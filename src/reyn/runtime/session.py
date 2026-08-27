@@ -1393,6 +1393,19 @@ class Session:
         # mcp_initialized/mcp_resource_updated, per #5277's own
         # investigation that these two ALREADY cover a bare reconnect's
         # mode/honored-set shift, so no new kind was needed).
+        #
+        # #5280: a 7th kind, ``mcp_reconnect_failed`` — found while
+        # answering architect's #5279 review question. The other 6 all
+        # fire on some SUCCESSFUL state change; none fire when a
+        # reconnect attempt ITSELF fails (``MCPConnectionService.
+        # _reconnect``, connection_service.py) — the server has already
+        # been popped from ``held_servers()`` by that point, but
+        # ``mcp_initialized`` only fires on a successful reopen. Without
+        # this kind, that one path left the cache stale until an
+        # unrelated event happened to invalidate it — unlike #5278 (a
+        # pre-existing gap this PR doesn't touch), this staleness was
+        # introduced by #5276/#5279 themselves (before them,
+        # ``subscription_summary()`` ran fresh every render frame).
         # ``None`` means "needs a real recompute on the next read" — both
         # at construction and right after any of these events — every OTHER
         # read is a bare attribute return, matching ``turn_usage_fn``/
@@ -1405,6 +1418,7 @@ class Session:
                 "mcp_resource_subscribed", "mcp_resource_unsubscribed",
                 "mcp_server_installed", "mcp_server_removed",
                 "mcp_initialized", "mcp_resource_updated",
+                "mcp_reconnect_failed",
             ],
         )
 
@@ -9381,6 +9395,13 @@ class Session:
         something actually changed AND something is actually reading it —
         never on a frame nobody reads this, and never inside the event
         dispatch itself.
+
+        #5280: the subscriber list also includes ``mcp_reconnect_failed`` —
+        a FAILED reconnect drops the server from ``held_servers()`` (it was
+        already popped before the reopen was attempted,
+        ``MCPConnectionService._reconnect``) without ever reaching the
+        success-only ``mcp_initialized`` emit, so this dedicated kind is
+        what invalidates the cache on that specific path.
 
         #5279 review (architect BLOCK on an earlier draft that recomputed
         EAGERLY inside the subscriber callback instead of merely marking

@@ -493,7 +493,21 @@ class MCPConnectionService:
     ) -> MCPClient:
         """Discard the (dead) held client for ``server`` and open a fresh one.
         Teardown of the dead client is best-effort — its transport is already gone,
-        so a teardown fault here is expected and never blocks the reconnect."""
+        so a teardown fault here is expected and never blocks the reconnect.
+
+        #5280: if the reopen below (``_ensure_open``) itself raises — the
+        server subprocess is genuinely gone/unreachable, not just a
+        transient transport death — ``server`` has ALREADY been popped
+        from ``self._clients`` (right above), so ``held_servers()`` (and
+        therefore ``Session.mcp_subscription_state()``'s reactive cache,
+        session.py) no longer lists it. None of the 6 kinds that cache
+        subscribes to fire on a FAILED reopen — ``mcp_initialized`` only
+        fires on success (see ``_ensure_open``'s own tail). Emits
+        ``mcp_reconnect_failed`` here, the ONE place both call paths
+        (``_HeldConnection._heal``'s reactive path and
+        ``_reconnect_from_lost_subscription``'s proactive one) funnel
+        through, so the cache invalidates on this path too instead of
+        staying stale until an unrelated event happens to fire."""
         old = self._clients.pop(server, None)
         if old is not None:
             try:
@@ -526,7 +540,24 @@ class MCPConnectionService:
                     "MCPConnectionService: teardown of dead subscription adapter for %r "
                     "contained an error", server, exc_info=True,
                 )
-        return await self._ensure_open(server, config, agent_id=agent_id)
+        try:
+            return await self._ensure_open(server, config, agent_id=agent_id)
+        except BaseException:
+            # #5280 review (lead-coder, non-blocking): a bare ``except
+            # Exception:`` here does not catch ``CancelledError`` (it's a
+            # ``BaseException``, not an ``Exception``, since Python 3.8).
+            # ``server`` is already popped from ``self._clients`` (above)
+            # regardless of WHY the reopen didn't complete — a cancel
+            # landing mid-``_ensure_open`` leaves the cache exactly as
+            # stale as any other reopen failure would. ``raise``
+            # unconditionally below re-raises the SAME exception
+            # untouched (cancellation or otherwise) — this only adds the
+            # emit as a side effect, never changes what propagates or
+            # swallows a cancel (mirrors ``llm/llm.py``'s own ``except
+            # BaseException`` precedent for "always look, never absorb").
+            if self._emit_sink is not None:
+                self._emit_sink("mcp_reconnect_failed", server=server)
+            raise
 
     def _on_subscription_lost(
         self, server: str, config: dict, agent_id: "str | None", dead_client: "MCPClient",

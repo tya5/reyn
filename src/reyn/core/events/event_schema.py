@@ -334,6 +334,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "mcp_prompt_get_failed",
     "mcp_prompt_list_changed",
     "mcp_prompts_listed",
+    "mcp_reconnect_failed",
     "mcp_resource_read",
     "mcp_resource_read_cancelled",
     "mcp_resource_read_completed",

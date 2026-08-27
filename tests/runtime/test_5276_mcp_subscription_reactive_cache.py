@@ -29,6 +29,17 @@ subprocess). Uses the #4403 counting technique (wrap the real
 ``subscription_summary``, count real calls) and
 ``tests/_support/events.py``'s ``settle`` (#3868/#4966) to wait for the
 subscriber's queued dispatch before reading the post-event state.
+
+#5280 (found while answering architect's #5279 review question, fixed in
+that issue's own PR): a 7th kind, ``mcp_reconnect_failed``, was added to
+the subscriber list — a FAILED reconnect (``MCPConnectionService.
+_reconnect``) drops a server from ``held_servers()`` without ever
+reaching the success-only ``mcp_initialized`` emit, so none of the
+original 6 kinds fired on that path. See
+``test_mcp_reconnect_failed_also_marks_dirty`` below for the cache-side
+witness, and ``tests/mcp/test_5280_mcp_reconnect_failed_event.py`` for
+the real ``MCPConnectionService._reconnect`` witness that the event
+actually fires on a genuine reopen failure.
 """
 from __future__ import annotations
 
@@ -122,6 +133,37 @@ async def test_a_relevant_event_marks_dirty_but_does_not_itself_recompute(
     assert call_count["n"] == 2, (
         f"a read with no intervening event must cost nothing more, got "
         f"{call_count['n']} real calls total"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mcp_reconnect_failed_also_marks_dirty(tmp_path, monkeypatch) -> None:
+    """Tier 2: #5280 — a 7th subscribed kind, added after this file's own
+    original 6 (found while answering architect's #5279 review question):
+    a FAILED reconnect (``MCPConnectionService._reconnect``) drops a server
+    from ``held_servers()`` without ever reaching the success-only
+    ``mcp_initialized`` emit — this kind is what invalidates the cache on
+    that path instead. Same shape as
+    ``test_a_relevant_event_marks_dirty_but_does_not_itself_recompute``
+    above, for the new kind."""
+    s = _make_session(tmp_path)
+    call_count = _counting_wrapper(monkeypatch, s._mcp_connection_service)
+
+    s.mcp_subscription_state()  # lazy fill: 1 real call
+    assert call_count["n"] == 1
+
+    s._audit_events.emit("mcp_reconnect_failed", server="srv")
+    await settle(s._audit_events)
+
+    assert call_count["n"] == 1, (
+        f"the event itself must NOT trigger a real call (only marks dirty), "
+        f"got {call_count['n']} real calls total"
+    )
+
+    s.mcp_subscription_state()
+    assert call_count["n"] == 2, (
+        f"#5280 REGRESSION: expected exactly 1 more real call on the first "
+        f"read after mcp_reconnect_failed, got {call_count['n']} real calls total"
     )
 
 
