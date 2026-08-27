@@ -100,11 +100,20 @@ def _learner() -> TokenMultiplierLearner:
 def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
     """Tier 2: THE core #5329 proof. ``engine.compact()`` always raises the
     quota-exhausted shape — retry_loop must call ``compact()`` exactly
-    ONCE (not the shrink ladder's multiple attempts) and the exception
+    ONCE (not the shrink ladder's multiple attempts), and the exception
     that propagates OUT of retry_loop must be the BARE quota exception
     itself — never wrapped in ``CompactionOverflowError``/
     ``UnrecoveredError`` (the SAME "re-raise bare, let the existing
-    generic catch-all handle it" shape #5256's outer gate already uses)."""
+    generic catch-all handle it" shape #5256's outer gate already uses;
+    a caller catching retry_loop's own normal failure vocabulary must NOT
+    catch this).
+
+    #5292-style six-questions note (architect review on this PR): a
+    prior version of this file had the count check and the TYPE check as
+    two separate tests — the second could only ever go red in exactly
+    the situation the first already does (nothing distinguishes them),
+    so they are one test now, both invariants proven from the SAME
+    single drive."""
     engine = _MinimalCompactionEngine()
     compact_calls = 0
 
@@ -117,41 +126,6 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
 
     async def _never_called_main_call(**kwargs):
         raise AssertionError("main_call must never run — compact() never succeeds")
-
-    async def _drive():
-        await retry_loop(
-            SP="sp", head=[], summary=None,
-            raw_middle=[{"role": "user", "content": "x", "seq": 1}],
-            tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
-            cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
-            learner=_learner(), main_call=_never_called_main_call,
-            max_iterations=8,
-        )
-
-    with pytest.raises(_QuotaExhaustedError):
-        asyncio.run(_drive())
-
-    assert compact_calls == 1, (
-        f"expected exactly 1 compact() call (no shrink retry into the SAME "
-        f"exhausted quota) — got {compact_calls}"
-    )
-
-
-def test_quota_exhausted_compact_is_never_wrapped_in_compaction_overflow_error() -> None:
-    """Tier 2: #5329 — the SAME scenario, but the assertion is on the
-    exception TYPE specifically, not just count: a caller catching
-    ``CompactionOverflowError``/``UnrecoveredError`` (retry_loop's own
-    normal failure vocabulary) must NOT catch this — it needs to reach
-    the SAME bare-exception path #5256's outer gate already proved safe."""
-    engine = _MinimalCompactionEngine()
-
-    async def _compact(input_chunk):
-        raise _QuotaExhaustedError()
-
-    engine.compact = _compact
-
-    async def _never_called_main_call(**kwargs):
-        raise AssertionError("main_call must never run")
 
     async def _drive():
         try:
@@ -172,6 +146,11 @@ def test_quota_exhausted_compact_is_never_wrapped_in_compaction_overflow_error()
 
     with pytest.raises(_QuotaExhaustedError):
         asyncio.run(_drive())
+
+    assert compact_calls == 1, (
+        f"expected exactly 1 compact() call (no shrink retry into the SAME "
+        f"exhausted quota) — got {compact_calls}"
+    )
 
 
 def test_transient_rate_limit_still_enters_the_shrink_ladder_unaffected() -> None:

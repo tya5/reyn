@@ -841,7 +841,27 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     longer depends on the exception's message text containing "too large"
     at all, so a differently-worded 413 (a different provider/proxy, a
     non-English locale) is now caught too.
+
+    #5329 (architect review): a provider usage-window/plan quota
+    exhaustion (429 ``usage_limit_reached``) is NEVER a context overflow
+    — but its free-text message ("The usage limit has been reached")
+    matches this predicate's own ``"limit"`` keyword fallback, so it used
+    to classify as True here at EVERY call site that reaches this
+    function without its own quota guard first (#5256's outer
+    ``_run_with_shrink`` gate always checks quota before calling this —
+    unaffected either way — but ``_router_main_call``'s own except,
+    router_loop_driver.py, calls this DIRECTLY with no such guard: a
+    quota exhaustion striking THAT call site, after ``retry_loop``'s
+    compact() call already succeeded once, would re-enter the shrink
+    ladder there instead — the SAME wasteful class #5329's compact()-wrap
+    fix closes at a DIFFERENT call site). Checked here, at the single
+    shared predicate, rather than adding a guard at each of its call
+    sites individually — #5329's own reason to exist is exactly a
+    call-site-by-call-site guard missing one spot; a fix at the ONE
+    predicate every site funnels through cannot have a missed spot.
     """
+    if is_quota_exhausted_error(exc):
+        return False
     # #4381 stage 1: checked BEFORE the litellm import below (and so
     # regardless of whether that import succeeds) — a plain attribute
     # read needs no litellm dependency at all, and this signal must not
