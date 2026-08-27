@@ -390,6 +390,7 @@ class RouterHistoryBuffer:
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
         read_cap: Any = None,             # #4381 PR-5: ReadCapConfig — the resource bound to check budgets against
+        current_turn_owner_fn: "Callable[[], Any] | None" = None,  # #4995/#5267: zero-arg → Session._turn_owner_task, LIVE — see build_history()'s own `expected_owner` docstring
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -403,6 +404,10 @@ class RouterHistoryBuffer:
         # #4381 PR-5: threaded into resolve_effective_trigger_and_budgets's
         # resource/budget invariant check (_check_resource_within_budget).
         self._read_cap = read_cap
+        # #4995/#5267: see build_history()'s own `expected_owner` docstring —
+        # None (every pre-#5267 construction site) makes the ownership check
+        # in _incremental_elide_total a no-op, byte-identical to before.
+        self._current_turn_owner_fn = current_turn_owner_fn
         # #1652/②: cross-turn reasoning rides the wire assistant messages
         # (native re-attach) instead of a router-SP text section. ReasoningConfig
         # gates it (.continuity) and bounds it (.recent_turns). None → off.
@@ -425,6 +430,31 @@ class RouterHistoryBuffer:
         # them again next call — 100% miss, not a tuning problem.
         # See ``_incremental_elide_total``'s own docstring for the
         # invalidation contract these three fields exist to support.
+        #
+        # #4995/#5267 ⚠️ WHOEVER TOUCHES THESE FIELDS NEXT, READ THIS FIRST:
+        # these 5 attributes are safe to mutate WITHOUT a lock ONLY because
+        # today every write happens synchronously, inside the SAME coroutine
+        # that decided to call ``build_history()`` — a session processes one
+        # turn at a time, and a synchronous call cannot be interrupted or
+        # raced mid-flight by ``Session.cancel_inflight()``'s hard
+        # ``Task.cancel()`` (that cancel can only land at an ``await`` point,
+        # and there is none inside this computation today). The MOMENT any
+        # of these fields is written from code that has ALREADY awaited
+        # something (``asyncio.to_thread``, an actual I/O wait, anything
+        # that gives ``cancel_inflight`` a suspension point to land on),
+        # that safety is GONE: a cancelled turn's background work keeps
+        # running (a cancelled ``await`` does not stop a thread-pool worker
+        # already executing), the NEXT turn can start and reach this same
+        # write concurrently, and — because ``_incremental_elide_total``
+        # READS ``_cached_elide_total`` and ADDS to it rather than
+        # overwriting — an interleaved write is not merely stale, it can be
+        # arithmetically WRONG (#5267). ``_incremental_elide_total``'s own
+        # ``expected_owner``/``current_turn_owner_fn`` ownership check
+        # exists for exactly this: build privately, publish in ONE step,
+        # and only if the caller that started this computation is STILL the
+        # session's current turn owner. Do not add a NEW caller that awaits
+        # something before reaching this write without threading
+        # ``expected_owner`` through the same way.
         self._cached_elide_total: int = 0
         self._cached_elide_turn_count: int = 0
         self._cached_elide_last_seq: "int | None" = None
@@ -564,6 +594,7 @@ class RouterHistoryBuffer:
 
     def _incremental_elide_total(
         self, turns: list, wire_turns: list[dict], *, use_chars4: bool,
+        expected_owner: "object | None" = None,
     ) -> int:
         """#4403: the ``total`` build_history needs for its "total <=
         effective_trigger" elide decision, computed incrementally instead
@@ -595,7 +626,26 @@ class RouterHistoryBuffer:
         guess costs CPU, never correctness, because the ``else`` branch
         always re-derives ``total`` from the real ``wire_turns`` this call
         actually has.
-        """
+
+        #4995/#5267 ``expected_owner``: read the CACHE STATE once up front
+        (the ``cache_valid`` check below), do the (possibly slow, possibly
+        running on a worker thread via ``build_history``'s own
+        ``asyncio.to_thread`` caller) summing into the LOCAL ``total``
+        below, then COMMIT to ``self._cached_elide_*`` in one step only if
+        ``expected_owner`` (captured by the caller BEFORE dispatching this
+        work, e.g. ``asyncio.current_task()`` at the point it was still the
+        session's current turn) still matches
+        ``self._current_turn_owner_fn()`` (Session's LIVE
+        ``_turn_owner_task``, read fresh here — a bare attribute read/write
+        is atomic under the GIL, no lock needed for this comparison
+        itself). A caller that passes neither (``expected_owner=None`` and/
+        or no ``current_turn_owner_fn`` configured — every call site before
+        #5267, and the rare ``session.py`` limit-denied path, which stays
+        synchronous) always commits, byte-identical to before. This is
+        NEVER a correctness gate on ``total`` itself (the value returned to
+        THIS call's own caller is always the freshly computed, correct
+        one) — only on whether it gets written into the shared incremental
+        cache for the NEXT call to build on."""
         from reyn.services.compaction.engine import estimate_tokens_for_any_turn
 
         model = self._model
@@ -623,11 +673,20 @@ class RouterHistoryBuffer:
                 for wt in wire_turns
             )
 
-        self._cached_elide_total = total
-        self._cached_elide_turn_count = len(turns)
-        self._cached_elide_last_seq = turns[-1].seq if turns else None
-        self._cached_elide_model = model
-        self._cached_elide_use_chars4 = use_chars4
+        # #4995/#5267: publish in ONE step, gated on still being the current
+        # turn owner — see this method's own docstring above and the
+        # `_cached_elide_*` field declarations' own comment for why.
+        still_owner = (
+            expected_owner is None
+            or self._current_turn_owner_fn is None
+            or self._current_turn_owner_fn() is expected_owner
+        )
+        if still_owner:
+            self._cached_elide_total = total
+            self._cached_elide_turn_count = len(turns)
+            self._cached_elide_last_seq = turns[-1].seq if turns else None
+            self._cached_elide_model = model
+            self._cached_elide_use_chars4 = use_chars4
         return total
 
     def _elide_candidate_turns(self, history: list) -> "tuple[list, int]":
@@ -718,8 +777,23 @@ class RouterHistoryBuffer:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def build_history(self) -> list[dict]:
+    def build_history(self, *, expected_owner: "object | None" = None) -> list[dict]:
         """Slice history into OpenAI-style messages for RouterLoop.
+
+        #4995/#5267 ``expected_owner``: pass this when the CALLER dispatches
+        this method to a worker thread (``asyncio.to_thread`` — the #4995
+        motivating case, ``RouterLoopDriver._run_with_shrink``) rather than
+        calling it inline on the same coroutine that decided to. Capture it
+        BEFORE the dispatch — ``asyncio.current_task()`` from inside the
+        coroutine that IS the session's current turn (there is no running
+        task to ask from inside the worker thread itself). Threaded straight
+        through to :meth:`_incremental_elide_total`, the ONE place this
+        method mutates shared cache state — see that method's own docstring
+        for the ownership check itself, and the ``_cached_elide_*`` field
+        declarations' own comment for why this exists at all. Omit it (the
+        default, every pre-#5267 caller) for an inline/synchronous call —
+        there is no race to guard against when nothing was awaited before
+        reaching the write.
 
         #4954(2): PERMANENT compaction. A turn at or below the compaction
         watermark (``0 < seq <= self._compaction_watermark(history)`` —
@@ -855,7 +929,9 @@ class RouterHistoryBuffer:
         # turns before a 100k-turn pass reaches them again next call — 100%
         # miss, not a tuning problem. See _incremental_elide_total's own
         # docstring for the invalidation contract.
-        total = self._incremental_elide_total(turns, wire_turns, use_chars4=use_chars4)
+        total = self._incremental_elide_total(
+            turns, wire_turns, use_chars4=use_chars4, expected_owner=expected_owner,
+        )
         # #4977: this method's own internal `total`/`effective_trigger` used
         # to also be emitted here as a public P6 audit-event
         # (`elide_evaluated`) so a test (or an operator inspecting `reyn

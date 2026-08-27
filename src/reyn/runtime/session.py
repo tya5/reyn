@@ -5403,6 +5403,14 @@ class Session:
             # buffer's history entries came from).
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
             read_cap=self._read_cap_config,  # #4381 PR-5
+            # #4995/#5267: LIVE read of the session's current turn-owning
+            # task, for RouterHistoryBuffer's own ownership check when
+            # build_history() is dispatched off this coroutine (see
+            # RouterLoopDriver._run_with_shrink's own `expected_owner`
+            # capture and RouterHistoryBuffer.build_history's docstring).
+            # A bare attribute read/write is atomic under the GIL — no lock
+            # needed for this comparison itself.
+            current_turn_owner_fn=lambda: self._turn_owner_task,
         )
 
         # #3671 follow-up: a DEFERRED closure, not an eager construction —

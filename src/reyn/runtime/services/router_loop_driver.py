@@ -257,7 +257,54 @@ class RouterLoopDriver:
         # widened except exactly as #4885 established. This is not a
         # reversion of that fix.
 
-        history = self._history_buffer.build_history()
+        # #4995/#5267: dispatched to a worker thread rather than run inline
+        # on this coroutine's own turn — build_history() re-serialises every
+        # elide-candidate turn (path-ref image materialise included, #3185's
+        # own measurement) every call, a cost proportional to session length
+        # that otherwise runs synchronously on the SAME event loop the TUI's
+        # own frame scheduling shares. `asyncio.to_thread` suspends THIS
+        # coroutine at the `await` (the GIL still time-slices with the
+        # default ~5ms `sys.getswitchinterval()`, so the loop gets scheduled
+        # while the thread runs) — same shape as this codebase's own
+        # existing `voice.py` precedent ("Inference is dispatched to
+        # asyncio.to_thread so the Textual event loop ...").
+        #
+        # `expected_owner` MUST be captured here, before the dispatch — see
+        # RouterHistoryBuffer.build_history's own docstring and #5267:
+        # cancel_inflight()'s hard `Task.cancel()` can now land INSIDE this
+        # await (impossible when build_history() was purely synchronous),
+        # and a cancelled `to_thread` await does not stop the underlying
+        # worker thread — it keeps running and, without this ownership
+        # check, could race a NEXT turn's own build_history() call over the
+        # SAME shared `_cached_elide_*` fields. `asyncio.current_task()`
+        # from inside this coroutine IS the session's `_turn_owner_task`
+        # (this method runs on that task) — captured here, not on the
+        # worker thread, where there is no running task to ask.
+        #
+        # #5267 ⚠️ WHOEVER CHANGES THIS CALL CHAIN'S SHAPE, READ THIS: that
+        # identity holds ONLY because every step from
+        # `Session.run_one_iteration`'s `self._turn_owner_task =
+        # asyncio.create_task(self._run_turn_body(...))` down to THIS line
+        # is a plain `await` — verified by grepping every file on the path
+        # (`session.py`, `inter_agent_messaging.py`, this file) for
+        # `create_task`/`ensure_future` and confirming the only hits are
+        # either that ONE task-creation site itself or on entirely
+        # unrelated paths (intervention re-dispatch, buffered-answer
+        # persistence) — see #5267's own PR body for the exact commands
+        # run and their output. If a FUTURE change inserts a
+        # `create_task`/`ensure_future` ANYWHERE between those two points,
+        # `asyncio.current_task()` here silently stops being
+        # `_turn_owner_task` — `expected_owner` would then ALWAYS mismatch
+        # the live owner, and EVERY `build_history()` call would silently
+        # stop updating the shared incremental cache (a real perf
+        # regression, a full recompute every turn) with NOTHING going red
+        # to say so. This is the single point of fragility the ownership
+        # design has — see #5267's own disclosure of this as an absence,
+        # not a solved problem.
+        _expected_owner = asyncio.current_task()
+        history = await asyncio.to_thread(
+            self._history_buffer.build_history, expected_owner=_expected_owner,
+        )
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
