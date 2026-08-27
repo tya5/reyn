@@ -329,6 +329,13 @@ shard consumed. A skipped test is reported as a skip count alongside any
 finding, never silently folded into "unreachable" — a skip means the
 environment narrowed what could run, not that the entry is dead.
 
+**A silent pass is not the only failure mode** — a run where fixtures were
+opened but the consumption recorder itself never fired (a broken
+`LLMReplay._consumed_keys.add` wiring, say) fails LOUD as `INCONCLUSIVE`,
+not silently green: zero findings from a dead recorder would otherwise be
+indistinguishable from zero findings because nothing is actually stale.
+Read that run's result as UNKNOWN, not as a clean bill of health.
+
 **Detection, not prevention**: a stacked/orphaned entry keeps sitting on
 disk until this check runs and someone reads it — nothing here stops one
 from being *written*. `#3969`'s `kind="environment"` entries (no `key`,
