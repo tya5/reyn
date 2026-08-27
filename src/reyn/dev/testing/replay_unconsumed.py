@@ -149,31 +149,12 @@ def report_instance(fixture_path: "str", loaded: "set[str]", consumed: "set[str]
             fh.write(json.dumps({"kind": "consumed", "fixture": fixture_path, "key": key}) + "\n")
 
 
-def unconsumed_by_fixture() -> "dict[str, set[str]]":
-    """``{fixture_path: {unconsumed keys}}`` for every fixture this session
-    opened in replay mode, aggregated across every event this shared file
-    holds (i.e. across every xdist worker) — a file this session never
-    opened is silently absent, never reported as fully unconsumed.
-
-    #5283 witness 2 (architect's ruling): if ``LLMReplay``'s own consumption
-    recording (``_consumed_keys.add`` in ``_replay``/``_replay_embedding``)
-    is itself broken — stripped, or raising before it reaches the ``add``
-    call — every consumed set collapses to empty while loaded sets stay
-    populated, which would otherwise flood this report with a FALSE claim
-    that every single entry in every opened fixture is unreachable. That is
-    the wrong failure direction: "the detector died" and "everything is
-    unreachable" must not look identical, or a broken detector silently
-    becomes indistinguishable from (and gets acted on as) real evidence. A
-    real, passing replay-mode test can only reach a fixture entry through
-    ``_replay``/``_replay_embedding``'s own hit path — a fixture with ANY
-    loaded key that this session opened but for which NOTHING anywhere
-    consumed ANYTHING is not plausible unless the recorder itself is dead,
-    so that global state suppresses the report entirely rather than naming
-    a remainder.
-    """
+def _read_events() -> "tuple[set[str], dict[str, set[str]], dict[str, set[str]]]":
+    """Parse the shared events file into ``(opened, loaded, consumed)``,
+    aggregated across every xdist worker that wrote to it."""
     events_path = _events_path()
     if not events_path.exists():
-        return {}
+        return set(), {}, {}
 
     opened: "set[str]" = set()
     loaded: "dict[str, set[str]]" = {}
@@ -196,15 +177,44 @@ def unconsumed_by_fixture() -> "dict[str, set[str]]":
             loaded.setdefault(fixture, set()).add(event["key"])
         elif kind == "consumed":
             consumed.setdefault(fixture, set()).add(event["key"])
+    return opened, loaded, consumed
 
+
+def recorder_appears_dead() -> bool:
+    """True iff this session opened at least one fixture with loaded keys
+    but NOTHING anywhere consumed ANYTHING (#5283, architect's TESTS-READ
+    finding on this PR).
+
+    A real, passing replay-mode test can only reach a fixture entry through
+    ``_replay``/``_replay_embedding``'s own hit path — that global state is
+    not plausible unless ``LLMReplay``'s own consumption recording
+    (``_consumed_keys.add``) is itself broken (stripped, or raising before
+    it reaches the ``add`` call). ``pytest_sessionfinish`` MUST check this
+    BEFORE trusting :func:`unconsumed_by_fixture`'s absence of findings —
+    without this check, "the mechanism died" and "zero findings, all clean"
+    are both silence, and the check-flag-gated CI job (the only place this
+    ever runs) would stay green forever even if the recorder broke on the
+    very first commit that wired it in (the exact #5327-shaped hazard: a
+    gate whose OWN health nothing observes).
+    """
+    _, loaded, consumed = _read_events()
     total_loaded = sum(len(v) for v in loaded.values())
     total_consumed = sum(len(v) for v in consumed.values())
-    if total_loaded > 0 and total_consumed == 0:
-        # The recorder-dead canary above — every opened fixture would show
-        # up as 100% unconsumed, which is the false-positive-flood shape
-        # this function must never produce.
-        return {}
+    return total_loaded > 0 and total_consumed == 0
 
+
+def unconsumed_by_fixture() -> "dict[str, set[str]]":
+    """``{fixture_path: {unconsumed keys}}`` for every fixture this session
+    opened in replay mode, aggregated across every event this shared file
+    holds (i.e. across every xdist worker) — a file this session never
+    opened is silently absent, never reported as fully unconsumed.
+
+    Callers that need to tell "the recorder is dead" apart from "genuinely
+    nothing is unconsumed" must check :func:`recorder_appears_dead` FIRST —
+    this function answers only "what does the raw data say," not "should
+    this data be trusted."
+    """
+    opened, loaded, consumed = _read_events()
     result: "dict[str, set[str]]" = {}
     for fixture in opened:
         remainder = loaded.get(fixture, set()) - consumed.get(fixture, set())
@@ -245,11 +255,39 @@ def pytest_sessionfinish(session: "pytest.Session", exitstatus: int) -> None:
     if hasattr(session.config, "workerinput"):
         return
 
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+
+    # #5283 TESTS-READ (architect): check this BEFORE trusting an empty
+    # unconsumed_by_fixture() result — "the recorder died" and "zero
+    # findings, all clean" must not both present as silence, or this
+    # check-flag-gated job (the only place any of this ever runs) stays
+    # green forever even if the very first commit that wired the recorder
+    # in broke it. Named INCONCLUSIVE, not a per-entry report — a dead
+    # recorder gives no reliable per-entry data, so naming individual
+    # "entries" here would itself be the false-positive flood this
+    # function's whole design exists to avoid.
+    if recorder_appears_dead():
+        message = (
+            "\nLLMReplay unconsumed-entry check (#5283) is INCONCLUSIVE this "
+            "session: fixture(s) were opened in replay mode but NOTHING "
+            "anywhere consumed ANYTHING — this is not evidence every entry is "
+            "unreachable, it means the consumption recorder itself did not "
+            "run (LLMReplay._consumed_keys.add, or the report_instance wiring "
+            "in tests/conftest.py). Treat this run's absence of findings as "
+            "UNKNOWN, not as a clean bill of health, and fix the recorder "
+            "before trusting this check again."
+        )
+        if reporter is not None:
+            reporter.write_line(message, red=True)
+        else:
+            print(message)  # noqa: T201 — no terminalreporter (e.g. -q -s edge case)
+        session.exitstatus = 1
+        return
+
     hits = unconsumed_by_fixture()
     if not hits:
         return
 
-    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     skipped_count = len(reporter.stats.get("skipped", [])) if reporter is not None else 0
 
     lines = [

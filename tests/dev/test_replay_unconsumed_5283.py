@@ -95,29 +95,33 @@ def test_reset_events_file_clears_prior_run(tmp_path, monkeypatch):
 # the report go SILENT, never a false-positive flood ─────────────────────
 
 
-def test_recorder_dead_canary_suppresses_the_report_entirely(tmp_path, monkeypatch):
+def test_recorder_dead_canary_fires(tmp_path, monkeypatch):
     """Tier 1: if EVERY opened fixture's consumed set is empty while loaded
     keys exist (the shape ``_consumed_keys.add`` being stripped from
-    ``LLMReplay._replay`` produces globally), the report must go EMPTY —
-    not claim every single entry everywhere is unreachable. A report that
-    cannot tell 'the detector died' from 'everything is unreachable' is a
-    report whose positive findings cannot be trusted either."""
+    ``LLMReplay._replay`` produces globally), ``recorder_appears_dead()``
+    must say so — a caller (``pytest_sessionfinish``) checks this BEFORE
+    trusting ``unconsumed_by_fixture()``'s own raw diff, which on this same
+    data would otherwise read as "everything is unreachable" (architect's
+    TESTS-READ finding on this PR: silence from a dead recorder and silence
+    from zero genuine findings must not be indistinguishable, or a dead
+    recorder + a check nobody watches stays green forever, #5327-shaped)."""
     events_path = tmp_path / "events.jsonl"
     monkeypatch.setenv("REYN_REPLAY_UNCONSUMED_EVENTS_PATH", str(events_path))
     monkeypatch.setenv("REYN_REPLAY_UNCONSUMED_CHECK", "1")
     replay_unconsumed.report_instance("fixtures/a.jsonl", {"k1", "k2"}, set())
     replay_unconsumed.report_instance("fixtures/b.jsonl", {"k3"}, set())
-    assert replay_unconsumed.unconsumed_by_fixture() == {}
+    assert replay_unconsumed.recorder_appears_dead() is True
 
 
-def test_recorder_dead_canary_does_not_mask_a_real_partial_finding(tmp_path, monkeypatch):
-    """Tier 1: the canary is a GLOBAL emptiness check, not per-fixture — a
-    session with at least one genuine consumed key elsewhere must not have
-    its real finding masked."""
+def test_recorder_dead_canary_does_not_fire_on_a_real_partial_finding(tmp_path, monkeypatch):
+    """Tier 1: the canary is a GLOBAL emptiness check — a session with at
+    least one genuine consumed key anywhere must not be flagged dead, and
+    unconsumed_by_fixture() must still name the real remainder."""
     events_path = tmp_path / "events.jsonl"
     monkeypatch.setenv("REYN_REPLAY_UNCONSUMED_EVENTS_PATH", str(events_path))
     monkeypatch.setenv("REYN_REPLAY_UNCONSUMED_CHECK", "1")
     replay_unconsumed.report_instance("fixtures/a.jsonl", {"k1", "k2"}, {"k1"})
+    assert replay_unconsumed.recorder_appears_dead() is False
     assert replay_unconsumed.unconsumed_by_fixture() == {"fixtures/a.jsonl": {"k2"}}
 
 
@@ -255,3 +259,31 @@ def test_witness3_fail_open_without_the_flag(
     result.assert_outcomes(passed=1)
     assert result.ret == 0
     assert "UNCONSUMED" not in "\n".join(result.outlines)
+
+
+_SEED_DEAD_RECORDER_BODY = """
+    def test_seed():
+        from reyn.dev.testing import replay_unconsumed
+        replay_unconsumed.report_instance(
+            "fixtures/inner.jsonl", {"k1", "k2"}, set(),
+        )
+"""
+
+
+def test_dead_recorder_fails_the_inner_session_as_inconclusive(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+):
+    """Tier 1: architect's TESTS-READ finding on this PR, end to end — a
+    session whose consumption recorder reported zero hits anywhere (the
+    global shape a dead ``_consumed_keys.add`` produces) must exit non-zero
+    with an INCONCLUSIVE message, never a silent green. This is what makes
+    ``test_recorder_dead_canary_fires`` (the low-level unit test) actually
+    reach a real pytest session's exit code, not just a Python return
+    value."""
+    monkeypatch.setenv("REYN_REPLAY_UNCONSUMED_CHECK", "1")
+    result = _run_inner(
+        pytester, monkeypatch, _SEED_DEAD_RECORDER_BODY, tmp_path / "events.jsonl",
+    )
+    result.assert_outcomes(passed=1)
+    assert result.ret != 0
+    result.stdout.fnmatch_lines(["*INCONCLUSIVE*"])
