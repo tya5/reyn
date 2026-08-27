@@ -141,6 +141,12 @@ _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
 # previous per-site directives (chat "write your reply" / plan "step report") were
 # unevidenced differentiation — and the chat one's "Do not call another tool"
 # was itself anti-invoke. Iterate per-site ONLY if a measured problem appears.
+# #5273: the literal text is no longer the bare word "resume" (see
+# EMPTY_STOP_RETRY_DIRECTIVE's own comment in loop_control.py) — a
+# self-describing, attributed form fixes the token landing at a message's
+# content position reading as a human instruction. The UNIFORM-vocabulary
+# decision this paragraph documents is unchanged; only the literal string
+# grew a label and a negation clause.
 # reyn.prompt.loop_control (SP prompt-package, Phase 3 §I) — imported above,
 # re-bound to the original public name so every consumer
 # (``from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE``) is
@@ -2440,8 +2446,17 @@ class RouterLoop:
                     )
                 ):
                     _empty_stop_retries += 1
+                    # #5273: role="system", not "user" — a bare "resume" at
+                    # role=user's content position read as a human
+                    # instruction (the agent answered with a status-report
+                    # turn instead of continuing, leaving the real inbox
+                    # instruction undigested). system-role + the directive's
+                    # own self-describing text (see EMPTY_STOP_RETRY_
+                    # DIRECTIVE's comment) together mark this as reyn's own
+                    # continuation nudge, mirroring the same attributed-
+                    # push shape session.py's hook messages already use.
                     messages.append({
-                        "role": "user",
+                        "role": "system",
                         "content": self._empty_stop_retry_directive,
                     })
                     self.host.events.emit(

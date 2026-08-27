@@ -4,8 +4,9 @@ Pinned invariants:
 
 - When ``empty_stop_retry_directive`` is set AND ``REYN_EMPTY_STOP_RETRY=1``,
   an empty-stop response (= finish_reason=stop, no content, no tool_calls)
-  triggers ONE retry. Before the retry, a synthetic ``role="user"`` message
-  carrying the directive is appended to the messages list.
+  triggers ONE retry. Before the retry, a synthetic ``role="system"``
+  message (``"user"`` before #5273 — see that issue for why) carrying the
+  directive is appended to the messages list.
 - When the env var is unset, the directive is plumbed in but ignored — the
   loop falls through to the existing "observe + surface" path (= no behaviour
   change for the default chat-router policy).
@@ -95,9 +96,9 @@ def _make_loop(
 
 
 @pytest.mark.asyncio
-async def test_retry_path_injects_user_msg_when_env_var_set(monkeypatch):
+async def test_retry_path_injects_directive_msg_when_env_var_set(monkeypatch):
     """Tier 2: B42-NF-W6-1 — when env var set AND directive set AND empty
-    stop occurs, the loop appends a synthetic user message and retries.
+    stop occurs, the loop appends a synthetic continuation message and retries.
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
@@ -181,7 +182,7 @@ async def test_auto_flag_fires_retry_without_env_var(monkeypatch):
     ``chat.empty_stop_retry``, owner default ``False`` since 2026-08-14) —
     this test only pins that the flag, when set, works without needing the
     env var too. Mirror of
-    ``test_retry_path_injects_user_msg_when_env_var_set`` with env unset + auto.
+    ``test_retry_path_injects_directive_msg_when_env_var_set`` with env unset + auto.
     """
     monkeypatch.delenv("REYN_EMPTY_STOP_RETRY", raising=False)
     host = FakeRouterHost()
@@ -275,8 +276,17 @@ class _MessageCapturingScripted:
 @pytest.mark.asyncio
 async def test_retry_injects_directive_verbatim(monkeypatch):
     """Tier 2: the directive string is appended verbatim as a
-    ``role="user"`` message in the retry call's messages — no rewriting
+    ``role="system"`` message in the retry call's messages — no rewriting
     or wrapping by RouterLoop.
+
+    #5273: role changed from ``user`` to ``system`` — a bare continuation
+    token at role=user's content position read as a human instruction
+    (the agent answered with a status-report turn instead of continuing).
+    ``system`` is one half of the fix; the other half (the directive
+    text itself becoming self-describing) is pinned at the
+    ``EMPTY_STOP_RETRY_DIRECTIVE``/``prompt.loop_control`` level, not
+    here — this test only pins the WIRING (role + verbatim content),
+    same as before.
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
@@ -289,10 +299,10 @@ async def test_retry_injects_directive_verbatim(monkeypatch):
     retry_msgs = spy.messages_per_call[1]
     directive_msgs = [
         m for m in retry_msgs
-        if m.get("role") == "user" and m.get("content") == _DIRECTIVE
+        if m.get("role") == "system" and m.get("content") == _DIRECTIVE
     ]
     assert directive_msgs, (
-        f"expected directive user msg in retry, got none; "
+        f"expected directive system msg in retry, got none; "
         f"roles in retry: {[m.get('role') for m in retry_msgs]}"
     )
     (only_directive,) = directive_msgs
