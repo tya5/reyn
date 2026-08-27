@@ -8,6 +8,21 @@ index_drop). The no-legit-op-blocked matrix proven here: a dedicated-op write (e
 decl) PASSES; a raw file.write to a recovery-core prefix is DENIED; ``approvals.yaml``
 (top-level persist) stays protected; ``memory/`` + ``cache/`` + other ``.reyn/`` paths stay
 default-granted (the prefix-deny must not over-reach).
+
+#5238 (TMPDIR-dependent anchor audit, full count in the issue): of this file's 6
+tests, 2 pin their own ``reyn.yaml`` into ``tmp_path`` below (they call
+``reyn.api.safe.file``'s WALK-based ``_project_root_for_gate()``, which a
+``TMPDIR`` placing ``tmp_path`` inside an outer ``reyn.yaml`` tree would
+otherwise mis-anchor). The other 4 do not, and do not need to:
+``test_recovery_core_prefix_paths_excluded_from_default_zone`` /
+``test_non_recovery_core_reyn_paths_still_default_granted`` call
+``reyn.security.permissions.permissions``'s SAME-NAMED sibling functions, which
+take a plain ``Path.cwd()`` base with no walk at all — immune by construction.
+``test_safe_file_allows_non_recovery_core_reyn_write`` targets
+``.reyn/memory/``/``.reyn/cache/``, never in the protected/recovery-core lists
+under ANY root. ``test_safe_file_recovery_core_gate_anchors_on_project_root_
+not_launch_subdir`` already pins its own ``reyn.yaml`` (it is the pattern the
+2 fixed tests below now follow).
 """
 from __future__ import annotations
 
@@ -47,7 +62,19 @@ def test_non_recovery_core_reyn_paths_still_default_granted(tmp_path, monkeypatc
 def test_safe_file_denies_raw_write_under_recovery_core_prefix(tmp_path, monkeypatch):
     """Tier 2: safe.file._check_write DENIES a raw write to .reyn/config/ or .reyn/state/
     covered only by the broad .reyn/ parent-dir (no explicit listing) — forcing the
-    dedicated-op path. RED if the prefix-deny were removed (the .reyn/ zone would allow it)."""
+    dedicated-op path. RED if the prefix-deny were removed (the .reyn/ zone would allow it).
+
+    #5238: ``_check_write`` anchors via ``_project_root_for_gate()``, which walks UP
+    from cwd looking for ``reyn.yaml`` — pinning one directly in ``tmp_path`` (same
+    pattern as ``test_safe_file_recovery_core_gate_anchors_on_project_root_not_
+    launch_subdir`` below) makes the walk stop here regardless of whatever
+    ``reyn.yaml`` may or may not exist further up under ``TMPDIR``. Without this, a
+    ``TMPDIR`` that places ``tmp_path`` inside an ancestor's own ``reyn.yaml`` tree
+    (real incident, coder-smith, 2026-08-24) anchors the gate on that OUTER
+    project instead — this test's own ``.reyn/config``/``.reyn/state`` targets then
+    fall outside the (wrongly-anchored) recovery-core prefix, the raw write is
+    wrongly ALLOWED, and this test's own ``pytest.raises`` fails to see a raise."""
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     from reyn.api.safe import file as safe_file
 
@@ -64,7 +91,19 @@ def test_safe_file_denies_raw_write_under_recovery_core_prefix(tmp_path, monkeyp
 def test_safe_file_accepts_config_write_with_explicit_decl(tmp_path, monkeypatch):
     """Tier 2: the dedicated-op path — .reyn/config/mcp.yaml WITH an explicit file.write
     decl PASSES (mcp_install/drop session-approve the exact path). RED if the prefix-deny
-    rejected even an explicitly-declared write = the no-legit-op-blocked invariant broken."""
+    rejected even an explicitly-declared write = the no-legit-op-blocked invariant broken.
+
+    #5238: pinned anchor (see the sibling deny-test's docstring) — this closes a
+    real vacuous-pass, not just a hypothetical one: WITHOUT the pin, a ``TMPDIR``
+    that anchors the gate on an outer project makes ``_is_under_recovery_core_
+    prefix`` return False before the explicit-decl branch this test claims to
+    exercise is ever reached — the assertion below ("must not raise") was true
+    either way, so the test passed while checking nothing. STRIP-FALSIFY
+    (performed, not left as a claim): with the anchor pinned, removing the
+    explicit ``.reyn/config/mcp.yaml`` decl from ``write_paths`` makes this
+    correctly go RED (``PermissionError``, the no-legit-op-blocked invariant this
+    test exists to prove) — confirmed manually, reverted before commit."""
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     from reyn.api.safe import file as safe_file
 
