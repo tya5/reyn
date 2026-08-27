@@ -96,12 +96,32 @@ jobs:
             -f description="Checking the PR body and comments for an open blocking point..."
 
       # scripts/check_open_blocking_checkboxes.py is stdlib-only.
-      # `continue-on-error: true` keeps a script failure from also turning
-      # this step, and with it the job, red: the commit status posted below
-      # is the only channel that carries this verdict.
+      #
+      # #5328: this step used to run with `continue-on-error: true`, on the
+      # reasoning "the commit status posted below is the only channel that
+      # carries this verdict" — but `continue-on-error: true` forces the
+      # STEP's (and so the JOB's, and so this job's own auto-generated
+      # check-run's) *conclusion* to `success` regardless of the script's
+      # real exit code. That is not "a second channel that goes stale
+      # between comments" (the residual, disclosed limitation below) — it
+      # is unconditional: measured empirically (#5337, a throwaway PR
+      # carrying a deliberately open `- [ ] 🔴`), this job's own check-run
+      # read `pass` at the SAME push-time evaluation the commit status
+      # below correctly read `fail` for. A job that can never go red is not
+      # a second source of truth a reader can ignore — GitHub's rollup
+      # shows it as a plain PASS, indistinguishable at a glance from a
+      # gate that actually ran the check.
+      #
+      # Removed. This job's own conclusion (and so its check-run) now
+      # tracks the SAME script result the commit status below is computed
+      # from, in the SAME run — the two can only disagree afterward, when
+      # a LATER `issue_comment`-triggered run updates the commit status
+      # without a matching `pull_request` event to refresh this job's own
+      # check-run (that half of the shape is inherent — an `issue_comment`
+      # event's own check-run attaches to the DEFAULT BRANCH's sha, never
+      # the PR's, see the module comment above), not unconditional.
       - name: Check the PR body and comments for an open blocking point
         id: check
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -111,7 +131,12 @@ jobs:
       # check step above passed, failed, or (if the runner itself dies
       # first) never ran at all — in that last case this step ALSO never
       # runs, and the status posted above stays `pending` rather than
-      # silently vanishing.
+      # silently vanishing. #5328: now that the check step has no
+      # `continue-on-error`, a real failure there would otherwise SKIP this
+      # step under the default `if:` (all previous steps succeeded) — this
+      # `always()` is what keeps the commit status accurate instead of
+      # stuck on `pending` every time there actually IS an open blocking
+      # point, which is exactly the case this status exists to report.
       - name: Post final status
         if: always()
         env:
