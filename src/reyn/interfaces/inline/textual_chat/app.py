@@ -6671,6 +6671,24 @@ class TextualChatApp(App):
                         logger.exception("textual chat: compact layout failed")
                 except Exception:
                     logger.exception("textual chat: live chrome refresh failed")
+        except Exception:
+            # #5329 ②: the loop's own supply, ``self._transport.frames()``,
+            # was the one failure point in this method with no handler —
+            # every other site above logs and keeps the pump running.
+            # Remove this except and a genuine stream failure again falls
+            # silently into the same ``finally: self.exit()`` a clean
+            # end-of-stream takes, so a crash and a normal shutdown are
+            # indistinguishable afterward. ``reyn.log`` has a real reader
+            # even with the TUI closed: ``chrome.py``'s diagnostics line
+            # names this same log path to the operator inline. Whether/how
+            # to surface this WHILE the TUI is still open is left open —
+            # an owner visual-judgment call, not this fix's job.
+            logger.exception(
+                "textual chat: _pump_frames' frame stream (self._transport"
+                ".frames()) raised — the app is exiting BECAUSE of this "
+                "exception, not because the stream ended normally"
+            )
+            raise
         finally:
             self.exit()
 
