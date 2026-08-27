@@ -2809,33 +2809,30 @@ class TextualChatApp(App):
     def _hydrate_from_history(
         self, *, agent: "str | None" = None, session_id: "str | None" = None
     ) -> None:
-        """Restore-on-restart (#3273 Phase 5) AND session-switch reset+rehydrate
-        (#3310 N2): the SYNCHRONOUS do-both convenience — runs step ①
-        (:meth:`_read_conversation_history`) then step ② (:meth:`_apply_
-        hydrated_messages`) back to back, on whatever thread/task calls
-        this. #4983: mount (:meth:`on_mount`) no longer calls this when a
-        pre-fetched history is available (see that method's own docstring
-        for why it reads BEFORE the app is even constructed instead) —
-        this wrapper remains for :meth:`_handle_session_attached_event`
-        (the live session-switch rehydrate, #3310 N2), which #4983
-        deliberately did NOT touch: that call site's own event-loop-block
-        question is a separate, still-open UX question (does the
-        conversation pane briefly go blank on switch, in exchange for the
-        TUI no longer freezing?) requiring its own owner-facing ruling —
-        see #4983's own issue thread. Do not read "mount is fixed" as
-        "this method is fixed" — it is the SAME synchronous shape it
-        always was, on this call path.
+        """Restore-on-restart (#3273 Phase 5): the SYNCHRONOUS do-both
+        convenience — runs step ① (:meth:`_read_conversation_history`) then
+        step ② (:meth:`_apply_hydrated_messages`) back to back, on whatever
+        thread/task calls this. #4983: mount (:meth:`on_mount`) no longer
+        calls this when a pre-fetched history is available (see that
+        method's own docstring for why it reads BEFORE the app is even
+        constructed instead) — this remains the fallback for a caller that
+        never opted into that split.
 
-        Two call shapes:
+        #4994 (#4983's own arc): the live session-switch rehydrate
+        (:meth:`_handle_session_attached_event`, #3310 N2) no longer calls
+        THIS method at all — it has its own inline implementation with the
+        same step ①/② split as mount (step ① off the loop via
+        ``asyncio.to_thread``, gated by :attr:`_session_switch_generation`
+        against a superseding later switch; step ② on the loop, unchanged).
+        Do not read this method's ``agent``/``session_id`` parameters as
+        still serving that call site — they currently have no production
+        caller (kept for a targeted-hydrate shape a future caller could
+        still use, same read-model seam
+        :meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
+        — ``history.jsonl``, NOT the P6 audit-event log).
 
-        - No args: hydrates the CURRENTLY ATTACHED session, byte-identical
-          to pre-N2/pre-#4983 behavior.
-        - ``agent``/``session_id`` given (:meth:`_handle_session_attached_event`,
-          called AFTER :meth:`self.conversation`'s ``clear()``): hydrates that
-          SPECIFIC (possibly never-before-attached-in-this-client-run) session
-          instead — the same read-model seam
-          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
-          — ``history.jsonl``, NOT the P6 audit-event log), just targeted."""
+        No args: hydrates the CURRENTLY ATTACHED session, byte-identical to
+        pre-N2/pre-#4983 behavior."""
         self._apply_hydrated_messages(
             self._read_conversation_history(agent=agent, session_id=session_id)
         )
