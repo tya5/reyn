@@ -139,9 +139,7 @@ def test_build_tools_includes_web_search_via_registry():
     output (byte-identity gate for LLMReplay fixtures)."""
     from reyn.runtime.router_tools import build_tools
 
-    tools = build_tools(
-        available_agents=[],
-    )
+    tools = build_tools()
 
     # Find web_search in the returned tools list
     ws_tools = [t for t in tools if t.get("function", {}).get("name") == "web_search"]
@@ -169,9 +167,7 @@ def test_build_tools_web_search_not_duplicated():
     being included simultaneously."""
     from reyn.runtime.router_tools import build_tools
 
-    tools = build_tools(
-        available_agents=[],
-    )
+    tools = build_tools()
     ws_tools = [t for t in tools if t.get("function", {}).get("name") == "web_search"]
     assert ws_tools, "web_search should appear in build_tools output"
 

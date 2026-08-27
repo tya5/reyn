@@ -2,8 +2,18 @@
 
 Public API
 ----------
-build_tools(available_agents, *, file_permissions, mcp_servers)
+build_tools(*, file_permissions, mcp_servers)
     Returns 14–30 tools in fixed order for litellm.acompletion.
+
+    #5291: the leading positional ``available_agents`` parameter this
+    function used to require was removed (was never read by this
+    function's own body — its only consumer, ``delegate_to_agent``'s
+    per-call ``to`` enum injection, retired in #3978 P6; every call site
+    that supplied it was reading ``.reyn/agents/`` from disk for
+    nothing, some on every render frame). If a future capability needs
+    the caller's peer-agent list again, add a NEW, actually-read
+    parameter — reintroducing this exact name for a different purpose
+    would read as a silent revival of the dead one.
 
 Gemini-safe schema rules enforced throughout:
 - No oneOf / anyOf / additionalProperties / format keys
@@ -252,7 +262,6 @@ def build_mcp_search_tool(mcp_tool_specs: list[dict]) -> dict:
 
 
 def build_tools(
-    available_agents: list[dict],  # [{name, role}, ...]
     *,
     file_permissions: dict | None = None,  # {"read": [paths], "write": [paths]}
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
@@ -286,11 +295,6 @@ def build_tools(
 
     Parameters
     ----------
-    available_agents:
-        Peer agent entries. Each dict must have at least ``name``. Kept for
-        backward compatibility with all callers — its only consumer,
-        ``delegate_to_agent``'s per-call ``to`` enum injection, retired in
-        #3978 P6.
     file_permissions:
         Optional dict with ``read`` and/or ``write`` lists of path strings.
         - None or both empty → File tools omitted entirely (C1–C4).

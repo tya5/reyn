@@ -3242,8 +3242,10 @@ class RouterLoop:
 
         univ = layer_ctx["univ_enabled"]
         search_visible = layer_ctx["search_visible"]
+        # #5291: build_tools's available_agents param is removed — it was
+        # never read by that function's own body (only consumer retired,
+        # #3978 P6) — so this call no longer reads .reyn/agents/ from disk.
         tools = build_tools(
-            self.host.list_available_agents(),
             file_permissions=self.host.get_file_permissions(),
             mcp_servers=self.host.get_mcp_servers(),
             web_fetch_allowed=self.host.get_web_fetch_allowed(),
@@ -3262,8 +3264,8 @@ class RouterLoop:
         ``build_tools`` with the universal wrappers OFF. The common base a
         self-contained scheme starts from (enumerate-all adds ``catalog_entries``
         on top instead of the wrappers)."""
+        # #5291: see present()'s own comment above — same dead read, same fix.
         return build_tools(
-            self.host.list_available_agents(),
             file_permissions=self.host.get_file_permissions(),
             mcp_servers=self.host.get_mcp_servers(),
             web_fetch_allowed=self.host.get_web_fetch_allowed(),

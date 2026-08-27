@@ -53,7 +53,6 @@ from reyn.runtime.services.mcp_cache_file import cache_file_path, read_cache
 _SERVER = "reyn_markitdown"
 _TOOL = "convert_to_markdown"
 _TOOLS = [{"name": _TOOL, "description": "convert a uri to markdown"}]
-_AGENTS = [{"name": "researcher", "role": "Research agent", "cluster": "default"}]
 
 from tests._support.router_host_adapter import make_op_context_source  # noqa: E402
 
@@ -171,7 +170,7 @@ def _mcp_tool_enum(adapter: RouterHostAdapter) -> "list[str] | None":
     (= the schema degrades to a free-form string and the model is told
     nothing about which tools exist).
     """
-    tools = build_tools(_AGENTS, mcp_servers=adapter.get_mcp_servers())
+    tools = build_tools(mcp_servers=adapter.get_mcp_servers())
     for entry in tools:
         if entry.get("type") == "function" and entry["function"]["name"] == "call_mcp_tool":
             props = entry["function"]["parameters"]["properties"]

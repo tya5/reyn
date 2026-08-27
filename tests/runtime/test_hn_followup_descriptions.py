@@ -31,7 +31,6 @@ def test_q6_read_file_description_has_root_convention_hint() -> None:
     project-root path directly.
     """
     tools = build_tools(
-        available_agents=[],
         file_permissions={"read": ["."]},
     )
     desc = _find_tool(tools, "read_file")["description"]
