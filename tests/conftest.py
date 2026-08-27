@@ -573,6 +573,17 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
+        "llm_stub: monkeypatch litellm.acompletion with a fixed, fixture-less "
+        "minimal completion (finish_reason=stop, no tool_calls) for tests whose "
+        "subject is loop/valve/lifecycle/wiring behavior around a turn, not the "
+        "model's own output (#5103). Takes no path — reads/writes no fixture "
+        "file, so it is invisible to #3662's MissingFixture safety net and to "
+        "#5283's unconsumed-entry check. A test using this marker MUST NOT "
+        "declare Tier 3 (Tier 3 = the model's output IS the subject under "
+        "test — see test_tier_audit.py's enforcement of this pairing).",
+    )
+    config.addinivalue_line(
+        "markers",
         "docker: live-Docker integration test (#1332). Skipped when no daemon is "
         "reachable; runs against a real container. Select with `-m docker` / "
         "deselect with `-m 'not docker'`.",
@@ -693,3 +704,35 @@ def _llm_replay(request: pytest.FixtureRequest):
             replay_unconsumed.report_instance(
                 str(fixture_path), replay.loaded_keys(), replay.consumed_keys(),
             )
+
+
+@pytest.fixture(autouse=True)
+def _llm_stub(request: pytest.FixtureRequest):
+    """Install / restore the fixture-less LLM stub for tests marked with
+    @llm_stub (#5103, architect design "C2") — see
+    reyn.dev.testing.llm_stub's module docstring for the full rationale.
+
+    Reads/writes no fixture file: unlike `_llm_replay` above, there is
+    nothing to report to `replay_unconsumed` here (#5283 tracks fixture
+    entries; a stub has none), and the #3662 MissingFixture safety net
+    never applies (nothing to be missing)."""
+    marker = request.node.get_closest_marker("llm_stub")
+    if marker is None:
+        yield
+        return
+
+    replay_marker = request.node.get_closest_marker("replay")
+    if replay_marker is not None:
+        pytest.fail(
+            f"{request.node.nodeid}: @llm_stub and @replay both patch "
+            "litellm.acompletion — pick one, not both."
+        )
+
+    from reyn.dev.testing.llm_stub import LLMStub
+
+    stub = LLMStub()
+    stub.install()
+    try:
+        yield stub
+    finally:
+        stub.restore()

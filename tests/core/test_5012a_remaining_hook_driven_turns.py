@@ -7,6 +7,16 @@ reads the SAME cap computation the enforcement site
 (`_stamp_execution_context`'s `TurnOrigin.HOOK` branch) uses — via the shared
 `_effective_hook_driven_turns_cap` helper — rather than a second, independently
 maintained copy of the formula (lead-coder catch, #5012-A review).
+
+#5103: `test_remaining_counts_down_as_hook_turns_are_spent` drives the loop
+via `@pytest.mark.llm_stub` (architect design "C2") rather than replacing
+`Session._loop_driver.run_turn` with a private-per-test stand-in — the real
+`RouterLoopDriver.run_turn` / `RouterLoop` / `Session._run_router_loop` chain
+now actually runs each hook-driven turn; only the LLM boundary itself
+(`litellm.acompletion`) is stubbed. This test's subject (does a REAL turn
+decrement the counter) was previously unwitnessed: the old `_noop` stand-in
+replaced `run_turn` wholesale, so nothing inside it — including whatever
+decremented the counter — ever ran.
 """
 from __future__ import annotations
 
@@ -44,16 +54,15 @@ async def _push_hook(session: Session, text: str, *, wake: bool = True) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_remaining_counts_down_as_hook_turns_are_spent(tmp_path: Path) -> None:
     """Tier 2: each hook-driven turn actually run decrements what
     `remaining_hook_driven_turns` reports — the countdown is real, not a
-    static echo of the config value."""
+    static echo of the config value. Drives a REAL turn through
+    `RouterLoopDriver.run_turn` (only the LLM boundary is stubbed, #5103
+    "C2") — the decrement is witnessed on the real code path, not on a
+    private stand-in that replaced `run_turn` itself."""
     session = _make_session(tmp_path, cap=3)
-
-    async def _noop(user_text: str, chain_id: str) -> None:
-        pass
-
-    session._loop_driver.run_turn = _noop  # type: ignore[method-assign]
 
     assert session.remaining_hook_driven_turns == 3
     await _push_hook(session, "h1")
