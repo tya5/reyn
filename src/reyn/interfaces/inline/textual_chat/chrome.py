@@ -1911,10 +1911,14 @@ def config_warning_text(count: int, keys: "dict | None" = None, hooks_warnings: 
     ``⚠`` matches the existing ``HALTED`` banner glyph above (same
     single-cell-width class of symbol, same "something needs attention"
     register) rather than introducing a new one."""
-    if hooks_warnings:
-        return f"⚠ {hooks_warnings[0]}"
-    if not count:
+    warning_parts = list(hooks_warnings or [])
+    if not count and not warning_parts:
         return None
+    if warning_parts:
+        base = f"⚠ {'; '.join(warning_parts)}"
+        if count:
+            base += f" · {count} config key{'s' if count != 1 else ''} not applied"
+        return base
     plural = "" if count == 1 else "s"
     base = f"⚠ {count} config key{plural} not applied"
     if not keys:
