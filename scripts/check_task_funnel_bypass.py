@@ -96,6 +96,16 @@ warn-only gate nobody ever promotes is indistinguishable, in effect,
 from no gate at all, and #5010 is the standing example of exactly that
 non-outcome.
 
+**Who counts, and how**: a human, at promotion-decision time — not a
+new script. ``git log -p -- scripts/task_funnel_bypass_baseline.json``
+shows every commit that added an entry; the commit(s) adding a
+``"false_positive"`` entry ARE the false-positive count, in order,
+against the PRs that touched an in-scope file over that stretch. #5010
+stalled because nobody wrote down what "ready to promote" meant, not
+because nothing counted it automatically — writing the one-line
+derivation above, at promotion time, is enough; building a counter for
+it would be solving a problem #5010 never actually had.
+
 ## The baseline — where a false positive gets COUNTED (lead-coder review)
 
 The 20-PR/2-week conditions above need a denominator: something that
