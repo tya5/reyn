@@ -11,23 +11,46 @@ WHY THIS EXISTS
     instant the LAST test's protocol returns — neither can ever see a hang
     that happens strictly AFTER that point. This arms a SEPARATE,
     session-spanning watchdog (reusing ``reyn.runtime.stall_trace``'s
-    ``arm``/``disarm``, #4405 — the same ``faulthandler.dump_traceback_later``
-    primitive, not a new mechanism) that only gets cancelled at
-    ``pytest_sessionfinish`` — so if teardown itself hangs, the timer is
-    NEVER cancelled and fires.
+    ``arm``, #4405 — the same ``faulthandler.dump_traceback_later``
+    primitive, not a new mechanism).
+
+WHY THIS NEVER DISARMS (architect finding, PR #5362 review,
+issuecomment-5445125316)
+    The first version of this module cancelled the timer at
+    ``pytest_sessionfinish`` — but ``pytest_sessionfinish`` returning is
+    NOT the end of the process: interpreter shutdown, ``atexit`` handlers,
+    and non-daemon thread joins all still remain, and THAT is a class of
+    hang this repo has actually hit for real (PR #5049's
+    ``ThreadedTransportProxy``: an assert failure → an ``Event`` never set
+    → a non-daemon thread left running → ``atexit``'s own thread-join
+    hangs). Disarming at ``pytest_sessionfinish`` would have structurally
+    excluded the exact failure class #4986 exists to catch. Fixed by never
+    disarming at all: ``arm()`` is called with ``exit=False``, so a timer
+    that outlives the test session merely dumps (repeatedly, every
+    ``REYN_STALL_TRACE_CI`` seconds) and does nothing else — a HEALTHY
+    process has already exited (ending the background thread with it)
+    long before the threshold arrives, so this costs nothing on a green
+    run; a process still alive at the threshold is, by construction,
+    already taking longer than this suite's own normal completion time by
+    a wide margin — exactly the condition worth dumping for, whether the
+    hang is inside pytest's own session or in the interpreter's shutdown
+    sequence afterward.
 
 WHY GATED, NOT ALWAYS ON
     Opt-in via ``REYN_STALL_TRACE_CI`` (seconds) — unset means this file does
     nothing, zero behavior change for local/dev runs. On a healthy CI run,
-    ``pytest_sessionfinish`` cancels the timer well before it would fire
-    (normal completion is ~7-8 minutes; :data:`LOG_PATH`'s own workflow value
-    leaves comfortable margin both ways), so a green run gains nothing from
-    this beyond one empty, unwritten file (faulthandler needs an
-    already-open file object at ARM time, so opening happens whether or not
-    the timer ever fires — the CI step that surfaces this file tests for
-    NON-EMPTY content, not mere existence, for exactly this reason) — no
-    added cost worth naming, no added output. Dump CONTENT only appears
-    when something has already gone wrong (CLAUDE.md band: cost/budget).
+    the WHOLE PROCESS exits (ending the background timer with it) well
+    before the threshold would ever be reached (normal completion is ~7-8
+    minutes; :data:`LOG_PATH`'s own workflow value leaves comfortable
+    margin), so a green run gains nothing from this beyond one empty,
+    unwritten file (faulthandler needs an already-open file object at ARM
+    time, so opening happens regardless of whether the timer ever fires —
+    the CI step that surfaces this file tests for NON-EMPTY content, not
+    mere existence, for exactly this reason) — no added cost worth naming,
+    no added output. Dump CONTENT only appears when something has already
+    gone wrong (CLAUDE.md band: cost/budget) — see "WHY THIS NEVER
+    DISARMS" above for why process-exit, not a cancel call, is what ends
+    this on the healthy path.
 
 WHY A DISK FILE, NOT sys.stderr
     ``faulthandler.dump_traceback_later``'s destination is fixed at ARM
@@ -107,13 +130,3 @@ def pytest_configure(config: "pytest.Config") -> None:
 
     _dump_file = open(LOG_PATH, "a", buffering=1)  # noqa: SIM115 — see module docstring
     arm(seconds, file=_dump_file)
-
-
-def pytest_sessionfinish(session: "pytest.Session", exitstatus: int) -> None:
-    if _is_xdist_worker(session.config):
-        return
-    if _seconds_from_env() is None:
-        return
-    from reyn.runtime.stall_trace import disarm
-
-    disarm()

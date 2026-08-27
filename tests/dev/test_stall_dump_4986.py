@@ -3,11 +3,15 @@ teardown-hang diagnostic.
 
 Same style as tests/dev/test_extra_skip_report_4104.py: a REAL, isolated
 inner pytest session (via pytester's own subprocess seam) is the only way
-to exercise a genuine pytest_configure/pytest_sessionfinish pair without
-faking pytest's own session lifecycle. Run as real SUBPROCESSES (not
-pytester's in-process runpytest()) so the plugin's own faulthandler
-arm/disarm calls never interact with THIS outer test session's own
-faulthandler state.
+to exercise a genuine pytest_configure without faking pytest's own session
+lifecycle. Run as real SUBPROCESSES (not pytester's in-process runpytest())
+so the plugin's own faulthandler ``arm()`` call never interacts with THIS
+outer test session's own faulthandler state.
+
+stall_dump deliberately has no pytest_sessionfinish hook (architect
+finding, PR #5362 review) — the watchdog is never cancelled; a healthy
+process's own exit ends it. See that module's own "WHY THIS NEVER DISARMS"
+docstring section.
 
 No duration anywhere the assertion depends on: the inner session's own
 hang is a REAL, deterministic block (``sys.stdin.readline()`` on a pipe
@@ -54,6 +58,54 @@ def test_body():
 """
 
 _INNER_TEST_NORMAL = "def test_body():\n    assert True\n"
+
+_INNER_TEST_HANGS_AT_ATEXIT = """
+import atexit
+import sys
+
+def _hang_forever():
+    sys.stdin.readline()
+
+atexit.register(_hang_forever)
+
+def test_body():
+    assert True
+"""
+
+
+def test_an_atexit_hang_after_sessionfinish_also_produces_a_stall_dump(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: the specific class architect's PR #5362 review named — a
+    hang in interpreter shutdown/``atexit``, strictly AFTER
+    ``pytest_sessionfinish`` has already returned (this repo's own real
+    precedent: PR #5049's ``ThreadedTransportProxy``, a non-daemon thread
+    left running past session end, joined at ``atexit``) — is still
+    caught. This is the exact case a `pytest_sessionfinish`-cancelled
+    timer would have missed; stall_dump deliberately has no such hook
+    (see its own module docstring's "WHY THIS NEVER DISARMS")."""
+    pytester.makeconftest(_INNER_CONFTEST)
+    pytester.makepyfile(test_inner=_INNER_TEST_HANGS_AT_ATEXIT)
+    monkeypatch.setenv("REYN_STALL_TRACE_CI", "1")
+
+    log_path = Path(pytester.path) / ".reyn-ci-stall-trace.log"
+    proc = pytester.popen(
+        [sys.executable, "-m", "pytest", "-q", "-s", "test_inner.py"],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        while not (log_path.exists() and log_path.stat().st_size > 0):
+            time.sleep(0)
+        content = log_path.read_text()
+    finally:
+        assert proc.stdin is not None
+        proc.stdin.close()  # releases _hang_forever's readline()
+        proc.wait()
+
+    assert "Thread" in content, (
+        f"the dump file should contain a real faulthandler thread-stack "
+        f"dump even for an atexit-time hang, got {content!r}"
+    )
 
 
 def test_a_session_teardown_hang_produces_a_stall_dump(
@@ -104,8 +156,10 @@ def test_a_normal_session_produces_no_stall_dump(
 ) -> None:
     """Tier 1: regression guard — a session that finishes normally, well
     inside the configured threshold, must not produce dump CONTENT. Mirrors
-    #4986's own "no cost on a green run" requirement: the watchdog is
-    cancelled at pytest_sessionfinish before it would ever fire.
+    #4986's own "no cost on a green run" requirement: stall_dump never
+    disarms (see its own module docstring) — what ends the timer on a
+    healthy run is the PROCESS ITSELF exiting long before the threshold
+    arrives, not a cancel call.
 
     (The log file itself is opened, empty, the moment the watchdog is
     armed — faulthandler needs an already-open file object, so "opened"

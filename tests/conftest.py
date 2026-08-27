@@ -636,21 +636,16 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    from reyn.dev.testing import (
-        extra_skip_report,
-        network_gate,
-        replay_unconsumed,
-        stall_dump,
-    )
+    from reyn.dev.testing import extra_skip_report, network_gate, replay_unconsumed
 
     network_gate.pytest_sessionfinish(session, exitstatus)
     extra_skip_report.pytest_sessionfinish(session, exitstatus)
     replay_unconsumed.pytest_sessionfinish(session, exitstatus)
-    # #4986: cancel LAST — a session-teardown hang (the exact case this
-    # watchdog exists to catch) must not have its timer cancelled by an
-    # earlier sessionfinish hook's own side effect finishing first; this
-    # call itself is cheap and unconditional either way.
-    stall_dump.pytest_sessionfinish(session, exitstatus)
+    # #4986 (reyn.dev.testing.stall_dump): deliberately has no
+    # pytest_sessionfinish hook — see that module's own "WHY THIS NEVER
+    # DISARMS" docstring section (architect finding, PR #5362 review): a
+    # cancel here would exclude exactly the interpreter-shutdown/atexit
+    # hang class #4986 exists to catch.
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────
