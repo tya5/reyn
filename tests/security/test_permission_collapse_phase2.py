@@ -20,6 +20,15 @@ Verifies the OS-invariants introduced by Phase 2:
 Tier policy: these are OS-invariant tests pinning the contract between
 the permission resolver and `reyn.api.safe.file`. They use real
 PermissionResolver instances + the real safe.file module — no mocks.
+
+#5238 (TMPDIR-dependent anchor audit, full count in the issue): 3 of this
+file's tests pin their own `reyn.yaml` into `tmp_path` below, for the same
+reason `test_2248_prc_write_gate_prefix.py`'s module docstring gives —
+they call `reyn.api.safe.file`'s WALK-based `_project_root_for_gate()`,
+which a `TMPDIR` placing `tmp_path` inside an outer `reyn.yaml` tree would
+otherwise mis-anchor onto. `test_safe_file_check_write_still_allows_non_
+canonical_under_reyn` does not need one — its targets (`.reyn/cache/`,
+bare `.reyn/` files) are never canonical/recovery-core under any root.
 """
 from __future__ import annotations
 
@@ -164,7 +173,13 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
 
 
 def test_safe_file_check_write_rejects_canonical_via_parent_dir(tmp_path, monkeypatch):
-    """Tier 2: safe.file._check_write rejects a canonical path covered only by parent dir."""
+    """Tier 2: safe.file._check_write rejects a canonical path covered only by parent dir.
+
+    #5238: `reyn.yaml` pinned into `tmp_path` — see module docstring; without
+    it, a `TMPDIR` anchoring `_project_root_for_gate()` on an outer project
+    makes `_is_canonical_protected_write` return False and this test's own
+    `pytest.raises` fails to see a raise (real incident, coder-smith, 08-24)."""
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     from reyn.api.safe import file as safe_file
 
@@ -178,7 +193,17 @@ def test_safe_file_check_write_rejects_canonical_via_parent_dir(tmp_path, monkey
 
 
 def test_safe_file_check_write_accepts_canonical_via_explicit_path(tmp_path, monkeypatch):
-    """Tier 2: safe.file._check_write accepts canonical path when listed explicitly."""
+    """Tier 2: safe.file._check_write accepts canonical path when listed explicitly.
+
+    #5238: pinned anchor (see the sibling reject-test's docstring) — this
+    closes a real vacuous-pass: WITHOUT the pin, an outer-anchored TMPDIR
+    makes the canonical-path check return False before the explicit-path
+    branch this test claims to exercise is ever reached, so "must not raise"
+    held either way. STRIP-FALSIFY (performed, not left as a claim): with the
+    anchor pinned, removing the explicit `sources.yaml` entry from
+    `write_paths` makes this correctly go RED (`PermissionError`) — confirmed
+    manually, reverted before commit."""
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     from reyn.api.safe import file as safe_file
 
@@ -218,7 +243,12 @@ def test_safe_file_check_write_rejects_approvals_yaml(tmp_path, monkeypatch):
 
     Falsification contrast: a non-protected sibling under .reyn/ stays writable
     in-zone — the denial is specific to the protected-path list.
+
+    #5238: `reyn.yaml` pinned into `tmp_path` — see module docstring; without
+    it, an outer-anchored TMPDIR makes the canonical-path check return False
+    and the `pytest.raises` below fails to see a raise.
     """
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     from reyn.api.safe import file as safe_file
 
@@ -350,7 +380,15 @@ async def test_mcp_cron_config_reprotected_by_recovery_core_prefix(tmp_path, mon
     No legit op blocked: the dedicated ops write via their own write_text + an EXPLICIT
     file.write decl, so they pass (proven in test_2248_prc_write_gate_prefix). approvals.yaml
     (top-level persist) stays protected via its explicit carve-out.
+
+    #5238: `reyn.yaml` pinned into `tmp_path` for the `safe_file._check_write`
+    calls below — see module docstring. The `resolver.require_file_write`/
+    `_in_default_write_zone` calls in this same test are unaffected either way
+    (the resolver takes an explicit `project_root=tmp_path` above; the bare
+    `_in_default_write_zone(rel)` call defaults to `Path.cwd()`, no walk) —
+    only the walk-based `safe.file` gate needed the pin.
     """
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     from reyn.api.safe import file as safe_file
