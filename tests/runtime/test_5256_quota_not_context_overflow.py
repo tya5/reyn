@@ -145,13 +145,32 @@ def test_a_genuine_context_overflow_still_shrinks_unaffected(monkeypatch) -> Non
     assert is_quota_exhausted_error(exc) is False
     assert is_context_overflow_error(exc) is True
 
-    # architect/lead-coder review (#5292): without this line, nothing here
-    # asserts WHY the #5256 gate is load-bearing — this test only exercised
-    # a DIFFERENT string, so removing "limit" from _CONTEXT_OVERFLOW_KEYWORDS
-    # would make the gate a silent no-op and every test in this PR would
-    # stay green. Pin the actual would-be-misdiagnosis directly: the quota
+    # #5329 (architect review): this assertion used to pin the OPPOSITE
+    # value (True) — documenting a genuine misdiagnosis: the quota
     # exception's own message ("The usage limit has been reached") DOES
-    # match is_context_overflow_error's keyword fallback today — that
-    # positive match is exactly what the new gate in _run_with_shrink
-    # exists to intercept before it ever reaches this predicate.
-    assert is_context_overflow_error(_QuotaExhaustedError()) is True
+    # match is_context_overflow_error's own "limit" keyword fallback, so
+    # any call site reaching this predicate WITHOUT its own quota guard
+    # first (unlike #5256's outer _run_with_shrink gate, which always
+    # checks quota before calling this) would still misdiagnose a quota
+    # exhaustion as an overflow. #5329 closed that at the single shared
+    # predicate itself (is_quota_exhausted_error checked FIRST, inside
+    # is_context_overflow_error) rather than requiring every call site to
+    # remember its own guard — this now asserts the FIXED value.
+
+    # #5329 (architect review, 2nd finding — vacuity): the `is False`
+    # assertion below is green for TWO possible reasons — (a) the new
+    # quota check fired (intended) or (b) someone silently removed
+    # "limit" from _CONTEXT_OVERFLOW_KEYWORDS, making the keyword
+    # fallback a no-op regardless of quota — exactly the class of thing
+    # the ORIGINAL (pre-#5329) comment on this test named as its own
+    # reason to exist. This positive control uses the SAME "limit" text
+    # on a NON-quota exception (no .body) — it must still match True. With
+    # that pinned, the class of exceptions here differs ONLY in .body, so
+    # the `is False` below can only be attributed to the quota check.
+    class _PlainLimitMessageError(Exception):
+        pass
+
+    assert is_context_overflow_error(
+        _PlainLimitMessageError("The usage limit has been reached"),
+    ) is True
+    assert is_context_overflow_error(_QuotaExhaustedError()) is False
