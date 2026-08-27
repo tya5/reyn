@@ -11,22 +11,60 @@ name: Open blocking-checkbox check
 # check-pr-closing-intent.yml is one: the body is edited *after* opening —
 # a reviewer adds the box, the author ticks it — and `edited` is not one of
 # the default pull_request event types.
+#
+# #5138 (this workflow's own instance, discovered via #5314/#5317): since
+# #5317, this gate also reads COMMENTS (a `BLOCKING (head <sha>)` /
+# `BLOCKING-CLEARED (head <sha>)` pair, and the verbatim-quoting comment a
+# checked `- [x] 🔴` line requires) — but `pull_request` does not fire on a
+# new comment. Measured on #5324 (2026-08-27): a reviewer posted the
+# resolving comment, the gate script itself reported `OK` when run by hand,
+# and the check stayed red until someone noticed and re-ran the workflow.
+# `check-tests-read-names-its-tree.yml` already solved the identical shape
+# for TESTS-READ notes (#5138, same issue number — this workflow shares its
+# root cause). This workflow now mirrors that one's shape exactly:
+# `issue_comment` triggers a re-check, and the verdict is reported via a
+# GitHub commit STATUS posted to the PR's own head sha (resolved via `gh pr
+# view`, which works the same regardless of which event triggered this
+# run) — never a check run's own pass/fail, because a check run triggered
+# by `issue_comment` attaches to the DEFAULT BRANCH's sha, not the PR's,
+# and would never appear on the PR's own rollup (measured 4/4 on the
+# sibling workflow's own #5127/#5128/#5132/#5136 before that fix landed).
+# `pending` is posted BEFORE the script runs and `success`/`failure` AFTER
+# — a job that dies mid-run leaves `pending` standing (blocks merge)
+# rather than going silent.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  issue_comment:
+    types: [created, edited]
 
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
+
+env:
+  # Single fixed context so both triggers report to the SAME status slot —
+  # a branch protection rule names this string once.
+  STATUS_CONTEXT: open-blocking-checkbox
 
 jobs:
   open-blocking-checkbox:
     name: no open blocking checkbox in the PR body
+    # `issue_comment` fires for plain issues too; only pull requests have a
+    # `pull_request` key on the issue payload.
+    if: github.event_name == 'pull_request' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
+      # No checkout of the PR itself — only the script, from the base
+      # branch (no `ref:`). The `issue_comment` event's default checkout
+      # target is the DEFAULT BRANCH, which is exactly what's wanted here;
+      # nothing here ever executes a contributor's tree.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -34,9 +72,59 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # scripts/check_open_blocking_checkboxes.py is stdlib-only.
-      - name: Check the PR body for an open blocking checkbox
+      - name: Resolve this PR's number and head sha
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/check_open_blocking_checkboxes.py --pr "${{ github.event.pull_request.number }}"
+          # `pull_request` events carry the number on .pull_request; an
+          # `issue_comment` on a PR carries it on .issue. Either way the
+          # HEAD SHA has to come from `gh pr view` — it is not on the
+          # `issue_comment` payload at all, and posting a status needs it.
+          NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          SHA="$(gh pr view "$NUMBER" --json headRefOid -q .headRefOid)"
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Post pending status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending \
+            -f context="$STATUS_CONTEXT" \
+            -f description="Checking the PR body and comments for an open blocking point..."
+
+      # scripts/check_open_blocking_checkboxes.py is stdlib-only.
+      # `continue-on-error: true` keeps a script failure from also turning
+      # this step, and with it the job, red: the commit status posted below
+      # is the only channel that carries this verdict.
+      - name: Check the PR body and comments for an open blocking point
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_open_blocking_checkboxes.py --pr "${{ steps.pr.outputs.number }}"
+
+      # `if: always()` is the whole point: this step must run whether the
+      # check step above passed, failed, or (if the runner itself dies
+      # first) never ran at all — in that last case this step ALSO never
+      # runs, and the status posted above stays `pending` rather than
+      # silently vanishing.
+      - name: Post final status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            STATE=success
+            DESC="No open blocking point in the PR body or comments."
+          else
+            STATE=failure
+            DESC="Open blocking point found -- see the job log."
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$STATE" \
+            -f context="$STATUS_CONTEXT" \
+            -f description="$DESC"
