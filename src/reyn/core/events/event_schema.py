@@ -453,6 +453,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "turn_started",
     "turn_too_large_truncated",
     "untrusted_narrowing_engaged",
+    "untrusted_narrowing_lifted",
     "user_answered_intervention",
     "user_intervention_received",
     "user_intervention_requested",

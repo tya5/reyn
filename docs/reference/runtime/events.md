@@ -247,6 +247,7 @@ turn_settled
 turn_started
 turn_too_large_truncated
 untrusted_narrowing_engaged
+untrusted_narrowing_lifted
 user_answered_intervention
 user_intervention_received
 user_intervention_requested
@@ -624,6 +625,7 @@ intervention flow and force-close wrap-up.
 | Kind | When | Key payload |
 |------|------|-------------|
 | `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
+| `untrusted_narrowing_engaged`, `untrusted_narrowing_lifted` | #1909/#3501 opt-in (`safety.threat_scan.capability_narrowing` != `off`): untrusted external content (an `external_source`-tagged history entry) enters/leaves the active, uncompacted context, most-restrictively narrowing tool visibility while it is live. `Session._ephemeral_contextual_for_turn` — the default `turn` rung, the common case an operator opting in at all is most likely running — emits both kinds, exactly once per genuine state flip, never per read (a status-panel poll on an unchanged state produces no event); previously silent at both transitions (#5282). The top `iteration` rung (`RouterLoop`'s own `_intra_turn_contextual_for_turn_fn` branch) separately emits `untrusted_narrowing_engaged` only — it has no lift event yet, out of #5282's scope. | `provenance` (`external_source`); the `iteration` rung's `engaged` also carries `chain_id`, `iteration` |
 
 ## Replay
 
