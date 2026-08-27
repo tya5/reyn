@@ -357,7 +357,9 @@ async def test_message_bus_stops_after_session_completed(tmp_path, monkeypatch, 
         processed.append(text)
 
     monkeypatch.setattr(Session, "_handle_inbox_text", handle)
-    session._session_completed = True
+    await session.inbox.put(("shutdown", {}))
+    await session.run()
+    assert session.session_completed is True
     await session.inbox.put(("user", {"text": "late"}))
     replies = await MessageBus().request(
         session, TurnOrigin.EXTERNAL_MESSAGE, {"text": "new"},
