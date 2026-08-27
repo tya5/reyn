@@ -250,19 +250,47 @@ def test_the_real_cli_entry_point_actually_calls_register_process(
     )
     try:
         marker_dir = home / ".reyn" / "processes"
-        _wait_until(lambda: marker_dir.is_dir() and any(marker_dir.glob("*.json")))
+        # #5342 CI observation (lead-coder): this test failed on json.loads
+        # under an unrelated PR's CI run — real, not a flake. Root cause:
+        # register_process() writes via Path.write_text(), which is NOT
+        # atomic — the file is created (and so becomes glob-visible) the
+        # moment it's opened, before its content is written and flushed.
+        # The OLD wait predicate here only checked for the file's EXISTENCE
+        # (``any(marker_dir.glob("*.json"))``), so under real disk-I/O
+        # contention (12000+ tests across xdist workers measured the night
+        # this was found) a reader could win the race between "file exists"
+        # and "file's bytes are fully written" — reading a truncated/empty
+        # file straight into json.loads.
+        #
+        # Fixed two ways at once: (a) the wait predicate now requires the
+        # file to be SUCCESSFULLY PARSEABLE, not merely present — closing
+        # the exact race; (b) the marker is addressed by this test's own
+        # already-known ``proc.pid`` directly, not "whichever file glob
+        # returns first" — closing a SEPARATE concern lead-coder raised
+        # (``markers[0]`` had no guarantee of being THIS test's own marker
+        # rather than some other file, however unlikely under `tmp_path`
+        # isolation in practice).
+        marker_path = marker_dir / f"{proc.pid}.json"
+
+        def _marker_is_readable() -> bool:
+            if not marker_path.is_file():
+                return False
+            try:
+                json.loads(marker_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return False
+            return True
+
+        _wait_until(_marker_is_readable)
 
         markers = list(marker_dir.glob("*.json"))
-        # Non-empty AND nothing past the first — a behavioral "exactly one
-        # marker for the one process this test launched" claim, phrased to
-        # avoid test_tier_audit.py's Tier 4 format-pinning flag on an
-        # explicit length-equality check.
-        assert markers and markers[1:] == [], (
-            f"#5226 REGRESSION: the real CLI entry point (main()) did not "
-            f"register itself via register_process — got {markers!r} under "
+        assert markers == [marker_path], (
+            f"#5226 REGRESSION: the real CLI entry point (main()) should "
+            f"register itself via register_process under exactly this "
+            f"process's own pid ({proc.pid}) — got {markers!r} under "
             f"{marker_dir}"
         )
-        data = json.loads(markers[0].read_text(encoding="utf-8"))
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
         assert data["pid"] == proc.pid, (
             "the marker's own pid should be the real child process's pid"
         )
