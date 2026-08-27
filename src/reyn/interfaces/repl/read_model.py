@@ -306,6 +306,18 @@ class ChatReadModelCapabilities:
     # #5034's clearance and why they stay 2 fields despite landing together.
     visibility_items_reported: bool  # covers `visibility_items` (tool/mcp/skill panes)
     mcp_subscriptions_reported: bool  # covers `mcp_subscriptions` (mcp pane only)
+    # #5100/#5272 (lead-coder correction, issuecomment on #5272): unlike
+    # `unknown_config_key_count`/`unknown_config_keys` (genuinely client-
+    # local — a remote's OWN reyn.yaml, structurally absent on that
+    # connection), `hooks_config_warnings`'s value is SESSION state
+    # (`status.py`'s snapshot reads `getattr(s, "hooks_config_warnings",
+    # [])` off the live Session) — the SERVER side genuinely has a
+    # per-session hooks.yaml and may genuinely have parsed it with a real
+    # warning. `project_remote_snapshot`'s `[]` is "not wired onto the
+    # wire yet", not "structurally cannot exist" — the same fabrication
+    # shape `hooks_reported` above closes for the Hook pane, not the
+    # `_CLEARED_NON_FABRICATING_KEYS` shape its two siblings are.
+    hooks_config_warnings_reported: bool
 
 
 def reported_snapshot_keys(
@@ -361,6 +373,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     attached_name_reported=True,
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
+    hooks_config_warnings_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
@@ -396,6 +409,10 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     attached_name_reported=True,
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
+    # #5100/#5272: not yet wired onto the AG-UI wire (no producer projects
+    # the server session's real hooks_config_warnings for a remote
+    # client to read) -- False, not True; see the field's own docstring.
+    hooks_config_warnings_reported=False,
 )
 
 
@@ -987,6 +1004,13 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # count-only (here, no-indicator-at-all) fallback in
         # config_warning_text, never a fabricated key list.
         "unknown_config_keys": {},
+        # `[]` below is correct (per-session hooks.yaml parsing lives on the
+        # SERVER's Session, not projected onto the wire); gated by
+        # `hooks_config_warnings_reported` above so `config_warning_text`
+        # can tell "genuinely no warnings" apart from "this connection
+        # can't report them" — unlike `unknown_config_key_count`/
+        # `unknown_config_keys` just above, which name the CLIENT's own
+        # reyn.yaml and are structurally absent on a remote connection.
         "hooks_config_warnings": [],
     }
 
