@@ -68,3 +68,4 @@ spike_results/
 /.mcp.json
 scratch/
 .reyn-memory-ceiling.log
+.reyn-ci-stall-trace.log

@@ -125,9 +125,38 @@ jobs:
         # excluded-injected-tokens fix option). -n auto is xdist; the gate
         # aggregates cross-worker via a shared events file (same mechanism
         # network_gate already uses here) before judging.
+        # REYN_STALL_TRACE_CI=600 (#4986): a session-spanning stack dump if
+        # the pytest process itself does not finish within 600s — 120s of
+        # margin below this step's own `timeout 12m` (720s) kill, comfortably
+        # above this suite's own normal completion (~7-8 min measured). Exists
+        # because neither `--timeout=120` (pytest-timeout) nor pytest's own
+        # builtin faulthandler_timeout can ever see a hang in SESSION
+        # teardown — both wrap only `pytest_runtest_protocol` per item and
+        # cancel their own watchdog the instant the last item's protocol
+        # returns (`_pytest/faulthandler.py`'s own source, confirmed, not
+        # guessed). See `reyn/dev/testing/stall_dump.py`'s own docstring.
         run: |
           set -o pipefail
-          REYN_REPLAY_UNCONSUMED_CHECK=1 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+
+      # #4986: surface the stall dump above if (and only if) it fired. The
+      # log file is opened (empty) the moment the watchdog is armed —
+      # faulthandler needs an already-open file object — so a healthy run
+      # leaves an EMPTY file behind, not a missing one; `-s` (non-empty)
+      # is the actual "did it fire" test, not `-f`. `if: always()` + a
+      # non-firing no-op costs nothing on every healthy run. Without this
+      # step the dump would sit on the ephemeral runner's disk, unread by
+      # anyone — the whole point of #4986's fix is a diagnostic that
+      # SURVIVES to be read, not merely one that gets written.
+      - name: Stall-trace dump (#4986 — only non-empty if the session hung)
+        if: always()
+        run: |
+          if [ -s .reyn-ci-stall-trace.log ]; then
+            echo "::warning::#4986 stall-trace fired — pytest's own teardown did not finish within REYN_STALL_TRACE_CI seconds"
+            cat .reyn-ci-stall-trace.log
+          else
+            echo "no stall-trace dump (pytest session finished normally)"
+          fi
 
       # #4331: what a green run above does NOT say — the skip census (count
       # + reason breakdown) and the collection-error count, on the SAME
