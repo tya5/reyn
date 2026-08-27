@@ -125,10 +125,19 @@ def test_missing_name_raises_value_error() -> None:
         _build_cron_config(raw)
 
 
-def test_missing_to_message_raises_value_error() -> None:
-    """Tier 1: a job with neither a message shape nor a (legacy) skill raises ValueError."""
+def test_missing_to_raises_value_error() -> None:
+    """Tier 1: 'to' (the host agent, #5209) is required for every action."""
     raw = {"jobs": [{"name": "my_job", "schedule": "0 * * * *"}]}
-    with pytest.raises(ValueError, match="to.*message"):
+    with pytest.raises(ValueError, match="to"):
+        _build_cron_config(raw)
+
+
+def test_missing_message_raises_value_error() -> None:
+    """Tier 1: action='message' (default) with 'to' set but no 'message'
+    raises ValueError — #5209 split the old combined to+message check into
+    two independent field checks."""
+    raw = {"jobs": [{"name": "my_job", "to": "agent_a", "schedule": "0 * * * *"}]}
+    with pytest.raises(ValueError, match="message"):
         _build_cron_config(raw)
 
 
@@ -246,4 +255,76 @@ def test_legacy_skill_based_job_rejected() -> None:
         ]
     }
     with pytest.raises(ValueError, match="legacy_index"):
+        _build_cron_config(raw)
+
+
+# ── #5209: action — "message" (default) | "hook" ────────────────────────────
+
+
+def test_action_defaults_to_message_and_requires_message() -> None:
+    """Tier 1: action defaults to "message" (byte-identical to pre-#5209
+    behaviour) — a job missing 'message' still raises the same as before."""
+    ok = _build_cron_config({
+        "jobs": [
+            {"name": "morning_news", "to": "news_agent",
+             "message": "summarise today", "schedule": "0 9 * * *"},
+        ]
+    })
+    assert ok.jobs[0].action == "message"
+
+
+def test_action_hook_requires_to_but_not_message() -> None:
+    """Tier 1: #5209 core shape — action='hook' needs only 'to' (the host
+    agent); no 'message' is required (none is ever delivered)."""
+    cfg = _build_cron_config({
+        "jobs": [
+            {"name": "poll_deploy", "to": "ops_agent", "action": "hook",
+             "schedule": "*/5 * * * *"},
+        ]
+    })
+    (job,) = cfg.jobs
+    assert job.action == "hook"
+    assert job.to == "ops_agent"
+    assert job.message is None
+
+
+def test_action_hook_with_message_raises_value_error() -> None:
+    """Tier 1: #5209 acceptance ④ (architect's corrected brief,
+    issuecomment-5440197832) — action='hook' + 'message' is a config error:
+    a hook job never delivers text, so a written 'message' would silently be
+    ignored without this check."""
+    raw = {
+        "jobs": [
+            {"name": "poll_deploy", "to": "ops_agent", "action": "hook",
+             "message": "this is never sent", "schedule": "*/5 * * * *"},
+        ]
+    }
+    with pytest.raises(ValueError, match="message"):
+        _build_cron_config(raw)
+
+
+def test_action_hook_without_to_raises_value_error() -> None:
+    """Tier 1: #5209 acceptance ⑤ (architect's corrected brief) — action='hook'
+    still requires 'to' (the host agent whose session cron_fired fires on) —
+    resolve_cron_session/dispatch_cron_fired have no session-less dispatch
+    path, so a hook job without 'to' cannot run at all."""
+    raw = {
+        "jobs": [
+            {"name": "poll_deploy", "action": "hook", "schedule": "*/5 * * * *"},
+        ]
+    }
+    with pytest.raises(ValueError, match="to"):
+        _build_cron_config(raw)
+
+
+def test_action_unknown_value_raises_value_error() -> None:
+    """Tier 1: an unrecognised action value is rejected at load, not silently
+    treated as "message" (declare-don't-infer, architect ruling)."""
+    raw = {
+        "jobs": [
+            {"name": "poll_deploy", "to": "ops_agent", "action": "notify",
+             "schedule": "*/5 * * * *"},
+        ]
+    }
+    with pytest.raises(ValueError, match="action"):
         _build_cron_config(raw)

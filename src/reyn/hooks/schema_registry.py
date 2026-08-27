@@ -114,7 +114,10 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
         {"point", "server", "uri", "agent_name", "resync"},
     ),
     "builtin:external:file_changed": frozenset({"point", "path", "event_type"}),
-    "builtin:external:cron_fired": frozenset({"point", "job_name", "to"}),
+    # #5209: "action" — "message" (default, also delivered a message to the
+    # inbox) or "hook" (fired cron_fired only, no message) — lets an
+    # on: cron_fired hook branch on which kind of fire this was.
+    "builtin:external:cron_fired": frozenset({"point", "job_name", "to", "action"}),
     "builtin:external:webhook_received": frozenset({"point", "transport", "sender"}),
     # proposal 0067 P3/P4e: TWO producers — the pipeline-async terminal-
     # delivery path (P3, owner ruling via lead-coder, 2026-08-10) and

@@ -15,15 +15,29 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CronJob:
-    """One scheduled execution (FP-0009 Component B + FP-0041 #489 PR-B).
+    """One scheduled execution (FP-0009 Component B + FP-0041 #489 PR-B;
+    ``action`` #5209).
 
-    Jobs are message-based (= FP-0041 PR-B): set ``to`` (= target agent
-    name) and ``message`` (= free-form text). The scheduler dispatches the
-    message to the agent's inbox with ``sender="cron:<name>"`` so the LLM
-    reads it as a normal attributed turn from a scheduled trigger.
+    ``to`` (= target agent name) is required for EVERY job regardless of
+    ``action`` — it names the agent whose ``cron:<job_name>`` Session this
+    job runs on (the "host"): ``resolve_cron_session``/``dispatch_cron_fired``
+    have no session-less path to fire ``cron_fired`` on. ``action`` declares
+    what a fire actually does on that host session:
 
-    (A cron job must be message-based: ``to`` + ``message``. A config entry
-    lacking that shape — e.g. a legacy bare ``agent`` name — is rejected at load.)
+      - ``"message"`` (default, unchanged, FP-0041 PR-B): ``to`` doubles as
+        the message RECIPIENT too. ``message`` (= free-form text) is
+        required; the scheduler dispatches it to the agent's inbox with
+        ``sender="cron:<name>"`` so the LLM reads it as a normal attributed
+        turn — always starts an LLM turn.
+      - ``"hook"`` (#5209): only fires ``cron_fired`` on the host session —
+        never starts a turn itself. A ``hooks.yaml`` ``on: cron_fired`` entry
+        (typically ``exec_capture`` + ``push_when``) decides whether
+        anything happens next; an unfired/false ``push_when`` costs zero
+        LLM turns. ``message`` is never set on a ``"hook"`` job (rejected at
+        config load).
+
+    (A config entry missing the required shape for its ``action`` — e.g. no
+    ``to`` at all, or a ``message`` on a ``"hook"`` job — is rejected at load.)
 
     Mutable on the scheduler side: ``last_run_at`` / ``last_run_status``
     / ``last_run_error`` / ``next_run_at`` are updated after each fire.
@@ -31,9 +45,9 @@ class CronJob:
 
     name: str               # job identifier, unique within scheduler
     schedule: str           # cron expression, 5-field (e.g. "0 */6 * * *")
-    # ── message-based (FP-0041 PR-B) ─────────────────
-    to: str | None = None       # target agent name
-    message: str | None = None  # free-form text dispatched to agent.inbox
+    to: str | None = None       # target agent name — the host session, required for every action
+    message: str | None = None  # free-form text dispatched to agent.inbox — action="message" only
+    action: str = "message"     # #5209: "message" (default) | "hook"
     # FP-0043 S4b-3b: opt-in unattended notification channel (e.g. "telegram").
     # None = off (event-log only = current behaviour). When set, the fired cron
     # turn's final reply is routed to the channel via the external-transport outbox
@@ -54,12 +68,18 @@ class CronJob:
         """True if this job uses the message-based shape (= ``to + message``)."""
         return bool(self.to and self.message)
 
+    def is_hook_based(self) -> bool:
+        """#5209: True if this job only fires ``cron_fired`` — never starts
+        a turn itself (``action == "hook"``)."""
+        return self.action == "hook"
+
     def to_dict(self) -> dict:
         """JSON-safe shape for `reyn cron list` and `reyn cron status`."""
         return {
             "name": self.name,
             "to": self.to,
             "message": self.message,
+            "action": self.action,
             "notify": self.notify,
             "schedule": self.schedule,
             "input": self.input,

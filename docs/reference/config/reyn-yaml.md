@@ -1687,9 +1687,13 @@ See also:
 
 ## `cron` block
 
-Schedule recurring message dispatches. The scheduler runs as part of
-`reyn web` (= started in the FastAPI lifespan) or as a foreground
-process via `reyn cron run`.
+Schedule recurring cron jobs. The scheduler runs as part of `reyn web`
+(= started in the FastAPI lifespan) or as a foreground process via
+`reyn cron run`. Each job declares an `action` (#5209): `message` (default)
+dispatches text to an agent's inbox — always starts an LLM turn; `hook`
+only fires the `cron_fired` external-event hook — a `hooks.yaml`
+`on: cron_fired` entry's own `push_when` then decides whether anything
+happens next, at zero LLM turns when it doesn't.
 
 ```yaml
 cron:
@@ -1705,17 +1709,36 @@ cron:
       message: "weekly ops report"
       schedule: "0 9 * * MON"   # Monday 09:00
       enabled: true
+
+    - name: poll_deploy_status   # action: hook — a "token 0" periodic check
+      to: ops_agent              # (#5209): no message is delivered here at all;
+      action: hook                # the fired cron_fired hook's own push_when
+      schedule: "*/5 * * * *"    # decides whether to wake ops_agent
 ```
 
 ### Fields
 
 - **`name`** (required) — job identifier, unique within the schedule
-- **`to`** (required) — target agent name; the message is dispatched to its
-  inbox with `sender="cron:<name>"` attribution
-- **`message`** (required) — free-form text delivered to the target agent
+- **`to`** (required, every `action`) — the agent this job runs on (its
+  `cron:<job_name>` Session is what `cron_fired` fires on); for
+  `action: message` it also doubles as the message RECIPIENT
+- **`action`** (optional, default `"message"`) — `"message"`: `to` doubles
+  as the recipient and `message` is required, dispatched to its inbox with
+  `sender="cron:<name>"` attribution, always starting an LLM turn.
+  `"hook"` (#5209): only fires the `cron_fired` external-event hook on the
+  host session — never starts a turn itself; `message` must NOT be set (a
+  hook job never delivers text). Whether a turn happens next is entirely up
+  to a `hooks.yaml` `on: cron_fired` entry's own `push_when` (typically an
+  `exec_capture` script) — an unsatisfied `push_when` costs zero LLM turns,
+  the reason this action exists (a periodic condition-check that only wakes
+  the agent when it finds something).
+- **`message`** (required for `action: message`; forbidden for
+  `action: hook`) — free-form text delivered to the target agent
 - **`schedule`** (required) — 5-field cron expression
   (minute / hour / day-of-month / month / day-of-week)
 - **`notify`** (optional) — opt-in unattended notification channel
+  (`action: message` only — a hook job's own push, if any, carries its
+  own `session`/routing via the hook definition)
 - **`input`** (optional, default `{}`) — extra input dict carried on the job
 - **`enabled`** (optional, default `true`) — `false` keeps the entry in
   configuration but skips scheduling

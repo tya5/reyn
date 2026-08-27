@@ -37,7 +37,7 @@ valid in one is not necessarily valid in the other:
 | `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` | ✅ | ✅ |
 | `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update | ✅ | ✅ |
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
-| `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
+| `cron_fired` | `builtin:external:cron_fired` | a `cron:` job fires (either `action`, #5209) | ✅ | ✅ |
 | `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
 | `task_settled` | `builtin:task:task_settled` | an async task (see below for its producers) reaches a terminal disposition | ✅ | ✅ |
 | — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
@@ -316,14 +316,19 @@ burst fires the hook once, not once per underlying filesystem event.
 
 ### `cron_fired`
 
-Fires when a message-based `cron:` job delivers to its own session.
+Fires on every `cron:` job's fire, on its own resolved `cron:<job_name>`
+session — for both `action: message` (the message also delivers to the
+inbox, separately) and `action: hook` (#5209 — this hook fire is the ONLY
+thing that happens; no message is ever delivered). See the `cron` block
+reference (`docs/reference/config/reyn-yaml.md#cron-block`) for `action`.
 
 Template vars:
 
 | Var | Meaning |
 |-----|---------|
 | `job_name` | The fired job's configured name. |
-| `to` | The target agent name. |
+| `to` | The target agent name (the job's host session). |
+| `action` | `"message"` or `"hook"` (#5209) — lets a hook branch on which kind of fire this was, e.g. `matcher: {action: "hook"}`. |
 
 ### `webhook_received`
 

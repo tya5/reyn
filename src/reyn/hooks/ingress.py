@@ -276,8 +276,10 @@ class CronIngressAdapter:
         registry.ensure_session_running(agent_name, self.session_id(job_name))
         return session
 
-    def to_event(self, job_name: str, to: str) -> HookEvent:
-        payload = build_hook_payload("cron_fired", job_name=job_name, to=to)
+    def to_event(self, job_name: str, to: str, *, action: str = "message") -> HookEvent:
+        """``action`` (#5209): ``"message"`` (default) or ``"hook"`` — lets
+        an ``on: cron_fired`` hook branch on which kind of fire this was."""
+        payload = build_hook_payload("cron_fired", job_name=job_name, to=to, action=action)
         return HookEvent(kind=canonical_kind("cron_fired"), payload=payload)
 
     def deliver(self, event: HookEvent, session: Any) -> None:

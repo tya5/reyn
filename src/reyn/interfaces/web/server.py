@@ -33,20 +33,43 @@ logger = logging.getLogger(__name__)
 def _make_cron_runner():
     """Return an async callable that executes a CronJob headlessly.
 
-    FP-0009 Component B + FP-0041 #489 PR-B: dispatches based on job
-    shape via ``build_default_runner``. Task-based job execution uses the
-    message-based path; only message-based jobs run:
+    FP-0009 Component B + FP-0041 #489 PR-B; ``action`` #5209: dispatches
+    based on ``job.action`` via ``build_default_runner``.
 
-      - Message-based (FP-0041): pushes message into target agent's
+      - ``action="message"`` (FP-0041): pushes message into target agent's
         inbox via ``AgentRegistry.ensure_running``, with
         ``sender="cron:<name>"`` envelope so the agent reads it as a
         normal attributed turn from a scheduled trigger.
+      - ``action="hook"`` (#5209): only fires ``cron_fired`` on the job's
+        host session — no inbox push, no turn started here. See
+        ``_hook_only_dispatcher``.
     """
     from reyn.runtime.cron.runners import build_default_runner
 
+    async def _resolve_and_fire(to: str, native_id: str, *, action: str):
+        """Shared by both dispatchers below: resolve the job's host session
+        and fire ``cron_fired`` on it. Returns the resolved Session, or
+        ``None`` on a resolve failure (caller returns "error")."""
+        from reyn.interfaces.web.deps import _get_registry
+        from reyn.runtime.cron.routing import (
+            dispatch_cron_fired,
+            resolve_cron_session,
+        )
+        registry = _get_registry()
+        try:
+            session = resolve_cron_session(registry, to, native_id)
+        except (FileNotFoundError, KeyError):
+            return None
+        # #2608 H5: fire the cron_fired external-event hook on the job's own
+        # resolved session — non-blocking, so a slow hook action never stalls
+        # this fire's own inbox delivery (message jobs) / returns promptly
+        # (hook jobs). See dispatch_cron_fired's docstring.
+        dispatch_cron_fired(session, native_id, to, action=action)
+        return session
+
     async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
         """Deliver ``envelope`` to the job's own ``cron:<job_name>`` Session of
-        agent ``to`` via the registry.
+        agent ``to`` via the registry (``action="message"`` jobs only).
 
         FP-0043 S4b-3a: a message-based cron job is re-keyed from the agent's
         "main" session to a per-job ``cron:<native_id>`` Session (resolve_session
@@ -63,22 +86,10 @@ def _make_cron_runner():
         this unattended session instead of being read by the model. Cron is not a
         human at a client, so it stopped saying it was one.
         """
-        from reyn.interfaces.web.deps import _get_registry
-        from reyn.runtime.cron.routing import (
-            dispatch_cron_fired,
-            resolve_cron_session,
-        )
         from reyn.runtime.turn_origin import TurnOrigin
-        registry = _get_registry()
-        try:
-            session = resolve_cron_session(registry, to, native_id)
-        except (FileNotFoundError, KeyError):
+        session = await _resolve_and_fire(to, native_id, action="message")
+        if session is None:
             return "error"
-        # #2608 H5: fire the cron_fired external-event hook on the job's own
-        # resolved session — non-blocking, so a slow hook action never stalls
-        # this fire's own inbox delivery below. See dispatch_cron_fired's
-        # docstring.
-        dispatch_cron_fired(session, native_id, to)
         payload = dict(envelope)
         # FP-0043 S4b-3b: opt-in notify → tag the inbox with reply_to=ExternalRef so
         # the agent's final reply is relayed to the channel by the (already
@@ -90,6 +101,15 @@ def _make_cron_runner():
             payload["reply_to"] = ExternalRef(transport=notify, destination={})
         await session._put_inbox(TurnOrigin.CRON, payload)
         return "ok"
+
+    async def _hook_only_dispatcher(to: str, native_id: str) -> str:
+        """#5209: resolve the job's host session and fire ``cron_fired`` on
+        it — no inbox push, no turn started by the runner itself. Whether a
+        turn happens next is entirely up to a ``hooks.yaml``
+        ``on: cron_fired`` entry's own ``push_when`` (``action="hook"``
+        jobs only)."""
+        session = await _resolve_and_fire(to, native_id, action="hook")
+        return "ok" if session is not None else "error"
 
     async def _failure_notifier(job, reason: str) -> None:
         """FP-0043 S4b-3b errors=(b): relay a job-execution FAILURE (a job that
@@ -117,6 +137,7 @@ def _make_cron_runner():
 
     return build_default_runner(
         inbox_pusher=_inbox_pusher,
+        hook_only_dispatcher=_hook_only_dispatcher,
         failure_notifier=_failure_notifier,
     )
 
