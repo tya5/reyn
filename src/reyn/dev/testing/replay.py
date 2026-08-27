@@ -188,6 +188,17 @@ class LLMReplay:
         self._records: dict[str, dict] = {}
         # key → serialised EmbeddingResponse dict (kind="embedding")
         self._embed_records: dict[str, dict] = {}
+        # #5283: keys actually served by a REPLAY hit this instance's
+        # lifetime (added by ``_replay``/``_replay_embedding``, never by
+        # ``_record``/``_record_embedding`` — record mode has its own
+        # in-place-replace dedup via ``replay_stacking.group_signature``
+        # and this set answers a different question). Read by
+        # ``reyn.dev.testing.replay_unconsumed`` after this instance's
+        # ``restore()`` to report entries that exist in ``self.fixture_path``
+        # but were never consumed anywhere this session — see that module's
+        # docstring for why observing consumption (not enumerating what
+        # COULD change a key) is what closes #5283's class of stacking.
+        self._consumed_keys: set[str] = set()
         # pending writes (record mode only) — completion and embedding entries
         # share one pending list; each entry carries its own "kind".
         self._pending: list[dict] = []
@@ -488,6 +499,19 @@ class LLMReplay:
             litellm.aembedding = self._original_aembedding  # type: ignore[attr-defined]
             self._original_aembedding = None
 
+    def loaded_keys(self) -> "set[str]":
+        """Every completion/embedding key this instance loaded from
+        ``self.fixture_path`` at construction (#5283) — the universe
+        ``reyn.dev.testing.replay_unconsumed`` diffs ``self._consumed_keys``
+        against. Not affected by anything recorded THIS session (record
+        mode's new entries are never what #5283 is asking about)."""
+        return set(self._records) | set(self._embed_records)
+
+    def consumed_keys(self) -> "set[str]":
+        """Keys actually served by a replay hit this instance's lifetime
+        (#5283) — see ``self._consumed_keys``'s own comment."""
+        return set(self._consumed_keys)
+
     # ── Request handler ────────────────────────────────────────────────────────
 
     async def _handle(
@@ -656,6 +680,7 @@ class LLMReplay:
                 f"Fixture: {self.fixture_path}\n"
                 f"Re-run with REYN_LLM_RECORD=1 to record new fixtures."
             )
+        self._consumed_keys.add(key)
         import litellm
 
         return litellm.EmbeddingResponse(**self._embed_records[key])
@@ -719,6 +744,7 @@ class LLMReplay:
                 f"Re-run with REYN_LLM_RECORD=1 to record new fixtures."
             )
         self._check_preconditions(key, model, messages, observed)
+        self._consumed_keys.add(key)
         import litellm
 
         return litellm.ModelResponse(**self._records[key])

@@ -600,6 +600,12 @@ def pytest_configure(config: pytest.Config) -> None:
 
     network_gate.pytest_configure(config)
 
+    # #5283: unconsumed-LLMReplay-entry gate — same lazy-import-inside-the-
+    # hook-body reason as network_gate immediately above.
+    from reyn.dev.testing import replay_unconsumed
+
+    replay_unconsumed.pytest_configure(config)
+
     # #3872: a per-process memory ceiling. A test reached ~10 GB and cost the
     # operator three reboots; nothing on the machine stopped it, and macOS does
     # not enforce RLIMIT_AS. Started here so every pytest run carries it without
@@ -623,10 +629,11 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    from reyn.dev.testing import extra_skip_report, network_gate
+    from reyn.dev.testing import extra_skip_report, network_gate, replay_unconsumed
 
     network_gate.pytest_sessionfinish(session, exitstatus)
     extra_skip_report.pytest_sessionfinish(session, exitstatus)
+    replay_unconsumed.pytest_sessionfinish(session, exitstatus)
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────
@@ -672,3 +679,17 @@ def _llm_replay(request: pytest.FixtureRequest):
         replay.restore()
         if mode == "record":
             replay.flush()
+        else:
+            # #5283: report this instance's own (loaded, consumed) key sets
+            # to the shared cross-worker events file — record mode is a
+            # different question (#3634's own in-place-replace dedup), so
+            # it never reports here. See replay_unconsumed's module
+            # docstring for why fail-open gates the actual check on this
+            # data, not the reporting itself (reporting is always cheap and
+            # unconditional; only pytest_sessionfinish's own read-back is
+            # gated on REYN_REPLAY_UNCONSUMED_CHECK=1).
+            from reyn.dev.testing import replay_unconsumed
+
+            replay_unconsumed.report_instance(
+                str(fixture_path), replay.loaded_keys(), replay.consumed_keys(),
+            )
