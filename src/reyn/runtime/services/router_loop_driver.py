@@ -465,7 +465,7 @@ class RouterLoopDriver:
                 # trigger here) is the correct fix for.
                 if (
                     _unrecovered.saw_byte_limit
-                    and self._compaction.recovery_policy == "same_turn"
+                    and self._compaction.recovery_policy == "next_turn"
                 ):
                     await self._compaction_controller.force_compact_now()
                 raise

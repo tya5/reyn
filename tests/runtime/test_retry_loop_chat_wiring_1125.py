@@ -378,15 +378,15 @@ def test_max_shrink_iterations_config_value_bounds_the_real_driver_call(
 
 @pytest.mark.parametrize(
     ("recovery_policy", "compaction_expected"),
-    [("same_turn", True), ("never", False)],
+    [("next_turn", True), ("never", False)],
 )
 def test_byte_limit_recovery_policy_controls_compaction(
     tmp_path, monkeypatch, recovery_policy: str, compaction_expected: bool,
 ) -> None:
     """Tier 1: #5296 — the recovery stop-line changes real behavior.
 
-    With ``same_turn`` (the default), a byte-limit exhaustion triggers the
-    existing durable compaction path. With ``never``, the same measured
+    With ``next_turn`` (the default), a byte-limit exhaustion triggers the
+    existing durable compaction path for the following turn. With ``never``, the same measured
     exhaustion propagates without compaction. Both assertions observe the
     controller's real ``compaction_check`` event, not a mock call count.
 
