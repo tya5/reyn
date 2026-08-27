@@ -131,6 +131,7 @@ Path-conditional gates:
 5. **No blanket en/ja mirror obligation.** Fix a `.ja.md` file only when the PR falsifies something it asserts.
 6. **Arc-closure remainder rule**: every remainder is **filed** or **explicitly dropped**, in the closing comment. "Next arc" is a third, silent state. (`docs/deep-dives/contributing/issue-management.md`)
 7. **A reviewer's blocking point goes in the PR body** as `- [ ] 🔴 <point>` — and closing it takes a comment quoting that line verbatim; ticking alone leaves no record and the gate stays red (#5314). A `BLOCKING (head <sha>)` / `BLOCKING-CLEARED (head <sha>)` comment pair is the equivalent comment-only form. Rule 4 applies to that edit too.
+   - Verbatim has two different targets: `BLOCKING-CLEARED` quotes the `BLOCKING` comment's **identifying line** (its first non-empty line after the marker), never a summary; a checked `- [x] 🔴` needs a comment quoting **that line itself**, not restated in the body. One comment can cover several checked lines.
 8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ claim lands as a comment's FIRST line** (marker + head SHA together; grounds go from line 2 on).
 9. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
