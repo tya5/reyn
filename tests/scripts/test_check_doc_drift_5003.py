@@ -561,3 +561,176 @@ def test_find_removed_identifiers_precise_falls_back_and_logs_when_file_deleted(
         captured = capsys.readouterr()
         assert "falling back to line heuristic" in captured.err
         assert "gone_file.py" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# #5010 calibration fixture — the real #5095/#5106 incident, pinned to 2
+# immutable refs (architect, issuecomment-5435721126). Closes the module
+# docstring's own disclosed gap: the earlier calibration attempt
+# (`--pr 5095` against the LIVE tree) went green for the wrong reason —
+# by the time anyone re-ran it, #5106 had already fixed the docs, so the
+# same command measured a DIFFERENT world than the one #5095 shipped
+# into (architect's own diagnosis, issuecomment-5380414073: "an
+# observation does not name its own referent"). Pinning both the src-side
+# removal commit and the docs-side pre-fix commit as fixed SHAs means
+# this fixture measures the SAME thing every time it runs, regardless of
+# how far `main` has moved since — the same discipline #5290 names for a
+# different check.
+#
+# Every read below is `git show <PINNED_SHA>:<path>` against this
+# repo's own immutable history — never the checked-out working tree at
+# HEAD, which is free to move. The two refs:
+#   - src side (identifier removed): e802ad73a — "fix(#5091): remove the
+#     'broker' concept from reyn's own runtime (#5095)".
+#   - docs side (pre-fix state):     ba9690bb2^ — the commit immediately
+#     BEFORE "docs: ... 3 places still cite the removed field (#5106)".
+# ---------------------------------------------------------------------------
+
+_5010_SRC_SHA = "e802ad73a"  # #5095 — removes AgentProfile.broker_identity
+_5010_DOCS_PRE_SHA = "ba9690bb2^"  # immediately before #5106's doc fix
+_5010_IDENTIFIER = "broker_identity"
+# The 2 src/ files whose only surviving mention is comment/docstring prose
+# (architect, issuecomment-5435721126 — verified independently below via
+# `git grep -n` against the pinned SHA, not taken on report).
+_5010_SRC_PROSE_ONLY_FILES = (
+    "src/reyn/runtime/profile.py",
+    "src/reyn/runtime/session.py",
+)
+# The 2 docs/ files (4 total line-level occurrences — 2 each) #5106 fixed;
+# untouched by #5095 itself.
+_5010_DOC_FILES = (
+    "docs/reference/config/reyn-yaml.md",
+    "docs/reference/config/reyn-yaml.ja.md",
+)
+
+
+def _content_at(sha: str, path: str) -> str:
+    """Real file content at a pinned, immutable ref in THIS repo's own
+    git history — never the live working tree. Fails loudly (via
+    ``check=True``) rather than silently substituting empty content if
+    either ref ever stopped resolving (e.g. a history rewrite) — a
+    fixture that can go quietly empty is worse than one that errors."""
+    result = subprocess.run(
+        ["git", "show", f"{sha}:{path}"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    return result.stdout
+
+
+def _materialize_fixture_repo(tmp_path: Path) -> Path:
+    """An isolated, throwaway git repo (never the live reyn-dev tree)
+    seeded with the REAL byte-for-byte content of the 2 src/ files and 2
+    docs/ files at their pinned SHAs above. `identifier_survives_in_src`/
+    `find_doc_files_containing` both shell out to `git grep`, which
+    requires an actual git working directory to search — this gives them
+    one, without ever pointing either function at this repo's own,
+    movable HEAD."""
+    repo = _init_repo(tmp_path)
+    for rel in _5010_SRC_PROSE_ONLY_FILES:
+        dest = repo / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_content_at(_5010_SRC_SHA, rel))
+    for rel in _5010_DOC_FILES:
+        dest = repo / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_content_at(_5010_DOCS_PRE_SHA, rel))
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=repo, check=True)
+    return repo
+
+
+def test_5010_fixture_content_matches_the_real_historical_commits_exactly():
+    """Tier 2: sanity check on the fixture itself, independent of
+    ``check_doc_drift.py`` entirely — a plain ``git grep -n`` against the
+    pinned SHAs in THIS repo's real history, confirming the exact 4
+    file:line occurrences architect reported (issuecomment-5435721126)
+    are still there, unchanged, before trusting anything built on top of
+    them. If this ever goes red, the fixture's own premise moved (e.g. a
+    history rewrite), not the discriminator under test."""
+    doc_hits = subprocess.run(
+        ["git", "grep", "-n", "-F", _5010_IDENTIFIER, _5010_DOCS_PRE_SHA, "--", "docs/"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+    assert f"{_5010_DOCS_PRE_SHA}:docs/reference/config/reyn-yaml.ja.md:35:" in doc_hits
+    assert f"{_5010_DOCS_PRE_SHA}:docs/reference/config/reyn-yaml.ja.md:66:" in doc_hits
+    assert f"{_5010_DOCS_PRE_SHA}:docs/reference/config/reyn-yaml.md:37:" in doc_hits
+    assert f"{_5010_DOCS_PRE_SHA}:docs/reference/config/reyn-yaml.md:72:" in doc_hits
+
+    src_hits = subprocess.run(
+        ["git", "grep", "-n", "-F", _5010_IDENTIFIER, _5010_SRC_SHA, "--", "src/"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+    assert f"{_5010_SRC_SHA}:src/reyn/runtime/profile.py:29:" in src_hits
+    assert f"{_5010_SRC_SHA}:src/reyn/runtime/session.py:5619:" in src_hits
+
+    # #5095 (e802ad73a) never touched either docs/ file — #5106 (a LATER,
+    # separate commit) is what eventually fixed them.
+    touched = subprocess.run(
+        ["git", "show", "--stat", "--format=", _5010_SRC_SHA],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout
+    assert "reyn-yaml.md" not in touched
+    assert "reyn-yaml.ja.md" not in touched
+
+
+def test_5010_naive_grep_says_the_identifier_still_survives(tmp_path):
+    """Tier 2: acceptance ① of #5010's re-promotion fixture (architect,
+    issuecomment-5435721126) — the OLD discriminator class this fixture
+    exists to distinguish from. A bare, unredacted ``git grep -lF`` (no
+    call into any of ``check_doc_drift.py``'s own functions — this is an
+    independent external-tool baseline, not a transcription of
+    production logic) finds ``broker_identity`` still present in both
+    src/ files, because it cannot tell a live code occurrence from a
+    comment/docstring PROSE citation recording the removal. This is what
+    made the ORIGINAL (#5007/#5010-round-1) discriminator call the
+    identifier "still survives" and skip it — a false negative, not a
+    false positive: the doc-drift finding these 2 docs deserved never
+    fired."""
+    repo = _materialize_fixture_repo(tmp_path)
+    raw_grep = subprocess.run(
+        ["git", "grep", "-lF", "--", _5010_IDENTIFIER, "--", "src"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert raw_grep.returncode == 0, "the naive grep must find it (that's the bug)"
+    hits = set(raw_grep.stdout.splitlines())
+    assert hits == set(_5010_SRC_PROSE_ONLY_FILES)
+
+
+def test_5010_real_discriminator_correctly_says_it_does_not_survive(tmp_path):
+    """Tier 2: acceptance ② — the REAL, current ``identifier_survives_in_src``
+    (the tokenizer/AST-backed redaction fix, #5010 round 2) on the exact
+    same fixture correctly says ``broker_identity`` does NOT survive as
+    living code — both of its only 2 remaining mentions are comment/
+    docstring prose (verified above, independent of this call). This is
+    the discriminator this fixture exists to pin: the naive and the real
+    check give OPPOSITE answers on the same real historical incident."""
+    repo = _materialize_fixture_repo(tmp_path)
+    assert m.identifier_survives_in_src(_5010_IDENTIFIER, repo) is False
+
+
+def test_5010_end_to_end_finds_the_real_4_line_drift_untouched_by_5095():
+    """Tier 2: acceptance ③ — wires ①+② together the way
+    ``resolve_gone_identifiers_precise``/``check_doc_drift_pure`` do, over
+    the SAME fixture, to reproduce the exact shape #5010's calibration
+    reported: the identifier is gone from src/ (as CODE), 2 non-history
+    docs/ files still name it, and neither was touched by the commit that
+    removed it — so the discriminator correctly flags both files. This
+    fixture never reads this repo's own live working tree — every value
+    below traces back to `git show <PINNED_SHA>:<path>` at the top of
+    this section."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = _materialize_fixture_repo(Path(tmp))
+        assert m.identifier_survives_in_src(_5010_IDENTIFIER, repo) is False
+        doc_files = m.find_doc_files_containing(_5010_IDENTIFIER, repo)
+        assert doc_files == set(_5010_DOC_FILES)
+
+        # #5095 (the commit that removed it) touched neither doc file —
+        # mirrors check_doc_drift_pure's own "touched_files" input.
+        touched_files: "set[str]" = set()
+        findings = m.check_doc_drift_pure(
+            gone_identifiers={_5010_IDENTIFIER},
+            doc_files_by_identifier={_5010_IDENTIFIER: doc_files},
+            touched_files=touched_files,
+        )
+        found_paths = {f.doc_path for f in findings}
+        assert found_paths == set(_5010_DOC_FILES)
