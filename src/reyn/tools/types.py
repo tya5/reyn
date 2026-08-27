@@ -498,14 +498,17 @@ class ToolDefinition:
     # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
     # When set, callers (= build_tools) invoke this hook AFTER
     # render_for_router to inject per-session dynamic data into the
-    # schema (canonical example: delegate_to_agent.to enum from
-    # available_agents).
+    # schema (live example, #5291: tools/mcp.py's _enrich_router_schema
+    # reads state.mcp_servers to enumerate call_mcp_tool's server names;
+    # the original canonical example, delegate_to_agent.to from
+    # available_agents, is gone — that consumer retired #3978 P6, and
+    # available_agents itself was removed, #5291, 0 remaining readers).
     #
     # Signature: (rendered_tool_dict, RouterCallerState) -> rendered_tool_dict
     #   - rendered_tool_dict: the dict produced by render_for_router
     #     (= function/parameters/etc shape)
-    #   - RouterCallerState: contains available_agents and other
-    #     per-session data the enricher may consult
+    #   - RouterCallerState: per-session data the enricher may consult
+    #     (e.g. mcp_servers)
     #   - returns: a NEW dict with dynamic enrichment applied (do NOT
     #     mutate the input; static schema is the canonical render)
     #
@@ -552,10 +555,10 @@ class ToolDefinition:
 
         M4 Phase 3: when ``schema_enricher`` is set on the ToolDefinition AND
         ``state`` is provided, the static render is post-processed by the
-        enricher to inject per-call dynamic data (e.g. delegate_to_agent.to
-        enum from RouterCallerState.available_agents). When either is None (= 24/26
-        capabilities, plus all callers that don't supply state), the static
-        render is returned as-is.
+        enricher to inject per-call dynamic data (e.g. ``call_mcp_tool``'s
+        server-name enum from ``RouterCallerState.mcp_servers``, #5291).
+        When either is None (= 24/26 capabilities, plus all callers that
+        don't supply state), the static render is returned as-is.
         """
         rendered = {
             "type": "function",

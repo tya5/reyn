@@ -110,8 +110,14 @@ class _FakeHost:
 # below. Deliberately NOT including host-derived-but-async-manifest
 # ``available_rag_sources`` in this list; it's checked separately since both
 # sides read the SAME real ``get_source_manifest(Path.cwd())`` (no fake).
+#
+# #5291: ``available_agents`` removed from this list — the field itself was
+# removed from ``RouterCallerState`` (0 real consumers; every populate site
+# was a real .reyn/agents/ disk read for a value nothing downstream read).
+# The other 10 (a)-fields' own equality checks are unaffected — this list
+# just has one fewer entry to prove equal.
 _RESOURCE_FIELDS = (
-    "available_agents", "op_context_factory", "host", "action_embedding_index",
+    "op_context_factory", "host", "action_embedding_index",
     "embedding_provider", "embedding_model_class", "sandbox_backend",
     "mcp_servers", "available_skills", "agent_registry", "pipeline_registry",
 )
