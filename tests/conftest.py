@@ -614,6 +614,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
     memory_ceiling.pytest_configure(config)
 
+    # #4986: CI teardown-hang stall dump — opt-in (REYN_STALL_TRACE_CI unset
+    # means this is a no-op), see that module's own docstring for why a
+    # session-spanning watchdog is needed at all.
+    from reyn.dev.testing import stall_dump
+
+    stall_dump.pytest_configure(config)
+
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
     from reyn.dev.testing import memory_ceiling, network_gate
@@ -634,6 +641,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     network_gate.pytest_sessionfinish(session, exitstatus)
     extra_skip_report.pytest_sessionfinish(session, exitstatus)
     replay_unconsumed.pytest_sessionfinish(session, exitstatus)
+    # #4986 (reyn.dev.testing.stall_dump): deliberately has no
+    # pytest_sessionfinish hook — see that module's own "WHY THIS NEVER
+    # DISARMS" docstring section (architect finding, PR #5362 review): a
+    # cancel here would exclude exactly the interpreter-shutdown/atexit
+    # hang class #4986 exists to catch.
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────

@@ -56,6 +56,10 @@ import faulthandler
 import logging
 import os
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import IO
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +99,7 @@ def _log_stream():
     return sys.stderr
 
 
-def arm(seconds: float) -> None:
+def arm(seconds: float, *, file: "IO[str] | int | None" = None) -> None:
     """Start the background-thread stall timer. Call at turn entry, paired
     with :func:`disarm` in a ``finally`` so a turn that raises still
     disarms it — never call twice without a ``disarm`` in between
@@ -104,8 +108,20 @@ def arm(seconds: float) -> None:
     new *seconds*/file, which is not this module's problem to solve since
     only one turn ever runs at a time on a given event loop by
     construction).
+
+    ``file`` (#4986): overrides the destination — default ``None`` keeps
+    every existing caller's behavior (:func:`_log_stream`'s own
+    resolution) byte-identical. A caller arming this OUTSIDE reyn's own
+    runtime, where ``sys.stderr``/a reyn log handler may not be the real
+    destination it looks like (pytest's capture manager can own
+    ``sys.stderr`` for parts of a session — the same hazard
+    ``memory_ceiling.py`` already documents for its own kill message),
+    should pass its own already-open file object instead — see
+    ``reyn.dev.testing.stall_dump`` for that caller.
     """
-    faulthandler.dump_traceback_later(seconds, repeat=True, file=_log_stream(), exit=False)
+    faulthandler.dump_traceback_later(
+        seconds, repeat=True, file=file if file is not None else _log_stream(), exit=False
+    )
 
 
 def disarm() -> None:
