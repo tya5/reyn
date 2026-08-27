@@ -1865,7 +1865,7 @@ def status_line_text(
 _CONFIG_WARNING_INLINE_KEY_CAP = 3
 
 
-def config_warning_text(count: int, keys: "dict | None" = None) -> "str | None":
+def config_warning_text(count: int, keys: "dict | None" = None, hooks_warnings: "list[str] | None" = None) -> "str | None":
     """The bottom-chrome config-warning indicator's text, or ``None`` when
     there is nothing to show (#4194).
 
@@ -1911,6 +1911,8 @@ def config_warning_text(count: int, keys: "dict | None" = None) -> "str | None":
     ``⚠`` matches the existing ``HALTED`` banner glyph above (same
     single-cell-width class of symbol, same "something needs attention"
     register) rather than introducing a new one."""
+    if hooks_warnings:
+        return f"⚠ {hooks_warnings[0]}"
     if not count:
         return None
     plural = "" if count == 1 else "s"

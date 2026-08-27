@@ -1938,6 +1938,7 @@ class TextualChatApp(App):
             config_warning = config_warning_text(
                 getattr(self._config, "unknown_config_key_count", 0),
                 keys=getattr(self._config, "unknown_config_keys", None),
+                hooks_warnings=(self._snapshot() or {}).get("hooks_config_warnings", []),
             )
             if config_warning is not None:
                 yield ConfigWarningLine(config_warning, id="config-warning")

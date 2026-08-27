@@ -1024,6 +1024,7 @@ class Session:
         # CapabilityVisibility, constructed below (see #3121 step3 Extract Class).
         # Session-scoped hook APPLICABILITY override, per-session by construction (#2285, see session-construction.md#capability-permission-visibility)
         self._disabled_hooks: "set[str]" = set()
+        self._hooks_config_warnings: list[str] = []
         # Per-message tool-call budget for the MAIN chat RouterLoop (#187, see session-construction.md#safety-limits-interactive-mode)
         self._router_max_iterations = int(router_max_iterations)
         # Run-once mode: the router SP must not ask a clarifying question nobody can answer (#1439 Fix #1, see session-construction.md#safety-limits-interactive-mode)
@@ -6224,10 +6225,17 @@ class Session:
                 path, agent_name=self.agent_name, project_root=self._hot_reload_project_root(),
             )
         except HookYamlReadError as exc:
+            line = next((line for line in str(exc).splitlines() if "line " in line), "unknown")
+            self._hooks_config_warnings.append(f"hooks.yaml could not be read: {path.name} ({line})")
             logger.warning("hooks layer %s could not be read: %s", path, exc)
             return []
         values = (data or {}).get(key)
         return list(values) if isinstance(values, list) else []
+
+    @property
+    def hooks_config_warnings(self) -> list[str]:
+        """Warnings for hooks layers that could not be parsed."""
+        return list(self._hooks_config_warnings)
 
     def _read_per_agent_hooks(self) -> list:
         """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent

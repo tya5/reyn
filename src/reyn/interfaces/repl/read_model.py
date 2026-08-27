@@ -987,6 +987,7 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # count-only (here, no-indicator-at-all) fallback in
         # config_warning_text, never a fabricated key list.
         "unknown_config_keys": {},
+        "hooks_config_warnings": [],
     }
 
 
