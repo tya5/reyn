@@ -34,13 +34,23 @@ from tests._support.agent_session import make_session
 
 
 def _make_session(
-    tmp_path: Path, agent_name: str, *, workspace_base_dir: "Path | None" = None,
+    tmp_path: Path,
+    agent_name: str,
+    *,
+    workspace_base_dir: "Path | None" = None,
+    hooks_config: "list | None" = None,
 ) -> Session:
+    """``hooks_config`` (#5356/#5360, added for the ``session_start``
+    exec-hook test below): threads through ``ReactivityConfig.hooks_config``
+    to ``Session._startup_hooks_raw`` (origin ``"startup"``) — the same
+    layer a real ``reyn.yaml`` occupies, and NOT agent-writable, unlike the
+    per-agent/per-session layers ``_write_broker_inbox_hook`` below writes
+    to."""
     return make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}.wal"),
         snapshot_path=tmp_path / agent_name / "snap.json",
-        reactivity=ReactivityConfig(),
+        reactivity=ReactivityConfig(hooks_config=hooks_config),
         workspace_base_dir=workspace_base_dir,
         sandbox_backend=NoopBackend(),
     )
@@ -252,25 +262,34 @@ async def test_session_start_exec_hook_resolves_the_register_script_in_its_own_b
         encoding="utf-8",
     )
 
-    # Written to the per-session state dir BEFORE construction: the
-    # dispatcher's own registry is built ONCE, in `Session.__init__` —
-    # `_build_hook_registry()` itself re-reads the per-session layer fresh
-    # on every call (the OTHER tests in this module call it directly,
-    # after construction, for exactly that reason), but the dispatcher's
-    # already-built registry does not re-read until told to. Writing
-    # first, matching how an operator's hand-authored file is already on
-    # disk before `reyn chat`/`--connect` ever constructs the session.
-    (tmp_path / "coder-smith").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "coder-smith" / "hooks.yaml").write_text(
-        "hooks:\n"
-        "  - on: session_start\n"
-        "    network: true\n"
-        "    exec:\n"
-        f"      - {sys.executable}\n"
-        "      - register_with_broker.py\n",
-        encoding="utf-8",
+    # #5356/#5360: `network: true` at an agent-writable origin (per-agent,
+    # per-session — an agent can already write either via the ordinary
+    # file-write op / `hooks_add`) is now an eager-rejected confused-deputy
+    # self-grant, dropping the whole layer. This test used to write this
+    # exact declaration into the per-session layer; it is REWRITTEN here
+    # to the startup layer instead — matching the REAL deployed shape
+    # (lead-coder's own measurement, 2026-08-24: every live `network: true`
+    # hook declaration already lives in `reyn.yaml`'s startup layer, none
+    # in per-agent/per-session, which are both empty), not a design
+    # regression. `_make_session`'s `hooks_config` threads to
+    # `Session._startup_hooks_raw` (origin "startup", not agent-writable,
+    # so #5356's rejection does not apply here). The property this test
+    # verifies — a `session_start` exec hook's relative argv resolves
+    # against THIS agent's own `base_dir` via `HookDispatcher`'s
+    # `hook_cwd` — depends on `workspace_base_dir`/dispatch, not on which
+    # config layer supplied the hook, so it is unaffected by this move.
+    session = _make_session(
+        tmp_path,
+        "coder-smith",
+        workspace_base_dir=base_dir,
+        hooks_config=[
+            {
+                "on": "session_start",
+                "network": True,
+                "exec": [sys.executable, "register_with_broker.py"],
+            },
+        ],
     )
-    session = _make_session(tmp_path, "coder-smith", workspace_base_dir=base_dir)
 
     await session._hook_dispatcher.dispatch("session_start", {})
 

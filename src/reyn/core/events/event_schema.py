@@ -321,6 +321,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "hook_event_emitted",
     "hook_push_fired",
     "hook_shell_executed",
+    "hooks_layer_rejected",
     "inbox_cancel",
     "index_dropped",
     "index_update_cost_warning",

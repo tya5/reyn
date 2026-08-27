@@ -36,6 +36,7 @@ from reyn.hooks.composer import COMPOSED_KIND_PREFIX
 from reyn.hooks.event_pattern import from_legacy_matcher
 from reyn.hooks.event_pattern import validate_against_schema as validate_event_pattern
 from reyn.hooks.registry import HookRegistry
+from reyn.hooks.sandbox_scope import HOOK_SANDBOX_SCOPE
 from reyn.hooks.schema import (
     ALLOWED_HOOK_POINTS,
     HookConfigError,
@@ -77,6 +78,46 @@ _WRONG_SCOPE_HINTS: dict[str, str] = {
         "the per-hook key for the same axis is 'write_paths'."
     ),
 }
+
+#: #5356: the two ``HookDef.origin`` values whose config FILE an agent can
+#: already write directly via the ordinary file-write op (the SAME two
+#: layers ``session.py``'s own ``_build_hook_registry`` comment and
+#: ``hook_origin_is_at_least_as_specific_as``'s docstring name as
+#: "agent-writable": ``.reyn/agents/<name>/hooks.yaml`` and the per-session
+#: state dir's ``hooks.yaml``). A ``write_paths:``/``subprocess:``/
+#: ``network:`` declared at either is a confused-deputy self-grant, not a
+#: silent drop: verified directly (docs-maintainer, real
+#: ``SeatbeltBackend``, #5351/#5356) that ``write_paths`` is fully HONORED
+#: — an agent could already write its own hooks.yaml, and this key would
+#: then grant that same agent's hook sandbox write access to an arbitrary
+#: declared path, including another agent's working tree — and confirmed
+#: (against ``dispatcher.py``) that ``subprocess``/``network`` are threaded
+#: to the real sandbox the exact same unconditional way, so the same
+#: self-grant applies to all three (lead-coder, #5356). Rejecting all
+#: three at these two origins closes the class (both layers share the
+#: same write-access-to-the-declaration reasoning, and the reasoning does
+#: not depend on which of the three keys is used); the operator's
+#: ``startup``/``runtime`` layers are untouched (those are NOT
+#: agent-writable, so the same grant carries no self-escalation risk
+#: there).
+_AGENT_WRITABLE_ORIGINS: frozenset[str] = frozenset({"per-agent", "per-session"})
+
+#: #5356 (architect, 2nd-round point): the per-hook sandbox key names this
+#: module rejects at an agent-writable origin, derived from
+#: :data:`~reyn.hooks.sandbox_scope.HOOK_SANDBOX_SCOPE`'s RIGHT column (the
+#: per-hook keys) rather than hand-listed — this PR's own reasoning ("closing
+#: one hole is not closing the class") applies one level up to itself: a
+#: hand-written 3-tuple is complete only until a 4th axis is added to that
+#: registry, and would then silently fall outside this rejection with no
+#: signal. `HOOK_SANDBOX_SCOPE` is the authoritative registry of exactly
+#: this vocabulary (its own module docstring: "the per-site, operator-owned
+#: sandbox surface") and deliberately excludes the deny-side fields
+#: (`read_deny_paths`/`write_deny_paths`/`env_deny_names`/`timeout_seconds`)
+#: that are not part of it — so deriving from it cannot accidentally widen
+#: this rejection to a narrowing-only field.
+_AGENT_WRITABLE_SANDBOX_KEYS: tuple[str, ...] = tuple(
+    hook_key for _config_field, hook_key in HOOK_SANDBOX_SCOPE
+)
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +495,41 @@ def _parse_entry(
                 f"{type(value).__name__!r}."
             )
         return value
+
+    # #5356 (architect ruling, docs-maintainer measurement; scope corrected
+    # by lead-coder after the first version of this fix rejected only
+    # `write_paths`; the key SET corrected again by architect's 2nd-round
+    # point to derive from the registry, see `_AGENT_WRITABLE_SANDBOX_KEYS`):
+    # eager-rejected at an agent-writable origin, BEFORE the type/shape
+    # checks below — an agent can already write its own per-agent/
+    # per-session hooks.yaml via the ordinary file-write op, and every
+    # per-hook sandbox key `HOOK_SANDBOX_SCOPE` names (today: `subprocess`
+    # #2827, `network`/`write_paths` #3005 — this site's own comment above
+    # calls them "the three axes an operator owns per-site") is threaded to
+    # the real sandbox identically, with no origin-based branching anywhere
+    # — verified directly against `dispatcher.py`, where `allow_subprocess=
+    # hook.subprocess, network=hook.network` sit right next to
+    # `write_paths=hook.write_paths` in the same call. The self-grant
+    # reasoning (the actor who writes the rule and the actor bound by it are
+    # identical) is key-name-independent, so rejecting a hand-listed subset
+    # would close only today's holes, not the class (CLAUDE.md) — the same
+    # reasoning this PR applies to a single key applies one level up to the
+    # key SET itself. This is NOT the #4501 unknown-key shape (each key name
+    # is correct and known) — each is a known key rejected at a specific
+    # origin, so it is checked here rather than folded into
+    # `_KNOWN_HOOK_ENTRY_KEYS`.
+    for _agent_writable_key in _AGENT_WRITABLE_SANDBOX_KEYS:
+        if _agent_writable_key in raw and origin in _AGENT_WRITABLE_ORIGINS:
+            raise HookConfigError(
+                f"hooks[{entry_index}].{_agent_writable_key} is not "
+                f"permitted at the {origin!r} layer — an agent can write "
+                f"its own {origin} hooks.yaml, so a "
+                f"{_agent_writable_key} grant declared there is a "
+                f"self-grant, not an operator's expressed will (#5356). "
+                f"Declare {_agent_writable_key} at the startup "
+                f"(reyn.yaml) or runtime (.reyn/config/hooks.yaml) layer "
+                f"instead — neither is agent-writable."
+            )
 
     subprocess_raw = _sandbox_bool("subprocess")
     network_raw = _sandbox_bool("network")
