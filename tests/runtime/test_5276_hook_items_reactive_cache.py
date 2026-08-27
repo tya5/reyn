@@ -182,3 +182,39 @@ async def test_a_hook_declaration_reload_invalidates_the_cache(tmp_path, monkeyp
 
     after = {h["name"] for h in s.hook_state()}
     assert "reloaded-hook" in after
+
+
+def test_load_persisted_toggles_invalidates_the_cache(tmp_path, monkeypatch) -> None:
+    """Tier 2: acceptance — the 3rd invalidation site (architect B on #5284:
+    only 2 of 3 sites had a witness). Priming ``hook_state()``'s cache,
+    THEN persisting a disabled-set directly to the per-session state dir's
+    ``hooks.yaml`` (bypassing ``set_hook_enabled`` entirely — the exact
+    restart-recovery shape ``load_persisted_toggles`` exists for), THEN
+    calling ``load_persisted_toggles()`` must make the NEXT ``hook_state()``
+    read reflect the persisted disable — proving this site's own
+    ``self._cached_hook_items = None`` line is load-bearing (removing it
+    reproduces this test going red with no other change)."""
+    import yaml
+
+    _write_agent_hook(tmp_path, "myhook")
+    s = _make_session(tmp_path)
+
+    # Prime the cache with the pre-restore (enabled) state.
+    before = {h["name"]: h["enabled"] for h in s.hook_state()}
+    assert before.get("myhook") is True
+
+    # Persist a disabled-set directly (mirrors a prior session's own
+    # _persist_hook_disabled write, restored on a fresh instance) —
+    # bypasses set_hook_enabled's own synchronous invalidation entirely.
+    state_dir = Path(s._snapshot_path).parent
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "hooks.yaml").write_text(
+        yaml.safe_dump({"disabled": ["myhook"]}), encoding="utf-8",
+    )
+
+    s.load_persisted_toggles()
+    after = {h["name"]: h["enabled"] for h in s.hook_state()}
+    assert after.get("myhook") is False, (
+        "hook_state() read after load_persisted_toggles() must reflect the "
+        "just-restored disabled-set, not the primed pre-restore cache"
+    )
