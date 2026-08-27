@@ -18,6 +18,15 @@ becomes ``exec: ["cmd", "arg1", "arg2"]``.
 Validation errors raise ``HookConfigError`` with a decision-enabling message
 that names the entry index and the failing field so the operator can fix the
 config immediately.
+
+#5243: one exception to "validation errors raise" — a structurally VALID
+entry that declares ``template_push`` on an external event point
+(``mcp_resource_updated``/``file_changed``/``cron_fired``/
+``webhook_received``) only WARNS (``_warn_if_unconditional_push_on_external_
+point``, below load's own per-entry loop). This is not a structural defect
+(``template_push`` is legal there), but a real production hazard (a
+self-re-triggering loop, #5243's own incident) the load-time log can
+surface before a hazardous config ever runs a turn.
 """
 from __future__ import annotations
 
@@ -633,6 +642,62 @@ def load_hooks(
 
     defs: list[HookDef] = []
     for idx, entry in enumerate(raw):
-        defs.append(_parse_entry(entry, idx, composed_schemas, origin=origin))
+        hook_def = _parse_entry(entry, idx, composed_schemas, origin=origin)
+        _warn_if_unconditional_push_on_external_point(hook_def, idx)
+        defs.append(hook_def)
 
     return HookRegistry(defs)
+
+
+def _warn_if_unconditional_push_on_external_point(hook_def: HookDef, entry_index: int) -> None:
+    """#5243: a hook declaring ``template_push`` on an EXTERNAL event point
+    (``mcp_resource_updated``/``file_changed``/``cron_fired``/
+    ``webhook_received``) unconditionally injects its message every time the
+    point fires — correct for the six LIFECYCLE points (firing IS the
+    content: a turn started, a session ended), but not for an external one,
+    where "the event fired" and "there is something worth telling the agent"
+    are different facts. The real incident this closes (issue #5243, owner's
+    production trace, 2026-08-24): an ``mcp_resource_updated`` hook declared
+    ``template_push`` unconditionally on the operator's own inbox resource;
+    the agent's own ``receive_messages`` call (triggered BY that push)
+    itself moved the resource's state, re-firing the SAME hook — one turn
+    ran 11 hours 34 minutes before an operator noticed and force-restarted
+    the process. No turn-scoped loop limit could catch it
+    (``safety.loop.max_router_iterations``/``max_tool_calls_per_turn`` are
+    real ceilings, but a turn that never CLOSES never reaches them in a way
+    that stops it before the operator has to intervene) — the only place to
+    stop this is BEFORE the fire ever starts driving that shape, hence a
+    LOAD-time warning rather than a runtime guard.
+
+    Structural-only, matching this whole module's own validation posture
+    (see the module docstring): logs, never raises — ``exec_capture`` (a
+    script that can check "is there actually new content" before deciding
+    whether to inject anything, e.g. reyn-self's own post-incident fix,
+    ``broker_inbox_gate.py``) is the judgment-capable alternative for an
+    external point; ``template_push`` stays fully legal to declare — this
+    only makes the "fired ≠ has content" distinction visible to whoever
+    reads the load-time log, before the config ever runs a real turn.
+
+    Deliberately narrow: fires ONLY for (external point) AND
+    (``template_push`` declared) — never for a lifecycle point (firing IS
+    the content there, #5243's own framing) and never for
+    ``exec``/``exec_capture``/``pipeline_launch`` on an external point
+    (those CAN embed a content check; only ``template_push`` structurally
+    cannot). Does not touch any existing ``HookConfigError`` raise site in
+    this module — a structurally invalid entry still fails load exactly as
+    before; this is a NEW signal for a structurally VALID entry that is
+    still a live production hazard."""
+    if hook_def.template_push is None:
+        return
+    if not canonical_kind(hook_def.on).startswith("builtin:external:"):
+        return
+    _log.warning(
+        "hooks[%d]: 'on: %s' declares an unconditional 'template_push' — "
+        "external events (mcp_resource_updated/file_changed/cron_fired/"
+        "webhook_received) firing does not mean there is new content to "
+        "report (#5243: an agent's own receive_messages call can itself "
+        "re-trigger the SAME resource, looping a single turn for hours). "
+        "Consider 'exec_capture' instead, which can check for real content "
+        "before deciding whether to inject anything.",
+        entry_index, hook_def.on,
+    )
