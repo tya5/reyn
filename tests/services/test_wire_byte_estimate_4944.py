@@ -526,7 +526,7 @@ def test_learned_byte_limit_clause_with_both_bounds_names_both() -> None:
     clause = _learned_byte_limit_clause(
         last_accepted_wire_bytes=12_345, last_rejected_wire_bytes=20_000,
     )
-    assert "12345" in clause or "12,345" in clause or "12_345" in clause or str(12_345) in clause
+    assert "12345" in clause  # no thousands separator — the actual, single format
     assert str(20_000) in clause
 
 
@@ -617,3 +617,60 @@ def test_retry_loop_that_only_413s_names_the_learned_limit_in_the_terminal_messa
             "no smaller" in str(exc).lower() or "not accepted" in str(exc).lower()
             or "no accepted" in str(exc).lower()
         )
+
+
+def test_compaction_wire_bytes_measured_carries_only_byte_counts_never_content() -> None:
+    """Tier 2: #5316 (architect co-vet non-blocking note) — every value in a
+    real ``compaction_wire_bytes_measured`` event is an ``int`` or ``bool``,
+    never a string (which could carry real payload content). This is the
+    company-environment guarantee ``EVENT_AUDIT_REQUIREMENTS`` itself
+    cannot express — that dict only declares which fields are REQUIRED, not
+    a type/no-content constraint on their values, so a future field like a
+    ``head_preview`` string could be added there without this gate ever
+    turning red. This test is that gate."""
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    async def _success_call(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=800), choices=[])
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    asyncio.run(retry_loop(
+        SP="system prompt with secrets", head=[{"role": "user", "content": "sensitive", "seq": 1}],
+        summary=None, raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
+        new_msg={"role": "user", "content": "and this too", "seq": 3},
+        cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
+        learner=learner, main_call=_success_call, max_iterations=8,
+    ))
+
+    (event,) = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
+    # #4496 PR-1's own framework-stamped keys — always present, legitimately
+    # non-numeric (a hash / a counter used as an id), NOT something this
+    # kind's own emit-site code controls. Everything else on this event
+    # must be int/bool — checked WITHOUT a fixed whitelist of "the fields
+    # I expect", so a future field this emit site adds (the exact scenario
+    # architect's co-vet warned about, e.g. a "head_preview" string) is
+    # caught even though this test was never updated to name it.
+    _FRAMEWORK_KEYS = {"emitter", "audit_seq", "agent_id", "run_id"}
+    non_numeric = {
+        k: v for k, v in event.data.items()
+        if k not in _FRAMEWORK_KEYS and not isinstance(v, (int, bool))
+    }
+    assert non_numeric == {}, (
+        f"every compaction_wire_bytes_measured field this emit site controls "
+        f"must be int/bool only — got non-numeric values: {non_numeric!r}"
+    )
