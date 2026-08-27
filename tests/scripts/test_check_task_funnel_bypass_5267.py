@@ -11,9 +11,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.check_task_funnel_bypass import (
     _BASELINE_PATH,
     _SRC_DIR,
+    false_positive_count,
     in_scope_files,
     load_declared_baseline,
     offending_files,
@@ -176,9 +179,10 @@ def test_the_real_repo_tree_matches_the_declared_baseline_exactly() -> None:
     assert not new, (
         f"undeclared offender(s): {new} — add an entry to "
         f"{_BASELINE_PATH.name} classifying each as \"defect\" (a real "
-        "hazard, tracked for its own fix PR) or \"false_positive\" (the "
-        "gate is wrong about this one), with a one-line note explaining "
-        "which and why"
+        "hazard, tracked for its own fix PR), \"false_positive\" (the "
+        "gate is wrong about this one), or \"accepted\" (a real bypass, "
+        "measured and judged not dangerous — #5300), with a one-line "
+        "note explaining which and why"
     )
     # A declared entry that no longer measures (fixed, or the module
     # changed shape) is allowed to silently drop — same as mypy_ratchet's
@@ -225,3 +229,62 @@ def test_an_undeclared_offender_is_what_the_ratchet_exists_to_catch(tmp_path: Pa
         "a synthetic new offender, absent from the real declared baseline, "
         "must show up as undeclared growth"
     )
+
+
+def test_false_positive_count_classifies_each_of_the_three_types(tmp_path: Path) -> None:
+    """Tier 1: #5300 — a fixture baseline carrying one entry of each of
+    the three declared types must be classified correctly: only the
+    ``"false_positive"`` entry counts. ``"defect"`` (a real hazard) and
+    ``"accepted"`` (a real bypass, measured and judged not dangerous)
+    must not inflate the count — collapsing either into it would
+    contaminate the "0 new false positives" promotion condition this
+    count is the denominator for."""
+    baseline = {
+        "src/reyn/a.py": {"type": "defect", "note": "real hazard"},
+        "src/reyn/b.py": {"type": "false_positive", "note": "gate is wrong"},
+        "src/reyn/c.py": {"type": "accepted", "note": "measured, not dangerous"},
+    }
+    assert false_positive_count(baseline) == 1
+
+
+def test_false_positive_count_does_not_move_when_an_accepted_entry_is_added() -> None:
+    """Tier 1: #5300's own acceptance criterion, as a strip-falsify pair.
+    Adding an ``"accepted"`` entry to the baseline must NOT move the
+    false-positive counter (the promotion condition's denominator);
+    adding a ``"false_positive"`` entry must. If the counting
+    implementation regressed to counting all three types (the strip:
+    replace the equality check with ``len(baseline)``), the first
+    assertion below would fail."""
+    before = {"src/reyn/existing.py": {"type": "false_positive", "note": "x"}}
+    count_before = false_positive_count(before)
+
+    with_accepted = dict(before)
+    with_accepted["src/reyn/new.py"] = {"type": "accepted", "note": "measured, not dangerous"}
+    assert false_positive_count(with_accepted) == count_before, (
+        "an \"accepted\" entry must not move the false-positive counter"
+    )
+
+    with_new_false_positive = dict(before)
+    with_new_false_positive["src/reyn/new2.py"] = {"type": "false_positive", "note": "gate is wrong"}
+    assert false_positive_count(with_new_false_positive) == count_before + 1, (
+        "a genuinely new \"false_positive\" entry must move the counter — "
+        "the counter is not inert to every addition, only to \"accepted\" ones"
+    )
+
+
+def test_load_declared_baseline_rejects_an_unrecognized_type(tmp_path: Path) -> None:
+    """Tier 1: #5300 review (architect) — an unvalidated free ``type``
+    string would let a typo (``"acepted"`` for ``"accepted"``) silently
+    fall out of ``false_positive_count()``'s count with no signal, always
+    landing on the lenient side (a real ``"false_positive"`` entry typo'd
+    away would silently vanish from the count too). ``load_declared_
+    baseline`` — the one place every downstream consumer reads ``type``
+    through — must reject an unrecognized value loudly rather than pass
+    it through."""
+    fixture = tmp_path / "baseline.json"
+    fixture.write_text(
+        json.dumps({"src/reyn/example.py": {"type": "acepted", "note": "typo'd type"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="acepted"):
+        load_declared_baseline(fixture)
