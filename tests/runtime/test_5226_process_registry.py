@@ -207,7 +207,10 @@ def test_the_real_cli_entry_point_actually_calls_register_process(
     left all 5 original tests green while the feature was completely
     dead in production (reyn would register nothing, ``reyn doctor``
     would always say "no reyn process markers found", and CI stayed
-    silent) — architect's own strip-falsify of the finding.
+    silent) — architect read the diff and reasoned this out (no live
+    verification, by design — owner ruling scopes architect to
+    review, not to running code); the strip-falsify confirming it was
+    run by this PR's own author.
 
     Spawns the REAL ``reyn.interfaces.cli.main()`` entry point as a
     genuinely separate subprocess, with ``HOME`` pointed at an isolated
