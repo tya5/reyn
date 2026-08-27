@@ -15,9 +15,11 @@ name: PR closing-intent check
 # real incident and design rationale.
 #
 # #5321: this repo's squash headline is built from the PR TITLE, not any
-# one commit's own title, whenever a PR has 2+ commits — so the same
-# check 4/5 scan also covers the PR title (gated on commit count; see the
-# module docstring's "Title source" note).
+# one commit's own title, whenever a PR has 2+ commits (and a plain merge
+# commit's body is the PR TITLE regardless of commit count) — so the same
+# check 4/5 scan also covers the PR title, UNCONDITIONALLY (corrected
+# #5330 — an earlier commit-count gate here was wrong for the merge-commit
+# case; see the module docstring's "Title source" note).
 #
 # A dedicated workflow (not folded into test.yml's bare `pull_request:`
 # trigger) because this check must also re-run on `edited` — an author
