@@ -200,15 +200,30 @@ async def test_detached_driver_mcp_permission_fail_closed_deny(tmp_path: Path) -
 # ── Structural: every router-op intervention bus is the single bridge-aware seam ──────────
 
 
-def _self_bound_bus_construction_methods() -> "list[str]":
+def _parsed_session_source() -> "tuple[str, ast.Module]":
+    """Parse ``Session``'s own source ONCE — ``inspect.getsource(Session)``
+    (a CLASS) resolves via CPython's ``_ClassFinder`` (matches on
+    ``__qualname__`` via a fresh ``ast.parse``, #5290), not the function/
+    method branch (``findsource``'s ``co_firstlineno``-plus-regex-scan,
+    invalidated only by ``linecache.checkcache`` re-reading whatever the
+    file currently contains at that cached line — fragile if the file is
+    edited between this call and a LATER ``getsource`` call in the same
+    process, #5290's own report). Both the offender scan and the vacuity
+    guard below read the SAME parse of the SAME source instead of each
+    doing its own ``getsource`` (which is exactly the shape #5290
+    describes: two ``getsource`` calls in one test, one of a class — safe
+    — one of a method — not)."""
+    src = textwrap.dedent(inspect.getsource(Session))
+    return src, ast.parse(src)
+
+
+def _self_bound_bus_construction_methods(tree: ast.Module) -> "list[str]":
     """Enumerate ``Session`` methods whose body constructs a SELF-BOUND
     ``ChatInterventionBus(self, ...)`` directly (positional first arg ``self``) — derived from
     the live class source, never hand-listed, so a NEWLY-added router-op seam that hardcodes its
     own self-bound bus is caught automatically. ``_make_router_intervention_bus`` (the ONE
     sanctioned construction point, which chooses self-bound only when no bridge is present) is
     excluded — it is the seam every other method must route through."""
-    src = textwrap.dedent(inspect.getsource(Session))
-    tree = ast.parse(src)
     offenders: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -237,7 +252,8 @@ def test_router_op_intervention_bus_has_single_bridge_aware_seam() -> None:
     MCP-style op method that builds its own self-bound bus — reintroducing the #3049 orphan for a
     driver session — makes this list non-empty and fails here. RED before the fix: the 5 MCP op
     methods (``_mcp_call_tool`` + resource/prompt siblings) each hardcoded the self-bound bus."""
-    offenders = _self_bound_bus_construction_methods()
+    src, tree = _parsed_session_source()
+    offenders = _self_bound_bus_construction_methods(tree)
     assert offenders == [], (
         "these Session methods construct a self-bound ChatInterventionBus(self, ...) directly, "
         "bypassing the bridge-aware _make_router_intervention_bus seam — a driver session's "
@@ -247,7 +263,35 @@ def test_router_op_intervention_bus_has_single_bridge_aware_seam() -> None:
     # Vacuity guard: the helper itself MUST contain the sanctioned self-bound construction, else
     # the scan matches nothing for a trivial reason (renamed class / moved seam) and the guard is
     # inert. Assert the one legitimate site exists so "offenders == []" means "swept", not "empty scan".
-    helper_src = inspect.getsource(Session._make_router_intervention_bus)
+    #
+    # #5290: reads the method's own source segment out of the SAME tree the
+    # offender scan just walked (ast.get_source_segment, byte-exact against
+    # `src`) rather than a second, independent `inspect.getsource(<method>)`
+    # call — that second call resolves via CPython's line-number-plus-regex
+    # branch (`inspect.findsource`'s ``co_firstlineno``), re-read from
+    # whatever the file on disk currently contains (`linecache.checkcache`)
+    # at call time. If the file is edited between the two `getsource` calls
+    # in the same test run (a real, observed shape the night this was
+    # found: #5284/#5285 both landed lines in session.py mid-sweep), this
+    # method's SOURCE moves and the second call can read a DIFFERENT
+    # method's body entirely — a false vacuity-guard failure that looks
+    # like the seam disappeared, when nothing did. The class-source branch
+    # (``inspect.getsource(Session)`` above) is immune: it resolves by
+    # ``__qualname__`` via a fresh ``ast.parse``, not a cached line number.
+    helper_node = next(
+        (
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_make_router_intervention_bus"
+        ),
+        None,
+    )
+    assert helper_node is not None, (
+        "_make_router_intervention_bus not found in Session's source — the seam "
+        "was renamed or moved; this guard needs updating, not a bare StopIteration."
+    )
+    helper_src = ast.get_source_segment(src, helper_node)
+    assert helper_src is not None
     assert "ChatInterventionBus(" in helper_src and "_intervention_bridge" in helper_src, (
         "the bridge-aware seam _make_router_intervention_bus no longer contains the guarded "
         "construction — the structural scan would be vacuously green (guard inert)."
