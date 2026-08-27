@@ -34,6 +34,22 @@ anything was submitted) with seq values ABOVE the low, pre-dispatch
 ``_last_seq`` this connection's own pairing seeded — so they pass the
 seq-gate and promote normally. The verdict is read off PUBLIC widget state
 only (``FlowView.entries``, ``SentQueue.rendered_texts()``), as before.
+
+**Second gap, caught in PR #5293 review (architect, relayed by lead-coder,
+same-day):** the test above (and every #5179 test at that point) all
+hand-construct ``AgUiEmitter`` themselves, mirroring ``agui_events``'s own
+wiring (the docstring above literally says "the exact wiring `agui_events`
+now does") rather than ever CALLING ``agui_events`` itself. So the fix's
+actual production line — ``initial_status=initial_status`` inside
+``agui_events`` (endpoint.py) — could be deleted entirely and every #5179
+test stayed green: the fix's witness summed to zero. Same gap #5116 already
+named once in this same directory
+(``test_5116_connection_agent_owner_cross_attach.py``'s own
+``test_a_real_agui_events_get_pushes_correct_status_after_cross_agent_
+attach``, and its own docstring's account of catching an identical "tests
+mirror the wiring, never call it" gap). Same fix here:
+``test_agui_events_route_pairs_connect_status_with_backlog`` below calls
+the REAL route handler directly.
 """
 from __future__ import annotations
 
@@ -251,6 +267,14 @@ async def test_own_message_renders_via_real_connect_path(tmp_path) -> None:
                 await turn_task
             except (Exception, asyncio.CancelledError):
                 pass
+        # Real Session.run_one_iteration() above spawns the full router-loop
+        # machinery (EventLog subscribers included); a bare turn_task cancel
+        # leaves that background state dangling past this test's own event
+        # loop, surfacing as a cross-test "Event loop is closed" warning in
+        # a large sweep. registry.shutdown() is the established production
+        # cleanup path (registry.py's own docstring: "stop all loaded
+        # sessions, then await/cancel their tasks").
+        await registry.shutdown()
 
     assert rendered or still_queued, (
         "#5179 REGRESSION via the REAL connect path: the operator's own "
@@ -260,3 +284,138 @@ async def test_own_message_renders_via_real_connect_path(tmp_path) -> None:
         "this connection's own backlog+status pairing was captured, so "
         "its own turn_started frame should promote normally once forwarded."
     )
+
+
+@pytest.mark.asyncio
+async def test_agui_events_route_pairs_connect_status_with_backlog(tmp_path, monkeypatch) -> None:
+    """Tier 2: architect finding (PR #5293 review, relayed by lead-coder) —
+    no #5179 test called the REAL ``agui_events`` route handler directly;
+    every one (including the test above) hand-constructs ``AgUiEmitter``
+    itself, mirroring the route's own wiring rather than executing it. So
+    deleting the fix's actual production line
+    (``initial_status=initial_status`` inside ``agui_events``, endpoint.py)
+    left every #5179 test green — the fix's witness summed to zero. Same
+    gap #5116 already named once in this directory
+    (``test_5116_connection_agent_owner_cross_attach.py``'s own
+    ``test_a_real_agui_events_get_pushes_correct_status_after_cross_agent_
+    attach`` — its own docstring records catching an identical "tests
+    mirror the wiring, never call it" gap). Same fix here: call the route
+    directly (a real, minimal ``starlette.requests.Request``, not a
+    stand-in), obtain its own real ``StreamingResponse``, and read what the
+    PRODUCTION closure actually put on the wire.
+
+    Constructs the exact interleaving the fix closes: the operator's turn
+    is submitted and dispatched to completion AFTER ``agui_events`` already
+    returned (so its own ``_session_backlog_page_and_status`` call captured
+    a PRE-dispatch pairing — ``queue_seq`` 0), but BEFORE this test drains
+    the response body. Without the fix, a lazy ``status_provider()`` read
+    at ``stream()``-start (which only runs once something starts draining
+    ``body_iterator``, i.e. after the dispatch above already committed)
+    would see the ALREADY-dispatched, POST-turn value instead — 2. The
+    first ``STATE_SNAPSHOT`` on the real wire must carry the PRE-dispatch
+    value.
+
+    Strip-falsifier: removing ``initial_status=initial_status`` from
+    ``agui_events``'s own ``AgUiEmitter(...)`` construction (endpoint.py)
+    turns this test red — the first ``STATE_SNAPSHOT`` then reports
+    ``queue_seq=2`` instead of ``0``. Verified locally."""
+    import json as _json
+
+    from fastapi import FastAPI
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
+
+    from reyn.interfaces.transport.agui import endpoint as endpoint_mod
+    from reyn.interfaces.transport.agui.endpoint import router
+    from reyn.interfaces.web.auth import AuthContext
+
+    registry = _make_registry(tmp_path)
+    AgentProfile.new(_AGENT_NAME, role="").save(
+        tmp_path / ".reyn" / "agents" / _AGENT_NAME
+    )
+    session = await registry.ensure_running(_AGENT_NAME)
+
+    app = FastAPI()
+    app.include_router(router)
+    app.state.auth = AuthContext(token="s3cret", require_token=True)
+    monkeypatch.setattr(endpoint_mod, "get_registry", lambda: registry)
+
+    scope = {
+        "type": "http", "method": "GET", "path": f"/agui/chat/{_AGENT_NAME}/events",
+        "query_string": b"token=s3cret&connection_id=conn-5179-route-test",
+        "headers": [], "client": ("127.0.0.1", 12345), "app": app,
+    }
+    req = Request(scope)
+
+    turn_task: "asyncio.Task | None" = None
+    try:
+        # ── Call the REAL route handler — its own real, fixed connect-time
+        # pairing runs here, before anything is submitted. ────────────────
+        resp = await endpoint_mod.agui_events(req, _AGENT_NAME)
+        assert isinstance(resp, StreamingResponse), (
+            f"expected a real StreamingResponse (auth/agent-exists must "
+            f"both pass for this test's own setup); got {resp!r}"
+        )
+
+        # ── AFTER agui_events already returned, submit + dispatch the
+        # operator's real turn — BEFORE this test ever drains the body. ──
+        async def _drive_turn() -> None:
+            try:
+                await session.run_one_iteration()
+            except Exception:
+                pass
+
+        await session.submit_user_text(_OWN_TEXT)
+        turn_task = asyncio.create_task(_drive_turn())
+        while not _own_text_committed(session):
+            await asyncio.sleep(0)
+
+        body_iter = resp.body_iterator.__aiter__()
+
+        async def _iter_lines():
+            async for chunk in body_iter:
+                for line in chunk.split("\n"):
+                    if line:
+                        yield line
+
+        _lines = _iter_lines()
+
+        async def _read_one_event():
+            event_type = None
+            async for line in _lines:
+                if line.startswith("event:"):
+                    event_type = line[len("event:"):].strip()
+                elif line.startswith("data:"):
+                    return event_type, line[len("data:"):].strip()
+            raise StopAsyncIteration
+
+        # 1st reconnect event: MESSAGES_SNAPSHOT (backlog). 2nd: STATE_
+        # SNAPSHOT (status) — the one this fix is about.
+        first_type, _ = await _read_one_event()
+        assert first_type == "MESSAGES_SNAPSHOT", (
+            f"test construction error: expected MESSAGES_SNAPSHOT as the "
+            f"1st reconnect event, got {first_type!r}"
+        )
+        state_type, state_data = await _read_one_event()
+        assert state_type == "STATE_SNAPSHOT", (
+            f"test construction error: expected STATE_SNAPSHOT as the 2nd "
+            f"reconnect event, got {state_type!r}"
+        )
+        snapshot = _json.loads(state_data).get("snapshot") or {}
+
+        assert snapshot.get("queue_seq") == 0, (
+            "#5179 REGRESSION at the REAL agui_events route: the first "
+            f"STATE_SNAPSHOT reports queue_seq={snapshot.get('queue_seq')!r}, "
+            "not the PRE-dispatch value (0) captured at real connect time — "
+            "this means the wire is carrying a LIVE status re-read taken "
+            "at stream()-start rather than the paired connect-time "
+            "snapshot (the exact bug this fix closes)."
+        )
+    finally:
+        if turn_task is not None:
+            turn_task.cancel()
+            try:
+                await turn_task
+            except (Exception, asyncio.CancelledError):
+                pass
+        await registry.shutdown()

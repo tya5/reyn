@@ -1,8 +1,49 @@
 """Tier 2: #5179 — in ``--connect`` remote mode, the operator's OWN sent
-message can silently never appear in the conversation, while the agent's
-reply renders fine.
+message could silently never appear in the conversation, while the agent's
+reply rendered fine.
 
-Real chain (prior investigation, summarized in the issue thread):
+**History of this file.** The first version hand-constructed ``AgUiEmitter``
+directly with a deliberately-inconsistent ``status_provider`` (already
+reflecting the post-dispatch ``queue_seq`` from its very first line) to
+reproduce the race in isolation — real ``AgUiEmitter``/``AgUiTransport``/
+``TextualChatApp``, but never calling through ``session_backlog_page``/
+``endpoint.py`` at all. That was a valid demonstration of the seq-gate
+mechanism (``RemoteQueueView``) dropping an already-reflected turn when
+handed status inconsistent with the frames it is paired with — but it meant
+this test could never be closed by the endpoint-level fix, so it stayed
+permanently red even after the fix landed. CI correctly refused to merge a
+PR with a red test (lead-coder, PR #5293 review) — the SAME fact architect's
+review had already caught from the design side (its witness summed to zero
+across every #5179 test at that point, this one included, since none of
+them called ``agui_events`` itself).
+
+**Rewritten (per lead-coder's own recommendation ①, matching the fix
+already applied to ``test_5179_backlog_gap_end_to_end.py``'s own gap) to
+call the REAL ``agui_events`` route handler directly** — same precedent
+this directory already established
+(``test_5116_connection_agent_owner_cross_attach.py``'s own
+``test_a_real_agui_events_get_pushes_correct_status_after_cross_agent_
+attach``: "This test calls the REAL agui_events route handler DIRECTLY").
+This is now the THIRD, complementary angle on #5179's acceptance coverage,
+each testing something the other two don't:
+
+- ``test_5179_backlog_gap_end_to_end.py::test_own_message_renders_via_real_
+  connect_path`` — hand-constructs ``AgUiEmitter`` mirroring
+  ``agui_events``'s own wiring, mounts a full ``TextualChatApp``. Cheap,
+  controllable, but (as PR #5293 review caught) does not itself execute
+  the production call site.
+- ``test_5179_backlog_gap_end_to_end.py::test_agui_events_route_pairs_
+  connect_status_with_backlog`` — calls the REAL route, but reads the raw
+  SSE wire directly (no app), checking only the first ``STATE_SNAPSHOT``'s
+  ``queue_seq``.
+- **This file** — calls the REAL route AND mounts a full
+  ``TextualChatApp``, reading the verdict off PUBLIC widget state
+  (``FlowView.entries``, ``SentQueue.rendered_texts()``) — the same
+  end-to-end rendering check the very first version of this test made,
+  now actually reached through ``agui_events`` itself.
+
+Real chain (prior investigation, summarized in the issue thread, unchanged
+by the rewrite):
 
 - The operator's own message is NEVER folded into the flow directly.
   ``TextualChatApp._handle_user_submitted_event`` only STAGES it into
@@ -11,79 +52,20 @@ Real chain (prior investigation, summarized in the issue thread):
   entry (``_handle_turn_started_event`` → ``_ingest_frame``). Both calls
   are gated by ``RemoteQueueView``'s own monotonic ``seq`` gate
   (``apply_user_submitted``/``apply_turn_started`` — state.py): a delta
-  whose ``seq`` is ``<=`` the view's ``_last_seq`` is silently rejected —
-  AND, independent of the gate, ``_handle_turn_started_event`` only ever
-  promotes items already sitting in ``RemoteQueueView.queue()``: an item
-  whose OWN ``apply_user_submitted`` was gated never got staged, so there
-  is nothing to promote even if the ``turn_started`` delta's own gate
-  happens to pass.
+  whose ``seq`` is ``<=`` the view's ``_last_seq`` is silently rejected.
 - ``_last_seq`` is seeded exactly ONCE per connection, from a live read of
-  ``transport.status.values`` (``RemoteReadModel.snapshot()`` — read_model.py
-  — reads it live, no buffering), at ``TextualChatApp._seed_queue_view``,
-  itself called on the FIRST non-``BacklogBatch`` frame ``_pump_frames``
-  ever drains from ``transport.frames()``.
-- ``AgUiTransport._consume_block`` applies a decoded ``STATE_SNAPSHOT``/
-  ``STATE_DELTA`` to ``self._status`` SYNCHRONOUSLY, as soon as that block
-  is parsed. A ``STATE_*`` block decodes to ZERO ``Frame``/``BacklogBatch``
-  items (see ``_consume_block``'s own branch for ``StateUpdate``), so
-  applying it never puts anything onto ``AgUiTransport``'s own frame
-  queue — it is invisible to ``frames()``'s consumer except through its
-  side effect on ``self._status``.
+  ``transport.status.values`` (``RemoteReadModel.snapshot()``), at
+  ``TextualChatApp._seed_queue_view``, itself called on the FIRST
+  non-``BacklogBatch`` frame ``_pump_frames`` ever drains.
+- The fix (``endpoint.py._session_backlog_page_and_status``) pairs the
+  connect-time backlog and status in the SAME synchronous tick, so the
+  seed this connection gets is never advanced ahead of frames it hasn't
+  forwarded yet — see that function's own docstring for the full
+  reasoning.
 
-The construction below (verified directly, not assumed — see
-``_build_race_sse``'s own docstring for the measurement): the connection's
-ONE-TIME reconnect ``STATE_SNAPSHOT`` (``AgUiEmitter._reconnect_snapshot_
-chunks``, built ONCE before ``AgUiEmitter.stream()`` ever starts iterating
-its frame source) is computed from a ``status_provider()`` that already
-reflects the operator's OWN turn as fully dispatched (``queue_seq`` past
-both its ``user_submitted`` and ``turn_started`` deltas' own ``seq``
-stamps) — modeling a session whose enqueue+dispatch (one synchronous call)
-already completed by the time this particular connection's reconnect
-snapshot was computed, while the corresponding ``user_submitted``/
-``turn_started`` AUDIT-EVENTS for that SAME turn are still forwarded
-afterward over ``AgUiEmitter``'s separate frame-source pipeline, carrying
-their own historical ``seq`` stamps (1, 2). Because this STATE_SNAPSHOT
-sits on the wire strictly BEFORE either of those two frames (it is part of
-the connect preamble, emitted before the frame-source loop even starts)
-and decodes to zero queued items, it is GUARANTEED (no scheduling luck
-needed — verified below by direct instrumentation, not inferred) to have
-already updated ``transport.status`` by the time ``_pump_frames`` drains
-the FIRST real frame this connection ever produces — which is exactly
-when ``_seed_queue_view`` runs.
-
-An earlier construction this investigation also tried and DID NOT
-reproduce the bug is recorded in ``_build_race_sse``'s own docstring,
-because the negative result is itself part of the finding (this repo's
-own pre-conclusion checklist: report what falsifies a hypothesis, not
-only what confirms it).
-
-Real ``AgUiEmitter`` (server-side encoder) + real ``AgUiTransport``
-(client-side decoder) + a real mounted ``TextualChatApp`` wired to a real
-``RemoteReadModel`` — no mocks, no private-state pokes. The verdict is
-read off PUBLIC widget surfaces only: ``FlowView.entries`` (mirroring
-``test_3300_p2b_sentqueue_render.py``'s own ``_flow_user_entries``) and
-``SentQueue.rendered_texts()``.
-
-**Scope correction, written after the fix landed (endpoint.py/emitter.py,
-#5179):** this test builds ``AgUiEmitter`` DIRECTLY with a hand-set
-``status_provider`` already reflecting the post-dispatch ``queue_seq`` from
-the very first line of its construction — it never calls through
-``session_backlog_page``/``endpoint.py`` at all, so it does not exercise
-(and cannot be closed by) the endpoint-level fix
-(``_session_backlog_page_and_status`` pairing backlog+status in one tick).
-It demonstrates a different, narrower thing, correctly: the seq-gate
-mechanism itself (``RemoteQueueView``) WILL drop an already-reflected turn
-when handed a status that is inconsistent with the frames it is paired
-with — which is its designed behavior, not a bug, and stays true forever
-(feeding it deliberately-inconsistent inputs will always reproduce this).
-This test was earlier mis-described (issue thread) as one of two
-acceptance criteria the fix must flip green — that was wrong; the real
-end-to-end acceptance coverage for whether the FIXED endpoint actually
-avoids producing this inconsistency lives in
-``test_5179_backlog_gap_end_to_end.py`` (drives the real, fixed connect
-pairing) and ``test_5179_exit_b_status_race_discriminator.py`` (pins the
-specific race the fix closes). This file is kept as a mechanism
-illustration only and is expected to keep reproducing indefinitely.
+Real ``AgentRegistry``/``Session`` + a real ``agui_events`` call + real
+``AgUiTransport`` (client-side decoder) + a real mounted ``TextualChatApp``
+wired to a real ``RemoteReadModel`` — no mocks, no private-state pokes.
 """
 from __future__ import annotations
 
@@ -94,43 +76,43 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.repl.read_model import RemoteReadModel
 from reyn.interfaces.transport.agui.client import AgUiTransport
-from reyn.interfaces.transport.agui.emitter import AgUiEmitter
-from reyn.interfaces.transport.frames import EventFrame
-from reyn.schemas.models import Event
+from reyn.runtime.profile import AgentProfile
+from reyn.runtime.registry import AgentRegistry
+from reyn.runtime.session import Session
+from tests._support.agent_session import make_session
 
-_MSG_ID = "m1"
-_CHAIN_ID = "c1"
 _OWN_TEXT = "hello from the operator"
+_AGENT_NAME = "default"
+
+
+def _make_registry(tmp_path) -> AgentRegistry:
+    def factory(profile: AgentProfile) -> Session:
+        agent_dir = tmp_path / ".reyn" / "agents" / profile.name
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        return make_session(agent_name=profile.name, agent_role=profile.role)
+
+    return AgentRegistry(project_root=tmp_path, session_factory=factory)
 
 
 def _flow_user_entries(app: TextualChatApp):
     return [e for e in app.query_one(FlowView).entries if e.item.kind == "user"]
 
 
-async def _sse_lines(text: str) -> AsyncIterator[str]:
-    """Yields ``text``'s own lines then hangs on a real never-resolving
-    primitive — a genuinely open connection with nothing further to send
-    yet, NOT an exhausted stream (an exhausted finite generator would make
-    ``AgUiTransport.frames()`` raise ``StopAsyncIteration`` on its very
-    first ``__anext__()`` here, which tears the whole app down via
-    ``_pump_frames``'s own ``finally: self.exit()`` before this test ever
-    gets to inspect anything — matches
-    ``test_5050_remote_pending_intervention_choices.py``'s own
-    ``_sse_lines_then_hang`` for the identical reason).
-
-    A real ``asyncio.sleep(0)`` between every yielded line — NOT only
-    after the whole block — matches that same helper: a genuine SSE
-    source yields control at every line boundary (a real socket read),
-    so this is a representative sample of the wire's real timing, not an
-    artificial single burst."""
-    for line in text.split("\n"):
-        yield line
-        await asyncio.sleep(0)
-    await asyncio.Event().wait()
+async def _drain_lines(body_iter) -> AsyncIterator[str]:
+    """Adapts a real ``StreamingResponse.body_iterator`` (whole SSE chunks,
+    the exact thing Starlette itself would stream to a real client) into
+    the line-at-a-time ``AsyncIterator[str]`` shape ``AgUiTransport``
+    expects — mirrors ``test_5179_backlog_gap_end_to_end.py``'s own
+    ``_live_sse_lines``. Blank lines are NOT filtered (unlike a
+    manual-scan helper would) — they are the SSE block delimiter
+    ``AgUiTransport``'s own parser relies on."""
+    async for chunk in body_iter:
+        for line in chunk.split("\n"):
+            yield line
+            await asyncio.sleep(0)
 
 
 async def _wait_until(pilot, condition) -> None:
@@ -142,126 +124,117 @@ async def _wait_until(pilot, condition) -> None:
         await pilot.pause()
 
 
-async def _build_race_sse() -> str:
-    """Builds the exact SSE text via the REAL ``AgUiEmitter``.
-
-    ``status_state`` already carries the post-dispatch counters (``queue_
-    seq=2``) BEFORE ``AgUiEmitter`` is even constructed — this is what
-    ``_reconnect_snapshot_chunks`` (emitter.py) reads to build the ONE-TIME
-    connect ``STATE_SNAPSHOT``, computed before ``stream()`` ever starts
-    iterating ``frames``. The ``user_submitted``/``turn_started`` events
-    below are the SAME turn's own historical audit-events, forwarded
-    afterward with their own ``seq`` stamps (1, 2) — unchanged by the
-    snapshot already existing ahead of them, exactly as a real forwarder
-    lagging behind a live status read would behave.
-
-    Directly measured (this investigation's own instrumented run, not
-    assumed): with THIS construction, ``AgUiTransport``'s decoded
-    ``STATUS apply_snapshot`` (queue_seq=2) lands strictly before either
-    the ``user_submitted`` or ``turn_started`` ``EventFrame`` is even
-    dequeued from ``AgUiTransport.frames()`` — because the STATE_SNAPSHOT
-    block sits earlier on the wire and decodes to zero queued items, this
-    holds with no scheduling assumption.
-
-    A DIFFERENT construction was tried first and did NOT reproduce the
-    bug: mutating ``status_state`` to the post-dispatch values only
-    between yielding the ``user_submitted`` and ``turn_started`` frames
-    (so the STATE_DELTA reflecting the jump appears mid-stream, between
-    the two event frames, exactly as ``AgUiEmitter.stream()``'s real code
-    naturally emits — event first, its post-frame delta right after).
-    Measured directly: in that construction, ``AgUiTransport.frames()``'s
-    OWN per-dequeued-frame ``suspend_between_frames()`` call (on TOP of
-    the one inside ``AgUiTransport._pump_sse``) resynchronizes the two
-    tasks at every frame boundary, so ``_pump_frames`` always finished
-    fully handling frame N (a synchronous call, ``_seed_queue_view``
-    included) before ``_pump_sse`` ever got back control to decode block
-    N+1's STATE_DELTA. So a delta racing a frame it was itself computed
-    AFTER did not reproduce; a snapshot that already raced ahead of a turn
-    BEFORE that turn's own frames were ever produced (this module's actual
-    construction, above) does."""
-    status_state: dict = {"queue": [], "turn_active": True, "queue_seq": 2}
-
-    def status_provider() -> dict:
-        return dict(status_state)
-
-    async def frames():
-        yield EventFrame(
-            Event(
-                type="user_submitted",
-                data={
-                    "msg_id": _MSG_ID, "chain_id": _CHAIN_ID,
-                    "text": _OWN_TEXT, "seq": 1, "meta": {},
-                },
-            )
-        )
-        yield EventFrame(
-            Event(type="turn_started", data={"chain_id": _CHAIN_ID, "seq": 2}),
-        )
-
-    emitter = AgUiEmitter(frames(), status_provider)
-    chunks = [chunk async for chunk in emitter.stream()]
-    return "".join(chunks)
-
-
 @pytest.mark.asyncio
-async def test_own_message_race_construction_outcome() -> None:
-    """Tier 2: constructs the exact interleaving #5179 hypothesizes and
-    reports the actual, observed outcome — reproduced or not — off public
-    widget state only (see module docstring for the full mechanism)."""
-    sse = await _build_race_sse()
-    # Sanity on the WIRE CONTENT itself (not yet the app): the connect-time
-    # STATE_SNAPSHOT really does carry the post-dispatch queue_seq, and it
-    # really does sit BEFORE either event frame on the wire.
-    snap_pos = sse.index("STATE_SNAPSHOT")
-    us_pos = sse.index("user_submitted")
-    ts_pos = sse.index("turn_started")
-    assert snap_pos < us_pos < ts_pos, (
-        "test construction error: expected STATE_SNAPSHOT -> "
-        "EVENT(user_submitted) -> EVENT(turn_started) on the wire; got a "
-        "different order, so this run does not exercise the race this "
-        "test targets"
+async def test_own_message_renders_via_real_agui_events_route(tmp_path, monkeypatch) -> None:
+    """Tier 2: acceptance — calls the REAL ``agui_events`` route handler,
+    submits+dispatches the operator's own turn AFTER it returns (mirrors
+    ``test_agui_events_route_pairs_connect_status_with_backlog``'s own
+    ordering), and confirms the message renders in a REAL mounted
+    ``TextualChatApp`` fed off the route's own real ``StreamingResponse``.
+
+    Strip-falsifier: removing ``initial_status=initial_status`` from
+    ``agui_events``'s own ``AgUiEmitter(...)`` construction (endpoint.py)
+    turns this test red — the operator's own message renders in neither
+    the flow nor the sent-queue region. Verified locally (same strip
+    already used for ``test_agui_events_route_pairs_connect_status_with_
+    backlog``)."""
+    from fastapi import FastAPI
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
+
+    from reyn.interfaces.transport.agui import endpoint as endpoint_mod
+    from reyn.interfaces.transport.agui.endpoint import router
+    from reyn.interfaces.web.auth import AuthContext
+
+    registry = _make_registry(tmp_path)
+    AgentProfile.new(_AGENT_NAME, role="").save(
+        tmp_path / ".reyn" / "agents" / _AGENT_NAME
     )
-    assert '"queue_seq": 2' in sse.split("STATE_SNAPSHOT", 1)[1].split("\n\n", 1)[0], (
-        "test construction error: the connect-time STATE_SNAPSHOT does not "
-        "carry the post-dispatch queue_seq — this run does not exercise "
-        "the race this test targets"
-    )
+    session = await registry.ensure_running(_AGENT_NAME)
 
-    async def _send(_payload: dict) -> bool:
-        return False
+    app = FastAPI()
+    app.include_router(router)
+    app.state.auth = AuthContext(token="s3cret", require_token=True)
+    monkeypatch.setattr(endpoint_mod, "get_registry", lambda: registry)
 
-    transport = AgUiTransport(_sse_lines(sse), _send)
-    app = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
+    scope = {
+        "type": "http", "method": "GET", "path": f"/agui/chat/{_AGENT_NAME}/events",
+        "query_string": b"token=s3cret&connection_id=conn-5179-full-app-route-test",
+        "headers": [], "client": ("127.0.0.1", 12345), "app": app,
+    }
+    req = Request(scope)
 
-    async with app.run_test(size=(100, 30)) as pilot:
-        # A public, unconditional side effect of ``_handle_turn_started_
-        # event`` firing at all (``self._activity.begin("WORKING")`` runs
-        # BEFORE the seq gate is even consulted) — waiting on it proves
-        # the turn_started frame was drained and handled, independent of
-        # whether the promotion itself (the thing under test) succeeded.
-        await _wait_until(pilot, lambda: app.query_one(ActivityRow).state is not None)
-        # Give any already-scheduled promotion work one more full pass.
-        await pilot.pause()
-        await pilot.pause()
-
-        user_entries = _flow_user_entries(app)
-        sent_queue = app.query_one(SentQueue)
-        queued_texts = sent_queue.rendered_texts()
-
-        rendered = any(_OWN_TEXT in e.item.text for e in user_entries)
-        still_queued = any(_OWN_TEXT in t for t in queued_texts)
-
-        # This is the reproduction: it currently FAILS (#5179 is unfixed).
-        # The operator's own message must be present SOMEWHERE — either
-        # promoted into the flow, or still visibly staged in the
-        # sent-queue region — after its turn_started was drained and
-        # handled. Neither is true under this exact construction: it was
-        # silently dropped by the seq-gate race (the connect-time
-        # STATE_SNAPSHOT already reflecting the post-dispatch queue_seq
-        # reached transport.status before _seed_queue_view ran on frame #1).
-        assert rendered or still_queued, (
-            "REPRODUCED #5179: the operator's own message "
-            f"({_OWN_TEXT!r}) is present in NEITHER the flow "
-            f"({[e.item.text for e in user_entries]!r}) NOR the "
-            f"sent-queue region ({queued_texts!r})."
+    turn_task: "asyncio.Task | None" = None
+    try:
+        resp = await endpoint_mod.agui_events(req, _AGENT_NAME)
+        assert isinstance(resp, StreamingResponse), (
+            f"expected a real StreamingResponse (auth/agent-exists must "
+            f"both pass for this test's own setup); got {resp!r}"
         )
+
+        async def _drive_turn() -> None:
+            try:
+                await session.run_one_iteration()
+            except Exception:
+                # Expected: no @pytest.mark.replay fixture is installed —
+                # the real litellm boundary raises once the router reaches
+                # it, strictly after the history append this test cares
+                # about.
+                pass
+
+        await session.submit_user_text(_OWN_TEXT)
+        turn_task = asyncio.create_task(_drive_turn())
+        while not any(
+            getattr(m, "role", None) == "user" and _OWN_TEXT in str(getattr(m, "content", ""))
+            for m in session.history
+        ):
+            await asyncio.sleep(0)
+
+        async def _send(_payload: dict) -> bool:
+            return False
+
+        transport = AgUiTransport(_drain_lines(resp.body_iterator), _send)
+        app_ = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
+
+        async with app_.run_test(size=(100, 30)) as pilot:
+            # The turn was already driven all the way to its (expected)
+            # litellm-boundary failure BEFORE this app ever mounted (see
+            # above) — every frame this connection will ever emit for this
+            # turn is already queued by the time ``emitter.stream()``
+            # starts, so ``ActivityRow`` never sits in a non-idle state
+            # long enough for a mount-time observer to catch it (mirrors
+            # ``test_5179_backlog_gap_end_to_end.py``'s own reasoning). The
+            # real, public signal that THIS turn's own lifecycle fully
+            # drained to the client instead is the router-failure line
+            # landing in the flow.
+            await _wait_until(
+                pilot,
+                lambda: any(
+                    "litellm.acompletion" in getattr(e.item, "text", "")
+                    for e in app_.query_one(FlowView).entries
+                ),
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+            user_entries = _flow_user_entries(app_)
+            sent_queue = app_.query_one(SentQueue)
+            queued_texts = sent_queue.rendered_texts()
+
+            rendered = any(_OWN_TEXT in e.item.text for e in user_entries)
+            still_queued = any(_OWN_TEXT in t for t in queued_texts)
+
+            assert rendered or still_queued, (
+                "#5179 REGRESSION via the REAL agui_events route: the "
+                f"operator's own message ({_OWN_TEXT!r}) is present in "
+                f"NEITHER the flow ({[e.item.text for e in user_entries]!r}) "
+                f"NOR the sent-queue region ({queued_texts!r})."
+            )
+    finally:
+        if turn_task is not None:
+            turn_task.cancel()
+            try:
+                await turn_task
+            except (Exception, asyncio.CancelledError):
+                pass
+        await registry.shutdown()

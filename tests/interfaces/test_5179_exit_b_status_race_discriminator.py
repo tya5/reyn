@@ -224,3 +224,4 @@ async def test_capture_right_after_return_still_mismatches_on_exit_b(tmp_path, m
                 await turn_task
             except (Exception, asyncio.CancelledError):
                 pass
+        await registry.shutdown()

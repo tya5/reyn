@@ -482,7 +482,24 @@ async def _session_backlog_page_and_status(
     identical to :func:`session_backlog_page`'s own contract; ``status`` is
     ``None`` only when ``target`` itself does not resolve (mirrors the
     ``None``-session case :func:`~reyn.interfaces.repl.status._snapshot_for_session`
-    itself already handles for a detached agent)."""
+    itself already handles for a detached agent).
+
+    **Paired against ``target`` (this function's own resolved session), not
+    ``source.current_session()``** (architect, PR #5293 review, non-blocking)
+    — the live mid-stream path (``_status_provider`` below) reads the
+    LATTER. At the moment ``agui_events`` calls this function, the two are
+    the SAME session: ``attach()`` always focuses ``_DEFAULT_SID``
+    (registry.py), and ``_SessionFrameSource.__init__`` resolves
+    ``current_session()`` via ``self._bind(session)`` off that SAME
+    connect-time ``attach`` result — no cross-agent ``/attach`` re-point
+    (the only thing that can make them diverge, #5116) has had a chance to
+    fire yet at this specific call site. Pairing against ``target`` (this
+    function's own local) rather than threading ``source`` through as a
+    parameter is deliberate: it keeps this function's own contract self-
+    contained and matches the backlog's own resolution (``target`` is
+    where ``history`` itself comes from too — pairing status against a
+    DIFFERENT session's resolution than the backlog it rides alongside
+    would reintroduce a mismatch of its own)."""
     target = registry.get_session(name, sid)
     if target is None:
         return [], False, None, None
