@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Callable
+from weakref import WeakKeyDictionary
 
 from reyn.interfaces.repl.renderer import (
     _CC_ACCENT,
@@ -222,6 +223,67 @@ def _extract_hooks(config) -> list[dict]:
         except Exception:  # noqa: BLE001
             label = f"hook {i}"
         result.append({"label": label})
+    return result
+
+
+#: #5276: ``cron_jobs``/``mcp_servers``/``hooks``/``skills`` (the 4
+#: extractors above) never change after construction for a given
+#: (session, config) pair — the ``config`` object a caller holds is a
+#: frozen reference assigned exactly ONCE, at construction, and never
+#: reassigned (grep-confirmed: ``TextualChatApp.__init__``'s
+#: ``self._config = config`` is the only assignment site in that class;
+#: ``Session`` never assigns ``self._config`` at all). The actual
+#: hot-reload machinery (``HotReloader``) re-reads ``.reyn/*.yaml`` and
+#: applies it through per-component seams that mutate SEPARATE live
+#: objects (the cron scheduler, the hook dispatcher's registry, the
+#: session's own ``_available_skills``, the MCP tool cache) — never this
+#: ``config`` reference. So caching these 4 fields here causes ZERO
+#: behavior change either way: before this cache existed, every one of
+#: the ~60 renders/sec this ran at recomputed the IDENTICAL result from
+#: the same unchanging input. #5278 (filed separately, NOT fixed here)
+#: is the real, disclosed gap this leaves untouched: the status panel
+#: never reflects a hot-reload for these 4 kinds, and never did.
+#: Keyed by session identity (``WeakKeyDictionary`` — entries vanish with
+#: the session, no manual teardown needed) plus a STRONG reference to the
+#: ``config`` object itself, compared via ``is`` — so a caller that
+#: genuinely swaps in a DIFFERENT config object (none does today, per the
+#: grep above, but nothing here assumes it never will) still recomputes
+#: rather than silently reusing a stale-by-construction entry.
+#:
+#: #5279 review (architect/lead-coder): an EARLIER version of this guard
+#: compared ``id(config)`` (a bare int) instead of holding the object
+#: itself. That is unsafe in general — ``id()`` is only unique while the
+#: object it names is alive; once garbage-collected, CPython can and does
+#: reuse the same int for an unrelated later object, which would make a
+#: stale cache entry compare EQUAL to a completely different config by
+#: coincidence. Doesn't happen today (a session holds its own config for
+#: its whole life — the same grep-confirmed invariant this whole cache
+#: relies on), but that's exactly the "future config swap" case this
+#: guard exists to protect, and holding only an int would silently stop
+#: protecting it. A strong reference costs nothing extra here: the
+#: session already keeps its config alive for its entire lifetime
+#: regardless of whether this cache holds a second reference to it.
+_CONFIG_DERIVED_CACHE: "WeakKeyDictionary[object, dict]" = WeakKeyDictionary()
+
+
+def _config_derived_fields(session, config) -> dict:
+    """#5276: the memoized ``{cron_jobs, mcp_servers, hooks, skills}``
+    computed at most once per (session, config) pair — see
+    :data:`_CONFIG_DERIVED_CACHE`'s own comment for the full "why caching
+    here is safe and behavior-neutral" reasoning, and for why the guard
+    holds a real reference to ``config`` (compared via ``is``) rather than
+    a bare ``id()`` int."""
+    cached = _CONFIG_DERIVED_CACHE.get(session)
+    if cached is not None and cached.get("_config_ref") is config:
+        return cached
+    result = {
+        "_config_ref": config,
+        "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
+        "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
+        "hooks": _extract_hooks(config) if config is not None else [],
+        "skills": _extract_skills(config) if config is not None else [],
+    }
+    _CONFIG_DERIVED_CACHE[session] = result
     return result
 
 
@@ -565,10 +627,15 @@ def _snapshot_for_session(registry, s, config=None):
         # state — the LOCAL implementation is always CAPABLE of
         # reporting cron config, whether or not one happens to be
         # loaded on THIS particular call.
-        "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
-        "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
-        "hooks": _extract_hooks(config) if config is not None else [],
-        "skills": _extract_skills(config) if config is not None else [],
+        #
+        # #5276: routed through _config_derived_fields — memoized per
+        # (session, config) pair, computed at most once (see that
+        # function's own comment for why this is behavior-neutral: #5278,
+        # filed separately, is the real staleness gap this leaves as-is).
+        "cron_jobs": _config_derived_fields(s, config)["cron_jobs"],
+        "mcp_servers": _config_derived_fields(s, config)["mcp_servers"],
+        "hooks": _config_derived_fields(s, config)["hooks"],
+        "skills": _config_derived_fields(s, config)["skills"],
         # #4194: the policy-tier unknown/renamed config-key count
         # (ReynConfig.unknown_config_key_count, set once at load_config()
         # time — see that field's own docstring in root.py). Read every
