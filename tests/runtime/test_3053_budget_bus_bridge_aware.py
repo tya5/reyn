@@ -318,9 +318,31 @@ def test_budget_bus_has_no_frozen_self_bound_dispatch_capture() -> None:
     # session.py mid-sweep), `__init__`'s SOURCE moves and the second call can read a DIFFERENT
     # method's body entirely — a false vacuity-guard failure that looks like the wiring
     # disappeared, when nothing did.
+    #
+    # architect's TESTS-READ(B) BLOCK (#5341): an earlier version of this fix searched
+    # `ast.walk(tree)` for a node named `__init__` — `Session` has TWO nested classes
+    # (`_ChatBudgetBus`, `_ChatLimitBus`; neither currently defines its own `__init__`), and
+    # `ast.walk`'s own docstring is explicit — "in no specified order" — so that search
+    # depended on an unspecified CPython implementation detail (today's BFS order) AND would
+    # silently start reading a NESTED class's `__init__` body instead of `Session`'s own the
+    # moment either nested class gained one — reintroducing the exact "silently reads a
+    # different method's body" defect this fix exists to remove, just relocated. Fixed to walk
+    # only `Session`'s OWN ClassDef body (never descending into a nested class at all), which
+    # depends on neither `ast.walk`'s order nor a re-run census of what nested classes
+    # currently do or don't define.
+    #
+    # No separate test witnesses "one parse, not two, is used" — that is a structural property
+    # of THIS code (which resolution path it takes), not an observable behavior a test can
+    # assert on without transcribing the implementation (Tier 4). What DOES stay observable,
+    # and is guarded below, is that `__init__` is actually found and that its source still
+    # names the two markers the vacuity guard exists to check.
+    session_cls = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Session"
+    )
     init_node = next(
         (
-            node for node in ast.walk(tree)
+            node for node in session_cls.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             and node.name == "__init__"
         ),
