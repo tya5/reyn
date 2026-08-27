@@ -152,12 +152,11 @@ async def test_a_pump_exception_is_logged_distinguishably_before_exit(
 ) -> None:
     """Tier 2: #5329 ②'s own witness — a genuine exception from
     ``self._transport.frames()`` must leave a distinguishable, durable
-    record (this session's own precedent for "durable" — ``reyn.log``, the
-    same channel the 18 sibling guards in this method already use and
-    already have real readers: an operator tailing it directly,
-    ``scripts/dogfood_trace.py --mode llm-payloads``) BEFORE the app exits
-    — not merely SOME record eventually, at the exact point that
-    distinguishes this from a clean shutdown.
+    record (``reyn.log``, the same channel the 18 sibling guards in this
+    method already use, and the same path ``chrome.py``'s own diagnostics
+    line names to the operator inline) BEFORE the app exits — not merely
+    SOME record eventually, at the exact point that distinguishes this
+    from a clean shutdown.
 
     Strip-falsifier: reverting the new ``except Exception: logger.exception(
     ...); raise`` block around the ``async for`` (back to the bare
@@ -186,7 +185,8 @@ async def test_a_pump_exception_is_logged_distinguishably_before_exit(
                 await pilot.pause()
                 await pilot.pause()
 
-    messages = [r.message for r in caplog.records if r.name == _LOGGER_NAME]
+    records = [r for r in caplog.records if r.name == _LOGGER_NAME]
+    messages = [r.message for r in records]
     assert any(
         "_pump_frames' frame stream" in m and "raised" in m for m in messages
     ), (
@@ -194,10 +194,15 @@ async def test_a_pump_exception_is_logged_distinguishably_before_exit(
         f"logged, distinguishably from a clean end-of-stream — got "
         f"{messages!r}"
     )
-    assert any("BECAUSE of this exception" in m for m in messages), (
-        "the log line should say the exit is BECAUSE of the exception, "
-        "not merely that something happened — this is the distinguishing "
-        "half, not just a bare traceback"
+    # The distinguishing property is structural, not wording: this record
+    # carries the real exception (``exc_info``, set by ``logger.exception``),
+    # which is what makes it recoverable evidence rather than a bare "some
+    # error happened" line — the same property a clean end-of-stream (next
+    # test) never produces at all.
+    assert any(r.exc_info is not None for r in records), (
+        "the log record should carry the real exception (exc_info), not "
+        "just a message — that's what makes this durably distinguishable "
+        "from a clean shutdown, not merely the wording"
     )
 
 

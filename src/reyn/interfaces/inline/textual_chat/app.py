@@ -6672,41 +6672,17 @@ class TextualChatApp(App):
                 except Exception:
                     logger.exception("textual chat: live chrome refresh failed")
         except Exception:
-            # #5329 ②: every OTHER failure mode in this method (18 sites
-            # above) is guarded — a single frame's ingest, chrome refresh,
-            # or layout decision failing logs and the pump keeps running.
-            # The one thing that was NOT guarded was the loop's own supply
-            # — ``self._transport.frames()`` itself. An exception raised
-            # there (post-#5126, ``frames()`` now correctly RAISES a real
-            # transport failure instead of silently ending the stream —
-            # this except is the next layer up that #5126 alone did not
-            # reach) fell straight through this method with no handler,
-            # into the SAME ``finally: self.exit()`` a clean end-of-stream
-            # also takes — making a genuine crash and a normal shutdown
-            # produce the identical, silent "app closed, shell prompt
-            # back" symptom (owner's own real-machine observation this
-            # session: "the process completely terminates and returns to
-            # shell").
-            #
-            # This does not decide whether exiting was the RIGHT response
-            # to this failure (lead-coder's own scoping: "終了の可否を先
-            # に決めようとしないでください" — a real transport closure is
-            # itself sometimes a legitimate reason to exit) — only that
-            # the two paths must be DISTINGUISHABLE afterward. logger.
-            # exception here is the SAME durable channel — reyn.log — the
-            # 18 sibling guards above already use and this session already
-            # established has real readers (an operator tailing it
-            # directly, ``scripts/dogfood_trace.py --mode llm-payloads``,
-            # #4364's own доctor-style diagnostics precedent) — a log line
-            # nobody reads would be absence under another name, which is
-            # exactly what this fixes, not what it would become. The
-            # DISPLAY question (whether/how an operator sees this WHILE
-            # the TUI is still open, before it exits) is deliberately left
-            # open — that is an owner visual-judgment call this fix does
-            # not attempt to make; what it guarantees is that the reason
-            # survives the exit and is discoverable AFTER the process has
-            # already returned to shell, which is the shape the owner's
-            # own observation actually needs answered first.
+            # #5329 ②: the loop's own supply, ``self._transport.frames()``,
+            # was the one failure point in this method with no handler —
+            # every other site above logs and keeps the pump running.
+            # Remove this except and a genuine stream failure again falls
+            # silently into the same ``finally: self.exit()`` a clean
+            # end-of-stream takes, so a crash and a normal shutdown are
+            # indistinguishable afterward. ``reyn.log`` has a real reader
+            # even with the TUI closed: ``chrome.py``'s diagnostics line
+            # names this same log path to the operator inline. Whether/how
+            # to surface this WHILE the TUI is still open is left open —
+            # an owner visual-judgment call, not this fix's job.
             logger.exception(
                 "textual chat: _pump_frames' frame stream (self._transport"
                 ".frames()) raised — the app is exiting BECAUSE of this "
