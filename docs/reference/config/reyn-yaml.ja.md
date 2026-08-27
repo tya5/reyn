@@ -760,7 +760,7 @@ auth:
 
 ## `cron` ブロック
 
-定期的なメッセージ配信をスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。
+定期的な cron ジョブをスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。各ジョブは `action`（#5209）を宣言します: `message`（デフォルト）はエージェントの inbox にテキストを配信 — 常に LLM turn を起動します。`hook` は外部イベントフック `cron_fired` のみを発火 — `hooks.yaml` の `on: cron_fired` エントリ自身の `push_when` が次に何が起きるかを決め、条件不成立なら LLM turn は 0 回です。
 
 ```yaml
 cron:
@@ -776,16 +776,22 @@ cron:
       message: "weekly ops report"
       schedule: "0 9 * * MON"   # 月曜 09:00
       enabled: true
+
+    - name: poll_deploy_status   # action: hook — 「token 0」の定期検査（#5209）
+      to: ops_agent              # message は一切配信されない;
+      action: hook                # 発火した cron_fired フックの push_when が
+      schedule: "*/5 * * * *"    # ops_agent を起こすかどうかを決める
 ```
 
 ### フィールド
 
 - **`name`** (必須) — ジョブ識別子。スケジュール内で一意である必要があります
-- **`to`** (必須) — 宛先エージェント名。メッセージは `sender="cron:<name>"` 属性でそのエージェントの inbox に配信されます
-- **`message`** (必須) — 宛先エージェントに配信される自由形式テキスト
+- **`to`** (必須、全 `action` 共通) — このジョブが走るエージェント（その `cron:<job_name>` Session 上で `cron_fired` が発火します）。`action: message` ではメッセージの宛先も兼ねます
+- **`action`** (省略可、デフォルト `"message"`) — `"message"`: `to` が宛先も兼ね、`message` が必須。エージェントの inbox に `sender="cron:<name>"` 属性で配信され、常に LLM turn を起動します。`"hook"`（#5209）: host session 上で外部イベントフック `cron_fired` のみを発火 — 自身では turn を起動しません。`message` は設定不可（hook job はテキストを配信しません）。次に何が起きるかは完全に `hooks.yaml` の `on: cron_fired` エントリ自身の `push_when`（典型的には `exec_capture` スクリプト）次第です — 不成立なら LLM turn は 0 回、これが `action: hook` の存在理由です（何かを見つけたときだけエージェントを起こす定期条件チェック）
+- **`message`** (`action: message` では必須、`action: hook` では設定不可) — 宛先エージェントに配信される自由形式テキスト
 - **`schedule`** (必須) — 5 フィールドの cron 式
   （分 / 時 / 日 / 月 / 曜日）
-- **`notify`** (省略可) — オプトインの無人通知チャンネル
+- **`notify`** (省略可) — オプトインの無人通知チャンネル（`action: message` のみ）
 - **`input`** (省略可、デフォルト `{}`) — ジョブに付随する追加の入力辞書
 - **`enabled`** (省略可、デフォルト `true`) — `false` にすると設定にエントリを保持したままスケジューリングをスキップします
 
