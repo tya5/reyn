@@ -35,6 +35,8 @@ from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from reyn.llm.llm import LLMToolCallResult
     from reyn.tools.scheme import ExecutionResult
 
@@ -1204,7 +1206,14 @@ class RouterLoop:
             return _fn()
         return self._resolver.class_ceiling()
 
-    def _emit_agent_delta(self, text: str) -> None:
+    def _emit_agent_delta(
+        self,
+        text: str,
+        *,
+        raw_chunk_count: int,
+        first_arrival: "datetime",
+        last_arrival: "datetime",
+    ) -> None:
         """#3288 ③b: forward one streamed content-delta chunk as an audit-event
         — the owner-ratified L4 replacement (issue #3288 comment thread): a
         partial rides ``host.events`` (the SAME audit-event channel
@@ -1243,6 +1252,20 @@ class RouterLoop:
 
         Best-effort: a failing audit-event emit must never abort the
         in-flight LLM call it is merely narrating.
+
+        ``raw_chunk_count``/``first_arrival``/``last_arrival`` (#5261,
+        architect condition): ``text`` may already stand in for MORE than
+        one raw provider chunk — ``recorded_acompletion``'s own source-side
+        merge (task B's confirmed drain form, issue #5261) concatenates
+        whatever was already waiting before this callback ever fires. These
+        3 fields keep "what did the provider send, and when" answerable
+        after that merge — the same question the durable side's
+        ``coalesced_fragment_count`` answers for ITS OWN, separate
+        coalescing (#4960); losing this here would leave a gap the
+        durable side never had. What is genuinely lost is the individual
+        chunk BOUNDARIES within one merged batch — the owner's own
+        stated goal for this change (issue #5261: "no one wants individual
+        delta events").
         """
         try:
             self.host.events.emit(
@@ -1250,6 +1273,9 @@ class RouterLoop:
                 text=text,
                 chain_id=self.chain_id,
                 round_index=self._delta_round_index,
+                raw_chunk_count=raw_chunk_count,
+                first_arrival=first_arrival.isoformat(),
+                last_arrival=last_arrival.isoformat(),
             )
         except Exception:  # noqa: BLE001 — narration must never break the turn
             logger.exception("router: agent_delta audit-event emit failed")

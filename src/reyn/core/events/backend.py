@@ -354,7 +354,21 @@ class LocalEventBackend:
         if key not in self._delta_last_persisted_at:
             self._delta_last_persisted_at[key] = now
         self._delta_last_event[key] = event
-        pending = self._delta_pending_count.get(key, 0) + 1
+        # #5261: an incoming ``agent_delta`` may already stand in for MORE
+        # than one raw provider chunk — the source-side merge that issue
+        # introduced tags a merged event with its own ``raw_chunk_count``.
+        # Sum that (not a bare +1 per EVENT) so ``coalesced_fragment_count``
+        # below keeps meaning "how many raw provider chunks", not "how many
+        # agent_delta events arrived" — those stopped being the same number
+        # the moment source-side merging could produce an event standing in
+        # for more than one chunk. An event with no ``raw_chunk_count``
+        # (pre-#5261 callers, or #5261's own unmerged single-chunk case)
+        # contributes exactly 1 — an unmerged event IS one raw chunk, by
+        # definition, so this is not a guessed default.
+        _raw_count = event.data.get("raw_chunk_count")
+        pending = self._delta_pending_count.get(key, 0) + (
+            _raw_count if isinstance(_raw_count, int) and _raw_count > 0 else 1
+        )
         elapsed_ms = (now - self._delta_last_persisted_at[key]) * 1000
         if (
             pending >= self._agent_delta_coalesce_fragments
@@ -402,6 +416,15 @@ class LocalEventBackend:
         (already-completed) subscriber dispatch loop may still be holding a
         reference to, so a new object is written, never the original
         mutated in place).
+
+        *coalesced_fragment_count* (#5261: this caller's own ``pending``,
+        summed from each incoming event's ``raw_chunk_count`` — see
+        :meth:`write`'s own comment) is provider-raw-chunk-accurate even
+        when the source itself already merges: it always means "how many
+        chunks the provider actually sent", never "how many
+        ``agent_delta`` events arrived here" — those stopped being
+        interchangeable the moment source-side merging could make one
+        event stand in for more than one chunk.
 
         #4666: when ``agent_delta_include_text`` is off (the default),
         ``text`` (the streamed reply content itself) is dropped from the

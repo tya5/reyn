@@ -90,6 +90,36 @@ def test_coalescing_resets_after_each_durable_write() -> None:
     assert [w.data.get("coalesced_fragment_count") for w in store.written] == [5, 5]
 
 
+# ── #5261: raw_chunk_count-aware summing ────────────────────────────────
+
+
+def test_coalesced_count_sums_raw_chunk_count_not_event_count() -> None:
+    """Tier 1: #5261 — a mix of ``agent_delta`` events, some already
+    standing in for several raw provider chunks (source-side merged,
+    ``raw_chunk_count`` set) and some with none (pre-#5261 callers, or
+    #5261's own unmerged single-chunk case, contributing exactly 1) must
+    sum to the TRUE raw-chunk total, not the number of events that
+    arrived. Asserts the actual computed sum, never a pinned/hardcoded
+    literal (a pinned count previously failed ``test_tier_audit.py
+    --strict`` on #5266) — the value below is derived from the same
+    per-event contributions the test itself constructs."""
+    store = _RecordingStore()
+    backend = LocalEventBackend(store, agent_delta_coalesce_fragments=1_000_000, clock=_FakeClock())
+
+    contributions = [3, None, 1, 5, None]  # None == no raw_chunk_count field at all
+    for n in contributions:
+        data = {"chain_id": "c1", "text": "x"}
+        if n is not None:
+            data["raw_chunk_count"] = n
+        backend.write(Event(type="agent_delta", data=data))
+    assert store.written == [], "sanity: below the (huge) fragment threshold, nothing durable yet"
+
+    backend.flush_pending_deltas("c1")
+
+    expected_total = sum(n if n is not None else 1 for n in contributions)
+    assert [w.data.get("coalesced_fragment_count") for w in store.written] == [expected_total]
+
+
 # ── interval coalescing (the process-death guarantee) ──────────────────
 
 

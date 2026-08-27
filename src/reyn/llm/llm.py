@@ -10,7 +10,7 @@ import weakref
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Union
+from typing import TYPE_CHECKING, Coroutine, NamedTuple, Protocol, TypeVar, Union
 
 logger = logging.getLogger(__name__)
 from reyn.core.turn_scope import get_active_turn_chain_id
@@ -2130,6 +2130,26 @@ def _streaming_enabled(
     return capability is not False
 
 
+class _OnContentDelta(Protocol):
+    """#5261: the ``on_content_delta`` callback shape. ``text`` is the
+    concatenation of whatever raw provider chunks a batch's worth of
+    task B draining merged (see ``_stream_and_reconstruct``'s own #5261
+    comment) — ``raw_chunk_count``/``first_arrival``/``last_arrival``
+    (architect condition, issue #5261) let a consumer reconstruct "what
+    did the provider send, and when" after that merge, the same question
+    the durable side's ``coalesced_fragment_count`` answers for its own,
+    separate coalescing (#4960)."""
+
+    def __call__(
+        self,
+        text: str,
+        *,
+        raw_chunk_count: int,
+        first_arrival: "datetime",
+        last_arrival: "datetime",
+    ) -> None: ...
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -2144,7 +2164,7 @@ async def recorded_acompletion(
     extra_kwargs: dict | None = None,
     emit_cost_events: bool = False,  # #1683: chat path opts in (kernel emits via LLMCallRecorder)
     routing: dict | None = None,  # #309: per-class api_base/provider; None → global proxy_kwargs()
-    on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: opt-in per-chunk content-delta callback (see _stream_and_reconstruct)
+    on_content_delta: "_OnContentDelta | None" = None,  # #3288 ③b / #5261: opt-in MERGED content-delta callback (see _stream_and_reconstruct)
     stream_override: "bool | None" = None,  # a model class's ``stream:`` — operator policy, NOT a litellm kwarg
     prompt_cache_key: str | None = None,  # #4700: routing hint — see the call-kwargs block below for the full reasoning
 ) -> object:
@@ -2184,15 +2204,23 @@ async def recorded_acompletion(
     ModelClassExceedsCeilingError` BEFORE ``litellm.acompletion`` is ever
     called — no partial call, no charge, no record.
 
-    ``on_content_delta`` (#3288 ③b): an OPT-IN, per-call callback invoked
-    SYNCHRONOUSLY with each non-empty content-delta string as ``_stream_and_reconstruct``
-    (③a) drains the chunk stream — never invoked on the whole-collect (non-streaming)
-    path, so it is capability-gated by construction (see ``_streaming_enabled``: no
-    capability ⇒ no streaming ⇒ this callback never fires). ``None`` (every caller
-    except ``RouterLoop``'s primary reply call) is byte-identical to today. A raising
-    callback is caught and logged — a broken display-event emit must never break the
-    LLM call it is merely narrating. The reconstructed WHOLE response (below) is
-    unaffected either way — this is purely an additional notification channel, not a
+    ``on_content_delta`` (#3288 ③b, #5261): an OPT-IN, per-call callback
+    invoked SYNCHRONOUSLY as ``_stream_and_reconstruct`` (③a) drains the
+    chunk stream — never invoked on the whole-collect (non-streaming) path,
+    so it is capability-gated by construction (see ``_streaming_enabled``:
+    no capability ⇒ no streaming ⇒ this callback never fires). ``None``
+    (every caller except ``RouterLoop``'s primary reply call) is
+    byte-identical to today — no queue, no second task, the original
+    single-loop chunk drain. #5261: no longer once per raw provider
+    chunk — the ``text`` a call carries is whatever task B's drain had
+    ALREADY accumulated by the time it got a turn to run (see
+    ``_stream_and_reconstruct``'s own #5261 comment for the confirmed
+    drain form); ``raw_chunk_count``/``first_arrival``/``last_arrival``
+    (:class:`_OnContentDelta`) let a consumer reconstruct what that batch
+    stood in for. A raising callback is caught and logged — a broken
+    display-event emit must never break the LLM call it is merely
+    narrating. The reconstructed WHOLE response (below) is unaffected
+    either way — this is purely an additional notification channel, not a
     change to what this function returns or records.
 
     ``prompt_cache_key`` (#4700): OPTIONAL — sent to litellm only when set
@@ -2529,34 +2557,178 @@ async def recorded_acompletion(
         chunks = []
         _delta_fired = False
         _tool_calls_seen = False
-        async for chunk in chunk_stream:
-            chunks.append(chunk)
-            if on_content_delta is not None:
-                _delta_text = None
+        if on_content_delta is None:
+            # #5261: byte-identical to pre-#5261 — no queue/task machinery
+            # at all when nobody wants delta notifications (every caller
+            # except RouterLoop's primary reply call).
+            async for chunk in chunk_stream:
+                chunks.append(chunk)
+                # #4805 review (lead-coder catch): a tool-only round's chunks
+                # legitimately never expose delta.content at all (tool_calls
+                # is a SEPARATE field) — this is reyn's most common round
+                # shape, not a defect. Tracked here, alongside _delta_fired,
+                # so the guard below can tell "genuinely dead" apart from
+                # "just a normal tool round."
                 try:
-                    _delta_text = chunk.choices[0].delta.content
+                    if chunk.choices[0].delta.tool_calls:
+                        _tool_calls_seen = True
                 except Exception:  # noqa: BLE001 — malformed/empty chunk shape
-                    _delta_text = None
-                if _delta_text:
+                    pass
+        else:
+            # #5261: task A drains the provider stream and queues each
+            # non-empty content delta with its own arrival time; task B —
+            # the SAME event loop, no thread (owner ruling, issue #5261) —
+            # repeatedly drains whatever is ALREADY waiting in that queue
+            # into ONE merged ``on_content_delta`` call. Nothing is held
+            # for a fixed interval or count: the boundary is "however much
+            # task A managed to put while task B was still busy delivering
+            # the previous batch" — see ``_drain_and_emit_deltas``'s own
+            # docstring for the confirmed drain form and why it needs no
+            # ``held``/no-match branch (unlike its AG-UI precedent,
+            # ``_SessionFrameSource._drain_delta_run``, #5262): every item
+            # this queue ever holds is a content delta from THIS ONE
+            # ``acompletion`` call — same ``chain_id``, same ``round_index``
+            # by construction — so there is nothing for a "different run"
+            # to look like.
+            #
+            # The queue is intentionally UNBOUNDED. ``_pump_chunks``'s own
+            # ``chunks.append(chunk)`` below ALREADY retains every chunk
+            # unconditionally (``litellm.stream_chunk_builder`` needs the
+            # complete list to reconstruct the response) — this queue only
+            # ever holds a SUBSET of what ``chunks`` already holds (the ones
+            # carrying a non-empty content delta), so it cannot be the
+            # reason memory grows beyond what this function already commits
+            # to holding — a ``maxsize`` here would bound something that is
+            # not a new resource (owner's standing "no unjustified constant"
+            # rule). See ``chunks.append(chunk)``'s own comment for what
+            # would silently invalidate this (architect, issue #5261).
+            q: "asyncio.Queue[tuple[str, datetime]]" = asyncio.Queue()
+            _DONE = object()
+
+            async def _pump_chunks() -> None:
+                nonlocal _tool_calls_seen
+                try:
+                    async for chunk in chunk_stream:
+                        # #5261: this unconditional append is WHY the merge
+                        # queue above needs no ``maxsize`` — it already
+                        # retains every chunk regardless of delta wiring, so
+                        # the queue only ever holds a subset. If this line
+                        # ever becomes conditional (e.g. a knob to stop
+                        # retaining chunks once reconstruction no longer
+                        # needs them), the queue above silently becomes an
+                        # unbounded resource of its own and nothing here
+                        # turns red to say so — re-examine it then.
+                        chunks.append(chunk)
+                        _delta_text = None
+                        try:
+                            _delta_text = chunk.choices[0].delta.content
+                        except Exception:  # noqa: BLE001 — malformed/empty chunk shape
+                            _delta_text = None
+                        if _delta_text:
+                            await q.put((_delta_text, datetime.now().astimezone()))
+                        # #4805 review (lead-coder catch) — see the
+                        # ``on_content_delta is None`` branch above for the
+                        # full reasoning; unchanged here.
+                        try:
+                            if chunk.choices[0].delta.tool_calls:
+                                _tool_calls_seen = True
+                        except Exception:  # noqa: BLE001 — malformed/empty chunk shape
+                            pass
+                finally:
+                    # ALWAYS enqueued, on every exit (normal end, a raised
+                    # exception, or cancellation) — the only way
+                    # ``_drain_and_emit_deltas`` learns "no more deltas are
+                    # coming" (mirrors #5107's own ``_SSE_DONE``-in-``finally``
+                    # discipline, ``AgUiTransport._pump_sse``).
+                    await q.put(_DONE)
+
+            async def _drain_and_emit_deltas() -> None:
+                """#5261 confirmed drain form (issue #5261, lead-coder's
+                final sketch after 4 owner-driven simplifications — no
+                fixed window, no fixed count, no ``held``):
+
+                    array = [await q.get()]
+                    while True:
+                        await asyncio.sleep(0)
+                        try: array.append(q.get_nowait())
+                        except QueueEmpty: break
+                    emit(merge(array))
+
+                Extended only to also stop on :data:`_DONE` (not part of
+                the confirmed snippet — that snippet assumed an infinite
+                delta stream; this one is finite, one ``acompletion`` call)
+                and to loop the whole thing until the stream ends, since one
+                call produces MANY merged batches over its lifetime, not
+                one. Runs until ``_pump_chunks`` signals the stream is
+                over, then returns — never blocks forever on an empty
+                queue with nothing left to fill it.
+
+                Each merged batch is emitted with ①the raw chunk count and
+                ②the first/last arrival time of the chunks it stands in
+                for (architect condition, issue #5261 — the coalesced-away
+                individual arrivals must still be reconstructible: "what
+                did the provider send, and when", the same question
+                ``coalesced_fragment_count`` answers on the durable side,
+                #4960)."""
+                nonlocal _delta_fired
+                while True:
+                    item = await q.get()
+                    if item is _DONE:
+                        return
+                    array = [item]
+                    stream_ended = False
+                    while True:
+                        await asyncio.sleep(0)  # yield — #5262's own drain does the same
+                        try:
+                            nxt = q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        if nxt is _DONE:
+                            stream_ended = True
+                            break
+                        array.append(nxt)
                     _delta_fired = True
+                    merged_text = "".join(text for text, _ in array)
                     try:
-                        on_content_delta(_delta_text)
+                        on_content_delta(
+                            merged_text,
+                            raw_chunk_count=len(array),
+                            first_arrival=array[0][1],
+                            last_arrival=array[-1][1],
+                        )
                     except Exception:  # noqa: BLE001 — a display-event emit must never break the LLM call
                         logger.exception(
                             "recorded_acompletion: on_content_delta callback raised; "
                             "continuing the stream"
                         )
-            # #4805 review (lead-coder catch): a tool-only round's chunks
-            # legitimately never expose delta.content at all (tool_calls is
-            # a SEPARATE field) — this is reyn's most common round shape,
-            # not a defect. Tracked here, alongside _delta_fired, so the
-            # guard below can tell "genuinely dead" apart from "just a
-            # normal tool round."
+                    if stream_ended:
+                        return
+
+            pump_task = asyncio.create_task(_pump_chunks())
+            drain_task = asyncio.create_task(_drain_and_emit_deltas())
             try:
-                if chunk.choices[0].delta.tool_calls:
-                    _tool_calls_seen = True
-            except Exception:  # noqa: BLE001 — malformed/empty chunk shape
-                pass
+                await pump_task
+                await drain_task
+            except BaseException:
+                # A raise from the provider stream, or this whole call
+                # being cancelled from outside — either way, the other
+                # task must not be left running unattended. cancel() only
+                # REQUESTS cancellation — it does not wait for it, so
+                # without the gather below this function would return (and
+                # `raise` would propagate) while a task is still pending:
+                # ``_pump_chunks``'s own `finally` (which still runs on
+                # cancellation) could append to `chunks` or put onto `q`
+                # AFTER the caller believes the call is over — the same
+                # class of hazard #5267 named tonight for a different
+                # task pair. Awaiting the gather (with
+                # `return_exceptions=True`, since a cancelled task's own
+                # CancelledError must not mask the real exception we're
+                # about to re-raise) makes both tasks genuinely `done()`
+                # before this function returns.
+                drain_task.cancel()
+                pump_task.cancel()
+                await asyncio.gather(pump_task, drain_task, return_exceptions=True)
+                raise
         # #3288 ③b co-vet fix: a silent functional-dead-mode guard. If the
         # provider streamed at least one chunk AND a callback was supplied,
         # but NOT ONE chunk ever exposed a non-empty delta.content (e.g. a
@@ -2806,7 +2978,7 @@ async def call_llm_tools(
     event_log: "EventLog | None" = None,
     emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
     response_format: "dict | None" = None,  # 0062: RouterLoop's separate no-tools structured-answer turn ONLY — every op-loop tool-decision call leaves this None (ADR-0035 D2 separate-decide preserved: never combined with a non-empty `tools`)
-    on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: forwarded to recorded_acompletion — see its docstring
+    on_content_delta: "_OnContentDelta | None" = None,  # #3288 ③b / #5261: forwarded to recorded_acompletion — see its docstring
     model_class: "str | None" = None,  # #4206 T1: forwarded to recorded_acompletion — see its docstring (None = not subject to ceiling enforcement)
     model_class_ceiling: "str | None" = None,  # #4206 T1: the caller's effective ceiling, if any (None = unbounded)
     prompt_cache_key: str | None = None,  # #4700: forwarded to recorded_acompletion — see its docstring for the full reasoning
