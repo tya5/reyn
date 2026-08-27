@@ -57,14 +57,15 @@ operator が宣言した監視パス配下のファイルが作成・変更・�
 
 ### `cron_fired`
 
-message ベースの `cron:` ジョブが自身のセッションに配送されるときに発火します。
+すべての `cron:` ジョブの発火時、その解決された `cron:<job_name>` セッション上で発火します — `action: message`（メッセージも別途 inbox に配信される）と `action: hook`（#5209 — このフック発火だけが起こるすべてで、メッセージは一切配信されない）の両方に共通です。`action` の詳細は cron ブロックのリファレンス(`docs/reference/config/reyn-yaml.ja.md#cron-ブロック`)を参照してください。
 
 テンプレート変数:
 
 | 変数 | 意味 |
 |-----|------|
 | `job_name` | 発火したジョブの設定名。 |
-| `to` | ターゲットのエージェント名。 |
+| `to` | ターゲットのエージェント名(ジョブの host session)。 |
+| `action` | `"message"` または `"hook"`(#5209) — フックがどちらの種類の発火かで分岐できます。例: `matcher: {action: "hook"}`。 |
 
 ### `webhook_received`
 
