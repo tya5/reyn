@@ -98,24 +98,32 @@ class InProcessTransport(ClientTransport):
 
     # -- frame production ---------------------------------------------------
 
-    def _forward_audit_event(self, event: "Event") -> None:
+    def _forward_audit_event(self, event: "Event", *, agent: "str | None" = None) -> None:
         # Synchronous subscriber (same mechanism as before): enqueue ONLY the
         # renderer-relevant subset onto the unified stream. Non-renderer events
         # are dropped here — the transport carries the renderer's vocabulary,
         # not every audit-event.
         #
-        # #5041 ①: this callback is only ever subscribed to the CURRENTLY
-        # attached session (rewired on every /attach — see
-        # ``AgentRegistry._wire_focus_listeners``), so ``attached_name`` read
-        # fresh at call time is always the true origin, no local tracking
-        # needed (unlike ``_pump_outbox`` below, where multiple sessions'
-        # items can coexist in the SAME queue during a switch race).
-        # ``getattr(..., None)`` — a test double standing in for the registry
-        # need not implement this property; ``agent`` degrades to its own
-        # default (``None``), same as before this field existed.
+        # #5041 ① (architect's own BLOCK finding, #5344's TESTS-READ(B)):
+        # an earlier version of this read ``self._registry.attached_name``
+        # HERE, at call time — reasoning "this callback is only ever
+        # subscribed to the CURRENTLY attached session, so live state is
+        # always the true origin". That reasoning assumed dispatch is
+        # synchronous with emit; ``EventLog`` actually dispatches via its
+        # own background consumer (#4961 C), so a callback CAN run after a
+        # LATER switch has already happened — reading live state at that
+        # point would confidently attach the WRONG agent's name, worse
+        # than the pre-①  "no attribution at all" (a reader trusts a
+        # wrong answer; it never questioned a missing one). Fixed at the
+        # SOURCE instead: ``AgentRegistry._wire_focus_listeners`` now
+        # BINDS the agent name into the subscribed closure at subscribe
+        # time (before this method is ever called), so ``agent`` here is
+        # always the name of the session this callback was ACTUALLY wired
+        # to — correct regardless of when the callback happens to run.
+        # The default (``None``) only matters for a direct call bypassing
+        # that binding (e.g. a test double), never for a real registry.
         etype = getattr(event, "type", None)
         if etype in self._forward_events:
-            agent = getattr(self._registry, "attached_name", None)
             self._frames.put_nowait(EventFrame(event, agent=agent))
 
     async def _pump_outbox(self) -> None:

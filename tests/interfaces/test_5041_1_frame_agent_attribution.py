@@ -13,21 +13,40 @@ ever let two agents be "attached" concurrently, a consumer draining the
 converged stream would have no way to tell their frames apart — not
 unlikely, structurally impossible.
 
-Fix (``src/reyn/interfaces/transport/frames.py`` + ``in_process.py``):
-``DisplayFrame``/``EventFrame`` gain an optional ``agent: str | None = None``
-field (mirrors ``BacklogBatch.agent``, defaults to ``None`` so every OTHER
-existing construction site across the AG-UI wire paths and test doubles is
-unaffected). ``InProcessTransport`` populates it two ways: the audit-event
-path reads ``registry.attached_name`` fresh at each call (always correct —
-that callback is only ever wired to the CURRENTLY attached session); the
-``repl_outbox``-draining path tracks a running ``current_agent``, updated
-ONLY by the ``session_attached`` barrier frame itself (never by re-querying
-live registry state at drain time, which could race a switch that happens
-between an item's PUT — gated on ``is_attached`` at THAT moment, in the
-registry's own ``_forwarder`` — and this GET). The barrier's own documented
-FIFO property (registry.py's ``_announce_session_attached``: "before this
-frame = old session's frames, after = new session's frames") is exactly
-what makes queue-position-based tracking correct.
+Fix (``src/reyn/interfaces/transport/frames.py`` + ``in_process.py`` +
+``registry.py``): ``DisplayFrame``/``EventFrame`` gain an optional
+``agent: str | None = None`` field (mirrors ``BacklogBatch.agent``,
+defaults to ``None`` so every OTHER existing construction site across the
+AG-UI wire paths and test doubles is unaffected). ``InProcessTransport``
+populates it two ways, NEITHER of which reads live "who's attached now"
+state at the moment a frame is produced (architect's own TESTS-READ(B)
+BLOCK finding, issuecomment-5443216808, on an EARLIER version of this fix
+that read ``registry.attached_name`` in the audit-event path at call
+time — an execution-order assumption a background-dispatched callback can
+break, attaching a CONFIDENTLY WRONG name instead of the pre-fix "no
+attribution at all", worse as an attribution failure mode):
+
+- the ``repl_outbox``-draining path tracks a running ``current_agent``,
+  updated ONLY by the ``session_attached`` barrier frame itself flowing
+  through the SAME queue (never by re-querying live registry state at
+  drain time, which could race a switch that happens between an item's
+  PUT — gated on ``is_attached`` at THAT moment, in the registry's own
+  ``_forwarder`` — and this GET). The barrier's own documented FIFO
+  property (registry.py's ``_announce_session_attached``: "before this
+  frame = old session's frames, after = new session's frames") is what
+  makes queue-position-based tracking correct.
+- the audit-event path has no such queue to track position in, so
+  ``AgentRegistry._wire_focus_listeners`` instead BINDS the agent name
+  into the subscribed closure at SUBSCRIBE time (wrapping the raw
+  listener before ``session.subscribe_audit_events`` ever sees it) —
+  ``EventLog`` dispatches via its own background consumer (#4961 C), not
+  synchronously with ``emit()``, so a late-running callback still
+  carries the name of whichever session it was ACTUALLY subscribed to.
+  This closes the race STRUCTURALLY (no live state is ever read at call
+  time to race against), not merely narrows its window — per architect's
+  own note, there is deliberately no test attempting to force that
+  specific timing here: once binding removes the only state a race could
+  act on, there is nothing left for such a test to observe failing.
 
 Real ``AgentRegistry`` + 2 real sessions (``make_session``) + a real
 ``InProcessTransport`` — no mocks. Drives ``session._put_outbox`` directly
