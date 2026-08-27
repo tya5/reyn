@@ -56,10 +56,25 @@ entry below for why it is deliberately NOT an intent-comparison check):
      before merge) know whether a human will hand-edit it away. That is by
      design, not a gap: the check's job is to catch the state that CAN leak
      a close, not to certify that a human removed it.
+
+     **Title source (#5321)**: the PR's own TITLE is a third text that can
+     carry the same leak — ``gh api repos/<owner>/<repo>`` measured this
+     repo's own ``squash_merge_commit_title: COMMIT_OR_PR_TITLE`` setting,
+     which means a 2+-commit PR's squash headline is built from the PR
+     TITLE, not any one commit's own title. `` `fix #5299 regression in
+     the cron runner` `` as a title on a 2+-commit PR is exactly the
+     #3187 leak class via this third text — unscanned before #5321 (no
+     known merged PR has actually tripped it; the gap was found by
+     inspection of the script's own field list, not a real incident).
+     Gated on ``len(commit_messages) >= 2``: a 1-commit PR's squash
+     headline is that ONE commit's own title (already covered by the
+     commit-message scan above), so an ungated title scan would be a
+     false positive on the common 1-commit PR shape.
   5. **negated closing keyword** (#4992, real incident 2026-08-21) — a
      closing keyword with a negation word in the narrow window immediately
      before it (e.g. "does not close #N", "will never fix #N"), in the PR
-     body OR a commit message. UNCONDITIONAL — fires regardless of
+     body, a commit message, OR the PR title (#5321, same >= 2-commit
+     gate as check 4's title scan). UNCONDITIONAL — fires regardless of
      ``closingIssuesReferences``, never comparing declared intent against
      the parser's actual behavior the way checks 1-4 do. Real incidents
      #4834 and #4986 were BOTH auto-closed by exactly this shape ("it does
@@ -593,6 +608,7 @@ def check_contradictions(
     body: str,
     closing_refs: list[int],
     commit_messages: list[str] | None = None,
+    title: str | None = None,
 ) -> list[Finding]:
     """Pure contradiction detector — no network, no inference of intent.
 
@@ -603,6 +619,19 @@ def check_contradictions(
     only by check 4 (see module docstring); defaults to none, so callers
     that only have body/closing_refs (e.g. the existing test suite) are
     unaffected.
+
+    ``title`` (#5321) — the PR's own title, scanned by checks 4 and 5
+    ONLY when ``len(commit_messages) >= 2`` (this repo's own measured
+    ``squash_merge_commit_title: COMMIT_OR_PR_TITLE`` setting: a 1-commit
+    PR's squash headline is that ONE commit's own title, already covered
+    by scanning ``commit_messages`` — the PR title never reaches the
+    merge commit in that case, and flagging it there would be a false
+    positive on the common 1-commit PR, not a genuine leak). A 2+-commit
+    PR's squash headline IS the PR title, so a closing keyword there is
+    the exact #3187/check-4 leak class, just via a THIRD text GitHub
+    reads (body, commit messages, and now title) — unscanned before
+    #5321 (real gap named in #5321, not yet incident-confirmed: no
+    known merged PR has actually tripped this one).
     """
     closing_declared = find_closing_declarations(body)
     nonclosing_declared = find_nonclosing_declarations(body)
@@ -761,6 +790,44 @@ def check_contradictions(
             )
         )
 
+    # Check 4, title source (#5321): the PR title itself, scanned ONLY when
+    # it will actually BECOME the squash-merge headline — see this
+    # function's own docstring for the COMMIT_OR_PR_TITLE condition
+    # (>= 2 commits). A 1-commit PR's title never reaches the merge
+    # commit (that commit's own title does, already covered above), so
+    # this is gated rather than unconditional — an ungated scan would be a
+    # false positive on the common 1-commit PR shape.
+    if title and len(commit_messages or []) >= 2:
+        title_closing_declared = (
+            find_closing_declarations(title) - find_discussing_declarations(title)
+        )
+        for n in sorted(title_closing_declared - closing_declared):
+            findings.append(
+                Finding(
+                    check=4,
+                    issue=n,
+                    message=(
+                        f"this PR's TITLE declares closing intent for #{n} "
+                        f"(Closes/Fixes/Resolves) but the PR BODY does not "
+                        f"also declare closing intent for #{n}. This PR has "
+                        "2+ commits, so GitHub's squash-merge headline is "
+                        "built from the PR TITLE (this repo's own "
+                        "squash_merge_commit_title=COMMIT_OR_PR_TITLE "
+                        "setting), which will carry this keyword into the "
+                        f"merge commit and can auto-close #{n} on merge "
+                        "regardless of what the PR body says (the #3187/"
+                        "check-4 leak class, via a third text GitHub reads "
+                        f"— #5321). If closing #{n} is intended, also write "
+                        f"'Closes #{n}' in the PR body. If not, reword the "
+                        f"title so it doesn't read as a closing keyword — a "
+                        "discussing marker in the body cannot exempt a "
+                        "title (this check scans the TITLE's own text, "
+                        "same per-source scoping check 4 already uses for "
+                        "commit messages, not a body-wide exemption)."
+                    ),
+                )
+            )
+
     # Check 5 (negated closing keyword, #4992): a closing keyword with a
     # negation word in the narrow window immediately before it — see this
     # module's ``_NEGATION_TERMS_EN``/``_NEGATION_TERMS_JA`` comment and ``find_negated_closing_
@@ -809,6 +876,27 @@ def check_contradictions(
                 )
             )
 
+    # Check 5, title source (#5321): same negated-keyword shape, same
+    # >= 2-commit gate as check 4's title scan above (a 1-commit PR's
+    # title never becomes the squash headline).
+    if title and len(commit_messages or []) >= 2:
+        for n in sorted(find_negated_closing_declarations(title)):
+            findings.append(
+                Finding(
+                    check=5,
+                    issue=n,
+                    message=(
+                        f"this PR's TITLE contains a NEGATED closing "
+                        f"keyword for #{n} — same defect as check 5's body/"
+                        "commit-message findings, carried into the squash-"
+                        "merge headline because this PR has 2+ commits "
+                        "(squash_merge_commit_title=COMMIT_OR_PR_TITLE). "
+                        "Rewrite the title without the verb, or wrap the "
+                        "phrase in backticks."
+                    ),
+                )
+            )
+
     return findings
 
 
@@ -832,13 +920,16 @@ def _commit_message_text(commit: dict) -> str:
     return f"{headline}\n\n{msg_body}" if msg_body else headline
 
 
-def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str]]:
-    """Fetch (body, closing_issue_numbers, commit_messages) for an open PR.
+def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str], str]:
+    """Fetch (body, closing_issue_numbers, commit_messages, title) for an
+    open PR.
 
     Uses ``gh pr view``. ``commit_messages`` is one full message string
     (headline + body) per commit currently on the PR — see check 4 in the
     module docstring for why these are scanned independently of
-    ``closingIssuesReferences``.
+    ``closingIssuesReferences``. ``title`` (#5321) is the PR's own title —
+    see :func:`check_contradictions`'s own docstring for when it actually
+    becomes the squash-merge headline.
     """
     result = subprocess.run(
         [
@@ -847,7 +938,7 @@ def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str]]:
             "view",
             str(pr_number),
             "--json",
-            "closingIssuesReferences,body,commits",
+            "closingIssuesReferences,body,commits,title",
         ],
         capture_output=True,
         text=True,
@@ -857,7 +948,8 @@ def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str]]:
     body = data.get("body") or ""
     closing_refs = [ref["number"] for ref in data.get("closingIssuesReferences") or []]
     commit_messages = [_commit_message_text(c) for c in data.get("commits") or []]
-    return body, closing_refs, commit_messages
+    title = data.get("title") or ""
+    return body, closing_refs, commit_messages, title
 
 
 # ---------------------------------------------------------------------------
@@ -885,10 +977,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to a JSON fixture file with keys 'body' (str), "
             "'closingIssuesReferences' (list of {'number': N} or plain ints), "
-            "and optionally 'commits' (list of {'messageHeadline':, "
-            "'messageBody':} or plain strings) — same shape as "
-            "`gh pr view --json closingIssuesReferences,body,commits`. Lets "
-            "this check run offline / in tests without hitting GitHub."
+            "optionally 'commits' (list of {'messageHeadline':, "
+            "'messageBody':} or plain strings), and optionally 'title' "
+            "(str, #5321) — same shape as `gh pr view --json "
+            "closingIssuesReferences,body,commits,title`. Lets this check "
+            "run offline / in tests without hitting GitHub."
         ),
     )
     return parser
@@ -924,7 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.pr is not None:
         try:
-            body, closing_refs, commit_messages = fetch_pr_data(args.pr)
+            body, closing_refs, commit_messages, title = fetch_pr_data(args.pr)
         except subprocess.CalledProcessError as exc:
             print(f"gh pr view failed: {exc.stderr}", file=sys.stderr)
             return 2
@@ -936,9 +1029,10 @@ def main(argv: list[str] | None = None) -> int:
         body = raw.get("body") or ""
         closing_refs = _closing_refs_from_fixture(raw.get("closingIssuesReferences"))
         commit_messages = _commit_messages_from_fixture(raw.get("commits"))
+        title = raw.get("title") or ""
         source = args.fixture
 
-    findings = check_contradictions(body, closing_refs, commit_messages)
+    findings = check_contradictions(body, closing_refs, commit_messages, title)
 
     if not findings:
         print(f"OK — no closing-intent contradictions found ({source}).")

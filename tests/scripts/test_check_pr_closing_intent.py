@@ -710,3 +710,135 @@ def test_boundary_3_a_genuine_closes_inside_a_multiline_fence_stays_green():
     # fires here, unaffected by fencing by its own long-standing design:
     findings = m.check_contradictions(body, closing_refs=[])
     assert _checks(findings) == [(1, 4834)]
+
+
+# ---------------------------------------------------------------------------
+# #5321: the PR title itself, when it becomes the squash-merge headline
+# (this repo's own squash_merge_commit_title=COMMIT_OR_PR_TITLE setting —
+# only true for a 2+-commit PR; a 1-commit PR's title never reaches the
+# merge commit, its ONE commit's own title does).
+# ---------------------------------------------------------------------------
+
+
+def test_title_check4_fires_when_2plus_commits_and_body_silent():
+    """Tier 1: #5321 — a closing keyword in the PR TITLE, with 2+ commits
+    (so the title WILL become the squash headline) and the body NOT also
+    declaring closing intent, is the exact #3187/check-4 leak class via a
+    third text GitHub reads."""
+    findings = m.check_contradictions(
+        "part of #5299",
+        closing_refs=[],
+        commit_messages=["first commit", "second commit"],
+        title="fix #5299 regression in the cron runner",
+    )
+    assert _checks(findings) == [(4, 5299)]
+
+
+def test_title_check4_silent_with_only_1_commit():
+    """Tier 1: #5321 — the SAME closing-keyword title, but only 1 commit on
+    the PR: the title never becomes the squash headline (that one commit's
+    own title does, already covered by the commit_messages scan), so
+    flagging it would be a false positive on the common 1-commit PR shape.
+    Must stay silent."""
+    findings = m.check_contradictions(
+        "part of #5299",
+        closing_refs=[],
+        commit_messages=["fix #5299 regression in the cron runner"],
+        title="fix #5299 regression in the cron runner",
+    )
+    # The commit message itself still legitimately fires check 4 — the
+    # title-source scan specifically must not ALSO fire (would double-count
+    # the same #5299 finding, or fire on a title that can't leak).
+    assert _checks(findings) == [(4, 5299)]
+
+
+def test_title_check4_silent_when_body_also_declares_closing():
+    """Tier 1: #5321 — normal/intentional path: the body ALSO writes
+    Closes #N, so the title's declaration is not a contradiction."""
+    findings = m.check_contradictions(
+        "Closes #5299",
+        closing_refs=[5299],
+        commit_messages=["c1", "c2"],
+        title="fix #5299 regression in the cron runner",
+    )
+    assert findings == []
+
+
+def test_title_check4_silent_when_no_title_supplied():
+    """Tier 1: #5321 — backward compatibility, mirrors
+    test_check4_silent_when_no_commit_messages_supplied: omitting title is
+    a no-op even with 2+ commit_messages present."""
+    findings = m.check_contradictions(
+        "part of #5299", closing_refs=[], commit_messages=["c1", "c2"],
+    )
+    assert findings == []
+
+
+def test_title_check4_body_discussing_marker_does_not_exempt_the_title():
+    """Tier 1: #5321 — a discussing marker written in the PR BODY cannot
+    exempt a closing keyword in the TITLE (a different text blob) — the
+    same per-source-blob scoping check 4's commit-message exemption
+    already enforces
+    (test_check4_escape_hatch_does_not_exempt_across_blobs_body_marker_ignored),
+    now true of the title too. The marker would need to be IN the title
+    text itself, which an HTML comment realistically never is."""
+    findings = m.check_contradictions(
+        "part of #5299\n<!-- closing-check: discussing #5299 -->",
+        closing_refs=[],
+        commit_messages=["c1", "c2"],
+        title="fix #5299 regression in the cron runner",
+    )
+    assert _checks(findings) == [(4, 5299)]
+
+
+def test_title_check5_fires_on_negated_keyword_with_2plus_commits():
+    """Tier 1: #5321 — the real #4834/#4986 negated-keyword shape, but in
+    the PR title with 2+ commits: GitHub's parser does not read the
+    negation, only the keyword+#N substring in the squash headline. Check
+    4 legitimately fires alongside check 5 here too — the negated phrase
+    IS still a syntactic closing declaration (``_CLOSING_RE`` does not
+    understand negation either), and the body does NOT also declare
+    closing intent for #4834, so check 4's own body-vs-title contradiction
+    is real and independent — the same "check 1 fires alongside check 5"
+    property
+    ``test_check5_fires_unconditionally_even_when_the_parser_disagrees_with_the_negation``
+    already documents for the body/parser pairing, now true of check
+    4/title too."""
+    findings = m.check_contradictions(
+        "body text",
+        closing_refs=[],
+        commit_messages=["c1", "c2"],
+        title="does not close #4834 in this PR",
+    )
+    assert _checks(findings) == [(4, 4834), (5, 4834)]
+
+
+def test_title_check5_silent_with_only_1_commit():
+    """Tier 1: #5321 — the same negated title, but only 1 commit: the
+    title never becomes the squash headline, so check 5's title-source
+    scan must stay silent (check 5's own body/commit-message scans are
+    unrelated and also stay silent here since neither text carries the
+    phrase)."""
+    findings = m.check_contradictions(
+        "body text",
+        closing_refs=[],
+        commit_messages=["c1"],
+        title="does not close #4834 in this PR",
+    )
+    assert findings == []
+
+
+def test_title_scan_does_not_duplicate_a_commit_message_finding():
+    """Tier 1: #5321 — a real PR where the title AND a commit message
+    independently carry the same closing keyword for the same #N (2+
+    commits) produces exactly ONE check-4 finding for #N per source that
+    actually carries it — the commit-message scan and the title scan are
+    independent sources, each correctly reporting its own leak, not one
+    check silently absorbing the other's job."""
+    findings = m.check_contradictions(
+        "part of #5299",
+        closing_refs=[],
+        commit_messages=["fix #5299 in the cron runner", "second commit"],
+        title="fix #5299 regression in the cron runner",
+    )
+    assert _checks(findings) == [(4, 5299), (4, 5299)]
