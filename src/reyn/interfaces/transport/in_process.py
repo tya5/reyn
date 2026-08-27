@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, AsyncIterator
 
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -102,9 +103,20 @@ class InProcessTransport(ClientTransport):
         # renderer-relevant subset onto the unified stream. Non-renderer events
         # are dropped here — the transport carries the renderer's vocabulary,
         # not every audit-event.
+        #
+        # #5041 ①: this callback is only ever subscribed to the CURRENTLY
+        # attached session (rewired on every /attach — see
+        # ``AgentRegistry._wire_focus_listeners``), so ``attached_name`` read
+        # fresh at call time is always the true origin, no local tracking
+        # needed (unlike ``_pump_outbox`` below, where multiple sessions'
+        # items can coexist in the SAME queue during a switch race).
+        # ``getattr(..., None)`` — a test double standing in for the registry
+        # need not implement this property; ``agent`` degrades to its own
+        # default (``None``), same as before this field existed.
         etype = getattr(event, "type", None)
         if etype in self._forward_events:
-            self._frames.put_nowait(EventFrame(event))
+            agent = getattr(self._registry, "attached_name", None)
+            self._frames.put_nowait(EventFrame(event, agent=agent))
 
     async def _pump_outbox(self) -> None:
         # Re-tag the display outbox onto the unified stream, preserving order.
@@ -117,13 +129,31 @@ class InProcessTransport(ClientTransport):
         # (the very stream a switch swaps). Pass an already-tagged frame
         # through UNCHANGED; only a bare ``OutboxMessage`` gets re-tagged as a
         # ``DisplayFrame`` here.
+        #
+        # #5041 ①: ``current_agent`` tracks WHOSE frames are flowing through
+        # this queue right now, updated only by the ``session_attached``
+        # barrier itself — never by re-querying live registry state at drain
+        # time, which could race a switch that happens between an item's PUT
+        # (gated on ``is_attached`` at that moment, in the registry's own
+        # ``_forwarder``) and this GET. The barrier's own documented FIFO
+        # property (registry.py's ``_announce_session_attached``: "before
+        # this frame = old session's frames, after = new session's frames")
+        # is exactly what makes queue-position-based tracking correct where
+        # real-time state would not be. Seeded from ``attached_name`` so the
+        # FIRST batch of frames (before any switch/barrier has been seen)
+        # is still attributed, not left at the field's own ``None`` default.
         outbox = self._registry.repl_outbox
+        current_agent = getattr(self._registry, "attached_name", None)
         while True:
             item = await outbox.get()
             if isinstance(item, EventFrame):
+                if item.event.type == "session_attached":
+                    current_agent = item.event.data.get("agent", current_agent)
+                if item.agent is None:
+                    item = replace(item, agent=current_agent)
                 self._frames.put_nowait(item)
                 continue
-            self._frames.put_nowait(DisplayFrame(item))
+            self._frames.put_nowait(DisplayFrame(item, agent=current_agent))
             if item.kind == "__end__":
                 return
 
