@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from reyn.llm.llm import _apply_g12_signal
+from reyn.llm.llm import _G12_SIGNAL_TEXT, _apply_g12_signal
 
 # ── 1. No-op gate (= signal must NOT fire on non-post-tool turns) ─────────
 
@@ -72,7 +72,7 @@ def test_json_tool_content_gets_top_level_signal_field() -> None:
     new_tool = result[-1]
     assert new_tool["role"] == "tool"
     parsed = json.loads(new_tool["content"])
-    assert parsed["_g12_signal"] == "resume"
+    assert parsed["_g12_signal"] == _G12_SIGNAL_TEXT
     assert parsed["status"] == "ok"
     assert parsed["data"] == {"path": "foo.md"}
 
@@ -129,7 +129,7 @@ def test_plain_text_tool_content_gets_prefix() -> None:
     ]
     result = _apply_g12_signal(msgs)
     new_content = result[-1]["content"]
-    assert new_content.startswith("resume")
+    assert new_content.startswith(_G12_SIGNAL_TEXT)
     assert new_content.endswith("plain text result")
 
 
@@ -173,8 +173,8 @@ def test_canonical_frontmatter_tool_content_has_no_bare_resume_prefix() -> None:
     sent = result[-1]["content"]
 
     # Core #2689 guard: no foreign token glued to the front of the op result.
-    assert not sent.startswith("resume"), (
-        "canonical tool content must not carry a bare 'resume' prefix (#2689)"
+    assert not sent.startswith(_G12_SIGNAL_TEXT), (
+        "canonical tool content must not carry a bare, unlabeled signal prefix (#2689)"
     )
     # The signal is still present — the workaround must not be silently dropped.
     assert "_g12_signal" in sent
@@ -182,7 +182,7 @@ def test_canonical_frontmatter_tool_content_has_no_bare_resume_prefix() -> None:
     assert sent.startswith("---\n")
     fm_block, body = sent[4:].split("\n---\n", 1)
     parsed = yaml.safe_load(fm_block)
-    assert parsed["_g12_signal"] == "resume"
+    assert parsed["_g12_signal"] == _G12_SIGNAL_TEXT
     # Original op metadata + body survive intact (the tool result the model
     # reads is the real result, not a mangled one).
     assert parsed["op"] == "read"
@@ -226,7 +226,7 @@ def test_empty_json_object_produces_valid_json() -> None:
     new_content = result[-1]["content"]
     # Must parse cleanly
     parsed = json.loads(new_content)
-    assert parsed["_g12_signal"] == "resume"
+    assert parsed["_g12_signal"] == _G12_SIGNAL_TEXT
     # No other fields (= the only key is the signal)
     assert list(parsed.keys()) == ["_g12_signal"]
 
@@ -304,7 +304,7 @@ def test_realistic_polluted_history_post_tool_shape() -> None:
 
     # Trailing tool message got the signal field
     parsed = json.loads(result[-1]["content"])
-    assert parsed["_g12_signal"] == "resume"
+    assert parsed["_g12_signal"] == _G12_SIGNAL_TEXT
     assert parsed["status"] == "ok"
 
     # Prior snowball-style assistant message is left untouched (= helper
@@ -356,7 +356,7 @@ def test_success_vs_error_signal_differential() -> None:
     error signal. Same code path, status-driven branch."""
     ok_signal = _signal_of('{"status": "ok", "data": 1}')
     err_signal = _signal_of('{"status": "error", "error": "x"}')
-    assert ok_signal == "resume"                  # success cell = uniform resume
+    assert ok_signal == _G12_SIGNAL_TEXT           # success cell = uniform continuation token
     assert "complete" not in err_signal.lower()   # error cell suppresses it
     assert ok_signal != err_signal
 
@@ -366,10 +366,10 @@ def test_absent_and_non_json_status_use_success_cell() -> None:
     unparseable `{`-string, and plain-text content all fall to the success cell
     (byte-identical signal), so the error path is narrow (replay-gate bound)."""
     # status absent → success
-    assert _signal_of('{"data": 5}') == "resume"
+    assert _signal_of('{"data": 5}') == _G12_SIGNAL_TEXT
     # plain-text content → success (prefix form)
     plain = _apply_g12_signal([{"role": "tool", "content": "just text"}])[-1]["content"]
-    assert plain.startswith("resume")
+    assert plain.startswith(_G12_SIGNAL_TEXT)
     assert "resume" in plain
 
 
@@ -409,21 +409,48 @@ def test_nested_ok_under_data_uses_success_cell() -> None:
     {"status":"ok","data":{...,"status":"ok"}} uses the success cell
     (nested ok must NOT false-trigger the error cell)."""
     content = '{"status": "ok", "data": {"kind": "file", "status": "ok", "data": {}}}'
-    assert _signal_of(content) == "resume"
+    assert _signal_of(content) == _G12_SIGNAL_TEXT
 
 
 # ── 7. stage-0: success cell is now "resume" (uniform continuation) ──────────
 # The prior text asserted "task complete" unconditionally — overstate for many
-# op kinds. The new text is "resume" — the same token used by the chat
+# op kinds. The new text carries "resume" — the same token used by the chat
 # empty-stop recovery path — a pure continuation nudge with no state assertion.
 # Error cell (#1441) is unchanged.
+#
+# #5273: the bare token "resume" landed in the CONTENT position indistinguish-
+# ably from a human instruction — an agent reading a synthetic {"role": "user",
+# "content": "resume"} (the EMPTY_STOP_RETRY_DIRECTIVE sibling injection) read
+# it as "someone told me to resume" and answered with a status-report turn,
+# leaving the real inbox instruction undigested. The fix is not a different
+# word (ANY word in the content position reads as content) but a self-
+# describing, attributed form — see test_success_cell_is_self_describing_
+# and_uniform_with_the_directive below.
 
 
-def test_success_cell_is_resume() -> None:
-    """Tier 2: stage-0 — the success cell text is exactly "resume" (uniform
-    continuation signal). No state assertion, no instruction."""
+def test_success_cell_is_self_describing_and_uniform_with_the_directive() -> None:
+    """Tier 1: #5273 — the success cell shares the SAME token as
+    ``EMPTY_STOP_RETRY_DIRECTIVE`` (uniform nudge vocabulary across both
+    recovery paths, #187 — architect ruling #5273 explicitly preserves this),
+    and that shared token is now self-describing: it states what it is and
+    that it is not an instruction from anyone, so a reader (human or agent)
+    cannot mistake it for an inbox instruction. Asserts the PAYLOAD CONTRACT
+    (attribution + negation clause present) — never "does the agent actually
+    reply" (an LLM behavior, not something a test pins, per architect's own
+    witness scoping for #5273)."""
     from reyn.llm.llm import _G12_SIGNAL_TEXT
-    assert _G12_SIGNAL_TEXT == "resume"
+    from reyn.prompt.loop_control import EMPTY_STOP_RETRY_DIRECTIVE
+
+    assert _G12_SIGNAL_TEXT == EMPTY_STOP_RETRY_DIRECTIVE
+    assert "resume" in _G12_SIGNAL_TEXT.lower()
+    # Negation clause: architect review (#5274) — "instruction" present AND
+    # a bare "no"/"not" somewhere is vacuously true even for a SENTENCE
+    # ASSERTING the opposite (e.g. "an instruction ..., no reply needed"
+    # passes both clauses while stating exactly what this fix must NOT
+    # say). Pin the actual negation phrase instead — this is reyn's own
+    # authored prose (not third-party text), so pinning it is legitimate,
+    # and the phrase IS the property under test.
+    assert "not an instruction" in _G12_SIGNAL_TEXT.lower()
 
 
 def test_success_cell_contains_no_task_complete() -> None:
@@ -444,12 +471,13 @@ def test_error_cell_unchanged_by_stage0() -> None:
 
 
 def test_two_cell_differential() -> None:
-    """Tier 2: stage-0 — falsification pair: success → "resume"; error → error
-    cell. The two must be distinct, and success must not contain "complete"."""
+    """Tier 2: stage-0 — falsification pair: success → the uniform
+    continuation token; error → error cell. The two must be distinct, and
+    success must not contain "complete"."""
     from reyn.llm.llm import _G12_SIGNAL_ERROR_TEXT, _G12_SIGNAL_TEXT
     ok_signal = _signal_of('{"status": "ok", "data": 1}')
     err_signal = _signal_of('{"status": "error", "error": "x"}')
-    assert ok_signal == _G12_SIGNAL_TEXT == "resume"
+    assert ok_signal == _G12_SIGNAL_TEXT
     assert err_signal == _G12_SIGNAL_ERROR_TEXT
     assert ok_signal != err_signal
     assert "complete" not in ok_signal.lower()

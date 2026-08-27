@@ -7,13 +7,14 @@ injection point (the system-prompt golden diff in ``router_frame.py`` etc.
 does not cover these — they never touch ``build_system_prompt``):
 
 - **§I** ``reyn.runtime.router_loop.RouterLoop`` — the empty-stop retry
-  directive, appended as a synthetic ``{"role": "user", ...}`` message before
-  one re-entry of the loop (#187).
+  directive, appended as a synthetic ``{"role": "system", ...}`` message
+  before one re-entry of the loop (#187; role changed from ``user`` to
+  ``system`` in #5273 — see ``EMPTY_STOP_RETRY_DIRECTIVE``'s own comment).
 - **§J** ``reyn.llm.llm._apply_g12_signal`` — the G12 post-tool empty-stop
   attractor workaround: a continuation signal embedded in the trailing
-  ``role=tool`` message (success cell = the SAME "resume" token as §I, by
-  design — #187's "uniform resume" philosophy; error cell = a distinct
-  decision-enabling text).
+  ``role=tool`` message (success cell = the SAME token as §I, by design —
+  #187's "uniform resume" philosophy, self-describing since #5273; error
+  cell = a distinct decision-enabling text).
 - **§K** ``reyn.runtime.router_loop.RouterLoop._tool_call_cap_notice`` — the
   re-grounding notice appended after a per-turn ``tool_calls`` cap fires
   (#1666). Parameterized (``attempted``/``kept`` counts are dynamic; the
@@ -36,30 +37,61 @@ from __future__ import annotations
 # WHEN: only when a router turn ends with an empty (no tool_calls, no text)
 #       completion — at most once per turn (#187 B43-NF-W6-1).
 # WHERE: reyn.runtime.router_loop.RouterLoop.run() — appended as a synthetic
-#        ``{"role": "user", "content": EMPTY_STOP_RETRY_DIRECTIVE}`` message,
+#        ``{"role": "system", "content": EMPTY_STOP_RETRY_DIRECTIVE}`` message,
 #        then the loop re-enters once.
 # WHY: a content-neutral "resume" token re-enters the loop and lets the model
 #      continue (tool-call OR reply) on its own — evidenced to recover 11/12
 #      real-task empty stops vs 67% premature-stop baseline. Owner decision
 #      (2026-06-07): uniform across every construction site, no per-site
 #      differentiation without evidence.
+#
+# #5273: the token used to be the bare string "resume", landing at the
+# CONTENT position of a synthetic message with no marker distinguishing it
+# from something a person typed. An agent reading it had no way to tell
+# "reyn's own scheduler nudged me to continue" apart from "someone told me
+# to resume" — and correctly answered the latter with a status-report turn
+# (the InboxArbiter's real, undigested instruction never got read that
+# turn). No choice of WORD fixes this: whatever token occupies the content
+# position of a message IS content, indistinguishable from an instruction,
+# regardless of its literal text (architect ruling, #5273) — so the fix is
+# the DELIVERY shape, not the vocabulary: role="system" (this constant is
+# no longer wrapped in a role="user" message — see the call site) plus a
+# self-describing, attributed value: a parenthesized source tag (same
+# "(<tag>) <text>" shape G12_SIGNAL_ERROR_TEXT below already uses —
+# parens, not the ``[hook:<name>]`` bracket convention
+# ``_format_ride_along_attribution`` (session.py) uses for a FULL
+# standalone message, because THIS token also gets embedded as a bare
+# YAML frontmatter scalar value in ``_apply_g12_signal``'s canonical-
+# tool-content branch, where a leading ``[`` is a flow-sequence
+# indicator, not literal text — verified: it broke ``yaml.safe_load`` in
+# this PR's own test until switched to parens) and an explicit negation
+# clause ("not an instruction ..."). The vocabulary itself stays uniform
+# — one token, shared verbatim by G12_SIGNAL_TEXT below, same as before;
+# only its self-description is new.
 # 日本語訳: ルーターのターンが空応答（tool_callsもテキストも無し）で終わった
-#      場合にのみ、ターンにつき最大1回、合成 user メッセージとして付与される
-#      継続トークン。内容を持たない「resume」がループを再開させ、モデル自身に
-#      次の一手（tool呼び出しまたは返信）を委ねる。全構築サイトで一律。
-EMPTY_STOP_RETRY_DIRECTIVE = "resume"
+#      場合にのみ、ターンにつき最大1回、合成 system メッセージとして付与される
+#      継続トークン。#5273: 裸の「resume」は内容欄に来ると人の指示と区別が
+#      つかなかった（agentが状態報告を返し、受信箱の指示が消化されなかった）
+#      ため、帰属タグと否定節を持つ自己記述形にした。語彙自体は1つのまま。
+EMPTY_STOP_RETRY_DIRECTIVE = (
+    "(reyn-auto-continue) resume - automatic continuation signal from reyn's"
+    " own scheduler, not an instruction from anyone. No reply needed;"
+    " continue the interrupted work."
+)
 
 # WHEN: every successful (non-error) trailing ``role=tool`` result, when the
 #       G12 signal is enabled (default on; ``REYN_G12_SIGNAL=off`` disables).
 # WHERE: reyn.llm.llm._apply_g12_signal — embedded inside the trailing tool
 #        message's content (JSON ``_g12_signal`` field, or a frontmatter
 #        field, or a plain-text prefix, depending on the tool content shape).
-# WHY: #187 "uniform resume" — the SAME content-neutral continuation token as
-#      EMPTY_STOP_RETRY_DIRECTIVE (by design, not coincidence), so the model
-#      reads one consistent nudge vocabulary across both recovery paths.
+# WHY: #187 "uniform resume" — the SAME continuation token as
+#      EMPTY_STOP_RETRY_DIRECTIVE (by design, not coincidence, and #5273
+#      preserves this: one shared value, not two divergent tokens), so the
+#      model reads one consistent, self-describing nudge vocabulary across
+#      both recovery paths.
 # 日本語訳: 成功した末尾の role=tool 結果に埋め込まれる継続シグナル。
 #      EMPTY_STOP_RETRY_DIRECTIVE と意図的に同じトークン（#187「一律resume」
-#      方針）。
+#      方針、#5273 でも維持）。
 G12_SIGNAL_TEXT = EMPTY_STOP_RETRY_DIRECTIVE
 
 # WHEN: every ERRORED trailing ``role=tool`` result (status in
