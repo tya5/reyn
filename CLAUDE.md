@@ -133,7 +133,8 @@ Path-conditional gates:
 7. **A reviewer's blocking point goes in the PR body** as `- [ ] 🔴 <point>` — and closing it takes a comment quoting that line verbatim; ticking alone leaves no record and the gate stays red (#5314). A `BLOCKING (head <sha>)` / `BLOCKING-CLEARED (head <sha>)` comment pair is the equivalent comment-only form. Rule 4 applies to that edit too.
    - Verbatim has two different targets: `BLOCKING-CLEARED` quotes the `BLOCKING` comment's **identifying line** (its first non-empty line after the marker), never a summary; a checked `- [x] 🔴` needs a comment quoting **that line itself**, not restated in the body. One comment can cover several checked lines.
 8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ claim lands as a comment's FIRST line** (marker + head SHA together; grounds go from line 2 on).
-9. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
+9. **`update-branch` only on a real conflict** (`mergeable=CONFLICTING`), and **never re-run a gate by hand** — a merely-behind branch is fine as it is, both PR pushes and comments already trigger the gates that read them, and each needless run costs a full matrix on a saturable resource (#4239).
+10. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
 **Issue-triage label `blocked:external`** — needs owner judgment or an upstream
 dependency. An open issue WITHOUT it is pickable by any peer session.

@@ -1,0 +1,36 @@
+# `main`'s required_status_checks.strict is deliberately false (#4239). What
+# that costs, and what already pays for it, is written once — in
+# main-hourly-gate-sweep.yml's own header (#4257). Do not restate it here.
+#
+# This gate exists because the pressure to switch strict back ON is real and
+# recurring: it looks like the fix the first time two independently-green PRs
+# combine into a red `main`. It is not — the fix is a fixing PR, and the
+# composition gap already has the witness that header describes. A CLAUDE.md
+# rule could not enforce this anyway (any session with admin flips the setting
+# in one API call), so the check lives here, where it is mechanical and has no
+# false positives.
+name: branch protection strict stays off
+on:
+  schedule: [{cron: "17 * * * *"}]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: main's required_status_checks.strict must be false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          strict=$(gh api "repos/${GITHUB_REPOSITORY}/branches/main/protection" \
+                     --jq '.required_status_checks.strict')
+          echo "required_status_checks.strict = ${strict}"
+          if [ "${strict}" != "false" ]; then
+            echo "::error::strict is '${strict}', expected 'false'. Turning it back on"
+            echo "::error::re-creates the update-branch storm #4239 measured. If a red main"
+            echo "::error::sent you here, see main-hourly-gate-sweep.yml's header: that gap"
+            echo "::error::already has a witness, and the fix is a fixing PR."
+            exit 1
+          fi

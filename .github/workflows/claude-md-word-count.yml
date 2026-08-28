@@ -1,0 +1,28 @@
+# CLAUDE.md loads into every session, so its word count is the cost of every
+# rule in it — which is why the file itself asks for `wc -w` in any PR that
+# touches it. Three PRs in a row reported that number wrong (a value read at
+# some intermediate head, not the one being merged), so the number is printed
+# here instead of transcribed by hand. Report-only: it never fails.
+name: CLAUDE.md word count
+on:
+  pull_request:
+    paths: ["CLAUDE.md", "**/CLAUDE.md"]
+permissions:
+  contents: read
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: {fetch-depth: 0}
+      - name: word count, this head vs the base
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          git fetch -q origin "${{ github.base_ref }}"
+          for f in $(git diff --name-only "${base}...HEAD" | grep -E '(^|/)CLAUDE\.md$' || true); do
+            now=$(wc -w < "${f}")
+            was=$(git show "${base}:${f}" 2>/dev/null | wc -w || echo 0)
+            printf '%s: %s -> %s (%+d words)\n' "${f}" "${was}" "${now}" "$((now - was))" \
+              | tee -a "${GITHUB_STEP_SUMMARY}"
+          done
