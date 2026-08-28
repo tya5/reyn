@@ -62,9 +62,33 @@ class Agent:
     workspace_base_dir: "Path | None" = None
     workspace_state_dir: "Path | None" = None
 
-    # Exec + FS seams (agent-level-uniform backends, #1200). ``sandbox_config`` is
-    # the exec-tool gating config; ``sandbox_backend`` is the SandboxBackend
-    # INSTANCE; ``environment_backend`` is the EnvironmentBackend INSTANCE.
+    # Exec + FS seams (agent-level-uniform backends, #1200 — "agent-level"
+    # there names the SCOPE the backend stays uniform ACROSS (one agent's
+    # own chat/planner/phase run-modes), not "narrowed differently per
+    # agent"). ``sandbox_config`` is the exec-tool gating config;
+    # ``sandbox_backend`` is the SandboxBackend INSTANCE;
+    # ``environment_backend`` is the EnvironmentBackend INSTANCE.
+    #
+    # #5352 (lens 5, security — reading (A) ruled by architect,
+    # issuecomment-5450347844): DESPITE living on a per-agent ``Agent``
+    # instance, ``sandbox_config`` today is the SAME object for every
+    # agent in a process — SessionFactoryConfig.from_config threads the
+    # ONE process-wide ``ReynConfig.sandbox`` (loaded once from
+    # reyn.yaml/reyn.local.yaml) to every agent's factory construction,
+    # unmodified; no code path narrows it per agent name. A field named
+    # on a per-agent dataclass reads as a per-agent narrowing point —
+    # there is no way to notice from here alone that it is not one.
+    # Consequence: reyn.yaml's absolute-path fields (``allow_write_paths``
+    # etc.) grant write access to every agent in the process equally,
+    # including one whose own worktree differs from the path an operator
+    # wrote for a DIFFERENT agent — harmless while every agent in a
+    # deployment is equally trusted, live the moment they are not.
+    # Deliberately NOT fixed by adding per-agent narrowing here — that is
+    # a NEW capability #1200 never decided to build, and a security
+    # capability's own promise ("this can be narrowed per agent") needs
+    # its own owner-level decision on who sets it (operator vs. a
+    # spawning model) before it exists at all — tracked as a SEPARATE
+    # question in #5352, not resolved by this disclosure.
     sandbox_config: Any = None
     sandbox_backend: Any = None
     environment_backend: Any = None

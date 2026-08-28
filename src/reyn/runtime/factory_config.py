@@ -134,6 +134,10 @@ class SessionFactoryConfig:
         # same validated snapshot.
         presentation_registry = build_presentation_registry(config.presentations)
         return cls(
+            # #5352: this ONE SandboxConfig instance is threaded, unmodified,
+            # to every agent's Agent.sandbox_config this factory constructs
+            # for THIS process — see that field's own docstring (agent.py)
+            # for the consequence (process-wide, not per-agent narrowed).
             sandbox_config=config.sandbox,
             multimodal_config=config.multimodal,
             # #4274: the previously-dead web_fetch.* config, now threaded live.
