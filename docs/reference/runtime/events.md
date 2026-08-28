@@ -41,6 +41,7 @@ agent_request_received
 agent_response_committed
 agent_response_received
 asyncio_unhandled_exception
+behavior_anomaly_judged
 body_summary_hard_truncated
 budget_caps_updated
 budget_reset
@@ -394,7 +395,7 @@ Each Control IR op kind emits its own event:
 | Kind | When |
 |------|------|
 | `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
-| `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `argv0_resolved`, `backend`; `completed`: `argv`, `argv0_resolved`, `backend`, `returncode`, `denial_class`. `argv0_resolved` (#2820) is the absolute path actually executed: a version-manager shim (`~/.pyenv/shims/python3`) is resolved to its real binary by reading the manager's on-disk layout (part A — filesystem-only, no subprocess) so the sandbox runs the real binary directly instead of the shim, whose launch-`fork()` would die under `(deny process-fork)`; equals the plain PATH resolution for a non-shim command, or the unchanged `argv[0]` when resolution is unavailable (fail-open). `denial_class` is `"fork_denied"` when the sandbox blocked `fork()` at a PATH launcher/shim (pyenv/asdf/mise/npx/uvx) under `(deny process-fork)`, else `null` — an environment/config condition, not a tool failure |
+| `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `argv0_resolved`, `backend`; `completed`: `argv`, `argv0_resolved`, `backend`, `returncode`, `denial_class`. `argv0_resolved` (#2820) is the absolute path actually executed: a version-manager shim (`~/.pyenv/shims/python3`) is resolved to its real binary by reading the manager's on-disk layout (part A — filesystem-only, no subprocess) so the sandbox runs the real binary directly instead of the shim, whose launch-`fork()` would die under `(deny process-fork)`; equals the plain PATH resolution for a non-shim command, or the unchanged `argv[0]` when resolution is unavailable (fail-open). `denial_class` is `"fork_denied"` when the sandbox blocked `fork()` at a PATH launcher/shim (pyenv/asdf/mise/npx/uvx) under `(deny process-fork)`, `"network_denied"` when it blocked outbound `connect()` because the op's own `network` field is unset/false (#5244①), else `null` — an environment/config condition, not a tool failure |
 | `mcp_called`, `mcp_completed`, `mcp_failed`, `mcp_cancelled` | MCP tool ops — `mcp_cancelled` (#2813) fires instead of `mcp_completed`/`mcp_failed` when a Ctrl-C `cancel_event` interrupts an in-flight call before it completes |
 | `mcp_media_denied` | #4946 — an MCP tool response carried an image whose byte size the multi-modal gate (`require_media_load`, same shared gate as `file_read_media_denied`/`web_fetch_media_denied`) rejected under `multimodal.on_oversize=deny` (or an `ask` prompt the operator declined). Gated PER IMAGE, not per call — an MCP tool can return several images in one response, and one oversized image is dropped (replaced with a text denial note) without discarding the rest of the result. `server`, `tool`, `size_bytes`, `mime_type` |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
@@ -524,6 +525,34 @@ Required fields are declared in `src/reyn/core/events/event_schema.py`.
 | `project_context_changed` | Turn boundary, emitted by TWO `ProjectContextWatcher` instances per session (`src/reyn/runtime/project_context_watch.py`, #3787/#4263) — tell them apart by `path`. **Project-wide file** (`project_context_path` → `AGENTS.md` / `REYN.md`): **detection only** — the file is scanned, not fenced (#4830 — operator/agent-editable content, the same trust class as Claude Code's CLAUDE.md, backstopped by the file-write permission gate rather than a per-turn fence marker), but the live `project_context` a session's system prompt was built with is frozen at construction and NOT reloaded from this signal (owner ruling, #3787: this file is read once at startup by design, not hot). **Per-agent file** (`.reyn/agents/<agent_name>/AGENTS.md`, owner ruling B, #3787): DOES reload — but not because of this event. `RouterHostAdapter.get_project_context` reads this file fresh on every call regardless (it is already invoked live every turn, never from a memoized value), so an edit is reflected on the very next turn with no dependency on this watcher firing at all; this event is purely the audit-event signal that an edit was *observed*, for the same reason every other `*_changed` kind exists (band: observability). Either way: fires once per edit, never repeats until the file changes again (mtime comparison, not content hash — same content re-touched, e.g. a branch switch, can still fire once). | `path` |
 | `visibility_changed` | #5276/#5277 — `Session.set_capability_visible` (the `/visibility` command's own seam) was called for THIS session. Fires unconditionally once the forwarded `CapabilityVisibility.set_capability_visible` call returns without raising — this records the OPERATOR'S OWN toggle action, not whether the effective, envelope-gated visibility actually changed (toggling ON a capability the agent's envelope denies is a no-op for the live gate, per that method's own docstring, but the override is still recorded and this event still fires — charter lens 7: reconstructable from the audit-event trail). `applied` (architect review, same rule as `hook_changed` below) means "the override was written", always `True` here since this method never reaches the emit past its one raising case (an unknown `kind`); it does NOT mean "the live, envelope-gated visibility ended up matching the request" — that deeper distinction is a disclosed, NOT-yet-closed gap (see `Session.set_capability_visible`'s own docstring). | `kind` (`tool`/`mcp`/`category`/`skill`), `name`, `on`, `applied` |
 | `hook_changed` | #5276/#5277 — `Session.set_hook_enabled` (the `/hook` command's own seam) was called for THIS session. Fires on BOTH outcomes (architect BLOCK, #5277: a kind that only ever fires on success cannot answer "why is this protected hook still running after someone tried to stop it" — #5041/#5213 — and the meaning cannot be widened later without changing what already-logged events of this kind mean, #5261's rejected shape): a genuine change to `_disabled_hooks` (`applied=True`), or a #5230 refusal of a `disable` request for a `startup`/`runtime`-origin hook (`applied=False`, `_disabled_hooks` untouched — the attempt itself is the fact worth recording). | `name`, `enabled` (the request), `applied`, `origin` (the hook's most-specific origin, `None` for an unresolved name) |
+
+## Behavioral anomaly detector
+
+`behavior_anomaly_judged` (#5221) — the ONLY producer is the
+`emit_behavior_anomaly_verdict` tool (`src/reyn/tools/emit_behavior_anomaly_verdict.py`),
+called from a `tool` step in the `src/reyn/data/pipelines/behavior_anomaly.yaml`
+pipeline right after its judge `agent` step answers. NOT a "prompt-injection
+detector" (architect ruling, issue #5221): the judge is constrained to a
+CLOSED vocabulary of op-kind counts/booleans (never raw message text — see
+`reyn.runtime.turn_behavior_tally`), so it can flag that a turn's
+OPERATIONS looked unusual, never that its TEXT contained an injection.
+Launched from a `turn_end` hook, which fires AFTER the turn — this can only
+alert on / gate the NEXT turn, never prevent the one that carried the
+behavior (detection, not prevention).
+
+**Three states, join by `chain_id` against `turn_settled`/`turn_completed`
+above — never conflate them**: (1) `verdict: "suspicious"` — actionable;
+(2) `verdict: "clean"` — asymmetric trust: means ONLY "the judge did not
+flag this turn", never "verified clean" (a judge successfully talked out of
+alarming is indistinguishable from a genuinely clean turn from the outside);
+(3) a `chain_id` with `turn_settled` but NO matching `behavior_anomaly_judged`
+at all — "the judge did not run" (below the deterministic escalation
+threshold, or the pipeline launch itself failed) — a DIFFERENT state from
+(2), not a variant of it.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `behavior_anomaly_judged` | The judge `agent` step answered and its `tool` step recorded the verdict. Opt-in — nothing fires until an operator registers both the pipeline (`pipelines.entries`) and a `turn_end` `pipeline_launch` hook naming it. | `verdict` (`clean` \| `suspicious`), `chain_id`, `anomalous_op_count` (the sensitive-op tally that triggered escalation) |
 
 ## Tool dispatch
 
