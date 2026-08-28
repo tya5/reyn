@@ -79,6 +79,34 @@ def test_pinned_agent_is_excluded_entirely(tmp_path):
     )
 
 
+def test_pin_matches_through_safe_token_normalization(tmp_path):
+    """Tier 2: lead-coder BLOCKING (#5417) — the previous pin test used
+    agent names ("alice"/"bob") that are both FIXED POINTS of
+    _safe_token, so it could not witness the normalization itself:
+    stripping the `_safe_token(...)` call from the pin-matching set
+    would still pass with those names. An agent name with a space is
+    NOT a fixed point (on-disk it becomes "my_agent") — this is the
+    real witness. Direction matters: without normalization,
+    `pin: ["my agent"]` would silently fail to match the on-disk
+    "my_agent" segment, letting a declared-pinned agent's content
+    silently re-enter the candidate set — the exact "protection
+    declared, protection lost, nobody told" shape #5416 tracks for
+    config-value fallbacks; this is the same shape for path-matching."""
+    weird = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="my agent", session_id="main",
+    )
+    block = weird.save_tool_result("weird agent content", mime_type="text/plain", seq=1)
+
+    root = history_content_root_for(tmp_path)
+    candidates = cross_session_eviction_candidates(root, pin=["my agent"])
+
+    assert (tmp_path / block["path"]).resolve() not in candidates, (
+        "pin=['my agent'] must exclude the on-disk 'my_agent' directory "
+        "— the pin set must be normalized through the SAME _safe_token "
+        "the write path already applied, or this match silently fails"
+    )
+
+
 def test_pinning_every_agent_leaves_no_candidates(tmp_path):
     """Tier 2: control — pinning every agent that has written content
     leaves an EMPTY candidate list (not an error), the shape the
