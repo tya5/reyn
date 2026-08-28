@@ -1245,8 +1245,13 @@ class RouterHistoryBuffer:
         )
 
         def _save(c: "str | dict", **kw: Any) -> dict:
+            # #5387: ``chain_id`` arrives via ``**kw`` now — forwarded by
+            # ``cap_tool_result_content`` from the ``chain_id=chain_id``
+            # passed below (this method's OWN param, not a separate
+            # value) — NOT hardcoded here too, which would collide
+            # ("got multiple values for keyword argument 'chain_id'").
             return self._media_store.save_tool_result(
-                c, chain_id=chain_id, tool=tool, seq=seq, **kw
+                c, tool=tool, seq=seq, **kw
             )
 
         replacement = cap_tool_result_content(
@@ -1257,6 +1262,7 @@ class RouterHistoryBuffer:
             save_fn=_save,
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
             events=self._events,
+            chain_id=chain_id,
         )
         if replacement == content:
             # cap_tool_result_content's own no-op paths (cap<=0, or the

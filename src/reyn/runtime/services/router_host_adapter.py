@@ -751,6 +751,7 @@ class RouterHostAdapter:
         content_type: "str | None" = None,
         on_offload: "Callable[[str], None] | None" = None,
         on_write_unavailable: "Callable[[], None] | None" = None,
+        chain_id: str = "",
     ) -> str:
         """#1128 size axis: cap an oversized tool-result string at the
         router_loop chokepoint. Delegates to the session-supplied callable
@@ -762,13 +763,15 @@ class RouterHostAdapter:
         forwarded to the session capper unchanged (identity path ignores it — nothing to store).
 
         ``on_offload`` (#5364 §1.2) / ``on_write_unavailable`` (#5364 §1.5)
-        — forwarded unchanged; optional and additive, every existing
-        caller unaffected."""
+        / ``chain_id`` (#5387, the write-time cap path's own chain — see
+        ``RouterLoop.feedback``'s call sites, which have it as
+        ``self.chain_id``) — forwarded unchanged; optional and additive,
+        every existing caller unaffected."""
         if self._cap_tool_result is None:
             return content_str
         return self._cap_tool_result(
             content_str, content_type=content_type, on_offload=on_offload,
-            on_write_unavailable=on_write_unavailable,
+            on_write_unavailable=on_write_unavailable, chain_id=chain_id,
         )
 
     def media_followup_budget(self, tool_content: str) -> int | None:

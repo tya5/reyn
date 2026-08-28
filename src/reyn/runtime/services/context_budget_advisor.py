@@ -228,6 +228,7 @@ class ContextBudgetAdvisor:
         content_type: "str | None" = None,
         on_offload: "Callable[[str], None] | None" = None,
         on_write_unavailable: "Callable[[], None] | None" = None,
+        chain_id: str = "",
     ) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
@@ -248,6 +249,14 @@ class ContextBudgetAdvisor:
         ``on_write_unavailable`` (#5364 §1.5) — forwarded to
         ``tool_result_cap.cap_tool_result_content``'s own param of the same
         name; optional and additive, every existing caller unaffected.
+
+        ``chain_id`` (#5387) — forwarded unchanged to
+        ``tool_result_cap.cap_tool_result_content``'s own param of the same
+        name (which forwards it to ``store.save_tool_result``, the ONE
+        thing GC needs to tell a still-open turn's content apart from an
+        evictable one — see that store's own docstring). Default ``""``:
+        byte-identical to every caller from before this parameter
+        existed.
         """
         if not self._offload_config.enabled:
             return content_str
@@ -272,6 +281,7 @@ class ContextBudgetAdvisor:
             max_inline_bytes=cfg.max_inline_bytes,
             preview_head_chars=cfg.preview_head_chars,
             preview_tail_chars=cfg.preview_tail_chars,
+            chain_id=chain_id,
         )
 
     def media_followup_budget(self, tool_content: str) -> "int | None":
