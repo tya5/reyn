@@ -394,6 +394,38 @@ _NEGATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# #5032 (2nd instance, PR #5398, 2026-08-28): a word-count-only window has
+# no notion of a CLAUSE — "content_write already reads during the pending
+# window, not after\nflush) -- this PR closes #5384 in full" put "not" (a
+# negation genuinely about the PRECEDING clause, "not after flush") inside
+# the 6-word window before "closes", across a `)` and a `--`, even though
+# the "closes" clause itself never negates anything. #5032's own 1st
+# instance (PR #5031, tracked separately, not this fix's acceptance
+# subject) was the same root cause. Cutting the window at the nearest
+# clause boundary (scanning backward from the keyword) fixes the CLASS,
+# not just this one sentence — architect's own instruction: do not widen
+# the vocabulary or shrink the word count, the defect is the missing
+# boundary, not the window's width (if anything this makes the window
+# NARROWER on average, never wider). A boundary token itself is EXCLUDED
+# from the window — it belongs to the clause it ends, not the one after.
+_CLAUSE_BOUNDARY_RE = re.compile(r"[,;)\.]$|^--$")
+
+
+def _clause_window(preceding_words: "list[str]") -> "list[str]":
+    """Cut *preceding_words* (already at most :data:`_NEGATION_WINDOW_WORDS`
+    long) at the nearest clause boundary, scanning backward from the
+    keyword — a negation word on the OTHER side of a boundary belongs to a
+    different clause and must never be checked. Returns every word from
+    the keyword back to (but not including) the first boundary token
+    encountered; the full list if none is found within the window."""
+    result: "list[str]" = []
+    for word in reversed(preceding_words):
+        if _CLAUSE_BOUNDARY_RE.search(word):
+            break
+        result.append(word)
+    result.reverse()
+    return result
+
 
 def _window_has_negation(window: str) -> bool:
     """True if *window* (the last few words before a closing keyword,
@@ -603,6 +635,7 @@ def find_negated_closing_declarations(body: str) -> set[int]:
     out: set[int] = set()
     for m in _CLOSING_RE.finditer(text):
         preceding_words = text[:m.start()].split()[-_NEGATION_WINDOW_WORDS:]
+        preceding_words = _clause_window(preceding_words)
         window = " ".join(preceding_words).lower()
         if _window_has_negation(window):
             out.add(int(m.group(1)))
