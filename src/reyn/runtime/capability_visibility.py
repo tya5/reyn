@@ -210,6 +210,7 @@ class CapabilityVisibility:
         contextual_permission: "object | None" = None,
         excluded_categories: "frozenset[str] | None" = None,
         chat_tool_use_scheme: "str" = "enumerate-all",
+        sandbox_override: "dict | None" = None,
     ) -> None:
         self._registry = registry
         self._router_host = router_host
@@ -221,6 +222,15 @@ class CapabilityVisibility:
         self._available_skills_provider = available_skills_provider
         self._contextual_permission = contextual_permission
         self._excluded_categories = frozenset(excluded_categories or ())
+        # #5352: the sid-keyed sandbox-policy override — SAME "resolved once at
+        # construction (sid=None -> inert), re-injected by the registry at spawn
+        # time" shape as ``_contextual_permission`` above, mutated ONLY by
+        # ``apply_per_session_sandbox`` (verified: no other code path reassigns
+        # it). ``None`` = no session-layer override; ``Session._sandbox_config``
+        # then falls through to this agent's own ``profile.yaml`` declaration (a
+        # live re-read, same shape ``_agent_profile_preferences`` uses), then to
+        # ``self._agent.sandbox_config`` (the process-wide default).
+        self._sandbox_override = sandbox_override
         # #3220: the chat-layer ``ToolUseScheme`` name (``reyn.tools.scheme.get_scheme``
         # registry key — "enumerate-all" / "universal-category" / "retrieval" / the
         # three content_fence cells' resolved names: (enumerate-all, content_fence) =
@@ -288,6 +298,38 @@ class CapabilityVisibility:
         self._excluded_categories = self._excluded_categories | frozenset(
             excluded_categories or ()
         )
+
+    @property
+    def sandbox_override(self) -> "dict | None":
+        """The live sid-keyed sandbox-policy override (#5352), or ``None`` when
+        this session has none (falls through to the agent/process layers —
+        see ``Session._sandbox_config``)."""
+        return self._sandbox_override
+
+    def apply_per_session_sandbox(self, sandbox_override: "dict | None") -> None:
+        """#5352: re-inject the spawner-resolved per-session sandbox-policy override
+        AFTER spawn-time config resolution — the SAME #2126 shape
+        ``apply_per_session_narrowing`` uses, one axis over.
+
+        Nothing re-resolves this override with the sid on its own: the value a
+        spawn wrote to the child's ``config.yaml`` (``AgentRegistry.
+        resolved_sandbox_for``) is otherwise never enforced, because
+        ``Session._sandbox_config`` reads THIS field, set once at construction
+        (``sid=None`` — no session-scoped config.yaml exists yet at that point).
+        The registry calls this right after spawn-time persist, BEFORE the
+        session's run-loop starts, so the first turn already gates against the
+        resolved value (closes the exact #2126 failure mode for this axis: a
+        narrowing accepted + persisted but never enforced).
+
+        ``sandbox_override`` REPLACES (never composes with) the previous value —
+        unlike ``apply_per_session_narrowing``'s ∩-composition, this is not a
+        restrict-only conjunct layered onto a prior narrowing: it is the single,
+        already-resolved value the #5352 spawn-time priority table produced
+        (same-agent -> the spawner's own effective value; cross-agent + the
+        target agent's profile declares its own -> that declared value;
+        cross-agent + undeclared -> the spawner's value) — resolution happened
+        BEFORE this call, so there is nothing left here to further narrow."""
+        self._sandbox_override = sandbox_override
 
     # ── #2285: session-scoped LLM tool-VISIBILITY toggle (the status-bar seam) ──────────────
 

@@ -3454,37 +3454,45 @@ class AgentRegistry:
         return session
 
     def _persist_session_narrowing(
-        self, name: str, sid: str, narrowing: dict, *, base_dir: "Path | None" = None,
+        self, name: str, sid: str, narrowing: dict, *,
+        base_dir: "Path | None" = None,
+        sandbox: "dict | None" = None,
     ) -> None:
-        """Write ``narrowing`` (+ optionally #4200's ``base_dir`` override) to
-        ``(name, sid)``'s own ``config.yaml`` — the #2103-S1a per-session capability
-        layer, workspace-backed (P5), now ALSO the #4200 per-session ``base_dir``
-        override layer (a SIBLING key in the SAME file — ``Session._workspace_base_dir``
-        reads it directly, not through this narrowing-specific code path).
+        """Write ``narrowing`` (+ optionally #4200's ``base_dir`` override, + #5352's
+        ``sandbox`` override) to ``(name, sid)``'s own ``config.yaml`` — the
+        #2103-S1a per-session capability layer, workspace-backed (P5), now ALSO the
+        #4200 per-session ``base_dir`` override layer AND the #5352 per-session
+        ``sandbox`` override layer (both SIBLING keys in the SAME file —
+        ``Session._workspace_base_dir`` reads ``base_dir`` directly;
+        ``AgentRegistry.resolved_sandbox_for`` reads ``sandbox`` directly — neither
+        goes through this narrowing-specific code path).
 
-        The single WRITER of that file, so the two spawn entry points cannot drift from
+        The single WRITER of that file, so the spawn entry points cannot drift from
         each other or from its readers (``_load_per_session_capability_profile`` /
-        ``per_session_narrowing`` / ``Session._read_base_dir_override``, all keyed
-        through ``_session_state_dir``). The synthetic ``name`` key is what
-        ``per_session_narrowing`` strips back off, so the parent→child round-trip is
-        exact.
+        ``per_session_narrowing`` / ``Session._read_base_dir_override`` /
+        ``resolved_sandbox_for``, all keyed through ``_session_state_dir``). The
+        synthetic ``name`` key is what ``per_session_narrowing`` strips back off, so
+        the parent→child round-trip is exact.
 
-        Writing the file is not by itself enforcement (for the narrowing half — the
-        ``base_dir`` half is read live on every ``Session._workspace_base_dir`` access,
-        so no separate injection step applies to it): the live session's
-        ``_contextual_permission`` was resolved by the factory with ``sid=None`` and has
+        Writing the file is not by itself enforcement (for the narrowing half, and
+        for the sandbox half — the ``base_dir`` half is read live on every
+        ``Session._workspace_base_dir`` access, so no separate injection step applies
+        to it): the live session's ``_contextual_permission`` (resp. its sandbox
+        override) was resolved/injected by the factory with ``sid=None`` and has
         never seen this file. Each of the two callers re-resolves WITH the sid and
         injects — ``spawn_session`` immediately after calling this, and
         ``spawn_session_recorded`` after its own ``refresh_config_projections()`` (the
         ordering there is measured, not stylistic; see the note at its ``spawn_session``
-        call). A caller that writes without injecting has persisted a narrowing nothing
-        enforces, which is the #2126 failure mode."""
+        call). A caller that writes without injecting has persisted a narrowing (or a
+        sandbox override) nothing enforces, which is the #2126 failure mode."""
         import yaml
         cfg_path = self._session_state_dir(name, sid) / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict = {"name": f"_session_{sid}", **narrowing}
         if base_dir is not None:
             payload["base_dir"] = str(base_dir)
+        if sandbox is not None:
+            payload["sandbox"] = dict(sandbox)
         cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
     def spawn_session(
@@ -3492,6 +3500,7 @@ class AgentRegistry:
         *, presentation_consumer: "object | None",
         intervention_bridge: "object | None",
         narrowing: "dict | None" = None,
+        sandbox: "dict | None" = None,
     ) -> str:
         """FP-0043 Stage 3: open a NEW conversation Session under an existing
         Agent, SHARING the agent's identity object. Returns the new session-id.
@@ -3502,6 +3511,16 @@ class AgentRegistry:
         ``None`` (every recovery caller, and any caller with nothing to impose) is
         byte-identical to the pre-#3562 behaviour: no file is written and the sid's own
         persisted layer, if it has one, is what the injection below applies.
+
+        #5352: ``sandbox`` is the SAME shape, one axis over — the resolved sandbox-
+        policy override the child is BORN under (the caller has already applied the
+        same-agent / cross-agent-declared / cross-agent-undeclared priority table —
+        this primitive has no notion of "the spawner" to resolve it itself, same
+        division of labour as ``base_dir``). Persisted as a sibling ``config.yaml``
+        key and injected into the live session before this returns, so the first
+        turn already gates against it. ``None`` is byte-identical to pre-#5352: no
+        key is written and the sid's own persisted layer, if it has one (recovery),
+        is what the injection below applies.
 
         ★ Why the channel is HERE and not "route the remaining caller through
         ``spawn_session_recorded``" — a decision, not an omission. ``/session new``
@@ -3638,12 +3657,23 @@ class AgentRegistry:
         # longer REDs the two tests that pinned the ordering — deciding whether to move it
         # is a separate change with its own review). See the note at its
         # ``spawn_session`` call.
-        if narrowing:
-            self._persist_session_narrowing(name, new_sid, narrowing)
+        if narrowing or sandbox is not None:
+            self._persist_session_narrowing(name, new_sid, narrowing or {}, sandbox=sandbox)
         inject = getattr(session, "apply_per_session_narrowing", None)
         if callable(inject):
             contextual, excluded = self.resolved_profile_for(name, sid=new_sid)
             inject(contextual, excluded)
+        # #5352: re-resolve + inject the sid-keyed sandbox override, same reason and
+        # same point in the sequence as the narrowing injection immediately above —
+        # the factory resolved this session's ``_sandbox_config`` with no sid-keyed
+        # override in scope, so the live session ignores this sid's config.yaml
+        # ``sandbox:`` key (or the value this spawn just persisted) until something
+        # re-resolves + injects it. Inert for a sid with no override at either layer
+        # (``resolved_sandbox_for`` returns None → ``apply_per_session_sandbox(None)``
+        # is a no-op, byte-identical to pre-#5352).
+        inject_sandbox = getattr(session, "apply_per_session_sandbox", None)
+        if callable(inject_sandbox):
+            inject_sandbox(self.resolved_sandbox_for(name, sid=new_sid))
         # #2285 step2: now that the per-session state dir is finalized (snapshot re-key above),
         # restore any persisted visibility/hook toggles for this (name, sid) — the loaded override
         # composes atop the authoritative envelope, so visible ⊆ authorized survives across restart.
@@ -3657,6 +3687,7 @@ class AgentRegistry:
         self, name: str, *, sid: "str | None" = None, mode: str = "persistent",
         narrowing: "dict | None" = None,
         base_dir: "Path | None" = None,
+        sandbox: "dict | None" = None,
         attended: bool = True,
         presentation_consumer: "object | None",
         intervention_bridge: "object | None",
@@ -3698,6 +3729,12 @@ class AgentRegistry:
         non-LLM callers (crash-recovery re-wake, ``/session new``) that have no LLM
         input to restrict in the first place. Pass an already-validated (or
         operator-trusted) value.
+
+        ``sandbox`` (#5352) is ANOTHER sibling persisted value, same posture as
+        ``base_dir`` immediately above: this method does NOT resolve the
+        same-agent/cross-agent priority table — that is the CALLER's job (it knows
+        the spawner's session and the target agent's own declared value; this
+        primitive knows neither). Pass an already-resolved value.
 
         Does NOT submit a task — that is the caller (the spawn op), separable from the
         record. Emit no-ops without a WAL.
@@ -3796,15 +3833,17 @@ class AgentRegistry:
                 # the "proceed with assumption" SP branch instead of wasting
                 # its one turn asking a question no one can answer.
                 spawned_session._non_interactive = True
-        if narrowing or base_dir is not None:
+        if narrowing or base_dir is not None or sandbox is not None:
             # #3562: the file write itself is the primitive's ``_persist_session_narrowing``
             # — one writer for both spawn entry points, so the two cannot drift from each
             # other or from the reader. Only the CALL SITE stays here; see the note above
             # this method's ``spawn_session`` call for the measurement that keeps it here.
             # #4200 2/2: base_dir alone (no narrowing) must still reach the write — the
             # pre-#4200 condition (``if narrowing:``) would silently drop a base_dir-only
-            # spawn request.
-            self._persist_session_narrowing(name, sid, narrowing or {}, base_dir=base_dir)
+            # spawn request. #5352: same for sandbox alone.
+            self._persist_session_narrowing(
+                name, sid, narrowing or {}, base_dir=base_dir, sandbox=sandbox,
+            )
             # #2126: ENFORCE the narrowing just written. The per-session capability
             # layer (#1827 / #2103-S1a) only resolves WITH a sid, and every
             # construction-time factory caller resolves sid=None — so the live spawned
@@ -3818,11 +3857,18 @@ class AgentRegistry:
             if callable(inject):
                 contextual, excluded = self.resolved_profile_for(name, sid=sid)
                 inject(contextual, excluded)
+            # #5352: the SAME #2126 enforcement, one axis over — the sandbox override
+            # just written (or already present from a prior spawn/recovery) is inert
+            # until re-resolved WITH the sid and re-injected into the live session.
+            inject_sandbox = getattr(session, "apply_per_session_sandbox", None)
+            if callable(inject_sandbox):
+                inject_sandbox(self.resolved_sandbox_for(name, sid=sid))
         if self._state_log is not None:
             await self._state_log.append(
                 "session_spawned", entity_kind="session", name=name, sid=sid,
                 mode=mode, narrowing=narrowing,
                 base_dir=str(base_dir) if base_dir is not None else None,
+                sandbox=sandbox,
             )
         return sid
 
@@ -4903,6 +4949,46 @@ class AgentRegistry:
             return None
         narrowing = {k: v for k, v in raw.items() if k != "name"}
         return narrowing or None
+
+    def resolved_sandbox_for(self, name: str, sid: "str | None" = None) -> "dict | None":
+        """#5352: this ``(name, sid)``'s effective sandbox-policy override — the
+        sibling-key counterpart of ``base_dir`` (see ``_persist_session_narrowing``'s
+        own docstring for that shape), NOT the ∩-composed ``resolved_profile_for``
+        machinery: an agent's ``sandbox:`` declaration is a per-agent BASELINE (the
+        same "each agent's own operator-authored value" shape ``allowed_mcp`` /
+        ``base_dir`` already use), not a restrict-only term composed across
+        topology / delegate-floor / session layers.
+
+        Session-layer (``sid``'s own ``config.yaml`` ``sandbox:`` key — the value a
+        spawn resolved via #5352's priority table and persisted) wins over the
+        agent-layer (``name``'s own ``profile.yaml`` ``sandbox:`` declaration) wins
+        over ``None`` (no override at either layer — ``Agent.sandbox_config``, the
+        process-wide default, governs unchanged).
+
+        A malformed session config.yaml is surfaced (stderr) and skipped — falls
+        through to the agent layer, restrict-only-safe (can only WIDEN toward that
+        layer, never past the effective floor), same posture every other reader of
+        this file already takes."""
+        if sid is not None:
+            path = self._session_state_dir(name, sid) / "config.yaml"
+            if path.is_file():
+                import yaml
+                try:
+                    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+                except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+                    import sys
+                    print(
+                        f"warning: skipping malformed per-session config {path} "
+                        f"while resolving the sandbox override: {e}",
+                        file=sys.stderr,
+                    )
+                    raw = None
+                if isinstance(raw, dict) and isinstance(raw.get("sandbox"), dict):
+                    return dict(raw["sandbox"])
+        try:
+            return self.load_profile(name).sandbox
+        except FileNotFoundError:
+            return None
 
     def _load_per_session_capability_profile(
         self, name: str, sid: str
