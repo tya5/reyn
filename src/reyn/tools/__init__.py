@@ -108,6 +108,7 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.plugin_management_verbs import PLUGIN_INSTALL, PLUGIN_LIST, PLUGIN_UNINSTALL
     from reyn.tools.present import PRESENT
     from reyn.tools.presentation_management_verbs import PRESENTATION_INSTALL
+    from reyn.tools.record_behavior_anomaly_verdict import RECORD_BEHAVIOR_ANOMALY_VERDICT
     from reyn.tools.render_template import RENDER_TEMPLATE
     from reyn.tools.reyn_repo import (
         REYN_REPO_GLOB,
@@ -248,6 +249,11 @@ def get_default_registry() -> ToolRegistry:
     # hook-event emission onto the caller's own HookBus. Router-only (the
     # handler needs a live session-bound HookBus/session_id).
     registry.register(EMIT_HOOK_EVENT)
+    # #5221: behavioral-anomaly-detector's verdict recorder. gates.router="deny"
+    # — never offered to a live agent; only a registered pipeline's own `tool`
+    # step calls it (dispatch there does not consult gates.router at all — see
+    # the tool's own module docstring).
+    registry.register(RECORD_BEHAVIOR_ANOMALY_VERDICT)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
     # the glob_files / grep_files surfaces but scoped to the OS source tree.
     registry.register(REYN_REPO_GLOB)

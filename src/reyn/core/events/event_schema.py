@@ -260,6 +260,22 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   reliable "the turn is done" signal for UI working-indicators. kind mirrors
     #   turn_started; chain_id may be absent for non-user triggers.
     "turn_settled": frozenset({"kind"}),
+    # #5221: emitted by the `record_behavior_anomaly_verdict` tool, the ONLY
+    # producer — called from a registered pipeline's own `tool` step after its
+    # judge `agent` step returns a schema-constrained verdict (never by a
+    # live agent directly: the tool is gates.router="deny"). `verdict` is the
+    # closed clean|suspicious vocabulary (`reyn.tools.record_behavior_anomaly_verdict`
+    # is the SSoT for the two literal values). `chain_id` joins this back to
+    # the turn's own `turn_settled`/`turn_completed` — a chain_id with
+    # `turn_settled` but NO matching `behavior_anomaly_judged` means "the
+    # judge did not run" (below the escalation threshold, or the pipeline
+    # itself failed), a THIRD state from "judged clean" — never conflate the
+    # two (asymmetric trust: `verdict="clean"` means "the judge did not flag
+    # it", not "verified clean"; an absent record means the judge never
+    # looked at all). `anomalous_op_count` is the sensitive-op tally
+    # (reyn.runtime.turn_behavior_tally) that triggered escalation, so a
+    # reader can see WHY the judge ran without re-deriving it.
+    "behavior_anomaly_judged": frozenset({"verdict", "chain_id", "anomalous_op_count"}),
 }
 
 
@@ -291,6 +307,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "agent_response_committed",
     "agent_response_received",
     "asyncio_unhandled_exception",
+    "behavior_anomaly_judged",
     "body_summary_hard_truncated",
     "budget_caps_updated",
     "budget_reset",
