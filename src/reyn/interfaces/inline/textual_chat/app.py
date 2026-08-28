@@ -1935,9 +1935,16 @@ class TextualChatApp(App):
             # #4357: `keys=` passes the actual `{key: hint}` dict so the line
             # names the offending keys (and destinations, where known)
             # instead of only a bare count.
+            _snap = self._snapshot() or {}
             config_warning = config_warning_text(
                 getattr(self._config, "unknown_config_key_count", 0),
                 keys=getattr(self._config, "unknown_config_keys", None),
+                hooks_warnings=_snap.get("hooks_config_warnings", []),
+                # #5100/#5272: default True — a producer that hasn't wired
+                # this key at all (older server) reads as "reported", the
+                # pre-#5272 behavior; only an EXPLICIT False (a connection
+                # that positively knows it can't report) shows the new line.
+                hooks_warnings_reported=_snap.get("hooks_config_warnings_reported", True),
             )
             if config_warning is not None:
                 yield ConfigWarningLine(config_warning, id="config-warning")
