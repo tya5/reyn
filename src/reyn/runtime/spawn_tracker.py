@@ -41,16 +41,18 @@ Ownership split:
   ``AgentRegistry`` (``session_id``: spawn-time re-key, ``registry.py``
   ``spawn_session_recorded``; ``ephemeral``: ``registry.py``
   ``spawn_session`` / ``pipeline_executor_driver.py`` set it True AFTER
-  ``Session.__init__`` returns), so a snapshot copied once at construction
-  would go stale and silently use the WRONG value (the same staleness hazard
-  ``CapabilityVisibility`` documents for its ``session_id_provider`` /
-  ``available_skills_provider``) — this class reads through a live getter
-  rather than owning a second, staleable copy. ★ Ground correction vs the
-  #3133 P3 firm comment (which specified plain ``session_id: str`` /
-  ``ephemeral: bool``): both fields are mutated by external assignment
-  (``session._session_id = ...`` / ``session._ephemeral = True``) after
-  construction, so a plain constructor value would freeze the pre-mutation
-  value forever — the same pattern #3129 already solved with a provider.
+  ``Session.__init__`` returns, via :meth:`Session.mark_ephemeral` — #5336,
+  was a bare private-attribute write), so a snapshot copied once at
+  construction would go stale and silently use the WRONG value (the same
+  staleness hazard ``CapabilityVisibility`` documents for its
+  ``session_id_provider`` / ``available_skills_provider``) — this class
+  reads through a live getter rather than owning a second, staleable copy.
+  ★ Ground correction vs the #3133 P3 firm comment (which specified plain
+  ``session_id: str`` / ``ephemeral: bool``): both fields are mutated by
+  external assignment (``session._session_id = ...`` /
+  ``session.mark_ephemeral()``) after construction, so a plain constructor
+  value would freeze the pre-mutation value forever — the same pattern
+  #3129 already solved with a provider.
 """
 from __future__ import annotations
 

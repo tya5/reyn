@@ -3784,7 +3784,7 @@ class AgentRegistry:
             # (Session._maybe_schedule_ephemeral_vanish, via this registry's
             # remove_session teardown seam). Persistent spawns leave the flag False.
             if spawned_session is not None:
-                spawned_session._ephemeral = True
+                spawned_session.mark_ephemeral()
                 # #2585 PR2: an ephemeral spawn is structurally headless — it
                 # receives exactly ONE prompt via MessageBus.request (see
                 # session_api.run_agent_step) and returns; there is no

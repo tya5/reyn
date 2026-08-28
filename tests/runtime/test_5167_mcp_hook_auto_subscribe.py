@@ -311,7 +311,7 @@ async def test_ephemeral_session_never_subscribes_but_still_reports_why(
         mcp_servers={"srv": _stdio_cfg(_SUBSCRIBABLE_SERVER)},
         permission_resolver=resolver,
     )
-    session._ephemeral = True
+    session.mark_ephemeral()
     session._audit_events = events
     _write_hooks_yaml(session, server="srv", uri=_URI)
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
