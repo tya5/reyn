@@ -473,6 +473,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "tool_executed",
     "tool_failed",
     "tool_result_offloaded",
+    "tool_result_write_unavailable",
     "tool_returned",
     "turn_cancelled",
     "turn_completed",
