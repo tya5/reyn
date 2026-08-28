@@ -106,7 +106,7 @@ def _op_context(tmp_path: Path, events: Any) -> Any:
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         web_fetch_config=None,
-        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path),
+        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session"),
     )
 
 
@@ -128,7 +128,7 @@ def _advisor(tmp_path: Path, *, offload_enabled: bool) -> ContextBudgetAdvisor:
     return ContextBudgetAdvisor(
         compaction=CompactionConfig(),
         compaction_controller=None,
-        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path),
+        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session"),
         model_fn=lambda: "gpt-4o",
         events=_RecordingEventLog(),
         history_fn=list,

@@ -119,6 +119,7 @@ def test_read_resource_returns_body_for_minted_path_ref(
         MediaStoreConfig(),
         project_root=tmp_path,
         agent_name="researcher",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "mcp body\n", mime_type="text/plain",

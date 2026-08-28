@@ -144,7 +144,7 @@ def test_cap_tool_result_content_type_drives_stored_ref_extension(tmp_path: Path
     stored under an extension matching that type (real MediaStore, no fake collaborator);
     with content_type=None the store's existing text/plain default (``.txt``) is unchanged.
     """
-    store = MediaStore(project_root=tmp_path)
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
     big = "# Title\n\n" + ("word " * 20_000)
 
     out_md = cap_tool_result_content(
@@ -195,7 +195,7 @@ def test_present_data_ref_defaults_to_markdown_when_ref_carries_markdown_type(
     Strip-falsify: an identical body stored WITHOUT a declared type renders as ``text``,
     proving the markdown default came from the declared type, not the data's shape."""
     monkeypatch.chdir(tmp_path)
-    store = MediaStore(project_root=tmp_path)
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
     body = "# Heading\n\nSome *emphasis* text."
 
     md_block = store.save_tool_result(body, mime_type="text/markdown", tool="t", seq=1)
@@ -228,7 +228,7 @@ def test_resolve_present_source_recovers_content_type_from_stored_ref(
     producer declared at store time, purely from the ref's on-disk extension — the
     read-side half of the #2663 sidecar (no separate metadata file)."""
     monkeypatch.chdir(tmp_path)
-    store = MediaStore(project_root=tmp_path)
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
     block = store.save_tool_result("code here", mime_type="application/json", tool="t", seq=1)
 
     ctx, _events = _ctx(tmp_path)

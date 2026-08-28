@@ -287,7 +287,13 @@ def run(args: argparse.Namespace) -> None:
     # resource" made visible, not asserted).
     print()
     print("Disk usage — no declared retention policy (visibility only):")
-    store = MediaStore(MediaStoreConfig(), project_root=resolved_root)
+    # #5364: read-only here (storage_stats never writes) — session_id is
+    # a required kwarg (no default: a forgotten value must never silently
+    # resolve to a real session's directory, #5369) but this store never
+    # calls save_tool_result, so the value itself is inert.
+    store = MediaStore(
+        MediaStoreConfig(), project_root=resolved_root, session_id="<read-only>",
+    )
     media_stats = store.storage_stats()
     hist = aggregate_history_stats(resolved_root)
     print(

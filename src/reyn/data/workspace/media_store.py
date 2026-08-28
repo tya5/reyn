@@ -220,6 +220,17 @@ class MediaStoreConfig:
     """
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
+    # #5364 §1.1: the CURRENT tool-result write location (session-scoped —
+    # ``<session_id>`` is appended by :class:`MediaStore` itself, never
+    # part of this literal). A separate field from ``tool_results_dir``
+    # (lead-coder review, PR #5369: "旧 store は同じ file の 2 行上で
+    # self._config.tool_results_dir を通しています ... 新しい store は別
+    # の field に") — ``tool_results_dir`` names the FROZEN, read-only
+    # legacy location; conflating the two would let one config change
+    # silently redirect BOTH the live write path and the historical read
+    # boundary at once, which is never what an operator overriding one
+    # of them actually wants.
+    history_content_dir: str = ".reyn/memory/history-content"
 
 
 @dataclass(frozen=True)
@@ -362,7 +373,7 @@ class MediaStore:
         project_root: Path,
         agent_name: str | None = None,
         base_url: str | None = None,
-        session_id: str = "main",
+        session_id: str,
     ) -> None:
         self._config = config or MediaStoreConfig()
         self._project_root = project_root.resolve()
@@ -386,8 +397,15 @@ class MediaStore:
         # PARENT of every session's own subdirectory) is also the read
         # boundary `read_tool_result` validates new-format paths against.
         self._history_content_root = (
-            self._project_root / ".reyn" / "memory" / "history-content"
+            self._project_root / self._config.history_content_dir
         ).resolve()
+        # #5364 (lead-coder review, PR #5369): NO default here — a
+        # forgotten session_id must never silently resolve to some OTHER
+        # real session's directory. `None` is a legitimate value for a
+        # read-only construction (4 of production's 5 construction sites
+        # never write a tool result at all, per that same review); it is
+        # only an error at the one point that actually needs it — see
+        # :meth:`_history_content_dir`.
         self._session_id = session_id
         self._agent_name = agent_name or None
         # #385 β sub-task 3b: when set, save_* augments path-refs with a

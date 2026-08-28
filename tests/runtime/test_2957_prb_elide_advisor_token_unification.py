@@ -232,7 +232,7 @@ def test_pathref_and_materialised_image_count_identically(tmp_path):
     materialisation has already run, so serialising for measurement
     purposes is safe regardless of which state a turn's content is in.
     """
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
     raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 200
     pathref_block = store.save_image(raw, mime_type="image/png", tool="test", seq=1)
     assert pathref_block["type"] == "image"  # sanity: genuinely un-materialised

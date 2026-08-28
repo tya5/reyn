@@ -58,7 +58,13 @@ def run_stats(args: argparse.Namespace) -> None:
     from reyn.runtime.history_tail_reader import aggregate_history_stats
 
     project_root = Path(args.project_root).resolve()
-    store = MediaStore(MediaStoreConfig(), project_root=project_root)
+    # #5364: read-only here (storage_stats never writes) — session_id is
+    # a required kwarg (no default: a forgotten value must never silently
+    # resolve to a real session's directory, #5369) but this store never
+    # calls save_tool_result, so the value itself is inert.
+    store = MediaStore(
+        MediaStoreConfig(), project_root=project_root, session_id="<read-only>",
+    )
     stats = store.storage_stats()
     hist = aggregate_history_stats(project_root)
 

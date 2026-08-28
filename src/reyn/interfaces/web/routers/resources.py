@@ -180,10 +180,15 @@ async def get_tool_result(
     #    route and the same-host fs reader share one rule (= no chance of
     #    drift).
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    # #5364: read-only here (this route only ever reads a tool-result
+    # artifact) — session_id is a required kwarg (no default: a
+    # forgotten value must never silently resolve to a real session's
+    # directory, #5369), inert since this store never writes.
     store = MediaStore(
         MediaStoreConfig(),
         project_root=Path.cwd(),
         agent_name=agent_name,
+        session_id="<read-only>",
     )
     # #5364: the URL route carries only <agent>, never <session_id> — a
     # write can have landed under ANY of this agent's session

@@ -28,7 +28,7 @@ from reyn.runtime.services.router_history_buffer import (
 
 
 def _new_store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
 
 # ── _materialise_path_ref_content ──────────────────────────────────────

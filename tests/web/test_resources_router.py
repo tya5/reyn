@@ -97,6 +97,7 @@ def _mint_path_ref(tmp_project: Path, content: str = "hello world\n") -> dict:
         MediaStoreConfig(),
         project_root=tmp_project,
         agent_name="researcher",
+        session_id="test-session",
     )
     return store.save_tool_result(
         content, mime_type="text/plain", chain_id="chainX", tool="web_fetch", seq=1,

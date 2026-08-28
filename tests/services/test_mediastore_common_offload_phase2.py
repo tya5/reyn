@@ -44,7 +44,7 @@ from reyn.services.offload.store import OffloadResult, offload_value
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +286,7 @@ def test_cross_host_method_read_by_uri_unchanged(tmp_path: Path) -> None:
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "uri content\n", mime_type="text/plain", chain_id="c1",
@@ -307,6 +308,7 @@ def test_cross_host_method_read_by_url_unchanged(tmp_path: Path) -> None:
         project_root=tmp_path,
         agent_name="test-agent",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "url content\n", mime_type="text/plain", chain_id="c1", tool="web_fetch", seq=1,
@@ -326,6 +328,7 @@ def test_attach_cross_host_fields_unchanged_with_agent_name(tmp_path: Path) -> N
         project_root=tmp_path,
         agent_name="researcher",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "body", mime_type="text/plain", chain_id="chain1",
@@ -345,6 +348,7 @@ def test_save_image_is_unchanged_by_phase2_migration(tmp_path: Path) -> None:
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="vision",
+        session_id="test-session",
     )
     data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
     block = store.save_image(

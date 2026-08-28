@@ -698,10 +698,15 @@ def build_server(
         # name; the boundary check ensures the resolved path stays
         # inside ``.reyn/tool-results/`` regardless.
         from pathlib import Path
+        # #5364: read-only here (only reads a tool-result artifact by
+        # URI) — session_id is a required kwarg (no default: a forgotten
+        # value must never silently resolve to a real session's
+        # directory, #5369), inert since this store never writes.
         store = MediaStore(
             MediaStoreConfig(),
             project_root=Path.cwd(),
             agent_name=agent_name,
+            session_id="<read-only>",
         )
         body, found = store.read_tool_result_by_uri(uri_str)
         if not found:
