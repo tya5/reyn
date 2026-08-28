@@ -122,7 +122,7 @@ async def test_ephemeral_leg_logs_re_raising_and_actually_raises(
     drifting from the other (the log line reverted to unconditional, or the
     raise itself removed)."""
     s = make_session(agent_name="t")
-    s._ephemeral = True  # the registry sets this post-construction on a real ephemeral spawn
+    s.mark_ephemeral()  # the registry sets this post-construction on a real ephemeral spawn
 
     async def _raise_mid_work(text: str, chain_id: str) -> None:
         raise RuntimeError("simulated final-call crash")

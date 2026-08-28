@@ -57,7 +57,7 @@ async def _session(tmp_path) -> Session:
     # test_2597_s2a_mcp_connection_service.py). #3447: the adapter's ephemeral_fn
     # reads this LIVE, so flipping it post-construction (as the registry does for a
     # real spawned session) is still observed correctly.
-    sess._ephemeral = True
+    sess.mark_ephemeral()
     return sess
 
 

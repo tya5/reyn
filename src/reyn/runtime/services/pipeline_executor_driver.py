@@ -478,9 +478,10 @@ class PipelineExecutorDriver:
             )
         # Reuse the existing ephemeral auto-vanish teardown (quiesce + cancel
         # run-loop + drop + session_vanished + per-session dir purge) instead of
-        # a second teardown path. Same private poke spawn_session_recorded uses.
+        # a second teardown path. Same public seam spawn_session_recorded uses
+        # (#5336: Session.mark_ephemeral() — was a private-attribute poke).
         if self._session is not None:
-            self._session._ephemeral = True
+            self._session.mark_ephemeral()
 
     async def _deliver(
         self, *, status: str, output: Any, error: "str | None",

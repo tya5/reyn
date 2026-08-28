@@ -970,7 +970,11 @@ class Session:
         self._intervention_bridge = intervention_bridge
         # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits-interactive-mode)
         self._current_turn_origin: str = "auto_improvement"
-        # Spawned EPHEMERAL flag, set post-construction by the registry (#2103, see session-construction.md#safety-limits-interactive-mode).
+        # Spawned EPHEMERAL flag, set post-construction via :meth:`mark_ephemeral`
+        # (#5336: was a bare private write; the two real production callers — the
+        # registry and PipelineExecutorDriver — needed a genuine public seam, not
+        # a private name a fact-set-from-outside had outgrown; see that method's
+        # own docstring; #2103, see session-construction.md#safety-limits-interactive-mode).
         # The vanish-scheduling state (_vanish_scheduled / _vanish_task) is owned by
         # SpawnTracker, constructed below (see #3133 P3 Extract Class, spawn_tracker.py).
         self._ephemeral: bool = False
@@ -1663,6 +1667,38 @@ class Session:
         self._audit_events.set_backend(self._build_events_backend(new_store))
         self.events_dir = events_dir
         self._event_store = new_store
+
+    def mark_ephemeral(self) -> None:
+        """#5336: the ONE post-construction write external callers make to
+        ``_ephemeral`` — now a genuine public seam. Architect ruling: this
+        is an externally-decided FACT about the session (whether it should
+        auto-vanish), not an internal implementation choice #4866 forbids
+        exposing — ``_ephemeral`` had a private NAME but was already, in
+        practice, written from outside by two production sites; this
+        method just makes the name agree with the fact.
+
+        Two real call sites, at two DIFFERENT times, both valid:
+
+        - ``AgentRegistry.spawn_session_recorded`` (#2103): called
+          IMMEDIATELY after a fresh ``mode="ephemeral"`` spawn — a genuine
+          spawn-time declaration. Not folded into ``__init__`` itself:
+          ``spawn_session``'s own construction call has no ephemeral/mode
+          parameter today, and threading one through would be a separate,
+          larger refactor to that primitive — this seam only needs to
+          stop the EXTERNAL write from touching a private name, not
+          restructure ``spawn_session``.
+        - ``PipelineExecutorDriver``'s own run-completion teardown: called
+          at RUN COMPLETION, on a session that was NEVER ephemeral at
+          spawn — reusing the SAME auto-vanish machinery
+          (``_maybe_schedule_ephemeral_vanish``) as a "vanish this session
+          now" trigger, not a declaration. Safe to call more than once
+          (setting True on an already-True flag is a no-op) and safe to
+          call late in a session's life — nothing reads this flag except
+          the vanish-scheduling path and the lazy ``ephemeral_provider``
+          read wired at construction (``session.py``'s own
+          ``lambda: self._ephemeral``, unchanged by this method existing).
+        """
+        self._ephemeral = True
 
     @property
     def non_interactive(self) -> bool:
