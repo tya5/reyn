@@ -73,6 +73,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +83,8 @@ from reyn.services.offload.store import offload_value, read_offloaded
 
 if TYPE_CHECKING:
     from reyn.core.events.durability_worker import DurabilityWorker
+
+logger = logging.getLogger(__name__)
 
 #: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
 #: line per :meth:`MediaStore.save_tool_result` write — the persisted
@@ -261,6 +264,27 @@ class MediaStoreConfig:
     # measured across all 8 was 132 MB. 2 GB is >15x that observed
     # maximum — the cap is intended to never fire under any measured
     # real usage; it exists only to bound a genuine runaway.
+    #
+    # This does NOT protect a still-open turn's own content from GC —
+    # doing that needs a discriminator distinguishing "this session's
+    # newest file" from "a turn currently in flight", and none exists
+    # yet: the write-time cap path (``tool_result_cap.py``'s ``save_fn``
+    # call) does not thread ``chain_id`` through today, so most spilled
+    # files carry none (only the REACTIVE-spill path,
+    # ``router_history_buffer.py``, does) — mtime is NOT a safe
+    # approximation (lead-coder ruling, #5364: "the newest file is not a
+    # turn boundary"; architect, same ruling: mtime answers "when was
+    # this written", not "whose turn is this" — two concurrent sessions
+    # writing at once interleave mtime order across BOTH turns).
+    #
+    # DO NOT LOWER THIS DEFAULT to a value that can actually fire under
+    # real usage until #5387 lands (threading ``chain_id`` through the
+    # write-time cap path so GC can tell a still-open turn's content
+    # apart from an evictable one). At today's 2 GB this gap has nothing
+    # to protect — 2GB is >15x the largest ``.reyn/`` tree measured
+    # above, so eviction is not expected to ever run — but a lower cap
+    # WOULD run eviction against real, in-flight turn content with no
+    # discriminator to protect it.
     history_content_max_bytes: int = 2 * 1024 * 1024 * 1024
 
 
@@ -327,6 +351,36 @@ def _dir_stats_recursive(directory: Path) -> tuple[int, int]:
     return count, total
 
 
+def _eviction_order(directory: Path) -> list[Path]:
+    """#5364 §1.6 "C": among files that ARE eligible for deletion, which
+    one goes first — oldest ``mtime`` first, the only rule today.
+
+    This is an ORDER over an already-eligible set, not an eligibility
+    filter — the two are different questions with different failure
+    modes (lead-coder review, PR #5388: "may this be deleted" is a
+    filter, "which one first" is a sort, and folding a future filter
+    into THIS function's sort key would let it silently become "deleted
+    last" instead of "never deleted"). #5387's turn-boundary exclusion
+    (once ``chain_id`` is threaded through the write-time cap path)
+    belongs in a SEPARATE eligibility filter applied to this function's
+    input or output — not as another entry in a predicate sequence
+    here. mtime cannot stand in for that filter either way: see
+    ``history_content_max_bytes``'s own docstring for why (two
+    concurrent sessions' writes interleave in mtime order — "oldest" is
+    not "whose turn is still open"). Best-effort on a ``stat()`` race (a
+    file removed between listing and stat) — same disclosed-skip policy
+    as :func:`_dir_stats`."""
+    entries: list[tuple[float, Path]] = []
+    for entry in directory.rglob("*"):
+        try:
+            if entry.is_file():
+                entries.append((entry.stat().st_mtime, entry))
+        except FileNotFoundError:
+            continue
+    entries.sort(key=lambda pair: pair[0])
+    return [path for _, path in entries]
+
+
 # #385 β core impl sub-task 1: cross-host capable resource URI scheme.
 # A path-ref minted with ``agent_name`` set carries this scheme so a
 # downstream consumer (= another agent / a different host) can dispatch
@@ -353,6 +407,25 @@ def parse_resource_uri(uri: str) -> tuple[str, str] | None:
     if not agent or not artifact:
         return None
     return agent, artifact
+
+
+def history_content_dir_for(
+    project_root: Path, agent_name: str, session_id: str,
+    config: "MediaStoreConfig | None" = None,
+) -> Path:
+    """#5364 §1.6 "Q": the SAME path :meth:`MediaStore._history_content_dir`
+    computes for a LIVE store, exposed as a standalone function so a
+    caller that only needs to know WHERE a session's content lives (e.g.
+    the registry's own session-vanish purge) doesn't have to construct a
+    full ``MediaStore`` instance — one source of truth for the path
+    shape, not a second hand-derived copy that could drift from the
+    real one. Never creates the directory (a vanished session may never
+    have written anything at all — the caller is expected to check
+    ``is_dir()`` before acting, same as ``registry._purge_session_dir``
+    already does for the state dir)."""
+    cfg = config or MediaStoreConfig()
+    root = (project_root / cfg.history_content_dir).resolve()
+    return root / _safe_token(agent_name) / _safe_token(session_id)
 
 
 class MediaStoreWriteUnavailable(Exception):
@@ -719,10 +792,12 @@ class MediaStore:
                 "agent_name must never silently fall into a directory "
                 "shared with other agents' sessions, #5364)"
             )
-        return (
-            self._history_content_root
-            / _safe_token(self._agent_name)
-            / _safe_token(self._session_id)
+        # Delegates to the standalone function below — one source of
+        # truth for the path shape (see its own docstring: a caller with
+        # no live store, e.g. the registry's session-vanish purge, needs
+        # the SAME computation without constructing a MediaStore).
+        return history_content_dir_for(
+            self._project_root, self._agent_name, self._session_id, self._config,
         )
 
     def save_tool_result(
@@ -865,7 +940,46 @@ class MediaStore:
             "content_hash": result.content_hash,
         }
         self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
+        # #5364 §1.6 "C": bound THIS session's own history-content
+        # footprint after every write — a per-write check (not a
+        # separate sweep) keeps the cap self-enforcing without a second
+        # scheduled mechanism. Runs against whatever is ALREADY on disk;
+        # the write just submitted above is off-loop and may not have
+        # landed yet, so this can lag one write behind — acceptable for
+        # a backstop that (per the field's own docstring) is not
+        # expected to fire under real usage.
+        self._evict_history_content_over_cap()
         return block
+
+    def _evict_history_content_over_cap(self) -> None:
+        """#5364 §1.6 "C": delete this session's own OLDEST history-content
+        files (see :func:`_eviction_order`) until its directory is back
+        under ``history_content_max_bytes``. Scoped to THIS session's own
+        subdirectory, not the whole ``history_content_root`` — the cap's
+        own subject is one session's content (see the field's docstring:
+        cross-session growth is #5366's separate subject, not this one's).
+        Best-effort: an ``OSError`` mid-delete is logged and skipped, same
+        policy as :meth:`_purge_session_dir`'s own sibling deletes — a
+        failed eviction must never fail the write it followed."""
+        cap = self._config.history_content_max_bytes
+        directory = self._history_content_dir()
+        _, total = _dir_stats_recursive(directory)
+        if total <= cap:
+            return
+        for path in _eviction_order(directory):
+            if total <= cap:
+                break
+            try:
+                size = path.stat().st_size
+                path.unlink()
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#5364 §1.6: eviction of %s under the history-content "
+                    "cap failed: %s",
+                    path, e,
+                )
+                continue
+            total -= size
 
     @property
     def durability_failed(self) -> bool:
