@@ -743,6 +743,35 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
 
 
 @pytest.mark.asyncio
+async def test_spill_turn_content_offload_event_names_trigger_overflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5367①/BLOCKING witness — the REAL production wiring
+    (``RouterHistoryBuffer.spill_turn_content``, driven through
+    ``RouterLoopDriver._attempt_reactive_spill``, no fake collaborator)
+    names its ``tool_result_offloaded`` event's ``trigger`` as ``"overflow"``.
+
+    Strip-falsify: swapping ``TRIGGER_CAP``/``TRIGGER_OVERFLOW`` in
+    ``router_history_buffer.py`` turns this RED (the event would carry
+    ``"cap"`` instead)."""
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    events: list = []
+    session._audit_events.add_subscriber(lambda e: events.append(e))
+
+    _push(session, "tool", "huge tool result " + "z" * 5_000, tool_call_id="tc-1", name="tool")
+    for i in range(20):
+        _push(session, "user", f"filler question number {i} " * 8)
+        _push(session, "assistant", f"filler answer number {i} " * 8)
+
+    await session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    await session._audit_events.drain()
+
+    offloaded = [e for e in events if e.type == "tool_result_offloaded"]
+    assert offloaded, "test setup sanity: at least one candidate must have been spilled"
+    assert offloaded[0].data["trigger"] == "overflow"
+
+
+@pytest.mark.asyncio
 async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

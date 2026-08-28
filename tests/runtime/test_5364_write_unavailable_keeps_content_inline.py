@@ -38,7 +38,7 @@ from reyn.runtime.chat_message import (
     SPILLED_META_KEY,
 )
 from reyn.runtime.router_loop import RouterLoop
-from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
 from reyn.tools.scheme import ExecutionResult
 from tests._support.agent_session import make_session
 
@@ -104,7 +104,7 @@ def test_cap_tool_result_content_keeps_content_inline_on_write_unavailable() -> 
 
     result = cap_tool_result_content(
         big, cap_tokens=10, model=_MODEL, save_fn=_always_unavailable,
-        use_chars4=True, events=events,
+        trigger=TRIGGER_CAP, use_chars4=True, events=events,
         on_write_unavailable=lambda: calls.append(None),
     )
 

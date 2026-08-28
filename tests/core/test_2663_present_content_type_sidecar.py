@@ -28,7 +28,7 @@ from reyn.core.op_runtime.present import handle
 from reyn.core.present.source import resolve_present_source
 from reyn.data.workspace.media_store import MediaStore, mime_type_for_ext
 from reyn.data.workspace.workspace import Workspace
-from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -149,14 +149,14 @@ def test_cap_tool_result_content_type_drives_stored_ref_extension(tmp_path: Path
 
     out_md = cap_tool_result_content(
         big, cap_tokens=64, model=_MODEL, save_fn=store.save_tool_result,
-        use_chars4=True, content_type="text/markdown",
+        trigger=TRIGGER_CAP, use_chars4=True, content_type="text/markdown",
     )
     ref_md = _ref_from(out_md)
     assert ref_md.endswith(".md"), f"declared text/markdown must drive a .md ref, got {ref_md}"
 
     out_plain = cap_tool_result_content(
         big, cap_tokens=64, model=_MODEL, save_fn=store.save_tool_result,
-        use_chars4=True, content_type=None,
+        trigger=TRIGGER_CAP, use_chars4=True, content_type=None,
     )
     ref_plain = _ref_from(out_plain)
     assert ref_plain.endswith(".txt"), "no declared content_type -> unchanged .txt default"

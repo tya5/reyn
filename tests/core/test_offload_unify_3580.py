@@ -32,6 +32,7 @@ from reyn.core.offload.seam import build_offload_body
 from reyn.core.op_runtime.web import handle_web_fetch
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.runtime.services.tool_result_cap import (
+    TRIGGER_CAP,
     cap_tool_result_content,
     compute_cap_tokens,
 )
@@ -187,10 +188,10 @@ def test_the_inline_preview_size_follows_its_config() -> None:
         return {"path": ".reyn/tool-results/x.txt"}
 
     shipped = cap_tool_result_content(
-        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save
+        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save, trigger=TRIGGER_CAP,
     )
     tuned = cap_tool_result_content(
-        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save,
+        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save, trigger=TRIGGER_CAP,
         preview_head_chars=100, preview_tail_chars=50,
     )
 
