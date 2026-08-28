@@ -197,15 +197,27 @@ def test_decompose_wire_shape_matches_build_history(tmp_path, monkeypatch) -> No
     head, raw_middle, tail, _summary, _seq_by_id = session._history_buffer.decompose_history_for_retry()
     via_build = session._history_buffer.build_history()
 
-    # Both paths must return the same non-bridge turns in the same order.
-    # _build_history_for_router: head + [bridge?] + tail (no summary → no bridge).
-    # _decompose_history_for_retry: head + raw_middle + tail.
-    # The head and tail turns must be wire-identical across both paths.
-    decomposed_head_tail = [m["content"] for m in head + tail]
+    # Both paths must return HEAD- and TAIL-turn wire serialisation
+    # identically — the actual claim this test makes (retry_loop's
+    # recovery prompt must reuse the same head/tail rendering the normal
+    # router path used). #5367: _build_history_for_router's own output is
+    # no longer ONLY head+[bridge?]+tail — an elided mid range now folds
+    # back in as ref-previews / a synthetic report turn between them, so
+    # this test compares head as a PREFIX and tail as a SUFFIX of
+    # build_history's output, rather than asserting whole-list equality
+    # against decompose's own (mid-free) head+tail concatenation.
+    head_contents = [m["content"] for m in head]
+    tail_contents = [m["content"] for m in tail]
     build_contents = [m["content"] for m in via_build]
-    assert decomposed_head_tail == build_contents, (
-        "decompose head+tail must match _build_history_for_router output "
-        "(same serialisation, same turns) — retry_loop recovery path must be byte-identical"
+    assert build_contents[:len(head_contents)] == head_contents, (
+        "decompose's head must match _build_history_for_router's own head "
+        "prefix (same serialisation, same turns) — retry_loop recovery "
+        "path must be byte-identical"
+    )
+    assert build_contents[len(build_contents) - len(tail_contents):] == tail_contents, (
+        "decompose's tail must match _build_history_for_router's own tail "
+        "suffix (same serialisation, same turns) — retry_loop recovery "
+        "path must be byte-identical"
     )
 
 
