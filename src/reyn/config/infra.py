@@ -5,6 +5,15 @@ import socket
 from dataclasses import dataclass, field
 from typing import Literal
 
+# #5416: module-level, not the lazy-inside-function pattern the rest of
+# this file uses for config_schema — a dataclass field's own `metadata=`
+# is evaluated at CLASS BODY execution (module import time), so the
+# constants must already be bound by then. Safe here (no cycle):
+# config_schema.py has no top-level dependency back on this module or on
+# reyn.config's own package __init__ (it only reaches those lazily,
+# inside function bodies — see e.g. its own register_freeform_leaf_*
+# call sites).
+from reyn.config.config_schema import FAILS_OPEN, FAILS_SAFE
 from reyn.security.secrets.oauth import OAuthProviderConfig
 
 
@@ -701,23 +710,34 @@ class StorageConfig:
     whose history-content is NEVER an eviction candidate for this
     project-wide cap, regardless of process liveness.
 
-    ⚠️ A malformed ``pin`` value (wrong type, e.g. a bare string instead
-    of a list) falls back to ``[]`` — SILENTLY, with no operator-visible
-    disclosure that the fallback happened (lead-coder BLOCKING on #5415,
-    tracked as #5416, not yet fixed): unlike ``max_bytes`` above (whose
-    fallback to "unlimited" matches the same state as writing nothing —
+    A malformed ``pin`` value (wrong type, e.g. a bare string instead of
+    a list, or an entry that isn't a string) falls back to ``[]`` or
+    drops the bad entries — unlike ``max_bytes`` above (whose fallback
+    to "unlimited" matches the same state as writing nothing at all —
     harmless), this fallback REMOVES a declared protection whose only
-    consequence is deletion — the operator finds out only after their
-    content is already gone. #5416 is the general "known key, malformed
-    value, fallback direction more permissive than unset" disclosure gap
-    this instance surfaced; not fixed here because the right disclosure
-    surface (extending ``config_schema.unknown_config_keys()``'s own
-    CUI-visible "N config keys not applied" chrome, vs. a new parallel
-    channel) is itself a design decision, not a local fix to this
-    function."""
+    consequence is deletion. #5416 (lead-coder BLOCKING on #5415,
+    resolved): this field's own ``metadata={"fallback": FAILS_OPEN}``
+    (below) is what makes that rejection operator-visible — folded into
+    the SAME CUI-visible "N config keys not applied" chrome
+    :func:`~reyn.config.config_schema.unknown_config_keys` already
+    populates for unknown keys (architect's ruling: one combined
+    report, not a second parallel channel). See
+    :func:`_build_storage_config`'s own docstring for the parser-side
+    half."""
 
-    max_bytes: "int | None" = None
-    pin: "list[str]" = field(default_factory=list)
+    # #5416: fallback direction declared on the field itself (architect's
+    # final ruling — the population `config_schema`'s completeness check
+    # walks is `dataclasses.fields(StorageConfig)`, a runtime registry
+    # that cannot silently omit a field, unlike a parser-side census of
+    # `except (TypeError, ValueError)` sites, which architect's own #5416
+    # comment disclosed as NOT exhaustive). See `config_schema.FAILS_SAFE`
+    # / `FAILS_OPEN`'s own docstring for what the two mean.
+    max_bytes: "int | None" = field(
+        default=None, metadata={"fallback": FAILS_SAFE},
+    )
+    pin: "list[str]" = field(
+        default_factory=list, metadata={"fallback": FAILS_OPEN},
+    )
 
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
@@ -1677,7 +1697,9 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
     )
 
 
-def _build_storage_config(raw: object) -> StorageConfig:
+def _build_storage_config(
+    raw: object, *, rejected: "dict[str, object] | None" = None,
+) -> StorageConfig:
     """Parse `storage:` from reyn.yaml (#5366).
 
     A malformed (non-numeric, non-positive) `max_bytes` falls back to
@@ -1688,7 +1710,18 @@ def _build_storage_config(raw: object) -> StorageConfig:
     unlimited is the field's OWN steady state, not a failure mode) — a
     malformed value therefore falls back to the SAME state an operator
     who wrote nothing gets, not a silent widening of an otherwise-active
-    cap."""
+    cap. FAILS_SAFE (see the field's own `metadata=`) ∴ never written
+    into *rejected* even when malformed.
+
+    #5416: *rejected*, when given, is mutated in place with a
+    ``config_schema.RejectedValueHint`` for `pin` whenever the raw value
+    was PRESENT but rejected (wrong top-level type, or one-or-more
+    non-str entries dropped from an otherwise-valid list) — never for a
+    simply-absent key, which is not malformed, just unset (``pin_raw ==
+    defaults.pin`` in that case, taking the same branch a real empty
+    list would). `pin` is FAILS_OPEN (see the field's own `metadata=`),
+    so its rejection IS reported — the only field in this function that
+    is."""
     defaults = StorageConfig()
     if not isinstance(raw, dict):
         return defaults
@@ -1702,11 +1735,32 @@ def _build_storage_config(raw: object) -> StorageConfig:
         except (TypeError, ValueError):
             pass
     pin_raw = raw.get("pin", defaults.pin)
-    pin_val = (
-        [p for p in pin_raw if isinstance(p, str)]
-        if isinstance(pin_raw, list)
-        else list(defaults.pin)
-    )
+    if isinstance(pin_raw, list):
+        pin_val = [p for p in pin_raw if isinstance(p, str)]
+        dropped = [p for p in pin_raw if not isinstance(p, str)]
+        if dropped and rejected is not None:
+            from reyn.config.config_schema import RejectedValueHint
+            rejected["storage.pin"] = RejectedValueHint(
+                note=(
+                    f"`storage.pin` entries must all be strings (agent "
+                    f"names) — {dropped!r} were dropped; a pin declared "
+                    "for a name in this list is NOT protected"
+                ),
+                fallback=FAILS_OPEN,
+            )
+    else:
+        pin_val = list(defaults.pin)
+        if pin_raw != defaults.pin and rejected is not None:
+            from reyn.config.config_schema import RejectedValueHint
+            rejected["storage.pin"] = RejectedValueHint(
+                note=(
+                    f"`storage.pin` must be a list of agent names — got "
+                    f"{pin_raw!r} ({type(pin_raw).__name__}); falling "
+                    "back to an EMPTY pin list removes every declared "
+                    "protection"
+                ),
+                fallback=FAILS_OPEN,
+            )
     return StorageConfig(max_bytes=max_bytes_val, pin=pin_val)
 
 
