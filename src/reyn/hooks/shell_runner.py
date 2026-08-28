@@ -677,7 +677,7 @@ async def run_shell_hook(
     try:
         stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
 
-        from reyn.security.sandbox.denial import DENIAL_FORK  # noqa: PLC0415
+        from reyn.security.sandbox.denial import DENIAL_FORK, DENIAL_NETWORK  # noqa: PLC0415
         from reyn.security.sandbox.launcher import run_and_classify  # noqa: PLC0415
 
         launched = await run_and_classify(
@@ -823,6 +823,22 @@ async def run_shell_hook(
                     "shim (pyenv/asdf/mise) or a spawn-based launcher (npx/uvx) forks "
                     "internally. Set `subprocess: true` on this hook to permit it, or "
                     "use an absolute path to the real binary. (stderr: %s)",
+                    command,
+                    result.returncode,
+                    denial_class,
+                    stderr_snippet or "<empty>",
+                )
+            elif denial_class == DENIAL_NETWORK:
+                # #5244 ①: name the class and point at the fix. The raw
+                # stderr (an opaque EPERM, or an asyncio ExceptionGroup
+                # burying one) reads as a broken command/client library
+                # bug; it is actually the sandbox denying connect() because
+                # this hook's own ``network:`` knob is unset/false.
+                _log.warning(
+                    "shell-hook %r exited %d: the sandbox denied connect() "
+                    "(denial_class=%s) — an environment/config problem, not "
+                    "a command or client-library failure. Set `network: "
+                    "true` on this hook to permit it. (stderr: %s)",
                     command,
                     result.returncode,
                     denial_class,
