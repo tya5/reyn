@@ -1865,9 +1865,26 @@ def status_line_text(
 _CONFIG_WARNING_INLINE_KEY_CAP = 3
 
 
-def config_warning_text(count: int, keys: "dict | None" = None) -> "str | None":
+def config_warning_text(
+    count: int,
+    keys: "dict | None" = None,
+    hooks_warnings: "list[str] | None" = None,
+    hooks_warnings_reported: bool = True,
+) -> "str | None":
     """The bottom-chrome config-warning indicator's text, or ``None`` when
     there is nothing to show (#4194).
+
+    ``hooks_warnings_reported`` (#5100/#5272, default ``True`` — every
+    caller before this connection-awareness existed, and every LOCAL
+    session today, gets the pre-existing behavior byte-identical):
+    ``False`` means the CONNECTION cannot report per-session hooks.yaml
+    warnings at all (a remote client — see
+    ``ChatReadModelCapabilities.hooks_config_warnings_reported``), not
+    that the server-side session has none. Distinct from ``hooks_warnings
+    == []``, which means the connection COULD report and genuinely found
+    nothing — the same "unsupported vs empty" distinction #5034 already
+    drew for the Hook/Pipe panes, applied here to the ONE remaining
+    caller (this line) that read `hooks_config_warnings` unconditionally.
 
     Architect's ruling (#4194 issue thread, 2026-08-11) fixes exactly THREE
     properties, form left to the implementer: ①doesn't
@@ -1911,8 +1928,22 @@ def config_warning_text(count: int, keys: "dict | None" = None) -> "str | None":
     ``⚠`` matches the existing ``HALTED`` banner glyph above (same
     single-cell-width class of symbol, same "something needs attention"
     register) rather than introducing a new one."""
-    if not count:
+    warning_parts = list(hooks_warnings or [])
+    # #5100/#5272: an unreported connection with an EMPTY hooks_warnings list
+    # cannot be distinguished from "genuinely healthy" without this — say so,
+    # rather than silently falling through to the `None` (no row at all)
+    # case below, which a remote operator would misread as "no problem".
+    # Genuine warning content (a non-empty list) always wins regardless of
+    # the reported flag — real content is never suppressed.
+    if not hooks_warnings_reported and not warning_parts:
+        warning_parts = ["hooks config warnings not reported on this connection"]
+    if not count and not warning_parts:
         return None
+    if warning_parts:
+        base = f"⚠ {'; '.join(warning_parts)}"
+        if count:
+            base += f" · {count} config key{'s' if count != 1 else ''} not applied"
+        return base
     plural = "" if count == 1 else "s"
     base = f"⚠ {count} config key{plural} not applied"
     if not keys:

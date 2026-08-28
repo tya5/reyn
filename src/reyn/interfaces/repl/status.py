@@ -714,6 +714,7 @@ def _snapshot_for_session(registry, s, config=None):
         "unknown_config_keys": (
             getattr(config, "unknown_config_keys", {}) if config is not None else {}
         ),
+        "hooks_config_warnings": getattr(s, "hooks_config_warnings", []),
         # #2285: session-scoped capability visibility + hook applicability toggles.
         # #3378: ``visibility_items`` is ``None`` when the session wires no visibility
         # seam (or it raised) and a possibly-empty LIST when it does — the renderer
