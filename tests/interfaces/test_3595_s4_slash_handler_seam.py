@@ -541,14 +541,15 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: ``CapabilityVisibility.apply_per_session_sandbox`` — same shape as
 #: ``apply_per_session_narrowing`` directly above it, one axis over
 #: (sandbox instead of capability narrowing).
-#: ② Why not private: the exact same external seam as
-#: ``apply_per_session_narrowing`` (#2126) — the spawn seam
-#: (``RouterHostAdapter.spawn_session``) re-injects the spawner-resolved
-#: per-session sandbox override into the ALREADY-CONSTRUCTED spawned
-#: session from OUTSIDE this class, right after spawn-time config
-#: resolution; not a slash handler reaching into session internals
-#: (#3595 S4's own failure mode). Public because its sibling is public
-#: and for the identical reason.
+#: ② Why not private: called via ``getattr(session, "apply_per_session_sandbox",
+#: None)`` from TWO real production sites in ``registry.py`` —
+#: ``AgentRegistry.spawn_session`` and ``AgentRegistry.spawn_session_recorded``
+#: — the exact same two call sites ``apply_per_session_narrowing`` (#2126) is
+#: already called from, immediately alongside each of those calls. Both
+#: re-inject the spawner-resolved sandbox override into the
+#: ALREADY-CONSTRUCTED spawned session from OUTSIDE this class, right after
+#: spawn-time config resolution — a genuine external seam, not a slash
+#: handler reaching into session internals (#3595 S4's own failure mode).
 #: ③ Why not a constructor argument: same answer as
 #: ``apply_per_session_narrowing`` already gave for its own case — the
 #: value to inject is only known AFTER the session is constructed and
