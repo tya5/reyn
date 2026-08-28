@@ -178,3 +178,14 @@ def test_the_actual_5364_store_lands_under_the_nested_nonleaking_shape(
         f"save_tool_result must never place a file directly under memory/ "
         f"(flat, unnested) — got {written!r} whose parent is memory_dir itself"
     )
+    # lead-coder (#5369 BLOCKING, taken same-PR per house rule 6): the assert
+    # above only rules out "directly under memory/" — a regression that
+    # writes back to the pre-#5364 `.reyn/tool-results/` (audit tier, a
+    # sibling of memory/, not a descendant) would otherwise pass it too.
+    # This checks the OTHER half: the write must land somewhere IN the
+    # memory/ tree, not merely "not directly under" some other tree.
+    assert memory_dir in written.parents, (
+        f"save_tool_result must write inside memory/ — got {written!r}, "
+        f"which is not under {memory_dir!r} at all (e.g. a regression that "
+        f"writes back to `.reyn/tool-results/` would otherwise pass)"
+    )

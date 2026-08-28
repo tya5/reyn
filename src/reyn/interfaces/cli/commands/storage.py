@@ -1,6 +1,7 @@
 """`reyn storage stats` — read-only on-disk footprint report for
-``.reyn/media/``, ``.reyn/tool-results/`` (#4478 Phase 1), and every
-``history.jsonl`` under ``.reyn/agents/`` (#4476 Phase 1).
+``.reyn/media/``, ``.reyn/memory/history-content/`` (#4478 Phase 1, #5364
+moved the write location), and every ``history.jsonl`` under
+``.reyn/agents/`` (#4476 Phase 1).
 
 Named ``storage``, not ``media`` (renamed from the original #4485 name once
 #4476 landed on the same command — lead-coder review on #4488): once
@@ -42,7 +43,7 @@ def register(sub) -> None:
         "stats",
         help=(
             "Print on-disk file counts + byte totals for "
-            ".reyn/media/, .reyn/tool-results/, and every history.jsonl"
+            ".reyn/media/, .reyn/memory/history-content/, and every history.jsonl"
         ),
     )
     stats_p.add_argument(
