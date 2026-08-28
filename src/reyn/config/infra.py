@@ -699,7 +699,22 @@ class StorageConfig:
     is the unit an operator can actually declare in reyn.yaml; per-session
     pinning would need to name a session id an operator does not choose)
     whose history-content is NEVER an eviction candidate for this
-    project-wide cap, regardless of process liveness."""
+    project-wide cap, regardless of process liveness.
+
+    ⚠️ A malformed ``pin`` value (wrong type, e.g. a bare string instead
+    of a list) falls back to ``[]`` — SILENTLY, with no operator-visible
+    disclosure that the fallback happened (lead-coder BLOCKING on #5415,
+    tracked as #5416, not yet fixed): unlike ``max_bytes`` above (whose
+    fallback to "unlimited" matches the same state as writing nothing —
+    harmless), this fallback REMOVES a declared protection whose only
+    consequence is deletion — the operator finds out only after their
+    content is already gone. #5416 is the general "known key, malformed
+    value, fallback direction more permissive than unset" disclosure gap
+    this instance surfaced; not fixed here because the right disclosure
+    surface (extending ``config_schema.unknown_config_keys()``'s own
+    CUI-visible "N config keys not applied" chrome, vs. a new parallel
+    channel) is itself a design decision, not a local fix to this
+    function."""
 
     max_bytes: "int | None" = None
     pin: "list[str]" = field(default_factory=list)
