@@ -169,6 +169,7 @@ async def handle(
                 ctx.intervention_bus,
                 ctx.actor,
                 sandbox_policy=_sandbox,
+                agent_name=ctx.agent_name or ctx.actor,
             )
 
         # 0b. Determine install destination — a stable name under .reyn/pipelines/.

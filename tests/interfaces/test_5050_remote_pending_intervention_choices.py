@@ -276,7 +276,7 @@ async def test_remote_always_choice_persists_to_the_approval_ledger(tmp_path, mo
     await require_task
 
     from reyn.security.permissions.approval_ledger import ApprovalLedger
-    saved, _bound = ApprovalLedger(ledger_path).fold()
+    saved, _bound, _scopes = ApprovalLedger(ledger_path).fold()
     assert saved.get("chat_router/http.get/news.ycombinator.com") is True, saved
 
 

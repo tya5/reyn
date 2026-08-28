@@ -56,16 +56,24 @@ def _legacy_snapshot_path(project_root: Path) -> Path:
     return project_root / ".reyn" / "approvals.yaml"
 
 
-def _load(project_root: Path) -> dict[str, bool]:
-    """Fold the ledger (migrating a legacy snapshot first, if present)."""
+def _load(project_root: Path) -> "tuple[dict[str, bool], dict[str, str]]":
+    """Fold the ledger (migrating a legacy snapshot first, if present).
+
+    #5052: returns ``(approvals, scopes)`` — ``scopes`` is
+    :data:`~reyn.security.permissions.approval_ledger.SCOPE_LEGACY_WORKSPACE`
+    for a pre-#5052 record (no ``scope`` field ever written), so
+    :func:`list_permissions` can surface that count rather than
+    silently folding it into ``SCOPE_WORKSPACE`` (architect ruling: "黙って
+    昇格させない" — a legacy-workspace entry that is still in effect must
+    say so, not disappear into an indistinguishable 'workspace' label)."""
     from reyn.security.permissions.approval_ledger import (
         ApprovalLedger,
         migrate_legacy_snapshot,
     )
     ledger = ApprovalLedger(_ledger_path(project_root))
     migrate_legacy_snapshot(ledger, _legacy_snapshot_path(project_root))
-    approvals, _bound = ledger.fold()
-    return approvals
+    approvals, _bound, scopes = ledger.fold()
+    return approvals, scopes
 
 
 # ── response models ───────────────────────────────────────────────────────────
@@ -74,6 +82,9 @@ def _load(project_root: Path) -> dict[str, bool]:
 class ApprovalEntry(BaseModel):
     key: str
     approved: bool
+    #: #5052: "workspace" / "agent:<name>" / "legacy-workspace" (a pre-#5052
+    #: entry — still honored workspace-wide, never silently relabeled).
+    scope: str
 
 
 # ── routes ───────────────────────────────────────────────────────────────────
@@ -83,9 +94,17 @@ class ApprovalEntry(BaseModel):
 async def list_permissions(
     project_root: Path = Depends(get_project_root),
 ) -> list[ApprovalEntry]:
-    """Return all saved approval entries, folded from the ledger."""
-    data = _load(project_root)
-    return [ApprovalEntry(key=k, approved=v) for k, v in sorted(data.items())]
+    """Return all saved approval entries, folded from the ledger.
+
+    #5052: each entry names its own ``scope`` — an operator (or a caller
+    counting ``scope == "legacy-workspace"``) can see which grants predate
+    the agent dimension and still apply to every agent, rather than that
+    fact being invisible."""
+    data, scopes = _load(project_root)
+    return [
+        ApprovalEntry(key=k, approved=v, scope=scopes.get(k, "legacy-workspace"))
+        for k, v in sorted(data.items())
+    ]
 
 
 @router.delete("/permissions/{key:path}", status_code=status.HTTP_204_NO_CONTENT)
@@ -104,7 +123,7 @@ async def revoke_permission(
     failure (see ``emit_direct_event``'s docstring) — the append always
     lands, but on an emit failure the audit trail does not record it.
     """
-    data = _load(project_root)
+    data, _scopes = _load(project_root)
     if key not in data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -137,7 +156,7 @@ async def clear_permissions(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Pass {\"confirm\": true} in the request body to clear all approvals.",
         )
-    data = _load(project_root)
+    data, _scopes = _load(project_root)
     currently_approved = [k for k, v in data.items() if v]
     from reyn.security.permissions.approval_ledger import ApprovalLedger
     ledger = ApprovalLedger(_ledger_path(project_root))

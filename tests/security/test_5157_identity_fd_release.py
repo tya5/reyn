@@ -125,7 +125,7 @@ async def test_revoking_an_approval_also_clears_its_stale_identity_record(
     from reyn.security.permissions.approval_ledger import ApprovalLedger
 
     ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
-    _saved, bound = ApprovalLedger(ledger_path).fold()
+    _saved, bound, _scopes = ApprovalLedger(ledger_path).fold()
     assert key not in bound, (
         "revoke must also clear the PERSISTED bound-identity record -- "
         "otherwise it survives a process restart and a later re-approval "

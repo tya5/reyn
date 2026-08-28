@@ -58,7 +58,7 @@ def test_revoke_appends_a_false_record_the_row_survives(tmp_path: Path, monkeypa
 
     out = capsys.readouterr().out
     assert f"Revoked {key!r}" in out
-    saved, _bound = _ledger(tmp_path).fold()
+    saved, _bound, _scopes = _ledger(tmp_path).fold()
     assert key in saved, "the approval row must survive a revoke, not disappear"
     assert saved[key] is False
 
@@ -90,7 +90,7 @@ def test_clear_revokes_every_currently_approved_key(tmp_path: Path, monkeypatch,
 
     out = capsys.readouterr().out
     assert "Cleared 2 approval(s)" in out
-    saved, _bound = ledger.fold()
+    saved, _bound, _scopes = ledger.fold()
     assert saved == {"actor/file.write/a/": False, "actor/file.write/b/": False}
 
 

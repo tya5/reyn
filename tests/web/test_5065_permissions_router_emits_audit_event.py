@@ -136,7 +136,7 @@ def test_revoke_permission_emits_one_audit_event_naming_the_key(tmp_project: Pat
     # the ledger no longer shows this key as approved (the row itself
     # SURVIVES, as an explicit revoke record -- audit-events acceptance).
     from reyn.security.permissions.approval_ledger import ApprovalLedger
-    saved, _bound = ApprovalLedger(
+    saved, _bound, _scopes = ApprovalLedger(
         tmp_project / ".reyn" / "approvals.jsonl"
     ).fold()
     assert saved.get("chat_router/http.get/example.com") is False
@@ -170,7 +170,7 @@ def test_clear_permissions_emits_one_audit_event_with_the_cleared_count(
     assert events[0]["data"]["surface"] == "web"
 
     from reyn.security.permissions.approval_ledger import ApprovalLedger
-    saved, _bound = ApprovalLedger(
+    saved, _bound, _scopes = ApprovalLedger(
         tmp_project / ".reyn" / "approvals.jsonl"
     ).fold()
     assert saved == {
