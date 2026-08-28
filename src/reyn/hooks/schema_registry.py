@@ -109,7 +109,16 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
     "builtin:lifecycle:session_start": frozenset({"point", "agent_name"}),
     "builtin:lifecycle:session_end": frozenset({"point", "agent_name"}),
     "builtin:lifecycle:turn_start": frozenset({"point", "agent_name", "kind", "chain_id"}),
-    "builtin:lifecycle:turn_end": frozenset({"point", "agent_name", "chain_id", "user_text"}),
+    # #5221: sensitive_op_count / sensitive_op_kinds_csv are the behavioral-
+    # anomaly-detector's closed-vocabulary data source (see
+    # reyn.runtime.turn_behavior_tally) — a `pipeline_launch` hook on this
+    # point can read them via `input_template`. Every value either field can
+    # ever carry is drawn from SENSITIVE_OP_KINDS, itself a fixed subset of
+    # AUDIT_EVENT_KINDS — never raw message text.
+    "builtin:lifecycle:turn_end": frozenset(
+        {"point", "agent_name", "chain_id", "user_text",
+         "sensitive_op_count", "sensitive_op_kinds_csv"},
+    ),
     "builtin:external:mcp_resource_updated": frozenset(
         {"point", "server", "uri", "agent_name", "resync"},
     ),
