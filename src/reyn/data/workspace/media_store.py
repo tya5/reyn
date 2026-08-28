@@ -1027,7 +1027,20 @@ class MediaStore:
         session's own open turn is out of C's reach entirely — C only
         ever enumerates THIS session's own directory — and stays
         unprotected only until a CROSS-session GC (#5366) is built; #5366
-        is where that would first need to be handled, not here."""
+        is where that would first need to be handled, not here.
+
+        Disclosed (architect review, non-blocking): if EVERY remaining
+        candidate is protected (all share the triggering chain), this
+        returns having deleted nothing, and the directory stays OVER
+        cap — deliberately: protecting an open turn's content is worth
+        more than strictly enforcing the byte cap on any given pass.
+        Not silent — the caller (:meth:`save_tool_result`) already logs
+        nothing extra here because this is the expected, harmless
+        common case (see ``history_content_max_bytes``'s own docstring:
+        2 GB default, eviction is not expected to fire under real usage
+        at all); a future lower cap that fires routinely against a
+        single long-running chain would see this over-cap state
+        persist across many writes, not a one-pass fluke."""
         cap = self._config.history_content_max_bytes
         directory = self._history_content_dir()
         _, total = _dir_stats_recursive(directory)

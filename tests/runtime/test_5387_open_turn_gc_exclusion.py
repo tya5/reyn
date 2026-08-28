@@ -142,6 +142,54 @@ def test_a_file_from_a_different_chain_is_not_protected_by_the_current_one(
     )
 
 
+def test_the_older_of_two_same_chain_files_survives_only_because_of_the_exclusion(
+    tmp_path,
+) -> None:
+    """Tier 2: #5387 architect review — the sibling tests above (turn-
+    boundary, opt-in) are each ALSO fully explained by oldest-first
+    ordering alone, with zero exclusion in effect: the triggering
+    chain's own write is always the NEWEST file, so "the newest survives"
+    never distinguishes "protected" from "just not old enough to be
+    picked yet". This is the one construction where ordering alone
+    predicts the OPPOSITE outcome from exclusion, so exclusion is the
+    ONLY explanation left: two files from the SAME chain ("c1"), the
+    flag at its default (True) — an oldest-first-only implementation
+    would evict the older one (it is not the newest); the exclusion
+    must keep BOTH, since both share the chain that is triggering THIS
+    pass.
+
+    Strip-falsify: removing the ``protect_open_turn`` skip from
+    ``_evict_history_content_over_cap`` makes ONLY this test go RED (the
+    3 sibling tests all stay green — proof they were never
+    distinguishing this case)."""
+    store = MediaStore(
+        MediaStoreConfig(history_content_max_bytes=50),
+        project_root=tmp_path,
+        agent_name="alice",
+        session_id="main",
+    )
+
+    older_block = store.save_tool_result(
+        "payload number one " * 2, mime_type="text/plain", chain_id="c1", seq=1,
+    )
+    _bump_all_mtimes_forward(store.history_content_dir)
+    # The triggering write itself — same chain as the older file above,
+    # so BOTH must be recognized as "this pass's own open turn".
+    newer_block = store.save_tool_result(
+        "payload number two " * 2, mime_type="text/plain", chain_id="c1", seq=2,
+    )
+
+    older_path = tmp_path / older_block["path"]
+    newer_path = tmp_path / newer_block["path"]
+    assert older_path.exists(), (
+        "the OLDER file must survive — an oldest-first-only "
+        "implementation (no exclusion) would evict it, since it is "
+        "not the newest file; the exclusion is what keeps it, because "
+        "it shares the SAME chain as the write triggering this pass"
+    )
+    assert newer_path.exists()
+
+
 def test_protect_open_turn_from_gc_false_opts_the_current_chain_back_into_eviction(
     tmp_path,
 ) -> None:
