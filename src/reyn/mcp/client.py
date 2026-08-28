@@ -984,6 +984,33 @@ class MCPClient:
         # actually opens a connection (every transport now).
         self._exit_stack: "Any | None" = None
         self._initialized = False
+        # #5357: this client's open (initialize) and close run inside ONE
+        # dedicated "owner" asyncio.Task for the client's whole open lifetime —
+        # whoever ENTERS an anyio-backed context manager must be the SAME task
+        # that EXITS it (anyio's cancel-scope machinery checks task identity,
+        # not just "some task"). Pre-#5357, `initialize()` ran in whatever task
+        # called it and `close()` ran in whatever (possibly different) task
+        # called IT — and a caller that simply dropped its last reference
+        # without ever calling close() left the event loop's own async-
+        # generator finalizer to close the transport CM in NO task at all,
+        # which is exactly what production's chronic "Attempted to exit cancel
+        # scope in a different task than it was entered in" traceback was
+        # (`context_message` always "closing of asynchronous generator
+        # streamable_http_client", `task_repr` always empty — see #5357).
+        # `_owner_task` runs `_own_lifecycle` below: open, then wait for a
+        # close request, then close — ALL in this one task, no matter which
+        # (possibly different) tasks call `initialize()`/`close()` themselves.
+        self._owner_task: "asyncio.Task[None] | None" = None
+        self._close_requested: "asyncio.Event | None" = None
+        self._open_ready: "asyncio.Future[None] | None" = None
+        # #5357 stage 3: set True iff `_owner_task` was torn down (its own
+        # await on `_close_requested` was cancelled because nothing else
+        # referenced this client any more) WITHOUT `close()` ever being
+        # called — the exact "reference just gets dropped" leak this issue
+        # closes. Reported as a `mcp_client_close_leaked` audit-event from
+        # `_do_close()` (never fired on a normal `close()` call — see that
+        # method).
+        self._leaked_close = False
         # Captures subprocess stderr for stdio transport so initialize
         # failures (e.g. self-made MCP server exits immediately, writes
         # a traceback to stderr before the MCP handshake completes) can
@@ -1134,13 +1161,62 @@ class MCPClient:
         stays a declared dependency until this PR also removes it from
         ``pyproject.toml`` — a separate, later step in the same PR, not a
         follow-up).
+
+        #5357: the actual handshake now runs inside a dedicated ``_owner_task``
+        (spawned here, awaited to readiness) rather than directly in whichever
+        task calls this method — see :meth:`_own_lifecycle` and the matching
+        ``__init__`` comment for why. This method (and therefore ``__aenter__``,
+        and every lazy-init call site below that calls ``self.initialize()``)
+        stays a normal ``await`` from the CALLER's point of view; only
+        ``close()`` needs to know the teardown runs in that same owner task.
         """
         if self._initialized:
             return
-        if self._type == "stdio":
-            await self._initialize_stdio()
-        else:
-            await self._initialize_http_or_sse()
+        if self._owner_task is not None:
+            # A concurrent/prior initialize() already spawned the owner task
+            # (e.g. it failed and is still finishing, or another caller is
+            # already awaiting it) — join THAT SAME attempt rather than
+            # racing a second one.
+            assert self._open_ready is not None
+            await self._open_ready
+            return
+        self._close_requested = asyncio.Event()
+        self._open_ready = asyncio.get_running_loop().create_future()
+        self._owner_task = asyncio.create_task(self._own_lifecycle())
+        await self._open_ready
+
+    async def _own_lifecycle(self) -> None:
+        """#5357: the ONE task that both opens (below) and, eventually,
+        closes (:meth:`_do_close`) this client's transport — see the
+        ``__init__``/``initialize`` comments for the mechanism this closes.
+
+        Waits on ``_close_requested`` after a successful open. If that wait
+        is CANCELLED because nothing else references this client any more
+        (the caller dropped every reference without ever calling ``close()``)
+        rather than because ``close()`` set the event, ``_do_close()`` still
+        runs — in THIS SAME task, so anyio's cancel-scope task-identity check
+        never trips — but the teardown was never requested, so it is a
+        genuine leak: ``_leaked_close`` is set, and :meth:`_do_close` turns
+        that into a ``mcp_client_close_leaked`` audit-event (witness #2/#3 in
+        #5357: fires on this path, never on a normal ``close()``)."""
+        assert self._open_ready is not None
+        try:
+            if self._type == "stdio":
+                await self._initialize_stdio()
+            else:
+                await self._initialize_http_or_sse()
+        except BaseException as exc:
+            if not self._open_ready.done():
+                self._open_ready.set_exception(exc)
+            return
+        if not self._open_ready.done():
+            self._open_ready.set_result(None)
+        assert self._close_requested is not None
+        try:
+            await self._close_requested.wait()
+        except asyncio.CancelledError:
+            self._leaked_close = True
+        await self._do_close()
 
     async def _initialize_stdio(self) -> None:
         """#3698 stage 1 / PR-1: stdio via the official ``mcp`` SDK's
@@ -1497,14 +1573,23 @@ class MCPClient:
         self._server_capabilities = session.server_capabilities
 
     async def __aenter__(self) -> "MCPClient":
-        """#a359: structured lifecycle. ``initialize()`` here + ``close()`` in ``__aexit__`` run in
-        the SAME task/scope — so the transport + session (whose SDK stdio_client / ClientSession hold
-        internal anyio task-group scopes that MUST be exited in the task that entered them) open and
-        close within one ``async with`` block. Callers use ``async with MCPClient(cfg) as c:`` instead
-        of a lazy ``initialize()`` + a deferred ``self._stack`` closed by a later ``close()`` in a
-        possibly-different task — that deferral was the root cause of the cross-task 'cancel scope
-        crossed task boundary' error (Windows: BrokenResource / BaseExceptionGroup during subprocess
-        teardown)."""
+        """#a359: structured lifecycle. A caller using ``async with MCPClient(cfg) as c:`` gets
+        ``initialize()`` here and ``close()`` in ``__aexit__`` naturally in the same call scope.
+
+        #5357 update: that discipline is no longer what actually PROTECTS the transport + session's
+        internal anyio task-group scopes (which MUST be exited in the task that entered them) — a
+        caller that holds a ``client`` past this ``async with`` block, or calls ``initialize()``/
+        ``close()`` directly instead (every lazy-init call site below does), used to open in whichever
+        task called ``initialize()`` and close in whichever (possibly different) task later called
+        ``close()``/``__aexit__``, or — worse — never called either and just dropped the reference,
+        letting the event loop's own async-generator finalizer close it in NO task at all. That was the
+        root cause of the chronic 'cancel scope crossed task boundary' RuntimeError (`context_message`
+        always "closing of asynchronous generator streamable_http_client", `task_repr` always empty —
+        see #5357, not #a359's originally-diagnosed Windows BrokenResource/BaseExceptionGroup shape).
+        ``initialize()`` now pins the open AND the eventual close to one dedicated ``_owner_task`` (see
+        that method + ``_own_lifecycle``) regardless of which task calls either — this docstring's
+        ``async with`` recommendation is still the clearest usage, but is no longer load-bearing for
+        task-identity correctness."""
         await self.initialize()
         return self
 
@@ -1857,6 +1942,27 @@ class MCPClient:
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly.
 
+        #5357: the actual teardown (:meth:`_do_close`) always runs inside this
+        client's ``_owner_task`` — the SAME task that ran ``initialize()`` — no
+        matter which task calls THIS method. If that owner task never got as
+        far as opening anything (``initialize()`` was never called, or it
+        raised before spawning the owner task), there is nothing to close
+        beyond the stderr-capture/child-reap bookkeeping every close performs."""
+        owner_task = self._owner_task
+        if owner_task is None:
+            self.close_stderr_capture()
+            self._reap_child_process()  # nothing opened, or already closed once — still idempotent
+            return
+        if self._close_requested is not None and not self._close_requested.is_set():
+            self._close_requested.set()
+        await owner_task  # `_do_close()` runs — and completes — in THAT task, not this one
+
+    async def _do_close(self) -> None:
+        """The real teardown — called exactly once, from :meth:`_own_lifecycle`,
+        always in this client's ``_owner_task``. Never call this directly;
+        call :meth:`close` (or ``__aexit__``), which routes here through that
+        task regardless of which task calls IT.
+
         #2714: the graceful ``client.close()`` (fastmcp → mcp ``stdio_client``'s
         SIGTERM→SIGKILL / Windows Job-Object tree-terminate) is the PRIMARY reaper.
         But that teardown runs inside anyio cancel scopes that, on Windows, can raise
@@ -1931,6 +2037,21 @@ class MCPClient:
             # child alive.
             self._reap_child_process()
             self.close_stderr_capture()
+        # #5357 stage 3: fires ONLY when `_own_lifecycle` reached this close because
+        # its wait on `_close_requested` was cancelled (nothing referenced this client
+        # any more and `close()` was never called) — never on a normal `close()` call
+        # (witness #3: the noise guard). Best-effort — a sink-less caller (the
+        # ephemeral MCPClientPool path, or a direct construction with no emit_event)
+        # sees no behaviour change, same as every other `_emit_event` use in this file.
+        if self._leaked_close and self._emit_event is not None:
+            try:
+                self._emit_event(
+                    "mcp_client_close_leaked",
+                    server=self._server_name or "<unknown>",
+                    transport=self._type,
+                )
+            except Exception:  # noqa: BLE001 — reporting a leak must never itself raise
+                logger.warning("MCPClient: mcp_client_close_leaked emit failed", exc_info=True)
 
     def _reap_child_process(self) -> None:
         """#2714 belt-and-suspenders: synchronously terminate the captured stdio child

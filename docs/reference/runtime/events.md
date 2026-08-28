@@ -110,6 +110,7 @@ llm_request_error
 llm_response_received
 mcp_called
 mcp_cancelled
+mcp_client_close_leaked
 mcp_completed
 mcp_elicitation_answered
 mcp_elicitation_auto_declined
@@ -428,6 +429,7 @@ op dispatch:
 | `mcp_initialized` | Emitted on every (re)connect, once the server's handshake completes (`initialize` or, since #3698 PR-2's `Client(mode="auto")`, `discover`). | `server`, `negotiated_version`, `capabilities`, `subscription_adapter` (the selected `SubscriptionAdapter` class name — `LegacySubscriptionAdapter` or `ListenSubscriptionAdapter`, see [Concepts: MCP](../../concepts/tools-integrations/mcp.md) — the audit-visible witness of which delivery mechanism this connection actually uses) |
 | `mcp_resource_updated` | A subscribed resource's server-pushed `resources/updated` notification, or a synthetic resync fired per re-subscribed URI after a transport-death reconnect. Also wired into the hook dispatcher as an external-event hook-point — see [Concepts: hooks](../../concepts/runtime/hooks.md#mcp_resource_updated). | `server`, `uri`, `resync` (`true` for a reconnect resync, `false` for a real push) |
 | `mcp_reconnect_failed` | #5280: a reconnect attempt (`MCPConnectionService._reconnect`, either `_HeldConnection._heal`'s reactive path or `_reconnect_from_lost_subscription`'s proactive one) itself failed to reopen — the server subprocess is genuinely gone, not just a transient transport death. Fired instead of `mcp_initialized` (which only fires on success) specifically so `Session.mcp_subscription_state()`'s reactive cache (#5276/#5279) has a signal to invalidate on, since the server has already dropped out of `held_servers()` by this point. | `server` |
+| `mcp_client_close_leaked` | #5357: an `MCPClient`'s transport was torn down because its dedicated owner task was cancelled (nothing referenced the client any more) WITHOUT `close()`/`__aexit__` ever being called — the "reference just gets dropped" shape that used to crash the event loop with `RuntimeError: Attempted to exit cancel scope in a different task than it was entered in` (the loop's own async-generator finalizer closing the transport in NO task at all). `initialize()`/`close()` now pin the open and the eventual close to one dedicated task regardless of caller, so this no longer crashes — but it is still a genuine leak (nobody asked for the teardown), so it is reported. Never fires on a normal `close()` call (the noise guard). | `server`, `transport` |
 | `mcp_elicitation_requested` | A server issues an `elicitation/create` structured-input request. | `server`, `field_keys` (the requested schema's property **names** only — never values) |
 | `mcp_elicitation_answered` | The request resolves to `accept` or `decline` (human choice, or a `decline` from `auto_decline` config). | `server`, `field_keys`, `action` (`"accept"` \| `"decline"`) |
 | `mcp_elicitation_timed_out` | No answer arrived before `elicitation_timeout_seconds`. | `server`, `field_keys` |
