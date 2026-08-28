@@ -494,13 +494,14 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: ``run_coroutine_threadsafe``, and a private method cannot be that
 #: closure's target from outside the class).
 #: Raised 116 -> 117 for #5336: ``mark_ephemeral`` — a NEW method.
-#: ① What was added: a one-line setter (``self._ephemeral = True``) —
-#: no new state, no new behavior; ``_ephemeral`` itself already existed.
+#: ① What was added: a one-line setter (sets the existing ``_ephemeral``
+#: flag True) — no new state, no new behavior; the flag itself already
+#: existed.
 #: ② Why not private: two REAL production sites — ``registry.py``'s
 #: ``spawn_session_recorded`` and ``pipeline_executor_driver.py``'s own
-#: run-completion teardown — already wrote ``session._ephemeral = True``
-#: from OUTSIDE this class (a genuine external seam wearing a private
-#: name, confirmed via ``git grep`` before this PR), not a slash handler
+#: run-completion teardown — already wrote that flag directly, from
+#: OUTSIDE this class (a genuine external seam wearing a private name,
+#: confirmed via ``git grep`` before this PR), not a slash handler
 #: reaching into session state (#3595 S4's own failure mode) — architect
 #: ruling: this is an externally-decided FACT about the session, the
 #: opposite shape from #4866's "don't publish _x just because a test
