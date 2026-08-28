@@ -340,10 +340,14 @@ async def test_agui_events_route_pairs_connect_status_with_backlog(tmp_path, mon
     app.state.auth = AuthContext(token="s3cret", require_token=True)
     monkeypatch.setattr(endpoint_mod, "get_registry", lambda: registry)
 
+    # #5130: agui_events no longer accepts a bare agent_name: str
+    # parameter — the real router populates scope["path_params"] on a
+    # match, so a direct (non-routed) call here must do the same.
     scope = {
         "type": "http", "method": "GET", "path": f"/agui/chat/{_AGENT_NAME}/events",
         "query_string": b"token=s3cret&connection_id=conn-5179-route-test",
         "headers": [], "client": ("127.0.0.1", 12345), "app": app,
+        "path_params": {"agent_name": _AGENT_NAME},
     }
     req = Request(scope)
 
@@ -351,7 +355,7 @@ async def test_agui_events_route_pairs_connect_status_with_backlog(tmp_path, mon
     try:
         # ── Call the REAL route handler — its own real, fixed connect-time
         # pairing runs here, before anything is submitted. ────────────────
-        resp = await endpoint_mod.agui_events(req, _AGENT_NAME)
+        resp = await endpoint_mod.agui_events(req)
         assert isinstance(resp, StreamingResponse), (
             f"expected a real StreamingResponse (auth/agent-exists must "
             f"both pass for this test's own setup); got {resp!r}"
