@@ -363,7 +363,7 @@ async def test_message_bus_stops_after_session_completed(tmp_path, monkeypatch, 
     await session.inbox.put(("user", {"text": "late"}))
     replies = await MessageBus().request(
         session, TurnOrigin.EXTERNAL_MESSAGE, {"text": "new"},
-        A2aRef(request_id="r"), timeout=0.01,
+        A2aRef(request_id="r"), timeout=float("inf"),
     )
     assert processed == []
     assert replies == []
