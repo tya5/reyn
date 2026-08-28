@@ -16,7 +16,7 @@ from reyn.config.chat import OffloadConfig
 from reyn.data.workspace.media_store import MediaStore
 from reyn.runtime.chat_message import CONTENT_REF_META_KEY, SPILLED_META_KEY
 from reyn.runtime.router_loop import RouterLoop
-from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
 from reyn.tools.scheme import ExecutionResult
 from tests._support.agent_session import make_session
 
@@ -53,7 +53,7 @@ class _RecordingHost:
             return content_str
         return cap_tool_result_content(
             content_str, cap_tokens=100, model=_MODEL,
-            save_fn=self.media_store.save_tool_result,
+            save_fn=self.media_store.save_tool_result, trigger=TRIGGER_CAP,
             use_chars4=True, content_type=content_type, on_offload=on_offload,
             on_write_unavailable=on_write_unavailable,
         )
