@@ -134,13 +134,21 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
     ``run_loop`` starts is durable by the time the (real, injected)
     ``_llm_caller`` is invoked for this turn's very first iteration.
 
-    No await happens anywhere in ``run_loop`` before its flush call site
-    for a bare ``FakeRouterHost`` (no ``should_force_close`` /
+    No await happens anywhere in ``run_loop`` between the top of its
+    per-iteration loop and its flush call site for a bare
+    ``FakeRouterHost`` (no ``should_force_close`` /
     ``peek_mid_turn_injection`` implemented — both getattr-guarded, both
-    short-circuit before their own ``await``) — confirmed by reading
-    ``router_loop.py`` lines 1753-1953 directly. So this is a genuine
-    ordering witness, not a scheduler-timing coincidence: nothing else in
-    this call graph could have run the drainer first."""
+    short-circuit BEFORE their own ``await``, never reaching it). This is
+    an invariant about the CODE PATH (guard-then-await, in that order,
+    both gated on a host attribute this fixture never implements), not a
+    line-number range — confirmed by reading ``router_loop.py``'s
+    ``run_loop`` directly at the head of each iteration, before the
+    flush call. If a future edit adds a new unconditional ``await``
+    ahead of the flush, this test would go green on scheduler luck
+    rather than the barrier — re-verify this comment's claim (not just
+    that the test still passes) whenever that region changes. So this is
+    a genuine ordering witness, not a scheduler-timing coincidence:
+    nothing else in this call graph could have run the drainer first."""
     store = MediaStore(project_root=tmp_path, session_id="flush-test")
     host = _MediaStoreHost(store)
     written = await _seed_pending_spill(host)
