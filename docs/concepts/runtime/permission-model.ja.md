@@ -44,6 +44,8 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 永続的な選択は `.reyn/approvals.jsonl`(append-only ledger — #5153。1決定=1行のJSONLレコードで、読み込み時にfold・同一keyは最後の行が勝つ)に `<actor>/<op>/<path>`（例: `chat_router/file.write//tmp/output`）のキーで保存されます。キーは actor スコープです。ある actor の承認が別の actor に漏れることはありません（`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"）。`actor` は呼び出し元サブシステムを識別します(例: LLM ルーター駆動の op パスなら `chat_router`、バックグラウンド呼び出しなら `hooks`/`cron` など) — 個々の named agent ではありません。#5153以前の `.reyn/approvals.yaml` snapshotは初回タッチ時に1度だけこのledgerへ移行され、以降は読まれません。
 
+キーだけでは、保存済み承認が「誰に」適用されるかは決まらなくなりました(#5052): 全ての決定は上記キーとは直交する `scope` 値も持ちます。呼び出し元がrunning-agent identityを持つ場合、既定のscopeは `agent:<name>`(その1 agentのみ)に狭まります。agent identityの無いサブシステム/config書き込み(`hooks`/`cron`/`mcp` actor)は代わりに `SCOPE_WORKSPACE`(全agent)を記録します。この既定が狭い側に倒れているのは意図的です(`approval_ledger.scope_for_agent`自身のdocstring): リスクは非対称——狭すぎて誤る場合は2番目のagentが一度再プロンプトされるだけですが、広すぎて誤る場合は1つのagentの承認が workspace 内の全agentを黙って統治してしまいます。#5052以前のレコードは `SCOPE_LEGACY_WORKSPACE` にfoldされます——lookup時の一致挙動は `SCOPE_WORKSPACE` と同一ですが、ディスク上は別の値として区別されます(書かれた時点でagent軸自体が存在しなかった、という事実は「明示的にworkspace全体」とは別物のため)。
+
 `file.read`/`file.write`(path 系)のキーについては、キーが一致するだけでは十分ではありません(#5042): 承認済み path 自体の identity(`st_ino` + `st_birthtime`、`st_birthtime` が使えない環境では ino のみに縮退)が初回使用時に束縛され、以降の一致のたびに再照合されます。同じ path に別の identity のオブジェクトが後から現れた場合(承認対象が削除され、同名で別物が作られた場合)は一致しないものとして扱われ、purge して同じ path に作り直すと古い承認をそのまま引き継がず再度確認を求められます。承認行自体は不一致によって変更されません — 影響を受けるのはその path への新しい使用だけです。
 
 呼び出しに intervention bus が配線されていない場合（`bus=None` — 非インタラクティブなコンテキスト）、JIT プロンプトはスキップされ、ゾーン外アクセスは保留せずに拒否されます。
