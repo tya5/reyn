@@ -352,22 +352,24 @@ def _dir_stats_recursive(directory: Path) -> tuple[int, int]:
 
 
 def _eviction_order(directory: Path) -> list[Path]:
-    """#5364 §1.6 "C": which file in *directory* goes first when it must
-    shrink, expressed as an ordered PREDICATE SEQUENCE rather than an
-    inline sort key — so a future predicate (#5387's turn-boundary
-    exclusion, once ``chain_id`` is threaded through the write-time cap
-    path) has a single named place to land instead of a second hand-
-    rolled sort. Today there is exactly ONE predicate: oldest ``mtime``
-    first.
+    """#5364 §1.6 "C": among files that ARE eligible for deletion, which
+    one goes first — oldest ``mtime`` first, the only rule today.
 
-    This is an eviction ORDER, not a claim about which turn a file
-    belongs to — see ``history_content_max_bytes``'s own docstring for
-    why mtime cannot answer that question (two concurrent sessions'
-    writes interleave in mtime order). It only says "when something
-    must go, the least-recently-written file goes first", the standard
-    backstop default even before any turn-awareness exists. Best-effort
-    on a ``stat()`` race (a file removed between listing and stat) —
-    same disclosed-skip policy as :func:`_dir_stats`."""
+    This is an ORDER over an already-eligible set, not an eligibility
+    filter — the two are different questions with different failure
+    modes (lead-coder review, PR #5388: "may this be deleted" is a
+    filter, "which one first" is a sort, and folding a future filter
+    into THIS function's sort key would let it silently become "deleted
+    last" instead of "never deleted"). #5387's turn-boundary exclusion
+    (once ``chain_id`` is threaded through the write-time cap path)
+    belongs in a SEPARATE eligibility filter applied to this function's
+    input or output — not as another entry in a predicate sequence
+    here. mtime cannot stand in for that filter either way: see
+    ``history_content_max_bytes``'s own docstring for why (two
+    concurrent sessions' writes interleave in mtime order — "oldest" is
+    not "whose turn is still open"). Best-effort on a ``stat()`` race (a
+    file removed between listing and stat) — same disclosed-skip policy
+    as :func:`_dir_stats`."""
     entries: list[tuple[float, Path]] = []
     for entry in directory.rglob("*"):
         try:
