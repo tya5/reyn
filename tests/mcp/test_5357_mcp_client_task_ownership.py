@@ -42,7 +42,7 @@ from tests.mcp.test_mcp_client import _HttpEchoServer
 
 
 def test_abandoned_owner_task_closes_in_same_task_and_reports_leak() -> None:
-    """Tier 1: #5357 witnesses 1+2 — a streamable-http ``MCPClient`` whose owner
+    """Tier 2: #5357 witnesses 1+2 — a streamable-http ``MCPClient`` whose owner
     task is torn down WITHOUT ``close()``/``__aexit__`` ever being called (the
     "reference just gets dropped" shape architect specified — see the module
     docstring for why this drives it via a direct cancel rather than organic GC)
@@ -91,7 +91,7 @@ def test_abandoned_owner_task_closes_in_same_task_and_reports_leak() -> None:
 
 
 def test_normal_close_never_reports_a_leak() -> None:
-    """Tier 1: #5357 witness 3 — the noise guard. A client that goes through the
+    """Tier 2: #5357 witness 3 — the noise guard. A client that goes through the
     normal ``async with MCPClient(...) as client:`` open/close path — the SAME
     owner-task machinery witness 1's test exercises — never fires
     ``mcp_client_close_leaked``. A leak detector that fires on every ordinary close
@@ -115,7 +115,7 @@ def test_normal_close_never_reports_a_leak() -> None:
 
 
 def test_close_from_a_different_task_than_initialize_still_succeeds() -> None:
-    """Tier 1: #5357 general-form check — ``initialize()`` in one asyncio Task and
+    """Tier 2: #5357 general-form check — ``initialize()`` in one asyncio Task and
     ``close()`` from a DIFFERENT one (the exact shape ``connection_service.py``'s
     ``_ensure_open``/``_reconnect`` split across separate calls) must not raise: the
     actual anyio-sensitive teardown now always runs in the client's own owner task,
