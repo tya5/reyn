@@ -92,6 +92,26 @@ class AgentProfile:
     # the string. None = no override (falls through to the project-wide
     # file, same convention as `base_dir`'s own None).
     project_context_path: "str | None" = None
+    # #5352: this agent's OWN declared sandbox-policy narrowing — the
+    # config-facing vocabulary dict (``network`` / ``subprocess`` /
+    # ``allow_write_paths`` / ``deny_write_paths`` / ``deny_read_paths`` /
+    # ``allow_env_names`` / ``deny_env_names`` / ...) that
+    # ``reyn.security.sandbox.policy._translate_sandbox_policy_config`` and
+    # ``reyn.config.infra.SandboxConfig.policy`` already use — SAME shape,
+    # a DIFFERENT source (this agent's own profile.yaml rather than the
+    # process-wide reyn.yaml `sandbox.policy`). None (absent) = no per-agent
+    # declaration; the agent's ``Session._sandbox_config`` then falls
+    # through to the process-wide ``SandboxConfig`` unmodified (#5352's own
+    # disclosure in ``runtime/agent.py`` — this field is what answers the
+    # "per-agent narrowing" question that disclosure named as open).
+    # Composition at spawn time (same-agent inherits the spawner's live
+    # effective value; cross-agent inherits THIS field when the target
+    # declares it, else falls back to the spawner's value) lives in
+    # ``AgentRegistry.resolved_sandbox_for`` / the spawn call sites — this
+    # field only carries the agent's OWN raw declaration, same "raw value,
+    # resolved/bounded at USE time" split ``base_dir``/``project_context_path``
+    # already use above.
+    sandbox: "dict[str, object] | None" = None
 
     @classmethod
     def new(
@@ -146,6 +166,14 @@ class AgentProfile:
         project_context_path = (
             str(raw_project_context_path) if raw_project_context_path else None
         )
+        # #5352: `sandbox:` — a dict (the config-facing sandbox-policy
+        # vocabulary) or absent/None. Not routed through any further
+        # validation here (same "no hard-fail, warn elsewhere" posture
+        # `SandboxConfig.__post_init__` already settled for this exact
+        # vocabulary, #4174 T0) — an unknown key inside it is a USE-time
+        # concern for whatever resolves it, not a load-time crash.
+        raw_sandbox = data.get("sandbox")
+        sandbox = dict(raw_sandbox) if isinstance(raw_sandbox, dict) else None
         return cls(
             name=name,
             role=str(data.get("role", "") or ""),
@@ -155,6 +183,7 @@ class AgentProfile:
             bounding=bounding,
             base_dir=base_dir,
             project_context_path=project_context_path,
+            sandbox=sandbox,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -178,6 +207,8 @@ class AgentProfile:
             payload["base_dir"] = self.base_dir
         if self.project_context_path is not None:
             payload["project_context_path"] = self.project_context_path
+        if self.sandbox is not None:
+            payload["sandbox"] = dict(self.sandbox)
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",

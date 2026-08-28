@@ -536,7 +536,27 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: supplied — they accumulate as hooks.yaml layers are read (possibly
 #: repeatedly, across hot-reloads) over the session's own lifetime, not
 #: known at construction time.
-_PUBLIC_MEMBER_CEILING = 118
+#: Raised 118 -> 119 for #5352: ``apply_per_session_sandbox`` — a NEW method.
+#: ① What was added: a thin forwarder to
+#: ``CapabilityVisibility.apply_per_session_sandbox`` — same shape as
+#: ``apply_per_session_narrowing`` directly above it, one axis over
+#: (sandbox instead of capability narrowing).
+#: ② Why not private: called via ``getattr(session, "apply_per_session_sandbox",
+#: None)`` from TWO real production sites in ``registry.py`` —
+#: ``AgentRegistry.spawn_session`` and ``AgentRegistry.spawn_session_recorded``
+#: — the exact same two call sites ``apply_per_session_narrowing`` (#2126) is
+#: already called from, immediately alongside each of those calls. Both
+#: re-inject the spawner-resolved sandbox override into the
+#: ALREADY-CONSTRUCTED spawned session from OUTSIDE this class, right after
+#: spawn-time config resolution — a genuine external seam, not a slash
+#: handler reaching into session internals (#3595 S4's own failure mode).
+#: ③ Why not a constructor argument: same answer as
+#: ``apply_per_session_narrowing`` already gave for its own case — the
+#: value to inject is only known AFTER the session is constructed and
+#: persisted (spawn-time priority resolution happens in the spawn seam,
+#: which runs after ``Session.__init__``), so it cannot be threaded
+#: through construction without restructuring the spawn seam itself.
+_PUBLIC_MEMBER_CEILING = 119
 
 
 def test_session_public_surface_does_not_grow() -> None:

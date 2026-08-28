@@ -1569,10 +1569,40 @@ class RouterHostAdapter:
                     ),
                 }
             resolved_base_dir = candidate
+        # #5352: the spawn-time sandbox-policy priority table — NOT an LLM-authored
+        # argument (unlike ``narrowing``/``base_dir`` above): entirely automatic from
+        # the target agent + the spawner's own live state, no ``spawn_session`` tool
+        # parameter needed. Same-agent spawn (``target_agent == self._agent_name``,
+        # including the reflexive default-``agent`` case) inherits the SPAWNER's own
+        # currently-effective override (whatever it is — restrict-only, since the
+        # spawner cannot exceed its own envelope). A cross-agent spawn onto a target
+        # whose OWN ``profile.yaml`` declares a ``sandbox:`` narrowing uses THAT
+        # declared value instead — the target's own operator-authored baseline, the
+        # same "each agent's own declared value" precedent ``allowed_mcp`` already
+        # sets (not a restrict-only ∩ against the spawner: a differently-declared
+        # agent is not bound by the spawner's own value, exactly as spawning under a
+        # target with its own ``allowed_mcp`` does not intersect with the spawner's).
+        # A cross-agent spawn onto a target that declares NOTHING falls back to the
+        # spawner's own value (never "unrestricted") — an undeclared target must not
+        # silently escape whatever the spawner itself is under.
+        resolved_sandbox: "dict | None" = None
+        if target_agent == self._agent_name:
+            resolved_sandbox = getattr(
+                parent_session, "_effective_sandbox_policy_override", lambda: None,
+            )()
+        else:
+            target_sandbox = self._registry.load_profile(target_agent).sandbox
+            if target_sandbox is not None:
+                resolved_sandbox = target_sandbox
+            else:
+                resolved_sandbox = getattr(
+                    parent_session, "_effective_sandbox_policy_override", lambda: None,
+                )()
         try:
             sid = await self._registry.spawn_session_recorded(
                 target_agent, sid=session, mode=mode, narrowing=narrowing,
                 base_dir=resolved_base_dir,
+                sandbox=resolved_sandbox,
                 # #4193 ①: this method returns a spawn-ack and submits the task
                 # below WITHOUT awaiting its completion — regardless of ``mode``.
                 # A persistent spawn through this one path is exactly the gap

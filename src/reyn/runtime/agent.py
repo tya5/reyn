@@ -70,28 +70,26 @@ class Agent:
     # ``environment_backend`` is the EnvironmentBackend INSTANCE.
     #
     # #5352 (lens 5, security — reading (A) ruled by architect,
-    # issuecomment-5450347844): DESPITE living on a per-agent ``Agent``
-    # instance, ``sandbox_config`` today is the SAME object for every
-    # agent in a process — SessionFactoryConfig.from_config threads the
-    # ONE process-wide ``ReynConfig.sandbox`` (loaded once from
+    # issuecomment-5450347844): this field ITSELF is STILL the SAME object
+    # for every agent in a process — SessionFactoryConfig.from_config threads
+    # the ONE process-wide ``ReynConfig.sandbox`` (loaded once from
     # reyn.yaml/reyn.local.yaml) to every agent's factory construction,
-    # unmodified; no code path narrows it per agent name (repo-wide
-    # census, 2026-08-28 — until #5352 answers whether per-agent
-    # narrowing is built; that PR's own landing is what would make this
-    # claim false, not a byte-count or a date). A field named on a
-    # per-agent dataclass reads as a per-agent narrowing point —
-    # there is no way to notice from here alone that it is not one.
-    # Consequence: reyn.yaml's absolute-path fields (``allow_write_paths``
-    # etc.) grant write access to every agent in the process equally,
-    # including one whose own worktree differs from the path an operator
-    # wrote for a DIFFERENT agent — harmless while every agent in a
-    # deployment is equally trusted, live the moment they are not.
-    # Deliberately NOT fixed by adding per-agent narrowing here — that is
-    # a NEW capability #1200 never decided to build, and a security
-    # capability's own promise ("this can be narrowed per agent") needs
-    # its own owner-level decision on who sets it (operator vs. a
-    # spawning model) before it exists at all — tracked as a SEPARATE
-    # question in #5352, not resolved by this disclosure.
+    # unmodified; nothing narrows THIS field per agent name. #5352 answered
+    # the open question this disclosure originally left standing ("who sets a
+    # per-agent narrowing, operator or spawning model") — BOTH: an agent's own
+    # ``profile.yaml`` may declare a ``sandbox:`` narrowing (operator-authored,
+    # ``AgentProfile.sandbox``), and a spawning model's ``spawn_session`` tool
+    # composes it per a same-agent / cross-agent-declared / cross-agent-
+    # undeclared priority table (``RouterHostAdapter.spawn_session`` +
+    # ``AgentRegistry.resolved_sandbox_for``). Neither reaches THIS field —
+    # both compose on TOP of it, one layer up, at
+    # ``Session._sandbox_config`` (the actual per-session/per-agent-effective
+    # read every consumer already uses instead of ``Agent.sandbox_config``
+    # directly — see that property's own docstring,
+    # ``docs/reference/runtime/session-construction.md``). So the
+    # consequence named below is now narrower than it reads: it still holds
+    # for an agent that declares nothing and was never spawned with an
+    # override (the pre-#5352 default), not for the system as a whole.
     sandbox_config: Any = None
     sandbox_backend: Any = None
     environment_backend: Any = None

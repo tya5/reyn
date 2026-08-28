@@ -2453,7 +2453,88 @@ class Session:
 
     @property
     def _sandbox_config(self) -> Any:
-        return self._agent.sandbox_config
+        """#5352: this session's EFFECTIVE ``SandboxConfig`` — the per-agent
+        narrowing point #5352 answers (``runtime/agent.py``'s own disclosure:
+        ``Agent.sandbox_config`` alone is the SAME process-wide object for every
+        agent, unmodified).
+
+        Session-layer override (this session's own sid-keyed override,
+        ``self._capability_visibility.sandbox_override`` — #2126-shape: resolved
+        by the registry at spawn time and re-injected via
+        ``apply_per_session_sandbox``, see that method's own docstring) wins over
+        the agent-layer (this agent's own ``profile.yaml`` ``sandbox:``
+        declaration — a live re-read, same shape ``_agent_profile_preferences``
+        already uses for ``preferences:``) wins over ``None`` (no override at
+        either layer — ``self._agent.sandbox_config`` governs unchanged, byte-
+        identical to pre-#5352 for every agent that declares nothing and was
+        never spawned with an override).
+
+        The resolved policy dict REPLACES ``base.policy`` wholesale (never
+        merged onto it): the value already reaching here is the FULLY resolved
+        one (either this agent's own declared policy, or the value the #5352
+        spawn-time priority table produced) — resolution happened upstream
+        (``AgentRegistry.resolved_sandbox_for`` / the spawn call sites), so
+        there is nothing left to further merge here."""
+        base = self._agent.sandbox_config
+        override_policy = self._effective_sandbox_policy_override()
+        if override_policy is None:
+            return base
+        import dataclasses
+
+        if base is None:
+            from reyn.config.infra import SandboxConfig
+
+            return SandboxConfig(policy=dict(override_policy))
+        return dataclasses.replace(base, policy=dict(override_policy))
+
+    def _effective_sandbox_policy_override(self) -> "dict | None":
+        """#5352: session-layer override wins over agent-layer declaration wins
+        over ``None`` — see ``_sandbox_config``'s own docstring for the full
+        layering. Factored out so both this property and any future direct
+        caller (mirrors ``_resolve_session_preference``'s own extraction reason)
+        share one resolution path."""
+        # #5352: guarded — this property is read during __init__ itself
+        # (``_build_hook_event_bundle``, before ``self._capability_visibility``
+        # is constructed), same "not yet built" hazard
+        # ``self._capability_visibility.contextual_permission if
+        # getattr(self, "_capability_visibility", None) is not None`` already
+        # guards against elsewhere in this file.
+        cap_vis = getattr(self, "_capability_visibility", None)
+        session_override = cap_vis.sandbox_override if cap_vis is not None else None
+        if session_override is not None:
+            return session_override
+        return self._agent_profile_sandbox()
+
+    def _agent_profile_sandbox(self) -> "dict | None":
+        """#5352: this agent's `profile.yaml` `sandbox:` declaration — a live
+        re-read (same "session layer in front of agent layer" shape
+        `_workspace_base_dir`/`_agent_profile_preferences` already use), ``None``
+        when the profile is missing/malformed/declares none. Live rather than
+        captured once at construction so an operator editing `profile.yaml` by
+        hand takes effect on the next sandbox-policy read, not just the next
+        process start."""
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            return AgentProfile.load(self.workspace_dir).sandbox
+        except FileNotFoundError:
+            # No profile.yaml on disk at all — the ordinary case for a
+            # programmatically-constructed Session (every make_session() test
+            # call, `reyn pipe run`'s default identity, ...), not an error.
+            # Same "absent file -> no override" contract as
+            # `_read_base_dir_override`/`_agent_profile_preferences`.
+            return None
+        except ValueError as e:
+            # A malformed `preferences`/`bounding` block elsewhere in the SAME
+            # profile.yaml can raise inside `AgentProfile.load` (unrelated to
+            # `sandbox`, but the loader is not field-granular) — surfaced, not
+            # silently eaten, but does not crash session construction/property
+            # access; the caller falls back to "no agent-layer override".
+            logger.warning(
+                "#5352: skipping unreadable agent sandbox declaration at %s: %s",
+                self.workspace_dir, e,
+            )
+            return None
 
     @property
     def _sandbox_backend(self) -> Any:
@@ -3029,6 +3110,14 @@ class Session:
         self._capability_visibility.apply_per_session_narrowing(
             contextual_permission, excluded_categories,
         )
+
+    def apply_per_session_sandbox(self, sandbox_override: "dict | None") -> None:
+        """#5352: re-inject the spawner-resolved per-session sandbox-policy
+        override AFTER spawn-time config resolution. Thin forwarder — see
+        ``CapabilityVisibility.apply_per_session_sandbox`` for the full
+        rationale (the same #2126 shape ``apply_per_session_narrowing`` above
+        uses, one axis over)."""
+        self._capability_visibility.apply_per_session_sandbox(sandbox_override)
 
     # ── #2285: session-scoped LLM tool-VISIBILITY toggle (the status-bar seam) ──────────────
     # Owned by CapabilityVisibility (#3121 step3 Extract Class); Session forwards.

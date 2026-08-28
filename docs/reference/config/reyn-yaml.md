@@ -265,6 +265,7 @@ not attempt project-layer or session-layer reload classes.
 | `allowed_mcp` | `explicit-trigger` |
 | `base_dir` | `live` |
 | `project_context_path` | `construction-once` |
+| `sandbox` | `live` |
 | `preferences.output_language` | `live` |
 | `preferences.chat.reasoning.display` | `live` |
 | `preferences.cost.per_agent_tokens.warn_ratio` | `live` |
