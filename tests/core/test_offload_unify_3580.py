@@ -102,7 +102,7 @@ def _ctx_with_media_store(tmp_path: Path) -> Any:
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         web_fetch_config=None,
-        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path),
+        media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session"),
     )
 
 

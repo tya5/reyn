@@ -37,7 +37,7 @@ from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST, estimate_to
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
 
 def _path_blocks(store: MediaStore, n: int) -> list[dict]:

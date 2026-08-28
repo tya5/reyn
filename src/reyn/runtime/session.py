@@ -1063,6 +1063,10 @@ class Session:
                 agent_name=self.agent_name,
                 # path-refs carry a url when this instance is HTTP-reachable (#385, see docs/reference/runtime/session-construction.md#multimodal-media)
                 base_url=multimodal_config.base_url,
+                # #5364 §1.1: new tool-result writes are session-scoped —
+                # local `session_id` param (not `self._session_id`, which
+                # this constructor hasn't assigned yet at this point).
+                session_id=session_id,
             )
         else:
             self._media_store = None

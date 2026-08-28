@@ -44,7 +44,7 @@ from reyn.services.offload.store import OffloadResult, offload_value
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +71,14 @@ def test_save_tool_result_block_shape_preserved(tmp_path: Path) -> None:
     assert block["mime_type"] == "text/plain"
     # path is project-relative (no leading /)
     assert not block["path"].startswith("/")
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/")
     assert block["path"].endswith(".txt")
     assert "content_hash" in block
     assert block["content_hash"].startswith("sha256:")
 
-    # File written under tool_results_dir with original content
+    # File written under history_content_dir with original content (#5364)
     full = tmp_path / block["path"]
-    assert full.exists(), "file must be written under tool_results_dir"
+    assert full.exists(), "file must be written under history_content_dir"
     assert full.read_text(encoding="utf-8") == content
 
     # content_hash is correct sha256 of content bytes
@@ -113,7 +113,7 @@ def test_save_tool_result_path_is_project_relative_not_absolute(tmp_path: Path) 
     assert not block["path"].startswith("/"), (
         f"path must be project-relative, got absolute: {block['path']!r}"
     )
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/")
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +158,9 @@ def test_read_tool_result_missing_returns_not_found(tmp_path: Path) -> None:
     """
     store = _store(tmp_path)
     # Ensure the directory exists so path validation passes.
-    store.tool_results_dir.mkdir(parents=True, exist_ok=True)
+    store.history_content_dir.mkdir(parents=True, exist_ok=True)
     fake_rel = str(
-        (store.tool_results_dir / "does-not-exist.txt").relative_to(tmp_path)
+        (store.history_content_dir / "does-not-exist.txt").relative_to(tmp_path)
     )
 
     text, found = store.read_tool_result(fake_rel)
@@ -183,7 +183,7 @@ def test_read_tool_result_outside_boundary_raises_permission_error(tmp_path: Pat
     store = _store(tmp_path)
     (tmp_path / "secret.txt").write_text("not allowed", encoding="utf-8")
 
-    with pytest.raises(PermissionError, match="outside tool_results_dir"):
+    with pytest.raises(PermissionError, match="outside both tool_results_dir"):
         store.read_tool_result("secret.txt")
 
 
@@ -191,7 +191,7 @@ def test_read_tool_result_traversal_raises_permission_error(tmp_path: Path) -> N
     """Tier 2: a ../traversal path outside tool_results_dir raises PermissionError."""
     store = _store(tmp_path)
 
-    with pytest.raises(PermissionError, match="outside tool_results_dir"):
+    with pytest.raises(PermissionError, match="outside both tool_results_dir"):
         store.read_tool_result("../etc/passwd")
 
 
@@ -286,6 +286,7 @@ def test_cross_host_method_read_by_uri_unchanged(tmp_path: Path) -> None:
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "uri content\n", mime_type="text/plain", chain_id="c1",
@@ -307,6 +308,7 @@ def test_cross_host_method_read_by_url_unchanged(tmp_path: Path) -> None:
         project_root=tmp_path,
         agent_name="test-agent",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "url content\n", mime_type="text/plain", chain_id="c1", tool="web_fetch", seq=1,
@@ -326,6 +328,7 @@ def test_attach_cross_host_fields_unchanged_with_agent_name(tmp_path: Path) -> N
         project_root=tmp_path,
         agent_name="researcher",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "body", mime_type="text/plain", chain_id="chain1",
@@ -345,6 +348,7 @@ def test_save_image_is_unchanged_by_phase2_migration(tmp_path: Path) -> None:
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="vision",
+        session_id="test-session",
     )
     data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
     block = store.save_image(

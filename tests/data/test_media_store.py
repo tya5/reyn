@@ -15,7 +15,7 @@ from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
 
 # ── save_image ─────────────────────────────────────────────────────────
@@ -124,10 +124,11 @@ def test_read_image_rejects_traversal_attempt(tmp_path):
 # ── save_tool_result + read_tool_result ────────────────────────────────
 
 
-def test_save_tool_result_writes_to_tool_results_dir(tmp_path):
-    """Tier 2: save_tool_result writes under .reyn/tool-results/ with the
-    parallel naming convention as save_image.
-    """
+def test_save_tool_result_writes_to_history_content_dir(tmp_path):
+    """Tier 2: #5364 — save_tool_result writes under
+    .reyn/memory/history-content/<session_id>/, NOT .reyn/tool-results/
+    (that directory is read-only going forward — see
+    test_read_tool_result_round_trip_for_a_legacy_tool_results_path)."""
     store = _store(tmp_path)
     block = store.save_tool_result(
         "hello world", mime_type="text/plain",
@@ -135,11 +136,21 @@ def test_save_tool_result_writes_to_tool_results_dir(tmp_path):
     )
     assert block["type"] == "tool_result_ref"
     assert block["mime_type"] == "text/plain"
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/test-session/")
     assert block["path"].endswith(".txt")
     full = tmp_path / block["path"]
     assert full.exists()
     assert full.read_text(encoding="utf-8") == "hello world"
+
+
+def test_save_tool_result_nests_under_the_given_session_id(tmp_path):
+    """Tier 2: #5364 §1.1 "ディレクトリはsession単位" — a different
+    session_id lands in a different subdirectory."""
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, session_id="peer-agent-7",
+    )
+    block = store.save_tool_result("x", mime_type="text/plain")
+    assert block["path"].startswith(".reyn/memory/history-content/peer-agent-7/")
 
 
 def test_save_tool_result_html_extension(tmp_path):
@@ -163,13 +174,31 @@ def test_read_tool_result_round_trip(tmp_path):
 
 
 def test_read_tool_result_rejects_outside_dir(tmp_path):
-    """Tier 2: path traversal outside tool_results_dir raises
-    PermissionError — same defence as read_image.
+    """Tier 2: path traversal outside BOTH tool_results_dir and
+    history_content_root raises PermissionError — same defence as
+    read_image.
     """
     store = _store(tmp_path)
     (tmp_path / "leak.txt").write_text("secret")
-    with pytest.raises(PermissionError, match="outside tool_results_dir"):
+    with pytest.raises(PermissionError, match="outside both tool_results_dir"):
         store.read_tool_result("leak.txt")
+
+
+def test_read_tool_result_round_trip_for_a_legacy_tool_results_path(tmp_path):
+    """Tier 2: #5364 — an entry recorded under the pre-#5364
+    .reyn/tool-results/ location (never migrated, never written to
+    again) still resolves — the resolver opens the entry's own path as
+    given, never reconstructs one from a base dir + filename."""
+    store = _store(tmp_path)
+    legacy_dir = tmp_path / ".reyn" / "tool-results"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "20250101T000000-abc-tool-1.txt").write_text("old content")
+
+    out, found = store.read_tool_result(
+        ".reyn/tool-results/20250101T000000-abc-tool-1.txt",
+    )
+    assert found is True
+    assert out == "old content"
 
 
 # ── isolation across separate save_* calls ─────────────────────────────
@@ -177,31 +206,45 @@ def test_read_tool_result_rejects_outside_dir(tmp_path):
 
 def test_image_and_tool_result_dirs_are_distinct(tmp_path):
     """Tier 2: save_image writes to media_dir only; save_tool_result writes
-    to tool_results_dir only. Each path-ref carries its own ``type``.
+    to history_content_root only (#5364). Each path-ref carries its own
+    ``type``.
     """
     store = _store(tmp_path)
     img_block = store.save_image(b"img", mime_type="image/png")
     txt_block = store.save_tool_result("txt", mime_type="text/plain")
 
     assert (tmp_path / ".reyn" / "media").is_dir()
-    assert (tmp_path / ".reyn" / "tool-results").is_dir()
+    assert (tmp_path / ".reyn" / "memory" / "history-content").is_dir()
     assert img_block["type"] == "image"
     assert txt_block["type"] == "tool_result_ref"
     # Each path lives only in its own dir.
     assert "/media/" in img_block["path"]
-    assert "/tool-results/" in txt_block["path"]
+    assert "/history-content/" in txt_block["path"]
 
 
 def test_custom_dirs_via_config(tmp_path):
-    """Tier 2: MediaStoreConfig overrides the default subdirectory names."""
+    """Tier 2: MediaStoreConfig overrides media_dir. tool_results_dir is
+    a SEPARATE, no-longer-written knob (#5364 §1.4 "tool_results_dirと潰
+    さない") — it still relocates where LEGACY reads are validated
+    against, but save_tool_result never writes there again regardless of
+    this config."""
     cfg = MediaStoreConfig(
         media_dir=".alt/img", tool_results_dir=".alt/text",
     )
-    store = MediaStore(cfg, project_root=tmp_path)
+    store = MediaStore(cfg, project_root=tmp_path, session_id="test-session")
     img = store.save_image(b"x", mime_type="image/png")
     txt = store.save_tool_result("y", mime_type="text/plain")
     assert img["path"].startswith(".alt/img/")
-    assert txt["path"].startswith(".alt/text/")
+    assert txt["path"].startswith(".reyn/memory/history-content/test-session/")
+
+    # The custom tool_results_dir is still honored as a READ boundary for
+    # a legacy path (#5364 — never migrated, never written to again).
+    legacy_dir = tmp_path / ".alt" / "text"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "old.txt").write_text("legacy")
+    out, found = store.read_tool_result(".alt/text/old.txt")
+    assert found is True
+    assert out == "legacy"
 
 
 # ── Cross-host capable path-ref shape (#385 β core impl sub-task 1) ────
@@ -212,7 +255,7 @@ def test_save_tool_result_without_agent_name_keeps_legacy_shape(tmp_path):
     returns the pre-β path-ref shape (= no resource_uri / source_agent /
     source_chain_id). Backward compat for legacy callers and test stubs.
     """
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
     block = store.save_tool_result("body", mime_type="text/plain", chain_id="c1")
 
     assert "resource_uri" not in block
@@ -232,6 +275,7 @@ def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="researcher",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "body", mime_type="text/plain", chain_id="chain42",
@@ -245,7 +289,7 @@ def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
     filename = Path(block["path"]).name
     assert block["resource_uri"].endswith("/" + filename)
     # Same-host path is still there as the fast-path fallback.
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/test-session/")
 
 
 def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
@@ -255,6 +299,7 @@ def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="vision",
+        session_id="test-session",
     )
     block = store.save_image(b"\x89PNG\r\n", mime_type="image/png", chain_id="c2")
 
@@ -270,6 +315,7 @@ def test_save_with_agent_name_but_no_chain_id_omits_audit_field(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="agentX",
+        session_id="test-session",
     )
     block = store.save_tool_result("body", mime_type="text/plain")
 
@@ -333,6 +379,7 @@ def test_read_tool_result_by_uri_same_host_round_trip(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+        session_id="test-session",
     )
     block = store.save_tool_result("hello\nworld\n", mime_type="text/plain")
     out, found = store.read_tool_result_by_uri(block["resource_uri"])
@@ -349,6 +396,7 @@ def test_read_tool_result_by_uri_cross_host_raises_stub_error(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="local",
+        session_id="test-session",
     )
     other_uri = "reyn-tool-result://remote/some-artifact.txt"
 
@@ -362,6 +410,7 @@ def test_read_tool_result_by_uri_invalid_uri_raises(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+        session_id="test-session",
     )
 
     with pytest.raises(ValueError, match="invalid resource_uri"):
@@ -373,7 +422,7 @@ def test_read_tool_result_by_uri_missing_agent_name_raises(tmp_path):
     cross-host URIs (= it has no identity to compare against). Raises
     ValueError to make the misconfiguration visible.
     """
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
 
     with pytest.raises(ValueError, match="no agent_name"):
         store.read_tool_result_by_uri(
@@ -388,6 +437,7 @@ def test_read_tool_result_by_uri_missing_file_returns_not_found(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+        session_id="test-session",
     )
     out, found = store.read_tool_result_by_uri(
         "reyn-tool-result://me/never-written.txt",
@@ -402,9 +452,10 @@ def test_agent_name_property_returns_set_identity(tmp_path):
     so dispatchers / introspection code can verify which identity a
     given MediaStore instance carries.
     """
-    no_id = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    no_id = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
     with_id = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="alpha",
+        session_id="test-session",
     )
     assert no_id.agent_name is None
     assert with_id.agent_name == "alpha"
@@ -433,6 +484,7 @@ def test_saved_tool_result_persists_across_independent_store_instances(tmp_path)
     """
     producer = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="producer",
+        session_id="test-session",
     )
     block = producer.save_tool_result("persisted body\n", mime_type="text/plain")
 
@@ -440,6 +492,7 @@ def test_saved_tool_result_persists_across_independent_store_instances(tmp_path)
     del producer
     consumer = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="consumer",
+        session_id="test-session",
     )
     body, found = consumer.read_tool_result(block["path"])
     assert found is True
@@ -457,6 +510,7 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+        session_id="test-session",
     )
     blocks = [
         store.save_tool_result(f"entry {i}\n", mime_type="text/plain", seq=i)
@@ -468,7 +522,7 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
         assert found is True, f"entry {i} was evicted"
         assert body == f"entry {i}\n"
     # All saved paths still present on disk (= no auto-cleanup).
-    files_on_disk = {p.name for p in store.tool_results_dir.iterdir()}
+    files_on_disk = {p.name for p in store.history_content_dir.iterdir()}
     saved_names = {Path(b["path"]).name for b in blocks}
     assert saved_names.issubset(files_on_disk), "some saved files were evicted"
 
@@ -484,6 +538,7 @@ def test_save_without_base_url_omits_url_field(tmp_path):
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="researcher",
+        session_id="test-session",
     )
     block = store.save_tool_result("body", mime_type="text/plain")
     assert "url" not in block
@@ -503,6 +558,7 @@ def test_save_with_base_url_emits_url_field(tmp_path):
         project_root=tmp_path,
         agent_name="researcher",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result(
         "body", mime_type="text/plain", chain_id="c1", tool="web_fetch", seq=1,
@@ -524,6 +580,7 @@ def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
         project_root=tmp_path,
         agent_name=None,
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_tool_result("body", mime_type="text/plain")
     assert "url" not in block
@@ -540,6 +597,7 @@ def test_base_url_trailing_slash_is_trimmed(tmp_path):
         project_root=tmp_path,
         agent_name="me",
         base_url="https://reyn.example.com/",
+        session_id="test-session",
     )
     block = store.save_tool_result("body", mime_type="text/plain")
     # No "//" in the path portion (= host stays separated by single /).
@@ -558,6 +616,7 @@ def test_save_image_also_carries_url_when_base_url_set(tmp_path):
         project_root=tmp_path,
         agent_name="vision",
         base_url="https://reyn.example.com",
+        session_id="test-session",
     )
     block = store.save_image(
         b"\x89PNG\r\n", mime_type="image/png", chain_id="c2",
@@ -607,6 +666,7 @@ def test_saved_file_survives_when_no_one_reads_for_a_while(tmp_path):
 
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+        session_id="test-session",
     )
     block = store.save_tool_result("old body\n", mime_type="text/plain")
     full_path = tmp_path / block["path"]

@@ -1,6 +1,7 @@
 """`reyn storage stats` — read-only on-disk footprint report for
-``.reyn/media/``, ``.reyn/tool-results/`` (#4478 Phase 1), and every
-``history.jsonl`` under ``.reyn/agents/`` (#4476 Phase 1).
+``.reyn/media/``, ``.reyn/memory/history-content/`` (#4478 Phase 1, #5364
+moved the write location), and every ``history.jsonl`` under
+``.reyn/agents/`` (#4476 Phase 1).
 
 Named ``storage``, not ``media`` (renamed from the original #4485 name once
 #4476 landed on the same command — lead-coder review on #4488): once
@@ -42,7 +43,7 @@ def register(sub) -> None:
         "stats",
         help=(
             "Print on-disk file counts + byte totals for "
-            ".reyn/media/, .reyn/tool-results/, and every history.jsonl"
+            ".reyn/media/, .reyn/memory/history-content/, and every history.jsonl"
         ),
     )
     stats_p.add_argument(
@@ -58,14 +59,23 @@ def run_stats(args: argparse.Namespace) -> None:
     from reyn.runtime.history_tail_reader import aggregate_history_stats
 
     project_root = Path(args.project_root).resolve()
-    store = MediaStore(MediaStoreConfig(), project_root=project_root)
+    # #5364: read-only here (storage_stats never writes) — session_id is
+    # a required kwarg (no default: a forgotten value must never silently
+    # resolve to a real session's directory, #5369) but this store never
+    # calls save_tool_result, so the value itself is inert.
+    store = MediaStore(
+        MediaStoreConfig(), project_root=project_root, session_id="<read-only>",
+    )
     stats = store.storage_stats()
     hist = aggregate_history_stats(project_root)
 
-    print(f"{'directory':<16}{'files':>10}{'bytes':>16}")
-    print(f"{'media/':<16}{stats.media_file_count:>10}{stats.media_bytes:>16,}")
+    print(f"{'directory':<26}{'files':>10}{'bytes':>16}")
+    print(f"{'media/':<26}{stats.media_file_count:>10}{stats.media_bytes:>16,}")
+    # #5364: tool-result writes now live under memory/history-content/
+    # (nested per session, GB-class), not tool-results/ — the label
+    # reflects where the bytes actually are.
     print(
-        f"{'tool-results/':<16}"
+        f"{'memory/history-content/':<26}"
         f"{stats.tool_result_file_count:>10}{stats.tool_result_bytes:>16,}",
     )
     print()

@@ -15,7 +15,7 @@ from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 def _store(tmp_path: Path, agent_name: str | None = None) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name=agent_name)
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name=agent_name, session_id="test-session")
 
 
 # ── storage_stats ─────────────────────────────────────────────────────────

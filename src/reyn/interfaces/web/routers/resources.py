@@ -174,23 +174,36 @@ async def get_tool_result(
         )
 
     # 2) Path-traversal protection: the artifact must resolve inside
-    #    the project's ``.reyn/tool-results/`` directory. We re-use
-    #    MediaStore's existing boundary check so the route and the
-    #    same-host fs reader share one rule (= no chance of drift).
+    #    the project's ``.reyn/tool-results/`` (legacy) OR
+    #    ``.reyn/memory/history-content/`` (#5364, current writes)
+    #    directory. We re-use MediaStore's existing boundary check so the
+    #    route and the same-host fs reader share one rule (= no chance of
+    #    drift).
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    # #5364: read-only here (this route only ever reads a tool-result
+    # artifact) — session_id is a required kwarg (no default: a
+    # forgotten value must never silently resolve to a real session's
+    # directory, #5369), inert since this store never writes.
     store = MediaStore(
         MediaStoreConfig(),
         project_root=Path.cwd(),
         agent_name=agent_name,
+        session_id="<read-only>",
     )
-    rel_path = str(
-        (store.tool_results_dir / artifact).relative_to(Path.cwd()),
-    )
+    # #5364: the URL route carries only <agent>, never <session_id> — a
+    # write can have landed under ANY of this agent's session
+    # subdirectories. MediaStore.find_tool_result_artifact searches (this
+    # session's dir → every other session's dir → the legacy flat dir),
+    # same order the cross-host resource_uri/url readers use.
+    candidate = store.find_tool_result_artifact(artifact)
+    if candidate is None:
+        candidate = store.tool_results_dir / artifact
+    rel_path = str(candidate.relative_to(Path.cwd()))
     try:
         body, found = store.read_tool_result(rel_path)
     except PermissionError as exc:
         # MediaStore raises PermissionError when the resolved path
-        # escapes ``tool_results_dir`` — this catches a malicious /
+        # escapes both valid boundaries — this catches a malicious /
         # malformed ``artifact`` that includes ``..`` or absolute paths.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -162,7 +162,7 @@ async def test_bare_reread_of_a_spilled_file_errors_with_the_remedy(tmp_path: Pa
     issue traces (op_runtime's cap and the router's separate token cap
     are independent, so a truncated-but-still-big result could spill
     again)."""
-    store = MediaStore(project_root=tmp_path)
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
     huge = "line content here, " * 5000  # large enough to force truncation on re-read
     block = store.save_tool_result(huge, tool="some_tool")
     spill_path = block["path"]  # project-relative, as a subsequent read_file would receive it
@@ -192,12 +192,12 @@ async def test_spill_guard_survives_a_fresh_media_store_instance(tmp_path: Path)
     ``project_root`` (the same object a fresh process would build) rather
     than reusing the first instance — this is what actually falsifies
     "in-memory only" if the persistence regresses."""
-    writer = MediaStore(project_root=tmp_path)
+    writer = MediaStore(project_root=tmp_path, session_id="test-session")
     huge = "line content here, " * 5000
     block = writer.save_tool_result(huge, tool="some_tool")
     spill_path = block["path"]
 
-    reader = MediaStore(project_root=tmp_path)  # a FRESH instance — simulates a new process
+    reader = MediaStore(project_root=tmp_path, session_id="test-session")  # a FRESH instance — simulates a new process
     assert reader.is_tool_result_spill(spill_path), (
         "a fresh MediaStore instance (same project_root) must recognize a spill "
         "written by an earlier instance — the guard must survive a restart"
@@ -220,7 +220,7 @@ async def test_a_non_spill_oversized_file_still_truncates_normally(tmp_path: Pat
     behaviour, unaffected by the new guard. Without this, the guard could
     have been implemented as "any oversized read errors", which would be
     a real regression for every non-spill large-file read in the repo."""
-    store = MediaStore(project_root=tmp_path)
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
     huge_line = "w" * 50_000
     (tmp_path / "ordinary.txt").write_text(huge_line)
 
