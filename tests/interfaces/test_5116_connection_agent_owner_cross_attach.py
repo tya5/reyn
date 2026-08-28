@@ -300,18 +300,22 @@ async def test_status_changes_are_pushed_by_the_attach_itself_not_ridden_on_a_la
     await asyncio.sleep(0)
 
 
-def _make_get_request(query_string: bytes, app):
+def _make_get_request(query_string: bytes, app, *, agent_name: str = "default"):
     """A minimal real ``starlette.requests.Request`` for a GET to
     ``agui_events`` — enough scope for ``_auth_context``/
     ``authenticate_request``/``_connection_id_from_request`` to read
     (``request.app.state.auth``, ``request.query_params``,
-    ``request.client``), without going through a full ASGI transport."""
+    ``request.client``), without going through a full ASGI transport.
+
+    #5130: ``agui_events`` no longer accepts a bare ``agent_name: str``
+    parameter — the real router populates ``scope["path_params"]`` on a
+    match, so a direct (non-routed) call here must do the same."""
     from starlette.requests import Request
 
     scope = {
-        "type": "http", "method": "GET", "path": "/agui/chat/default/events",
+        "type": "http", "method": "GET", "path": f"/agui/chat/{agent_name}/events",
         "query_string": query_string, "headers": [], "client": ("127.0.0.1", 12345),
-        "app": app,
+        "app": app, "path_params": {"agent_name": agent_name},
     }
     return Request(scope)
 
@@ -375,7 +379,7 @@ async def test_a_real_agui_events_get_pushes_correct_status_after_cross_agent_at
     from reyn.interfaces.transport.agui import endpoint as endpoint_mod
 
     req = _make_get_request(f"token=s3cret&connection_id={conn_id}".encode(), app)
-    resp = await endpoint_mod.agui_events(req, "default")
+    resp = await endpoint_mod.agui_events(req)
     from starlette.responses import StreamingResponse
 
     assert isinstance(resp, StreamingResponse), (
