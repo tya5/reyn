@@ -329,6 +329,26 @@ def parse_resource_uri(uri: str) -> tuple[str, str] | None:
     return agent, artifact
 
 
+class MediaStoreWriteUnavailable(Exception):
+    """#5364 §1.5: raised by :meth:`MediaStore.save_tool_result` instead of
+    returning a ref block, when this store's writes are known NOT to land —
+    either this exact call's own write failed synchronously (the
+    no-running-loop / sync-fallback path — an operator script, a CLI
+    command, a sync test), or an EARLIER write already exhausted
+    :class:`~reyn.core.events.durability_worker.DurabilityWorker`'s §4
+    retry bound and latched ``durability_failed`` (a chat-turn call,
+    off-loop — that failure was necessarily discovered async, after this
+    call's own synchronous return already happened once before, so this
+    exception only ever protects the NEXT attempt).
+
+    The caller (``tool_result_cap.cap_tool_result_content``) catches this
+    and keeps the content INLINE instead — #5364 §1.5's own requirement:
+    "a permanently-failed write's turn keeps content inline, never emits a
+    ref naming a file that doesn't exist." Never raised for a transient
+    (retryable) failure — those stay entirely inside the worker's own
+    bounded-backoff retry, invisible here."""
+
+
 class MediaStore:
     """Path-ref'd file storage for multimodal media + tool result text.
 
@@ -679,24 +699,51 @@ class MediaStore:
         externally by the caller (e.g. ``web.py`` ``_generate_web_fetch_preview``).
         See the ★ three-party bound contract in
         ``services/offload/store.py`` module docstring.
+
+        #5364 §1.5 (owner: "a permanently-failed write's turn keeps
+        content inline, never emits a ref naming a file that doesn't
+        exist"): raises :class:`MediaStoreWriteUnavailable` instead of
+        returning a block when this store's writes are known not to
+        land — see that exception's own docstring for the two ways this
+        can be discovered. ``cap_tool_result_content`` (this method's
+        one real caller) catches it and keeps the content inline.
         """
+        if self.durability_failed:
+            raise MediaStoreWriteUnavailable(
+                "MediaStore's durable-write worker has a PERSISTENT "
+                "failure latched (DurabilityWorker.durability_failed) — "
+                "refusing to mint a ref for a file that will not exist"
+            )
         chain_short = _safe_token(chain_id)[:6] if chain_id else ""
         tool_token = _safe_token(tool) or "tool"
         ext = _ext_for_mime(mime_type)
         filename = f"{_timestamp()}-{chain_short}-{tool_token}-{seq}{ext}"
 
-        result = offload_value(
-            content,
-            store_dir=self._history_content_dir(),
-            preview_strategy=None,
-            filename=filename,
-            payload_field=payload_field,
-            # #5364 §1.4: the actual disk write moves off the event loop
-            # (fire-and-forget, serial FIFO) — see :meth:`flush`'s own
-            # docstring for the barrier this relies on to make the write
-            # observable before anything could try to read it back.
-            submit_nowait=self._submit_write_or_inline,
-        )
+        try:
+            result = offload_value(
+                content,
+                store_dir=self._history_content_dir(),
+                preview_strategy=None,
+                filename=filename,
+                payload_field=payload_field,
+                # #5364 §1.4: the actual disk write moves off the event loop
+                # (fire-and-forget, serial FIFO) — see :meth:`flush`'s own
+                # docstring for the barrier this relies on to make the write
+                # observable before anything could try to read it back.
+                submit_nowait=self._submit_write_or_inline,
+            )
+        except OSError as exc:
+            # #5364 §1.5: only reachable via the SYNC-FALLBACK branch of
+            # _submit_write_or_inline (no running loop — the write ran
+            # inline, synchronously, so ITS OWN failure is known here and
+            # now, unlike the async/worker path's failures, which are
+            # necessarily discovered later — see MediaStoreWriteUnavailable's
+            # own docstring). No retry here: the async path already owns
+            # retry (DurabilityWorker §4); this path only ever runs when no
+            # loop is present to defer to it in the first place.
+            raise MediaStoreWriteUnavailable(
+                f"the synchronous (no-running-loop) write failed: {exc}"
+            ) from exc
 
         # Convert absolute path_ref to project-relative path for the block.
         abs_path = Path(result.path_ref)
@@ -748,6 +795,17 @@ class MediaStore:
         }
         self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
         return block
+
+    @property
+    def durability_failed(self) -> bool:
+        """#5364 §1.5: True once a fire-and-forget ``save_tool_result``
+        write failed PERSISTENTLY (§4-exhausted retries) — the SAME
+        latched health-signal ``DurabilityWorker.durability_failed``
+        exposes, delegated here so :meth:`save_tool_result` itself can
+        refuse a NEW write once this is known, rather than minting a ref
+        for a file the worker has already given up trying to write.
+        Never auto-clears (mirrors the worker's own contract)."""
+        return self._worker.durability_failed
 
     def _submit_write_or_inline(self, do_write) -> None:
         """#5364 §1.4: ``DurabilityWorker.submit_nowait`` requires a RUNNING

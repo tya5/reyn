@@ -47,6 +47,7 @@ class _RecordingHost:
 
     def cap_tool_result(
         self, content_str: str, *, content_type: "str | None" = None, on_offload=None,
+        on_write_unavailable=None,
     ) -> str:
         if self.media_store is None:
             return content_str
@@ -54,6 +55,7 @@ class _RecordingHost:
             content_str, cap_tokens=100, model=_MODEL,
             save_fn=self.media_store.save_tool_result,
             use_chars4=True, content_type=content_type, on_offload=on_offload,
+            on_write_unavailable=on_write_unavailable,
         )
 
     def media_followup_budget(self, _content_str: str) -> int:
