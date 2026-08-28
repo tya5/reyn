@@ -114,7 +114,7 @@ class HookProcessContext:
     a REAL environment variable a spawned CHILD process reads because it
     has no way to run reyn's own in-process expander itself).
 
-    Exactly THREE named fields, never a free-form ``dict[str, str]`` —
+    Exactly FOUR named fields, never a free-form ``dict[str, str]`` —
     architect's own ruling (#5084, owner's standing directive "don't break
     the Sandbox abstraction"): a general ``run(env=Mapping[str, str])``
     would let a caller inject ARBITRARY env into a sandboxed subprocess
@@ -122,36 +122,52 @@ class HookProcessContext:
     actually runs, not just what it can read) — silently routing around
     the sandbox boundary's whole point. This type is a closed envelope
     (Tier-1 lens 2: typed, never free-formed): a caller cannot add a
-    fourth variable, and the three names below are the ONLY ones any
+    fifth variable, and the four names below are the ONLY ones any
     backend's :meth:`~reyn.security.sandbox.backend.SandboxBackend.run`
     implementation is asked to set.
 
-    ``project_dir``/``agent_base_dir`` are PATHS, resolved on the reyn
-    host — meaningless (or actively wrong) inside a container backend
-    whose repo lives at a different in-container path (the SAME asymmetry
-    ``SandboxBackend.run``'s own ``cwd`` docstring already draws for a
-    workspace-coupled backend); ``agent_name`` is a bare identity string,
-    equally true on either side of a container boundary, so it is passed
-    through unconditionally. A backend that cannot translate the two path
-    values omits them rather than passing a host-side path that would
-    silently resolve to nothing (or someone else's directory) inside the
-    container — never a silent full drop of all three."""
+    ``project_dir``/``agent_base_dir``/``agent_state_dir`` are PATHS,
+    resolved on the reyn host — meaningless (or actively wrong) inside a
+    container backend whose repo lives at a different in-container path
+    (the SAME asymmetry ``SandboxBackend.run``'s own ``cwd`` docstring
+    already draws for a workspace-coupled backend); ``agent_name`` is a
+    bare identity string, equally true on either side of a container
+    boundary, so it is passed through unconditionally. A backend that
+    cannot translate the three path values omits them rather than passing
+    a host-side path that would silently resolve to nothing (or someone
+    else's directory) inside the container — never a silent full drop of
+    all four.
+
+    #5208: ``agent_state_dir`` (``REYN_AGENT_STATE_DIR`` — the agent's own
+    ``.reyn/agents/<agent>/state/``) is a structurally reachable write
+    target for EVERY agent regardless of ``base_dir`` — ``.reyn`` sits
+    inside ``_DEFAULT_WRITE_ZONES`` (``reyn.security.permissions.permissions``),
+    so a hook that wants to persist something durable no longer has to
+    fight ``base_dir`` narrowing to find a place it is structurally
+    guaranteed to be allowed to write. reyn itself is responsible for this
+    directory existing by the time a hook's child process reads this
+    variable (it is already materialized before this point — the same
+    session-construction-time writes that create ``config.yaml``/
+    ``hooks.yaml``/``snapshot.json`` alongside it); a hook's own child
+    process is never asked to ``mkdir`` it."""
 
     project_dir: Path
     agent_base_dir: Path
     agent_name: str
+    agent_state_dir: Path
 
     def as_env(self) -> "dict[str, str]":
         """The literal ``os.environ`` additions a host-process backend
         applies verbatim. A container backend calls this too but MAY strip
-        the two path keys first (see the class docstring) before merging
+        the path keys first (see the class docstring) before merging
         the rest into the container's own env — never call ``os.environ``
-        directly from a backend; go through this method so the three
+        directly from a backend; go through this method so the four
         names stay defined in exactly one place."""
         return {
             "REYN_PROJECT_DIR": str(self.project_dir),
             "REYN_AGENT_BASE_DIR": str(self.agent_base_dir),
             "REYN_AGENT_NAME": self.agent_name,
+            "REYN_AGENT_STATE_DIR": str(self.agent_state_dir),
         }
 
 
