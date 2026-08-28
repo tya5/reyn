@@ -9968,6 +9968,9 @@ class Session:
         _stall_seconds = stall_trace_seconds_from_env()
         if _stall_seconds is not None:
             _arm_stall_trace(_stall_seconds)
+        _turn_completed = False
+        _external_cancelled = False
+        _cancel_targeted_this_turn = False
         try:
             self._last_turn_chain_id = chain_id
             # #4381 PR-2 stage ③: reset the in-flight taint latch for the
@@ -9981,38 +9984,65 @@ class Session:
             )
             with active_turn(chain_id):
                 await self._loop_driver.run_turn(user_text, chain_id)
-            # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
-            # only placement that fires exactly once per turn regardless of which terminal path the
-            # loop took; moving it into RouterLoop risks double-emission or a missed terminal path.
-            self._audit_events.emit("turn_completed", chain_id=chain_id)
-            # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
-            # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
-            await self._hook_dispatcher.dispatch(
-                "turn_end",
-                build_hook_payload(
-                    "turn_end", agent_name=self.agent_name,
-                    chain_id=chain_id, user_text=user_text,
-                ),
+            _turn_completed = True
+        except asyncio.CancelledError:
+            # The shared discriminator distinguishes a cancellation aimed at
+            # this task from a spurious/sub-task cancellation folded into it.
+            from reyn.mcp.pool import is_real_control_flow
+
+            # Only a genuine cancellation of this task can be classified as
+            # external; the session flag identifies the user-directed cancel
+            # requested through ``cancel_inflight`` (the C checkpoint).
+            _external_cancelled = (
+                is_real_control_flow(asyncio.CancelledError())
+                and not self._turn_cancel_self_initiated
             )
-            # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
-            # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
-            await self._hot_reloader.apply_pending()
-            # #3787: project-context edit detection — read-only, emits at most once per
-            # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
-            self._project_context_watcher.check()
-            # #3787: the agent-side sibling — same audit-event kind, path
-            # tells the two apart. Unlike the line above, THIS file's
-            # content already reloads unconditionally on every
-            # RouterHostAdapter.get_project_context() call regardless of
-            # what this check() call returns — it exists purely so an edit
-            # is observable on the audit trail.
-            self._agent_context_watcher.check()
-            # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
-            # user message is this checkpoint's anchor for the rewind-timeline preview.
-            # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
-            await self._journal.cut_generation(
-                anchor=_truncate_anchor(user_text), full_message=user_text,
-            )
+            raise
         finally:
-            if _stall_seconds is not None:
-                _disarm_stall_trace()
+            # #5248: each boundary operation remains reachable when the router
+            # raises. Nested finalizers also keep later boundary operations
+            # from being skipped if an earlier one fails.
+            try:
+                # ``turn_completed`` remains success-only; ``turn_settled`` is
+                # emitted by the inbox iteration layer for every turn kind.
+                if _turn_completed:
+                    self._audit_events.emit("turn_completed", chain_id=chain_id)
+            finally:
+                try:
+                    # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
+                    # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
+                    await self._hook_dispatcher.dispatch(
+                        "turn_end",
+                        build_hook_payload(
+                            "turn_end", agent_name=self.agent_name,
+                            chain_id=chain_id, user_text=user_text,
+                        ),
+                    )
+                finally:
+                    try:
+                        # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
+                        # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
+                        await self._hot_reloader.apply_pending()
+                        # #3787: project-context edit detection — read-only, emits at most once per
+                        # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
+                        self._project_context_watcher.check()
+                        # #3787: the agent-side sibling — same audit-event kind, path
+                        # tells the two apart. Unlike the line above, THIS file's
+                        # content already reloads unconditionally on every
+                        # RouterHostAdapter.get_project_context() call regardless of
+                        # what this check() call returns — it exists purely so an edit
+                        # is observable on the audit trail.
+                        self._agent_context_watcher.check()
+                    finally:
+                        try:
+                            # External cancellation is not a user-facing checkpoint (D), so
+                            # do not create a rewind anchor for it.
+                            if not _external_cancelled:
+                                # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint.
+                                # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
+                                await self._journal.cut_generation(
+                                    anchor=_truncate_anchor(user_text), full_message=user_text,
+                                )
+                        finally:
+                            if _stall_seconds is not None:
+                                _disarm_stall_trace()
