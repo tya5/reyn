@@ -70,13 +70,18 @@ Out of scope (= future work):
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.services.offload.store import offload_value, read_offloaded
+
+if TYPE_CHECKING:
+    from reyn.core.events.durability_worker import DurabilityWorker
 
 #: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
 #: line per :meth:`MediaStore.save_tool_result` write — the persisted
@@ -374,9 +379,24 @@ class MediaStore:
         agent_name: str | None = None,
         base_url: str | None = None,
         session_id: str,
+        worker: "DurabilityWorker | None" = None,
     ) -> None:
         self._config = config or MediaStoreConfig()
         self._project_root = project_root.resolve()
+        # #5364 §1.4 (owner: "UIを止めさせたくない" — a synchronous tool-result
+        # write can stall the event loop, same class of problem #1765 fixed
+        # for the WAL; see :meth:`save_tool_result`'s own docstring). Same
+        # lazy-default shape as EventStore's own worker (event_store.py) —
+        # this store's writes have no ordering dependency on the WAL's, so a
+        # DEDICATED worker (not the session's shared one) keeps the two
+        # substrates decoupled, matching EventStore's own precedent rather
+        # than StateLog's cross-substrate ``submit_durable`` sharing (that
+        # sharing exists because a snapshot's ``applied_seq`` must never
+        # precede the WAL entry it names — no such dependency here).
+        if worker is None:
+            from reyn.core.events.durability_worker import DurabilityWorker
+            worker = DurabilityWorker()
+        self._worker = worker
         self._media_dir = (
             self._project_root / self._config.media_dir
         ).resolve()
@@ -401,11 +421,13 @@ class MediaStore:
         ).resolve()
         # #5364 (lead-coder review, PR #5369): NO default here — a
         # forgotten session_id must never silently resolve to some OTHER
-        # real session's directory. `None` is a legitimate value for a
-        # read-only construction (4 of production's 5 construction sites
-        # never write a tool result at all, per that same review); it is
-        # only an error at the one point that actually needs it — see
-        # :meth:`_history_content_dir`.
+        # real session's directory. Required kwarg (option (a) of the
+        # two the review offered): a construction site with nothing real
+        # to pass (4 of production's 5 sites never write a tool result at
+        # all) supplies a self-documenting placeholder (e.g.
+        # ``"<read-only>"``) rather than omitting it — omitting it is a
+        # TypeError at construction, not a silent write into another
+        # session's directory.
         self._session_id = session_id
         self._agent_name = agent_name or None
         # #385 β sub-task 3b: when set, save_* augments path-refs with a
@@ -669,6 +691,11 @@ class MediaStore:
             preview_strategy=None,
             filename=filename,
             payload_field=payload_field,
+            # #5364 §1.4: the actual disk write moves off the event loop
+            # (fire-and-forget, serial FIFO) — see :meth:`flush`'s own
+            # docstring for the barrier this relies on to make the write
+            # observable before anything could try to read it back.
+            submit_nowait=self._submit_write_or_inline,
         )
 
         # Convert absolute path_ref to project-relative path for the block.
@@ -678,21 +705,41 @@ class MediaStore:
         # THIS process or a LATER one (a reference to it can sit in
         # ``history.jsonl`` past a restart) — can detect it's re-reading a
         # spill artifact (see :meth:`is_tool_result_spill`'s own
-        # docstring for why). The in-memory set update and the manifest
-        # append are independent, best-effort: a manifest-write failure
-        # (e.g. a read-only ``tool_results_dir``) must never fail the
-        # spill write itself, which is the load-bearing operation here —
-        # it only means a FUTURE process's guard won't recognize this one
-        # path, not that this write failed.
+        # docstring for why). The in-memory set update is immediate
+        # (in-memory, no I/O, no ordering hazard — protects a re-read
+        # within THIS same turn even before the content write is durable).
+        # The manifest append is independent, best-effort: a manifest-
+        # write failure (e.g. a read-only ``tool_results_dir``) must never
+        # fail the spill write itself, which is the load-bearing operation
+        # here — it only means a FUTURE process's guard won't recognize
+        # this one path, not that this write failed.
+        #
+        # #5364 §1.4: submitted via the SAME deferral path as the content
+        # write above, ALWAYS after it (same worker, FIFO-serial — see
+        # ``DurabilityWorker``'s own "enqueue order = durability order"
+        # guarantee) — never inline-synchronous here. `_load_spill_
+        # manifest`'s self-prune (see its own docstring) drops any entry
+        # whose target file doesn't exist ON DISK YET; writing this line
+        # before the content write actually landed would let a FRESH
+        # MediaStore instance's self-prune permanently discard a
+        # perfectly-good, merely-still-queued entry — ordering, not just
+        # eventual completion, is what this file's manifest contract needs.
         resolved_path = abs_path.resolve()
         self._tool_result_spill_paths.add(resolved_path)
-        try:
-            manifest_path = self._spill_manifest_path()
-            manifest_path.parent.mkdir(parents=True, exist_ok=True)
-            with manifest_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({"path": str(resolved_path)}) + "\n")
-        except OSError:
-            pass
+
+        async def _write_manifest_line(_resolved_path: Path = resolved_path) -> None:
+            try:
+                manifest_path = self._spill_manifest_path()
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                line = json.dumps({"path": str(_resolved_path)}) + "\n"
+
+                def _append() -> None:
+                    with manifest_path.open("a", encoding="utf-8") as f:
+                        f.write(line)
+                await asyncio.to_thread(_append)
+            except OSError:
+                pass
+        self._submit_write_or_inline(_write_manifest_line)
         block: dict = {
             "type": "tool_result_ref",
             "path": rel_path,
@@ -701,6 +748,54 @@ class MediaStore:
         }
         self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
         return block
+
+    def _submit_write_or_inline(self, do_write) -> None:
+        """#5364 §1.4: ``DurabilityWorker.submit_nowait`` requires a RUNNING
+        event loop (it binds its queue to one) — but ``save_tool_result``
+        has always been callable from a plain synchronous context (a CLI
+        script, ``reyn doctor``, a sync test with no ``asyncio.run``
+        wrapper), and every real chat turn's own call is already inside one
+        (``RouterLoop.feedback`` runs on ``_run_execute_round``'s live
+        loop). Rather than making every sync caller responsible for
+        spinning one up, this checks: a loop is running → defer via the
+        worker (the off-loop win this section exists for); no loop running →
+        run ``do_write`` inline via ``asyncio.run`` (byte-identical to the
+        pre-#5364-§1.4 synchronous write — a script/test never sees this
+        move as a behaviour change, only chat turns do)."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(do_write())
+        else:
+            self._worker.submit_nowait(do_write)
+
+    async def flush(self) -> None:
+        """#5364 §1.4: wait until every enqueued :meth:`save_tool_result`
+        write has actually landed on disk — WITHOUT closing the worker.
+
+        This is the ONE barrier the fire-and-forget write above relies on:
+        the router loop calls this once per turn, right before the NEXT LLM
+        call (never per-write — see ``router_loop.py``'s own call site) —
+        so by the time a ``read_file(path=<ref>)`` tool call could possibly
+        reach the model (it can only follow a completion the model has
+        already seen the ref in), the write behind that ref is guaranteed
+        durable. Mirrors ``DurabilityWorker.flush``'s own contract exactly
+        (this store just owns a dedicated worker instance — see
+        :meth:`__init__`)."""
+        await self._worker.flush()
+
+    async def aclose(self) -> None:
+        """#5364 §1.4 (same class of gap #2783 named for ``EventStore``,
+        #4961 C for ``_audit_events`` — a 3rd instance): drain this store's
+        worker before the process exits. Without this, a normal session
+        shutdown can drop a still-queued ``save_tool_result`` write —
+        ``asyncio.run`` cancels outstanding tasks at loop teardown and this
+        write is fire-and-forget by construction. Called from the
+        registry's session-teardown seams alongside
+        ``aclose_event_store``/``aclose_audit_events`` — same pattern, same
+        call sites (``Session.aclose_media_store``). Idempotent
+        (``DurabilityWorker.aclose`` is idempotent)."""
+        await self._worker.aclose()
 
     def read_tool_result(self, path_str: str) -> tuple[str, bool]:
         """Read tool result text by project-relative path.

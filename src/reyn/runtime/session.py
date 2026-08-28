@@ -9644,6 +9644,19 @@ class Session:
         """
         await self._event_store.aclose()
 
+    async def aclose_media_store(self) -> None:
+        """#5364 §1.4 teardown: drain this session's MediaStore worker before
+        the process exits — the same class of gap #2783 named for
+        ``EventStore`` above, a 5th instance. Without this, a normal
+        session shutdown can drop a still-queued ``save_tool_result``
+        write (fire-and-forget by construction, #5364 §1.4). Idempotent
+        (``MediaStore.aclose`` → ``DurabilityWorker.aclose``, idempotent).
+        A no-op when this session has no media_store (``multimodal_config``
+        was never set).
+        """
+        if self._media_store is not None:
+            await self._media_store.aclose()
+
     async def aclose_audit_events(self) -> None:
         """#4961 C teardown: close this session's ``_audit_events`` EventLog
         before the process exits — the same class of gap #2783 named for

@@ -1941,6 +1941,17 @@ class RouterLoop:
                     )
                     result = memo
             if result is None:
+                # #5364 §1.4: barrier for MediaStore's fire-and-forget
+                # tool-result writes (save_tool_result → submit_nowait) —
+                # ONCE per iteration, right here, immediately before the
+                # LLM actually sees this turn's history (both branches
+                # below reach the model). Not per-write: a per-write flush
+                # would reintroduce the very stall #5364 §1.4 moved the
+                # write off the loop to avoid. getattr-guarded — a host
+                # with no media_store (or an older host stub) is a no-op.
+                _media_store = getattr(host, "media_store", None)
+                if _media_store is not None:
+                    await _media_store.flush()
                 if _force_close_now:
                     # #1092 PR-C: replace the normal act-turn call with the wrap-up
                     # (force-close) call — swaps the SP for the wrap-up SP +

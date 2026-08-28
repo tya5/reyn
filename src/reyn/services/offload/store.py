@@ -35,6 +35,7 @@ bound.  Responsibility for bounding the inline preview lies with the CALLER:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -71,6 +72,7 @@ def offload_value(
     preview_strategy: Callable[[Any, str], Any] | None = None,
     filename: str | None = None,
     payload_field: str | None = None,
+    submit_nowait: "Callable[[Callable[[], Any]], None] | None" = None,
 ) -> OffloadResult:
     """Write *value* to *store_dir* and return preview + path_ref + content_hash.
 
@@ -107,6 +109,19 @@ def offload_value(
                           Absent / field missing → the whole-value serialisation.
                           The preview (and thus the inline envelope) is always built
                           over the WHOLE *value*, unchanged.
+        submit_nowait:    #5364 §1.4 (owner: "UIを止めさせたくない" — a synchronous
+                          write on the event loop, e.g. onto slow/network storage,
+                          stalls the whole loop, same class of problem #1765 fixed
+                          for the WAL). When provided (a ``DurabilityWorker.
+                          submit_nowait``-shaped callable), the actual disk write
+                          is handed to it FIRE-AND-FORGET instead of running
+                          inline — everything else (hash, preview, the returned
+                          path_ref) is still computed synchronously, since
+                          ``serialized`` is already fully in memory before the
+                          write is enqueued; only the write's OWN latency moves
+                          off the loop. ``None`` (default) keeps the prior
+                          synchronous behaviour byte-identical — every caller but
+                          MediaStore's own chat axis.
 
     Returns:
         :class:`OffloadResult` with preview (or ``None``), path_ref, content_hash.
@@ -123,7 +138,12 @@ def offload_value(
         serialized = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
     else:
         serialized = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
-    dest.write_text(serialized, encoding="utf-8")
+    if submit_nowait is not None:
+        async def _write_job(_dest: Path = dest, _serialized: str = serialized) -> None:
+            await asyncio.to_thread(_dest.write_text, _serialized, encoding="utf-8")
+        submit_nowait(_write_job)
+    else:
+        dest.write_text(serialized, encoding="utf-8")
 
     path_ref = str(dest)
     content_hash = "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
