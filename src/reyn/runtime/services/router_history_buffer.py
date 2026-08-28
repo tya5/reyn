@@ -1173,6 +1173,36 @@ class RouterHistoryBuffer:
         self._bound_wire_reasoning(head + raw_middle + tail)
         return head, raw_middle, tail, summary_dict, seq_by_id
 
+    def compaction_watermark(self) -> int:
+        """#5364 §1.6 (architect review): public accessor for
+        :meth:`_compaction_watermark` — the reduction axis's OTHER
+        progress witness, alongside :meth:`is_already_spilled`'s spill
+        axis. A STRUCTURAL fact (the latest summary's
+        ``covers_through_seq``), never a byte count — the compaction axis
+        is compared as "did the watermark advance", the same way the
+        spill axis is compared as "did a candidate get consumed", never
+        by re-measuring wire bytes for either."""
+        return self._compaction_watermark()
+
+    def is_already_spilled(self, content: str) -> bool:
+        """#5364 §1.6: True if ``content`` IS a previously-produced spill
+        preview (a value ``spill_turn_content`` itself once returned),
+        rather than an original body that merely happens to look similar.
+
+        A candidate whose CURRENT (overlay-substituted) content already
+        satisfies this must never be offered to ``spill_turn_content``
+        again — that call is not idempotent on a preview: a preview's own
+        token count almost always still exceeds ``cap_tokens=1``, so
+        re-offloading it produces ANOTHER, different preview (a new
+        ``seq``, a new path) rather than returning the input unchanged.
+        Without this check, ``_attempt_reactive_spill`` would treat that
+        as fresh progress forever — an infinite loop, never reaching
+        #5364 §1.6's failure predicate (candidates exhausted). Checked by
+        VALUE (this method takes no turn identity — the same content
+        string could arrive from a different candidate object across
+        calls, e.g. after a `decompose_history_for_retry` re-scan)."""
+        return content in self._spill_overlay.values()
+
     def spill_turn_content(
         self, content: str, *, chain_id: str = "", tool: str = "tool", seq: int = 1,
     ) -> "str | None":
@@ -1236,22 +1266,6 @@ class RouterHistoryBuffer:
         content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
         self._spill_overlay[content_hash] = replacement
         return replacement
-
-    def discard_spill_overlay_for(self, content: str) -> None:
-        """#5296 PR-2 (lead-coder review): undo a :meth:`spill_turn_content`
-        call for *content* whose caller has determined it did NOT help
-        (the total payload did not shrink) — without this, a no-progress
-        spill attempt still LEAVES its overlay entry in place, so a turn
-        whose every candidate got spilled for zero net benefit would keep
-        ALL of them spilled anyway: exactly the "destroy more of the
-        operator's visible context than necessary" outcome
-        :meth:`spill_turn_content`'s own docstring already disclaims.
-        Recomputes the SAME hash :meth:`spill_turn_content` used (the
-        ORIGINAL content, not the replacement) — a no-op if no entry is
-        present (idempotent, safe to call speculatively)."""
-        import hashlib
-        content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
-        self._spill_overlay.pop(content_hash, None)
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.
