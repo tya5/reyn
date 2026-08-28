@@ -55,6 +55,16 @@ description: >
   Entry point (#5221). A cheap, deterministic threshold check over the
   turn's closed-vocabulary sensitive-op tally; escalates to the LLM judge
   only when the count crosses the threshold.
+
+  Threshold (>= 2, below): UNVERIFIED initial value, not derived from any
+  measurement of real traffic (lead-coder review, PR #5414) -- operators
+  are expected to tune it for their own workload before relying on it.
+  Which direction fails silently: too HIGH means a real anomaly stays
+  below threshold and produces NOTHING (a miss is invisible -- no event,
+  no alert); too LOW means every turn escalates to the judge, paying its
+  LLM-call cost on the common case instead of only on anomalies (#5221's
+  own cost design point -- see the issue). Retune here without touching
+  the closed-vocabulary contract (the judge's input shape) at all.
 steps:
   - transform:
       value: "ctx.sensitive_op_count >= 2"

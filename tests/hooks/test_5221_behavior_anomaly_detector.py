@@ -66,6 +66,7 @@ from reyn.tools.record_behavior_anomaly_verdict import (
 )
 from reyn.tools.types import ToolContext
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 from tests._support.paths import REPO_ROOT
 
 _DSL_PATH = REPO_ROOT / "src" / "reyn" / "data" / "pipelines" / "behavior_anomaly.yaml"
@@ -77,9 +78,12 @@ _DSL_PATH = REPO_ROOT / "src" / "reyn" / "data" / "pipelines" / "behavior_anomal
 
 
 def test_sensitive_op_kinds_is_a_subset_of_the_closed_vocabulary() -> None:
-    """Tier 1: every watched kind is a real, currently-declared audit-event
-    kind — the module-level assertion at import time already enforces this,
-    this test just makes the invariant visible/greppable as a named test."""
+    """Tier 2: ``SENSITIVE_OP_KINDS`` is internal (no external boundary
+    depends on it — architect review, PR #5414) so this is not a Tier-1
+    pin. Its real value is the vacuity guard: ``set() <= X`` is trivially
+    true for an empty set, so ``len(...) > 0`` is what actually rules out
+    a silently-emptied watch-list — the subset check alone would stay
+    green even if every kind were removed."""
     assert SENSITIVE_OP_KINDS <= AUDIT_EVENT_KINDS
     assert len(SENSITIVE_OP_KINDS) > 0
 
@@ -212,6 +216,7 @@ async def test_record_verdict_rejects_a_value_outside_the_closed_vocabulary() ->
         _tool_ctx(events),
     )
 
+    await settle(events)
     assert result["status"] == "error"
     assert captured == []
 
@@ -307,6 +312,7 @@ async def test_below_threshold_skips_the_judge_no_audit_event_at_all(tmp_path: P
         schema_registry=schema_registry, pipeline_registry=pipeline_registry,
     )
 
+    await settle(events)
     assert result.named_stores["result"] == "not_escalated"
     assert captured == []  # the judge never ran — no LLM call either
     assert scripted.calls == 0
