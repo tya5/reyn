@@ -190,15 +190,44 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
     ``peek_mid_turn_injection`` implemented — both getattr-guarded, both
     short-circuit BEFORE their own ``await``, never reaching it). This is
     an invariant about the CODE PATH (guard-then-await, in that order,
-    both gated on a host attribute this fixture never implements), not a
-    line-number range — confirmed by reading ``router_loop.py``'s
-    ``run_loop`` directly at the head of each iteration, before the
-    flush call. If a future edit adds a new unconditional ``await``
-    ahead of the flush, this test would go green on scheduler luck
-    rather than the barrier — re-verify this comment's claim (not just
-    that the test still passes) whenever that region changes. So this is
-    a genuine ordering witness, not a scheduler-timing coincidence:
-    nothing else in this call graph could have run the drainer first."""
+    both gated on a host attribute this fixture never implements), never
+    a line-number range — a line number silently drifts the moment a line
+    is inserted ABOVE it, while the claim keeps citing the same (now
+    wrong) range; #5384 non-block ① (architect, on #5377's own TESTS-READ):
+    "a reference must break on the change you care about". Enforced below
+    via ``inspect.getsource`` quote-match against ``run_loop`` itself —
+    those two asserts fail the moment either guard's own source text
+    changes, so THIS docstring's claim cannot go silently stale the way a
+    line-number one could: no separate CI gate reads docstrings, so
+    without a real assert the claim's staleness would only ever be caught
+    by a human happening to re-read this comment, which #5384 named as
+    exactly the failure mode. If a future edit adds a new unconditional
+    ``await`` ahead of the flush without touching either quoted guard's
+    own text, the quote-match still passes while the barrier itself is
+    gone — no assert can catch a defect it does not encode; re-reading
+    this docstring's claim by eye is still required for THAT specific
+    edit shape. So this is a genuine ordering witness, not a
+    scheduler-timing coincidence: nothing else in this call graph could
+    have run the drainer first."""
+    import inspect
+    _run_loop_source = inspect.getsource(RouterLoop.run_loop)
+    assert (
+        '_force_close_fn = getattr(self.host, "should_force_close", None)'
+        in _run_loop_source
+    ), (
+        "run_loop's should_force_close guard no longer reads verbatim as "
+        "this test's docstring claims — re-verify the ordering claim "
+        "above before trusting this test (#5384 ①)"
+    )
+    assert (
+        '_peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)'
+        in _run_loop_source
+    ), (
+        "run_loop's peek_mid_turn_injection guard no longer reads "
+        "verbatim as this test's docstring claims — re-verify the "
+        "ordering claim above before trusting this test (#5384 ①)"
+    )
+
     store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
     host = _MediaStoreHost(store)
     written = await _seed_pending_spill(host)
