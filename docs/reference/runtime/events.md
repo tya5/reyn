@@ -529,7 +529,7 @@ Required fields are declared in `src/reyn/core/events/event_schema.py`.
 ## Behavioral anomaly detector
 
 `behavior_anomaly_judged` (#5221) — the ONLY producer is the
-`record_behavior_anomaly_verdict` tool (`src/reyn/tools/record_behavior_anomaly_verdict.py`),
+`emit_behavior_anomaly_verdict` tool (`src/reyn/tools/emit_behavior_anomaly_verdict.py`),
 called from a `tool` step in the `src/reyn/data/pipelines/behavior_anomaly.yaml`
 pipeline right after its judge `agent` step answers. NOT a "prompt-injection
 detector" (architect ruling, issue #5221): the judge is constrained to a

@@ -22,7 +22,7 @@ Tier 2 (OS invariant):
   - ``TurnBehaviorTally``: counts ONLY its closed watch-list, ignores every
     other audit-event kind, and ``snapshot_and_reset`` clears atomically —
     real ``EventLog``, no mocks.
-  - ``record_behavior_anomaly_verdict``: emits ``behavior_anomaly_judged``
+  - ``emit_behavior_anomaly_verdict``: emits ``behavior_anomaly_judged``
     with the exact typed fields; rejects a verdict outside the closed
     {clean, suspicious} vocabulary. Real ``EventLog`` via a hand-built
     ``ToolContext`` (the same idiom test_2425 uses for a non-router-loop
@@ -30,7 +30,7 @@ Tier 2 (OS invariant):
   - Full pipeline logic end-to-end: a REAL ``PipelineExecutor.run`` through
     the shipped DSL's THREE pipelines (transform threshold check -> match ->
     escalate/skip), a REAL tool-registry dispatch (``_make_tool_dispatch``,
-    so ``record_behavior_anomaly_verdict`` really emits), and a REAL
+    so ``emit_behavior_anomaly_verdict`` really emits), and a REAL
     ``Session``/``AgentRegistry`` for the judge ``agent`` step (only the LLM
     reply is scripted) — proving BOTH escalation paths: below-threshold
     (judge never runs, no audit-event at all — the third state) and
@@ -60,10 +60,10 @@ from reyn.data.pipelines.registry import build_pipeline_registry
 from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.turn_behavior_tally import SENSITIVE_OP_KINDS, TurnBehaviorTally
-from reyn.tools.pipeline_verbs import _make_tool_dispatch
-from reyn.tools.record_behavior_anomaly_verdict import (
-    RECORD_BEHAVIOR_ANOMALY_VERDICT,
+from reyn.tools.emit_behavior_anomaly_verdict import (
+    EMIT_BEHAVIOR_ANOMALY_VERDICT,
 )
+from reyn.tools.pipeline_verbs import _make_tool_dispatch
 from reyn.tools.types import ToolContext
 from tests._support.agent_session import make_session
 from tests._support.events import settle
@@ -162,7 +162,7 @@ def test_tally_empty_window_reports_zero_and_empty_csv() -> None:
 
 
 # ===========================================================================
-# Tier 2 — record_behavior_anomaly_verdict: the ONLY producer
+# Tier 2 — emit_behavior_anomaly_verdict: the ONLY producer
 # ===========================================================================
 
 
@@ -188,7 +188,7 @@ async def test_record_verdict_emits_the_typed_audit_event() -> None:
     captured: list = []
     events.add_subscriber(lambda e: captured.append(e), kinds={"behavior_anomaly_judged"})
 
-    result = await RECORD_BEHAVIOR_ANOMALY_VERDICT.handler(
+    result = await EMIT_BEHAVIOR_ANOMALY_VERDICT.handler(
         {"verdict": "suspicious", "chain_id": "c-1", "anomalous_op_count": 3},
         _tool_ctx(events),
     )
@@ -211,7 +211,7 @@ async def test_record_verdict_rejects_a_value_outside_the_closed_vocabulary() ->
     captured: list = []
     events.add_subscriber(lambda e: captured.append(e), kinds={"behavior_anomaly_judged"})
 
-    result = await RECORD_BEHAVIOR_ANOMALY_VERDICT.handler(
+    result = await EMIT_BEHAVIOR_ANOMALY_VERDICT.handler(
         {"verdict": "verified_clean", "chain_id": "c-1", "anomalous_op_count": 1},
         _tool_ctx(events),
     )

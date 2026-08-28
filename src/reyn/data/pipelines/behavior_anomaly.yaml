@@ -113,7 +113,7 @@ steps:
       schema: AnomalyVerdict
       output: verdict
   - tool:
-      name: record_behavior_anomaly_verdict
+      name: emit_behavior_anomaly_verdict
       args:
         verdict: !expr ctx.verdict.verdict
         chain_id: !expr ctx.chain_id

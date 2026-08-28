@@ -1,4 +1,4 @@
-"""``record_behavior_anomaly_verdict`` ToolDefinition (#5221).
+"""``emit_behavior_anomaly_verdict`` ToolDefinition (#5221).
 
 The ONLY producer of the ``behavior_anomaly_judged`` audit-event kind. A
 `tool` step in the behavioral-anomaly-detector pipeline
@@ -35,13 +35,13 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _VERDICT_VALUES = ("clean", "suspicious")
 
-_RECORD_BEHAVIOR_ANOMALY_VERDICT_DESCRIPTION = (
+_EMIT_BEHAVIOR_ANOMALY_VERDICT_DESCRIPTION = (
     "Internal: record a behavioral-anomaly judge verdict onto the audit "
     "trail. Never offered to a live agent — called only from the "
     "behavior_anomaly pipeline's own tool step."
 )
 
-_RECORD_BEHAVIOR_ANOMALY_VERDICT_PARAMETERS: dict[str, Any] = {
+_EMIT_BEHAVIOR_ANOMALY_VERDICT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "verdict": {
@@ -62,7 +62,7 @@ _RECORD_BEHAVIOR_ANOMALY_VERDICT_PARAMETERS: dict[str, Any] = {
 }
 
 
-async def _handle_record_behavior_anomaly_verdict(
+async def _handle_emit_behavior_anomaly_verdict(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
     verdict = args.get("verdict")
@@ -86,21 +86,21 @@ async def _handle_record_behavior_anomaly_verdict(
     return {"status": "ok", "verdict": verdict, "chain_id": chain_id}
 
 
-def _render_record_behavior_anomaly_verdict(result: dict) -> str:
+def _render_emit_behavior_anomaly_verdict(result: dict) -> str:
     return f"Recorded behavior-anomaly verdict '{result.get('verdict', '')}'."
 
 
-record_behavior_anomaly_verdict_to_canonical = make_status_text_mapper(
-    render=_render_record_behavior_anomaly_verdict, meta_keys=("verdict", "chain_id"),
+emit_behavior_anomaly_verdict_to_canonical = make_status_text_mapper(
+    render=_render_emit_behavior_anomaly_verdict, meta_keys=("verdict", "chain_id"),
 )
 
-RECORD_BEHAVIOR_ANOMALY_VERDICT = ToolDefinition(
-    canonical=record_behavior_anomaly_verdict_to_canonical,
-    name="record_behavior_anomaly_verdict",
-    description=_RECORD_BEHAVIOR_ANOMALY_VERDICT_DESCRIPTION,
-    parameters=_RECORD_BEHAVIOR_ANOMALY_VERDICT_PARAMETERS,
+EMIT_BEHAVIOR_ANOMALY_VERDICT = ToolDefinition(
+    canonical=emit_behavior_anomaly_verdict_to_canonical,
+    name="emit_behavior_anomaly_verdict",
+    description=_EMIT_BEHAVIOR_ANOMALY_VERDICT_DESCRIPTION,
+    parameters=_EMIT_BEHAVIOR_ANOMALY_VERDICT_PARAMETERS,
     gates=ToolGates(router="deny"),
-    handler=_handle_record_behavior_anomaly_verdict,
+    handler=_handle_emit_behavior_anomaly_verdict,
     category="observability",
     purity="side_effect",
 )

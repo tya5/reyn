@@ -260,11 +260,11 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   reliable "the turn is done" signal for UI working-indicators. kind mirrors
     #   turn_started; chain_id may be absent for non-user triggers.
     "turn_settled": frozenset({"kind"}),
-    # #5221: emitted by the `record_behavior_anomaly_verdict` tool, the ONLY
+    # #5221: emitted by the `emit_behavior_anomaly_verdict` tool, the ONLY
     # producer — called from a registered pipeline's own `tool` step after its
     # judge `agent` step returns a schema-constrained verdict (never by a
     # live agent directly: the tool is gates.router="deny"). `verdict` is the
-    # closed clean|suspicious vocabulary (`reyn.tools.record_behavior_anomaly_verdict`
+    # closed clean|suspicious vocabulary (`reyn.tools.emit_behavior_anomaly_verdict`
     # is the SSoT for the two literal values). `chain_id` joins this back to
     # the turn's own `turn_settled`/`turn_completed` — a chain_id with
     # `turn_settled` but NO matching `behavior_anomaly_judged` means "the

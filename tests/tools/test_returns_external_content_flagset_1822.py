@@ -90,6 +90,12 @@ _NOT_EXTERNAL = {
     # delivery ACK {status, agent, session, wake}, not external content — it
     # is fire-and-forget delivery, so there is no reply to relay at all.
     "send_to_session",
+    # #5221: emit_behavior_anomaly_verdict → returns an OS-generated
+    # {status, ...} ACK for a typed audit-event write; its own args are
+    # supplied by the pipeline's judge step (a closed-vocabulary verdict +
+    # counts), never external/untrusted content, and its return carries
+    # nothing back from outside reyn to fence.
+    "emit_behavior_anomaly_verdict",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file",
     "remember_shared", "remember_agent", "forget_memory",
