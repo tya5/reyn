@@ -394,6 +394,21 @@ class SqliteIndexBackend:
             row_norms = np.where(row_norms == 0.0, 1e-10, row_norms)
             scores = (vectors @ q_vec) / (row_norms * q_norm)
 
+        # #5427: cosine similarity's own MATHEMATICAL range is [-1.0, 1.0]
+        # — the contract ActionEmbeddingIndex.query's own docstring
+        # states (action_index.py) for this method's `score` — but
+        # `scores` is a float32 division — a near-parallel pair
+        # (self-match or a very close neighbor) can round to a value 1
+        # ulp past 1.0 (1.0000001192092896, float32's own eps ≈ 1.19e-7
+        # above 1.0), violating that documented range. Clamped HERE
+        # (implementation side, not left for every caller to tolerate)
+        # so the returned `score` genuinely stays inside the range the
+        # public contract promises — a caller (or a test) reading `-1.0
+        # <= score <= 1.0` is checking a contract this line now keeps
+        # true, not the underlying float32 arithmetic's own looser
+        # behavior.
+        scores = np.clip(scores, -1.0, 1.0)
+
         # Descending sort, take top_k. Sort ``-scores`` ascending with
         # ``kind="stable"`` (FP-0057 Phase 0 non-regression gate) rather
         # than ``np.argsort(scores)[::-1]``: reversing an ascending-stable
