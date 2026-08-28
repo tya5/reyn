@@ -124,10 +124,11 @@ def test_read_image_rejects_traversal_attempt(tmp_path):
 # ── save_tool_result + read_tool_result ────────────────────────────────
 
 
-def test_save_tool_result_writes_to_tool_results_dir(tmp_path):
-    """Tier 2: save_tool_result writes under .reyn/tool-results/ with the
-    parallel naming convention as save_image.
-    """
+def test_save_tool_result_writes_to_history_content_dir(tmp_path):
+    """Tier 2: #5364 — save_tool_result writes under
+    .reyn/memory/history-content/<session_id>/, NOT .reyn/tool-results/
+    (that directory is read-only going forward — see
+    test_read_tool_result_round_trip_for_a_legacy_tool_results_path)."""
     store = _store(tmp_path)
     block = store.save_tool_result(
         "hello world", mime_type="text/plain",
@@ -135,11 +136,21 @@ def test_save_tool_result_writes_to_tool_results_dir(tmp_path):
     )
     assert block["type"] == "tool_result_ref"
     assert block["mime_type"] == "text/plain"
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/main/")
     assert block["path"].endswith(".txt")
     full = tmp_path / block["path"]
     assert full.exists()
     assert full.read_text(encoding="utf-8") == "hello world"
+
+
+def test_save_tool_result_nests_under_the_given_session_id(tmp_path):
+    """Tier 2: #5364 §1.1 "ディレクトリはsession単位" — a different
+    session_id lands in a different subdirectory."""
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, session_id="peer-agent-7",
+    )
+    block = store.save_tool_result("x", mime_type="text/plain")
+    assert block["path"].startswith(".reyn/memory/history-content/peer-agent-7/")
 
 
 def test_save_tool_result_html_extension(tmp_path):
@@ -163,13 +174,31 @@ def test_read_tool_result_round_trip(tmp_path):
 
 
 def test_read_tool_result_rejects_outside_dir(tmp_path):
-    """Tier 2: path traversal outside tool_results_dir raises
-    PermissionError — same defence as read_image.
+    """Tier 2: path traversal outside BOTH tool_results_dir and
+    history_content_root raises PermissionError — same defence as
+    read_image.
     """
     store = _store(tmp_path)
     (tmp_path / "leak.txt").write_text("secret")
-    with pytest.raises(PermissionError, match="outside tool_results_dir"):
+    with pytest.raises(PermissionError, match="outside both tool_results_dir"):
         store.read_tool_result("leak.txt")
+
+
+def test_read_tool_result_round_trip_for_a_legacy_tool_results_path(tmp_path):
+    """Tier 2: #5364 — an entry recorded under the pre-#5364
+    .reyn/tool-results/ location (never migrated, never written to
+    again) still resolves — the resolver opens the entry's own path as
+    given, never reconstructs one from a base dir + filename."""
+    store = _store(tmp_path)
+    legacy_dir = tmp_path / ".reyn" / "tool-results"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "20250101T000000-abc-tool-1.txt").write_text("old content")
+
+    out, found = store.read_tool_result(
+        ".reyn/tool-results/20250101T000000-abc-tool-1.txt",
+    )
+    assert found is True
+    assert out == "old content"
 
 
 # ── isolation across separate save_* calls ─────────────────────────────
@@ -177,23 +206,28 @@ def test_read_tool_result_rejects_outside_dir(tmp_path):
 
 def test_image_and_tool_result_dirs_are_distinct(tmp_path):
     """Tier 2: save_image writes to media_dir only; save_tool_result writes
-    to tool_results_dir only. Each path-ref carries its own ``type``.
+    to history_content_root only (#5364). Each path-ref carries its own
+    ``type``.
     """
     store = _store(tmp_path)
     img_block = store.save_image(b"img", mime_type="image/png")
     txt_block = store.save_tool_result("txt", mime_type="text/plain")
 
     assert (tmp_path / ".reyn" / "media").is_dir()
-    assert (tmp_path / ".reyn" / "tool-results").is_dir()
+    assert (tmp_path / ".reyn" / "memory" / "history-content").is_dir()
     assert img_block["type"] == "image"
     assert txt_block["type"] == "tool_result_ref"
     # Each path lives only in its own dir.
     assert "/media/" in img_block["path"]
-    assert "/tool-results/" in txt_block["path"]
+    assert "/history-content/" in txt_block["path"]
 
 
 def test_custom_dirs_via_config(tmp_path):
-    """Tier 2: MediaStoreConfig overrides the default subdirectory names."""
+    """Tier 2: MediaStoreConfig overrides media_dir. tool_results_dir is
+    a SEPARATE, no-longer-written knob (#5364 §1.4 "tool_results_dirと潰
+    さない") — it still relocates where LEGACY reads are validated
+    against, but save_tool_result never writes there again regardless of
+    this config."""
     cfg = MediaStoreConfig(
         media_dir=".alt/img", tool_results_dir=".alt/text",
     )
@@ -201,7 +235,16 @@ def test_custom_dirs_via_config(tmp_path):
     img = store.save_image(b"x", mime_type="image/png")
     txt = store.save_tool_result("y", mime_type="text/plain")
     assert img["path"].startswith(".alt/img/")
-    assert txt["path"].startswith(".alt/text/")
+    assert txt["path"].startswith(".reyn/memory/history-content/main/")
+
+    # The custom tool_results_dir is still honored as a READ boundary for
+    # a legacy path (#5364 — never migrated, never written to again).
+    legacy_dir = tmp_path / ".alt" / "text"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "old.txt").write_text("legacy")
+    out, found = store.read_tool_result(".alt/text/old.txt")
+    assert found is True
+    assert out == "legacy"
 
 
 # ── Cross-host capable path-ref shape (#385 β core impl sub-task 1) ────
@@ -245,7 +288,7 @@ def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
     filename = Path(block["path"]).name
     assert block["resource_uri"].endswith("/" + filename)
     # Same-host path is still there as the fast-path fallback.
-    assert block["path"].startswith(".reyn/tool-results/")
+    assert block["path"].startswith(".reyn/memory/history-content/main/")
 
 
 def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
@@ -468,7 +511,7 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
         assert found is True, f"entry {i} was evicted"
         assert body == f"entry {i}\n"
     # All saved paths still present on disk (= no auto-cleanup).
-    files_on_disk = {p.name for p in store.tool_results_dir.iterdir()}
+    files_on_disk = {p.name for p in store.history_content_dir.iterdir()}
     saved_names = {Path(b["path"]).name for b in blocks}
     assert saved_names.issubset(files_on_disk), "some saved files were evicted"
 

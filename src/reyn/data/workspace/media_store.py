@@ -265,6 +265,26 @@ def _dir_stats(directory: Path) -> tuple[int, int]:
     return count, total
 
 
+def _dir_stats_recursive(directory: Path) -> tuple[int, int]:
+    """(file_count, total_bytes) for a NESTED layout — #5364's
+    ``history-content/<session_id>/`` tree, one flat level PER session
+    rather than one flat level overall. Same best-effort/error-disclosure
+    policy as :func:`_dir_stats` (see its own docstring); ``rglob`` walks
+    every session subdirectory in one pass."""
+    if not directory.is_dir():
+        return 0, 0
+    count = 0
+    total = 0
+    for entry in directory.rglob("*"):
+        try:
+            if entry.is_file():
+                count += 1
+                total += entry.stat().st_size
+        except FileNotFoundError:
+            continue
+    return count, total
+
+
 # #385 β core impl sub-task 1: cross-host capable resource URI scheme.
 # A path-ref minted with ``agent_name`` set carries this scheme so a
 # downstream consumer (= another agent / a different host) can dispatch
@@ -342,15 +362,33 @@ class MediaStore:
         project_root: Path,
         agent_name: str | None = None,
         base_url: str | None = None,
+        session_id: str = "main",
     ) -> None:
         self._config = config or MediaStoreConfig()
         self._project_root = project_root.resolve()
         self._media_dir = (
             self._project_root / self._config.media_dir
         ).resolve()
+        # #4381/#5364: `tool_results_dir` (`.reyn/tool-results/`) is the
+        # PRE-#5364 write location — kept, untouched, READ-ONLY going
+        # forward (see :meth:`save_tool_result`'s own docstring for why
+        # writes moved). No migration script: an old path-ref still
+        # resolves here exactly as it always did.
         self._tool_results_dir = (
             self._project_root / self._config.tool_results_dir
         ).resolve()
+        # #5364 §1.1: new tool-result writes go under a PERSIST-tier,
+        # session-scoped, NESTED directory — `memory/` directly, never a
+        # flat `.md`, because 4 non-recursive `glob("*.md")` scanners walk
+        # `memory/`'s own direct children and would each read this store's
+        # entire multi-GB footprint if it lived there unnested (#5364,
+        # tui-coder's 4-scanner census). `_history_content_root` (the
+        # PARENT of every session's own subdirectory) is also the read
+        # boundary `read_tool_result` validates new-format paths against.
+        self._history_content_root = (
+            self._project_root / ".reyn" / "memory" / "history-content"
+        ).resolve()
+        self._session_id = session_id
         self._agent_name = agent_name or None
         # #385 β sub-task 3b: when set, save_* augments path-refs with a
         # ``url`` field pointing at this Reyn instance's resources router
@@ -550,7 +588,14 @@ class MediaStore:
             return b"", False
         return full.read_bytes(), True
 
-    # ── Tool result storage (= .reyn/tool-results/) ───────────────────
+    # ── Tool result storage (= .reyn/memory/history-content/<session_id>/) ──
+
+    def _history_content_dir(self) -> Path:
+        """This session's own subdirectory under ``_history_content_root``
+        (#5364 §1.1 "★M ── ディレクトリはsession単位"). Created lazily by
+        :func:`offload_value`'s own write path, same as every other
+        MediaStore directory — never pre-created here."""
+        return self._history_content_root / _safe_token(self._session_id)
 
     def save_tool_result(
         self,
@@ -562,14 +607,25 @@ class MediaStore:
         seq: int = 1,
         payload_field: str | None = None,
     ) -> dict:
-        """Write a tool result text dump to ``tool_results_dir`` and
-        return a path-ref block (= ``{"type": "tool_result_ref", "path":
-        ..., "mime_type": ..., "content_hash": ...}``).
+        """Write a tool result text dump under this session's
+        ``history-content`` directory (#5364 §1.1/§1.4 — the SAME write
+        seam every reactive-spill / write-time-cap caller already uses;
+        only the destination directory moved) and return a path-ref block
+        (= ``{"type": "tool_result_ref", "path": ..., "mime_type": ...,
+        "content_hash": ...}``).
 
         The LOCAL store + hash is delegated to :func:`offload_value` from
         ``services/offload/store.py`` (Phase 2 of the offload-dedup effort,
         FP-0008 C5 #223).  The return block shape is IDENTICAL to the
         pre-migration contract — callers are unaffected.
+
+        #5364: this is deliberately the ONE write call site
+        (``is_tool_result_spill`` checks WHAT WAS ACTUALLY WRITTEN via the
+        in-memory + persisted manifest below, keyed off whatever directory
+        THIS method resolves — a second write call site would silently
+        stop populating that manifest for its own files). The pre-#5364
+        ``.reyn/tool-results/`` directory is never written here again —
+        see :meth:`read_tool_result` for why old path-refs still resolve.
 
         #2394-followup clean-payload: when ``content`` is the op-result dict and
         ``payload_field`` names its sole-oversized field, ``offload_value`` stores
@@ -591,7 +647,7 @@ class MediaStore:
 
         result = offload_value(
             content,
-            store_dir=self._tool_results_dir,
+            store_dir=self._history_content_dir(),
             preview_strategy=None,
             filename=filename,
             payload_field=payload_field,
@@ -631,33 +687,42 @@ class MediaStore:
     def read_tool_result(self, path_str: str) -> tuple[str, bool]:
         """Read tool result text by project-relative path.
 
-        Validates the resolved path lives inside ``tool_results_dir``.
-        Returns ``(text, found)``.
+        Validates the resolved path lives inside EITHER the pre-#5364
+        ``tool_results_dir`` (old-format path-refs, never migrated — #5364
+        §1.1 "移行scriptは要らない") OR the current
+        ``history_content_root`` (new writes, #5364 §1.1). Returns
+        ``(text, found)``.
+
+        #5364 §1.2: the resolver opens the entry's OWN path as recorded —
+        it never reconstructs one from a base dir + filename (doing so
+        would make every pre-#5364 entry resolve to a location it was
+        never written to, i.e. universally ``lost``). This method's job
+        is only to pick the matching validation boundary for whichever
+        directory the path actually resolves under; it never rewrites the
+        path itself.
 
         The LOCAL read is delegated to :func:`read_offloaded` from
         ``services/offload/store.py`` (Phase 2 of the offload-dedup effort).
         The ``(text, found)`` contract and ``PermissionError`` boundary are
         preserved identically — callers are unaffected.
-
-        Path resolution: ``path_str`` is project-relative; we resolve it
-        under ``self._project_root`` to an absolute path before passing
-        to ``read_offloaded`` (which expects an absolute path_str).
-        The boundary ``base_dir=self._tool_results_dir`` ensures the
-        ``PermissionError`` fires for any path outside ``tool_results_dir``.
         """
         # Resolve project-relative → absolute before calling read_offloaded,
-        # which validates against base_dir (= tool_results_dir).
-        abs_path = str((self._project_root / path_str).resolve())
-        try:
-            return read_offloaded(abs_path, base_dir=self._tool_results_dir)
-        except PermissionError:
-            # Re-raise with the original MediaStore error message shape so
-            # existing consumers that match on "outside tool_results_dir"
-            # continue to work.
-            raise PermissionError(
-                f"path {path_str!r} is outside tool_results_dir "
-                f"{self._tool_results_dir} — refusing to read"
-            )
+        # which validates against a single base_dir.
+        abs_path = (self._project_root / path_str).resolve()
+        for base_dir in (self._history_content_root, self._tool_results_dir):
+            try:
+                abs_path.relative_to(base_dir.resolve())
+            except ValueError:
+                continue
+            return read_offloaded(str(abs_path), base_dir=base_dir)
+        # Neither boundary contains this path — same PermissionError shape
+        # as before #5364 (existing consumers match on "outside
+        # tool_results_dir"), extended to name both valid locations.
+        raise PermissionError(
+            f"path {path_str!r} is outside both tool_results_dir "
+            f"{self._tool_results_dir} and history_content_root "
+            f"{self._history_content_root} — refusing to read"
+        )
 
     # ── Cross-host routing (#385 β core impl sub-task 1) ──────────────
 
@@ -724,17 +789,11 @@ class MediaStore:
                 f"URL path does not match /agents/<agent>/tool-results/<artifact>: {url!r}"
             )
         artifact = "/".join(parts[3:])
+        candidate = self.find_tool_result_artifact(artifact)
+        if candidate is None:
+            return "", False
         # Re-use the existing path-based reader (= same boundary check).
-        try:
-            rel_path = str(
-                (self._tool_results_dir / artifact).relative_to(
-                    self._project_root,
-                ),
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"artifact {artifact!r} resolves outside tool_results_dir"
-            ) from exc
+        rel_path = str(candidate.relative_to(self._project_root))
         return self.read_tool_result(rel_path)
 
     def read_tool_result_by_uri(self, uri: str) -> tuple[str, bool]:
@@ -772,20 +831,44 @@ class MediaStore:
                 "yet supported in this build (= sub-task 3 of #385 β core "
                 f"impl). This store's identity is {self._agent_name!r}."
             )
-        # Same-host: the artifact is a filename inside tool_results_dir.
+        # Same-host: the artifact is a filename inside either this
+        # session's history-content directory (#5364, current writes) or
+        # the pre-#5364 tool_results_dir (legacy, read-only). Try the
+        # current location first (the overwhelming common case — a
+        # same-process round trip), falling back to the legacy one so an
+        # OLD resource_uri (minted before #5364) still resolves.
         # Delegate to read_tool_result with the project-relative path so
         # workspace-boundary validation runs through the existing path.
-        try:
-            rel_path = str(
-                (self._tool_results_dir / artifact).relative_to(
-                    self._project_root,
-                ),
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"artifact {artifact!r} resolves outside tool_results_dir"
-            ) from exc
+        candidate = self.find_tool_result_artifact(artifact)
+        if candidate is None:
+            return "", False
+        rel_path = str(candidate.relative_to(self._project_root))
         return self.read_tool_result(rel_path)
+
+    def find_tool_result_artifact(self, artifact: str) -> "Path | None":
+        """#5364: locate an on-disk artifact by FILENAME ONLY (the shape
+        every same-host cross-reference — resource_uri / url — carries,
+        none of which encode a session_id) across every valid location,
+        in order: (1) THIS store's own session directory (the overwhelming
+        common case — a same-process round trip); (2) every OTHER
+        session's subdirectory under ``history_content_root`` (a
+        different session's write, read back through THIS store); (3)
+        the legacy flat ``tool_results_dir`` (pre-#5364, read-only). The
+        first existing match wins; ``None`` when nowhere has it."""
+        own_session = self._history_content_dir() / artifact
+        if own_session.exists():
+            return own_session
+        if self._history_content_root.is_dir():
+            other_session = next(
+                (p for p in self._history_content_root.rglob(artifact) if p.is_file()),
+                None,
+            )
+            if other_session is not None:
+                return other_session
+        legacy = self._tool_results_dir / artifact
+        if legacy.exists():
+            return legacy
+        return None
 
     @property
     def agent_name(self) -> str | None:
@@ -806,8 +889,17 @@ class MediaStore:
 
     @property
     def tool_results_dir(self) -> Path:
-        """Absolute path of the tool result text storage directory."""
+        """Absolute path of the PRE-#5364 tool result text storage
+        directory — read-only going forward; see :meth:`read_tool_result`.
+        """
         return self._tool_results_dir
+
+    @property
+    def history_content_dir(self) -> Path:
+        """#5364: absolute path of THIS session's tool-result write
+        directory (``.reyn/memory/history-content/<session_id>/``) — where
+        :meth:`save_tool_result` writes now."""
+        return self._history_content_dir()
 
     def storage_stats(self) -> "MediaStorageStats":
         """#4478 Phase 1: a read-only, policy-independent snapshot of this
@@ -819,7 +911,13 @@ class MediaStore:
         ``image_cache_size_bytes``-style snapshot-read pattern (#4376),
         applied here to on-disk rather than in-memory storage."""
         media_count, media_bytes = _dir_stats(self._media_dir)
-        tr_count, tr_bytes = _dir_stats(self._tool_results_dir)
+        # #5364: tool-result writes moved to history_content_root (nested
+        # per session) — tool_result_file_count/bytes measure the CURRENT
+        # write location, same field name/meaning as before the move
+        # (the legacy .reyn/tool-results/ tree is frozen going forward,
+        # so continuing to report it here would make this measurement
+        # surface silently stop reflecting new writes).
+        tr_count, tr_bytes = _dir_stats_recursive(self._history_content_root)
         return MediaStorageStats(
             media_file_count=media_count,
             media_bytes=media_bytes,

@@ -106,7 +106,7 @@ def test_falsify_both_streams_offload_cleanly_no_whole_dict_blob(tmp_path):
 
     # Two clean offload files: unpacking asserts EXACTLY two independent files (one per stream) —
     # the whole point of the independent-stream seam, and the falsify against a single-blob fallback.
-    file_a, file_b = sorted(store.tool_results_dir.iterdir())
+    file_a, file_b = sorted(store.history_content_dir.iterdir())
     bodies = [file_a.read_text(encoding="utf-8"), file_b.read_text(encoding="utf-8")]
     assert any(b == _BIG for b in bodies), "the text stream is stored CLEAN in its own file"
     assert any(json.loads(b) == big_structured for b in bodies if b.lstrip().startswith(("{", "["))), \

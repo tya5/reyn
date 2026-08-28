@@ -82,6 +82,34 @@ Everything else is excluded, by one of four reasons:
 │                           unbounded growth) but does NOT rebuild if the
 │                           manifest FILE ITSELF is deleted — pruning and
 │                           rebuilding are not the same claim.
+│   └── history-content/<session_id>/  PERSIST (#5364) — full tool-result
+│                           bodies `history.jsonl` references, GB-CLASS by
+│                           design (a single oversized turn is the whole
+│                           point this store exists to absorb — #5364,
+│                           owner: "普通に考えれば最新にでかいもの置くだ
+│                           けで会話継続できないとわかるでしょ"). One
+│                           directory PER session — `MediaStore.
+│                           save_tool_result`'s current write target (the
+│                           pre-#5364 `tool-results/` AUDIT dir below is
+│                           frozen: read-only going forward, no migration).
+│                           NESTED deliberately — 4 separate `memory/`
+│                           scanners (`reyn.data.memory.memory.
+│                           list_entries`, `knowledge_ingest.
+│                           _iter_memory_entries`, `tools.memory.
+│                           _regenerate_index`, `op_runtime.file.
+│                           regenerate_index_impl`) each do a non-recursive
+│                           `glob("*.md")` over `memory/`'s own direct
+│                           children — a flat `.md` here would make all
+│                           four read this store's entire footprint
+│                           (pinned by `tests/data/test_5364_history_
+│                           content_nesting.py`, one test per scanner).
+│                           ⏳ #5364's own history-resolution/GC follow-up
+│                           work (a pure `inline`/`ref`/`lost` resolver;
+│                           the permanent-write-failure fallback; the
+│                           directory size-cap GC) is designed but not yet
+│                           implemented as of this entry — see #5364 for
+│                           current status before assuming any of it
+│                           exists.
 ├── approvals.jsonl         PERSIST — user-authored permission grants, append-only ledger
 │                           (#5153); survive rewind. approvals.yaml (legacy snapshot) is
 │                           migrated into this once, on first touch, then inert history.

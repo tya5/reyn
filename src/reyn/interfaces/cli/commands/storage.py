@@ -62,10 +62,13 @@ def run_stats(args: argparse.Namespace) -> None:
     stats = store.storage_stats()
     hist = aggregate_history_stats(project_root)
 
-    print(f"{'directory':<16}{'files':>10}{'bytes':>16}")
-    print(f"{'media/':<16}{stats.media_file_count:>10}{stats.media_bytes:>16,}")
+    print(f"{'directory':<26}{'files':>10}{'bytes':>16}")
+    print(f"{'media/':<26}{stats.media_file_count:>10}{stats.media_bytes:>16,}")
+    # #5364: tool-result writes now live under memory/history-content/
+    # (nested per session, GB-class), not tool-results/ — the label
+    # reflects where the bytes actually are.
     print(
-        f"{'tool-results/':<16}"
+        f"{'memory/history-content/':<26}"
         f"{stats.tool_result_file_count:>10}{stats.tool_result_bytes:>16,}",
     )
     print()
