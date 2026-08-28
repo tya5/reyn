@@ -11,6 +11,7 @@ Also owns the module-level helpers:
 
   - _materialise_path_ref_content
   - _read_pathref_image
+  - _resolve_spilled_content    — #5364 §1.2: lost-file detection for spilled entries
 
 history_fn dependency: a zero-arg callable that returns the raw history list
 (all ChatMessages including summaries) — passed in production as
@@ -163,6 +164,58 @@ def _refresh_skill_location_tokens(
         content, skill_source_path=skill_source_path, project_dir=project_dir,
         alias_claude=True,
     )
+
+
+def _resolve_spilled_content(
+    content: "str | list[dict]", meta: Any, project_dir_fn: "Callable[[], Any] | None",
+) -> "str | list[dict]":
+    """#5364 §1.2: replace a spilled entry's stale ref-preview with an
+    explicit "lost" notice once its backing file is actually gone —
+    every serialise, via the ONE resolver
+    (:func:`reyn.core.offload.history_content_resolve.resolve`).
+
+    No-op (content returned unchanged) unless ``content`` is a ``str``
+    AND ``meta`` carries ``SPILLED_META_KEY`` — an unspilled entry's own
+    content is already self-sufficient (§1.2's own truth table: the
+    ``spilled=False`` row never depends on file existence), so this never
+    touches it. ``project_dir_fn is None`` (legacy/test double with no
+    workspace access) degrades to "never check" — same fail-closed idiom
+    :func:`_refresh_skill_location_tokens` uses for the identical shape.
+
+    Without this, a spilled entry whose backing file was GC'd or never
+    persisted keeps showing the model a ``read_file(path=...)`` preview
+    naming a file that no longer exists — a silent dangling reference the
+    model can only discover by actually trying the read and getting an
+    error, rather than being told up front."""
+    if not isinstance(content, str) or not isinstance(meta, dict) or project_dir_fn is None:
+        return content
+    from reyn.runtime.chat_message import CONTENT_REF_META_KEY, SPILLED_META_KEY
+    if not meta.get(SPILLED_META_KEY):
+        return content
+    ref = meta.get(CONTENT_REF_META_KEY)
+    if not ref:
+        return content
+    project_dir = project_dir_fn()
+    if project_dir is None:
+        return content
+
+    from pathlib import Path as _Path
+
+    from reyn.core.offload.history_content_resolve import HistoryContentEntry, resolve
+
+    def _file_exists(rel_path: str) -> bool:
+        return (_Path(project_dir) / rel_path).is_file()
+
+    resolved = resolve(
+        HistoryContentEntry(spilled=True, content=content, ref=ref),
+        file_exists=_file_exists,
+    )
+    if resolved.kind == "lost":
+        return (
+            f"[content lost: the offloaded body at {ref!r} no longer exists "
+            "on disk — it may have been deleted or garbage-collected]"
+        )
+    return content
 
 
 # #4381 PR-1: warn-once cache for the resource/budget invariant below, keyed
@@ -554,6 +607,13 @@ class RouterHistoryBuffer:
         # persisted `load_skill` entry left literal, against the CURRENT
         # filesystem (see _refresh_skill_location_tokens's docstring).
         content = _refresh_skill_location_tokens(
+            content, getattr(m, "meta", None), self._project_dir_fn,
+        )
+        # #5364 §1.2: fresh, every serialise — a spilled entry's backing
+        # file may have been GC'd or never persisted since the last time
+        # this turn was serialised (see _resolve_spilled_content's own
+        # docstring for why this is not a one-time check at write time).
+        content = _resolve_spilled_content(
             content, getattr(m, "meta", None), self._project_dir_fn,
         )
         # #5296 PR-2: apply the reactive-spill overlay, same stage as the

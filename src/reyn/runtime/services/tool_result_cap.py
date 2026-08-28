@@ -80,6 +80,7 @@ def cap_tool_result_content(
     max_inline_bytes: int = MAX_TOOL_RESULT_INLINE_BYTES,
     preview_head_chars: int = _PREVIEW_HEAD_CHARS,
     preview_tail_chars: int = _PREVIEW_TAIL_CHARS,
+    on_offload: "Callable[[str], None] | None" = None,
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
 
@@ -106,6 +107,16 @@ def cap_tool_result_content(
                       ref's on-disk extension carries it (``None`` → the store's own
                       ``"text/plain"`` default, unchanged behaviour). Never read into ``content_str``
                       or any LLM-visible output of this function.
+        on_offload:   (#5364 §1.2) Called with the offloaded ref path exactly
+                      once, only when offload actually happens — the ONE
+                      typed channel a caller uses to learn "this was
+                      spilled, and to where" without re-deriving it by
+                      parsing the returned preview text for its
+                      ``read_file(path=...)`` marker (this repo's own
+                      "typed, never form-sniffed" convention —
+                      ``chat_message.py``'s ``TOOL_STATUS_META_KEY``
+                      docstring). Optional and additive: every existing
+                      caller that doesn't pass it is unaffected.
 
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
@@ -161,6 +172,8 @@ def cap_tool_result_content(
             ref=ref,
             content_hash=content_hash,
         )
+    if on_offload is not None:
+        on_offload(ref)
     return preview
 
 

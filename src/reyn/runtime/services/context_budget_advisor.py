@@ -221,7 +221,13 @@ class ContextBudgetAdvisor:
             alpha=cfg.cap_alpha,
         )
 
-    def cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
+    def cap_tool_result(
+        self,
+        content_str: str,
+        *,
+        content_type: "str | None" = None,
+        on_offload: "Callable[[str], None] | None" = None,
+    ) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
         No-op when no media_store is configured, or when ``offload.enabled: false``
@@ -233,6 +239,10 @@ class ContextBudgetAdvisor:
         type, e.g. ``"text/html"``); forwarded to the store's ``mime_type`` so the offloaded ref's
         on-disk extension carries it (never into any LLM-visible field — this only ever reaches the
         store, never the frontmatter this method's caller builds separately).
+
+        ``on_offload`` (#5364 §1.2) — forwarded to
+        ``tool_result_cap.cap_tool_result_content``'s own param of the same
+        name; optional and additive, every existing caller unaffected.
         """
         if not self._offload_config.enabled:
             return content_str
@@ -251,6 +261,7 @@ class ContextBudgetAdvisor:
             use_chars4=use_chars4,
             events=self._events,
             content_type=content_type,
+            on_offload=on_offload,
             max_inline_bytes=cfg.max_inline_bytes,
             preview_head_chars=cfg.preview_head_chars,
             preview_tail_chars=cfg.preview_tail_chars,

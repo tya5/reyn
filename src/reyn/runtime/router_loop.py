@@ -3466,7 +3466,9 @@ class RouterLoop:
         )
         from reyn.core.offload.seam import build_offload_body, render_tool_result
         from reyn.runtime.chat_message import (
+            CONTENT_REF_META_KEY,
             SKILL_SOURCE_PATH_META_KEY,
+            SPILLED_META_KEY,
             TOKEN_MAP_META_KEY,
             TOOL_ERROR_KIND_META_KEY,
             TOOL_ERROR_MESSAGE_META_KEY,
@@ -3502,6 +3504,17 @@ class RouterLoop:
             _media_store = getattr(host, "media_store", None)
             _save_fn = _media_store.save_tool_result if _media_store is not None else None
             _cap = getattr(host, "cap_tool_result", None)
+            # #5364 §1.2: the ONE typed channel this turn's cap call reports
+            # "this was offloaded, and to where" through — never re-derived
+            # later by parsing content_str's own read_file(path=...) marker
+            # (this repo's typed-over-form-sniffed convention, same as the
+            # #73 _tool_error_* locals above). Stays None when _cap never
+            # offloads (content stayed under the cap) or was never wired.
+            _offloaded_ref: "str | None" = None
+
+            def _on_offload(ref: str) -> None:
+                nonlocal _offloaded_ref
+                _offloaded_ref = ref
 
             # Error path (plain string, never JSON): a dispatch-envelope error carries
             # ``error.kind``/``.message`` (``permission_denied`` vs ``not_found`` imply different
@@ -3555,7 +3568,10 @@ class RouterLoop:
                 if (canonical.get("meta") or {}).get("isError"):
                     text_full = canonical.get("text", "") or ""
                     scan_target = f"Error: {text_full}"
-                    text = _cap(text_full) if _cap is not None else text_full
+                    text = (
+                        _cap(text_full, on_offload=_on_offload)
+                        if _cap is not None else text_full
+                    )
                     content_str = f"Error: {text}"
                     _tool_error_message = text_full
                 else:
@@ -3629,7 +3645,9 @@ class RouterLoop:
                         # text offload store as its mime_type — NEVER into frontmatter (built
                         # above, already sealed) — so a later present(data_ref=<this ref>) can
                         # recover it from the stored ref's file extension.
-                        text = _cap(text, content_type=content_type)
+                        text = _cap(
+                            text, content_type=content_type, on_offload=_on_offload,
+                        )
                     content_str = render_tool_result(frontmatter, text)
                     # #3629: `load_skill_to_canonical` is the one mapper that sets
                     # `history_text` — the SAME frontmatter, un-capped (a skill body is
@@ -3707,6 +3725,12 @@ class RouterLoop:
                 _tool_meta[TOKEN_MAP_META_KEY] = _history_meta_extra["token_map"]
             if "skill_source_path" in _history_meta_extra:
                 _tool_meta[SKILL_SOURCE_PATH_META_KEY] = _history_meta_extra["skill_source_path"]
+            # #5364 §1.2 "D": persisted so a restart never re-guesses whether
+            # this entry was spilled — the resolver reads this typed field,
+            # never the content string's own shape.
+            if _offloaded_ref is not None:
+                _tool_meta[SPILLED_META_KEY] = True
+                _tool_meta[CONTENT_REF_META_KEY] = _offloaded_ref
             if _append_entry is not None:
                 _append_entry(
                     role="tool",
