@@ -2431,6 +2431,22 @@ class Session:
             else Path.cwd() / ".reyn"
         )
 
+    def _ensure_agent_state_dir(self) -> "Path":
+        """#5208: this agent's own `.reyn/agents/<name>/state/` — the SAME
+        directory `self._snapshot_path`'s parent already names — created
+        here (idempotent `mkdir(parents=True, exist_ok=True)`, cheap on the
+        already-common case) if it does not already exist yet. reyn's own
+        responsibility, never a hook's `exec`/`exec_capture` child process's
+        (that child is only ever handed the resolved path via
+        `REYN_AGENT_STATE_DIR`, never asked to create it). Called lazily
+        from the `hook_process_context` callable right before a hook
+        dispatch reads it, so it is guaranteed to exist by then regardless
+        of whether anything else in this session's lifecycle happened to
+        create it first."""
+        state_dir = Path(self._snapshot_path).parent.resolve()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir
+
     @property
     def _environment_backend(self) -> Any:
         return self._agent.environment_backend
@@ -5129,6 +5145,18 @@ class Session:
                     self._workspace_base_dir or self._reyn_state_root.parent
                 ).resolve(),
                 agent_name=self.agent_name,
+                # #5208: a structurally write-reachable target for EVERY
+                # agent regardless of base_dir narrowing (`.reyn` is inside
+                # `_DEFAULT_WRITE_ZONES` — `permissions.py`). Same anchor
+                # `Path(self._snapshot_path).parent` already resolves to
+                # (line 3274 above) — not re-derived here so a future
+                # snapshot-path change can't silently diverge the two.
+                # reyn creates the directory here (never the hook's own
+                # child process's job — a hook is never asked to `mkdir`
+                # its own env var target): lazily, on this lambda's own
+                # call, so it exists by the time ANY hook that reads
+                # REYN_AGENT_STATE_DIR actually runs.
+                agent_state_dir=self._ensure_agent_state_dir(),
             ),
             # #5210: same deferred-lambda-over-live-state idiom as hook_cwd/
             # hook_process_context above — the model (and therefore the
