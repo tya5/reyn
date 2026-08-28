@@ -119,7 +119,7 @@ def test_trigger_is_required_no_default(tmp_path: Path) -> None:
     unlabelled audit event. A caller that forgets it fails loudly at the call
     site, before any offload/emit happens."""
     store = MediaStore(project_root=tmp_path, session_id="test-session")
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="trigger"):
         cap_tool_result_content(  # type: ignore[call-arg]
             "X" * 100_000, cap_tokens=64, model=_MODEL,
             save_fn=store.save_tool_result, use_chars4=True,
