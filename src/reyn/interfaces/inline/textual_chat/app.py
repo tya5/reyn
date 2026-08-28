@@ -6452,7 +6452,12 @@ class TextualChatApp(App):
         Display frames fold into the model (skipping command-UI sentinels) via
         :meth:`_ingest_frame` — appending a new entry, or COALESCING a correlated
         tool result into its RUNNING started entry (② settle-in-place). ``__end__``
-        stops the app (the session closed). Event frames are the working-indicator
+        ends THIS worker's own loop (the session closed) — #5329 A: it no longer
+        stops the app. Only an explicit operator ``/quit`` does that (see
+        ``on_composer_submitted``, which calls ``self.exit()`` directly and does
+        not depend on this method). See this method's own ``try/except/else``
+        below for the full 4-way table of how the loop can end and what each
+        one now does. Event frames are the working-indicator
         path — consumed but not drawn, EXCEPT for the turn-end subset
         (:data:`_TURN_END_EVENT_TYPES`), which triggers
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
@@ -6509,6 +6514,8 @@ class TextualChatApp(App):
         cache-shaped (a cached FlowView would be stale-by-construction: the
         forwarder drops a detached session's frames entirely).
         """
+        import asyncio  # noqa: PLC0415 — same lazy-import convention as _watch_loop_responsiveness above
+
         try:
             async for frame in self._transport.frames():
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
@@ -6670,26 +6677,49 @@ class TextualChatApp(App):
                         logger.exception("textual chat: compact layout failed")
                 except Exception:
                     logger.exception("textual chat: live chrome refresh failed")
-        except Exception:
-            # #5329 ②: the loop's own supply, ``self._transport.frames()``,
-            # was the one failure point in this method with no handler —
-            # every other site above logs and keeps the pump running.
-            # Remove this except and a genuine stream failure again falls
-            # silently into the same ``finally: self.exit()`` a clean
-            # end-of-stream takes, so a crash and a normal shutdown are
-            # indistinguishable afterward. ``reyn.log`` has a real reader
-            # even with the TUI closed: ``chrome.py``'s diagnostics line
-            # names this same log path to the operator inline. Whether/how
-            # to surface this WHILE the TUI is still open is left open —
-            # an owner visual-judgment call, not this fix's job.
-            logger.exception(
-                "textual chat: _pump_frames' frame stream (self._transport"
-                ".frames()) raised — the app is exiting BECAUSE of this "
-                "exception, not because the stream ended normally"
+        except asyncio.CancelledError:
+            # #5329 A: this worker's own task was cancelled (app teardown
+            # already in progress via some OTHER path, or a #5050-style
+            # worker restart) — NOT itself a reason to call self.exit().
+            # Before this fix, every one of the 4 ways this loop could end
+            # funneled into ONE unconditional `finally: self.exit()`,
+            # conflating "the operator asked to quit" with "the supply
+            # simply ended/failed/was cancelled" (architect's #5329 §1
+            # census). Only an explicit operator /quit exits now — see
+            # ``on_composer_submitted``, which calls ``self.exit()`` itself
+            # and does not depend on this method at all.
+            logger.info(
+                "textual chat: _pump_frames cancelled (reason=cancelled) — "
+                "the app stays open; only an explicit /quit exits."
             )
             raise
-        finally:
-            self.exit()
+        except Exception:
+            # #5329 ②(landed, #5355): the loop's own supply,
+            # ``self._transport.frames()``, was the one failure point in
+            # this method with no handler — every other site above logs
+            # and keeps the pump running. #5329 A (this change): a supply
+            # failure no longer exits the app either (reason=supply_failed)
+            # — see the class docstring above for the full 4-way table.
+            logger.exception(
+                "textual chat: _pump_frames' frame stream (self._transport"
+                ".frames()) raised (reason=supply_failed) — the app stays "
+                "open; only an explicit /quit exits."
+            )
+            raise
+        else:
+            # #5329 A: the supply ended normally — either the `__end__`
+            # sentinel broke the loop (Session.run() itself completed) or
+            # ``frames()`` was exhausted with no more items. Either shape is
+            # reason=session_ended. Previously this silently fell into
+            # ``finally: self.exit()`` — the exact "quota exhaustion makes
+            # the TUI vanish with nothing shown" owner report this issue is
+            # about: the session ending is not the same event as the
+            # operator wanting to leave.
+            logger.info(
+                "textual chat: _pump_frames' frame stream ended normally "
+                "(reason=session_ended) — the app stays open; only an "
+                "explicit /quit exits."
+            )
 
     def _refresh_live_chrome(self) -> None:
         """Re-render everything that must track live session state as frames land:
