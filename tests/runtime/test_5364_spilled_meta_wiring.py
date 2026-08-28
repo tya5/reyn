@@ -85,7 +85,7 @@ def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -
     """Tier 2: content over the cap → the persisted entry's meta carries
     SPILLED_META_KEY=True and CONTENT_REF_META_KEY naming a file that
     actually exists and holds the ORIGINAL (pre-offload) content."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     host = _RecordingHost(store)
 
     _feedback(_mcp_env(content=_BIG), host)
@@ -104,7 +104,7 @@ def test_unoffloaded_tool_result_is_never_stamped_spilled(tmp_path) -> None:
     """Tier 2: content under the cap → no offload happens → meta carries
     neither key at all (never False/None as a placeholder — see
     SPILLED_META_KEY's own docstring: absence means "never spilled")."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     host = _RecordingHost(store)
 
     _feedback(_mcp_env(content=_SMALL), host)

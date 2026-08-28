@@ -44,7 +44,7 @@ from reyn.services.offload.store import OffloadResult, offload_value
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    return MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
 
 
 # ---------------------------------------------------------------------------

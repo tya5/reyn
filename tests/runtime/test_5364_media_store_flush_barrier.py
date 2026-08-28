@@ -42,7 +42,7 @@ async def test_save_tool_result_write_is_deferred_until_flush(tmp_path: Path) ->
     are all synchronous (the caller gets a usable ref immediately), but the
     actual bytes on disk are NOT there yet until :meth:`MediaStore.flush`
     is awaited — the write ran off-loop, fire-and-forget."""
-    store = MediaStore(project_root=tmp_path, session_id="flush-test")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
 
     block = store.save_tool_result(_BIG)
     written = tmp_path / block["path"]
@@ -151,7 +151,7 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
     that the test still passes) whenever that region changes. So this is
     a genuine ordering witness, not a scheduler-timing coincidence:
     nothing else in this call graph could have run the drainer first."""
-    store = MediaStore(project_root=tmp_path, session_id="flush-test")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
     host = _MediaStoreHost(store)
     written = await _seed_pending_spill(host)
     assert not written.exists(), (

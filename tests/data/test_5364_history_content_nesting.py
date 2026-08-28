@@ -159,7 +159,8 @@ def test_the_actual_5364_store_lands_under_the_nested_nonleaking_shape(
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
     store = MediaStore(
-        MediaStoreConfig(), project_root=tmp_path, session_id="a-real-session",
+        MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
+        session_id="a-real-session",
     )
     block = store.save_tool_result("some tool output", mime_type="text/plain")
 

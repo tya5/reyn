@@ -87,7 +87,7 @@ def _text_ref(content: str) -> str:
 def test_single_payload_mcp_offloads_text_clean(tmp_path):
     """Tier 2: a single-payload MCP result (only content large) offloads the content CLEAN as a
     plain-text preview — the read-back file is exactly the content (real newlines, no JSON stub)."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     content = _tool_content(_feedback(_mcp_env(content=_BIG), store))
     assert not content.lstrip().startswith("{"), "plain-text preview, not a JSON stub"
     assert "read_file(path=" in content, "the preview names the read_file read-back path"
@@ -100,7 +100,7 @@ def test_falsify_both_streams_offload_cleanly_no_whole_dict_blob(tmp_path):
     ``structured`` produces TWO clean offload files (one per stream) and NO single-line whole-dict
     JSON blob. The independent-stream seam is genuinely exercised: text via the token cap, structured
     via the seam's own gate."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     big_structured = {"rows": ["x" * 4000]}
     content = _tool_content(_feedback(_mcp_env(content=_BIG, structured=big_structured), store))
 
@@ -145,7 +145,7 @@ def test_plain_text_only_result_has_no_wrapper():
 def test_media_blocks_inside_data_are_forwarded(tmp_path):
     """Tier 2: media nested INSIDE data (which the top-level strip misses) is lifted and forwarded as
     a multimodal follow-up user message — the canonical path fixes the previously-missed MCP media."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     msgs = _feedback(_mcp_env(content="small", media_blocks=[{"type": "image", "data": "aGVsbG8="}]), store)
     assert [m for m in msgs if m.get("role") == "user"], "a media follow-up message is produced"
 

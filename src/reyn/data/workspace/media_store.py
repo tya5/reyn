@@ -678,10 +678,52 @@ class MediaStore:
 
     def _history_content_dir(self) -> Path:
         """This session's own subdirectory under ``_history_content_root``
-        (#5364 §1.1 "★M ── ディレクトリはsession単位"). Created lazily by
-        :func:`offload_value`'s own write path, same as every other
-        MediaStore directory — never pre-created here."""
-        return self._history_content_root / _safe_token(self._session_id)
+        (#5364 §1.1 "★M ── ディレクトリはsession単位"), NESTED one level
+        further under this store's own agent (#5364 issue-body fixup,
+        architect ruling): ``session_id`` alone is not agent-unique — the
+        default session id (``registry._DEFAULT_SID``, ``"main"``) is the
+        SAME literal for every agent, so keying on ``session_id`` alone
+        let every agent's main session share one directory (measured: a
+        real key-space defect in #5369, merged before this fix). This
+        store already declares its own agent identity elsewhere (see
+        :meth:`read_tool_result_by_uri`'s cross-host agent-match check,
+        ``"This store's identity is {self._agent_name!r}"``) — nesting
+        under it here makes THIS path agree with that same identity,
+        and makes the key-space match ``registry._session_state_dir``'s
+        own ``(name, sid)`` shape exactly (the precondition #5364 §1.6
+        "Q" needs to wire session-vanish purge safely).
+
+        ``_history_content_root`` itself is UNCHANGED (not nested under
+        agent) — an already-minted flat ref must keep resolving inside
+        the same boundary (no migration script, same reasoning as
+        #5364 §1.1's own root-boundary decision); only NEW writes land
+        one level deeper.
+
+        Raises :class:`ValueError` if this store has no agent identity
+        (``agent_name`` was never given at construction) — the same
+        "raise at the one point that actually needs it" shape
+        ``session_id`` already uses (required there; ``agent_name``
+        stays optional at construction — 4 of 5 production sites are
+        read-only and legitimately have none — so the check lives here,
+        the one method that actually needs a real value). Falling back
+        to a shared directory would reproduce the exact defect this
+        fixes.
+
+        Created lazily by :func:`offload_value`'s own write path, same
+        as every other MediaStore directory — never pre-created here.
+        """
+        if not self._agent_name:
+            raise ValueError(
+                "MediaStore.save_tool_result requires a real agent_name — "
+                "the write-time directory is agent-scoped (a missing "
+                "agent_name must never silently fall into a directory "
+                "shared with other agents' sessions, #5364)"
+            )
+        return (
+            self._history_content_root
+            / _safe_token(self._agent_name)
+            / _safe_token(self._session_id)
+        )
 
     def save_tool_result(
         self,
