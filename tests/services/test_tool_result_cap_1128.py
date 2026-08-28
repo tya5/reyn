@@ -118,7 +118,7 @@ def test_trigger_is_required_no_default(tmp_path: Path) -> None:
     """Tier 2: #5367① — omitting ``trigger`` is a ``TypeError``, not a silently
     unlabelled audit event. A caller that forgets it fails loudly at the call
     site, before any offload/emit happens."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     with pytest.raises(TypeError, match="trigger"):
         cap_tool_result_content(  # type: ignore[call-arg]
             "X" * 100_000, cap_tokens=64, model=_MODEL,
@@ -130,7 +130,7 @@ def test_trigger_is_required_no_default(tmp_path: Path) -> None:
 def test_offload_event_carries_the_trigger_it_was_given(tmp_path: Path, trigger: str) -> None:
     """Tier 2: #5367① — the ``tool_result_offloaded`` audit event's ``trigger``
     field is exactly the value the caller passed (real EventLog, no mock)."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     events = EventLog()
     seen: list = []
     events.add_subscriber(lambda e: seen.append(e))

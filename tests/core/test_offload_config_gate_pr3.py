@@ -113,7 +113,7 @@ def test_cap_tool_result_offload_event_names_trigger_cap(tmp_path):
     version of #5375 lacked (a test that calls
     ``cap_tool_result_content`` directly and supplies its own ``trigger``
     can't catch a wiring swap in the real caller)."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     events = EventLog()
     seen: list = []
     events.add_subscriber(lambda e: seen.append(e))
