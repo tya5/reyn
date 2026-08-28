@@ -35,12 +35,18 @@ class _CapHost:
     def __init__(self, store: "MediaStore | None") -> None:
         self.media_store = store
 
-    def cap_tool_result(self, content_str: str, *, content_type: "str | None" = None) -> str:
+    def cap_tool_result(
+        self,
+        content_str: str,
+        *,
+        content_type: "str | None" = None,
+        on_offload=None,
+    ) -> str:
         if self.media_store is None:
             return content_str
         return cap_tool_result_content(
             content_str, cap_tokens=100, model=_MODEL, save_fn=self.media_store.save_tool_result,
-            use_chars4=True, content_type=content_type,
+            use_chars4=True, content_type=content_type, on_offload=on_offload,
         )
 
     def media_followup_budget(self, _content_str: str) -> int:

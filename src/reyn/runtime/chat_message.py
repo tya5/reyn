@@ -33,6 +33,36 @@ TOOL_STATUS_ERROR = "error"
 TOOL_ERROR_KIND_META_KEY = "error_kind"
 TOOL_ERROR_MESSAGE_META_KEY = "error_message"
 
+# #5364 §1.2: the tool-result history-content resolver's own persisted
+# signals — typed via named meta keys, NOT a new top-level ChatMessage
+# field (lead-coder ruling: a new field creates a "missing" state for
+# every ALREADY-persisted record, the same defect class ``seq: int = 0``'s
+# own "0 = no coordinate assigned (pre-fix history only)" already carries;
+# `meta` + a named key is this repo's typed convention for exactly this
+# shape — see `TOOL_STATUS_META_KEY` above, "restore.py reads this typed
+# field directly, matching reyn's typed-over-form-sniffed convention").
+#
+# ABSENCE of ``SPILLED_META_KEY`` (pre-#5364 history) means "never
+# spilled" (today's only possible history — nothing offloaded a tool
+# result into this store before #5364 existed), never "unknown".
+SPILLED_META_KEY = "spilled"
+# The backing file's project-relative path — set for every SPILLED entry.
+# #5364 §1.1 "A": every tool result is written to a file, but only a
+# SPILLED entry's own persisted content is the ref rather than the
+# original inline body, so only a spilled entry needs this to resolve.
+CONTENT_REF_META_KEY = "content_ref"
+# Set once `resolve()` (reyn.core.offload.history_content_resolve) has
+# actually observed the backing file missing — never guessed ahead of
+# that check. ABSENCE means "not (yet) known to be lost", never "present".
+LOST_META_KEY = "lost"
+LOST_REASON_META_KEY = "lost_reason"
+# #5364 §1.5: the two possible reasons, as constants (lead-coder review:
+# a bare "gc"/"never_persisted" string written at more than one call site
+# lets one side's typo pass silently — the same discipline
+# ``TOOL_STATUS_ERROR`` above already applies to its own value domain).
+LOST_REASON_GC = "gc"
+LOST_REASON_NEVER_PERSISTED = "never_persisted"
+
 # #3299 P4: the intervention PROMPT + resolved ANSWER, stamped on the
 # ``role="user"`` history entry ``InterventionHandler.deliver_answer_to``
 # already appends (mirroring ``intervention_id`` / ``intervention_kind``
