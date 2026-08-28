@@ -227,6 +227,7 @@ class ContextBudgetAdvisor:
         *,
         content_type: "str | None" = None,
         on_offload: "Callable[[str], None] | None" = None,
+        on_write_unavailable: "Callable[[], None] | None" = None,
     ) -> str:
         """Cap an oversized chat tool result (#1128 size axis).
 
@@ -241,6 +242,10 @@ class ContextBudgetAdvisor:
         store, never the frontmatter this method's caller builds separately).
 
         ``on_offload`` (#5364 §1.2) — forwarded to
+        ``tool_result_cap.cap_tool_result_content``'s own param of the same
+        name; optional and additive, every existing caller unaffected.
+
+        ``on_write_unavailable`` (#5364 §1.5) — forwarded to
         ``tool_result_cap.cap_tool_result_content``'s own param of the same
         name; optional and additive, every existing caller unaffected.
         """
@@ -262,6 +267,7 @@ class ContextBudgetAdvisor:
             events=self._events,
             content_type=content_type,
             on_offload=on_offload,
+            on_write_unavailable=on_write_unavailable,
             max_inline_bytes=cfg.max_inline_bytes,
             preview_head_chars=cfg.preview_head_chars,
             preview_tail_chars=cfg.preview_tail_chars,
