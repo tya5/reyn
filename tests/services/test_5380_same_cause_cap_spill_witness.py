@@ -81,12 +81,24 @@ class _SameCauseOnCompactSpillableEngine(_OverflowingEngine):
     def __init__(self) -> None:
         super().__init__(fail_compact=False)
         self.compact_calls = 0
+        # #5395 BLOCKING (lead-coder): `compact_calls` alone increments
+        # on ENTRY, including the FIRST call — which always raises,
+        # since the marker is still present before spill_fn ever runs.
+        # A ``>= 1`` assert on that counter is satisfied on EVERY green
+        # run regardless of whether the replacement ever reached
+        # compact() at all, so it never actually witnessed this class's
+        # own claimed property. This counter increments ONLY in the
+        # marker-absent branch — the one call shape that can only be
+        # reached once spill_fn's replacement has actually landed in
+        # the turns compact() was given.
+        self.compact_calls_with_marker_gone = 0
 
     async def compact(self, input_chunk):
         self.compact_calls += 1
         turns = input_chunk.new_turns
         if any(t.get("content") == _SPILLABLE_MARKER for t in turns if isinstance(t, dict)):
             raise ContextOverflowError("compact also overflows, same cause")
+        self.compact_calls_with_marker_gone += 1
         from reyn.services.compaction.engine import ChatSummary
         return ChatSummary(
             topic_arc="ok",
@@ -176,6 +188,30 @@ def test_5380_spill_resolves_the_same_cause_cap_non_byte_floor() -> None:
     ))
 
     assert result is not None, "retry_loop must return normally, not raise"
+    # #5386 / #5395 BLOCKING (lead-coder review): this class's own
+    # docstring names itself "the compact()-side witness that spill_fn's
+    # replacement actually reached engine.compact(), not just
+    # retry_loop's own state" — but a plain `compact_calls >= 1` does
+    # NOT witness that claim: `compact_calls` increments on ENTRY, and
+    # the FIRST compact() call always happens (and always raises)
+    # BEFORE spill_fn ever runs, since the marker is still present at
+    # that point. `>= 1` is therefore satisfied on every green run
+    # regardless of whether the replacement ever reached compact() at
+    # all. `compact_calls_with_marker_gone` increments ONLY in the
+    # marker-absent branch — the one call shape reachable only once
+    # spill_fn's replacement has genuinely landed in the turns
+    # compact() was given — so THIS is the counter that actually
+    # witnesses the claim. `>=` (not `==`) — the exact count is the
+    # retry ladder's own implementation detail, not this test's subject
+    # (the engine-direct-call sibling test, ..._mid_split_floor,
+    # asserts `== 2` because IT calls the engine directly and the count
+    # IS its subject there).
+    assert engine.compact_calls_with_marker_gone >= 1, (
+        "this class's own docstring claims to be the compact()-side "
+        "witness that spill_fn's replacement reached engine.compact() "
+        "— nothing verified that the replacement (not just any call) "
+        "reached it, until now"
+    )
     # Exactly one spill_fn call for the spillable turn — unpacking to one
     # element raises ValueError if retry_loop offered it a second time
     # (meaning the SAME object was offered for spilling twice).
