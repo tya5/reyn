@@ -88,7 +88,13 @@ def format_notification(run_id: str) -> str:
         "evidence: `gh api /repos/tya5/reyn/actions/runs/"
         f"{run_id}/attempts/1/logs` (or `gh run view {run_id} "
         "--log-failed`) — a re-run may not reproduce the hang, and the "
-        "log is the only record of this occurrence."
+        "log is the only record of this occurrence. #4986 variant B: "
+        "check attempt 1's log for "
+        "'TrackedTaskSet.aclose(caller=...): waiting on N tracked "
+        "task(s): ...' — if present, it names exactly which task(s) "
+        "were still pending when the hang started (the one thing the "
+        "faulthandler-based pytest-timeout dump above cannot say, since "
+        "an asyncio Task is not an OS thread)."
     )
 
 
