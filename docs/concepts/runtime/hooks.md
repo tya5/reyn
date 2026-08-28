@@ -509,6 +509,34 @@ hooks:
   crash-recoverable driver-session, and the result arrives later on this
   session's own inbox as a `pipeline_result` message.
 
+**Worked example — behavioral anomaly detector (#5221)**: `turn_end`'s event
+carries `sensitive_op_count` / `sensitive_op_kinds_csv` (#5221) — a
+closed-vocabulary tally of "sensitive" audit-event kinds that fired during
+the turn (never raw message text; see
+`reyn.runtime.turn_behavior_tally`). The shipped
+`src/reyn/data/pipelines/behavior_anomaly.yaml` pipeline reads these to
+decide, deterministically, whether to escalate to an LLM judge (constrained
+to a typed clean/suspicious verdict, zero capabilities) — opt-in, nothing
+runs until BOTH entries below are registered:
+
+```yaml
+pipelines:
+  entries:
+    behavior_anomaly:
+      path: src/reyn/data/pipelines/behavior_anomaly.yaml
+hooks:
+  - "on": turn_end
+    pipeline_launch:
+      name: behavior_anomaly.check
+      input_template: |
+        {"chain_id": "{{ event.chain_id }}", "sensitive_op_count": {{ event.sensitive_op_count }}, "sensitive_op_kinds_csv": "{{ event.sensitive_op_kinds_csv }}"}
+```
+
+See [Events § Behavioral anomaly detector](../../reference/runtime/events.md)
+for the `behavior_anomaly_judged` audit-event this produces, its
+asymmetric-trust reading, and why `turn_end` firing after the turn means
+this detects, it does not prevent.
+
 ### Cross-session push
 
 A `template_push` or `exec_capture` directive's `session` field routes the

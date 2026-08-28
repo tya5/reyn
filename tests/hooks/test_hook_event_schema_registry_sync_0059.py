@@ -271,7 +271,10 @@ def test_strip_falsify_schema_drift_is_caught(monkeypatch):
     original_schema = BUILTIN_HOOK_SCHEMAS[turn_end_kind]
 
     # Healthy (pre-falsify): the real call-site shape validates clean.
-    build_hook_payload("turn_end", agent_name="a", chain_id="c1", user_text="hi")
+    build_hook_payload(
+        "turn_end", agent_name="a", chain_id="c1", user_text="hi",
+        sensitive_op_count=0, sensitive_op_kinds_csv="",
+    )
 
     # Falsify: drop "user_text" from the shipped schema (simulating schema
     # drift relative to the untouched call site).
@@ -279,12 +282,18 @@ def test_strip_falsify_schema_drift_is_caught(monkeypatch):
         BUILTIN_HOOK_SCHEMAS, turn_end_kind, frozenset(original_schema - {"user_text"}),
     )
     with pytest.raises(HookSchemaError):
-        build_hook_payload("turn_end", agent_name="a", chain_id="c1", user_text="hi")
+        build_hook_payload(
+        "turn_end", agent_name="a", chain_id="c1", user_text="hi",
+        sensitive_op_count=0, sensitive_op_kinds_csv="",
+    )
 
     # Restore (monkeypatch undoes this automatically at teardown too, but
     # assert explicitly that build_hook_payload is green again mid-test).
     monkeypatch.setitem(BUILTIN_HOOK_SCHEMAS, turn_end_kind, original_schema)
-    build_hook_payload("turn_end", agent_name="a", chain_id="c1", user_text="hi")
+    build_hook_payload(
+        "turn_end", agent_name="a", chain_id="c1", user_text="hi",
+        sensitive_op_count=0, sensitive_op_kinds_csv="",
+    )
 
 
 def test_call_site_missing_field_raises_at_construction():
