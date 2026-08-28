@@ -429,11 +429,24 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     _push(session, "assistant", "ok, done")
 
     loop1 = _ContentDrivenLoop(lambda history, user_text: _has_content(history, huge))
-    asyncio.run(
-        session._loop_driver._run_with_shrink_and_byte_reduction(
+
+    async def _turn1() -> None:
+        await session._loop_driver._run_with_shrink_and_byte_reduction(
             loop1, "continue please", chain_id="c1",
         )
-    )
+        # #5364 §1.4: the manifest append is now off-loop (fire-and-forget,
+        # chained after the content write on save_tool_result's own
+        # worker — see media_store.py's own comment on that ordering). A
+        # REAL turn's own retry always re-enters RouterLoop.run_loop
+        # before its next LLM call, which flushes this durable —
+        # _ContentDrivenLoop (this test's own docstring: "A fake
+        # RouterLoop") never does, so this test needs the same explicit
+        # flush a real turn gets for free. MUST run in the SAME
+        # asyncio.run (DurabilityWorker.flush() no-ops on a different
+        # loop than the one its queue is bound to — see its own guard).
+        await session._media_store.flush()
+
+    asyncio.run(_turn1())
     assert any(_has_content(c, huge) for c in loop1.calls[:-1]), (
         "control arm: turn 1 must have actually hit the 413 at least once "
         "before recovering, else this test cannot witness a difference"
