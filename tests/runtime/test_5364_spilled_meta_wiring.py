@@ -1,4 +1,4 @@
-"""Tier 3a: #5364 §1.2 — the write-time cap chokepoint (RouterLoop.feedback,
+"""Tier 2: #5364 §1.2 — the write-time cap chokepoint (RouterLoop.feedback,
 mirroring test_2425_step1c_chat_chokepoint.py's own real harness) stamps
 ``SPILLED_META_KEY``/``CONTENT_REF_META_KEY`` on the persisted history entry
 exactly when an offload actually happened — never guessed from the
@@ -67,7 +67,7 @@ def _feedback(env: dict, host: "_RecordingHost"):
 
 
 def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -> None:
-    """Tier 3a: content over the cap → the persisted entry's meta carries
+    """Tier 2: content over the cap → the persisted entry's meta carries
     SPILLED_META_KEY=True and CONTENT_REF_META_KEY naming a file that
     actually exists and holds the ORIGINAL (pre-offload) content."""
     store = MediaStore(project_root=tmp_path, session_id="test-session")
@@ -86,7 +86,7 @@ def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -
 
 
 def test_unoffloaded_tool_result_is_never_stamped_spilled(tmp_path) -> None:
-    """Tier 3a: content under the cap → no offload happens → meta carries
+    """Tier 2: content under the cap → no offload happens → meta carries
     neither key at all (never False/None as a placeholder — see
     SPILLED_META_KEY's own docstring: absence means "never spilled")."""
     store = MediaStore(project_root=tmp_path, session_id="test-session")
@@ -101,7 +101,7 @@ def test_unoffloaded_tool_result_is_never_stamped_spilled(tmp_path) -> None:
 
 
 def test_no_media_store_never_stamps_spilled(tmp_path) -> None:
-    """Tier 3a: accept-side — a host with no media_store configured (cap
+    """Tier 2: accept-side — a host with no media_store configured (cap
     is identity, per _RecordingHost.cap_tool_result's own no-op branch)
     never stamps SPILLED_META_KEY even for content that WOULD have been
     offloaded had a store existed — proves the stamp is tied to an actual
