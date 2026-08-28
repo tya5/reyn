@@ -56,12 +56,21 @@ fixture: `a965d8e73` (main, post-#5413) vs `493bf70cd8` (an actual
 #5413 touched that the branch had not yet caught up on. See
 `tests/scripts/test_detect_5419_behind_revert_candidates.py`.
 
+⚠️ **This is not the only positive control.** This PR's OWN branch
+(#5420) tripped its own detector before merge: an `update-branch` on
+`feat/5366-project-storage-cap` landed between this branch's fork point
+and its first CI run, and lead-coder's own `comm -23` replay of this
+exact discriminant caught `media_store.py` and a `tests/data/` file
+BEHIND on #5417 — with all 5 gate checks green. A future reader
+considering removing this gate as "never actually fires" should read
+this: it fired on itself, live, the same night it shipped.
+
 ## Scope
 
 Pure diffing logic (`behind_revert_candidates`, `format_report`) takes
 already-computed two-dot/three-dot file lists — no I/O, fully
 unit-testable offline (mirrors `detect_4986_teardown_hang.py`'s
-network-free split). The thin `_git_diff_name_only` / `_post_pr_comment`
+network-free split). The thin `_git_diff_name_only` / `_resolve_pr_refs`
 wrappers below are the separately-swappable network/subprocess layer.
 
 Usage:
