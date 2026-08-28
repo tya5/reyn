@@ -49,6 +49,7 @@ from reyn.config.infra import (
     FsWatchConfig,
     LLMConfig,
     SandboxConfig,
+    StorageConfig,
     _default_agent_id,
 )
 from reyn.config.media import (
@@ -153,6 +154,11 @@ class ReynConfig:
     # default is a UX-scale default, not a derived number, and why that's
     # exactly why it must be operator-adjustable here.
     artifacts: ArtifactsConfig = field(default_factory=ArtifactsConfig)
+    # #5366: the PROJECT-wide (cross-session) history-content disk cap —
+    # see `StorageConfig`'s own docstring for why this needed a NEW
+    # top-level section (MediaStoreConfig's own history_content_max_bytes
+    # is structurally per-store, so it cannot carry a project-wide number).
+    storage: StorageConfig = field(default_factory=StorageConfig)
     # Downstream observability export (OTLP/OpenTelemetry). Opt-in + off by
     # default: no `observability.otel.endpoint` (and no OTEL_EXPORTER_OTLP_ENDPOINT
     # env) → the OtelExporter is never built and behavior is byte-identical to

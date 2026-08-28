@@ -2506,6 +2506,23 @@ artifacts:
 
 `remote_fallback_limit` is a **UX-scale default, not a performance one** — a single `stat()` costs order-microseconds, so even 10,000 rows costs tens of milliseconds; the binding constraint is how many newest-first rows an operator would ever actually scroll through in a list pane, which is a couple of dozen at most. The Artifacts pane's own disclosure text always states "newest N of M" so a truncation is never silent — raise this value if your own usage wants more history visible at once.
 
+## `storage` block
+
+The PROJECT-wide (cross-session) disk-usage cap on `.reyn/memory/history-content/` — the offloaded tool-result content every session in this project writes (#5366). Unlimited (off) by default: with no `max_bytes`, the cap never fires.
+
+```yaml
+storage:
+  max_bytes: 10737418240   # e.g. 10 GiB; omit for unlimited (default)
+  pin: []                  # agent names whose content is never evicted
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_bytes` | int \| null | `null` (unlimited) | Project-wide cap across every session's history-content. A non-positive or non-numeric value falls back to unlimited — the same state as omitting the key entirely, never a silently-active cap of some other size. |
+| `pin` | list[str] | `[]` | Agent names (not session ids) whose own history-content is NEVER an eviction candidate under this cap, regardless of whether that agent's process is currently running. A non-list value, or a non-string list entry, is dropped rather than propagated. |
+
+This is a **DIFFERENT number from `MediaStoreConfig`'s own per-store `history_content_max_bytes`** (2 GiB, not operator-configurable here) — that field is a per-SESSION fail-safe backstop; this one bounds the WHOLE `.reyn/memory/history-content/` tree across every session in the project, which is the number an operator can actually name (nobody chooses how many sessions a project spawns, so "N bytes per session" would silently mean "N × session-count total"). The two never share a name on purpose — reusing one name for both would make it unreadable which cap is actually in effect for a given eviction.
+
 ## `voice` block
 
 Voice-input (Whisper) settings for the inline CUI's F2 dictation binding — revived (#4187/#4249) as a reimplementation against the current CUI, after the original Ctrl+R binding was deleted along with the retired Textual TUI it was built for. See [concepts: voice](../../concepts/tools-integrations/voice.md). Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
