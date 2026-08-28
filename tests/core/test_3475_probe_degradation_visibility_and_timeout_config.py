@@ -123,15 +123,15 @@ def _make_probe_session(tmp_path: Path, *, mcp_probe_seconds: float, probe_cb):
 
 
 async def _drive_first_turn(session) -> None:
-    """Route one turn through the real turn-kind seam (`_run_router_loop`) without
-    invoking an actual LLM call — mirrors test_3475_mcp_probe_priming_all_turn_kinds.py's
-    `_install_snapshot_capturing_run_turn`, since this file's subject is the priming
-    chain's ARGUMENTS (per_server_timeout) and its side effects (audit-events), not
-    RouterLoop's own internals."""
-    async def _noop_run_turn(user_text: str, chain_id: str) -> None:
-        return None
+    """Route one turn through the real turn-kind seam (`_run_router_loop`).
 
-    session._loop_driver.run_turn = _noop_run_turn
+    #5103: the caller declares `@pytest.mark.llm_stub` — the REAL
+    `RouterLoopDriver.run_turn` / `RouterLoop` chain runs; only the LLM
+    boundary itself (`litellm.acompletion`) is stubbed (architect design
+    "C2", #5363's own precedent). Before this, `session._loop_driver.
+    run_turn` was replaced wholesale with a private `_noop`, so this
+    file's subject (does the priming chain's ARGUMENTS/audit-events
+    actually reach a real turn) was never witnessed on a real code path."""
     await session.submit_agent_request(
         from_agent="peer", request="hello", depth=1, chain_id="chain-3475",
     )
@@ -139,6 +139,7 @@ async def _drive_first_turn(session) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_session_threads_configured_probe_timeout_into_the_real_probe(tmp_path: Path):
     """Tier 2: (LOAD-BEARING) `safety.timeout.mcp_probe_seconds` set to a NON-default
     value (0) must reach `ensure_mcp_tools_cached`'s `per_server_timeout` — reyn's own
@@ -180,6 +181,7 @@ async def test_session_threads_configured_probe_timeout_into_the_real_probe(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
     """Tier 2: (LOAD-BEARING) a probe that times out under the configured budget emits
     `mcp_tool_probe_degraded` on the session's real EventLog, naming the server and
@@ -221,6 +223,7 @@ async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_probe_exception_emits_visible_degradation_event(tmp_path: Path):
     """Tier 2: a probe that raises (broken server, not merely slow) also emits
     `mcp_tool_probe_degraded`, with `reason="exception"` and a `detail` naming the
