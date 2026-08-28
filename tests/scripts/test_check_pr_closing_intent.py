@@ -639,6 +639,52 @@ def test_check5_does_not_fire_on_an_unrelated_negation_far_from_the_keyword():
 
 
 # ---------------------------------------------------------------------------
+# #5032 (2nd instance, real PR #5398, 2026-08-28) — a NEGATION-in-a-
+# DIFFERENT-CLAUSE false positive: the word-count-only window has no
+# notion of a clause boundary, so a negation genuinely about the
+# PRECEDING clause can land in the few words before an unrelated closing
+# keyword in the FOLLOWING clause. Fixed by cutting the window at the
+# nearest clause boundary (`,` `;` `)` `.` `--`), scanning backward from
+# the keyword — architect's own instruction: do not widen the vocabulary
+# or word count, the defect is the missing boundary.
+# ---------------------------------------------------------------------------
+
+
+def test_check5_does_not_fire_on_the_real_5398_incident_sentence():
+    """Tier 1: accept side — the exact sentence that false-positived on PR
+    #5398's own commit message: "not" sits in the 6-word window before
+    "closes", but belongs to the PRECEDING clause ("not after flush)"),
+    separated from "this PR closes #5384" by a `)` and a `--`. The
+    author's intent was genuinely to close — GitHub's real parser agreed
+    (this PR's own closing_refs resolved #5384) — so check 5 must stay
+    silent."""
+    findings = m.check_contradictions(
+        "content_write already reads during the pending window, not after\n"
+        "flush) -- this PR closes #5384 in full.",
+        closing_refs=[5384],
+    )
+    assert findings == []
+
+
+def test_check5_still_fires_on_the_same_words_without_a_clause_boundary():
+    """Tier 1: the witness that a CLAUSE BOUNDARY is what changed the
+    verdict above, not merely "this one sentence happens to be green" —
+    CLAUDE.md's own test-review Q4 concern (a green that would stay green
+    even having never run, or here: even having nothing real to bite on).
+    The exact same words, same order, same distance from the keyword —
+    with the boundary punctuation (`)`, `--`) removed so "not" and
+    "closes" sit in ONE unbroken clause — must still fire; if this ever
+    goes green too, the fix stopped detecting real negations, it did not
+    get smarter about boundaries."""
+    findings = m.check_contradictions(
+        "content_write already reads during the pending window not after "
+        "flush this PR closes #5384 in full.",
+        closing_refs=[5384],
+    )
+    assert _checks(findings) == [(5, 5384)]
+
+
+# ---------------------------------------------------------------------------
 # Boundary-fixing witnesses (#4986, architect ruling on the #4992 review
 # thread) — three cases pinning EXACTLY where the CommonMark-compliant
 # `_INLINE_CODE_RE` fix (multi-line spans now recognized as fenced) starts
