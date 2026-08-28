@@ -870,9 +870,14 @@ class RouterHistoryBuffer:
           duplication) — plus the summary bridge, if any.
         - Else: elide the middle of the (already watermark-filtered) turns
           — head (trim_head) + tail (trim_tail) — plus the summary bridge,
-          if any. The pre-frame guard ``maybe_force_compact`` has already
-          compacted the middle before this runs, so the elide point is
-          structurally aligned.
+          if any. #5367②: the pre-frame guard ``maybe_force_compact``
+          (``router_loop_driver.py``) runs exactly ONCE, at the head of the
+          turn, before this method's FIRST call in that turn — so alignment
+          holds THEN, but this method has no way to know it is being called
+          again. A turn whose history is built more than once (a
+          shrink-ladder retry, a re-send) re-enters this elide logic with
+          no fresh ``maybe_force_compact`` run in between — nothing in this
+          file, or the call site, re-triggers it.
 
         Overlap guard: if trim_head and trim_tail collectively cover all
         turns (the chat is small relative to budgets but total > trigger —

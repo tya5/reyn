@@ -2418,12 +2418,21 @@ async def retry_loop(
                 # False the only value this raise can ever carry, not an
                 # unreachable branch where the default happens not to
                 # matter.
+                # #5367②: the OLD text past this point claimed "shrinking is
+                # not resolving this cause" without qualification — false in
+                # the same way #5367①'s neighboring fix was: "shrinking" here
+                # names only the turn-count-reduction ladder this loop
+                # attempted (head/tail trim, halving raw_middle); it does not
+                # cover spilling a turn's CONTENT (replacing an oversized
+                # tool-result body with a ref), which this cap never tries
+                # before giving up (#5367③).
                 raise UnrecoveredError(
                     f"retry_loop: cause {_cause!r} recovered "
                     f"{_consecutive_same_cause} consecutive times (limit "
-                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — shrinking is "
-                    "not resolving this cause; stopping rather than "
-                    "exhausting max_iterations."
+                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — the "
+                    "turn-count shrink ladder attempted is not resolving "
+                    "this cause (content-level spill was not tried here); "
+                    "stopping rather than exhausting max_iterations."
                 ) from _overflow_exc
 
         # Shrink escalation: reduce context size monotonically.
@@ -2478,12 +2487,23 @@ async def retry_loop(
                 # cause on its own, with an accurate message, independent
                 # of this floor (predates this arc).
                 if _last_recover_is_byte_limit:
+                    # #5367②: the OLD text past this point claimed
+                    # "shrinking it further is not possible" — false. Only
+                    # the TURN-COUNT floor is reached here (mid is already
+                    # one turn; halving cannot produce a smaller nonzero
+                    # slice, #4947 ③). Nothing checked here about whether
+                    # mid's CONTENT could still shrink — a turn whose body
+                    # is a spillable tool result (owner: "spill は turn の
+                    # 中身を小さくします — 分割ではなく縮小") could still be
+                    # reduced without splitting it into more turns; this
+                    # retry_loop does not attempt that today (tracked as
+                    # #5367③).
                     raise UnrecoveredError(
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
                         "recurred compacting a single raw_middle turn "
-                        "alone — mid cannot be split any further; this is "
-                        "not a token-shrink problem, shrinking it further "
-                        "is not possible." + _learned_byte_limit_clause(
+                        "alone — mid cannot be split any further (this is "
+                        "the turn-count floor, not a claim that mid's "
+                        "content is already minimal)." + _learned_byte_limit_clause(
                             last_accepted_wire_bytes=_last_accepted_wire_bytes,
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
                         ),
