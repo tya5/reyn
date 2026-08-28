@@ -414,7 +414,7 @@ class RouterLoopDriver:
         for attempt in range(_MAX_BYTE_REDUCTION_ATTEMPTS + 1):
             attempt_start_bytes = self._wire_bytes_now()
             try:
-                return await self._run_with_shrink(loop, user_text)
+                return await self._run_with_shrink(loop, user_text, chain_id=chain_id)
             except _UnrecoveredError as exc:
                 if not exc.saw_byte_limit or attempt >= _MAX_BYTE_REDUCTION_ATTEMPTS:
                     raise
@@ -433,7 +433,7 @@ class RouterLoopDriver:
                 continue
         raise AssertionError("unreachable: loop always returns or raises")
 
-    async def _run_with_shrink(self, loop: Any, user_text: str) -> Any:
+    async def _run_with_shrink(self, loop: Any, user_text: str, *, chain_id: str = "") -> Any:
         """Run the router once with the reactive bounded-shrink ``retry_loop``.
 
         Returns the router usage, or raises ``_ContextOverflowError``
@@ -459,6 +459,15 @@ class RouterLoopDriver:
         caller's own except clause does not catch it, so it reaches
         Session's generic exception handler, which keeps the session
         alive (owner ruling).
+
+        ``chain_id`` (#5367③, default ``""`` when not from the one real
+        caller below): threaded through to ``retry_loop``'s injected
+        ``spill_fn`` so a same-turn content-level spill (at either
+        terminal floor retry_loop can hit) writes through the SAME
+        ``MediaStore.save_tool_result`` metadata shape
+        ``RouterHistoryBuffer.spill_turn_content``'s other caller
+        (``_attempt_reactive_spill``) already uses — no new store-path
+        convention.
         """
         from reyn.runtime.usage_shim import _RouterUsageShim
         from reyn.services.compaction.engine import (
@@ -579,6 +588,23 @@ class RouterLoopDriver:
             )
             _new_msg = {"role": "user", "content": user_text}
 
+            def _spill_fn(turn: dict) -> "dict | None":
+                # #5367③: injected into retry_loop, not imported by it —
+                # matches ``context_budget_advisor.py``'s own ``save_fn``
+                # injection style for ``cap_tool_result_content``. Only a
+                # tool-result turn with plain-str content is spillable
+                # (mirrors ``_spill_candidates``'s own filter); everything
+                # else reports "nothing to try" rather than raising.
+                if turn.get("role") != "tool" or not isinstance(turn.get("content"), str):
+                    return None
+                replacement = self._history_buffer.spill_turn_content(
+                    turn["content"], chain_id=chain_id,
+                    tool=turn.get("name") or "tool", seq=turn.get("seq", 1),
+                )
+                if replacement is None or replacement == turn["content"]:
+                    return None
+                return {**turn, "content": replacement}
+
             async def _router_main_call(*, SP, head, summary, tail, new_msg):
                 _msgs = list(head)
                 if summary:
@@ -628,6 +654,7 @@ class RouterLoopDriver:
                     engine=engine,
                     learner=self._token_learner,
                     main_call=_router_main_call,
+                    spill_fn=_spill_fn,
                     max_iterations=self._compaction.max_shrink_iterations,
                     # #4957: operator-tunable escape valve (chat.compaction.
                     # max_shrink_iterations) — was previously always the
