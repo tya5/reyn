@@ -1,11 +1,18 @@
 """Tier 1/2: #5084 ④ — a hook's ``exec``/``exec_capture`` child process
-receives the CLOSED, 3-field ``REYN_*`` envelope (``HookProcessContext``,
+receives the CLOSED, 4-field ``REYN_*`` envelope (``HookProcessContext``,
 mechanism "B" — see :mod:`reyn.runtime.workspace_paths`'s own module
 docstring for the A/B split) via its own environment, and a relative argv
 resolves inside the DISPATCHING AGENT'S OWN tree via ``cwd`` — both sourced
 LIVE from ``HookDispatcher``'s injected callables (``hook_cwd``/
 ``hook_process_context``), never frozen at construction (#5081's
 ``_workspace_base_dir`` can change across the dispatcher's lifetime).
+
+#5208 added the 4th field, ``agent_state_dir``/``REYN_AGENT_STATE_DIR``: a
+write target every agent can structurally reach regardless of ``base_dir``
+narrowing (``.reyn`` sits inside ``_DEFAULT_WRITE_ZONES`` —
+``reyn.security.permissions.permissions``). This module's own witnesses
+below cover it: ①/② updated for 4 fields, plus a new strip-witness and a
+base_dir-narrowed acceptance test (§ "four" section at the bottom).
 
 Before this: ``hooks/dispatcher.py``'s two ``_run_shell`` call sites passed
 NO ``cwd`` at all — every hook exec silently inherited reyn's own launch
@@ -31,23 +38,26 @@ from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 # ── ② closed by construction (Tier 1) ────────────────────────────────────────
 
 
-def test_hook_process_context_is_closed_to_exactly_three_named_fields():
+def test_hook_process_context_is_closed_to_exactly_four_named_fields():
     """Tier 1: ``HookProcessContext`` is a CLOSED envelope — a caller cannot
-    add a fourth variable, and ``as_env()`` emits exactly these 3 keys, never
+    add a fifth variable, and ``as_env()`` emits exactly these 4 keys, never
     more. This is what makes the type a typed contract (Tier-1 lens 2)
     instead of a free-form ``dict[str, str]``: the field/key SET is fixed by
     the class definition itself, not by whatever a caller happens to pass."""
     field_names = {f.name for f in fields(HookProcessContext)}
-    assert field_names == {"project_dir", "agent_base_dir", "agent_name"}, (
-        f"a 4th field would silently widen the envelope; got {field_names!r}"
+    assert field_names == {
+        "project_dir", "agent_base_dir", "agent_name", "agent_state_dir",
+    }, (
+        f"a 5th field would silently widen the envelope; got {field_names!r}"
     )
 
     ctx = HookProcessContext(
         project_dir=Path("/proj"), agent_base_dir=Path("/proj/agents/coder1"),
-        agent_name="coder1",
+        agent_name="coder1", agent_state_dir=Path("/proj/.reyn/agents/coder1/state"),
     )
     assert set(ctx.as_env().keys()) == {
         "REYN_PROJECT_DIR", "REYN_AGENT_BASE_DIR", "REYN_AGENT_NAME",
+        "REYN_AGENT_STATE_DIR",
     }
 
 
@@ -90,6 +100,7 @@ async def _dispatch_with_agent(agent_name: str, backend: "_RecordingBackend") ->
             project_dir=Path("/workspace"),
             agent_base_dir=Path(f"/workspace/agents/{agent_name}"),
             agent_name=agent_name,
+            agent_state_dir=Path(f"/workspace/.reyn/agents/{agent_name}/state"),
         ),
     )
     await dispatcher.dispatch("turn_end", {})
@@ -178,4 +189,75 @@ async def test_relative_exec_argv_runs_inside_the_dispatching_agents_own_tree(tm
     assert not (other_dir / "marker.txt").exists(), (
         "a sibling agent's tree must be untouched — this is a PER-AGENT cwd, "
         "not a process-wide default"
+    )
+
+
+# ── ④ #5208: agent_state_dir reaches every agent regardless of base_dir ─────
+
+
+@pytest.mark.asyncio
+async def test_agent_state_dir_stays_under_the_project_reyn_dir_when_base_dir_is_narrowed(
+    tmp_path,
+):
+    """Tier 2: strip-witness + acceptance for #5208.
+
+    Six-questions ④: this MUST be taken with ``base_dir`` moved AWAY from
+    the ``.reyn``-owning project root — a DEFAULT agent (base_dir ==
+    project root) would pass trivially even if ``agent_state_dir`` were
+    accidentally derived FROM ``base_dir`` instead of from the project's
+    own ``.reyn/agents/<name>/state``, since the two paths would coincide.
+    This test narrows ``workspace_base_dir`` to a SIBLING directory outside
+    ``.reyn`` and asserts ``REYN_AGENT_STATE_DIR`` still resolves under the
+    project's ``.reyn/agents/<name>/state`` — never under the narrowed
+    ``base_dir`` — which is the whole point (a structurally write-reachable
+    target for EVERY agent, `.reyn` is inside `_DEFAULT_WRITE_ZONES`,
+    independent of how narrow `base_dir` gets).
+
+    Strip-witness: removing ``REYN_AGENT_STATE_DIR`` from ``as_env()`` (or
+    the ``agent_state_dir=`` kwarg at the real ``session.py`` construction
+    site) makes ``ctx.as_env()["REYN_AGENT_STATE_DIR"]`` raise ``KeyError``
+    here — verified locally by temporarily reverting the ``as_env()`` dict
+    literal to its pre-#5208 3-key form.
+    """
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    narrow_base = tmp_path / "elsewhere" / "narrow-base"
+    narrow_base.mkdir(parents=True)
+
+    from tests._support.agent_session import make_session
+
+    session = make_session(
+        agent_name="coder1",
+        workspace_state_dir=project_root / ".reyn",
+        workspace_base_dir=narrow_base,
+    )
+
+    expected_state_dir = (project_root / ".reyn" / "agents" / "coder1" / "state").resolve()
+    assert not expected_state_dir.exists(), (
+        "test setup sanity: nothing in this session's construction should "
+        "have created the state dir yet — the point below is that reyn "
+        "creates it, not that it happened to already be there"
+    )
+
+    # This is the live callable a real hook dispatch calls right before
+    # exec/exec_capture — it must create the directory itself (reyn's own
+    # responsibility, never a hook's child process's `mkdir`) so it exists
+    # by the time ANY hook that reads REYN_AGENT_STATE_DIR actually runs.
+    ctx = session._hook_dispatcher._hook_process_context()
+    assert expected_state_dir.exists(), (
+        "REYN_AGENT_STATE_DIR's target must exist once hook_process_context() "
+        "has been called — reyn creates it, a hook is never asked to `mkdir` "
+        "its own env var target"
+    )
+    assert ctx is not None
+    resolved = Path(ctx.as_env()["REYN_AGENT_STATE_DIR"])
+    assert resolved == expected_state_dir, (
+        f"expected REYN_AGENT_STATE_DIR to stay under the project's own "
+        f".reyn/agents/coder1/state ({expected_state_dir}) regardless of "
+        f"the narrowed base_dir ({narrow_base}); got {resolved}"
+    )
+    assert narrow_base not in resolved.parents and resolved != narrow_base, (
+        "agent_state_dir must never collapse into the narrowed base_dir — "
+        "that would make it just as narrow as base_dir, defeating #5208's "
+        "own point"
     )
