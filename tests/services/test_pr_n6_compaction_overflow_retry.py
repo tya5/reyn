@@ -1413,6 +1413,117 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
     )
 
 
+def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor() -> None:
+    """Tier 2: #5367③ — at the byte-limit mid=1-turn floor, a spillable
+    ``raw_middle[0]`` (role ``tool``, str content) is offered to the
+    injected ``spill_fn`` BEFORE raising; if the spill produces smaller
+    content that compact() then accepts, retry_loop returns normally
+    instead of raising ``UnrecoveredError``.
+
+    Falsification (performed during review): removing the
+    ``_try_spill_first_mid_turn()`` call before the raise (reverting to
+    #5367②'s text-only fix) makes this test raise ``UnrecoveredError``
+    instead of returning — compact() never sees the spilled content
+    because the loop never retries.
+    """
+    cfg = _make_cfg()
+
+    class _SpillableByteLimitEngine(_OverflowingEngine):
+        """compact() 413s while the offered turn still carries the
+        ORIGINAL oversized marker; succeeds once it is the SPILLED one —
+        the compact()-side witness that spill_fn's replacement actually
+        reached engine.compact(), not just retry_loop's own state."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.compact_calls = 0
+
+        async def compact(self, input_chunk):
+            self.compact_calls += 1
+            turn = input_chunk.new_turns[0]
+            if turn.get("content") == "OVERSIZED_TOOL_RESULT":
+                raise _FakeStatusError("compact 413", status_code=413)
+            from reyn.services.compaction.engine import ChatSummary
+            return ChatSummary(topic_arc="ok", covers_through_seq=turn.get("seq", 0))
+
+    engine = _SpillableByteLimitEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    raw_middle = [{
+        "role": "tool", "content": "OVERSIZED_TOOL_RESULT", "seq": 1,
+        "tool_call_id": "tc-1", "name": "big_tool",
+    }]
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+    spill_calls: list = []
+
+    def _spill_fn(turn: dict) -> "dict | None":
+        spill_calls.append(turn)
+        if turn.get("role") != "tool" or turn.get("content") != "OVERSIZED_TOOL_RESULT":
+            return None
+        return {**turn, "content": "REF: spilled to .reyn/memory/history-content/..."}
+
+    async def _main_call(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
+
+    result = asyncio.run(retry_loop(
+        SP="sp", head=[], summary=None, raw_middle=raw_middle,
+        tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_main_call,
+        spill_fn=_spill_fn,
+        max_iterations=8,
+    ))
+
+    assert result is not None, "retry_loop must return normally, not raise"
+    # Exactly one spill_fn call for this single turn — unpacking to one
+    # element raises ValueError if the loop retried spill_fn a second time
+    # (which would mean the SAME object was offered for spilling twice).
+    (only_spill_call,) = spill_calls
+    assert only_spill_call["content"] == "OVERSIZED_TOOL_RESULT", (
+        "spill_fn must be offered the ORIGINAL content, not an already-"
+        "spilled one"
+    )
+    assert engine.compact_calls == 2, (
+        f"expected exactly 2 compact() calls (1 failing on the original "
+        f"content, 1 succeeding on the spilled content) — got "
+        f"{engine.compact_calls}"
+    )
+
+
+def test_5367_3_spill_unavailable_still_raises_with_accurate_message() -> None:
+    """Tier 2: #5367③ — with no ``spill_fn`` injected (the default,
+    matching every OTHER test in this file), the byte-limit mid-split
+    floor behaves exactly as #5367②'s text-only fix left it: raises
+    ``UnrecoveredError`` naming the turn-count floor, honestly silent
+    about spill (never claiming it was tried when it was not offered)."""
+    cfg = _make_cfg()
+    engine = _Always413CompactEngine(head_budget=10, tail_budget=10)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    raw_middle = [{"role": "tool", "content": "OVERSIZED_TOOL_RESULT", "seq": 1}]
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("main_call 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=[], summary=None, raw_middle=raw_middle,
+            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=8,
+        ))
+
+    assert "mid cannot be split any further" in str(excinfo.value)
+    assert excinfo.value.saw_byte_limit is True
+
+
 def test_4947_stage1_success_resets_same_cause_streak() -> None:
     """Tier 2: #4947 ③ (architect-ruled, CI red on #4950) — a compact()
     SUCCESS resets the same-cause cap's consecutive-recover counter, so

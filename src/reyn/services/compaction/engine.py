@@ -1962,6 +1962,7 @@ async def retry_loop(
     learner: "TokenMultiplierLearner",
     main_call: Callable[..., Awaitable[Any]],
     max_iterations: int = 8,
+    spill_fn: "Callable[[dict], dict | None] | None" = None,
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
 
@@ -1986,10 +1987,23 @@ async def retry_loop(
       ``component_weights["head|tail"] / total_weight * main_pool``).
     - Terminal condition: when ``head``/``tail`` are at or below their
       minimum token budgets AND ``raw_middle`` cannot be split any
-      smaller (down to a single turn, #4947 ③'s floor), ``UnrecoveredError``
-      is raised — this is a **structured-failure guarantee, not a success
-      guarantee**: it promises retry_loop always STOPS instead of looping
-      forever or silently dropping content, not that it always converges.
+      smaller (down to a single turn, #4947 ③'s floor) AND spilling that
+      turn's content either was not available/possible or did not resolve
+      the overflow (#5367③, below), ``UnrecoveredError`` is raised — this
+      is a **structured-failure guarantee, not a success guarantee**: it
+      promises retry_loop always STOPS instead of looping forever or
+      silently dropping content, not that it always converges.
+    - #5367③: ``spill_fn`` (optional, injected by the caller — this module
+      never imports the caller, matching ``tool_result_cap.cap_tool_
+      result_content``'s own ``save_fn``-injection style) is tried EXACTLY
+      ONCE per distinct ``raw_middle[0]`` object, at BOTH terminal floors
+      below (the byte-limit mid-split floor and the non-byte same-cause
+      cap), regardless of which mode caused the overflow — a floor is a
+      floor either way, and the fix (replacing an oversized tool-result
+      body with a ref) is not byte/token-specific. A local per-call
+      ``id()`` set bounds this to at most one extra ``continue`` per
+      unique turn object, so it strictly tightens (never loosens) the
+      existing ``max_iterations``-bounded termination proof above.
     - ``max_iterations=8`` is a safety cap independent of the above — even
       a well-founded decreasing measure can still take more steps than an
       operator wants to wait for real LLM calls, so this cap can fire
@@ -2128,6 +2142,27 @@ async def retry_loop(
     # not on every floor check.
     _sp_tokens_floor = estimate_tokens(SP, model, use_chars4=use_chars4)
     _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
+    # #5367③: which raw_middle[0] objects a spill has already been tried
+    # on this call — bounds the retry to at most one extra iteration per
+    # unique turn (never the same object twice), so this can only tighten
+    # the existing max_iterations-bounded termination proof, never loosen it.
+    _spill_attempted_ids: "set[int]" = set()
+
+    def _try_spill_first_mid_turn() -> bool:
+        """#5367③: if a turn is available and spillable, spill it in place
+        and report whether the caller should retry this iteration instead
+        of raising. Never attempts the SAME object twice."""
+        if spill_fn is None or not raw_middle:
+            return False
+        turn = raw_middle[0]
+        if id(turn) in _spill_attempted_ids:
+            return False
+        _spill_attempted_ids.add(id(turn))
+        spilled = spill_fn(turn)
+        if spilled is None:
+            return False
+        raw_middle[0] = spilled
+        return True
 
     for _iteration in range(max_iterations):
         # #4944①: tracks whether THIS iteration reached main_call — a
@@ -2418,21 +2453,20 @@ async def retry_loop(
                 # False the only value this raise can ever carry, not an
                 # unreachable branch where the default happens not to
                 # matter.
-                # #5367②: the OLD text past this point claimed "shrinking is
-                # not resolving this cause" without qualification — false in
-                # the same way #5367①'s neighboring fix was: "shrinking" here
-                # names only the turn-count-reduction ladder this loop
-                # attempted (head/tail trim, halving raw_middle); it does not
-                # cover spilling a turn's CONTENT (replacing an oversized
-                # tool-result body with a ref), which this cap never tries
-                # before giving up (#5367③).
+                # #5367③: before giving up, try spilling raw_middle[0]'s
+                # content (mode-independent — a floor is a floor whether
+                # the recurring cause is byte- or token-shaped) and retry
+                # this iteration if it made progress.
+                if _try_spill_first_mid_turn():
+                    continue
                 raise UnrecoveredError(
                     f"retry_loop: cause {_cause!r} recovered "
                     f"{_consecutive_same_cause} consecutive times (limit "
                     f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — the "
-                    "turn-count shrink ladder attempted is not resolving "
-                    "this cause (content-level spill was not tried here); "
-                    "stopping rather than exhausting max_iterations."
+                    "turn-count shrink ladder attempted, plus any "
+                    "content-level spill of raw_middle[0] this call had "
+                    "available, did not resolve this cause; stopping "
+                    "rather than exhausting max_iterations."
                 ) from _overflow_exc
 
         # Shrink escalation: reduce context size monotonically.
@@ -2491,19 +2525,21 @@ async def retry_loop(
                     # "shrinking it further is not possible" — false. Only
                     # the TURN-COUNT floor is reached here (mid is already
                     # one turn; halving cannot produce a smaller nonzero
-                    # slice, #4947 ③). Nothing checked here about whether
-                    # mid's CONTENT could still shrink — a turn whose body
-                    # is a spillable tool result (owner: "spill は turn の
-                    # 中身を小さくします — 分割ではなく縮小") could still be
-                    # reduced without splitting it into more turns; this
-                    # retry_loop does not attempt that today (tracked as
-                    # #5367③).
+                    # slice, #4947 ③). #5367③: mid's CONTENT could still
+                    # shrink — a turn whose body is a spillable tool result
+                    # (owner: "spill は turn の中身を小さくします — 分割で
+                    # はなく縮小") can be reduced without splitting it into
+                    # more turns, so that is tried here (below) before
+                    # this raise, not skipped.
+                    if _try_spill_first_mid_turn():
+                        continue
                     raise UnrecoveredError(
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
                         "recurred compacting a single raw_middle turn "
-                        "alone — mid cannot be split any further (this is "
-                        "the turn-count floor, not a claim that mid's "
-                        "content is already minimal)." + _learned_byte_limit_clause(
+                        "alone — mid cannot be split any further (the "
+                        "turn-count floor), and a content-level spill of "
+                        "it, where available, did not resolve this "
+                        "either." + _learned_byte_limit_clause(
                             last_accepted_wire_bytes=_last_accepted_wire_bytes,
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
                         ),
