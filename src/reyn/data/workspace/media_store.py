@@ -27,44 +27,64 @@ binary as a data URL ONLY when sending to the model. Storage stays
 light; the LLM sees the materialised form.
 
 Lifecycle policy (#385 β core impl sub-task 5, 2026-05-22 frozen
-contract Phase 1 = "(a) Persistent until user delete"):
+contract Phase 1 = "(a) Persistent until user delete"; #5364 §1.6 /
+#5366 have since landed a Phase-2 SLICE for history-content only — see
+the split below):
 
-  - **No auto-GC.** Files written by ``save_*`` remain on disk until a
-    user / operator deletes them out-of-band (= ``rm``, file explorer,
-    cleanup script). The MediaStore class does NOT enforce TTL,
-    max-N, session-end cleanup, or any other automatic eviction.
+  - **Media (``.reyn/media/``) — still no auto-GC.** Files written by
+    :meth:`save_image` remain on disk until a user / operator deletes
+    them out-of-band (= ``rm``, file explorer, cleanup script). No TTL,
+    max-N, or session-end cleanup exists for this directory today.
+  - **History-content (``.reyn/memory/history-content/``, #5364) — auto-GC
+    now EXISTS, in two layers, not yet enforced end-to-end.** Per-session:
+    every :meth:`save_tool_result` call runs
+    :meth:`_evict_history_content_over_cap`, deleting THIS session's own
+    oldest files (protecting only the write's own open turn) once its
+    directory exceeds ``history_content_max_bytes`` (#5364 §1.6 / #5388
+    — this layer is live in production). Project-wide: a
+    ``storage.max_bytes`` / ``storage.pin`` config
+    (#5366 1/N, ``ReynConfig.storage``) and a candidate-selection
+    function (:func:`cross_session_eviction_candidates`, #5366 2/N,
+    pin-only by design — no liveness filter; see that function's own
+    docstring for why) both exist, but nothing calls the candidate
+    function yet — the project-wide cap is configured and its eviction
+    ORDER is computed, with no delete pass wired to either. That wiring
+    is a later #5366 slice.
   - **Cross-turn / cross-session re-access supported.** A path-ref
     minted in user turn 1 remains valid in user turn 2 / next chat
-    session / a forwarded A2A peer's expand — the file is still there.
+    session / a forwarded A2A peer's expand — the file is still there,
+    for any file eviction above hasn't reached.
     (See Q1 of the frozen contract: ``agent_id = agent name`` durable
     identity, not per-turn ``chain_id``.)
-  - **Disk usage grows unboundedly.** Documented operational caveat —
-    operators are expected to ``ls -la .reyn/tool-results/`` and clean
+  - **Media disk usage still grows unboundedly.** Documented operational
+    caveat — operators are expected to ``ls -la .reyn/media/`` and clean
     up periodically. The browsable filename convention makes manual
     audit straightforward. :meth:`MediaStore.storage_stats` (#4478
     Phase 1) gives a scripted read of this instead of a manual ``ls``:
-    file counts + byte totals per directory, policy-independent — it
-    exists to SUPPLY the measurement evidence Phase 2 is gated on, it
-    does not itself decide anything.
-  - **Phase 2 reservation.** When measurement surfaces a real disk
-    pressure or stale-handle problem (= not just hypothetical), Phase 2
-    adds a config-driven policy: TTL / LRU / session-end / mixed. The
-    reyn.yaml ``multimodal:`` block is the natural insertion point;
-    no schema reservation made today (= YAGNI). The ``MediaStoreConfig``
-    dataclass is the future extension surface.
+    file counts + byte totals per directory, policy-independent.
+  - **Phase 2 reservation (media only).** When measurement surfaces a
+    real disk pressure or stale-handle problem for ``.reyn/media/``
+    specifically, a config-driven policy (TTL / LRU / session-end /
+    mixed) would need its own reyn.yaml insertion point — the
+    ``multimodal:`` block is the natural one; no schema reservation
+    made today (= YAGNI). History-content already has its own separate
+    ``storage:`` block (#5366 1/N) instead of sharing this one.
 
 Out of scope (= future work):
-  - Phase 2 cleanup policy (= TTL / max-N / session boundary). Trigger
-    is measurement evidence, not hypothesis — #4478 lands the
-    measurement (``storage_stats``) without the policy. A future Phase
-    2's own acceptance criteria MUST cover the user-visible side, not
-    just "no consumer crashes": every read consumer already tolerates
-    a missing file (404 / ``None`` / a silently dropped content block —
+  - Wiring :func:`cross_session_eviction_candidates` (#5366 2/N) to an
+    actual delete pass honoring ``storage.max_bytes`` — the project-wide
+    GC's own acceptance criteria MUST cover the user-visible side, not
+    just "no consumer crashes": every read consumer already tolerates a
+    missing file (404 / ``None`` / a silently dropped content block —
     #4478's own consumer sweep confirmed this), but a silently dropped
     block is a scrollback image or tool-result the USER sees vanish
     with no explanation, not a safe no-op. "Does this crash" is not
-    "is this a good experience" — Phase 2 needs to answer the second
-    question too, not just the first.
+    "is this a good experience" — that wiring needs to answer the
+    second question too, not just the first.
+  - Media (``.reyn/media/``) Phase 2 cleanup policy (= TTL / max-N /
+    session boundary) — trigger is measurement evidence, not
+    hypothesis; #4478 lands the measurement (``storage_stats``) without
+    the policy.
   - Cross-host RPC dispatcher for ``resource_uri`` (= #385 β core
     impl sub-task 3, pending scheme arbitration).
 """

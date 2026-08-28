@@ -8,10 +8,15 @@ applies_to: [reyn storage]
 # `reyn storage`
 
 Inspect Reyn-managed on-disk storage: media, offloaded tool results, and every
-agent's `history.jsonl`. Read-only — this command never deletes anything (#4478/#4476
-Phase 1: measurement only, no TTL/max-N/retention eviction policy yet; `media_store.py`
-and `history_tail_reader.py`'s own module docstrings name measurement evidence, not
-hypothesis, as the precondition for any future Phase 2 policy).
+agent's `history.jsonl`. Read-only — **this command itself** never deletes anything
+(#4478/#4476 Phase 1: measurement only). `media_store.py`'s own module docstring
+named measurement evidence, not hypothesis, as the precondition for eviction — that
+precondition has since been met for offloaded tool results specifically: `.reyn/media/`
+still has no eviction of any kind, but `.reyn/memory/history-content/` now has both a
+per-session byte cap that evicts on every write (#5364 §1.6/#5388) and a project-wide
+`storage.max_bytes`/`storage.pin` config with its candidate order computed (#5366
+1/N–2/N) — no delete pass wired to the project-wide cap yet. `reyn storage` itself
+stays read-only regardless: it never triggers any of the above, only measures it.
 
 Named `storage`, not `media` — the command started as `reyn media stats` (#4478),
 then #4476 landed `history.jsonl` reporting on the same surface rather than as a
@@ -95,7 +100,8 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
 tier's "derived, rebuilt after restore" promise never held for this manifest; see
 [`.reyn/` directory layout](../runtime/reyn-dir-layout.md)), read in full on every
 `MediaStore` construction. An entry whose target file no longer exists on disk
-(deleted manually, or by a future Phase 2 GC policy) is dropped from the manifest
+(deleted manually, or by the per-session history-content eviction — #5364 §1.6/#5388,
+live for offloaded tool results) is dropped from the manifest
 the next time it's loaded — this bounds the manifest's otherwise-unbounded growth.
 This is a self-PRUNE of existing entries only, never a REBUILD: if the manifest file
 itself were deleted, nothing recreates it. The prune only rewrites the manifest
