@@ -824,10 +824,13 @@ class MediaStore:
         # (in-memory, no I/O, no ordering hazard — protects a re-read
         # within THIS same turn even before the content write is durable).
         # The manifest append is independent, best-effort: a manifest-
-        # write failure (e.g. a read-only ``tool_results_dir``) must never
-        # fail the spill write itself, which is the load-bearing operation
-        # here — it only means a FUTURE process's guard won't recognize
-        # this one path, not that this write failed.
+        # write failure (e.g. a read-only ``tool_results_dir``, OR — #5364
+        # §1.4 — a process crash between this line ENQUEUING the deferred
+        # append and its job actually running, since it is fire-and-forget
+        # off-loop just like the content write above) must never fail the
+        # spill write itself, which is the load-bearing operation here —
+        # it only means a FUTURE process's guard won't recognize this one
+        # path, not that this write failed.
         #
         # #5364 §1.4: submitted via the SAME deferral path as the content
         # write above, ALWAYS after it (same worker, FIFO-serial — see
