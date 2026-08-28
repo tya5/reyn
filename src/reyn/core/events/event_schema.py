@@ -376,6 +376,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "llm_response_received",
     "mcp_called",
     "mcp_cancelled",
+    "mcp_client_close_leaked",
     "mcp_completed",
     "mcp_elicitation_answered",
     "mcp_elicitation_auto_declined",
