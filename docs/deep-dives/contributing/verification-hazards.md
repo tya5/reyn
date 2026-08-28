@@ -15,10 +15,11 @@ hazard below is that root wearing a different substrate, each with a real
 not a theory, a worked example. If a hazard here can't cite a real instance
 and a measured detection, it doesn't belong in this doc.
 
-## 1. The five faces of "observation ≠ referent"
+## 1. The six faces of "observation ≠ referent"
 
 | Face | What's missing | Instance |
 |---|---|---|
+| **Measures a different quantity** | The observation runs, hits something real, and can go red — but the QUANTITY it measures is not the one the claim names | A docstring named itself "the compact()-side witness that spill_fn's replacement actually reached `engine.compact()`, not just retry_loop's own state" — but `compact_calls` increments at `compact()`'s own ENTRY, so it is `>= 1` whether or not the replaced content ever arrived; the one property the docstring claimed to witness was never asserted on at all (#5386). Separately: a manifest-append-ordering claim was checked by reading BOTH the content file and the manifest AFTER `flush()` — the barrier drains both jobs regardless of which order they ran in, so the read sees the same state under either order and the assert cannot tell them apart (#5384③). Separately again: `assert "gone.txt" in tool_msg["content"]` was meant to witness a spilled entry's missing-backing-file resolving to a "lost" notice — but the STALE, un-resolved preview text (`read_file(path="gone.txt")`) also contains the substring `"gone.txt"`, so the assert passes identically whether resolution ran or never touched the entry at all (#5372). A fourth instance, about completion rather than counting: `while not (log_path.exists() and log_path.stat().st_size > 0): ...; content = log_path.read_text(); assert "Thread" in content` waited for "non-empty," not "finished" — `faulthandler`'s dump writes its header (`Timeout (0:00:01)!`) BEFORE the thread-stack body, so a read landing between the two writes sees a genuinely non-empty file with no `"Thread"` in it yet, flaking on machine speed alone with the exact same tree passing or failing (#5394 → #5397). A fifth instance, about a test construction accidentally selecting an existing explanation instead of the new one: an open-turn GC-exclusion feature's tests used only 2 files where the triggering chain's own file was ALSO the newest by mtime — eviction's pre-existing oldest-first order produces the identical pass/fail outcome with the new exclusion rule deleted outright, so 3 green tests said nothing about whether the exclusion code ran at all (#5399). Two of these five were prescribed by the same reviewer who later named the face — "the observation point has a name" was mistaken for "the observation point measures the claim," on both sides of the exchange. |
 | **Record is a lie** | The claim itself is false | `landlock.py` blamed network denial on "the no-network-fd / proxy gate" — a named mechanism that appears nowhere in the repo but that one comment (#3031). What actually denied `connect()` was a seccomp default-deny, itself skipped under `allow_subprocess=True` (#3030). |
 | **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). A repro can fail the SAME way a test can: investigating whether a secret leaks through `Session._run_router_loop`'s TUI/outbox path (#3830), a reproduction was built that raised the exception WITHOUT going through `scrub_exception_in_place` — the then-production path (removed by #4353; the leak surface itself was also closed by #4348) — and reported the fixed code as still leaking. Self-corrected once rebuilt to raise through the real call path, which produced the REDACTED text the first repro never could have shown either way (#4343). The repro environment, not a test, was the thing that couldn't witness the real path this time. |
 | **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. CLAUDE.md asserted the sandbox 3-tuple axis contract (deny/exception-boundary/workload) was "CI-conformance-only" — a claim about subsystem B (CI) written in subsystem A (the hard-rules doc) — with no one on B's side ever checking it was true: `test_sandbox_axis_contract_2983.py`'s network-axis arms skipped in every pytest job (no `sandbox-linux` extra) and were never collected by the one job that DID have Landlock available, so the "CI-conformance" layer ran on zero jobs, not the CI-conformance-only-but-still-real coverage the sentence implied. Distinct from the "environment can't witness" row above: the deny-gate job's environment COULD witness the risky path fine — once the file was added to its `pytest` invocation it ran and passed (34/34) — the gap was never a capability gap, only that nothing on the CI side had ever checked the claim against what actually ran (#4333, found via #4331's skip census cross-referenced against which job collects which file). |
@@ -43,6 +44,34 @@ found the defect (in-process vs. `pytest`, sequential vs. parallel, local vs.
 CI), first identify the failing regime, count the reproduction rate IN that
 regime, then recount in that SAME regime after the fix — a green result from
 a different regime answers a different question.
+
+**"Measures a different quantity" — the one question**: *does this
+observation point take a DIFFERENT value when the claim is false?* Not
+"does it run," not "can it go red" — both hold in every instance above.
+This is distinct from two hazards that look adjacent: the §6 vacuity guard
+below is about nothing to bite on at all (an empty set, a skip, zero
+collected) — here the observation bites on something real and can fail,
+just not for the claimed reason. It's also distinct from "Run doesn't
+support the claim" above — that face is about an unmet CONDITION (load,
+parallelism, a regime); here the condition is fully met and the code path
+the claim names did run — the observation POINT itself answers a different
+question than the one asserted.
+
+Detection technique, one per instance above: for a counter/flag, find the
+single moment it changes and name what triggers that moment — an ENTRY
+point is not the same claim as a downstream effect (#5386). Never place the
+observation after a barrier (`flush`/`join`/await-all) that a divergent
+order would drain identically either way — the barrier is exactly what
+erases the difference being tested (#5384③). For an "expected failure,"
+check that the failure mode itself is diagnostic, not merely present —
+absence, an error, and an empty result can all look identical regardless of
+WHY (#5372). "Non-empty" or "at least one line" is not "complete" if the
+underlying write can land in more than one piece — wait for the terminal
+shape the claim actually depends on (#5394). And before trusting a fixture
+that produces the expected result, check whether an OLDER, already-existing
+rule (sort order, priority, eviction policy) would produce the identical
+result with the new code deleted — a construction is only a witness once
+the new rule is the SOLE explanation left standing (#5399).
 
 ## 2. False-capability vs. false-prohibition — the dual, and only one is self-sealing
 
