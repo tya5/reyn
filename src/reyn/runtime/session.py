@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from reyn.hooks.composer import ComposerRegistry
     from reyn.hooks.dispatcher import HookDispatcher
     from reyn.hooks.schema import HookDef
+    from reyn.hooks.shell_runner import HookProcessContext
     from reyn.interfaces.slash import SlashContext
     from reyn.mcp.connection_service import MCPConnectionService
     from reyn.runtime.fs_watcher import FsWatcher
@@ -2458,6 +2459,40 @@ class Session:
         state_dir = Path(self._snapshot_path).parent.resolve()
         state_dir.mkdir(parents=True, exist_ok=True)
         return state_dir
+
+    def _build_hook_process_context(self) -> "HookProcessContext":
+        """#5084 ④ / #5208: the LIVE ``HookProcessContext`` a hook's
+        ``exec``/``exec_capture`` child process would receive if a hook
+        dispatched RIGHT NOW. Extracted out of the ``HookDispatcher``
+        construction call's own ``hook_process_context=`` kwarg (was an
+        inline lambda) — a named, independently-callable builder rather
+        than an anonymous closure buried in a large constructor call.
+
+        #5428: this extraction is deliberately NOT paired with a public
+        method in the same PR (architect BLOCKING on an earlier version
+        of this change, issuecomment on PR #5443): a public
+        ``hook_env_snapshot()`` with no production consumer would be the
+        exact #4866 shape #5442 spent that same PR closing 3 instances
+        of. #5428's own public read-surface, WITH its real consumer
+        (``reyn doctor`` — its own docstring already claims "reach into
+        sandbox / MCP / hook internals" / "a hook's argv actually
+        launched would be doctor's"), lands together in a follow-up.
+
+        Reads live state on every call (``_workspace_base_dir`` can change
+        across this session's lifetime, #5081) — never frozen at
+        construction. ``agent_state_dir`` is created here if missing
+        (``_ensure_agent_state_dir``'s own docstring: reyn's
+        responsibility, never a hook child process's ``mkdir``)."""
+        from reyn.hooks.shell_runner import HookProcessContext
+
+        return HookProcessContext(
+            project_dir=self._reyn_state_root.parent.resolve(),
+            agent_base_dir=(
+                self._workspace_base_dir or self._reyn_state_root.parent
+            ).resolve(),
+            agent_name=self.agent_name,
+            agent_state_dir=self._ensure_agent_state_dir(),
+        )
 
     @property
     def _environment_backend(self) -> Any:
@@ -5046,7 +5081,6 @@ class Session:
         from reyn.hooks.composed_consumer import ComposedEventConsumer
         from reyn.hooks.composer import ComposerRegistry, build_composers
         from reyn.hooks.dispatcher import HookDispatcher
-        from reyn.hooks.shell_runner import HookProcessContext
         from reyn.runtime.fs_watcher import FsWatcher
         from reyn.runtime.hot_reload import HotReloader
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
@@ -5151,25 +5185,7 @@ class Session:
             hook_cwd=lambda: (
                 str(self._workspace_base_dir) if self._workspace_base_dir else None
             ),
-            hook_process_context=lambda: HookProcessContext(
-                project_dir=self._reyn_state_root.parent.resolve(),
-                agent_base_dir=(
-                    self._workspace_base_dir or self._reyn_state_root.parent
-                ).resolve(),
-                agent_name=self.agent_name,
-                # #5208: a structurally write-reachable target for EVERY
-                # agent regardless of base_dir narrowing (`.reyn` is inside
-                # `_DEFAULT_WRITE_ZONES` — `permissions.py`). Same anchor
-                # `Path(self._snapshot_path).parent` already resolves to
-                # (line 3274 above) — not re-derived here so a future
-                # snapshot-path change can't silently diverge the two.
-                # reyn creates the directory here (never the hook's own
-                # child process's job — a hook is never asked to `mkdir`
-                # its own env var target): lazily, on this lambda's own
-                # call, so it exists by the time ANY hook that reads
-                # REYN_AGENT_STATE_DIR actually runs.
-                agent_state_dir=self._ensure_agent_state_dir(),
-            ),
+            hook_process_context=self._build_hook_process_context,
             # #5210: same deferred-lambda-over-live-state idiom as hook_cwd/
             # hook_process_context above — the model (and therefore the
             # budget) can change across this dispatcher's lifetime (a
