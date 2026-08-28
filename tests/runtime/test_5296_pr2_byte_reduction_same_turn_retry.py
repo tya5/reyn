@@ -503,3 +503,144 @@ def test_a_spill_that_does_not_help_is_undone(
         "content should still be what gets sent, not a bloated "
         "offloaded-preview replacement left behind uselessly"
     )
+
+
+# ── #5364: candidate order is STAGED (head → mid → tail), size-desc/stage ──
+
+
+@pytest.mark.asyncio
+async def test_spill_candidates_are_staged_head_then_mid_then_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5364 §1.3 (owner verbatim "mid も対象にしてね。head->mid->
+    tail->open") — the FIRST candidate spilled is a ``head`` turn, never a
+    ``raw_middle`` turn, even when the mid candidate's content dwarfs
+    every head candidate. A global size-sort (the bug this staged design
+    replaces) would offer the largest content first regardless of group —
+    here that would be the mid candidate — so which one is spilled FIRST
+    directly distinguishes staged order from global size order.
+
+    Witnessed via the PUBLIC ``tool_result_offloaded`` audit-event
+    (``tool_result_cap.py``'s own emit, threaded through
+    ``spill_turn_content``) — its ``total_chars`` names the size of the
+    candidate that was JUST spilled, a public order-witness for
+    ``RouterLoopDriver._spill_candidates`` without calling that private
+    static method directly (CLAUDE.md testing policy: "if neither [a
+    public surface nor a snapshot-style read] exists, that absence is the
+    finding" — here a public read DOES exist once driven through a real
+    spill pass, so this is that seam, not a documented absence).
+    ``session._audit_events.drain()`` is required before reading the
+    subscriber's list — events queue, they are not delivered
+    synchronously inside ``emit()`` (measured directly: the subscriber
+    list was empty without it, on every run)."""
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    events: list = []
+    session._audit_events.add_subscriber(lambda e: events.append(e))
+
+    # Head: one small tool turn. Mid: one turn whose content is FAR
+    # larger than the head candidate — if global size-sort fired instead
+    # of staged order, THIS would be spilled first. Padding filler turns
+    # (not tool-role, never candidates) so t_max forces a genuine
+    # head/mid split with each tool turn landing in its own group.
+    small_head_content = "tiny result h1 " + "a" * 10
+    huge_mid_content = "M" * 5_000
+    _push(session, "tool", small_head_content, tool_call_id="tc-h1", name="tool")
+    for i in range(20):
+        _push(session, "user", f"filler question number {i + 100} " * 8)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+    _push(session, "tool", huge_mid_content, tool_call_id="tc-m1", name="tool")
+    for i in range(3):
+        _push(session, "user", f"filler question number {i + 300} " * 8)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+
+    head, raw_middle, _tail, _summary, _seq_by_id = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    head_ids = {t.get("tool_call_id") for t in head if t.get("role") == "tool"}
+    mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+    assert head_ids == {"tc-h1"}, (
+        f"test setup sanity: the head candidate must land in head, got {head_ids!r} "
+        f"— adjust t_max/turn counts"
+    )
+    assert mid_ids == {"tc-m1"}, (
+        f"test setup sanity: the mid candidate must land in raw_middle, got {mid_ids!r}"
+    )
+
+    await session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    await session._audit_events.drain()
+
+    offloaded = [e for e in events if e.type == "tool_result_offloaded"]
+    assert offloaded, "test setup sanity: at least one candidate must have been spilled"
+    first_spilled_size = offloaded[0].data["total_chars"]
+    assert first_spilled_size == len(small_head_content), (
+        f"the FIRST candidate spilled must be the head turn "
+        f"({len(small_head_content)} chars), not the far-larger mid turn "
+        f"({len(huge_mid_content)} chars) — got first_spilled_size="
+        f"{first_spilled_size}. A global size-sort would spill the mid "
+        f"candidate first."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5364 §1.3 — a ``raw_middle`` candidate can never move wire
+    bytes (elided out of ``estimate_wire_bytes`` by construction), so the
+    pre-existing "no byte decrease → undo" rule must NOT apply to it —
+    applying it unconditionally would discard every mid spill, contradicting
+    #5364's own reason for including mid at all (persisted ``spilled``
+    state + a smaller future compaction fold). Witnessed via
+    ``decompose_history_for_retry()``'s own returned content (never the
+    private ``_spill_overlay`` dict directly) — surviving content must
+    equal the offload preview, matched by its ``read_file(path=...)``
+    marker."""
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=4_000)
+    # Enough turns that SOME land in raw_middle once elided (t_max forces a
+    # real split — see decompose_history_for_retry's own docstring on when
+    # raw_middle is non-empty).
+    for i in range(40):
+        _push(session, "user", f"q{i}")
+        _push(session, "tool", f"result body {i} " * 100, tool_call_id=f"tc{i}", name="tool")
+        _push(session, "assistant", f"a{i}")
+
+    head, raw_middle, tail, _summary, _seq_by_id = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    mid_tools = [t for t in raw_middle if t.get("role") == "tool"]
+    assert mid_tools, (
+        "test setup sanity: raw_middle must contain at least one tool "
+        "turn, or this test cannot exercise the mid-is-never-undone path "
+        "— adjust t_max/turn count"
+    )
+
+    reduced = await session._loop_driver._attempt_reactive_spill(
+        "continue", chain_id="c1",
+    )
+    assert reduced is False, (
+        "control arm: with no genuinely spillable head/tail progress in "
+        "this setup, the byte-decrease verdict stays False — this test's "
+        "subject is whether the MID spill survived regardless, next"
+    )
+
+    original_mid_content = mid_tools[0]["content"]
+    target_id = mid_tools[0].get("tool_call_id")
+    head2, raw_middle2, tail2, _summary2, _seq2 = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    reserialised = [
+        t for t in head2 + raw_middle2 + tail2
+        if t.get("tool_call_id") == target_id
+    ]
+    assert reserialised, "test setup sanity: the same mid turn must still decompose somewhere"
+    assert reserialised[0]["content"] != original_mid_content, (
+        "the mid spill must survive into a LATER decompose_history_for_retry() "
+        "call — its content should now be the offloaded preview, not the "
+        "original body. If this is still the original content, the "
+        "overlay was discarded (the bug #5364 names: mid spills undone "
+        "because they never satisfy 'after < before')."
+    )
+    assert "read_file(path=" in reserialised[0]["content"], (
+        "the surviving content should be the offload preview naming the "
+        f"read-back path — got: {reserialised[0]['content']!r}"
+    )
