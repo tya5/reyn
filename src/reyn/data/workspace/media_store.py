@@ -265,27 +265,43 @@ class MediaStoreConfig:
     # maximum — the cap is intended to never fire under any measured
     # real usage; it exists only to bound a genuine runaway.
     #
-    # This does NOT protect a still-open turn's own content from GC —
-    # doing that needs a discriminator distinguishing "this session's
-    # newest file" from "a turn currently in flight", and none exists
-    # yet: the write-time cap path (``tool_result_cap.py``'s ``save_fn``
-    # call) does not thread ``chain_id`` through today, so most spilled
-    # files carry none (only the REACTIVE-spill path,
-    # ``router_history_buffer.py``, does) — mtime is NOT a safe
-    # approximation (lead-coder ruling, #5364: "the newest file is not a
-    # turn boundary"; architect, same ruling: mtime answers "when was
-    # this written", not "whose turn is this" — two concurrent sessions
-    # writing at once interleave mtime order across BOTH turns).
+    # #5387 landed the discriminator this used to lack: ``chain_id`` now
+    # threads through the write-time cap path too (previously only the
+    # REACTIVE-spill path, ``router_history_buffer.py``, carried one), so
+    # ``MediaStore.is_open_turn_file`` can tell "this session's newest
+    # file" apart from "a turn currently in flight" WITHOUT approximating
+    # via mtime (mtime is NOT safe for this — lead-coder ruling, #5364:
+    # "the newest file is not a turn boundary"; architect, same ruling:
+    # mtime answers "when was this written", not "whose turn is this" —
+    # two concurrent sessions writing at once interleave mtime order
+    # across BOTH turns). See ``protect_open_turn_from_gc`` below for the
+    # resulting default and its scope.
     #
-    # DO NOT LOWER THIS DEFAULT to a value that can actually fire under
-    # real usage until #5387 lands (threading ``chain_id`` through the
-    # write-time cap path so GC can tell a still-open turn's content
-    # apart from an evictable one). At today's 2 GB this gap has nothing
-    # to protect — 2GB is >15x the largest ``.reyn/`` tree measured
-    # above, so eviction is not expected to ever run — but a lower cap
-    # WOULD run eviction against real, in-flight turn content with no
-    # discriminator to protect it.
+    # A lower cap can now safely fire without destroying real, in-flight
+    # turn content — see ``protect_open_turn_from_gc``'s own docstring
+    # for the one thing it still does NOT cover (another session's own
+    # open turn — #5366's subject, not this field's).
     history_content_max_bytes: int = 2 * 1024 * 1024 * 1024
+    # #5387 "L" (owner: "open-turn は GC 対象から外せるようにしたいね。規定は
+    # そうして、opt-in で対象にもするようにしたい" — verbatim): when True
+    # (the default), ``_evict_history_content_over_cap`` never deletes a
+    # file whose recorded ``chain_id`` matches the chain that triggered
+    # THIS eviction pass (``MediaStore.is_open_turn_file`` — GC is
+    # writer-triggered, so that chain IS "the turn currently in flight").
+    # Set False to opt IN to eviction being allowed to reach open-turn
+    # content too (the owner's own "opt-in で対象に" — e.g. an operator who
+    # has independently decided in-flight content is not worth protecting
+    # at their site).
+    #
+    # Scope (architect design B, #5387 — stated explicitly so this is not
+    # mistaken for "we decided not to bother"): this protects ONLY the
+    # write that triggered THIS session's own GC pass. Another session's
+    # own open turn is out of reach entirely — the eviction scan only
+    # ever enumerates THIS session's own directory (see
+    # ``_evict_history_content_over_cap``'s own docstring) — and stays
+    # unprotected until a CROSS-session GC (#5366) is built; #5366 is
+    # where that would first need to be handled, not here.
+    protect_open_turn_from_gc: bool = True
 
 
 @dataclass(frozen=True)
@@ -361,10 +377,10 @@ def _eviction_order(directory: Path) -> list[Path]:
     filter, "which one first" is a sort, and folding a future filter
     into THIS function's sort key would let it silently become "deleted
     last" instead of "never deleted"). #5387's turn-boundary exclusion
-    (once ``chain_id`` is threaded through the write-time cap path)
-    belongs in a SEPARATE eligibility filter applied to this function's
-    input or output — not as another entry in a predicate sequence
-    here. mtime cannot stand in for that filter either way: see
+    lands as exactly that SEPARATE filter, applied to this function's
+    OUTPUT by :meth:`MediaStore._evict_history_content_over_cap` (never
+    folded into this function's own sort) — not this function's job.
+    mtime cannot stand in for that filter either way: see
     ``history_content_max_bytes``'s own docstring for why (two
     concurrent sessions' writes interleave in mtime order — "oldest" is
     not "whose turn is still open"). Best-effort on a ``stat()`` race (a
@@ -592,6 +608,15 @@ class MediaStore:
         # survives for the project's lifetime, same as :mod:`data.workspace.
         # artifact_ref`'s sibling table.
         self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
+        # #5387: the write-time cap path's ONE consumer of ``chain_id`` —
+        # NOT persisted (lead-coder ruling: GC is writer-triggered, so the
+        # chain that fired THIS eviction pass IS "the turn currently in
+        # flight"; a file from a PAST process's chain is, by definition,
+        # never the current one — nothing here needs to survive a
+        # restart). Populated only when a real (non-empty) ``chain_id``
+        # reaches :meth:`save_tool_result`; never read for a path whose
+        # entry is absent — see :meth:`is_open_turn_file`.
+        self._chain_by_path: "dict[Path, str]" = {}
 
     def _spill_manifest_path(self) -> Path:
         # #4584: PERSIST tier — `.reyn/memory/`, not `.reyn/cache/` (see
@@ -919,6 +944,14 @@ class MediaStore:
         # eventual completion, is what this file's manifest contract needs.
         resolved_path = abs_path.resolve()
         self._tool_result_spill_paths.add(resolved_path)
+        # #5387: record this write's chain_id (in-memory, per-process —
+        # see the field's own docstring) so a LATER eviction pass this
+        # same process runs can tell "this file belongs to the turn that
+        # just triggered GC" apart from everything else. A caller that
+        # passes no chain_id (still the default at some call sites) never
+        # gets an entry — such a file is never treated as open-turn.
+        if chain_id:
+            self._chain_by_path[resolved_path] = chain_id
 
         async def _write_manifest_line(_resolved_path: Path = resolved_path) -> None:
             try:
@@ -948,27 +981,79 @@ class MediaStore:
         # landed yet, so this can lag one write behind — acceptable for
         # a backstop that (per the field's own docstring) is not
         # expected to fire under real usage.
-        self._evict_history_content_over_cap()
+        self._evict_history_content_over_cap(current_chain_id=chain_id)
         return block
 
-    def _evict_history_content_over_cap(self) -> None:
-        """#5364 §1.6 "C": delete this session's own OLDEST history-content
-        files (see :func:`_eviction_order`) until its directory is back
-        under ``history_content_max_bytes``. Scoped to THIS session's own
-        subdirectory, not the whole ``history_content_root`` — the cap's
-        own subject is one session's content (see the field's docstring:
-        cross-session growth is #5366's separate subject, not this one's).
-        Best-effort: an ``OSError`` mid-delete is logged and skipped, same
-        policy as :meth:`_purge_session_dir`'s own sibling deletes — a
-        failed eviction must never fail the write it followed."""
+    def is_open_turn_file(self, path: Path, *, current_chain_id: str) -> bool:
+        """#5387: True if ``path`` was written by the SAME chain that is
+        triggering GC right now — "the turn currently in flight" (GC is
+        writer-triggered: see :meth:`_evict_history_content_over_cap`'s
+        own docstring for why the triggering write's own ``chain_id`` IS
+        "now"). ``not_open_turn(path) = recorded_chain(path) !=
+        current_chain`` (architect/owner design, #5387) — this is that
+        predicate's negation.
+
+        Deliberately requires BOTH a real ``current_chain_id`` (empty ==
+        "no chain known for this GC pass" == protects nothing) AND a
+        recorded entry for ``path`` (absent == "this file predates
+        #5387's wiring, or its own write never got a chain_id" == never
+        open-turn) — a file can only be excluded from GC by matching an
+        ACTUAL chain, never by an absence on either side coincidentally
+        comparing equal (``"" == ""`` would otherwise protect every
+        chainless file against every chainless GC trigger)."""
+        if not current_chain_id:
+            return False
+        return self._chain_by_path.get(path) == current_chain_id
+
+    def _evict_history_content_over_cap(self, *, current_chain_id: str = "") -> None:
+        """#5364 §1.6 "C" / #5387 "L": delete this session's own OLDEST
+        history-content files (see :func:`_eviction_order`) until its
+        directory is back under ``history_content_max_bytes`` — SKIPPING
+        any file :meth:`is_open_turn_file` says belongs to the turn that
+        triggered THIS pass (default: protected; see
+        ``MediaStoreConfig.protect_open_turn_from_gc`` for the opt-in to
+        disable this and evict open-turn content too). Scoped to THIS
+        session's own subdirectory, not the whole ``history_content_root``
+        — the cap's own subject is one session's content (see the field's
+        docstring: cross-session growth is #5366's separate subject, not
+        this one's). Best-effort: an ``OSError`` mid-delete is logged and
+        skipped, same policy as :meth:`_purge_session_dir`'s own sibling
+        deletes — a failed eviction must never fail the write it
+        followed.
+
+        #5387 scope (architect design B, stated explicitly — NOT a
+        decision to leave a gap, a reach limit): this only protects the
+        write that triggered THIS session's own GC pass. Another
+        session's own open turn is out of C's reach entirely — C only
+        ever enumerates THIS session's own directory — and stays
+        unprotected only until a CROSS-session GC (#5366) is built; #5366
+        is where that would first need to be handled, not here.
+
+        Disclosed (architect review, non-blocking): if EVERY remaining
+        candidate is protected (all share the triggering chain), this
+        returns having deleted nothing, and the directory stays OVER
+        cap — deliberately: protecting an open turn's content is worth
+        more than strictly enforcing the byte cap on any given pass.
+        Not silent — the caller (:meth:`save_tool_result`) already logs
+        nothing extra here because this is the expected, harmless
+        common case (see ``history_content_max_bytes``'s own docstring:
+        2 GB default, eviction is not expected to fire under real usage
+        at all); a future lower cap that fires routinely against a
+        single long-running chain would see this over-cap state
+        persist across many writes, not a one-pass fluke."""
         cap = self._config.history_content_max_bytes
         directory = self._history_content_dir()
         _, total = _dir_stats_recursive(directory)
         if total <= cap:
             return
+        protect_open_turn = self._config.protect_open_turn_from_gc
         for path in _eviction_order(directory):
             if total <= cap:
                 break
+            if protect_open_turn and self.is_open_turn_file(
+                path, current_chain_id=current_chain_id,
+            ):
+                continue
             try:
                 size = path.stat().st_size
                 path.unlink()

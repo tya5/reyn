@@ -9691,6 +9691,7 @@ class Session:
         content_type: "str | None" = None,
         on_offload: "Callable[[str], None] | None" = None,
         on_write_unavailable: "Callable[[], None] | None" = None,
+        chain_id: str = "",
     ) -> str:
         """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1).
 
@@ -9700,11 +9701,11 @@ class Session:
         for present's stage-3 default viewer — never read into any LLM-visible field here.
 
         ``on_offload`` (#5364 §1.2) / ``on_write_unavailable`` (#5364 §1.5)
-        — forwarded unchanged; optional and additive, every existing
-        caller unaffected."""
+        / ``chain_id`` (#5387) — forwarded unchanged; optional and
+        additive, every existing caller unaffected."""
         return self._budget_advisor.cap_tool_result(
             content_str, content_type=content_type, on_offload=on_offload,
-            on_write_unavailable=on_write_unavailable,
+            on_write_unavailable=on_write_unavailable, chain_id=chain_id,
         )
 
     def _media_followup_budget(self, tool_content: str) -> "int | None":
