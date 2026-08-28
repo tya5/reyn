@@ -73,6 +73,30 @@ rule (sort order, priority, eviction policy) would produce the identical
 result with the new code deleted — a construction is only a witness once
 the new rule is the SOLE explanation left standing (#5399).
 
+**The same question binds the PRESCRIBER, not only the writer.** The face
+above reads as advice to whoever writes the assert — but "the observation
+runs, bites, and measures the wrong quantity" has a mirror shape one level
+up: a reviewer (or an issue) can find a genuine ABSENCE and prescribe a fix
+at a layer that isn't the one that would actually answer the claim,
+without ever checking whether an answer already exists elsewhere. Two
+instances the same night: a search for `emit_audit_event` in
+`landlock.py`/`seccomp.py` found zero hits and was read as "sandbox denial
+never reaches an audit-event" — the actual surface was one layer up,
+`shell_runner.py`'s own `hook_shell_executed` event, which already carried
+a `denial_class` field naming exactly this (#5244①). Separately, a design
+comment prescribed "build a seam one layer down" for injecting a fake
+compaction-engine failure, without first checking whether that layer
+already had a home for the LLM exemption this needed — `LLMReplay`, the
+`conftest.py` autouse fixture already at the litellm boundary — self-
+corrected as *"the question 'does an exemption's home already exist'
+should have come before 'build a seam'"* (#5382). Common form: **the layer
+where an absence was found is not necessarily the layer that owns the
+answer.** A sixth detection technique, for the prescribing/accepting side
+specifically: before recommending or approving a new mechanism to close a
+gap, ask whether an existing one — searched for directly, not assumed
+absent because the first grep came back empty — already answers the same
+question one layer away.
+
 ## 2. False-capability vs. false-prohibition — the dual, and only one is self-sealing
 
 A false **"X works"** claim dies the first time anyone depends on X — #3037's
