@@ -2418,12 +2418,21 @@ async def retry_loop(
                 # False the only value this raise can ever carry, not an
                 # unreachable branch where the default happens not to
                 # matter.
+                # #5367②: the OLD text past this point claimed "shrinking is
+                # not resolving this cause" without qualification — false in
+                # the same way #5367①'s neighboring fix was: "shrinking" here
+                # names only the turn-count-reduction ladder this loop
+                # attempted (head/tail trim, halving raw_middle); it does not
+                # cover spilling a turn's CONTENT (replacing an oversized
+                # tool-result body with a ref), which this cap never tries
+                # before giving up (#5367③).
                 raise UnrecoveredError(
                     f"retry_loop: cause {_cause!r} recovered "
                     f"{_consecutive_same_cause} consecutive times (limit "
-                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — shrinking is "
-                    "not resolving this cause; stopping rather than "
-                    "exhausting max_iterations."
+                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — the "
+                    "turn-count shrink ladder attempted is not resolving "
+                    "this cause (content-level spill was not tried here); "
+                    "stopping rather than exhausting max_iterations."
                 ) from _overflow_exc
 
         # Shrink escalation: reduce context size monotonically.
