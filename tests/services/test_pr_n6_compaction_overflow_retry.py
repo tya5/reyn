@@ -441,7 +441,7 @@ def _make_shrink_call_count_main_call(
     return _main_call
 
 
-def test_retry_loop_shrinks_tail_on_overflow() -> None:
+def test_retry_loop_shrinks_tail_on_overflow(tmp_path) -> None:
     """Tier 2: retry_loop shrinks tail after context overflow, reducing tail length.
 
     When main_call raises ContextOverflowError, retry_loop must reduce the
@@ -471,7 +471,7 @@ def test_retry_loop_shrinks_tail_on_overflow() -> None:
 
     cfg = _make_cfg()
     engine = _SmallMinEngine()
-    learner_path = Path(tempfile.mkdtemp()) / "m.json"
+    learner_path = tmp_path / "m.json"
     learner = TokenMultiplierLearner(storage_path=learner_path)
 
     # Tail with large-enough tokens (> tail_min=10) to trigger shrink.
@@ -515,7 +515,7 @@ def test_retry_loop_shrinks_tail_on_overflow() -> None:
         )
 
 
-def test_retry_loop_raises_unrecovered_when_all_at_min() -> None:
+def test_retry_loop_raises_unrecovered_when_all_at_min(tmp_path) -> None:
     """Tier 2: retry_loop raises UnrecoveredError when head and tail are already minimal.
 
     When head, tail, and raw_middle are all at or below their minimum token
@@ -523,7 +523,7 @@ def test_retry_loop_raises_unrecovered_when_all_at_min() -> None:
     """
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     # Single-turn minimal head + tail (≤ head_min_tokens / tail_min_tokens).
     head = [{"role": "user", "content": "h", "seq": 1}]
@@ -555,11 +555,11 @@ def test_retry_loop_raises_unrecovered_when_all_at_min() -> None:
     assert excinfo.value.saw_byte_limit is False
 
 
-def test_retry_loop_max_iterations_raises_unrecovered() -> None:
+def test_retry_loop_max_iterations_raises_unrecovered(tmp_path) -> None:
     """Tier 2: retry_loop raises UnrecoveredError when max_iterations=1 is exceeded."""
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     tail = _turns(["x" * 400] * 4)
     head = _turns(["h"])
@@ -580,7 +580,7 @@ def test_retry_loop_max_iterations_raises_unrecovered() -> None:
         ))
 
 
-def test_retry_loop_success_calls_learner_observe() -> None:
+def test_retry_loop_success_calls_learner_observe(tmp_path) -> None:
     """Tier 2: successful retry_loop call triggers learner.observe with positive tokens.
 
     When main_call returns a response with usage.prompt_tokens > 0, the
@@ -588,7 +588,7 @@ def test_retry_loop_success_calls_learner_observe() -> None:
     """
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner_path = Path(tempfile.mkdtemp()) / "m.json"
+    learner_path = tmp_path / "m.json"
     learner = TokenMultiplierLearner(storage_path=learner_path)
 
     model = "test-model"
@@ -633,7 +633,7 @@ def test_retry_loop_success_calls_learner_observe() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_retry_loop_emits_compaction_shrink_recovered_with_cause() -> None:
+def test_retry_loop_emits_compaction_shrink_recovered_with_cause(tmp_path) -> None:
     """Tier 2: #3783 stage 2 — a recovered overflow emits compaction_shrink_recovered
     naming the exception type, via the real EventLog subscriber mechanism (no mocks).
 
@@ -657,7 +657,7 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause() -> None:
     )
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head: list[dict] = []
     tail = _turns(["x" * 400] * 4)
@@ -688,7 +688,7 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause() -> None:
     assert only.data["consecutive"] == 1
 
 
-def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> None:
+def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted(tmp_path) -> None:
     """Tier 2: #3783 stage 2 — the SAME cause recovering more than
     ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS`` (2) times in a row raises
     UnrecoveredError even though shrinkable content remains (tail is not yet
@@ -742,7 +742,7 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> Non
     engine.budgets = budgets
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     # A big tail (tail_budget=10 is tiny, so it stays "shrinkable" across
     # several halvings) and an empty head so head-exhaustion is never reached
@@ -799,7 +799,7 @@ class _CompactFailsOnceEngine(_OverflowingEngine):
         return await super().compact(input_chunk)
 
 
-def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap() -> None:
+def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap(tmp_path) -> None:
     """Tier 2: #3783 stage 2 — a DIFFERENT cause resets the consecutive
     counter, so a turn that alternates between two real overflow causes is
     not penalised by the same-cause cap (each stays at consecutive=1,
@@ -818,7 +818,7 @@ def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap() -> None:
     engine = _CompactFailsOnceEngine()
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     # 4 raw_middle turns, empty head/tail: iteration 0's compact() overflows
     # (CompactionOverflowError) before main_call is ever reached; the shrink
@@ -900,7 +900,7 @@ class _FakeStatusError(Exception):
         self.status_code = status_code
 
 
-def test_413_recovery_does_not_claim_exceeds_t_max() -> None:
+def test_413_recovery_does_not_claim_exceeds_t_max(tmp_path) -> None:
     """Tier 2: #4885 — a 413 that never resolves (main_call always raises
     it, tail/head start at/below their token minimums) exhausts the
     binary-search floor and raises an ACCURATE message naming the byte
@@ -909,7 +909,7 @@ def test_413_recovery_does_not_claim_exceeds_t_max() -> None:
     T_max was never actually exceeded)."""
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head = [{"role": "user", "content": "h", "seq": 1}]
     tail = [{"role": "user", "content": "t", "seq": 2}]
@@ -945,7 +945,7 @@ def test_413_recovery_does_not_claim_exceeds_t_max() -> None:
     assert excinfo.value.saw_byte_limit is True
 
 
-def test_413_recovery_emits_t_max_override_in_the_audit_event() -> None:
+def test_413_recovery_emits_t_max_override_in_the_audit_event(tmp_path) -> None:
     """Tier 2: #4885 — the LOCAL T_max override this recovery uses is
     visible in the SAME audit trail an operator already reads for shrink
     activity (owner condition ②: not silently running with a smaller
@@ -953,7 +953,7 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event() -> None:
     event, not a new event kind."""
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head = [{"role": "user", "content": "h", "seq": 1}]
     tail = [{"role": "user", "content": "t", "seq": 2}]
@@ -990,7 +990,7 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event() -> None:
     )
 
 
-def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search() -> None:
+def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search(tmp_path) -> None:
     """Tier 2: #4885 — the pre-existing same-cause-recovers-N-times cap
     (#3783 stage 2, ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2``) does NOT
     fire for a byte-limit cause, even though a 413 recurring while the
@@ -1002,7 +1002,7 @@ def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search() -> Non
     which mechanism fired."""
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head = [{"role": "user", "content": "h", "seq": 1}]
     tail = [{"role": "user", "content": "t", "seq": 2}]
@@ -1030,7 +1030,7 @@ def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search() -> Non
     )
 
 
-def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() -> None:
+def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit(tmp_path) -> None:
     """Tier 2: #4947 ② — when retry_loop exhausts max_iterations, the
     generic "without convergence" message must name the byte limit if the
     LAST recovered cause was one, instead of leaving an operator to
@@ -1051,7 +1051,7 @@ def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() ->
     """
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     # Large enough that 3 iterations of tail-halving never reaches
     # tail_min_tokens (1500) or the SP+new_msg floor — this test wants
@@ -1118,7 +1118,7 @@ def _make_payload_threshold_main_call(
     return _main_call
 
 
-def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
+def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough(tmp_path) -> None:
     """Tier 2: #4944 — the ACCEPTING side of #4885's byte-limit recovery,
     which none of the 3 tests above witness (all 3 use ``_always_413`` —
     they only prove HOW retry_loop gives up, never that a real 413 the
@@ -1168,7 +1168,7 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
     questions Q2, no algorithm-level pin)."""
     cfg = _make_cfg()
     engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
     model = "test-model"
     use_chars4 = cfg.use_chars4_estimate
 
@@ -1315,7 +1315,7 @@ class _Always413CompactEngine(_OverflowingEngine):
         raise _FakeStatusError("compact 413", status_code=413)
 
 
-def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> None:
+def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state(tmp_path) -> None:
     """Tier 2: #4947 ③ — a compact()-origin 413 that recurs no matter how
     small the offered slice gets must terminate at the mid=1-turn floor
     (named 413), NOT cycle back to the state it started from.
@@ -1347,7 +1347,7 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
     engine = _Always413CompactEngine(head_budget=10, tail_budget=10)
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head = _turns(["h" * 20] * 8)
     tail = _turns(["t" * 20] * 8)
@@ -1413,7 +1413,7 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
     )
 
 
-def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor() -> None:
+def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path) -> None:
     """Tier 2: #5367③ — at the byte-limit mid=1-turn floor, a spillable
     ``raw_middle[0]`` (role ``tool``, str content) is offered to the
     injected ``spill_fn`` BEFORE raising; if the spill produces smaller
@@ -1447,7 +1447,7 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor() -> None
             return ChatSummary(topic_arc="ok", covers_through_seq=turn.get("seq", 0))
 
     engine = _SpillableByteLimitEngine()
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     raw_middle = [{
         "role": "tool", "content": "OVERSIZED_TOOL_RESULT", "seq": 1,
@@ -1492,7 +1492,7 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor() -> None
     )
 
 
-def test_5367_3_spill_unavailable_still_raises_with_accurate_message() -> None:
+def test_5367_3_spill_unavailable_still_raises_with_accurate_message(tmp_path) -> None:
     """Tier 2: #5367③ — with no ``spill_fn`` injected (the default,
     matching every OTHER test in this file), the byte-limit mid-split
     floor behaves exactly as #5367②'s text-only fix left it: raises
@@ -1500,7 +1500,7 @@ def test_5367_3_spill_unavailable_still_raises_with_accurate_message() -> None:
     about spill (never claiming it was tried when it was not offered)."""
     cfg = _make_cfg()
     engine = _Always413CompactEngine(head_budget=10, tail_budget=10)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     raw_middle = [{"role": "tool", "content": "OVERSIZED_TOOL_RESULT", "seq": 1}]
     new_msg = {"role": "user", "content": "q", "seq": 999}
@@ -1524,7 +1524,7 @@ def test_5367_3_spill_unavailable_still_raises_with_accurate_message() -> None:
     assert excinfo.value.saw_byte_limit is True
 
 
-def test_4947_stage1_success_resets_same_cause_streak() -> None:
+def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
     """Tier 2: #4947 ③ (architect-ruled, CI red on #4950) — a compact()
     SUCCESS resets the same-cause cap's consecutive-recover counter, so
     fail / fail / SUCCEED / fail / fail does NOT trip the cap (which fires
@@ -1571,7 +1571,7 @@ def test_4947_stage1_success_resets_same_cause_streak() -> None:
     engine = _ScriptedCauseEngine([True, True, False, True, True])
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head: list[dict] = []
     tail: list[dict] = []
@@ -1604,7 +1604,7 @@ def test_4947_stage1_success_resets_same_cause_streak() -> None:
     )
 
 
-def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure() -> None:
+def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(tmp_path) -> None:
     """Tier 2: #4947 ③ — a compact() that fails once then recovers must
     still reach a REAL success end-to-end via the split-and-retry
     mechanism, with the summary reflecting ALL of raw_middle (not just the
@@ -1615,7 +1615,7 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure()
     """
     cfg = _make_cfg()
     engine = _CompactFailsOnceEngine()
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head: list[dict] = []
     tail: list[dict] = []
@@ -1652,7 +1652,7 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure()
     assert only_summary["covers_through_seq"] == raw_middle[-1]["seq"]
 
 
-def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit() -> None:
+def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit(tmp_path) -> None:
     """Tier 2: #4947 ③ (architect review on #4950) — the mid=1-turn floor
     raises ONLY for a byte limit. A non-byte-limit compact() failure (a
     transient 5xx, a rate limit, a truncated JSON response) at this floor
@@ -1683,7 +1683,7 @@ def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit() -> No
             raise AssertionError("compact() must not be retried after the defer")
 
     engine = _CompactFailsOnceThenNoMoreCallsEngine()
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head: list[dict] = []
     tail: list[dict] = []
@@ -1713,7 +1713,7 @@ def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit() -> No
     assert only_tail == raw_middle + tail
 
 
-def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit() -> None:
+def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
     """Tier 2: #4947 ③ — the mid=1-turn floor DOES raise, naming the byte
     limit, when the recurring cause IS one — moving that single turn into
     ``tail`` would fatten the exact request ``main_call`` is about to
@@ -1725,7 +1725,7 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit() -> None:
             raise _FakeStatusError("compact 413", status_code=413)
 
     engine = _AlwaysByteLimitEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     head: list[dict] = []
     tail: list[dict] = []
