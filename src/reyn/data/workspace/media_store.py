@@ -258,6 +258,16 @@ class MediaStoreConfig:
     # accumulates — that cross-session subject is #5366 (owner-ruled
     # separation), deliberately NOT this field's job.
     #
+    # #5366 gave that separate subject its own number:
+    # ``reyn.config.infra.StorageConfig.max_bytes`` (``storage:`` in
+    # reyn.yaml) — a DIFFERENT number bounding the WHOLE project's
+    # history-content tree across every session, never reused as this
+    # field's own name (architect's ruling: two same-named caps would
+    # make it unreadable which one is actually in effect for a given
+    # eviction). This field remains the per-store fail-safe backstop
+    # #5388's own per-session eviction uses; it is unaffected by whether
+    # ``StorageConfig.max_bytes`` is set.
+    #
     # Default derivation (owner ruling, measured 2026-08-28, 8 projects
     # on this machine): the ONE project with any ``.reyn/tool-results/``
     # content at all held 18 files / 196 KB; the largest ``.reyn/`` tree
