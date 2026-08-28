@@ -1222,6 +1222,21 @@ class Session:
         # Kept directly (not only via journal), see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
+        # #5214: True once run()'s own while-loop has exited and the
+        # terminal session_completed audit event has been emitted.
+        # run_one_iteration() itself has NO awareness of whether run()
+        # has already exited — it is a pure pumping primitive, callable
+        # from outside run() (MessageBus.request), so a caller that pumps
+        # from outside run()'s own loop is the one that must check this
+        # before calling it again. No such read-point existed before
+        # #5214 (public OR private) — MessageBus kept calling
+        # run_one_iteration() purely on "inbox non-empty", with no way to
+        # know the session's own lifecycle had already ended (observed
+        # real-machine: audit-events stopped while turns kept running for
+        # 4h20m). Distinct from ``halted_reason`` (the FAIL-STOP axis —
+        # cancel/durability-failure); this covers ordinary graceful
+        # completion too, which halted_reason never sets.
+        self._run_completed: bool = False
         # In-memory buffer of restored-then-resolved intervention answers (PR-intervention-link L6, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # In-memory staging for wake=false ride-along messages, durably
@@ -6590,6 +6605,21 @@ class Session:
         ``DurabilityHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
         return self._halted_reason
 
+    @property
+    def run_completed(self) -> bool:
+        """#5214: True once ``run()``'s own while-loop has exited and the
+        terminal ``session_completed`` audit event has been emitted;
+        ``False`` while ``run()`` is still active (or was never started
+        via ``run()`` at all — a ``run_one_iteration()``-only caller with
+        no wrapping ``run()`` task never sets this True, by design: this
+        property answers "has run()'s OWN loop ended", not "is anything
+        still driving this session"). The public read-point a caller
+        pumping ``run_one_iteration()`` from OUTSIDE ``run()``'s own loop
+        (``MessageBus.request``) needs to know it must stop — see
+        ``run_one_iteration``'s own docstring for why that method cannot
+        know this on its own."""
+        return self._run_completed
+
     def _fail_stop_if_durability_dead(self) -> None:
         """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``DurabilityHaltError`` (recording the
         halt reason first, so it surfaces consistently with the process-edge) when durability has
@@ -6974,6 +7004,16 @@ class Session:
         Does NOT emit chat_started / chat_stopped events — those are emitted by
         run() which owns the session lifetime.  Does NOT call _drain_on_shutdown;
         that is also run()'s responsibility on loop exit.
+
+        #5214: this method itself has NO awareness of whether run()'s own
+        loop has already exited — it will happily process an inbox item
+        even after run_completed is True (it only checks _halted_reason,
+        the fail-stop axis, not ordinary graceful completion). A caller
+        pumping this from OUTSIDE run()'s own loop (MessageBus.request)
+        MUST check ``self.run_completed`` itself before calling this
+        again — this method does not raise or refuse on its own, by
+        design (it stays the same "process exactly one item" primitive
+        run() itself still uses internally up to its own loop condition).
 
         #1800 slice 4a: uses ``_drain_to_wake`` instead of ``_consume_inbox``
         directly.  With no ``wake=false`` messages ever enqueued (the current
@@ -7454,6 +7494,11 @@ class Session:
                 # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
                 # chat_stopped; marks the end of the session's resource scope.
                 self._audit_events.emit("session_completed", agent_name=self.agent_name)
+                # #5214: the SAME boundary session_completed marks — a
+                # caller pumping run_one_iteration() from outside this
+                # loop (MessageBus.request) reads this via the public
+                # ``run_completed`` property to know it must stop.
+                self._run_completed = True
                 # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
                 # scope). The run-loop has exited, so an E push here is not drained
                 # (harmless); session_end is the C/F point in practice.

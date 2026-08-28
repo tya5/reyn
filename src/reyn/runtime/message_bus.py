@@ -145,6 +145,30 @@ class MessageBus:
             # Drain all currently available outbox messages before pumping.
             self._drain_outbox(agent, collected)
 
+            # #5214: checked BEFORE quiescence — a completed session's
+            # inbox is never consumed again (nothing calls
+            # run_one_iteration() on it below), so it can never become
+            # quiescent on its own; without this check the loop would
+            # silently poll-sleep until `timeout` instead of stopping
+            # immediately with a real reason. Real-machine observed: a
+            # completed session kept getting pumped for 4h20m because
+            # nothing here ever asked whether run() had already exited
+            # (only inbox.empty() was checked) — see Session.run_
+            # completed's own docstring for why run_one_iteration()
+            # itself cannot refuse this on its own.
+            if agent.run_completed:
+                pending = agent.inbox.qsize()
+                if pending:
+                    logger.warning(
+                        "MessageBus.request: agent %r's session has "
+                        "already completed (run() exited) — refusing to "
+                        "pump further; %d inbox message(s) enqueued for "
+                        "this call will NOT be consumed",
+                        getattr(agent, "agent_name", "?"), pending,
+                    )
+                self._drain_outbox(agent, collected)
+                break
+
             if self._is_quiescent(agent):
                 # One final drain to catch any messages emitted just before
                 # the quiescence check.
