@@ -52,11 +52,31 @@ import shutil
 import pytest
 
 from reyn.security.permissions import PermissionDecl
+from reyn.security.permissions.approval_ledger import ApprovalLedger
 from reyn.security.permissions.permissions import PermissionResolver
 
 
 def _make_resolver(tmp_path) -> PermissionResolver:
     return PermissionResolver({}, project_root=tmp_path)
+
+
+def _fold(resolver: PermissionResolver):
+    """#5431: read (approvals, bound_identities, scopes) via a fresh
+    `ApprovalLedger.fold()` — the same production surface `reyn permissions
+    list` / `GET /api/permissions` use (migrating a legacy `approvals.yaml`
+    snapshot first, exactly like those two `_load()` functions, so a
+    legacy-only fixture is still visible), and the surface
+    `test_binding_writes_durably_no_tmp_file_ever_used` (below, unchanged
+    by this PR) already used directly for the SAME data — rather than the
+    removed `saved_get`/`bound_identity_get` accessors."""
+    from reyn.security.permissions.approval_ledger import migrate_legacy_snapshot
+
+    ledger = ApprovalLedger(resolver.approval_ledger_path)
+    # `resolver.project_root` is the public read; the legacy-snapshot
+    # relative path is the same fixed constant `interfaces/{cli,web}/
+    # .../permissions.py`'s own `_legacy_snapshot_path()` helpers use.
+    migrate_legacy_snapshot(ledger, resolver.project_root / ".reyn" / "approvals.yaml")
+    return ledger.fold()
 
 
 def test_purge_then_recreate_the_same_named_target_asks_again(tmp_path) -> None:
@@ -108,7 +128,8 @@ def test_the_approval_row_itself_survives_the_stale_mismatch(tmp_path) -> None:
     # A FRESH resolver (forces a real re-read from disk) still sees the
     # approval row as true.
     fresh = _make_resolver(tmp_path)
-    assert fresh.saved_get(key) is True, (
+    saved, _bound, _scopes = _fold(fresh)
+    assert saved[key] is True, (
         "the approval row disappeared from approvals.yaml -- #5042's own "
         "audit-events half (the row must never vanish) is not satisfied"
     )
@@ -126,19 +147,23 @@ def test_host_and_plugin_approvals_are_never_bound_to_an_identity(tmp_path) -> N
     target.mkdir()
     resolver = _make_resolver(tmp_path)
     resolver._saved["actor/file.write/some_dir/"] = True
-    resolver._saved["actor/http.get/example.com"] = True
-    resolver._saved["mcp.broker"] = True
+    # #5431: these two are persisted for real (`_persist`, the production
+    # write path) rather than poked directly into `resolver._saved`, so
+    # the ledger-fold read below actually finds them.
+    resolver._persist("actor/http.get/example.com", True)
+    resolver._persist("mcp.broker", True)
 
     write_path = str(target / "f.txt")
     asyncio.run(resolver.require_file_write(PermissionDecl(), write_path, "actor"))
 
-    assert resolver.saved_get("actor/http.get/example.com") is True
-    assert resolver.saved_get("mcp.broker") is True
-    assert resolver.bound_identity_get("actor/http.get/example.com") is None, (
+    saved, bound, _scopes = _fold(resolver)
+    assert saved["actor/http.get/example.com"] is True
+    assert saved["mcp.broker"] is True
+    assert "actor/http.get/example.com" not in bound, (
         "a HOST-flavor approval must never get a bound identity -- "
         "'target disappeared' has no meaning for a host"
     )
-    assert resolver.bound_identity_get("mcp.broker") is None, (
+    assert "mcp.broker" not in bound, (
         "a PLUGIN-flavor approval must never get a bound identity"
     )
 
@@ -152,8 +177,9 @@ async def test_an_approval_for_a_not_yet_existing_target_passes_on_first_use(
     prompt the first time the path shows up). Checking it before the
     target exists must still pass (nothing to bind yet); once the target
     is created, the NEXT check both passes AND performs the actual
-    binding (verified via the public `bound_identity_get` accessor, not a
-    private-state peek)."""
+    binding (verified via a fresh `ApprovalLedger.fold()`, the genuine
+    production surface for this data — #5431 removed the
+    `bound_identity_get` accessor, whose only callers were tests)."""
     target = tmp_path / "not_yet"
     resolver = _make_resolver(tmp_path)
     key = "actor/file.write/not_yet/"
@@ -165,16 +191,19 @@ async def test_an_approval_for_a_not_yet_existing_target_passes_on_first_use(
     # or returns None) -- it performs no filesystem I/O of its own, so
     # calling it against a not-yet-existing target is safe and exercises
     # the SAME public seam every real caller uses, not a private method.
-    assert resolver.bound_identity_get(key) is None
+    _saved, bound, _scopes = _fold(resolver)
+    assert key not in bound
     await resolver.require_file_write(PermissionDecl(), write_path, "actor")
-    assert resolver.bound_identity_get(key) is None, (
+    _saved, bound, _scopes = _fold(resolver)
+    assert key not in bound, (
         "a not-yet-existing target must not be bound to anything -- "
         "there is nothing real to bind to yet"
     )
 
     target.mkdir()
     await resolver.require_file_write(PermissionDecl(), write_path, "actor")
-    assert resolver.bound_identity_get(key) is not None, (
+    _saved, bound, _scopes = _fold(resolver)
+    assert key in bound, (
         "the first check AFTER the target started existing must have "
         "bound its identity"
     )
@@ -198,14 +227,16 @@ def test_a_legacy_bare_true_entry_is_treated_as_unbound_and_bound_on_first_use(
     (approvals_dir / "approvals.yaml").write_text(f"{key}: true\n", encoding="utf-8")
 
     resolver = _make_resolver(tmp_path)
-    assert resolver.saved_get(key) is True
-    assert resolver.bound_identity_get(key) is None, (
+    saved, bound, _scopes = _fold(resolver)
+    assert saved[key] is True
+    assert key not in bound, (
         "a legacy entry must read as unbound before its first use"
     )
 
     write_path = str(target / "f.txt")
     asyncio.run(resolver.require_file_write(PermissionDecl(), write_path, "actor"))
-    assert resolver.bound_identity_get(key) is not None, (
+    _saved, bound, _scopes = _fold(resolver)
+    assert key in bound, (
         "the legacy entry's first use must have bound it"
     )
 

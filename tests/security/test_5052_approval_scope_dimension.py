@@ -126,8 +126,13 @@ def test_default_agent_scoped_approval_does_not_leak_to_a_second_agent(
     )
 
     # Ledger-level corroboration: the scope actually recorded is agent-a's,
-    # not workspace-wide.
-    assert resolver_a.saved_scope_get(_KEY) == scope_for_agent("agent-a")
+    # not workspace-wide. #5431: read via a fresh `ApprovalLedger.fold()`
+    # (the same production surface `reyn permissions list` / `GET
+    # /api/permissions` use) rather than the removed `saved_scope_get`
+    # accessor — a strictly fresher read than that cached accessor ever
+    # was, not a weaker one.
+    _saved, _bound, scopes = _ledger(tmp_path).fold()
+    assert scopes[_KEY] == scope_for_agent("agent-a")
 
 
 # ── (b) an explicit workspace-scoped approval DOES apply to both agents ────
@@ -179,7 +184,9 @@ def test_legacy_scopeless_entry_is_still_honored_workspace_wide(
             f"agent {agent_name!r} should not have been prompted -- a "
             f"legacy scope-less grant still covers every agent"
         )
-        assert resolver.saved_scope_get(_KEY) == SCOPE_LEGACY_WORKSPACE, (
+        # #5431: fresh ledger fold, same reasoning as above.
+        _saved, _bound, scopes = _ledger(tmp_path).fold()
+        assert scopes[_KEY] == SCOPE_LEGACY_WORKSPACE, (
             "a scope-less record must classify as the LEGACY sentinel, "
             "never silently collapsed into SCOPE_WORKSPACE"
         )

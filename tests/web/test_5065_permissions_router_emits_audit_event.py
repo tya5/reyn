@@ -197,6 +197,7 @@ def test_web_revoke_clears_the_bound_identity_a_live_resolver_would_have_held(
     the SAME project after the HTTP revoke."""
     import asyncio
 
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
     key = "chat_router/file.write/some_dir/"
@@ -213,15 +214,24 @@ def test_web_revoke_clears_the_bound_identity_a_live_resolver_would_have_held(
             PermissionDecl(), str(target / "f.txt"), "chat_router",
         ),
     )
-    assert resolver.bound_identity_get(key) is not None
+    # #5431: read via a fresh `ApprovalLedger.fold()` (the same production
+    # surface `GET /api/permissions` itself uses) rather than the removed
+    # `bound_identity_get` accessor, whose only callers were tests.
+    ledger_path = tmp_project / ".reyn" / "approvals.jsonl"
+    _saved, bound, _scopes = ApprovalLedger(ledger_path).fold()
+    assert key in bound
 
     response = _client().delete(
         "/api/permissions/chat_router%2Ffile.write%2Fsome_dir%2F",
     )
     assert response.status_code == 204, response.text
 
-    fresh = PermissionResolver({}, project_root=tmp_project)
-    assert fresh.bound_identity_get(key) is None, (
+    # No live PermissionResolver needed to observe this -- the DELETE
+    # route writes straight to the SAME on-disk ledger, so a fresh fold
+    # (the process-boundary analogue) must show NO bound identity for
+    # this key.
+    _saved, bound, _scopes = ApprovalLedger(ledger_path).fold()
+    assert key not in bound, (
         "a web-surface revoke must clear the bound identity too, not "
         "just the approval row"
     )

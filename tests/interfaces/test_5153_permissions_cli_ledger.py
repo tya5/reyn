@@ -137,16 +137,21 @@ def test_cli_revoke_clears_the_bound_identity_a_live_resolver_would_have_held(
     asyncio.run(
         resolver.require_file_write(PermissionDecl(), str(target / "f.txt"), "actor"),
     )
-    assert resolver.bound_identity_get(key) is not None
+    # #5431: read via a fresh `ApprovalLedger.fold()` (this file's own
+    # `_ledger()` helper) — the removed `bound_identity_get` accessor's
+    # only callers were tests.
+    _saved, bound, _scopes = _ledger(tmp_path).fold()
+    assert key in bound
 
     # The CLI revokes it -- a SEPARATE process/door, no shared in-memory
     # state with `resolver` above.
     _cmd_revoke(Namespace(key=key))
 
-    # A FRESH resolver (the process-boundary analogue) must see NO bound
-    # identity for this key.
-    fresh = PermissionResolver({}, project_root=tmp_path)
-    assert fresh.bound_identity_get(key) is None, (
+    # No live PermissionResolver needed to observe this -- the CLI revoke
+    # writes straight to the SAME on-disk ledger, so a fresh fold (the
+    # process-boundary analogue) must show NO bound identity for this key.
+    _saved, bound, _scopes = _ledger(tmp_path).fold()
+    assert key not in bound, (
         "a CLI revoke must clear the bound identity too, not just the "
         "approval row -- otherwise a later re-approval of the same key "
         "could inherit a stale identity from before the revoke"

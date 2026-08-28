@@ -622,27 +622,44 @@ class PermissionResolver:
         ``_project_root``."""
         return self._project_root
 
-    def saved_get(self, key: str) -> bool | None:
-        """Read accessor for the persisted approvals map. Returns the
-        stored boolean (or None when not yet recorded)."""
-        return self._saved.get(key)
-
-    def saved_scope_get(self, key: str) -> "str | None":
-        """#5052: read accessor for *key*'s persisted scope — ``None``
-        when *key* has no saved approval at all (never approved, or
-        session-only). A saved key with no explicit scope reads as
-        :data:`~reyn.security.permissions.approval_ledger.SCOPE_LEGACY_WORKSPACE`
-        (see :meth:`ApprovalLedger.fold`'s own docstring), never as
-        ``None`` — "recorded, no scope" and "never recorded" are kept
-        distinct so a caller cannot mistake one for the other."""
-        return self._saved_scopes.get(key)
-
-    def bound_identity_get(self, key: str) -> "tuple[int, float | None] | None":
-        """#5042: read accessor for the PATH-flavor identity binding,
-        mirroring :meth:`saved_get`'s own convention — ``None`` when *key*
-        has never been bound (never used, a legacy pre-#5042 entry, or a
-        non-path-flavor key, which is never bound at all)."""
-        return self._bound_identities.get(key)
+    # #5431: ``saved_get`` / ``saved_scope_get`` / ``bound_identity_get`` —
+    # three read accessors that used to live here — were removed. Each had
+    # ZERO production consumers (confirmed via `git grep '\.<name>(' --
+    # src/`, both at issue-filing time and again in this PR): every caller
+    # was a test file, the #4866 "publish _x as x to satisfy a test" shape
+    # at class scale. Per-accessor disposition (architect's decision
+    # framework: does an operator actually want to read THIS through the
+    # live resolver?):
+    #   - ``saved_scope_get`` — an operator already sees this exact data
+    #     via `reyn permissions list` / `GET /api/permissions`, both of
+    #     which fold a FRESH `ApprovalLedger` read (`_load()` in
+    #     `interfaces/cli/commands/permissions.py` and
+    #     `interfaces/web/routers/permissions.py`) — a strictly BETTER
+    #     read than this accessor's cached `self.__saved_scopes` (fresh
+    #     vs. loaded-once-then-cached). Redundant; deleted.
+    #   - ``saved_get`` — same shape. `self.__saved` is populated once
+    #     (`_ensure_folded`) and mutated only by `_persist`, which writes
+    #     the SAME value to disk in the SAME call — so it never diverges
+    #     from a fresh ledger fold for any state a caller could observe
+    #     from outside this process (`session_approve_path`'s session-only
+    #     grants live in the SEPARATE `self._session` dict, never
+    #     `self.__saved`, so this accessor could never surface those
+    #     either way). No operator use case a fresh ledger read doesn't
+    #     already cover. Deleted.
+    #   - ``bound_identity_get`` — no operator-facing surface exists for
+    #     bound-identity state at all today (both `_load()` sites discard
+    #     `ApprovalLedger.fold()`'s second return value as `_bound`) and
+    #     no #5042 thread ever proposed adding one. `ApprovalLedger.fold()`
+    #     itself (already a public, already-used-elsewhere class — see
+    #     `test_binding_writes_durably_no_tmp_file_ever_used`, which read
+    #     `fold()[1]` directly rather than through this accessor even
+    #     before this PR) is the genuine production surface a caller
+    #     reaches for this data. Deleted.
+    # None was renamed to a private wrapper: the class already has a
+    # private `_saved` / `_saved_scopes` / `_bound_identities` property
+    # each of these accessors did nothing but forward to — adding a
+    # `_saved_get`-shaped method used by nothing would just be a second,
+    # redundant private spelling of the same read.
 
     def unconfirmable_identity_check_count(self) -> int:
         """#5152 (architect ruling, issuecomment-5383604927): how many
