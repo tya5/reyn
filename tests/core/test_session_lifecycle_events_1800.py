@@ -18,10 +18,15 @@ Four tests verifying the new P6 events fire at the right points:
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No MagicMock / AsyncMock / patch for Session collaborators.
 - Real Session, real EventLog, real StateLog.
-- Only the LLM-calling boundary (_loop_driver.run_turn, which invokes
-  RouterLoop → call_llm_tools) is replaced with a plain async callable,
-  consistent with the "LLM is the only collaborator that may be faked"
-  rule (Tier 2c).
+- Test 3 (turn_started) drives the REAL `RouterLoopDriver.run_turn` /
+  RouterLoop chain via `@pytest.mark.llm_stub` (#5103, architect design
+  "C2") — only `litellm.acompletion` itself is stubbed. Test 4
+  (turn_completed) still replaces `_loop_driver.run_turn` directly with a
+  plain async callable: its own subject is the turn_completed emit's
+  ORDERING relative to `run_turn`'s own return, so replacing `run_turn`
+  itself is what the test needs, not what it is working around (#5103
+  triage: this is the "timing observation" class, not the "LLM
+  avoidance" class the llm_stub migration targets).
 - Events observed via add_subscriber (public EventLog API), not via
   private state assertions.
 """
@@ -170,25 +175,24 @@ async def test_session_started_and_completed_emit(tmp_path: Path, monkeypatch) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_turn_started_emits_with_kind(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: turn_started is emitted once per turn in run_one_iteration(),
     carrying the inbox trigger's kind, before the turn's handler runs.
 
-    Approach: inject a 'user' inbox message, monkeypatch _loop_driver.run_turn
-    to a fast async noop (LLM-boundary fake — the only collaborator the policy
-    allows faking in Tier 2c), then call run_one_iteration() once.
+    Approach: inject a 'user' inbox message, then call run_one_iteration()
+    once. #5103: drives the REAL `run_one_iteration` -> `_handle_user_
+    message` -> `_run_router_loop` -> `RouterLoopDriver.run_turn` chain
+    (architect design "C2", #5363's own precedent) — only the LLM boundary
+    itself (`litellm.acompletion`) is stubbed via `@pytest.mark.llm_stub`,
+    not `run_turn` wholesale. What this test asserts (turn_started fires
+    with the right kind) was previously witnessed against a private
+    `_noop` stand-in that replaced `run_turn` entirely; now it is
+    witnessed on the real code path.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     collected = _collect_events(session)
-
-    # Replace the LLM-calling boundary (run_turn) with a plain async noop.
-    # This is the only fake; the real run_one_iteration → _handle_user_message
-    # → _run_router_loop chain runs.
-    async def _noop_run_turn(user_text: str, chain_id: str) -> None:
-        pass
-
-    session._loop_driver.run_turn = _noop_run_turn  # type: ignore[method-assign]
 
     _chain_id = "test-chain-001"
     await session._put_inbox("user", {"text": "hello", "chain_id": _chain_id})
