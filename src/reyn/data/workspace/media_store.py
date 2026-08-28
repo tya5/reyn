@@ -102,6 +102,7 @@ from typing import TYPE_CHECKING
 from reyn.services.offload.store import offload_value, read_offloaded
 
 if TYPE_CHECKING:
+    from reyn.config.infra import StorageConfig
     from reyn.core.events.durability_worker import DurabilityWorker
 
 logger = logging.getLogger(__name__)
@@ -611,8 +612,19 @@ class MediaStore:
         base_url: str | None = None,
         session_id: str,
         worker: "DurabilityWorker | None" = None,
+        storage: "StorageConfig | None" = None,
     ) -> None:
         self._config = config or MediaStoreConfig()
+        # #5366 §3: the PROJECT-wide cap/pin (StorageConfig.max_bytes/pin,
+        # reyn.yaml's `storage:` block) — a different subject than
+        # self._config.history_content_max_bytes (this store's own
+        # per-session fail-safe backstop; see that field's own docstring
+        # for why the two are deliberately never the same number). `None`
+        # (the default, matching StorageConfig's own default) means
+        # cross-session GC never fires — see
+        # :meth:`_evict_cross_session_over_cap`.
+        from reyn.config.infra import StorageConfig
+        self._storage = storage or StorageConfig()
         self._project_root = project_root.resolve()
         # #5364 §1.4 (owner: "UIを止めさせたくない" — a synchronous tool-result
         # write can stall the event loop, same class of problem #1765 fixed
@@ -978,6 +990,21 @@ class MediaStore:
                 "failure latched (DurabilityWorker.durability_failed) — "
                 "refusing to mint a ref for a file that will not exist"
             )
+        # #5366 §3: a PRE-check, same shape as durability_failed above —
+        # try to make room in the PROJECT-wide (cross-session) tree
+        # first; if evicting every available candidate still leaves the
+        # project ALREADY over StorageConfig.max_bytes (checked against
+        # what is on disk BEFORE this write — this does not project the
+        # size of the content this call is about to add), refuse this
+        # NEW write. A write that itself FIRST pushes the project over
+        # cap is therefore still allowed through (the project was under
+        # cap the instant this check ran) — the NEXT write's own
+        # pre-check is what observes and cleans up the resulting
+        # overage; see :meth:`_evict_cross_session_over_cap`'s own
+        # docstring. No-op (returns immediately) when
+        # StorageConfig.max_bytes is unset — see that field's own
+        # docstring: None means off, not "check anyway".
+        self._evict_cross_session_over_cap()
         chain_short = _safe_token(chain_id)[:6] if chain_id else ""
         tool_token = _safe_token(tool) or "tool"
         ext = _ext_for_mime(mime_type)
@@ -1161,6 +1188,122 @@ class MediaStore:
                 )
                 continue
             total -= size
+
+    def _evict_cross_session_over_cap(self) -> None:
+        """#5366 §3 (architect design, final ruling — issuecomment-
+        5451564768 / lead-coder confirmation issuecomment-5451700-ish):
+        bound the PROJECT-wide (cross-session) history-content footprint
+        against ``StorageConfig.max_bytes`` — a DIFFERENT number than
+        :attr:`MediaStoreConfig.history_content_max_bytes` (this store's
+        own per-session backstop, see that field's docstring for why the
+        two are deliberately never the same). No-op when ``max_bytes``
+        is unset (``None`` — the field's own default means "off", not
+        "check anyway").
+
+        Candidates come from :func:`cross_session_eviction_candidates`
+        against the project-wide root (:func:`history_content_root_for`)
+        minus pinned agents — deliberately no liveness filter (see that
+        function's own docstring for why: #5388's per-session cap
+        already evicts a LIVE session's own old files, so a liveness
+        filter here would protect cross-session GC MORE than per-session
+        GC protects itself, for the same resource).
+
+        Runs BEFORE the write this call is guarding (a pre-check, same
+        shape as the ``durability_failed`` check right above its own
+        call site) — not a post-write backstop like
+        :meth:`_evict_history_content_over_cap`. Checked against what is
+        ALREADY on disk before this write lands, never projecting this
+        write's own upcoming size — a write that itself first pushes the
+        project over cap is therefore still let through (the project
+        was under cap the instant this check ran); the NEXT write's own
+        pre-check is what observes and cleans up the resulting overage.
+        If evicting every available (non-pinned) candidate still leaves
+        the project ALREADY over cap, raises
+        :class:`MediaStoreWriteUnavailable` (#5364 §1.5's own contract:
+        refuse rather than mint a ref for content that cannot actually
+        fit) — architect's #5366 §3 spec: "候補が尽きて
+        なお超過なら MediaStoreWriteUnavailable". The caller
+        (``cap_tool_result_content``, this exception's one real
+        consumer) already keeps the content inline instead of failing
+        the turn; no new handling is needed at that seam.
+
+        Best-effort deletes (an ``OSError`` mid-delete is logged and
+        skipped), same policy as the per-session sibling above — a
+        failed eviction must never itself crash the write it precedes."""
+        max_bytes = self._storage.max_bytes
+        if max_bytes is None:
+            return
+        root = history_content_root_for(self._project_root, self._config)
+        _, total = _dir_stats_recursive(root)
+        if total <= max_bytes:
+            return
+        candidates = cross_session_eviction_candidates(
+            root, pin=self._storage.pin,
+        )
+        for path in candidates:
+            if total <= max_bytes:
+                return
+            try:
+                size = path.stat().st_size
+                path.unlink()
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#5366 §3: cross-session eviction of %s under the "
+                    "project storage cap failed: %s", path, e,
+                )
+                continue
+            total -= size
+        if total > max_bytes:
+            raise MediaStoreWriteUnavailable(
+                f"project-wide storage.max_bytes ({max_bytes}) is "
+                f"exceeded ({total} bytes) even after evicting every "
+                "non-pinned candidate — refusing to mint a ref for a "
+                "file that would push the project further over"
+            )
+
+    def cross_session_eviction_preview(self) -> "list[Path]":
+        """#5366 §3 item ④ ("消える前」表示 — 2 と同じ関数を削除せずに走ら
+        せる"): the SAME candidate function
+        (:func:`cross_session_eviction_candidates`) and the SAME
+        stop-when-under-cap loop :meth:`_evict_cross_session_over_cap`
+        runs, but never calls ``path.unlink()`` — an operator-facing
+        "what would go" list, computed without side effects, in the
+        SAME order eviction would actually delete them. Returns ``[]``
+        when ``StorageConfig.max_bytes`` is unset or the project is
+        already under it (nothing WOULD be evicted, not "the answer is
+        unavailable" — the two are the same falsy return deliberately,
+        mirroring :func:`cross_session_eviction_candidates`'s own "no
+        pin → return everything ``_eviction_order`` finds" shape: an
+        empty result here always means "nothing to evict", never
+        "couldn't compute")."""
+        max_bytes = self._storage.max_bytes
+        if max_bytes is None:
+            return []
+        root = history_content_root_for(self._project_root, self._config)
+        _, total = _dir_stats_recursive(root)
+        if total <= max_bytes:
+            return []
+        candidates = cross_session_eviction_candidates(
+            root, pin=self._storage.pin,
+        )
+        preview: list[Path] = []
+        for path in candidates:
+            if total <= max_bytes:
+                break
+            try:
+                size = path.stat().st_size
+            except OSError:
+                # #5366 §3 item ④: a candidate that vanished between the
+                # listing above and this stat (a concurrent process's
+                # own real eviction, or #5388's per-session pass) is
+                # simply skipped here — it can no longer be "about to
+                # go" since it is already gone, and a preview must never
+                # itself delete or otherwise mutate state to work around
+                # this race.
+                continue
+            preview.append(path)
+            total -= size
+        return preview
 
     @property
     def durability_failed(self) -> bool:
