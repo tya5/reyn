@@ -401,6 +401,6 @@ async def test_binding_writes_durably_no_tmp_file_ever_used(tmp_path) -> None:
         "create one at all"
     )
     from reyn.security.permissions.approval_ledger import ApprovalLedger
-    saved, bound = ApprovalLedger(ledger_path).fold()
+    saved, bound, _scopes = ApprovalLedger(ledger_path).fold()
     assert saved[key] is True
     assert bound[key][0] is not None

@@ -286,9 +286,16 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         # wildcard fires the per-host prompt). #1199 S3.1c-2: a sandbox with
         # network:false vetoes the fetch. Re-run on EVERY hop (not just initial).
         if ctx.permission_resolver is not None:
+            # #5052: `ctx.agent_name or ctx.actor` is the SAME fallback
+            # `present.py` already uses to obtain a real running-agent
+            # identity — `ctx.actor` alone is a per-call role label (the
+            # session bridge passes a fixed constant), not the agent
+            # dimension a saved approval's scope needs to be checked/
+            # recorded against.
             await ctx.permission_resolver.require_http_get(
                 ctx.permission_decl, host, ctx.intervention_bus, ctx.actor,
                 sandbox_policy=_sandbox_policy_from_ctx(ctx),
+                agent_name=ctx.agent_name or ctx.actor,
             )
         # L2 — SSRF IP-deny (always; independent of the permission system).
         try:

@@ -196,7 +196,7 @@ def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path
         f"should be an 'approval' from _worker_append_many, nothing else"
     )
 
-    approvals, _bound = ledger.fold()
+    approvals, _bound, _scopes = ledger.fold()
     # n is even, so the LAST record each process wrote (index n-1, odd) is
     # approved=False for both keys.
     assert approvals["actor/file.write/dir_a/"] is False
@@ -235,7 +235,7 @@ def test_two_real_processes_racing_the_same_key_resolve_by_log_order(
     assert written_total == 2, "both processes' appends must survive -- neither lost"
     last_record_approved = lines[-1]["approved"]
 
-    approvals, _bound = ledger.fold()
+    approvals, _bound, _scopes = ledger.fold()
     assert approvals[key] == last_record_approved, (
         "fold() must agree with whatever the ledger's OWN last line says "
         "for this key -- last wins by FILE ORDER, not by which process "
@@ -334,8 +334,7 @@ def test_migration_witness_fold_matches_the_legacy_reader(tmp_path: Path) -> Non
 
     ledger = ApprovalLedger(tmp_path / ".reyn" / "approvals.jsonl")
     migrate_legacy_snapshot(ledger, legacy_path)
-    saved, bound = ledger.fold()
-
+    saved, bound, _scopes = ledger.fold()
     assert saved == expected_saved
     assert bound == expected_bound
 
@@ -398,7 +397,7 @@ def test_two_processes_racing_the_first_migration_still_fold_correctly(
     assert p1.exitcode == 0
     assert p2.exitcode == 0
 
-    saved, _bound = ApprovalLedger(ledger_path).fold()
+    saved, _bound, _scopes = ApprovalLedger(ledger_path).fold()
     assert saved == {
         "actor/file.write/legacy_dir/": True,
         "actor/file.write/legacy_revoked/": False,
@@ -448,7 +447,7 @@ def test_a_slow_migration_racing_a_real_revoke_never_resurrects_the_stale_value(
     assert p_migrate.exitcode == 0
     assert p_revoke.exitcode == 0
 
-    saved, _bound = ApprovalLedger(ledger_path).fold()
+    saved, _bound, _scopes = ApprovalLedger(ledger_path).fold()
     assert saved[target_key] is False, (
         "a real, concurrent revoke must never be resurrected by a slow "
         "migration's stale legacy value landing after it in file order"
@@ -490,7 +489,7 @@ def test_migration_publish_never_clobbers_a_decision_that_wins_first(
     monkeypatch.setattr(os, "link", _real_decision_wins_the_narrowest_window)
     migrate_legacy_snapshot(ledger, legacy_path)
 
-    saved, _bound = ledger.fold()
+    saved, _bound, _scopes = ledger.fold()
     assert saved[target_key] is False, (
         "migration must never clobber a real decision, even one that "
         "wins the ledger path's existence in the narrowest possible "

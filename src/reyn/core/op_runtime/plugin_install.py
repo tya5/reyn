@@ -1035,6 +1035,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
             await ctx.permission_resolver.require_http_get(
                 ctx.permission_decl, host, ctx.intervention_bus, ctx.actor,
                 sandbox_policy=sandbox,
+                agent_name=ctx.agent_name or ctx.actor,
             )
         staging = root / ".staging" / f"git-{uuid4().hex}"
         clone_err = await _shallow_clone(op.source.url, staging, ctx)

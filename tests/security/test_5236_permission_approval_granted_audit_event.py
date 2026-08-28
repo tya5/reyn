@@ -83,7 +83,7 @@ def test_the_always_choice_emits_one_audit_event_naming_the_granted_key(
     assert events[0]["data"]["surface"] == "permission_prompt"
 
     # The write itself lands, unaffected by the audit addition.
-    saved, _bound = ApprovalLedger(tmp_path / ".reyn" / "approvals.jsonl").fold()
+    saved, _bound, _scopes = ApprovalLedger(tmp_path / ".reyn" / "approvals.jsonl").fold()
     assert saved.get("test_skill/http.get/example.com") is True
 
 
@@ -135,5 +135,5 @@ def test_the_never_choice_denial_emits_nothing(tmp_path: Path) -> None:
     # never granted) is real too — confirms _persist(key, False) genuinely
     # ran, so the absence of an event above is a real non-emission, not a
     # vacuous "nothing happened at all".
-    saved, _bound = ApprovalLedger(tmp_path / ".reyn" / "approvals.jsonl").fold()
+    saved, _bound, _scopes = ApprovalLedger(tmp_path / ".reyn" / "approvals.jsonl").fold()
     assert saved.get("test_skill/http.get/example.com") is False

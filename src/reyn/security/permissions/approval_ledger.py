@@ -74,6 +74,40 @@ shape this codebase closed 3 times over the same night this issue was
 ruled on. :meth:`fold` must never read ``ts`` for anything but a caller's
 own display formatting.
 
+**Scope (#5052)**: every approval decision now carries a ``scope`` value
+naming WHO it applies to — ``SCOPE_WORKSPACE`` ("every agent in this
+workspace") or an ``agent:<name>`` string built by :func:`scope_for_agent`
+("this one agent only"). This is a VALUE on the record, never a position in
+``key`` (architect ruling, issuecomment-5384686461, "C" — the repo's own
+standing "typed discriminated union over form-sniffed string" preference):
+putting the agent into the key string, or splitting into per-agent files,
+was explicitly rejected — the former can't tell "no agent dimension" apart
+from "matches everything", and the latter breaks the #5065 single-audit-
+surface goal. A THIRD value, ``session:<sid>``, was also explicitly
+rejected (architect + lead-coder, broker 2026-08-24): ``sid`` is generated
+by ``uuid4().hex[:8]`` (32 bits) and the registry keeps zero record of a
+retired session id (measured: ``registry.py``'s ``_has_session`` only
+checks CURRENTLY-LIVE sessions), so a session id CAN be reused — a
+session-scoped approval would silently reattach to an unrelated later
+session using the same id, which is worse than not having the scope at
+all.
+
+Append-only means a pre-#5052 record — written before this field existed —
+can NEVER be rewritten to carry one (rewriting a past ledger line is
+ledger falsification, the constitution's "does the repair destroy the
+evidence" question, answered "yes"). :meth:`fold` therefore treats a
+record with no ``scope`` key as ``SCOPE_LEGACY_WORKSPACE`` — deliberately
+a DIFFERENT sentinel from ``SCOPE_WORKSPACE``, never collapsed into it
+(the #4996-family discipline: "unspecified" and "specified-and-wide" are
+not the same value) — but one that matches the CURRENT-agent check the
+same way ``SCOPE_WORKSPACE`` does, because a pre-#5052 grant genuinely
+WAS a workspace-wide decision the moment it was made (there was no agent
+dimension for the operator to have narrowed). A fresh write never
+produces ``SCOPE_LEGACY_WORKSPACE`` — it is a read-time-only classification
+of absence, synthesized by :meth:`fold`, never persisted as a literal
+string. The moment a legacy key is re-approved, the newest record (which
+DOES carry an explicit scope) wins the fold, same as any other key.
+
 **Caveat, stated rather than solved** (acceptance ④): the append's
 atomicity depends on each record line being small — a local filesystem's
 ``write()`` for a buffer at or under ``PIPE_BUF``/the OS's own atomic-write
@@ -111,6 +145,52 @@ from typing import Any
 #: write-gate that protects it) moves together by construction.
 RELATIVE_PATH = ".reyn/approvals.jsonl"
 
+#: #5052: an approval that applies to every agent in the workspace. Only
+#: ever written when an operator EXPLICITLY chose the wide grant — never
+#: the silent default (see :func:`scope_for_agent`'s own docstring for the
+#: default reasoning).
+SCOPE_WORKSPACE = "workspace"
+
+#: #5052: read-time-only classification for a record that predates the
+#: ``scope`` field entirely (folded from a record with no ``"scope"`` key —
+#: see the module docstring's "Scope" section). Deliberately a DIFFERENT
+#: string from ``SCOPE_WORKSPACE`` — "this record never said" and "this
+#: record said workspace" must never collapse into the same value, even
+#: though both currently match every agent at lookup time. NEVER passed to
+#: :meth:`ApprovalLedger.append_approval` — a fresh write always carries an
+#: explicit scope, so this string can never appear as a literal on disk,
+#: only as :meth:`ApprovalLedger.fold`'s own in-memory classification.
+SCOPE_LEGACY_WORKSPACE = "legacy-workspace"
+
+
+def scope_for_agent(agent_name: str) -> str:
+    """#5052: the ``agent:<name>`` scope value naming ONE agent.
+
+    Default-scope reasoning (lead-coder ruling, issuecomment-5386
+    -family — reproduced here verbatim since acceptance ① requires the
+    default's justification live as a code comment at its definition
+    site, not only in the issue thread):
+
+    1. This is a "which direction is safer" question, not one where the
+       owner holds information the implementer lacks — the answer
+       follows from the risk shape alone, so it does not need to be
+       deferred.
+    2. The risk is ASYMMETRIC. Defaulting NARROW (``agent:<name>``) and
+       being wrong just means an operator is asked again for a second
+       agent — one extra prompt. Defaulting WIDE (``workspace``) and
+       being wrong means one agent's approval silently governs EVERY
+       agent in the workspace — the exact #5052 root cause, hitting the
+       permission band directly.
+    3. It is reversible in only ONE direction: an operator can WIDEN a
+       narrow grant later (re-approve with the workspace choice, or a
+       config override). There is no way to retroactively NARROW a
+       workspace grant that has already silently covered agents the
+       operator never saw prompted for.
+
+    ∴ the default for a genuine per-running-agent decision is this
+    function's own output, not :data:`SCOPE_WORKSPACE`."""
+    return f"agent:{agent_name}"
+
 
 class ApprovalLedger:
     """Append-only JSONL ledger for one project's permission-approval
@@ -130,16 +210,33 @@ class ApprovalLedger:
     def path(self) -> Path:
         return self._path
 
-    def append_approval(self, key: str, approved: bool) -> None:
+    def append_approval(
+        self, key: str, approved: bool, scope: "str | None" = None,
+    ) -> None:
         """Append one approval-decision record (a grant or a revoke).
         ``ts`` is DISPLAY-ONLY (see the module docstring's "Ordering
-        authority" section) — :meth:`fold` never reads it."""
-        self._write_record({
+        authority" section) — :meth:`fold` never reads it.
+
+        #5052: ``scope`` is :data:`SCOPE_WORKSPACE` or a
+        :func:`scope_for_agent` string — every REAL caller in this
+        codebase passes one explicitly (never relies on the ``None``
+        default here); ``None`` exists only so a record shaped like a
+        pre-#5052 legacy write can be constructed on purpose (tests
+        exercising the legacy-migration read path). A record written
+        with ``scope=None`` omits the ``"scope"`` key entirely rather
+        than writing a literal ``null`` — ``fold()`` distinguishes
+        "key absent" from "key present with a falsy value" the same
+        way, but omitting it keeps a legacy-shaped test record
+        byte-for-byte indistinguishable from a genuine pre-#5052 line."""
+        record: "dict[str, Any]" = {
             "ts": self._now_iso(),
             "kind": "approval",
             "key": key,
             "approved": approved,
-        })
+        }
+        if scope is not None:
+            record["scope"] = scope
+        self._write_record(record)
 
     def append_identity_bind(
         self, key: str, ino: int, birthtime: "float | None",
@@ -235,17 +332,27 @@ class ApprovalLedger:
 
     def fold(
         self,
-    ) -> "tuple[dict[str, bool], dict[str, tuple[int, float | None]]]":
-        """Replay every record in file order into the two maps
-        ``PermissionResolver`` needs: ``(approvals, bound_identities)``.
+    ) -> "tuple[dict[str, bool], dict[str, tuple[int, float | None]], dict[str, str]]":
+        """Replay every record in file order into the three maps
+        ``PermissionResolver`` needs: ``(approvals, bound_identities, scopes)``.
 
-        Last ``"approval"`` record per key wins for the boolean; last
+        Last ``"approval"`` record per key wins for the boolean AND for the
+        scope (they come from the SAME record — a re-approval always
+        replaces both together, never one without the other); last
         ``"identity_bind"`` record per key wins for the identity — EXCEPT
         an ``"approval"`` record with ``approved=False`` also clears that
         key's bound identity (see the module docstring's "Fold semantics"
-        section for why this mirrors #5157, not a new rule)."""
+        section for why this mirrors #5157, not a new rule).
+
+        #5052: ``scopes[key]`` is the record's own ``"scope"`` value when
+        present, else :data:`SCOPE_LEGACY_WORKSPACE` — see the module
+        docstring's "Scope" section for why a missing field is a
+        DIFFERENT value from an explicit ``SCOPE_WORKSPACE``, never
+        collapsed into it, even though both currently match every agent
+        at lookup time."""
         approvals: "dict[str, bool]" = {}
         bound: "dict[str, tuple[int, float | None]]" = {}
+        scopes: "dict[str, str]" = {}
         for rec in self.iter_records():
             key = rec.get("key")
             if not isinstance(key, str):
@@ -256,6 +363,8 @@ class ApprovalLedger:
                 if not isinstance(approved, bool):
                     continue
                 approvals[key] = approved
+                scope = rec.get("scope")
+                scopes[key] = scope if isinstance(scope, str) and scope else SCOPE_LEGACY_WORKSPACE
                 if not approved:
                     bound.pop(key, None)
             elif kind == "identity_bind":
@@ -264,7 +373,7 @@ class ApprovalLedger:
                     continue
                 bt = rec.get("birthtime")
                 bound[key] = (ino, float(bt) if isinstance(bt, (int, float)) else None)
-        return approvals, bound
+        return approvals, bound, scopes
 
 
 def _repair_missing_trailing_newline(path: Path) -> None:

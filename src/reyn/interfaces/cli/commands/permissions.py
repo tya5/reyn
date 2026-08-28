@@ -61,18 +61,23 @@ def _legacy_snapshot_path() -> Path:
     return project_root / ".reyn" / "approvals.yaml"
 
 
-def _load() -> dict[str, bool]:
+def _load() -> "tuple[dict[str, bool], dict[str, str]]":
     """Fold the ledger (migrating a legacy snapshot first, if present) —
     the SAME read every other approvals surface (`PermissionResolver`,
-    the web router) now does."""
+    the web router) now does.
+
+    #5052: also returns each key's ``scope`` — see
+    :func:`~reyn.interfaces.web.routers.permissions._load`'s own docstring
+    for why a legacy (pre-#5052, scope-less) entry is surfaced as
+    ``"legacy-workspace"`` rather than silently promoted to ``"workspace"``."""
     from reyn.security.permissions.approval_ledger import (
         ApprovalLedger,
         migrate_legacy_snapshot,
     )
     ledger = ApprovalLedger(_ledger_path())
     migrate_legacy_snapshot(ledger, _legacy_snapshot_path())
-    approvals, _bound = ledger.fold()
-    return approvals
+    approvals, _bound, scopes = ledger.fold()
+    return approvals, scopes
 
 
 def _parse_key(key: str) -> tuple[str, str, str] | None:
@@ -99,12 +104,22 @@ def _parse_key(key: str) -> tuple[str, str, str] | None:
 
 def _cmd_list(args: argparse.Namespace) -> None:
     path = _ledger_path()
-    data = _load()
+    data, scopes = _load()
     if not data:
         print(f"No saved approvals at {path}.")
         return
     print(f"# {path}")
     print()
+    legacy_count = sum(
+        1 for k, v in data.items() if v and scopes.get(k) == "legacy-workspace"
+    )
+    if legacy_count:
+        print(
+            f"  ⚠ {legacy_count} entr{'y' if legacy_count == 1 else 'ies'} predate "
+            f"the #5052 agent-scope field and still apply to EVERY agent in this "
+            f"workspace. Re-approve to narrow to one agent."
+        )
+        print()
     file_keys: list[tuple[str, str, str, bool]] = []  # actor, kind, path, approved
     other_keys: list[tuple[str, bool]] = []
     for key, approved in data.items():
@@ -141,7 +156,7 @@ def _cmd_list(args: argparse.Namespace) -> None:
 
 
 def _cmd_revoke(args: argparse.Namespace) -> None:
-    data = _load()
+    data, _scopes = _load()
     if args.key not in data:
         print(f"No saved approval with key {args.key!r}.", file=sys.stderr)
         # Friendly suggestion: any partial matches?
@@ -157,7 +172,7 @@ def _cmd_revoke(args: argparse.Namespace) -> None:
 
 
 def _cmd_clear(args: argparse.Namespace) -> None:
-    data = _load()
+    data, _scopes = _load()
     currently_approved = {k for k, v in data.items() if v}
     if not currently_approved:
         print("No saved approvals to clear.")

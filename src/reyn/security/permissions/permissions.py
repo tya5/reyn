@@ -514,6 +514,13 @@ class PermissionResolver:
         # property returns the SAME dict object each time, so in-place
         # `self._saved[key] = approved` still mutates the real stored dict.
         self.__saved: "dict[str, bool] | None" = None
+        # #5052: same lazy-load-once shape as `__saved`, folded from the
+        # SAME ledger pass — see `_ensure_folded`. `agent:<name>` /
+        # `workspace` / `legacy-workspace` (a pre-#5052 record with no
+        # `scope` field at all — see `approval_ledger.py`'s own module
+        # docstring's "Scope" section for why that is a DIFFERENT value
+        # from `workspace`, never collapsed into it).
+        self.__saved_scopes: "dict[str, str] | None" = None
         # #5042: PATH-flavor approvals only ("what dir/file was this grant
         # actually FOR, the moment it was last found valid") — a SIBLING
         # structure under its own top-level ``_bound_identities`` key in
@@ -620,6 +627,16 @@ class PermissionResolver:
         stored boolean (or None when not yet recorded)."""
         return self._saved.get(key)
 
+    def saved_scope_get(self, key: str) -> "str | None":
+        """#5052: read accessor for *key*'s persisted scope — ``None``
+        when *key* has no saved approval at all (never approved, or
+        session-only). A saved key with no explicit scope reads as
+        :data:`~reyn.security.permissions.approval_ledger.SCOPE_LEGACY_WORKSPACE`
+        (see :meth:`ApprovalLedger.fold`'s own docstring), never as
+        ``None`` — "recorded, no scope" and "never recorded" are kept
+        distinct so a caller cannot mistake one for the other."""
+        return self._saved_scopes.get(key)
+
     def bound_identity_get(self, key: str) -> "tuple[int, float | None] | None":
         """#5042: read accessor for the PATH-flavor identity binding,
         mirroring :meth:`saved_get`'s own convention — ``None`` when *key*
@@ -699,6 +716,15 @@ class PermissionResolver:
         assert self.__saved is not None  # _ensure_folded always sets both
         return self.__saved
 
+    @property
+    def _saved_scopes(self) -> "dict[str, str]":
+        """#5052: same lazy-load-once shape as :attr:`_saved` — folded
+        from the SAME ledger pass (see :meth:`_ensure_folded`)."""
+        if self.__saved_scopes is None:
+            self._ensure_folded()
+        assert self.__saved_scopes is not None  # _ensure_folded always sets all three
+        return self.__saved_scopes
+
     # ── #5042/#5153: bound identity for PATH-flavor approvals only ──────────
 
     @property
@@ -712,17 +738,22 @@ class PermissionResolver:
         return self.__bound_identities
 
     def _ensure_folded(self) -> None:
-        """#5153: the single fold site both :attr:`_saved` and
-        :attr:`_bound_identities` lazy-load through — one ledger read
-        producing BOTH maps together (they were always derived from the
-        same records; loading them separately would just be the same
-        file parsed twice). Migrates a legacy ``approvals.yaml`` snapshot
-        into the ledger first if the ledger doesn't exist yet (see
+        """#5153/#5052: the single fold site :attr:`_saved`,
+        :attr:`_bound_identities`, AND :attr:`_saved_scopes` lazy-load
+        through — one ledger read producing all THREE maps together
+        (they were always derived from the same records; loading them
+        separately would just be the same file parsed thrice). Migrates
+        a legacy ``approvals.yaml`` snapshot into the ledger first if the
+        ledger doesn't exist yet (see
         :func:`~reyn.security.permissions.approval_ledger.migrate_legacy_snapshot`)
         — a no-op on every call after the first, for this resolver or any
         other process (idempotent by construction: the ledger existing at
         all is what makes it skip)."""
-        if self.__saved is not None and self.__bound_identities is not None:
+        if (
+            self.__saved is not None
+            and self.__bound_identities is not None
+            and self.__saved_scopes is not None
+        ):
             return
         from reyn.security.permissions.approval_ledger import (
             ApprovalLedger,
@@ -730,7 +761,7 @@ class PermissionResolver:
         )
         ledger = ApprovalLedger(self._approval_ledger_path)
         migrate_legacy_snapshot(ledger, self._approvals_path)
-        self.__saved, self.__bound_identities = ledger.fold()
+        self.__saved, self.__bound_identities, self.__saved_scopes = ledger.fold()
 
     def _path_identity(self, path: Path) -> "tuple[int, float | None] | None":
         """#5042/#5084: raw ``(st_ino, st_birthtime)`` of *path* (file OR
@@ -863,13 +894,37 @@ class PermissionResolver:
             key, identity[0], identity[1],
         )
 
-    def _persist(self, key: str, approved: bool) -> None:
+    def _persist(
+        self, key: str, approved: bool, *, agent_name: str = "",
+    ) -> None:
         # #2248: approvals.yaml is PERSIST, not recovery-core — so NO config generation
         # recorded here (unlike mcp/cron/hooks/index). Approvals are a USER-authored security decision
         # (granted via a permission prompt; revoked via the web/CLI surfaces) — never
         # agent-authored — so a rewind must NOT revert them; they survive rewind like
         # `memory/`. Owner-confirmed reclassification (config → persist).
+        #
+        # #5052: the scope this decision is recorded under. `agent_name`
+        # is threaded from the caller's own running-agent identity (e.g.
+        # `require_http_get`'s own `agent_name` param, itself sourced the
+        # SAME way `present.py` already does: `ctx.agent_name or
+        # ctx.actor`) — when the caller HAS one, the default narrows to
+        # that one agent (see `approval_ledger.scope_for_agent`'s own
+        # docstring for the full 3-point reasoning: the risk is
+        # asymmetric — narrow-and-wrong just re-prompts a second agent;
+        # wide-and-wrong silently governs every agent — and only the
+        # narrow default is reversible via a later explicit widening).
+        # `agent_name == ""` means this decision was never per-running-
+        # agent to begin with (a subsystem/config write — `hooks`/`cron`/
+        # `mcp` actors are not agent identities), so `SCOPE_WORKSPACE` is
+        # the CORRECT, non-narrowing scope for those, not a silent
+        # regression of the new default.
+        scope = (
+            approval_ledger.scope_for_agent(agent_name)
+            if agent_name
+            else approval_ledger.SCOPE_WORKSPACE
+        )
         self._saved[key] = approved
+        self._saved_scopes[key] = scope
         self._session[key] = approved
         if not approved:
             # #5157 (architect ruling, issuecomment-5383671820, and a
@@ -903,7 +958,9 @@ class PermissionResolver:
         # that key's fold-time binding, from WHICHEVER writer produced
         # it — CLI, web router, or here) — no extra write needed for it.
         from reyn.security.permissions.approval_ledger import ApprovalLedger
-        ApprovalLedger(self._approval_ledger_path).append_approval(key, approved)
+        ApprovalLedger(self._approval_ledger_path).append_approval(
+            key, approved, scope,
+        )
         # #5236: the grant half of the same band pairing #5065 only closed
         # for revoke — "audit that records only the undo, never the
         # decision itself, is not an audit" (lead-coder's own filing).
@@ -1019,6 +1076,23 @@ class PermissionResolver:
                 return True
         return False
 
+    # ── #5052: scope (who a saved approval applies to) ───────────────────────
+
+    def _scope_covers_agent(self, key: str, agent_name: str) -> bool:
+        """True iff `key`'s SAVED (persisted) approval's scope covers
+        `agent_name` — caller must already know `key` is approved
+        (`self._saved.get(key)` truthy); this only decides WHO it
+        applies to. `SCOPE_WORKSPACE` (an explicit wide grant) and
+        `SCOPE_LEGACY_WORKSPACE` (a pre-#5052 record with no scope field
+        at all — see `approval_ledger.py`'s own "Scope" section for why
+        these are kept as DIFFERENT values despite matching identically
+        here) both cover every agent; an `agent:<name>` scope covers only
+        that one name."""
+        scope = self._saved_scopes.get(key, approval_ledger.SCOPE_LEGACY_WORKSPACE)
+        if scope in (approval_ledger.SCOPE_WORKSPACE, approval_ledger.SCOPE_LEGACY_WORKSPACE):
+            return True
+        return scope == approval_ledger.scope_for_agent(agent_name)
+
     # ── Core approval (non-file ops) ──────────────────────────────────────────
 
     async def _approve(
@@ -1028,6 +1102,7 @@ class PermissionResolver:
         bus: RequestBus,
         *,
         user_prompt: str | None = None,
+        agent_name: str = "",
     ) -> bool:
         if self._is_config_approved(key):
             return True
@@ -1042,11 +1117,26 @@ class PermissionResolver:
             return self._session[key]
         if key in self._saved:
             v = self._saved[key]
-            self._session[key] = v
-            return v
+            if not v:
+                # An explicit revoke applies to every agent regardless of
+                # scope — a scope only narrows WHO a GRANT covers, it
+                # never narrows a denial.
+                self._session[key] = False
+                return False
+            if self._scope_covers_agent(key, agent_name):
+                self._session[key] = True
+                return True
+            # #5052: a grant EXISTS for `key` but its scope is
+            # `agent:<other-name>` — it was never meant for THIS agent.
+            # Fall through to the interactive prompt instead of returning
+            # the other agent's decision (the exact leak #5052 reports:
+            # "an http.get approval granted while running as one agent
+            # silently applies to EVERY agent").
         if not self._interactive:
             return False
-        return await self._prompt(key, description, bus, user_prompt=user_prompt)
+        return await self._prompt(
+            key, description, bus, user_prompt=user_prompt, agent_name=agent_name,
+        )
 
     async def _prompt(
         self,
@@ -1055,6 +1145,7 @@ class PermissionResolver:
         bus: RequestBus,
         *,
         user_prompt: str | None = None,
+        agent_name: str = "",
     ) -> bool:
         # Issue #224: when the caller passes a user-facing question
         # (e.g. "Allow fetching this URL?"), use it as the prompt header
@@ -1074,10 +1165,10 @@ class PermissionResolver:
             self._session[key] = True
             return True
         if choice == ALWAYS:
-            self._persist(key, True)
+            self._persist(key, True, agent_name=agent_name)
             return True
         if choice == NEVER:
-            self._persist(key, False)
+            self._persist(key, False, agent_name=agent_name)
             return False
         # NO or unknown → deny (session-only)
         self._session[key] = False
@@ -1270,19 +1361,38 @@ class PermissionResolver:
         return self._is_offload_read_granted(path)
 
     def _is_host_approved_for(
-        self, host: str, actor: str, kind: str = "http.get",
+        self, host: str, actor: str, kind: str = "http.get", *, agent_name: str = "",
     ) -> bool:
-        """Return True if ``host`` is covered by a saved/session approval.
+        """Return True if ``host`` is covered by a saved/session approval
+        that also applies to ``agent_name``.
 
         Hosts are exact-string-matched against the persisted approval
-        key (= ``<actor>/http.get/<host>``). Mirrors
+        key (= ``<actor>/http.get/<host>``) — ``key`` carries NO agent
+        dimension by design (#5052 architect ruling "C": scope is a VALUE
+        the entry carries, not a position in the key). A saved approval's
+        own ``scope`` decides WHO it covers (see
+        :meth:`_scope_covers_agent`) — this is the #5052 fix: before this,
+        this method returned True for ANY agent the moment ``key`` was
+        approved for ONE, which is the exact leak the issue reports
+        ("an http.get approval granted while running as one agent
+        silently applies to EVERY agent"). Mirrors
         :meth:`_is_path_approved_for` but skips the filesystem
         resolution because hosts are network identifiers, not paths.
-        """
+
+        Session-only (non-persisted) approvals have no scope dimension —
+        they are checked first and short-circuit True, same as before
+        this fix (the #5052 design ruling scopes PERSISTED ledger
+        entries; a same-process session grant was never the reported
+        cross-agent leak, which is specifically about a decision
+        surviving to a LATER run as a different agent)."""
         if not actor or not host:
             return False
         key = f"{actor}/{kind}/{host}"
-        return bool(self._saved.get(key) or self._session.get(key))
+        if self._session.get(key):
+            return True
+        if not self._saved.get(key):
+            return False
+        return self._scope_covers_agent(key, agent_name)
 
     def session_approve_path(
         self, path: str, actor: str, kind: str, recursive: bool = False,
@@ -1540,8 +1650,17 @@ class PermissionResolver:
         actor: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
+        agent_name: str = "",
     ) -> None:
         """Gate HTTP access to ``host`` (#571 Phase 7 unification).
+
+        #5052: ``agent_name`` is the identity a saved grant's ``scope``
+        is checked/recorded against — pass ``ctx.agent_name or
+        ctx.actor`` (the SAME fallback convention ``present.py`` already
+        uses), never ``actor`` itself: ``actor`` is a per-call ROLE label
+        (e.g. the ``session.py`` bridge always passes the fixed
+        ``"chat_router"``), not a running agent's identity, so it cannot
+        stand in for the agent dimension this scope check needs.
 
         Mirrors the ``file.write`` model — declaration is intent, the
         prompt fires at the timing where the host actually becomes
@@ -1618,7 +1737,9 @@ class PermissionResolver:
 
         # Persisted per-host approval (from a prior interactive
         # runtime prompt, specific or wildcard).
-        if actor and self._is_host_approved_for(host, actor, "http.get"):
+        if actor and self._is_host_approved_for(
+            host, actor, "http.get", agent_name=agent_name,
+        ):
             return
         # Legacy session/saved ``web.fetch`` approval still authorises
         # every host while the deprecation window is open.
@@ -1664,6 +1785,7 @@ class PermissionResolver:
             approved = await self._approve(
                 approval_key, label, bus,
                 user_prompt=f"Allow fetching from {host!r}?",
+                agent_name=agent_name,
             )
             if not approved:
                 raise PermissionError(
