@@ -33,13 +33,16 @@ from tests._support.agent_session import make_session
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
-def _make_get_request(query_string: bytes, app):
+def _make_get_request(query_string: bytes, app, *, agent_name: str = "default"):
     from starlette.requests import Request
 
+    # #5130: agui_events no longer accepts a bare ``agent_name: str``
+    # parameter — the real router populates ``scope["path_params"]`` on a
+    # match, so a direct (non-routed) call here must do the same.
     scope = {
-        "type": "http", "method": "GET", "path": "/agui/chat/default/events",
+        "type": "http", "method": "GET", "path": f"/agui/chat/{agent_name}/events",
         "query_string": query_string, "headers": [], "client": ("127.0.0.1", 12345),
-        "app": app,
+        "app": app, "path_params": {"agent_name": agent_name},
     }
     return Request(scope)
 
@@ -116,7 +119,7 @@ async def test_exception_before_gen_starts_does_not_leak_the_hub_subscription(
 
     req = _make_get_request(f"token=s3cret&connection_id={conn_id}".encode(), app)
     with pytest.raises(RuntimeError, match="deliberate #5119 injected failure"):
-        await endpoint_mod.agui_events(req, "default")
+        await endpoint_mod.agui_events(req)
 
     assert not endpoint_mod.connection_retarget_has_subscribers(conn_id), (
         f"the hub subscription for {conn_id!r} leaked past the exception"
@@ -136,7 +139,7 @@ async def test_the_success_path_still_subscribes_normally(tmp_path, monkeypatch)
     conn_id = "conn-5119-success-test"
 
     req = _make_get_request(f"token=s3cret&connection_id={conn_id}".encode(), app)
-    resp = await endpoint_mod.agui_events(req, "default")
+    resp = await endpoint_mod.agui_events(req)
     from starlette.responses import StreamingResponse
 
     assert isinstance(resp, StreamingResponse)
