@@ -55,6 +55,11 @@ class SessionFactoryConfig:
     # shape/role as read_cap_config (#4431's role split): bytes,
     # model-independent, config-driven.
     history_resident_config: Any
+    # #5366 §3: reyn.yaml storage.* (max_bytes / pin) — the PROJECT-wide
+    # (cross-session) history-content cap. Same shape/role as
+    # history_resident_config just above: a plain value, config-driven,
+    # not a per-turn supplier.
+    storage_config: Any
     embedding_config: Any
     router_config: Any
     retry_config: Any
@@ -149,6 +154,8 @@ class SessionFactoryConfig:
             auth_config=config.auth,
             # #4387 Phase B ③: the resource-bound history-resident cap config.
             history_resident_config=config.history_resident,
+            # #5366 §3: the project-wide (cross-session) storage cap/pin.
+            storage_config=config.storage,
             embedding_config=config.embedding,
             router_config=config.llm.router,
             retry_config=config.llm.retry,
