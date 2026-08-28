@@ -2732,18 +2732,41 @@ class AgentRegistry:
         until after the substrate restores succeed (atomicity). Best-effort; LOGs an
         ``OSError`` rather than swallowing. Returns True iff a dir was removed."""
         state_dir = self._session_state_dir(name, sid)  # sid != main → sessions/<enc>/
-        if not state_dir.is_dir():
-            return False
-        import shutil
-        try:
-            shutil.rmtree(state_dir)
-            return True
-        except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
-            logger.warning(
-                "#2103/#2125: teardown of session %r/%r left state on disk: %s",
-                name, sid, e,
-            )
-            return False
+        removed = False
+        if state_dir.is_dir():
+            import shutil
+            try:
+                shutil.rmtree(state_dir)
+                removed = True
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#2103/#2125: teardown of session %r/%r left state on disk: %s",
+                    name, sid, e,
+                )
+        # #5364 §1.6 "Q": a vanished session's own spilled tool-result
+        # content is otherwise ORPHANED — nothing else ever purges
+        # history-content/<agent>/<sid>/ (the GC cap (§1.6 "C") bounds one
+        # session's OWN content, it does not know a session vanished).
+        # Same (name, sid) key-space as state_dir above — safe to purge
+        # together only because #5364's key-space fix made this dir's own
+        # keying agent-scoped, matching _session_state_dir's shape exactly
+        # (before that fix, this path was shared across every agent's
+        # same-named session — purging it here would have been the exact
+        # cross-agent data-loss #5364's key-space fix closed).
+        from reyn.data.workspace.media_store import history_content_dir_for
+        content_dir = history_content_dir_for(self._project_root, name, sid)
+        if content_dir.is_dir():
+            import shutil
+            try:
+                shutil.rmtree(content_dir)
+                removed = True
+            except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
+                logger.warning(
+                    "#5364 §1.6: teardown of session %r/%r left spilled "
+                    "tool-result content on disk: %s",
+                    name, sid, e,
+                )
+        return removed
 
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
