@@ -556,29 +556,7 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: persisted (spawn-time priority resolution happens in the spawn seam,
 #: which runs after ``Session.__init__``), so it cannot be threaded
 #: through construction without restructuring the spawn seam itself.
-#: Raised 119 -> 120 for #5428: ``hook_env_snapshot`` — a NEW method.
-#: ① What was added: a read-only snapshot of the 4 ``REYN_*`` keys a
-#: real ``exec``/``exec_capture`` hook child process would see right
-#: now (``HookProcessContext.as_env()``'s output) — resolved VALUES,
-#: never the callable itself, so a caller cannot use this to invoke a
-#: hook or reach ``HookDispatcher`` internals.
-#: ② Why not private: TWO real readers, neither of them a slash handler
-#: (#3595 S4's own failure mode is specifically "a slash handler
-#: reaching into session internals" — this is neither a slash module
-#: nor session-internal reach):
-#:   - an OPERATOR debugging "my hook says this env var is empty" had
-#:     no way to look at all before this (architect ruling, #5428's own
-#:     issue body) — the non-test reason this exists.
-#:   - #5426's own test previously read this two private hops deep
-#:     (``session._hook_dispatcher._hook_process_context()``) — CLAUDE.md's
-#:     testing policy names this exact shape ("a test must not depend
-#:     on private state... if neither exists, that absence is the
-#:     finding"); this method IS that missing public surface.
-#: ③ Why not a constructor argument: the value is inherently NOT known
-#: at construction — ``_workspace_base_dir`` can change across a
-#: session's lifetime (#5081), and this method's whole point is
-#: reading it LIVE on every call, never a value frozen at construction.
-_PUBLIC_MEMBER_CEILING = 120
+_PUBLIC_MEMBER_CEILING = 119
 
 
 def test_session_public_surface_does_not_grow() -> None:

@@ -2465,11 +2465,18 @@ class Session:
         ``exec``/``exec_capture`` child process would receive if a hook
         dispatched RIGHT NOW. Extracted out of the ``HookDispatcher``
         construction call's own ``hook_process_context=`` kwarg (was an
-        inline lambda) so #5428's public ``hook_env_snapshot`` can share
-        the SAME resolution logic instead of duplicating it — a second,
-        hand-copied builder would diverge from this one the moment either
-        is edited alone (the same #5230-class hazard this module's own
-        ``is_hook_disabled`` docstring warns about elsewhere).
+        inline lambda) — a named, independently-callable builder rather
+        than an anonymous closure buried in a large constructor call.
+
+        #5428: this extraction is deliberately NOT paired with a public
+        method in the same PR (architect BLOCKING on an earlier version
+        of this change, issuecomment on PR #5443): a public
+        ``hook_env_snapshot()`` with no production consumer would be the
+        exact #4866 shape #5442 spent that same PR closing 3 instances
+        of. #5428's own public read-surface, WITH its real consumer
+        (``reyn doctor`` — its own docstring already claims "reach into
+        sandbox / MCP / hook internals" / "a hook's argv actually
+        launched would be doctor's"), lands together in a follow-up.
 
         Reads live state on every call (``_workspace_base_dir`` can change
         across this session's lifetime, #5081) — never frozen at
@@ -2486,30 +2493,6 @@ class Session:
             agent_name=self.agent_name,
             agent_state_dir=self._ensure_agent_state_dir(),
         )
-
-    def hook_env_snapshot(self) -> "dict[str, str]":
-        """#5428: public read of "what env would this agent's hook get
-        right now" — the same 4 ``REYN_*`` keys (``REYN_PROJECT_DIR`` /
-        ``REYN_AGENT_BASE_DIR`` / ``REYN_AGENT_NAME`` / ``REYN_AGENT_STATE_DIR``)
-        a real ``exec``/``exec_capture`` hook child process would see, via
-        ``HookProcessContext.as_env()``. Returns the resolved VALUES, never
-        the callable itself — a caller cannot use this to invoke a hook or
-        reach ``HookDispatcher`` internals, only to read the current
-        envelope.
-
-        Before this: the only read of this value was two private hops deep
-        (``session._hook_dispatcher._hook_process_context()``, #5426's own
-        test) — CLAUDE.md's testing policy names this exact shape ("a test
-        must not depend on private state... if neither exists, that
-        absence is the finding"). An operator debugging "my hook says this
-        env var is empty" had no way to look at all — the second, non-test
-        reason this method exists (architect ruling, #5428).
-
-        Live, not construction-time frozen: reads ``self._workspace_base_dir``
-        fresh via ``_build_hook_process_context`` on every call, so moving
-        an agent's ``base_dir`` mid-session changes what this returns on
-        the NEXT call, same as what a real hook dispatch would see."""
-        return self._build_hook_process_context().as_env()
 
     @property
     def _environment_backend(self) -> Any:
