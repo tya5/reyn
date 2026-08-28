@@ -1058,7 +1058,79 @@ class RouterHistoryBuffer:
             # Overlap guard: dedupe by identity so no turn appears twice.
             head_ids = {id(t) for t in head}
             tail_deduped = [t for t in tail if id(t) not in head_ids]
-            selected = head + tail_deduped
+
+            # #5367 (owner: "llm に mid 渡さないとかありえないでしょ") — the
+            # elided MIDDLE used to vanish with nothing standing in for it:
+            # trim_head/trim_tail are genuine prefix/suffix cuts (their own
+            # docstrings), so everything between them fell through with no
+            # representation at all, model- or operator-side. (b) design
+            # (lead-coder/architect ruling): a SPILLED mid turn's own
+            # ``content`` is ALREADY the small ref-preview text (write-time
+            # cap, #5364 §1.2 — see ``_resolve_spilled_content``, this same
+            # module) — cheap to fold back in as-is, no new transform. An
+            # UNSPILLED mid turn's raw content is NOT cheap — every one of
+            # those is bundled into ONE synthetic report turn naming the
+            # affected seq range and count, so the model at least KNOWS
+            # turns were omitted (never "畳まずに捨てる", owner's own
+            # forbidden shape) instead of the omission being invisible to
+            # it too. Order matches the ruled processing order — fold (ref)
+            # first, report only for what could not be — folded/reported
+            # in original chronological order relative to each other.
+            #
+            # Disclosure (architect review, issuecomment-5450576257): this
+            # branch never re-checks the SIZE of what it folds back in — a
+            # middle dense with spilled turns folds in N ref-previews with
+            # no cap, which can partially defeat elide's own budget intent
+            # in that case. Not an unbounded loop (the driver's shrink
+            # ladder, #5391, still catches an over-budget result) but the
+            # projection this call returns is not guaranteed to fit
+            # head_budget/tail_budget in that scenario — the elide branch
+            # does not re-verify its own output against the trigger.
+            from reyn.runtime.chat_message import SPILLED_META_KEY
+
+            selected_ids = head_ids | {id(t) for t in tail_deduped}
+            mid_refs: "list[dict]" = []
+            unspilled_seqs: "list[int]" = []
+            mid_seqs: "list[int]" = []
+            for turn, wire in zip(turns, wire_turns):
+                if id(wire) in selected_ids:
+                    continue
+                mid_seqs.append(turn.seq)
+                if (turn.meta or {}).get(SPILLED_META_KEY):
+                    mid_refs.append(wire)
+                else:
+                    unspilled_seqs.append(turn.seq)
+
+            report_turns: "list[dict]" = []
+            if unspilled_seqs:
+                from reyn.runtime.chat_message import ChatMessage
+                seq_lo, seq_hi = min(unspilled_seqs), max(unspilled_seqs)
+                report_msg = ChatMessage(
+                    role="assistant",
+                    content=(
+                        f"[{len(unspilled_seqs)} earlier tool-result turn(s) "
+                        f"omitted to fit the context window — seq "
+                        f"{seq_lo}-{seq_hi}]"
+                    ),
+                )
+                report_turns = [self._serialise_turn(report_msg)]
+
+            if mid_seqs and self._events is not None:
+                # #5367 (B): the wire payload this describes is NOT persisted
+                # by default (no `REYN_LLM_TRACE_DUMP`) — architect ruling,
+                # this is the one place an operator can learn an elide
+                # happened at all on this turn. Counts the WHOLE elided
+                # middle (spilled-and-ref'd + unspilled-and-reported), not
+                # only the reported subset — "did an elide happen on this
+                # turn, how much" is the question this answers, and a
+                # spilled mid turn was equally invisible to an operator
+                # before this fix even though it is fully durable.
+                self._events.emit(
+                    "wire_turns_elided",
+                    count=len(mid_seqs), seq_start=min(mid_seqs), seq_end=max(mid_seqs),
+                )
+
+            selected = head + mid_refs + report_turns + tail_deduped
 
         # #4954(2): the summary bridge is now attached HERE, unconditionally
         # once `watermark > 0` — not only on the elide branch above. Before

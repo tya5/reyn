@@ -493,7 +493,33 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: #4995's cross-thread marshal needs a coroutine it can hand to
 #: ``run_coroutine_threadsafe``, and a private method cannot be that
 #: closure's target from outside the class).
-_PUBLIC_MEMBER_CEILING = 116
+#: Raised 116 -> 117 for #5336: ``mark_ephemeral`` — a NEW method.
+#: ① What was added: a one-line setter (sets the existing ``_ephemeral``
+#: flag True) — no new state, no new behavior; the flag itself already
+#: existed.
+#: ② Why not private: two REAL production sites — ``registry.py``'s
+#: ``spawn_session_recorded`` and ``pipeline_executor_driver.py``'s own
+#: run-completion teardown — already wrote that flag directly, from
+#: OUTSIDE this class (a genuine external seam wearing a private name,
+#: confirmed via ``git grep`` before this PR), not a slash handler
+#: reaching into session state (#3595 S4's own failure mode) — architect
+#: ruling: this is an externally-decided FACT about the session, the
+#: opposite shape from #4866's "don't publish _x just because a test
+#: touches it" (that is #5382's own subject, not this one's).
+#: ③ Why not a constructor argument (the STRONGER fix, which would avoid
+#: adding a member here at all): checked whether the two writes happen
+#: at the same time — they do not. ``registry.py`` writes immediately
+#: after a fresh spawn (a declaration); ``pipeline_executor_driver.py``
+#: writes much LATER, at run completion (reusing the same flag as a
+#: "vanish now" trigger on a session that was never ephemeral at spawn).
+#: Threading ``ephemeral``/``mode`` through ``spawn_session``'s own
+#: construction call (which has neither today) would be a separate,
+#: larger refactor to that primitive — out of this fix's scope.
+#: ★ Next person to raise this ceiling: stop here first and read the
+#: full paragraph above — the SAME question (same-time vs different-time
+#: write, private-vs-public, member-vs-constructor-arg) applies to your
+#: own case too, not just #5336's.
+_PUBLIC_MEMBER_CEILING = 117
 
 
 def test_session_public_surface_does_not_grow() -> None:

@@ -157,7 +157,7 @@ async def test_ephemeral_session_never_populates_connection_service():
     asserts on the service's public ``held_servers()`` surface, not private state."""
 
     session = make_session(agent_name="s2a-ephemeral-test", mcp_servers={"srv": _CFG})
-    session._ephemeral = True  # the registry sets this post-construction on an ephemeral spawn
+    session.mark_ephemeral()  # the registry sets this post-construction on an ephemeral spawn
     try:
         result = await session._mcp_call_tool("srv", "echo", {"text": "eph"})
         assert result.get("status") == "ok", result
