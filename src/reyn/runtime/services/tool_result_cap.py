@@ -50,6 +50,16 @@ _PREVIEW_TAIL_CHARS: int = 2_000
 ALPHA: float = 0.5
 FIXED_CEIL_TOKENS: int = 4096
 
+# #5367①: the two callers of this module drive genuinely different mechanisms —
+# TRIGGER_CAP is the write-time size gate (the config-default-off offload path,
+# ``ContextBudgetAdvisor.cap_tool_result``); TRIGGER_OVERFLOW is the reactive
+# same-turn spill a compaction/token-budget overflow provokes
+# (``RouterHistoryBuffer.spill_turn_content``, #5296 PR-2). Named constants
+# (not ad hoc strings at each call site) so a future third caller cannot invent
+# its own spelling of either value.
+TRIGGER_CAP: str = "cap"
+TRIGGER_OVERFLOW: str = "overflow"
+
 
 def compute_cap_tokens(
     effective_trigger: int,
@@ -74,6 +84,7 @@ def cap_tool_result_content(
     cap_tokens: int,
     model: str,
     save_fn: Callable[..., dict],
+    trigger: str,
     use_chars4: bool = False,
     events: Any = None,
     content_type: "str | None" = None,
@@ -98,6 +109,10 @@ def cap_tool_result_content(
                       least ``"path"`` (project-relative, read back via
                       ``read_file``) and ``"content_hash"``. In production this is
                       ``MediaStore.save_tool_result`` (the #385 store) — lossless.
+        trigger:      (#5367①) Which mechanism drove this call — :data:`TRIGGER_CAP`
+                      (write-time size gate) or :data:`TRIGGER_OVERFLOW` (reactive
+                      same-turn spill). No default: a caller that forgets it gets a
+                      ``TypeError``, not a silently-unlabelled audit event.
         use_chars4:   Match the engine's token estimator (``cfg.use_chars4_estimate``)
                       so the size measurement is unit-consistent with the
                       ``effective_trigger`` budget the cap is derived from.
@@ -197,6 +212,7 @@ def cap_tool_result_content(
             cap_tokens=cap_tokens,
             ref=ref,
             content_hash=content_hash,
+            trigger=trigger,
         )
     if on_offload is not None:
         on_offload(ref)

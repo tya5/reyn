@@ -1209,7 +1209,10 @@ class RouterHistoryBuffer:
             return None
         import hashlib
 
-        from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+        from reyn.runtime.services.tool_result_cap import (
+            TRIGGER_OVERFLOW,
+            cap_tool_result_content,
+        )
 
         def _save(c: "str | dict", **kw: Any) -> dict:
             return self._media_store.save_tool_result(
@@ -1220,6 +1223,7 @@ class RouterHistoryBuffer:
             content,
             cap_tokens=1,
             model=self._model,
+            trigger=TRIGGER_OVERFLOW,
             save_fn=_save,
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
             events=self._events,

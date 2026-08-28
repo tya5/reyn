@@ -254,7 +254,7 @@ class ContextBudgetAdvisor:
         store = self._media_store
         if store is None:
             return content_str
-        from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+        from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
         cfg = self._offload_config
@@ -262,6 +262,7 @@ class ContextBudgetAdvisor:
             content_str,
             cap_tokens=self.per_turn_cap_tokens(),
             model=self._model,
+            trigger=TRIGGER_CAP,
             save_fn=store.save_tool_result,
             use_chars4=use_chars4,
             events=self._events,

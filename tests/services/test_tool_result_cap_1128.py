@@ -26,9 +26,12 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.media_store import MediaStore
 from reyn.runtime.services.tool_result_cap import (
     MAX_TOOL_RESULT_INLINE_BYTES,
+    TRIGGER_CAP,
+    TRIGGER_OVERFLOW,
     cap_tool_result_content,
     compute_cap_tokens,
 )
@@ -50,7 +53,7 @@ def test_under_cap_content_is_identity(tmp_path: Path) -> None:
     content = "small tool result"
     out = cap_tool_result_content(
         content, cap_tokens=2048, model=_MODEL,
-        save_fn=store.save_tool_result, use_chars4=True,
+        save_fn=store.save_tool_result, trigger=TRIGGER_CAP, use_chars4=True,
     )
     assert out == content
     # Nothing stored when under cap.
@@ -70,7 +73,7 @@ def test_over_cap_preview_is_within_cap_tokens(tmp_path: Path, cap_tokens: int) 
     content = "X" * 400_000  # ~100k tokens (chars//4) — far over any cap
     out = cap_tool_result_content(
         content, cap_tokens=cap_tokens, model=_MODEL,
-        save_fn=store.save_tool_result, use_chars4=True,
+        save_fn=store.save_tool_result, trigger=TRIGGER_CAP, use_chars4=True,
     )
     assert out != content, "oversized content must be offloaded, not returned raw"
     assert estimate_tokens(out, _MODEL, use_chars4=True) <= cap_tokens, (
@@ -91,7 +94,7 @@ def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:
     content = "LINE\n" * 50_000  # large, distinctive
     out = cap_tool_result_content(
         content, cap_tokens=512, model=_MODEL,
-        save_fn=store.save_tool_result, use_chars4=True,
+        save_fn=store.save_tool_result, trigger=TRIGGER_CAP, use_chars4=True,
     )
     ref = _ref_from_preview(out)
 
@@ -106,9 +109,41 @@ def test_cap_disabled_when_zero(tmp_path: Path) -> None:
     content = "Y" * 100_000
     out = cap_tool_result_content(
         content, cap_tokens=0, model=_MODEL,
-        save_fn=store.save_tool_result, use_chars4=True,
+        save_fn=store.save_tool_result, trigger=TRIGGER_CAP, use_chars4=True,
     )
     assert out == content
+
+
+def test_trigger_is_required_no_default(tmp_path: Path) -> None:
+    """Tier 2: #5367① — omitting ``trigger`` is a ``TypeError``, not a silently
+    unlabelled audit event. A caller that forgets it fails loudly at the call
+    site, before any offload/emit happens."""
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    with pytest.raises(TypeError):
+        cap_tool_result_content(  # type: ignore[call-arg]
+            "X" * 100_000, cap_tokens=64, model=_MODEL,
+            save_fn=store.save_tool_result, use_chars4=True,
+        )
+
+
+@pytest.mark.parametrize("trigger", [TRIGGER_CAP, TRIGGER_OVERFLOW])
+def test_offload_event_carries_the_trigger_it_was_given(tmp_path: Path, trigger: str) -> None:
+    """Tier 2: #5367① — the ``tool_result_offloaded`` audit event's ``trigger``
+    field is exactly the value the caller passed (real EventLog, no mock)."""
+    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    events = EventLog()
+    seen: list = []
+    events.add_subscriber(lambda e: seen.append(e))
+
+    cap_tool_result_content(
+        "X" * 100_000, cap_tokens=64, model=_MODEL,
+        save_fn=store.save_tool_result, trigger=trigger, use_chars4=True,
+        events=events,
+    )
+
+    offloaded = [e for e in seen if e.type == "tool_result_offloaded"]
+    assert offloaded, "the oversized content must have been offloaded (test setup sanity)"
+    assert offloaded[0].data["trigger"] == trigger
 
 
 # ── load-bearing integration: capped turn folds via retry_loop, uncapped dead-ends ──
@@ -230,7 +265,7 @@ def test_capped_tool_turn_folds_via_retry_loop_without_overflow(tmp_path: Path) 
     capped = cap_tool_result_content(
         "Z" * 80_000,  # ~20k tokens — far over B_M=8000, the dead-end shape
         cap_tokens=cap_tokens, model=_MODEL,
-        save_fn=store.save_tool_result, use_chars4=True,
+        save_fn=store.save_tool_result, trigger=TRIGGER_CAP, use_chars4=True,
     )
     assert estimate_tokens(capped, _MODEL, use_chars4=True) < _budgets().B_M, (
         "precondition: the capped turn must fit the compaction budget"

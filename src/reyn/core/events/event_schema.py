@@ -120,6 +120,12 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
         "wire_bytes", "accepted",
         "sp_bytes", "head_bytes", "summary_bytes", "tail_bytes", "new_msg_bytes",
     }),
+    # #5367①: two distinct mechanisms (tool_result_cap.TRIGGER_CAP — write-time
+    # size gate; TRIGGER_OVERFLOW — reactive same-turn spill, #5296 PR-2) emit
+    # this SAME kind through one shared emit site. `trigger` is mandatory so a
+    # reader distinguishing the two never has to infer which one fired from
+    # context (chain_id presence, call ordering, ...).
+    "tool_result_offloaded": frozenset({"trigger"}),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
