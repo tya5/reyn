@@ -1,18 +1,28 @@
-"""Tier 2: #5296 PR-2 — same-turn recovery from a BYTE-limited (HTTP 413)
-unrecovered overflow.
+"""Tier 2: #5296 PR-2 / #5364 §1.6 — same-turn recovery from an
+`UnrecoveredError`, MODE-INDEPENDENT (byte-limited HTTP 413 OR a non-byte,
+token-axis terminal cause).
 
-Before this, `RouterLoopDriver._run_with_shrink`'s own `UnrecoveredError`
-(with `.saw_byte_limit=True`) always ended the turn — #4954(b)'s own
+Before #5296 PR-2, `RouterLoopDriver._run_with_shrink`'s own
+`UnrecoveredError` always ended the turn — #4954(b)'s own
 `recovery_policy="next_turn"` only advanced the watermark for a LATER turn
 via a real `force_compact_now()`, but THIS turn still failed. #5296 PR-2's
 `_run_with_shrink_and_byte_reduction` (the new wrapper `run_turn` now calls
-instead of the bare `_run_with_shrink`) intervenes on exactly that one
-failure shape: spill first (reusing the existing `MediaStore.save_tool_
-result` + `tool_result_cap.cap_tool_result_content` machinery via a new
-session-lived, non-durable `RouterHistoryBuffer` projection overlay — never
+instead of the bare `_run_with_shrink`) intervenes on exactly that failure
+shape: spill (reusing the existing `MediaStore.save_tool_result` +
+`tool_result_cap.cap_tool_result_content` machinery via a new session-lived,
+non-durable `RouterHistoryBuffer` projection overlay — never
 `self.history`/`history.jsonl`, never the compaction watermark), then
-durable compaction only if spill made no progress, then re-tries
-`_run_with_shrink` — bounded by `_MAX_BYTE_REDUCTION_ATTEMPTS`.
+re-tries `_run_with_shrink`.
+
+#5364 §1.6 replaces PR-2's original byte-comparison gate and fixed
+`_MAX_BYTE_REDUCTION_ATTEMPTS` cap (both removed entirely) with 3
+predicates, from the #5364 issue body (canonical): PROGRESS — the
+un-spilled candidate count went down by one (the sole termination
+witness); SUCCESS — the retried call stops raising; FAILURE — candidates
+are empty. The bound is candidate exhaustion, never a fixed constant, and
+applies identically whether `UnrecoveredError.saw_byte_limit` is True or
+False — a token-axis cause now gets the same spill attempts a byte-limit
+cause always did.
 
 Real `Session` + real `RouterLoopDriver`/`RouterHistoryBuffer`/`MediaStore`
 throughout — the same harness `test_retry_loop_chat_wiring_1125.py`'s own
@@ -261,21 +271,21 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
 ) -> None:
     """Tier 2: contract acceptance ① — many small turns, no tool-result
     turn at all (nothing spillable — spill's own candidate scan
-    structurally finds zero candidates).
-
-    #5296 PR-2 review (architect + lead-coder, 2nd finding): this
-    wrapper does NOT call ``force_compact_now`` itself (removed — see
-    ``_run_with_shrink_and_byte_reduction``'s own docstring for why a
-    second call site would either be redundant or, worse, silently
-    violate ``recovery_policy="never"``). Contract ④'s durable-
-    compaction step is instead covered by ``_run_with_shrink``'s own
-    PRE-EXISTING #4954(b) ``next_turn`` side-effect (the DEFAULT policy),
-    which already runs ``force_compact_now`` inside its own except block
-    before re-raising. This test's job is narrower than its name once
-    suggested: prove the wrapper correctly DETECTS that pre-existing
-    reduction (via ``_wire_bytes_now()``) and retries successfully — not
-    that the wrapper itself triggers compaction (it structurally cannot,
-    anymore).
+    structurally finds zero candidates). ★architect review — the FIRST
+    version of #5364 §1.6 broke this: it read only the spill axis's own
+    progress, so "spill candidates ZERO" was (wrongly) treated as
+    "nothing left to try" even though the COMPACT axis
+    (``_run_with_shrink``'s own PRE-EXISTING #4954(b) ``next_turn``
+    side-effect, ``force_compact_now`` inside ITS except block) had
+    genuinely advanced the watermark THIS attempt and let the SECOND
+    ``_run_with_shrink`` call succeed — a real, witnessed, main-green
+    recovery path, not a theoretical one (this test's own docstring, pre-
+    fix, already said so verbatim). #5367's own "縮小軸は2本／失敗＝両縮小
+    軸が dry" already named this; #5364 §1.6 only wrote the spill side —
+    an omission in that text, not in the pre-#5364-§1.6 implementation.
+    Fixed by tracking BOTH axes' progress (``compaction_watermark()``
+    strictly increasing = compact progress, alongside the pre-existing
+    spill-candidate-consumed signal) and failing only when NEITHER moved.
 
     ``fake_compaction_engine`` (a network-free stand-in, same shape the
     PR-N6 test file's own ``_OverflowingEngine`` uses — a real
@@ -313,9 +323,53 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
             loop, "continue please", chain_id="c1",
         )
     )
-    assert result is None
+    assert result is None  # the fake loop's own successful return
 
     assert compacted["done"], "expected a real compaction_completed event"
+    spill_events = [e for e in events if e.type == "tool_result_offloaded"]
+    assert not spill_events, (
+        "nothing was spillable (no tool-result turns) — spill must not "
+        f"have offloaded anything: {[e.data for e in spill_events]!r}"
+    )
+
+
+def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: contract acceptance ①b — the TRUE-exhaustion sibling of
+    the test above: nothing spillable (no tool-result turns) AND
+    compaction ALSO cannot progress (too few durable turns for
+    ``force_compact_now``'s own candidate scan to find anything —
+    ``fake_compaction_engine``'s ``compact()`` never even gets called).
+    Together the two tests distinguish "one axis dry" (recovers) from
+    "both axes dry" (true exhaustion, #5364 §1.6's unqualified failure
+    predicate: raise immediately, no generous extra attempts)."""
+    session = _make_spill_session(
+        tmp_path, monkeypatch, max_shrink_iterations=1,
+        fake_compaction_engine=True,  # recovery_policy="next_turn" (default)
+    )
+    _push(session, "user", "hi")
+    _push(session, "assistant", "ok")
+
+    events: list = []
+    session._audit_events.add_subscriber(lambda e: events.append(e))
+
+    loop = _ContentDrivenLoop(lambda history, user_text: True)  # always 413
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(
+            session._loop_driver._run_with_shrink_and_byte_reduction(
+                loop, "continue please", chain_id="c1",
+            )
+        )
+    assert excinfo.value.saw_byte_limit is True
+
+    assert not [e for e in events if e.type == "compaction_completed"], (
+        "too little history for compaction to have found any candidate — "
+        "the watermark must NOT have moved (control arm: if this test's "
+        "own compaction axis silently moved, the test is not actually "
+        "isolating the true-exhaustion case it means to)"
+    )
     spill_events = [e for e in events if e.type == "tool_result_offloaded"]
     assert not spill_events, (
         "nothing was spillable (no tool-result turns) — spill must not "
@@ -363,13 +417,17 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
         "existing next_turn side-effect (disabled by this policy) or a "
         "wrapper-owned call (removed entirely)"
     )
-    # ② clean, bounded termination — not a hang. The call count is
-    # structurally bounded by _MAX_BYTE_REDUCTION_ATTEMPTS regardless of
-    # how large the history is (a wall-clock timeout is never needed to
-    # prove this) — sliced past the composite bound, the tail must be
-    # empty.
-    from reyn.runtime.services.router_loop_driver import _MAX_BYTE_REDUCTION_ATTEMPTS
-    assert loop.calls[(1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * 1:] == []
+    # ② clean, bounded termination — not a hang. #5364 §1.6: the bound is
+    # candidate exhaustion, not a fixed constant. All 50 turns here are
+    # ``role="user"`` — zero spillable candidates — so
+    # ``_attempt_reactive_spill`` reports failure on its very FIRST call,
+    # and the wrapper must raise right after exactly ONE outer attempt (a
+    # wall-clock timeout is never needed to prove this): sliced past that
+    # single attempt's own ``_run_with_shrink`` call count (2, measured
+    # directly — ``max_shrink_iterations=1`` plus retry_loop's own initial
+    # full-history attempt, unrelated to and unchanged by this fix), the
+    # tail must be empty.
+    assert loop.calls[2:] == []
 
 
 # ── ③ oversized user message alone — both levers fail, clean termination ───
@@ -382,8 +440,10 @@ def test_oversized_new_message_alone_terminates_cleanly_not_a_hang(
     (never spilled, never compacted — #5296's own contract, and this
     module's #43-cited "NEVER dropped" invariant) is what is oversized.
     Neither spill nor compaction can touch it, so the wrapper must
-    terminate — bounded by construction (`_MAX_BYTE_REDUCTION_ATTEMPTS`),
-    not by a wall-clock timeout this test would have to wait out."""
+    terminate — #5364 §1.6: bounded by candidate exhaustion (one genuine
+    spill of the single small tool candidate, then failure once that
+    candidate is already at its own offload floor), never by a fixed
+    constant or a wall-clock timeout this test would have to wait out."""
     session = _make_spill_session(tmp_path, monkeypatch, max_shrink_iterations=1)
     _push(session, "user", "hi")
     _push(session, "tool", "small result", tool_call_id="tc1", name="tool")
@@ -399,12 +459,16 @@ def test_oversized_new_message_alone_terminates_cleanly_not_a_hang(
         )
     assert excinfo.value.saw_byte_limit is True
 
-    # Bounded: (1 + _MAX_BYTE_REDUCTION_ATTEMPTS) outer attempts, each an
-    # independent retry_loop call bounded by max_shrink_iterations=1 (one
-    # main_call per outer attempt here — no raw_middle to fold first) —
-    # sliced past the composite bound, the tail must be empty.
-    from reyn.runtime.services.router_loop_driver import _MAX_BYTE_REDUCTION_ATTEMPTS
-    assert loop.calls[(1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * 1:] == []
+    # Bounded: 2 outer attempts, each an independent retry_loop call —
+    # attempt 1 spills the single small tool candidate (genuine
+    # progress), attempt 2 finds that same candidate already at its own
+    # offload floor (no progress, #5364 §1.6's ``is_already_spilled``
+    # guard) and raises. Each outer attempt's own ``_run_with_shrink``
+    # call makes 2 loop.run calls (measured directly — max_shrink_
+    # iterations=1's own initial full-history attempt plus one more,
+    # unrelated to and unchanged by this fix), so the composite bound is
+    # 4 total; sliced past it, the tail must be empty.
+    assert loop.calls[4:] == []
 
 
 # ── spill persists across turns (session-lived overlay) ────────────────────
@@ -473,48 +537,52 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     )
 
 
-# ── a no-progress spill must not leave a useless overlay entry behind ──────
+# ── a genuine spill is KEPT even when it makes the payload bigger ──────────
 
 
-def test_a_spill_that_does_not_help_is_undone(
+def test_a_spill_that_makes_it_bigger_is_still_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: #5296 PR-2 review (architect, 1st finding) — spilling a
-    TINY tool result makes it BIGGER, not smaller (the offloaded preview
-    carries a fixed pointer-path overhead — measured directly building
-    this PR: an 11-char original became a 115-char replacement). Before
-    this fix, ``_attempt_reactive_spill`` left that overlay entry in
-    place regardless, contradicting its own docstring ("destroy more of
-    the operator's visible context than necessary"). Witnessed via the
-    PUBLIC ``build_history()`` seam (never the private ``_spill_overlay``
-    dict directly): the tiny turn's ORIGINAL content must still be what
-    gets sent, not the bloated replacement."""
+    """Tier 2: #5364 §1.6 (reverses #5296 PR-2's original 1st finding) —
+    spilling a TINY tool result makes it BIGGER, not smaller (the
+    offloaded preview carries a fixed pointer-path overhead — measured
+    directly building #5296 PR-2: an 11-char original became a 115-char
+    replacement). #5296 PR-2 originally UNDID such a spill
+    (``discard_spill_overlay_for``); #5364 §1.6 removes that undo
+    entirely — the stop condition is "did progress happen" (a candidate
+    got consumed), never "did bytes move", so a genuine new spill is now
+    KEPT regardless of whether it made the payload bigger. Witnessed via
+    the PUBLIC ``build_history()`` seam (never the private
+    ``_spill_overlay`` dict directly): the tiny turn's OFFLOADED preview
+    (not its original content) is what gets sent afterward."""
     session = _make_spill_session(tmp_path, monkeypatch)
     _push(session, "user", "hi")
     # NOT "hi" — a 2-char body estimates at <=1 token, so `cap_tokens=1`
     # never offloads it at all (`spill_turn_content` returns `None`,
-    # never reaching the discard path this test means to exercise —
-    # confirmed directly: an earlier draft using "hi" here stayed GREEN
-    # even with `discard_spill_overlay_for` stripped out). "tiny result"
-    # (11 chars) DOES cross the 1-token cap and genuinely gets offloaded
-    # — into a 115-char preview, bigger than the original.
+    # not a genuine spill). "tiny result" (11 chars) DOES cross the
+    # 1-token cap and genuinely gets offloaded — into a 115-char
+    # preview, bigger than the original.
     tiny = "tiny result"
     _push(session, "tool", tiny, tool_call_id="tc1", name="tool")
     _push(session, "assistant", "ok")
 
-    reduced = asyncio.run(
-        session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    progressed = asyncio.run(
+        session._loop_driver._attempt_reactive_spill(chain_id="c1")
     )
-    assert reduced is False, (
-        "control arm: spilling a tiny result must NOT report progress — "
-        "it makes the payload bigger, not smaller"
+    assert progressed is True, (
+        "spilling a tiny result IS progress (a candidate was genuinely "
+        "newly offloaded) even though the replacement is bigger than "
+        "the original — #5364 §1.6 never reads bytes to decide this"
     )
 
     history = session._loop_driver._history_buffer.build_history()
-    assert _has_content(history, tiny), (
-        "a no-progress spill must be undone — the tiny turn's ORIGINAL "
-        "content should still be what gets sent, not a bloated "
-        "offloaded-preview replacement left behind uselessly"
+    assert not _has_content(history, tiny), (
+        "the spill must be KEPT, not undone — the tiny turn's ORIGINAL "
+        "content must no longer be what gets sent"
+    )
+    assert "read_file(path=" in str(history), (
+        "the offloaded preview (naming a read_file path) must be what "
+        "gets sent in place of the tiny turn's original content"
     )
 
 
@@ -579,7 +647,7 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
         f"test setup sanity: the mid candidate must land in raw_middle, got {mid_ids!r}"
     )
 
-    await session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    await session._loop_driver._attempt_reactive_spill(chain_id="c1")
     await session._audit_events.drain()
 
     offloaded = [e for e in events if e.type == "tool_result_offloaded"]
@@ -763,7 +831,7 @@ async def test_spill_turn_content_offload_event_names_trigger_overflow(
         _push(session, "user", f"filler question number {i} " * 8)
         _push(session, "assistant", f"filler answer number {i} " * 8)
 
-    await session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    await session._loop_driver._attempt_reactive_spill(chain_id="c1")
     await session._audit_events.drain()
 
     offloaded = [e for e in events if e.type == "tool_result_offloaded"]
@@ -775,24 +843,32 @@ async def test_spill_turn_content_offload_event_names_trigger_overflow(
 async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: #5364 §1.3 — a ``raw_middle`` candidate can never move wire
-    bytes (elided out of ``estimate_wire_bytes`` by construction), so the
-    pre-existing "no byte decrease → undo" rule must NOT apply to it —
-    applying it unconditionally would discard every mid spill, contradicting
+    """Tier 2: #5364 §1.3/§1.6 — a ``raw_middle`` candidate can never move
+    wire bytes (elided out of ``estimate_wire_bytes`` by construction), so
+    the stop condition must NOT read bytes at all — it must be "did
+    progress happen" (a candidate got consumed), never "did bytes move".
+    Reading bytes here would discard every mid spill outright, contradicting
     #5364's own reason for including mid at all (persisted ``spilled``
-    state + a smaller future compaction fold). Witnessed via
+    state + a smaller future compaction fold). This setup has exactly ONE
+    spillable candidate, and it lands in ``raw_middle`` alone (no head/tail
+    tool turns to spill first), isolating the mid-only case. Witnessed via
     ``decompose_history_for_retry()``'s own returned content (never the
     private ``_spill_overlay`` dict directly) — surviving content must
     equal the offload preview, matched by its ``read_file(path=...)``
     marker."""
-    session = _make_spill_session(tmp_path, monkeypatch, t_max=4_000)
-    # Enough turns that SOME land in raw_middle once elided (t_max forces a
-    # real split — see decompose_history_for_retry's own docstring on when
-    # raw_middle is non-empty).
-    for i in range(40):
-        _push(session, "user", f"q{i}")
-        _push(session, "tool", f"result body {i} " * 100, tool_call_id=f"tc{i}", name="tool")
-        _push(session, "assistant", f"a{i}")
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    # Filler BEFORE and after the sole tool turn — enough that it lands
+    # squarely in raw_middle (never head/tail) once elided, mirroring
+    # test_spill_candidates_are_staged_head_then_mid_then_tail's own
+    # independently-measured t_max=2_500/filler shape. No OTHER tool
+    # turns exist, so this is the sole candidate.
+    for i in range(20):
+        _push(session, "user", f"filler question number {i + 100} " * 8)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+    _push(session, "tool", "result body " * 100, tool_call_id="tc-mid", name="tool")
+    for i in range(3):
+        _push(session, "user", f"filler question number {i + 300} " * 8)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
 
     head, raw_middle, tail, _summary, _seq_by_id = (
         session._loop_driver._history_buffer.decompose_history_for_retry()
@@ -803,14 +879,17 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
         "turn, or this test cannot exercise the mid-is-never-undone path "
         "— adjust t_max/turn count"
     )
-
-    reduced = await session._loop_driver._attempt_reactive_spill(
-        "continue", chain_id="c1",
+    assert not [t for t in head + tail if t.get("role") == "tool"], (
+        "test setup sanity: no head/tail tool candidate must exist, or "
+        "this test cannot isolate the mid-only case (a head/tail "
+        "candidate would be spilled FIRST, per #5364 §1.3's staged order)"
     )
-    assert reduced is False, (
-        "control arm: with no genuinely spillable head/tail progress in "
-        "this setup, the byte-decrease verdict stays False — this test's "
-        "subject is whether the MID spill survived regardless, next"
+
+    progressed = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
+    assert progressed is True, (
+        "a genuine new mid spill IS progress (a candidate was newly "
+        "offloaded), even though it moves zero wire bytes — #5364 §1.6 "
+        "never reads bytes to decide this"
     )
 
     original_mid_content = mid_tools[0]["content"]
@@ -833,4 +912,131 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
     assert "read_file(path=" in reserialised[0]["content"], (
         "the surviving content should be the offload preview naming the "
         f"read-back path — got: {reserialised[0]['content']!r}"
+    )
+
+
+# ── #5364 §1.6 REQUIRED acceptance: mid-only, multi-round, bytes constant ──
+
+
+def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5364 §1.6 REQUIRED acceptance — a mid-only-candidates
+    configuration (3 spillable ``raw_middle`` tool turns, nothing in
+    head/tail) where spill continues across multiple retries, each one
+    strictly decreasing the un-spilled candidate count by exactly one
+    (PROGRESS), main-call wire bytes stay IDENTICAL throughout every
+    retry (mid is elided out of ``estimate_wire_bytes`` by construction
+    — #5364 §1.3), and the turn ultimately SUCCEEDS once every candidate
+    has been spilled (the retried call stops raising — #5364 §1.6's own
+    SUCCESS predicate, never a separate byte-target comparison).
+
+    Strip-falsify (disclosed, not re-run inline — the old code no longer
+    exists to revert to): reverting ``_attempt_reactive_spill`` to the
+    OLD ``self._wire_bytes_now() >= attempt_start_bytes: raise`` stop
+    condition makes this test go RED on the very FIRST round — that
+    check reads "mid spill moved zero bytes" as failure and raises
+    immediately, before a second of the 3 candidates is ever reached.
+    """
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    for i in range(3):
+        for j in range(8):
+            _push(session, "user", f"filler {i}-{j} " * 8)
+            _push(session, "assistant", f"filler reply {i}-{j} " * 8)
+        _push(session, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
+    for i in range(3):
+        _push(session, "user", f"tail filler {i} " * 8)
+        _push(session, "assistant", f"tail reply {i} " * 8)
+
+    head, raw_middle, tail, _summary, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+    assert mid_ids == {"tc-mid0", "tc-mid1", "tc-mid2"}, (
+        f"test setup sanity: all 3 candidates must land in raw_middle "
+        f"alone, got {mid_ids!r} — adjust t_max/filler counts"
+    )
+    assert not [t for t in head + tail if t.get("role") == "tool"], (
+        "test setup sanity: no head/tail tool candidate must exist, or "
+        "this test cannot isolate the mid-only case"
+    )
+    raw_middle_chars_before = sum(len(t.get("content", "")) for t in raw_middle)
+
+    def _wire_bytes_of(current_head, current_tail) -> int:
+        from reyn.services.compaction.engine import estimate_wire_bytes
+        return estimate_wire_bytes(
+            SP="sp", head=current_head, summary=None, tail=current_tail,
+            new_msg={"role": "user", "content": "continue please"},
+        )
+
+    wire_bytes_before = _wire_bytes_of(head, tail)
+
+    spilled_ids: "list[str]" = []
+    for _round in range(3):
+        progressed = asyncio.run(
+            session._loop_driver._attempt_reactive_spill(chain_id="c1")
+        )
+        assert progressed is True, (
+            f"round {_round}: expected progress — {3 - _round} candidate(s) "
+            f"should still be un-spilled"
+        )
+        head_n, raw_middle_n, tail_n, _summary_n, _ = (
+            session._loop_driver._history_buffer.decompose_history_for_retry()
+        )
+        still_original = {
+            t.get("tool_call_id") for t in raw_middle_n
+            if t.get("role") == "tool" and t.get("tool_call_id") not in spilled_ids
+            and "read_file(path=" not in t.get("content", "")
+        }
+        newly_spilled = mid_ids - still_original - set(spilled_ids)
+        (only_newly_spilled,) = newly_spilled  # raises unless exactly one
+        spilled_ids.append(only_newly_spilled)
+        assert _wire_bytes_of(head_n, tail_n) == wire_bytes_before, (
+            f"round {_round}: main-call wire bytes must stay unchanged — "
+            f"a mid-only spill can never move them (#5364 §1.3)"
+        )
+
+    # All 3 now spilled — candidates exhausted (#5364 §1.6's failure
+    # predicate), a natural termination, not a fixed constant.
+    final_progressed = asyncio.run(
+        session._loop_driver._attempt_reactive_spill(chain_id="c1")
+    )
+    assert final_progressed is False
+
+    _head_f, raw_middle_f, _tail_f, _summary_f, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    raw_middle_chars_after = sum(len(t.get("content", "")) for t in raw_middle_f)
+    assert raw_middle_chars_after < raw_middle_chars_before, (
+        "compaction's own future input (raw_middle) must have SHRUNK once "
+        "every mid candidate was spilled into a bounded offload preview"
+    )
+
+    # The turn ultimately succeeds: a fake loop that fails until all 3
+    # candidates are spilled, driven through the real wrapper end-to-end
+    # (a fresh session — the one above already spent its candidates).
+    session2 = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    for i in range(3):
+        for j in range(8):
+            _push(session2, "user", f"filler {i}-{j} " * 8)
+            _push(session2, "assistant", f"filler reply {i}-{j} " * 8)
+        _push(session2, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
+    for i in range(3):
+        _push(session2, "user", f"tail filler {i} " * 8)
+        _push(session2, "assistant", f"tail reply {i} " * 8)
+    spilled_so_far = {"n": 0}
+    session2._audit_events.add_subscriber(
+        lambda e: spilled_so_far.__setitem__("n", spilled_so_far["n"] + 1)
+        if e.type == "tool_result_offloaded" else None
+    )
+    loop2 = _ContentDrivenLoop(lambda history, user_text: spilled_so_far["n"] < 3)
+    result = asyncio.run(
+        session2._loop_driver._run_with_shrink_and_byte_reduction(
+            loop2, "continue please", chain_id="c1",
+        )
+    )
+    assert result is None, "the turn must ultimately succeed once all mid candidates spilled"
+    assert spilled_so_far["n"] == 3, (
+        "the turn must have spilled all 3 mid candidates before succeeding "
+        f"— got {spilled_so_far['n']!r}"
     )
