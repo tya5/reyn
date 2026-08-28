@@ -166,6 +166,12 @@ async def test_bare_reread_of_a_spilled_file_errors_with_the_remedy(tmp_path: Pa
     huge = "line content here, " * 5000  # large enough to force truncation on re-read
     block = store.save_tool_result(huge, tool="some_tool")
     spill_path = block["path"]  # project-relative, as a subsequent read_file would receive it
+    # #5364 §1.4: the actual disk write is now off-loop (fire-and-forget) —
+    # a real chat turn only ever re-reads a ref in a LATER LLM round (the
+    # model must see the ref before it can name it, and every round
+    # boundary passes through router_loop.py's own flush barrier first),
+    # so this durability wait is what a real read always gets for free.
+    await store.flush()
 
     result = await handle(
         FileIROp(kind="file", op="read", path=spill_path),
@@ -196,6 +202,13 @@ async def test_spill_guard_survives_a_fresh_media_store_instance(tmp_path: Path)
     huge = "line content here, " * 5000
     block = writer.save_tool_result(huge, tool="some_tool")
     spill_path = block["path"]
+    # #5364 §1.4: writer's own manifest-append is off-loop too (chained
+    # after the content write, same worker, FIFO — see save_tool_result's
+    # own comment) — a real restart only ever observes a manifest entry
+    # AFTER real wall-clock time has passed (process exit/relaunch), which
+    # this flush stands in for; a fresh instance racing the SAME process's
+    # still-in-flight write is not a scenario a real restart can produce.
+    await writer.flush()
 
     reader = MediaStore(project_root=tmp_path, session_id="test-session")  # a FRESH instance — simulates a new process
     assert reader.is_tool_result_spill(spill_path), (

@@ -1443,6 +1443,11 @@ class AgentRegistry:
             aclose_audit_events = getattr(session, "aclose_audit_events", None)
             if callable(aclose_audit_events):
                 await aclose_audit_events()
+            # #5364 §1.4: same teardown-completeness gap — a 5th instance
+            # (see Session.aclose_media_store's own docstring).
+            aclose_media_store = getattr(session, "aclose_media_store", None)
+            if callable(aclose_media_store):
+                await aclose_media_store()
         cascade_changes, vanished_sids = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
@@ -2681,6 +2686,11 @@ class AgentRegistry:
             aclose_audit_events = getattr(session, "aclose_audit_events", None)
             if callable(aclose_audit_events):
                 await aclose_audit_events()
+            # #5364 §1.4: same teardown-completeness gap — a 5th instance
+            # (see Session.aclose_media_store's own docstring).
+            aclose_media_store = getattr(session, "aclose_media_store", None)
+            if callable(aclose_media_store):
+                await aclose_media_store()
             # #4215 ②: cancel this session's own hook-bus->parent bridge
             # task, if it is one (bridged children only —
             # session_api._spawn_pipeline_driver_session's attached path;
