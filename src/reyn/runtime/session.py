@@ -47,6 +47,7 @@ from reyn.config import (  # noqa: F401
     RenderTemplateConfig,
     RouterConfig,
     SafetyConfig,
+    StorageConfig,
     WebFetchConfig,
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
@@ -882,6 +883,11 @@ class Session:
         # #4387 Phase B ③: the resource-bound cap on self.history's resident
         # footprint (bytes). None → HistoryResidentConfig's own default (256 MiB).
         history_resident_config: "HistoryResidentConfig | None" = None,
+        # #5366 §3: reyn.yaml storage.* (max_bytes / pin) — the PROJECT-wide
+        # (cross-session) history-content cap, threaded to this Session's
+        # own MediaStore. None → StorageConfig's own default (max_bytes
+        # unset = cross-session GC never fires).
+        storage_config: "StorageConfig | None" = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1044,6 +1050,10 @@ class Session:
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
+        # #5366 §3: stored so MediaStore construction below can thread it —
+        # no other reader today (mirrors read_cap_config/auth_config's own
+        # plain-value-not-supplier shape).
+        self._storage_config = storage_config or StorageConfig()
         # #4468 security block (lead-coder review): the highest seq of any
         # EVICTED entry that carried the untrusted-content marker
         # (security.permissions.capability_profile.UNTRUSTED_META_KEY) —
@@ -1073,6 +1083,8 @@ class Session:
                 # local `session_id` param (not `self._session_id`, which
                 # this constructor hasn't assigned yet at this point).
                 session_id=session_id,
+                # #5366 §3: the project-wide (cross-session) storage cap/pin.
+                storage=self._storage_config,
             )
         else:
             self._media_store = None
