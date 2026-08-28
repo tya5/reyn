@@ -81,6 +81,7 @@ def cap_tool_result_content(
     preview_head_chars: int = _PREVIEW_HEAD_CHARS,
     preview_tail_chars: int = _PREVIEW_TAIL_CHARS,
     on_offload: "Callable[[str], None] | None" = None,
+    on_write_unavailable: "Callable[[], None] | None" = None,
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
 
@@ -117,22 +118,47 @@ def cap_tool_result_content(
                       ``chat_message.py``'s ``TOOL_STATUS_META_KEY``
                       docstring). Optional and additive: every existing
                       caller that doesn't pass it is unaffected.
+        on_write_unavailable: (#5364 §1.5) Called with no arguments when
+                      ``save_fn`` raises ``MediaStoreWriteUnavailable`` —
+                      the ONE typed channel a caller uses to learn "an
+                      offload was attempted and refused because the
+                      store's writes are known not to land," so the
+                      entry can be marked accordingly instead of the
+                      caller having to guess from the (unchanged, still
+                      inline) return value alone. Optional and additive.
 
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
         otherwise a bounded plain-text preview (head + a truncation marker naming
         the ``read_file`` path + tail) with ``estimate_tokens(preview) <= cap_tokens``.
         The full body is always stored first — no information is lost.
+
+        #5364 §1.5: also the original string, unchanged, if ``save_fn`` raises
+        ``MediaStoreWriteUnavailable`` — "a permanently-failed write's turn
+        keeps content inline, never emits a ref naming a file that doesn't
+        exist" (owner). ``on_write_unavailable`` (if given) fires first.
     """
     if cap_tokens <= 0:
         return content_str
     if estimate_tokens(content_str, model, use_chars4=use_chars4) <= cap_tokens:
         return content_str
 
-    if content_type:
-        block = save_fn(content_str, mime_type=content_type)
-    else:
-        block = save_fn(content_str)
+    from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+    try:
+        if content_type:
+            block = save_fn(content_str, mime_type=content_type)
+        else:
+            block = save_fn(content_str)
+    except MediaStoreWriteUnavailable:
+        if on_write_unavailable is not None:
+            on_write_unavailable()
+        if events is not None:
+            events.emit(
+                "tool_result_write_unavailable",
+                total_chars=len(content_str),
+                cap_tokens=cap_tokens,
+            )
+        return content_str
     preview_source = content_str
     ref = block.get("path", "")
     content_hash = block.get("content_hash", "")

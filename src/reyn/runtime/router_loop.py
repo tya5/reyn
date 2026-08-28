@@ -3478,6 +3478,8 @@ class RouterLoop:
         from reyn.core.offload.seam import build_offload_body, render_tool_result
         from reyn.runtime.chat_message import (
             CONTENT_REF_META_KEY,
+            LOST_REASON_META_KEY,
+            LOST_REASON_NEVER_PERSISTED,
             SKILL_SOURCE_PATH_META_KEY,
             SPILLED_META_KEY,
             TOKEN_MAP_META_KEY,
@@ -3526,6 +3528,18 @@ class RouterLoop:
             def _on_offload(ref: str) -> None:
                 nonlocal _offloaded_ref
                 _offloaded_ref = ref
+
+            # #5364 §1.5: the sibling typed channel — "an offload was
+            # attempted and refused because this store's writes are known
+            # not to land" (MediaStoreWriteUnavailable, caught inside
+            # cap_tool_result_content). Mutually exclusive with
+            # _on_offload firing for the SAME call (one cap_tool_result
+            # call either offloads, refuses, or neither — never both).
+            _write_unavailable = False
+
+            def _on_write_unavailable() -> None:
+                nonlocal _write_unavailable
+                _write_unavailable = True
 
             # Error path (plain string, never JSON): a dispatch-envelope error carries
             # ``error.kind``/``.message`` (``permission_denied`` vs ``not_found`` imply different
@@ -3580,7 +3594,10 @@ class RouterLoop:
                     text_full = canonical.get("text", "") or ""
                     scan_target = f"Error: {text_full}"
                     text = (
-                        _cap(text_full, on_offload=_on_offload)
+                        _cap(
+                            text_full, on_offload=_on_offload,
+                            on_write_unavailable=_on_write_unavailable,
+                        )
                         if _cap is not None else text_full
                     )
                     content_str = f"Error: {text}"
@@ -3658,6 +3675,7 @@ class RouterLoop:
                         # recover it from the stored ref's file extension.
                         text = _cap(
                             text, content_type=content_type, on_offload=_on_offload,
+                            on_write_unavailable=_on_write_unavailable,
                         )
                     content_str = render_tool_result(frontmatter, text)
                     # #3629: `load_skill_to_canonical` is the one mapper that sets
@@ -3742,6 +3760,14 @@ class RouterLoop:
             if _offloaded_ref is not None:
                 _tool_meta[SPILLED_META_KEY] = True
                 _tool_meta[CONTENT_REF_META_KEY] = _offloaded_ref
+            # #5364 §1.5: an offload was ATTEMPTED and refused — content
+            # stayed inline (never a ref to a file that doesn't exist), but
+            # the entry still records WHY (operator-actionable: check
+            # disk/permissions, distinct from LOST_REASON_GC's "check the
+            # cap size" — #1.6, not yet wired). SPILLED_META_KEY stays
+            # absent — no ref was ever minted for this entry.
+            if _write_unavailable:
+                _tool_meta[LOST_REASON_META_KEY] = LOST_REASON_NEVER_PERSISTED
             if _append_entry is not None:
                 _append_entry(
                     role="tool",

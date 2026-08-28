@@ -47,9 +47,13 @@ TOOL_ERROR_MESSAGE_META_KEY = "error_message"
 # result into this store before #5364 existed), never "unknown".
 SPILLED_META_KEY = "spilled"
 # The backing file's project-relative path — set for every SPILLED entry.
-# #5364 §1.1 "A": every tool result is written to a file, but only a
-# SPILLED entry's own persisted content is the ref rather than the
+# #5364 §1.1 "A": an offload attempt is ALWAYS file-backed when it lands —
+# a SPILLED entry's own persisted content is the ref rather than the
 # original inline body, so only a spilled entry needs this to resolve.
+# #5364 §1.5: "A" is not "always" without exception — a write that is
+# known, in advance, not to land (MediaStoreWriteUnavailable) never
+# reaches this store at all; that turn's content stays inline and this
+# key is never set (see LOST_REASON_NEVER_PERSISTED below).
 CONTENT_REF_META_KEY = "content_ref"
 # Set once `resolve()` (reyn.core.offload.history_content_resolve) has
 # actually observed the backing file missing — never guessed ahead of
