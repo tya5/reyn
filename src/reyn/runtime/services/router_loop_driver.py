@@ -237,18 +237,40 @@ class RouterLoopDriver:
     # ── Overflow-resilient router invocation ─────────────────────────────────
 
     @staticmethod
-    def _spill_candidates(head: "list[dict]", tail: "list[dict]") -> "list[dict]":
-        """#5296 PR-2 ②: oldest-and-largest-first spill candidates.
+    def _spill_candidates(
+        head: "list[dict]", raw_middle: "list[dict]", tail: "list[dict]",
+    ) -> "list[dict]":
+        """#5364 (owner ruling, verbatim "mid も対象にしてね。
+        head->mid->tail->open"): spill candidates in STAGED order —
+        ``head`` entirely before ``raw_middle`` entirely before ``tail``
+        (open-turn is handled by the caller, outside this function) —
+        largest-first WITHIN each stage.
 
-        ``head`` (older turns) is offered entirely before ``tail`` (more
-        recent turns — "this turn's own subject", contract's own "今回の
-        主題は最後"); within each group, the largest content goes first
-        (the fastest route to a byte-count decrease per spill). Only
-        ``role == "tool"`` turns with an inline string body are candidates
-        — an already-ref'd/non-string content has nothing left to spill.
-        ``new_msg`` (the turn's own newest user message) is never passed
-        in here at all — contract's own "user自身の最新messageは落とさな
-        い" is satisfied structurally, not by a filter that could miss it.
+        ``raw_middle`` (mid) is included even though spilling it moves
+        ZERO wire bytes (it is already elided out of ``build_history``'s
+        payload — ``estimate_wire_bytes`` never reads it, only ``summary``
+        does): #5364 §1.3 names two byte-independent reasons to spill it
+        anyway — (1) ``spilled`` is PERSISTENT (D), so a mid turn that
+        later slides into head/tail (as the window advances) is already
+        done; (2) when overflow later folds ``raw_middle`` into a summary,
+        the fold reads the (now-smaller) ref instead of the full body,
+        shrinking compaction's own input. The caller must not treat "this
+        candidate moved no bytes" as failure for a mid-stage candidate —
+        see ``_attempt_reactive_spill``.
+
+        Only ``role == "tool"`` turns with an inline string body are
+        candidates — an already-ref'd/non-string content has nothing left
+        to spill. ``new_msg`` (the turn's own newest user message) is never
+        passed in here at all — contract's own "user自身の最新messageは
+        落とさない" is satisfied structurally, not by a filter that could
+        miss it.
+
+        "Spilled candidates first" was considered and rejected (owner):
+        once spilled, a candidate's only remaining state is ``lost`` either
+        way, so an already-spilled entry does not need protecting from
+        being resorted alongside an unspilled one — E and C (the size-cap
+        GC) serve different purposes (E = minimize round-trips and
+        collateral spilling this turn; C = evict low-value data over time).
         """
         def _spillable(turns: "list[dict]") -> "list[dict]":
             cands = [
@@ -256,39 +278,65 @@ class RouterLoopDriver:
                 if t.get("role") == "tool" and isinstance(t.get("content"), str)
             ]
             return sorted(cands, key=lambda t: -len(t["content"]))
-        return _spillable(head) + _spillable(tail)
+        return _spillable(head) + _spillable(raw_middle) + _spillable(tail)
 
     async def _attempt_reactive_spill(self, user_text: str, *, chain_id: str) -> bool:
-        """#5296 PR-2 ②③: one spill pass over the CURRENT head/tail.
+        """#5296 PR-2 ②③ / #5364 (mid included): one spill pass over the
+        CURRENT head/mid/tail, staged (see ``_spill_candidates``).
 
-        Spills candidates (oldest/largest first) one at a time, re-measuring
-        total wire bytes after each, STOPPING as soon as the total has
-        decreased from before this pass started (contract ⑥'s "each
-        attempt strictly decreases bytes" — spilling more than needed
-        would destroy more of the operator's visible context than
-        necessary) or candidates are exhausted. The returned bool is this
-        method's OWN local verdict (useful standalone/for tests); the
-        caller (``_run_with_shrink_and_byte_reduction``) makes its own
+        Spills candidates one at a time, re-measuring total wire bytes
+        after each, STOPPING as soon as the total has decreased from
+        before this pass started (contract ⑥'s "each attempt strictly
+        decreases bytes" — spilling more than needed would destroy more
+        of the operator's visible context than necessary) or candidates
+        are exhausted. The returned bool is this method's OWN local
+        verdict (useful standalone/for tests); the caller
+        (``_run_with_shrink_and_byte_reduction``) makes its own
         escalate-to-compaction decision from a wrapper-wide
         ``_wire_bytes_now()`` reading instead — see that method's own
         docstring for why a narrower, call-scoped verdict is not always
         the right signal.
+
+        #5364: a ``raw_middle`` candidate can NEVER move wire bytes (it is
+        already elided out of ``estimate_wire_bytes``'s inputs by
+        construction) — undoing it under the "did not help" rule below
+        would discard EVERY mid spill unconditionally, contradicting
+        #5364 §1.3's own point in including mid at all (persisted
+        ``spilled`` state + a smaller future compaction fold). A
+        mid-sourced spill is therefore never undone for "no byte
+        decrease" and never itself ends the pass with a `True` verdict —
+        it is byte-neutral by design, so the loop moves on to the next
+        candidate (mid, then tail) rather than treating it as either
+        progress or failure.
+
+        #5364 ①/②'s open question (does the OUTER retry loop's
+        ``_MAX_BYTE_REDUCTION_ATTEMPTS`` cap still bound the number of
+        REAL acompletion attempts, or does the candidate ladder now run
+        to exhaustion across real per-candidate retries) is NOT resolved
+        here — this method still reports its OWN local byte-decrease
+        verdict per call, unchanged in that respect; see the tracking
+        discussion on #5364 before changing the caller's retry count.
         """
         from reyn.services.compaction.engine import estimate_wire_bytes
 
         SP = self._history_buffer.build_system_prompt()
         new_msg = {"role": "user", "content": user_text}
-        head, _raw_middle, tail, summary, _ = (
+        head, raw_middle, tail, summary, _ = (
             self._history_buffer.decompose_history_for_retry()
         )
         before = estimate_wire_bytes(SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg)
 
-        candidates = self._spill_candidates(head, tail)
+        mid_ids = {id(t) for t in raw_middle}
+        candidates = self._spill_candidates(head, raw_middle, tail)
         for i, turn in enumerate(candidates):
             replacement = self._history_buffer.spill_turn_content(
                 turn["content"], chain_id=chain_id, seq=i + 1,
             )
             if replacement is None:
+                continue
+            if id(turn) in mid_ids:
+                # Byte-neutral by construction (see docstring) — keep the
+                # spill, do not report progress from it alone, move on.
                 continue
             head2, _rm2, tail2, summary2, _sb2 = (
                 self._history_buffer.decompose_history_for_retry()

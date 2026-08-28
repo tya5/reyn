@@ -503,3 +503,106 @@ def test_a_spill_that_does_not_help_is_undone(
         "content should still be what gets sent, not a bloated "
         "offloaded-preview replacement left behind uselessly"
     )
+
+
+# ── #5364: candidate order is STAGED (head → mid → tail), size-desc/stage ──
+
+
+def test_spill_candidates_are_staged_head_then_mid_then_tail_size_desc_each(
+) -> None:
+    """Tier 2: #5364 §1.3 (owner verbatim "mid も対象にしてね。head->mid->
+    tail->open") — ``_spill_candidates`` offers ``head``'s tool turns
+    ENTIRELY (largest first) before any ``raw_middle`` turn, and every
+    ``raw_middle`` turn before any ``tail`` turn (largest first within
+    each group). Hand-built head/mid/tail — this is a pure static method,
+    so this test pins its own output directly rather than reconstructing a
+    real overflowing history just to get a particular split shape."""
+    head = [
+        {"role": "tool", "content": "h" * 5},
+        {"role": "tool", "content": "h" * 50},  # largest in head
+        {"role": "user", "content": "not a tool turn"},
+    ]
+    mid = [
+        {"role": "tool", "content": "m" * 10},
+        {"role": "tool", "content": "m" * 1_000_000},  # huge, but mid — still 2nd stage
+    ]
+    tail = [
+        {"role": "tool", "content": "t" * 3},
+    ]
+
+    from reyn.runtime.services.router_loop_driver import RouterLoopDriver
+
+    candidates = RouterLoopDriver._spill_candidates(head, mid, tail)
+
+    assert [c["content"] for c in candidates] == [
+        "h" * 50, "h" * 5,          # head, largest first
+        "m" * 1_000_000, "m" * 10,  # mid, largest first — despite dwarfing everything
+        "t" * 3,                    # tail last, even though it's the newest turn
+    ], (
+        "mid's 1,000,000-char candidate must NOT jump ahead of head, and "
+        "tail's candidate must come last regardless of size — order is "
+        "staged by group, not globally size-sorted"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5364 §1.3 — a ``raw_middle`` candidate can never move wire
+    bytes (elided out of ``estimate_wire_bytes`` by construction), so the
+    pre-existing "no byte decrease → undo" rule must NOT apply to it —
+    applying it unconditionally would discard every mid spill, contradicting
+    #5364's own reason for including mid at all (persisted ``spilled``
+    state + a smaller future compaction fold). Witnessed via the PUBLIC
+    ``is_tool_result_spill`` seam on the path recorded by
+    ``spill_turn_content`` — never a private overlay dict directly."""
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=4_000)
+    # Enough turns that SOME land in raw_middle once elided (t_max forces a
+    # real split — see decompose_history_for_retry's own docstring on when
+    # raw_middle is non-empty).
+    for i in range(40):
+        _push(session, "user", f"q{i}")
+        _push(session, "tool", f"result body {i} " * 100, tool_call_id=f"tc{i}", name="tool")
+        _push(session, "assistant", f"a{i}")
+
+    head, raw_middle, tail, _summary, _seq_by_id = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    mid_tools = [t for t in raw_middle if t.get("role") == "tool"]
+    assert mid_tools, (
+        "test setup sanity: raw_middle must contain at least one tool "
+        "turn, or this test cannot exercise the mid-is-never-undone path "
+        "— adjust t_max/turn count"
+    )
+
+    reduced = await session._loop_driver._attempt_reactive_spill(
+        "continue", chain_id="c1",
+    )
+    assert reduced is False, (
+        "control arm: with no genuinely spillable head/tail progress in "
+        "this setup, the byte-decrease verdict stays False — this test's "
+        "subject is whether the MID spill survived regardless, next"
+    )
+
+    original_mid_content = mid_tools[0]["content"]
+    target_id = mid_tools[0].get("tool_call_id")
+    head2, raw_middle2, tail2, _summary2, _seq2 = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    reserialised = [
+        t for t in head2 + raw_middle2 + tail2
+        if t.get("tool_call_id") == target_id
+    ]
+    assert reserialised, "test setup sanity: the same mid turn must still decompose somewhere"
+    assert reserialised[0]["content"] != original_mid_content, (
+        "the mid spill must survive into a LATER decompose_history_for_retry() "
+        "call — its content should now be the offloaded preview, not the "
+        "original body. If this is still the original content, the "
+        "overlay was discarded (the bug #5364 names: mid spills undone "
+        "because they never satisfy 'after < before')."
+    )
+    assert "read_file(path=" in reserialised[0]["content"], (
+        "the surviving content should be the offload preview naming the "
+        f"read-back path — got: {reserialised[0]['content']!r}"
+    )
