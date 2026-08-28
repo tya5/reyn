@@ -28,14 +28,26 @@ Tests build an `Agent` explicitly too — `tests/_support/agent_session.py`'s
 do this for every test call site, so no test constructs `Session` with the old
 flat identity kwargs either.
 
-`agent_name`/`model`/`_perm`/workspace dirs/`environment_backend`/`sandbox_config`/
+`agent_name`/`model`/`_perm`/`_workspace_state_dir`/`environment_backend`/
 `sandbox_backend`/`workspace_dir`/`agent_role` are then read-only `@property` delegations
 to `self._agent` (defined later in the class body) — external code reads them exactly as
-before; only the storage moved.
+before; only the storage moved. `_workspace_base_dir` (#4200/#5081/#5084) and
+`_sandbox_config` (#5352) are the two exceptions: each COMPOSES `self._agent`'s own
+value with session-layer + agent-layer overrides (see their own field notes below)
+rather than delegating to it bare.
 
 Field-by-field notes on the identity cluster (now Agent-held, exposed via the `@property`
 block):
-- `_sandbox_config` — exec-tool backend policy, plumbed to spawned Agents.
+- `_sandbox_config` — exec-tool backend policy, plumbed to spawned Agents. #5352:
+  now a COMPOSED property, not a bare delegation — `self._agent.sandbox_config`
+  (the process-wide default, byte-identical for every agent per that field's own
+  disclosure) with `.policy` REPLACED wholesale when either layer below has one:
+  a sid-keyed session-layer override (`apply_per_session_sandbox`, the #2126
+  shape — resolved by the registry at spawn time per the same-agent /
+  cross-agent-declared / cross-agent-undeclared priority table and re-injected
+  before the child's first turn) wins over this agent's own `profile.yaml`
+  `sandbox:` declaration (a live re-read, same shape `_workspace_base_dir` uses
+  for `base_dir`) wins over `None` (no override at either layer).
 - `_environment_backend` (#1200 PR-F1) — the agent's `EnvironmentBackend` INSTANCE for the
   chat FS seam (the router `Workspace` built in `make_router_op_context`); `None` → the
   workspace's own `HostBackend` default.
