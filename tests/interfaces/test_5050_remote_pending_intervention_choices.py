@@ -92,14 +92,16 @@ async def _sse_lines_then_hang(text: str):
     ``AgUiTransport.frames()`` raise ``StopAsyncIteration`` on its very
     first ``__anext__()`` when there is nothing to yield — which makes
     ``_pump_frames``'s ``async for`` loop complete with ZERO iterations
-    and fall straight into its own ``finally: self.exit()`` (a genuine
-    "the connection is over, quit the app" — correct for an actually-
-    closed stream, wrong for THIS scenario). A real long-lived connection
-    never exhausts this way; it just has nothing more to send yet. A
-    finite generator here would tear the WHOLE APP down via that
-    ``finally`` before witness ②'s own hydrated-intervention-head worker
-    ever gets a chance to run — not a mount race, a test artifact that
-    doesn't match the real bug shape.
+    and end its OWN worker (#5329 A: this no longer exits the app —
+    before that fix it fell straight into an unconditional ``finally:
+    self.exit()``, a genuine "the connection is over, quit the app" that
+    was correct for an actually-closed stream but wrong for THIS
+    scenario). A real long-lived connection never exhausts this way; it
+    just has nothing more to send yet. A finite generator here would
+    still end the pump's own loop with zero iterations, before witness
+    ②'s own hydrated-intervention-head worker ever gets a chance to run
+    — not a mount race, a test artifact that doesn't match the real bug
+    shape.
 
     A real ``asyncio.sleep(0)`` BETWEEN every yielded line (not merely
     after the whole block) — without it, ``_pump_frames``'s own worker
