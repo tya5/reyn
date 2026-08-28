@@ -209,6 +209,32 @@ def test_read_tool_result_round_trip_for_a_legacy_tool_results_path(tmp_path):
     assert out == "old content"
 
 
+def test_read_tool_result_round_trip_for_a_pre_5383_flat_history_content_path(
+    tmp_path,
+):
+    """Tier 2: #5383 — an entry recorded under the pre-#5383 FLAT
+    history-content/<sid>/ shape (the layout #5369 actually shipped,
+    before #5383's own key-space fix nested it under <agent>/<sid>/)
+    still resolves. ``history_content_root`` itself is UNCHANGED by
+    #5383 (architect ruling: no migration script needed) specifically
+    so an already-minted flat ref keeps resolving inside the same
+    boundary — this is the read-side witness for that promise, same
+    shape as the pre-#5364 tool-results/ legacy-path test above.
+    Architect non-blocking (#5383 TESTS-READ): a future narrowing of
+    the read boundary to root/<agent>/ would silently break this and
+    had no covering test — this closes that gap."""
+    store = _store(tmp_path)
+    flat_dir = tmp_path / ".reyn" / "memory" / "history-content" / "pre-5383-sid"
+    flat_dir.mkdir(parents=True)
+    (flat_dir / "20250101T000000-abc-tool-1.txt").write_text("pre-5383 content")
+
+    out, found = store.read_tool_result(
+        ".reyn/memory/history-content/pre-5383-sid/20250101T000000-abc-tool-1.txt",
+    )
+    assert found is True
+    assert out == "pre-5383 content"
+
+
 # ── isolation across separate save_* calls ─────────────────────────────
 
 
