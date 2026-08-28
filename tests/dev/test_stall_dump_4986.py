@@ -94,9 +94,22 @@ def test_an_atexit_hang_after_sessionfinish_also_produces_a_stall_dump(
         stdin=subprocess.PIPE,
     )
     try:
-        while not (log_path.exists() and log_path.stat().st_size > 0):
-            time.sleep(0)
-        content = log_path.read_text()
+        # #5394: faulthandler writes its dump in stages — the
+        # "Timeout (...)!" header, then a "Thread ... (most recent call
+        # first):" line, then the actual stack frames ("File \"...\",
+        # line N in func"). Waiting on mere non-emptiness (or even on
+        # "Thread" alone, measured directly while building this fix —
+        # that string is written BEFORE the frames) reads the file mid-
+        # write, racing the LAST part (machine-speed dependent — the same
+        # tree can go green or red). Wait on the actual completion this
+        # test needs instead: content containing a real stack frame IS
+        # "the dump finished writing", not a duration to guess at.
+        content = ""
+        while "File \"" not in content:
+            if log_path.exists():
+                content = log_path.read_text()
+            if "File \"" not in content:
+                time.sleep(0)
     finally:
         assert proc.stdin is not None
         proc.stdin.close()  # releases _hang_forever's readline()
@@ -137,9 +150,24 @@ def test_a_session_teardown_hang_produces_a_stall_dump(
         stdin=subprocess.PIPE,
     )
     try:
-        while not (log_path.exists() and log_path.stat().st_size > 0):
-            time.sleep(0)
-        content = log_path.read_text()
+        # #5394: faulthandler writes its dump in stages — the
+        # "Timeout (...)!" header, then a "Thread ... (most recent call
+        # first):" line, then the actual stack frames ("File \"...\",
+        # line N in func"). Waiting on mere non-emptiness (or even on
+        # "Thread" alone, measured directly while building this fix —
+        # that string is written BEFORE the frames) reads the file mid-
+        # write, racing the LAST part (machine-speed dependent — the same
+        # tree can go green or red; a header-only read was measured
+        # directly in a real CI red, #5394). Wait on the actual
+        # completion this test needs instead: content containing a real
+        # stack frame IS "the dump finished writing", not a duration to
+        # guess at.
+        content = ""
+        while "File \"" not in content:
+            if log_path.exists():
+                content = log_path.read_text()
+            if "File \"" not in content:
+                time.sleep(0)
     finally:
         assert proc.stdin is not None
         proc.stdin.close()  # releases _hang_forever_at_teardown's readline()
