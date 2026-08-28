@@ -75,8 +75,11 @@ class Agent:
     # agent in a process — SessionFactoryConfig.from_config threads the
     # ONE process-wide ``ReynConfig.sandbox`` (loaded once from
     # reyn.yaml/reyn.local.yaml) to every agent's factory construction,
-    # unmodified; no code path narrows it per agent name. A field named
-    # on a per-agent dataclass reads as a per-agent narrowing point —
+    # unmodified; no code path narrows it per agent name (repo-wide
+    # census, 2026-08-28 — until #5352 answers whether per-agent
+    # narrowing is built; that PR's own landing is what would make this
+    # claim false, not a byte-count or a date). A field named on a
+    # per-agent dataclass reads as a per-agent narrowing point —
     # there is no way to notice from here alone that it is not one.
     # Consequence: reyn.yaml's absolute-path fields (``allow_write_paths``
     # etc.) grant write access to every agent in the process equally,
