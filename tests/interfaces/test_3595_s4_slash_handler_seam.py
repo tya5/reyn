@@ -536,7 +536,26 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: supplied — they accumulate as hooks.yaml layers are read (possibly
 #: repeatedly, across hot-reloads) over the session's own lifetime, not
 #: known at construction time.
-_PUBLIC_MEMBER_CEILING = 118
+#: Raised 118 -> 119 for #5352: ``apply_per_session_sandbox`` — a NEW method.
+#: ① What was added: a thin forwarder to
+#: ``CapabilityVisibility.apply_per_session_sandbox`` — same shape as
+#: ``apply_per_session_narrowing`` directly above it, one axis over
+#: (sandbox instead of capability narrowing).
+#: ② Why not private: the exact same external seam as
+#: ``apply_per_session_narrowing`` (#2126) — the spawn seam
+#: (``RouterHostAdapter.spawn_session``) re-injects the spawner-resolved
+#: per-session sandbox override into the ALREADY-CONSTRUCTED spawned
+#: session from OUTSIDE this class, right after spawn-time config
+#: resolution; not a slash handler reaching into session internals
+#: (#3595 S4's own failure mode). Public because its sibling is public
+#: and for the identical reason.
+#: ③ Why not a constructor argument: same answer as
+#: ``apply_per_session_narrowing`` already gave for its own case — the
+#: value to inject is only known AFTER the session is constructed and
+#: persisted (spawn-time priority resolution happens in the spawn seam,
+#: which runs after ``Session.__init__``), so it cannot be threaded
+#: through construction without restructuring the spawn seam itself.
+_PUBLIC_MEMBER_CEILING = 119
 
 
 def test_session_public_surface_does_not_grow() -> None:
