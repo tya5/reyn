@@ -49,6 +49,11 @@ from reyn.config.root import ReynConfig  # #1682 #3 cross-section
 class HookYamlReadError(ValueError):
     """A hooks.yaml file exists but could not be read as a mapping."""
 
+    def __init__(self, message: str, *, line: int | None = None, column: int | None = None) -> None:
+        super().__init__(message)
+        self.line = line
+        self.column = column
+
 
 def _load_yaml(path: Path) -> dict:
     if not path.exists():
@@ -972,7 +977,12 @@ def _load_hooks_yaml(path: Path) -> dict:
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("failed to parse %s: %s", path, exc)
-        raise HookYamlReadError(str(exc)) from exc
+        mark = getattr(exc, "problem_mark", None)
+        raise HookYamlReadError(
+            str(exc),
+            line=getattr(mark, "line", None),
+            column=getattr(mark, "column", None),
+        ) from exc
     return data if isinstance(data, dict) else {}
 
 
