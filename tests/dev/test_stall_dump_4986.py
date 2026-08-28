@@ -115,9 +115,24 @@ def test_an_atexit_hang_after_sessionfinish_also_produces_a_stall_dump(
         proc.stdin.close()  # releases _hang_forever's readline()
         proc.wait()
 
-    assert "Thread" in content, (
-        f"the dump file should contain a real faulthandler thread-stack "
-        f"dump even for an atexit-time hang, got {content!r}"
+    # lead-coder TESTS-READ (non-blocking, #5394): the wait condition
+    # above (`"File \"" in content`) ALREADY implies `"Thread" in
+    # content` — faulthandler writes header -> "Thread ..." -> "File
+    # ...", in that order, so once a frame line has landed the thread
+    # line is guaranteed present too. Asserting that again would never
+    # fail (a silent tautology after this fix — a genuine future partial-
+    # dump bug would now hang to CI's own 120s timeout instead of this
+    # test's own readable message). Assert the ORDER instead — a
+    # property the wait condition does NOT imply (content merely
+    # containing all three substrings says nothing about their
+    # sequence).
+    header_at = content.find("Timeout")
+    thread_at = content.find("Thread")
+    frame_at = content.find("File \"")
+    assert -1 < header_at < thread_at < frame_at, (
+        f"the dump should write its header, then the thread line, then "
+        f"stack frames, in that order — got header@{header_at}, "
+        f"thread@{thread_at}, frame@{frame_at} in {content!r}"
     )
 
 
@@ -173,9 +188,17 @@ def test_a_session_teardown_hang_produces_a_stall_dump(
         proc.stdin.close()  # releases _hang_forever_at_teardown's readline()
         proc.wait()
 
-    assert "Thread" in content, (
-        f"the dump file should contain a real faulthandler thread-stack "
-        f"dump, got {content!r}"
+    # lead-coder TESTS-READ (non-blocking, #5394): see the sibling test's
+    # own comment on why `"Thread" in content` is a tautology here (the
+    # wait condition already implies it) and why the order check below
+    # is the property actually worth asserting.
+    header_at = content.find("Timeout")
+    thread_at = content.find("Thread")
+    frame_at = content.find("File \"")
+    assert -1 < header_at < thread_at < frame_at, (
+        f"the dump should write its header, then the thread line, then "
+        f"stack frames, in that order — got header@{header_at}, "
+        f"thread@{thread_at}, frame@{frame_at} in {content!r}"
     )
 
 
