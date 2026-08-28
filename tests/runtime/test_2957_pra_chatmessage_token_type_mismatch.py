@@ -212,7 +212,17 @@ def test_build_history_elides_when_image_cost_pushes_over_trigger(monkeypatch) -
     buf = _make_buffer(history)
     result = buf.build_history()
     kept_texts = [m.get("content") for m in result]
-    assert len(result) < len(history), (
-        f"expected the middle to elide once the image's fixed cost is counted, "
-        f"got all {len(result)} turns kept: {kept_texts}"
+    # #5367: the elided middle is no longer silently dropped — an unspilled
+    # mid turn is bundled into a synthetic report turn naming its seq range,
+    # so a raw message-COUNT comparison against the original history no
+    # longer distinguishes "elided" from "kept" (this scenario elides
+    # exactly 1 turn into exactly 1 report turn — same count, different
+    # content). Assert on the CONTENT instead: the image turn's own seq (2)
+    # must be named in a report turn, never present as itself.
+    assert any(
+        "omitted to fit the context window" in str(text) and " 2-2" in str(text)
+        for text in kept_texts
+    ), (
+        f"expected the middle (seq 2, the image turn) to elide once the "
+        f"image's fixed cost is counted, got: {kept_texts}"
     )
