@@ -222,6 +222,12 @@ class MediaStoreConfig:
     extension surface is documented to keep the future addition out of
     the public-API surprise zone, but no fields are reserved today
     (= YAGNI; field shape is a Phase 2 design decision).
+
+    #5364 §1.6 is that Phase 2 trigger, but ONLY for
+    ``history_content_dir`` (measurement surfaced real GB-class growth
+    there specifically — see ``history_content_max_bytes`` below); the
+    older ``media_dir``/``tool_results_dir`` fields are unaffected and
+    still carry no cleanup policy of their own.
     """
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
@@ -236,6 +242,26 @@ class MediaStoreConfig:
     # boundary at once, which is never what an operator overriding one
     # of them actually wants.
     history_content_dir: str = ".reyn/memory/history-content"
+    # #5364 §1.6: a per-project BACKSTOP against runaway growth of
+    # history_content_dir — NOT a routine management knob (owner: "not
+    # something to run day-to-day"). A separate field from
+    # tool_results_dir/history_content_dir (same reasoning as
+    # history_content_dir's own separation above — one knob must not
+    # double as two different subjects' cap).
+    #
+    # This alone does NOT bound the total size any operator's disk sees:
+    # what actually grows without bound is not one session's own content
+    # (this field's subject) but the NUMBER of sessions a project
+    # accumulates — that cross-session subject is #5366 (owner-ruled
+    # separation), deliberately NOT this field's job.
+    #
+    # Default derivation (owner ruling, measured 2026-08-28, 8 projects
+    # on this machine): the ONE project with any ``.reyn/tool-results/``
+    # content at all held 18 files / 196 KB; the largest ``.reyn/`` tree
+    # measured across all 8 was 132 MB. 2 GB is >15x that observed
+    # maximum — the cap is intended to never fire under any measured
+    # real usage; it exists only to bound a genuine runaway.
+    history_content_max_bytes: int = 2 * 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
