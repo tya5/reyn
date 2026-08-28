@@ -733,8 +733,10 @@ Construction is unconditional and cheap — an empty dict until the first
 listing methods off `Session` onto the adapter itself, threading this same
 `self._mcp_connection_service` instance through as a raw constructor
 argument) route through this held-open service. An ephemeral session
-(`self._ephemeral`, set post-construction by the registry once spawn mode
-is known — read via a LIVE `ephemeral_fn` callable on the adapter side, not
+(`self._ephemeral`, set post-construction via `Session.mark_ephemeral()`
+— #5336: a genuine public seam, not a private-name write from outside —
+by the registry once spawn mode is known — read via a LIVE `ephemeral_fn`
+callable on the adapter side, not
 a snapshot, for the same reason `session_id`/`ephemeral` are read through
 live providers elsewhere in this doc) keeps using the per-call
 `MCPClientPool` instead, so a sub-second-lived spawned session never holds
@@ -941,8 +943,14 @@ trust decision on a specific skill, discovered later if at all.
   LLM cannot spoof. Initialized to the STRICTER value (fail-safe: never default to
   `"user_directed"` before the first turn is classified).
 - `_ephemeral` / `_vanish_scheduled` / `_vanish_task` (#2103) — a spawned EPHEMERAL session
-  (spawn-time `mode="ephemeral"`) auto-vanishes once its task is done. Set
-  post-construction by the registry on an ephemeral spawn; the main session + persistent
+  (spawn-time `mode="ephemeral"`) auto-vanishes once its task is done. `_ephemeral` set
+  post-construction via `Session.mark_ephemeral()` (#5336: a genuine public seam,
+  not a private-name write from outside) by the registry on an ephemeral spawn;
+  `pipeline_executor_driver.py` also calls it, much later, to reuse the existing
+  auto-vanish mechanism as a "vanish now" trigger for a session that was not
+  originally ephemeral — the two call sites are NOT the same moment (architect
+  finding, #5336), which is why a setter method exists instead of a
+  constructor-time argument. The main session + persistent
   spawns leave `_ephemeral` `False`. `_vanish_scheduled` guards against a double-schedule
   across turns.
 
