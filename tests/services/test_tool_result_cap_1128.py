@@ -49,7 +49,7 @@ def _ref_from_preview(preview: str) -> str:
 
 def test_under_cap_content_is_identity(tmp_path: Path) -> None:
     """Tier 2: a result within cap_tokens is returned unchanged (no offload)."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     content = "small tool result"
     out = cap_tool_result_content(
         content, cap_tokens=2048, model=_MODEL,
@@ -69,7 +69,7 @@ def test_over_cap_preview_is_within_cap_tokens(tmp_path: Path, cap_tokens: int) 
     (covers the α-composition + bare-marker sanity-checks: the preview always
     fits the budget regardless of cap size).
     """
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     content = "X" * 400_000  # ~100k tokens (chars//4) — far over any cap
     out = cap_tool_result_content(
         content, cap_tokens=cap_tokens, model=_MODEL,
@@ -90,7 +90,7 @@ def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:
     The no-lossy-truncate guarantee: the body is stored, never discarded or
     raw-truncated. The inline preview is just a bounded pointer.
     """
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     content = "LINE\n" * 50_000  # large, distinctive
     out = cap_tool_result_content(
         content, cap_tokens=512, model=_MODEL,
@@ -105,7 +105,7 @@ def test_offloaded_body_reads_back_lossless(tmp_path: Path) -> None:
 
 def test_cap_disabled_when_zero(tmp_path: Path) -> None:
     """Tier 2: cap_tokens<=0 disables the cap (identity, no offload)."""
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     content = "Y" * 100_000
     out = cap_tool_result_content(
         content, cap_tokens=0, model=_MODEL,
@@ -260,7 +260,7 @@ def test_capped_tool_turn_folds_via_retry_loop_without_overflow(tmp_path: Path) 
     capped turn fits B_M), so it folds with NO CompactionOverflowError /
     UnrecoveredError.
     """
-    store = MediaStore(project_root=tmp_path, session_id="test-session")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     cap_tokens = compute_cap_tokens(_budgets().effective_trigger)
     capped = cap_tool_result_content(
         "Z" * 80_000,  # ~20k tokens — far over B_M=8000, the dead-end shape

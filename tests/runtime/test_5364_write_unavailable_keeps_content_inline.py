@@ -30,6 +30,7 @@ import pytest
 from reyn.config import CompactionConfig, MultimodalConfig
 from reyn.config.chat import OffloadConfig
 from reyn.core.events.durability_worker import DurabilityWorker
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreWriteUnavailable
 from reyn.runtime.chat_message import (
     CONTENT_REF_META_KEY,
@@ -92,14 +93,9 @@ def test_cap_tool_result_content_keeps_content_inline_on_write_unavailable() -> 
     def _always_unavailable(*_a, **_kw):
         raise MediaStoreWriteUnavailable("store is broken")
 
-    class _RecordingEvents:
-        def __init__(self) -> None:
-            self.emitted: list[dict] = []
-
-        def emit(self, type: str, **data) -> None:
-            self.emitted.append({"type": type, **data})
-
-    events = _RecordingEvents()
+    events = EventLog(subscribers=[])
+    emitted: list[dict] = []
+    events.add_subscriber(lambda e: emitted.append({"type": e.type, **e.data}))
     big = "X" * 100_000
 
     result = cap_tool_result_content(
@@ -110,7 +106,7 @@ def test_cap_tool_result_content_keeps_content_inline_on_write_unavailable() -> 
 
     assert result == big, "content must stay inline, unchanged — no ref was ever minted"
     assert calls == [None], "on_write_unavailable must fire exactly once"
-    kinds = [e["type"] for e in events.emitted]
+    kinds = [e["type"] for e in emitted]
     assert "tool_result_write_unavailable" in kinds, (
         f"expected a tool_result_write_unavailable audit event, got: {kinds!r}"
     )

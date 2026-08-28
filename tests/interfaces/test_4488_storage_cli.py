@@ -34,7 +34,7 @@ def test_stats_reflects_real_writes(tmp_path: Path, monkeypatch, capsys):
     """Tier 2: files written through the real MediaStore API show up in the
     CLI's printed counts/totals (#5364: tool-result writes now land under
     memory/history-content/)."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     store.save_image(b"x" * 30, mime_type="image/png", chain_id="c", tool="t", seq=1)
     store.save_tool_result("hello", chain_id="c", tool="t", seq=1)
 
@@ -53,7 +53,7 @@ def test_stats_reflects_real_writes(tmp_path: Path, monkeypatch, capsys):
 def test_stats_honors_an_explicit_project_root(tmp_path: Path, capsys):
     """Tier 2: --project-root overrides cwd — the CLI does not implicitly
     assume the current directory is the project."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     store.save_image(b"y" * 7, mime_type="image/png", chain_id="c", tool="t", seq=1)
 
     run_stats(Namespace(project_root=str(tmp_path)))

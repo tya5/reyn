@@ -222,6 +222,12 @@ class MediaStoreConfig:
     extension surface is documented to keep the future addition out of
     the public-API surprise zone, but no fields are reserved today
     (= YAGNI; field shape is a Phase 2 design decision).
+
+    #5364 §1.6 is that Phase 2 trigger, but ONLY for
+    ``history_content_dir`` (measurement surfaced real GB-class growth
+    there specifically — see ``history_content_max_bytes`` below); the
+    older ``media_dir``/``tool_results_dir`` fields are unaffected and
+    still carry no cleanup policy of their own.
     """
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
@@ -236,6 +242,26 @@ class MediaStoreConfig:
     # boundary at once, which is never what an operator overriding one
     # of them actually wants.
     history_content_dir: str = ".reyn/memory/history-content"
+    # #5364 §1.6: a per-project BACKSTOP against runaway growth of
+    # history_content_dir — NOT a routine management knob (owner: "not
+    # something to run day-to-day"). A separate field from
+    # tool_results_dir/history_content_dir (same reasoning as
+    # history_content_dir's own separation above — one knob must not
+    # double as two different subjects' cap).
+    #
+    # This alone does NOT bound the total size any operator's disk sees:
+    # what actually grows without bound is not one session's own content
+    # (this field's subject) but the NUMBER of sessions a project
+    # accumulates — that cross-session subject is #5366 (owner-ruled
+    # separation), deliberately NOT this field's job.
+    #
+    # Default derivation (owner ruling, measured 2026-08-28, 8 projects
+    # on this machine): the ONE project with any ``.reyn/tool-results/``
+    # content at all held 18 files / 196 KB; the largest ``.reyn/`` tree
+    # measured across all 8 was 132 MB. 2 GB is >15x that observed
+    # maximum — the cap is intended to never fire under any measured
+    # real usage; it exists only to bound a genuine runaway.
+    history_content_max_bytes: int = 2 * 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -652,10 +678,52 @@ class MediaStore:
 
     def _history_content_dir(self) -> Path:
         """This session's own subdirectory under ``_history_content_root``
-        (#5364 §1.1 "★M ── ディレクトリはsession単位"). Created lazily by
-        :func:`offload_value`'s own write path, same as every other
-        MediaStore directory — never pre-created here."""
-        return self._history_content_root / _safe_token(self._session_id)
+        (#5364 §1.1 "★M ── ディレクトリはsession単位"), NESTED one level
+        further under this store's own agent (#5364 issue-body fixup,
+        architect ruling): ``session_id`` alone is not agent-unique — the
+        default session id (``registry._DEFAULT_SID``, ``"main"``) is the
+        SAME literal for every agent, so keying on ``session_id`` alone
+        let every agent's main session share one directory (measured: a
+        real key-space defect in #5369, merged before this fix). This
+        store already declares its own agent identity elsewhere (see
+        :meth:`read_tool_result_by_uri`'s cross-host agent-match check,
+        ``"This store's identity is {self._agent_name!r}"``) — nesting
+        under it here makes THIS path agree with that same identity,
+        and makes the key-space match ``registry._session_state_dir``'s
+        own ``(name, sid)`` shape exactly (the precondition #5364 §1.6
+        "Q" needs to wire session-vanish purge safely).
+
+        ``_history_content_root`` itself is UNCHANGED (not nested under
+        agent) — an already-minted flat ref must keep resolving inside
+        the same boundary (no migration script, same reasoning as
+        #5364 §1.1's own root-boundary decision); only NEW writes land
+        one level deeper.
+
+        Raises :class:`ValueError` if this store has no agent identity
+        (``agent_name`` was never given at construction) — the same
+        "raise at the one point that actually needs it" shape
+        ``session_id`` already uses (required there; ``agent_name``
+        stays optional at construction — 4 of 5 production sites are
+        read-only and legitimately have none — so the check lives here,
+        the one method that actually needs a real value). Falling back
+        to a shared directory would reproduce the exact defect this
+        fixes.
+
+        Created lazily by :func:`offload_value`'s own write path, same
+        as every other MediaStore directory — never pre-created here.
+        """
+        if not self._agent_name:
+            raise ValueError(
+                "MediaStore.save_tool_result requires a real agent_name — "
+                "the write-time directory is agent-scoped (a missing "
+                "agent_name must never silently fall into a directory "
+                "shared with other agents' sessions, #5364)"
+            )
+        return (
+            self._history_content_root
+            / _safe_token(self._agent_name)
+            / _safe_token(self._session_id)
+        )
 
     def save_tool_result(
         self,
@@ -756,10 +824,13 @@ class MediaStore:
         # (in-memory, no I/O, no ordering hazard — protects a re-read
         # within THIS same turn even before the content write is durable).
         # The manifest append is independent, best-effort: a manifest-
-        # write failure (e.g. a read-only ``tool_results_dir``) must never
-        # fail the spill write itself, which is the load-bearing operation
-        # here — it only means a FUTURE process's guard won't recognize
-        # this one path, not that this write failed.
+        # write failure (e.g. a read-only ``tool_results_dir``, OR — #5364
+        # §1.4 — a process crash between this line ENQUEUING the deferred
+        # append and its job actually running, since it is fire-and-forget
+        # off-loop just like the content write above) must never fail the
+        # spill write itself, which is the load-bearing operation here —
+        # it only means a FUTURE process's guard won't recognize this one
+        # path, not that this write failed.
         #
         # #5364 §1.4: submitted via the SAME deferral path as the content
         # write above, ALWAYS after it (same worker, FIFO-serial — see

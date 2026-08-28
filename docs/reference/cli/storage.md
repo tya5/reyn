@@ -61,7 +61,9 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
   `image` component (see [Present op reference](../runtime/present.md#v1-catalog-display-only-non-executable)).
 - **`.reyn/memory/history-content/`** — offloaded large tool results (the
   chat-string offload path, `MediaStore.save_tool_result`), CURRENT writes
-  only, one nested subdirectory per session (#5364). Per
+  only, nested two levels — agent, then session (#5364; #5383's own
+  key-space fix: session id alone collided every agent's default `main`
+  session into one shared directory). Per
   [`.reyn/` directory layout](../runtime/reyn-dir-layout.md) this location is
   classified **persist**, not `cache/` — the bytes it accumulates are not
   something a future eviction policy simply rebuilds from elsewhere.

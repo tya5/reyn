@@ -83,7 +83,7 @@ def test_offload_disabled_default_skips_text_cap(tmp_path):
     down to a bounded plain-text preview, and the ``== oversized`` assertion
     would fail.
     """
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     advisor = _advisor(offload_config=OffloadConfig(enabled=False), media_store=store)
     oversized = "x" * 200_000  # far beyond any realistic per-turn cap
     assert advisor.cap_tool_result(oversized) == oversized
@@ -94,7 +94,7 @@ def test_offload_enabled_opted_in_caps_oversized_text(tmp_path):
     ``offload.enabled=True`` (explicit opt-in) — the text-cap gate DOES fire,
     proving the prior test's unchanged result comes from the flag, not a
     broken capper."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     advisor = _advisor(offload_config=OffloadConfig(enabled=True), media_store=store)
     oversized = "x" * 200_000
     capped = advisor.cap_tool_result(oversized)

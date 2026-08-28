@@ -15,7 +15,14 @@ from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 def _store(tmp_path: Path) -> MediaStore:
-    return MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    # #5364 keyspace fix: save_tool_result now requires a real agent_name
+    # (the write-time dir is agent-scoped) — every caller of this shared
+    # helper gets one, harmless for the save_image-only tests that never
+    # touch the tool-result path.
+    return MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
+        session_id="test-session",
+    )
 
 
 # ── save_image ─────────────────────────────────────────────────────────
@@ -136,7 +143,7 @@ def test_save_tool_result_writes_to_history_content_dir(tmp_path):
     )
     assert block["type"] == "tool_result_ref"
     assert block["mime_type"] == "text/plain"
-    assert block["path"].startswith(".reyn/memory/history-content/test-session/")
+    assert block["path"].startswith(".reyn/memory/history-content/test-agent/test-session/")
     assert block["path"].endswith(".txt")
     full = tmp_path / block["path"]
     assert full.exists()
@@ -147,10 +154,11 @@ def test_save_tool_result_nests_under_the_given_session_id(tmp_path):
     """Tier 2: #5364 §1.1 "ディレクトリはsession単位" — a different
     session_id lands in a different subdirectory."""
     store = MediaStore(
-        MediaStoreConfig(), project_root=tmp_path, session_id="peer-agent-7",
+        MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
+        session_id="peer-agent-7",
     )
     block = store.save_tool_result("x", mime_type="text/plain")
-    assert block["path"].startswith(".reyn/memory/history-content/peer-agent-7/")
+    assert block["path"].startswith(".reyn/memory/history-content/test-agent/peer-agent-7/")
 
 
 def test_save_tool_result_html_extension(tmp_path):
@@ -201,6 +209,32 @@ def test_read_tool_result_round_trip_for_a_legacy_tool_results_path(tmp_path):
     assert out == "old content"
 
 
+def test_read_tool_result_round_trip_for_a_pre_5383_flat_history_content_path(
+    tmp_path,
+):
+    """Tier 2: #5383 — an entry recorded under the pre-#5383 FLAT
+    history-content/<sid>/ shape (the layout #5369 actually shipped,
+    before #5383's own key-space fix nested it under <agent>/<sid>/)
+    still resolves. ``history_content_root`` itself is UNCHANGED by
+    #5383 (architect ruling: no migration script needed) specifically
+    so an already-minted flat ref keeps resolving inside the same
+    boundary — this is the read-side witness for that promise, same
+    shape as the pre-#5364 tool-results/ legacy-path test above.
+    Architect non-blocking (#5383 TESTS-READ): a future narrowing of
+    the read boundary to root/<agent>/ would silently break this and
+    had no covering test — this closes that gap."""
+    store = _store(tmp_path)
+    flat_dir = tmp_path / ".reyn" / "memory" / "history-content" / "pre-5383-sid"
+    flat_dir.mkdir(parents=True)
+    (flat_dir / "20250101T000000-abc-tool-1.txt").write_text("pre-5383 content")
+
+    out, found = store.read_tool_result(
+        ".reyn/memory/history-content/pre-5383-sid/20250101T000000-abc-tool-1.txt",
+    )
+    assert found is True
+    assert out == "pre-5383 content"
+
+
 # ── isolation across separate save_* calls ─────────────────────────────
 
 
@@ -231,11 +265,13 @@ def test_custom_dirs_via_config(tmp_path):
     cfg = MediaStoreConfig(
         media_dir=".alt/img", tool_results_dir=".alt/text",
     )
-    store = MediaStore(cfg, project_root=tmp_path, session_id="test-session")
+    store = MediaStore(
+        cfg, project_root=tmp_path, agent_name="test-agent", session_id="test-session",
+    )
     img = store.save_image(b"x", mime_type="image/png")
     txt = store.save_tool_result("y", mime_type="text/plain")
     assert img["path"].startswith(".alt/img/")
-    assert txt["path"].startswith(".reyn/memory/history-content/test-session/")
+    assert txt["path"].startswith(".reyn/memory/history-content/test-agent/test-session/")
 
     # The custom tool_results_dir is still honored as a READ boundary for
     # a legacy path (#5364 — never migrated, never written to again).
@@ -250,21 +286,17 @@ def test_custom_dirs_via_config(tmp_path):
 # ── Cross-host capable path-ref shape (#385 β core impl sub-task 1) ────
 
 
-def test_save_tool_result_without_agent_name_keeps_legacy_shape(tmp_path):
-    """Tier 2: when MediaStore has no ``agent_name``, save_tool_result
-    returns the pre-β path-ref shape (= no resource_uri / source_agent /
-    source_chain_id). Backward compat for legacy callers and test stubs.
-    """
+def test_save_tool_result_without_agent_name_refuses(tmp_path):
+    """Tier 2: #5364 keyspace fix — save_tool_result requires a real
+    ``agent_name`` (the write-time directory is agent-scoped: the
+    default ``session_id`` ("main") is NOT agent-unique, so keying on
+    session_id alone let every agent's main session share one directory
+    — a real defect found in already-merged #5369). ``agent_name=None``
+    now raises ValueError rather than silently falling into a shared
+    directory."""
     store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
-    block = store.save_tool_result("body", mime_type="text/plain", chain_id="c1")
-
-    assert "resource_uri" not in block
-    assert "source_agent" not in block
-    assert "source_chain_id" not in block
-    # Legacy fields still present.
-    assert block["type"] == "tool_result_ref"
-    assert "path" in block
-    assert "content_hash" in block
+    with pytest.raises(ValueError, match="agent_name"):
+        store.save_tool_result("body", mime_type="text/plain", chain_id="c1")
 
 
 def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
@@ -289,7 +321,7 @@ def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
     filename = Path(block["path"]).name
     assert block["resource_uri"].endswith("/" + filename)
     # Same-host path is still there as the fast-path fallback.
-    assert block["path"].startswith(".reyn/memory/history-content/test-session/")
+    assert block["path"].startswith(".reyn/memory/history-content/researcher/test-session/")
 
 
 def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
@@ -574,6 +606,14 @@ def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
     """Tier 2: ``url`` requires BOTH ``base_url`` AND ``agent_name`` —
     the URL path needs the agent segment. Without an identity, the URL
     can't be addressed; we don't fabricate a path with placeholder.
+
+    Driven via ``save_image`` (not ``save_tool_result``, #5364 keyspace
+    fix): ``save_tool_result`` itself now refuses outright with no
+    ``agent_name`` at all (a stricter, separate requirement — see
+    ``test_save_tool_result_without_agent_name_refuses``); the
+    url-omission behaviour under test here is shared cross-host-field
+    logic (``_attach_cross_host_fields``), not specific to the
+    tool-result write path.
     """
     store = MediaStore(
         MediaStoreConfig(),
@@ -582,7 +622,7 @@ def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
         base_url="https://reyn.example.com",
         session_id="test-session",
     )
-    block = store.save_tool_result("body", mime_type="text/plain")
+    block = store.save_image(b"x", mime_type="image/png")
     assert "url" not in block
 
 

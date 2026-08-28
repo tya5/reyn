@@ -42,7 +42,7 @@ async def test_save_tool_result_write_is_deferred_until_flush(tmp_path: Path) ->
     are all synchronous (the caller gets a usable ref immediately), but the
     actual bytes on disk are NOT there yet until :meth:`MediaStore.flush`
     is awaited — the write ran off-loop, fire-and-forget."""
-    store = MediaStore(project_root=tmp_path, session_id="flush-test")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
 
     block = store.save_tool_result(_BIG)
     written = tmp_path / block["path"]
@@ -58,6 +58,54 @@ async def test_save_tool_result_write_is_deferred_until_flush(tmp_path: Path) ->
 
     assert written.is_file(), "flush() must make the enqueued write durable"
     assert written.read_text(encoding="utf-8") == _BIG
+
+
+@pytest.mark.asyncio
+async def test_flush_orders_the_manifest_append_after_the_content_write(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: architect (#5384②) — a witness for the CONTENT-write-then-
+    manifest-append ORDER itself (save_tool_result's own comment on why
+    the manifest is submitted after the content job, same worker,
+    FIFO-serial) — not just "both eventually land" (a fresh read taken
+    AFTER flush cannot distinguish the two orderings: flush() drains the
+    content job either way, so by then the fresh reader sees the same
+    thing regardless of which write actually ran first — confirmed by
+    strip-falsify: an EARLIER attempt at this test that read only after
+    flush stayed green under a reordered strip).
+
+    The real distinguishing moment is a fresh instance reading the
+    manifest DURING the still-pending window, BEFORE flush. Correct
+    ordering (manifest deferred behind content, same worker) means
+    nothing is on disk yet at that moment — an ordinary, harmless miss,
+    self-prune has nothing to corrupt. The bug this guards (manifest
+    written eagerly, ahead of content) means the line WOULD already be
+    on disk at that moment, pointing at a not-yet-existing file — that
+    fresh read's own construction-time self-prune (``_load_spill_manifest``'s
+    own docstring) would DELETE it right then, permanently — so a LATER,
+    properly-flushed reader would ALSO miss it forever, not just once."""
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
+
+    block = store.save_tool_result(_BIG)
+    # No await yet — still inside the pending window. A fresh reader here
+    # exercises self-prune against whatever is (or isn't) on disk RIGHT
+    # NOW, before this store's own flush() has made anything durable.
+    early_reader = MediaStore(
+        project_root=tmp_path, agent_name="test-agent", session_id="flush-test",
+    )
+    early_reader.is_tool_result_spill(block["path"])  # side effect: may self-prune
+
+    await store.flush()
+
+    late_reader = MediaStore(
+        project_root=tmp_path, agent_name="test-agent", session_id="flush-test",
+    )
+    assert late_reader.is_tool_result_spill(block["path"]), (
+        "a reader constructed WHILE the write was still pending "
+        "permanently pruned the manifest entry — the manifest line was "
+        "on disk before the content file it names, the exact ordering "
+        "bug §1.4 fixed"
+    )
 
 
 class _MediaStoreHost(FakeRouterHost):
@@ -151,7 +199,7 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
     that the test still passes) whenever that region changes. So this is
     a genuine ordering witness, not a scheduler-timing coincidence:
     nothing else in this call graph could have run the drainer first."""
-    store = MediaStore(project_root=tmp_path, session_id="flush-test")
+    store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="flush-test")
     host = _MediaStoreHost(store)
     written = await _seed_pending_spill(host)
     assert not written.exists(), (

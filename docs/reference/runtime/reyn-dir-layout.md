@@ -82,13 +82,20 @@ Everything else is excluded, by one of four reasons:
 │                           unbounded growth) but does NOT rebuild if the
 │                           manifest FILE ITSELF is deleted — pruning and
 │                           rebuilding are not the same claim.
-│   └── history-content/<session_id>/  PERSIST (#5364) — full tool-result
-│                           bodies `history.jsonl` references, GB-CLASS by
-│                           design (a single oversized turn is the whole
-│                           point this store exists to absorb — #5364,
-│                           owner: "普通に考えれば最新にでかいもの置くだ
-│                           けで会話継続できないとわかるでしょ"). One
-│                           directory PER session — `MediaStore.
+│   └── history-content/<agent>/<session_id>/  PERSIST (#5364) — full
+│                           tool-result bodies `history.jsonl` references,
+│                           GB-CLASS by design (a single oversized turn is
+│                           the whole point this store exists to absorb —
+│                           #5364, owner: "普通に考えれば最新にでかい
+│                           もの置くだけで会話継続できないとわかるで
+│                           しょ"). One directory per (agent, session) pair
+│                           — the SESSION-ID-ONLY shape #5369 originally
+│                           shipped put every agent's default `main`
+│                           session under ONE shared directory (#5383's
+│                           own key-space fix; `history_content_root`
+│                           itself is unchanged, so an already-minted
+│                           flat ref still resolves — no migration
+│                           needed). `MediaStore.
 │                           save_tool_result`'s current write target (the
 │                           pre-#5364 `tool-results/` AUDIT dir below is
 │                           frozen: read-only going forward, no migration).
