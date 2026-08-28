@@ -33,6 +33,7 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_fs_watch_config,
     _build_llm_config,
     _build_sandbox_config,
+    _build_storage_config,
 )
 from reyn.config.media import (  # #1682 #3 cross-section
     _build_gateway_config,
@@ -875,6 +876,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         chat=_build_chat_config(merged.get("chat")),
         audit_events=_build_audit_events_config(merged.get("audit_events")),
         artifacts=_build_artifacts_config(merged.get("artifacts")),
+        storage=_build_storage_config(merged.get("storage")),
         observability=_build_observability_config(merged.get("observability")),
         cost=cost,
         tool_use=_build_tool_use_config(merged.get("tool_use")),
