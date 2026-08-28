@@ -3597,6 +3597,7 @@ class RouterLoop:
                         _cap(
                             text_full, on_offload=_on_offload,
                             on_write_unavailable=_on_write_unavailable,
+                            chain_id=self.chain_id,
                         )
                         if _cap is not None else text_full
                     )
@@ -3676,6 +3677,7 @@ class RouterLoop:
                         text = _cap(
                             text, content_type=content_type, on_offload=_on_offload,
                             on_write_unavailable=_on_write_unavailable,
+                            chain_id=self.chain_id,
                         )
                     content_str = render_tool_result(frontmatter, text)
                     # #3629: `load_skill_to_canonical` is the one mapper that sets

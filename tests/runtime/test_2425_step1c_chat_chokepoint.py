@@ -42,13 +42,14 @@ class _CapHost:
         content_type: "str | None" = None,
         on_offload=None,
         on_write_unavailable=None,
+        chain_id: str = "",
     ) -> str:
         if self.media_store is None:
             return content_str
         return cap_tool_result_content(
             content_str, cap_tokens=100, model=_MODEL, save_fn=self.media_store.save_tool_result,
             trigger=TRIGGER_CAP, use_chars4=True, content_type=content_type, on_offload=on_offload,
-            on_write_unavailable=on_write_unavailable,
+            on_write_unavailable=on_write_unavailable, chain_id=chain_id,
         )
 
     def media_followup_budget(self, _content_str: str) -> int:

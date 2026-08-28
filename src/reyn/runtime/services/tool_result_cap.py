@@ -93,6 +93,7 @@ def cap_tool_result_content(
     preview_tail_chars: int = _PREVIEW_TAIL_CHARS,
     on_offload: "Callable[[str], None] | None" = None,
     on_write_unavailable: "Callable[[], None] | None" = None,
+    chain_id: str = "",
 ) -> str:
     """Return *content_str* unchanged if within the cap, else its offloaded plain-text preview.
 
@@ -141,6 +142,16 @@ def cap_tool_result_content(
                       entry can be marked accordingly instead of the
                       caller having to guess from the (unchanged, still
                       inline) return value alone. Optional and additive.
+        chain_id:     (#5387) Forwarded to ``save_fn`` when offload
+                      actually happens, so ``MediaStore.save_tool_result``
+                      can record which turn wrote this file — the ONE
+                      discriminator GC needs to tell "this session's
+                      newest file" apart from "a turn currently in
+                      flight" (see that method's own docstring). Default
+                      ``""`` (= no chain known) matches every OTHER
+                      caller's existing behavior byte-for-byte — a file
+                      written with no chain_id is simply never treated
+                      as open-turn, same as before this parameter existed.
 
     Returns:
         The original string when ``estimate_tokens(content_str) <= cap_tokens``;
@@ -161,9 +172,9 @@ def cap_tool_result_content(
     from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
     try:
         if content_type:
-            block = save_fn(content_str, mime_type=content_type)
+            block = save_fn(content_str, mime_type=content_type, chain_id=chain_id)
         else:
-            block = save_fn(content_str)
+            block = save_fn(content_str, chain_id=chain_id)
     except MediaStoreWriteUnavailable:
         if on_write_unavailable is not None:
             on_write_unavailable()
