@@ -176,6 +176,20 @@ def test_5380_spill_resolves_the_same_cause_cap_non_byte_floor() -> None:
     ))
 
     assert result is not None, "retry_loop must return normally, not raise"
+    # #5386: this class's own docstring names itself "the compact()-side
+    # witness that spill_fn's replacement actually reached
+    # engine.compact(), not just retry_loop's own state" — but nothing
+    # below actually asserted on compact_calls, so that claim went
+    # unwitnessed. `>=` (not `==`) — the exact count is the retry
+    # ladder's own implementation detail, not this test's subject (the
+    # engine-direct-call sibling test, ..._mid_split_floor, asserts
+    # `== 2` because IT calls the engine directly and the count IS its
+    # subject there).
+    assert engine.compact_calls >= 1, (
+        "this class's own docstring claims to be the compact()-side "
+        "witness that spill_fn's replacement reached engine.compact() "
+        "— nothing verified that until now"
+    )
     # Exactly one spill_fn call for the spillable turn — unpacking to one
     # element raises ValueError if retry_loop offered it a second time
     # (meaning the SAME object was offered for spilling twice).
