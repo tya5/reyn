@@ -495,6 +495,23 @@ def _fork_denial_note(argv0_resolved: str | None) -> str:
     )
 
 
+def _network_denial_note() -> str:
+    """The operator/LLM-facing explanation prepended to a network-connect
+    denial (#5244 ①) — the SAME opacity #2820's fork note kills, for a
+    different denied syscall: an EPERM on ``connect()`` (or the same,
+    buried inside an asyncio ``TaskGroup``'s own ``ExceptionGroup``) reads
+    as a broken command or a client-library bug; it is actually the
+    sandbox denying network egress because this op's own ``network`` field
+    is unset/false."""
+    return (
+        "[sandbox] Blocked at the syscall layer: the sandbox denies outbound "
+        "network access (connect()) because this op's own network policy is "
+        "unset/false. This is an environment / sandbox-configuration problem — "
+        "NOT a missing tool and NOT a lack of tool-calling ability; retrying the "
+        "same command will fail identically. Fix: set network: true for this op."
+    )
+
+
 def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
     """sandboxed_exec result → canonical. ``stdout`` (+ ``stderr`` when present) → ``text``; a NONZERO
     ``returncode`` → signal meta (it changes what the LLM does next — a zero code is not signal).
@@ -520,6 +537,8 @@ def sandboxed_exec_to_canonical(result: dict) -> CanonicalToolResult:
         meta["denial_class"] = denial_class
         if denial_class == "fork_denied":
             text = f"{_fork_denial_note(result.get('argv0_resolved'))}\n\n{text}"
+        elif denial_class == "network_denied":
+            text = f"{_network_denial_note()}\n\n{text}"
     return CanonicalToolResult(text=text, attachments=[], source_ref=None, meta=meta)
 
 
