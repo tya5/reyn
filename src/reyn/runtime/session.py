@@ -7120,6 +7120,20 @@ class Session:
         ride_alongs, trigger = await self._inbox_arbiter.drain_to_wake()
         if trigger is None:
             # shutdown sentinel
+            # #5329 B: this branch's two siblings (durability_failure above,
+            # `cancelled` in run()'s own except) both emit a `session_halted`
+            # audit-event before returning False — this one silently
+            # returned. Not a new mechanism: the #2280 surface already
+            # exists (TUI status line + plain-CUI toolbar both render it);
+            # this was a gap in applying it, discovered while chasing
+            # owner's "quota exhaustion makes the TUI vanish with nothing
+            # shown" report (#5329) — the run() caller has no way to tell
+            # "shutdown sentinel" apart from "durability_failure"/"cancelled"
+            # without this. Same `_halted_reason is None` guard as its
+            # siblings: at most one halt notice per session.
+            if self._halted_reason is None:
+                self._halted_reason = "shutdown_requested"
+                self._audit_events.emit("session_halted", reason=self._halted_reason)
             return False
         kind, payload = trigger
         # proposal 0060 Phase 1 (A7): stamp per-turn provenance — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_current_turn_origin`).
