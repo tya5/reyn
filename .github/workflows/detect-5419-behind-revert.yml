@@ -1,0 +1,70 @@
+name: BEHIND-revert candidate report
+
+# #5419: 4 PRs tonight (#5415, #5417, #5418, #5414) each went
+# `mergeStateStatus=BEHIND` at some point and, while BEHIND, silently
+# reverted a file back to an OLDER line the branch itself never touched
+# — a real revert-in-waiting, gate-GREEN in all 4 cases (a revert is a
+# same-syntax old-value rewrite: syntax/build/test all pass, and
+# check-doc-drift cannot fire because the doc is back in sync with the
+# OLD mechanism, not out of sync with any mechanism). See
+# scripts/detect_5419_behind_revert_candidates.py's module docstring for
+# the discriminant (two-dot minus three-dot file sets) and its own
+# non-vacuity positive control.
+#
+# WARN-ONLY, same shape as check-doc-drift.yml (architect ruling, #5419
+# §3): `BEHIND` is routine and mostly harmless — GitHub's merge usually
+# resolves it correctly. Blocking on this would break on the *majority*
+# of ordinary BEHIND states. This workflow only ever annotates; it never
+# fails the job, and carries no `pull-requests: write` permission — it
+# cannot post a PR comment even if a future edit tried to.
+#
+# Trigger includes `synchronize` (not just `opened`) because a stale
+# BEHIND branch is typically discovered AFTER a later `update-branch` or
+# push — the same event `check-pr-closing-intent.yml` re-runs on for the
+# same reason (an author's later edit needs the gate to re-evaluate).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  behind-revert-report:
+    name: BEHIND-revert candidate report (warn-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # fetch-depth: 0 (full history) — the two-dot/three-dot diffs need
+      # both the PR's base and head commits, and their shared merge-base,
+      # present locally; a shallow checkout would make every comparison
+      # fail with "unknown revision".
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/detect_5419_behind_revert_candidates.py is stdlib-only
+      # (argparse / json / subprocess, `git`/`gh` as external tools). No
+      # pip install needed.
+      - name: Report BEHIND-revert candidates (never blocks)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/detect_5419_behind_revert_candidates.py --pr "${{ github.event.pull_request.number }}" > behind_revert_output.txt 2>&1
+          exit_code=$?
+          cat behind_revert_output.txt
+          if [ "$exit_code" -eq 1 ]; then
+            while IFS= read -r line; do
+              echo "::warning::${line}"
+            done < <(grep '^  - `' behind_revert_output.txt)
+          fi
+          exit 0
