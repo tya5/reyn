@@ -132,6 +132,58 @@ condition that would make it non-zero, which the detection question above
 lets you do. Never write "class C is empty" — write "class C is 0 *in this
 file*, and here is what a positive instance would look like."
 
+**A Class C comment must carry a witness or a timestamp** (#5371): every
+other class has *something* that notices when it rots — Class A's evidence
+still exists at its destination, Class B's reason gets read when its own
+line is touched, K-inline is a claim about code that isn't there to drift.
+Class C has none of that by construction (this section's own argument): the
+claim lives at neither location's own review, so **it is the one class
+structurally guaranteed not to go red when the other side changes** — a
+present-tense guarantee with nothing backing it is a promise nobody is
+still keeping. Carry one of:
+
+- **(a) a witness** — name the test or gate that goes red if the relation
+  breaks.
+- **(b) a timestamp** — write it in the past tense, `as of #NNNN, X was Y`
+  (architect), not as a standing present-tense guarantee, when the other
+  side is somewhere you cannot attach a witness to at all (a third party's
+  code, a different subsystem's own review). The claim is then a
+  historical fact, not a promise — it cannot rot, because it never
+  asserted anything about *now*.
+- **(c) `until #NNNN`** — a variant of (b) for a gap that is known and
+  tracked but not yet closed: name the issue whose landing would change
+  what this line can claim, rather than leaving the reader to guess
+  whether "not attempted" is a permanent design choice or a known TODO.
+
+Known instances of (c), three real fixes from the same sweep (#5367②,
+`router_history_buffer.py` / `engine.py` — each REPLACED an unqualified
+present-tense claim the sweep found false):
+
+> "a turn whose history is built more than once (a shrink-ladder retry, a
+> re-send) re-enters this elide logic with no fresh `maybe_force_compact`
+> run in between — nothing in this file, or the call site, re-triggers it."
+
+> "a turn whose body is a spillable tool result … could still be reduced
+> without splitting it into more turns; this retry_loop does not attempt
+> that today (tracked as #5367③)."
+
+> "the turn-count shrink ladder attempted is not resolving this cause
+> (content-level spill was not tried here)."
+
+Each names the SPECIFIC gap the two-location claim depends on — a reader
+knows exactly what "not attempted" covers, not just that something,
+somewhere, might change.
+
+**(d) An asserting docstring**: if the docstring names a specific witness
+by identifier (a test function, a gate script), the SAME unit must contain
+an `assert`/`pytest.raises`/equivalent that actually exercises it — naming
+a witness you never call is a claim with the same structural gap this
+section exists to close, one level down.
+
+Only a present-tense claim with none of (a)–(c) can go stale without any
+line change or test failure ever registering it — this is the one failure
+mode unique to Class C among all four classes.
+
 ## 5. The shape of a residue (the load-bearing section)
 
 **Write what BREAKS, never "do not change this."**
