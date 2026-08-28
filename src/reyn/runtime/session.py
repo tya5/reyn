@@ -119,6 +119,7 @@ from reyn.runtime.session_pure import (
 from reyn.runtime.spawn_tracker import SpawnTracker
 from reyn.runtime.task_types import CurrentTask
 from reyn.runtime.tracked_tasks import TrackedTaskSet
+from reyn.runtime.turn_behavior_tally import TurnBehaviorTally
 from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -1318,6 +1319,11 @@ class Session:
         self._event_store = _audit_bundle.event_store
         self._audit_events = _audit_bundle.audit_events
         self._otel_exporter = _audit_bundle.otel_exporter
+        # #5221: behavioral-anomaly-detector's deterministic, closed-vocabulary
+        # data source — see reyn.runtime.turn_behavior_tally's module docstring.
+        # Subscribed for the session's whole life; read + reset once per turn
+        # at turn_end (below).
+        self._behavior_tally = TurnBehaviorTally(self._audit_events)
         # Embedding block (#3082 Family 5). #4552: this used to also build
         # action_usage_tracker (hot-list), which is why the call site sits
         # right after Family 1 rather than before it — a #3408 reordering
@@ -10009,6 +10015,17 @@ class Session:
                     self._audit_events.emit("turn_completed", chain_id=chain_id)
             finally:
                 try:
+                    # #5221: read + reset this turn's closed-vocabulary sensitive-op
+                    # tally BEFORE dispatching turn_end — so a `pipeline_launch` hook
+                    # configured on this point (the behavioral-anomaly-detector) sees
+                    # THIS turn's window, never the next one's. Runs unconditionally
+                    # (#5248's finally, not gated on `_turn_completed`) — a turn that
+                    # raised still tallied ops and still deserves a window. See
+                    # reyn.runtime.turn_behavior_tally's module docstring for exactly
+                    # what this counts and does not claim.
+                    _sensitive_op_count, _sensitive_op_kinds_csv = (
+                        self._behavior_tally.snapshot_and_reset()
+                    )
                     # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
                     # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
                     await self._hook_dispatcher.dispatch(
@@ -10016,6 +10033,8 @@ class Session:
                         build_hook_payload(
                             "turn_end", agent_name=self.agent_name,
                             chain_id=chain_id, user_text=user_text,
+                            sensitive_op_count=_sensitive_op_count,
+                            sensitive_op_kinds_csv=_sensitive_op_kinds_csv,
                         ),
                     )
                 finally:
