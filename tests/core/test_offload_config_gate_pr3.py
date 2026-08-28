@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.config import CompactionConfig, OffloadConfig, _build_offload_config
+from reyn.core.events.events import EventLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
@@ -32,13 +33,15 @@ def _write_yaml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _advisor(*, offload_config: OffloadConfig, media_store=None) -> ContextBudgetAdvisor:
+def _advisor(
+    *, offload_config: OffloadConfig, media_store=None, events=None,
+) -> ContextBudgetAdvisor:
     return ContextBudgetAdvisor(
         compaction=CompactionConfig(),
         compaction_controller=None,  # → effective_trigger straight from the model window
         media_store=media_store,
         model_fn=lambda: "openai/gpt-4o",
-        events=None,
+        events=events,
         history_fn=lambda: [],
         offload_config=offload_config,
     )
@@ -97,6 +100,30 @@ def test_offload_enabled_opted_in_caps_oversized_text(tmp_path):
     capped = advisor.cap_tool_result(oversized)
     assert capped != oversized
     assert len(capped) < len(oversized)
+
+
+def test_cap_tool_result_offload_event_names_trigger_cap(tmp_path):
+    """Tier 2: #5367①/BLOCKING witness — the REAL production wiring
+    (``ContextBudgetAdvisor.cap_tool_result``, no fake collaborator) names
+    its ``tool_result_offloaded`` event's ``trigger`` as ``"cap"``.
+
+    Strip-falsify: swapping ``TRIGGER_CAP``/``TRIGGER_OVERFLOW`` in
+    ``context_budget_advisor.py`` turns this RED (the event would carry
+    ``"overflow"`` instead) — this is exactly the witness the earlier
+    version of #5375 lacked (a test that calls
+    ``cap_tool_result_content`` directly and supplies its own ``trigger``
+    can't catch a wiring swap in the real caller)."""
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path, session_id="test-session")
+    events = EventLog()
+    seen: list = []
+    events.add_subscriber(lambda e: seen.append(e))
+    advisor = _advisor(offload_config=OffloadConfig(enabled=True), media_store=store, events=events)
+
+    advisor.cap_tool_result("x" * 200_000)
+
+    offloaded = [e for e in seen if e.type == "tool_result_offloaded"]
+    assert offloaded, "test setup sanity: the oversized content must have been offloaded"
+    assert offloaded[0].data["trigger"] == "cap"
 
 
 # ── Tier 2: gate 2 — structured inline gate (build_offload_body) ───────────
