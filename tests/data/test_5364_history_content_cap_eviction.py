@@ -31,17 +31,24 @@ def test_a_write_that_pushes_the_session_over_cap_evicts_the_oldest_file(
 
     blocks = []
     for i in range(3):
-        blocks.append(
+        block = store.save_tool_result(
             # seq=i: save_tool_result's filename is (timestamp, chain,
             # tool, seq) — two calls in the SAME wall-clock second with
             # the same default seq=1 would collide on ONE filename
             # (silently overwriting), which would make this test pass
             # for the wrong reason (only one file ever existing) rather
             # than genuinely exercising eviction across multiple files.
-            store.save_tool_result(
-                f"payload number {i} " * 2, mime_type="text/plain", seq=i,
-            )
+            f"payload number {i} " * 2, mime_type="text/plain", seq=i,
         )
+        blocks.append(block)
+        # architect TESTS-READ non-block, #5388: assert PRESENT right
+        # after its own write, before the LATER assertions check it's
+        # absent — otherwise "not exists()" for a file that was never
+        # written in the first place would pass for the wrong reason
+        # (a broken write silently producing the SAME final state as a
+        # correct eviction). Same present→absent shape as this file's
+        # own Q sibling test.
+        assert (tmp_path / block["path"]).exists()
         # #5364 §1.6: mtime is the eviction order's own sort key — force
         # each write's mtime to be strictly later than the previous
         # one's, since a fast test loop can otherwise land two writes in
