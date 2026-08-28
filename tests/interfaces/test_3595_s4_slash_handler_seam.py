@@ -519,7 +519,24 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: full paragraph above — the SAME question (same-time vs different-time
 #: write, private-vs-public, member-vs-constructor-arg) applies to your
 #: own case too, not just #5336's.
-_PUBLIC_MEMBER_CEILING = 117
+#: Raised 117 -> 118 for #5100/#5272: ``hooks_config_warnings`` — a NEW
+#: read-only property.
+#: ① What was added: a list of "this hooks.yaml layer failed to parse"
+#: messages, accumulated during hooks reads over the session's own
+#: lifetime — no new mutation surface, just a read of existing internal
+#: state (``self._hooks_config_warnings``).
+#: ② Why not private: genuinely consumed from OUTSIDE Session —
+#: ``interfaces/repl/status.py``'s config-chrome snapshot
+#: (``getattr(s, "hooks_config_warnings", [])``) and the TUI's own
+#: rendering (``inline/textual_chat/app.py``) both read it across the
+#: module boundary; the whole point of #5100 is surfacing this warning
+#: in the chrome an operator actually looks at, not a slash handler
+#: reaching into session internals (#3595 S4's own failure mode).
+#: ③ Why not a constructor argument: the warnings are DISCOVERED, not
+#: supplied — they accumulate as hooks.yaml layers are read (possibly
+#: repeatedly, across hot-reloads) over the session's own lifetime, not
+#: known at construction time.
+_PUBLIC_MEMBER_CEILING = 118
 
 
 def test_session_public_surface_does_not_grow() -> None:
