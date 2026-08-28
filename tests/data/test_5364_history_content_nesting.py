@@ -164,20 +164,17 @@ def test_the_actual_5364_store_lands_under_the_nested_nonleaking_shape(
     block = store.save_tool_result("some tool output", mime_type="text/plain")
 
     memory_dir = tmp_path / ".reyn" / "memory"
-    direct_children = [p.name for p in memory_dir.iterdir()] if memory_dir.is_dir() else []
-    assert "history-content" in direct_children, (
-        "sanity: the store must actually have written somewhere under memory/"
-    )
-    # No .md file sits directly under memory/ as a result of this write —
-    # everything the store wrote is at least one level deeper.
-    direct_md_files = [
-        p.name for p in memory_dir.iterdir() if p.is_file() and p.suffix == ".md"
-    ] if memory_dir.is_dir() else []
-    assert direct_md_files == [], (
-        f"save_tool_result must never place a .md directly under memory/: "
-        f"{direct_md_files!r}"
-    )
-    assert not Path(block["path"]).name.endswith(".md"), (
-        "sanity: this test's own written file isn't even .md-shaped, "
-        f"got extension on {block['path']!r}"
+    written = tmp_path / block["path"]
+    assert written.is_file(), "sanity: the store must actually have written the file"
+    # #5369 TESTS-READ (architect): the invariant under test is DEPTH, not
+    # a name. `direct_md_files == []` was vacuous — mime_type="text/plain"
+    # never produces a .md file at all, so a regression to a FLAT (non-
+    # nested) layout would still pass it. Checking the written file's own
+    # parent is not memory_dir itself catches that regression regardless
+    # of what the nested directory happens to be named (config-independent
+    # — a future rename of MediaStoreConfig.history_content_dir's default
+    # does not need this test to change).
+    assert written.parent != memory_dir, (
+        f"save_tool_result must never place a file directly under memory/ "
+        f"(flat, unnested) — got {written!r} whose parent is memory_dir itself"
     )
