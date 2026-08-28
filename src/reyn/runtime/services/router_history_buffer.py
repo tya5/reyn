@@ -1076,6 +1076,16 @@ class RouterHistoryBuffer:
             # it too. Order matches the ruled processing order — fold (ref)
             # first, report only for what could not be — folded/reported
             # in original chronological order relative to each other.
+            #
+            # Disclosure (architect review, issuecomment-5450576257): this
+            # branch never re-checks the SIZE of what it folds back in — a
+            # middle dense with spilled turns folds in N ref-previews with
+            # no cap, which can partially defeat elide's own budget intent
+            # in that case. Not an unbounded loop (the driver's shrink
+            # ladder, #5391, still catches an over-budget result) but the
+            # projection this call returns is not guaranteed to fit
+            # head_budget/tail_budget in that scenario — the elide branch
+            # does not re-verify its own output against the trigger.
             from reyn.runtime.chat_message import SPILLED_META_KEY
 
             selected_ids = head_ids | {id(t) for t in tail_deduped}
