@@ -147,8 +147,14 @@ def test_persist_callback_exception_does_not_crash_persist(tmp_path):
 
     # Good callback still fired despite bad_cb raising.
     assert good_calls == ["safe.key"]
-    # And approvals.yaml side still completed.
-    assert resolver.saved_get("safe.key") is True
+    # And the ledger side still completed. #5431: read via a fresh
+    # `ApprovalLedger.fold()` (the same production surface `reyn
+    # permissions list` / `GET /api/permissions` use) rather than the
+    # removed `saved_get` accessor, whose only callers were tests.
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+
+    saved, _bound, _scopes = ApprovalLedger(resolver.approval_ledger_path).fold()
+    assert saved["safe.key"] is True
 
 
 # ── Session wiring ────────────────────────────────────────────────

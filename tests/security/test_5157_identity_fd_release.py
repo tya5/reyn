@@ -27,11 +27,20 @@ from __future__ import annotations
 import pytest
 
 from reyn.security.permissions import PermissionDecl
+from reyn.security.permissions.approval_ledger import ApprovalLedger
 from reyn.security.permissions.permissions import PermissionResolver
 
 
 def _make_resolver(tmp_path) -> PermissionResolver:
     return PermissionResolver({}, project_root=tmp_path)
+
+
+def _bound(resolver: PermissionResolver) -> dict:
+    """#5431: the bound-identities map via a fresh `ApprovalLedger.fold()`
+    — the removed `bound_identity_get` accessor's only callers were tests;
+    this file already read `fold()` directly further down for the SAME
+    data, this just applies it consistently."""
+    return ApprovalLedger(resolver.approval_ledger_path).fold()[1]
 
 
 @pytest.mark.asyncio
@@ -114,10 +123,10 @@ async def test_revoking_an_approval_also_clears_its_stale_identity_record(
     await resolver.require_file_write(
         PermissionDecl(), str(target / "f.txt"), "actor",
     )
-    assert resolver.bound_identity_get(key) is not None
+    assert key in _bound(resolver)
 
     resolver._persist(key, False)
-    assert resolver.bound_identity_get(key) is None, (
+    assert key not in _bound(resolver), (
         "revoke must clear the in-memory bound-identity record, not just "
         "the fd"
     )
