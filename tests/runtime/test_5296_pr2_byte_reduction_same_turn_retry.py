@@ -601,6 +601,23 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     here that would be the mid candidate — so which one is spilled FIRST
     directly distinguishes staged order from global size order.
 
+    #5370/#5390 (#5368 remainder): a THIRD stage — a ``tail`` tool
+    candidate, sized larger than mid — closes the SECOND boundary (mid
+    before tail). Without it, a regression to ``head -> tail -> mid``
+    would still pass: the original form of this test only pinned "head
+    is spilled first," never "mid is spilled before tail."
+
+    #5364 §1.6 changed ``_attempt_reactive_spill`` to spill exactly ONE
+    candidate per call (return immediately on the first genuine
+    progress — #5390's original single-call, 3-events-in-one-pass form
+    assumed the OLD "keep going until a byte decrease" behavior, which
+    §1.6 replaced). This version calls it 3 times in a row instead: each
+    call re-decomposes history fresh, and ``RouterHistoryBuffer.
+    is_already_spilled`` (checked by VALUE against the overlay) makes an
+    already-spilled candidate's current content skip straight to the
+    next one — so 3 sequential calls naturally walk head -> mid -> tail
+    without the test driving that skip itself.
+
     Witnessed via the PUBLIC ``tool_result_offloaded`` audit-event
     (``tool_result_cap.py``'s own emit, threaded through
     ``spill_turn_content``) — its ``total_chars`` names the size of the
@@ -620,11 +637,15 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
 
     # Head: one small tool turn. Mid: one turn whose content is FAR
     # larger than the head candidate — if global size-sort fired instead
-    # of staged order, THIS would be spilled first. Padding filler turns
-    # (not tool-role, never candidates) so t_max forces a genuine
-    # head/mid split with each tool turn landing in its own group.
+    # of staged order, THIS would be spilled first. Tail: one turn LARGER
+    # than mid (#5370) — a size-explained order would spill this before
+    # mid, so its size alone can't account for coming after. Padding
+    # filler turns (not tool-role, never candidates) so t_max forces a
+    # genuine head/mid/tail split with each tool turn landing in its own
+    # group.
     small_head_content = "tiny result h1 " + "a" * 10
     huge_mid_content = "M" * 5_000
+    huge_tail_content = "T" * 6_000
     _push(session, "tool", small_head_content, tool_call_id="tc-h1", name="tool")
     for i in range(20):
         _push(session, "user", f"filler question number {i + 100} " * 8)
@@ -633,12 +654,14 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     for i in range(3):
         _push(session, "user", f"filler question number {i + 300} " * 8)
         _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+    _push(session, "tool", huge_tail_content, tool_call_id="tc-t1", name="tool")
 
-    head, raw_middle, _tail, _summary, _seq_by_id = (
+    head, raw_middle, tail, _summary, _seq_by_id = (
         session._loop_driver._history_buffer.decompose_history_for_retry()
     )
     head_ids = {t.get("tool_call_id") for t in head if t.get("role") == "tool"}
     mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+    tail_ids = {t.get("tool_call_id") for t in tail if t.get("role") == "tool"}
     assert head_ids == {"tc-h1"}, (
         f"test setup sanity: the head candidate must land in head, got {head_ids!r} "
         f"— adjust t_max/turn counts"
@@ -646,19 +669,48 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     assert mid_ids == {"tc-m1"}, (
         f"test setup sanity: the mid candidate must land in raw_middle, got {mid_ids!r}"
     )
+    assert tail_ids == {"tc-t1"}, (
+        f"test setup sanity: the tail candidate must land in tail, got {tail_ids!r} "
+        f"— adjust t_max/turn counts"
+    )
 
-    await session._loop_driver._attempt_reactive_spill(chain_id="c1")
+    progressed_1 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
     await session._audit_events.drain()
+    progressed_2 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
+    await session._audit_events.drain()
+    progressed_3 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
+    await session._audit_events.drain()
+    assert (progressed_1, progressed_2, progressed_3) == (True, True, True), (
+        "each of the 3 calls must make genuine progress (one candidate "
+        f"each) — got {(progressed_1, progressed_2, progressed_3)!r}"
+    )
 
     offloaded = [e for e in events if e.type == "tool_result_offloaded"]
-    assert offloaded, "test setup sanity: at least one candidate must have been spilled"
-    first_spilled_size = offloaded[0].data["total_chars"]
+    # Canonical unpack idiom (testing.ja.md Tier 4 — no bare len()==N/>=N
+    # format pin): exactly 3 calls, exactly 3 events — one per call.
+    head_event, mid_event, tail_event = offloaded
+    first_spilled_size = head_event.data["total_chars"]
     assert first_spilled_size == len(small_head_content), (
         f"the FIRST candidate spilled must be the head turn "
         f"({len(small_head_content)} chars), not the far-larger mid turn "
         f"({len(huge_mid_content)} chars) — got first_spilled_size="
         f"{first_spilled_size}. A global size-sort would spill the mid "
         f"candidate first."
+    )
+    second_spilled_size = mid_event.data["total_chars"]
+    assert second_spilled_size == len(huge_mid_content), (
+        f"the SECOND call must spill the mid turn "
+        f"({len(huge_mid_content)} chars), not the LARGER tail turn "
+        f"({len(huge_tail_content)} chars) — got second_spilled_size="
+        f"{second_spilled_size}. A global size-sort would spill the tail "
+        f"candidate (the largest) before mid; a head->tail->mid regression "
+        f"would also put tail here."
+    )
+    third_spilled_size = tail_event.data["total_chars"]
+    assert third_spilled_size == len(huge_tail_content), (
+        f"the THIRD call must spill the tail turn "
+        f"({len(huge_tail_content)} chars) — got third_spilled_size="
+        f"{third_spilled_size}."
     )
 
 
