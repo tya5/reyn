@@ -663,6 +663,63 @@ class ArtifactsConfig:
     remote_fallback_limit: int = 50
 
 
+@dataclass
+class StorageConfig:
+    """``storage:`` — the PROJECT-wide (cross-session) disk-usage cap for
+    ``.reyn/memory/history-content/`` (#5366, architect ruling,
+    issuecomment-5451389251).
+
+    #5366 measured (e2e-coder) that ``MediaStoreConfig`` — and therefore
+    its own ``history_content_max_bytes`` field — is constructed FRESH
+    per ``Session`` (``session.py:1061``), i.e. structurally per-store.
+    The owner's own ruling for #5366 ("リソース上限はユーザが設定するこ
+    とになる" — the cap the user can actually NAME is one number for
+    ``.reyn/`` as a whole, not "N bytes per session", which silently
+    means "N × (however many sessions exist) total" since the user does
+    not choose how many sessions get spawned) has no existing home: no
+    top-level ``ReynConfig`` section carried a project-wide storage
+    concept before this one.
+
+    ``max_bytes`` is DELIBERATELY not named ``history_content_max_bytes``
+    — that name already exists on ``MediaStoreConfig`` as the per-store
+    fail-safe #5388's own per-session eviction still uses (kept, per
+    architect's ruling: "同じ名前の2つの上限は必ず混同されます" — reusing
+    the name would make it unreadable which of the two numbers is
+    actually in effect for a given eviction). The two are independent:
+    this field bounds the WHOLE project's history-content tree across
+    every session; the per-store field remains a backstop bounding one
+    session's own directory only.
+
+    ``None`` (the default) means unlimited/off — no separate boolean:
+    architect's ruling ("別の真偽値を作らない — 2つの表現が食い違いま
+    す") that a second on/off flag alongside a numeric field is a
+    guaranteed-to-diverge redundant representation.
+
+    ``pin`` names agent names (not session ids — an agent's OWN identity
+    is the unit an operator can actually declare in reyn.yaml; per-session
+    pinning would need to name a session id an operator does not choose)
+    whose history-content is NEVER an eviction candidate for this
+    project-wide cap, regardless of process liveness.
+
+    ⚠️ A malformed ``pin`` value (wrong type, e.g. a bare string instead
+    of a list) falls back to ``[]`` — SILENTLY, with no operator-visible
+    disclosure that the fallback happened (lead-coder BLOCKING on #5415,
+    tracked as #5416, not yet fixed): unlike ``max_bytes`` above (whose
+    fallback to "unlimited" matches the same state as writing nothing —
+    harmless), this fallback REMOVES a declared protection whose only
+    consequence is deletion — the operator finds out only after their
+    content is already gone. #5416 is the general "known key, malformed
+    value, fallback direction more permissive than unset" disclosure gap
+    this instance surfaced; not fixed here because the right disclosure
+    surface (extending ``config_schema.unknown_config_keys()``'s own
+    CUI-visible "N config keys not applied" chrome, vs. a new parallel
+    channel) is itself a design decision, not a local fix to this
+    function."""
+
+    max_bytes: "int | None" = None
+    pin: "list[str]" = field(default_factory=list)
+
+
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
 _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
 # #3823 ①②: compat / strict — NOT "custom" (owner ruling, 2026-08-09:
@@ -1618,6 +1675,39 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         ),
         provider_body_max_chars=provider_body_max_chars_val,
     )
+
+
+def _build_storage_config(raw: object) -> StorageConfig:
+    """Parse `storage:` from reyn.yaml (#5366).
+
+    A malformed (non-numeric, non-positive) `max_bytes` falls back to
+    the field's own default (``None`` — unlimited). Unlike
+    ``ArtifactsConfig``'s numeric fallback (where the default IS the
+    cap, so falling back never disables it), this field's own default
+    already means "the cap is off" by design (architect's ruling:
+    unlimited is the field's OWN steady state, not a failure mode) — a
+    malformed value therefore falls back to the SAME state an operator
+    who wrote nothing gets, not a silent widening of an otherwise-active
+    cap."""
+    defaults = StorageConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    max_bytes_raw = raw.get("max_bytes", defaults.max_bytes)
+    max_bytes_val: "int | None" = defaults.max_bytes
+    if max_bytes_raw is not None:
+        try:
+            candidate = int(max_bytes_raw)
+            if candidate > 0:
+                max_bytes_val = candidate
+        except (TypeError, ValueError):
+            pass
+    pin_raw = raw.get("pin", defaults.pin)
+    pin_val = (
+        [p for p in pin_raw if isinstance(p, str)]
+        if isinstance(pin_raw, list)
+        else list(defaults.pin)
+    )
+    return StorageConfig(max_bytes=max_bytes_val, pin=pin_val)
 
 
 def _build_artifacts_config(raw: object) -> ArtifactsConfig:

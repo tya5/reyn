@@ -726,6 +726,22 @@
 
 
 # -----------------------------------------------------------------------------
+# storage: the PROJECT-wide (cross-session) cap on .reyn/memory/history-content/
+# (#5366) — the offloaded tool-result content EVERY session in this project
+# writes. Unlimited (off) by default: no max_bytes at all. A DIFFERENT number
+# from MediaStoreConfig's own per-store history_content_max_bytes (that one
+# bounds a SINGLE session's own directory as a fail-safe; this one bounds the
+# WHOLE tree across every session — the number an operator can actually name,
+# since nobody chooses how many sessions get spawned). ``pin`` names AGENT
+# names (not session ids) whose own content is NEVER an eviction candidate,
+# regardless of process liveness.
+# -----------------------------------------------------------------------------
+# storage:
+#   max_bytes: 10737418240   # 10 GiB; omit (or leave unset) for unlimited
+#   pin: []                  # e.g. ["coder-smith"] — these agents' content is never evicted
+
+
+# -----------------------------------------------------------------------------
 # observability: downstream OpenTelemetry (OTLP) export. OPT-IN and OFF by
 # default — with no ``observability.otel.endpoint`` (and no
 # ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var) the exporter is never attached and

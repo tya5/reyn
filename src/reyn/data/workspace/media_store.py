@@ -258,6 +258,16 @@ class MediaStoreConfig:
     # accumulates — that cross-session subject is #5366 (owner-ruled
     # separation), deliberately NOT this field's job.
     #
+    # #5366 gave that separate subject its own number:
+    # ``reyn.config.infra.StorageConfig.max_bytes`` (``storage:`` in
+    # reyn.yaml) — a DIFFERENT number bounding the WHOLE project's
+    # history-content tree across every session, never reused as this
+    # field's own name (architect's ruling: two same-named caps would
+    # make it unreadable which one is actually in effect for a given
+    # eviction). This field remains the per-store fail-safe backstop
+    # #5388's own per-session eviction uses; it is unaffected by whether
+    # ``StorageConfig.max_bytes`` is set.
+    #
     # Default derivation (owner ruling, measured 2026-08-28, 8 projects
     # on this machine): the ONE project with any ``.reyn/tool-results/``
     # content at all held 18 files / 196 KB; the largest ``.reyn/`` tree
@@ -423,6 +433,72 @@ def parse_resource_uri(uri: str) -> tuple[str, str] | None:
     if not agent or not artifact:
         return None
     return agent, artifact
+
+
+def history_content_root_for(
+    project_root: Path, config: "MediaStoreConfig | None" = None,
+) -> Path:
+    """#5366: the project-wide root EVERY session's own history-content
+    directory nests under (``<root>/<agent>/<session_id>/``) — for a
+    caller that needs the WHOLE tree (the project-wide GC's own
+    candidate scan), not one session's own subdirectory
+    (:func:`history_content_dir_for` is that narrower sibling). Same
+    "one source of truth for the path shape" reasoning as that
+    function's own docstring — never creates the directory."""
+    cfg = config or MediaStoreConfig()
+    return (project_root / cfg.history_content_dir).resolve()
+
+
+def cross_session_eviction_candidates(
+    root: Path, *, pin: "list[str] | None" = None,
+) -> list[Path]:
+    """#5366 §3 (architect design, revised — issuecomment-5451564768):
+    the project-wide GC's own candidate set. Every file
+    :func:`_eviction_order` finds under *root* (oldest-first, across
+    EVERY session — #5383's own ``<agent>/<sid>/`` nesting means
+    attribution is readable straight from each path's first two
+    segments), minus any file whose ``<agent>`` segment names a pinned
+    agent.
+
+    Deliberately NO liveness filter (architect's own reversal after
+    e2e-coder's #5366 measurement found ``process_registry``'s own
+    marker carries no agent/session identity at all — {pid, ppid, cwd,
+    subcommand, started_at}, registered before any agent is even
+    resolved): #5388's per-session cap already evicts a LIVE session's
+    own old files on every write, protecting only that write's own open
+    turn (#5387's ``is_open_turn_file``) — a cross-session liveness
+    protection here would guard cross-session GC MORE than per-session
+    GC already guards itself, for the same resource, same content, same
+    operator, with no reason found for the asymmetry. Only pin
+    (operator-declared) and the write-driven open-turn protection
+    (owned by #5388/#5387, not this function) are real filters.
+
+    ⚠️ Disclosed, not solved (architect, same ruling): a project-wide
+    sweep running while a DIFFERENT session has a turn genuinely
+    in-flight can evict that turn's own content — there is no marker
+    today that could tell this scan "that file is mid-turn for a
+    session that isn't mine" (the #5387 discriminator is write-driven,
+    scoped to the session doing the writing). A read that later hits
+    the evicted path resolves as ``lost`` (#5364-B's own vocabulary) —
+    silence here would read as "cross-session GC is safe", which it is
+    not for that one window. Re-visit trigger (owner's own discipline:
+    do not build for something not yet observed): a real observation of
+    a cross-session sweep immediately followed by another session's own
+    in-flight ref reading back ``lost``."""
+    ordered = _eviction_order(root)
+    if not pin:
+        return ordered
+    pinned = {_safe_token(name) for name in pin}
+    candidates = []
+    for path in ordered:
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError:
+            continue
+        if parts and parts[0] in pinned:
+            continue
+        candidates.append(path)
+    return candidates
 
 
 def history_content_dir_for(
