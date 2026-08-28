@@ -31,7 +31,9 @@ reyn storage stats [--project-root <path>]
 
 ### `stats [--project-root <path>]`
 
-Print on-disk file counts + byte totals for `.reyn/media/` and `.reyn/tool-results/`,
+Print on-disk file counts + byte totals for `.reyn/media/` and
+`.reyn/memory/history-content/` (#5364: the tool-result write location moved here;
+see [Storage this command reports on](#storage-this-command-reports-on) below),
 plus file/byte/turn counts summed across every `history.jsonl` found under
 `.reyn/agents/`. Gives `MediaStore.storage_stats()` and `aggregate_history_stats()` —
 each previously a measurement method with no caller — an actual reader, so an
@@ -41,9 +43,9 @@ eviction/retention policy gets designed.
 ```bash
 $ reyn storage stats
 
-directory            files           bytes
-media/                   12         4,718,592
-tool-results/            37        18,874,368
+directory                      files           bytes
+media/                            12       4,718,592
+memory/history-content/           37      18,874,368
 
                      files           bytes       turns
 history.jsonl             3         623,411         842
@@ -57,12 +59,22 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
 
 - **`.reyn/media/`** — resolved image/media bytes fetched for the `present` op's
   `image` component (see [Present op reference](../runtime/present.md#v1-catalog-display-only-non-executable)).
-- **`.reyn/tool-results/`** — offloaded large tool results (the chat-string offload
-  path, `reyn.runtime.services.tool_result_cap.cap_tool_result`). Per
-  [`.reyn/` directory layout](../runtime/reyn-dir-layout.md), both `media/` and
-  `tool-results/` are classified **audit** — an append-only record kept, never
-  restored on rewind — not `cache/`, despite both being safe to grow without
-  affecting recovery correctness.
+- **`.reyn/memory/history-content/`** — offloaded large tool results (the
+  chat-string offload path, `MediaStore.save_tool_result`), CURRENT writes
+  only, one nested subdirectory per session (#5364). Per
+  [`.reyn/` directory layout](../runtime/reyn-dir-layout.md) this location is
+  classified **persist**, not `cache/` — the bytes it accumulates are not
+  something a future eviction policy simply rebuilds from elsewhere.
+- **`.reyn/tool-results/`** (pre-#5364, frozen — no longer written, no
+  migration) — the OLD offload location; still resolvable by an
+  already-minted path-ref, but **not** counted by `reyn storage stats`
+  (`storage_stats()` measures the current write location above). Per
+  [`.reyn/` directory layout](../runtime/reyn-dir-layout.md), `media/` and
+  `tool-results/` are classified **audit** — an append-only record kept,
+  never restored on rewind — not `cache/`, despite being safe to grow
+  without affecting recovery correctness. An operator upgrading from a
+  pre-#5364 checkout may still be carrying bytes under `tool-results/`
+  that this command no longer reports on; nothing deletes them.
 - **`history.jsonl`** (one per agent/session, `.reyn/agents/<name>/history.jsonl` and
   `.reyn/agents/<name>/sessions/<sid>/history.jsonl`, glob `**/history.jsonl`) — the
   durable, append-only turn log `CompactionController` and branch-visibility filtering
@@ -93,7 +105,7 @@ artifact directories the manifest tracks.
 ## Related
 
 - [`.reyn/` directory layout](../runtime/reyn-dir-layout.md) — the five-way subtree
-  classification (`media/`/`tool-results/` are audit; `history.jsonl` is currently
-  undocumented there)
+  classification (`media/`/`tool-results/` are audit; `memory/history-content/`
+  is persist, #5364; `history.jsonl` is currently undocumented there)
 - [Present op reference](../runtime/present.md) — the `image` component that
   populates `.reyn/media/`
