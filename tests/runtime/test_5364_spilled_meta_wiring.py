@@ -9,11 +9,16 @@ no real signal to read (#5364, lead-coder: "resolver は呼び口と同じ PR �
 """
 from __future__ import annotations
 
+import pytest
+
+from reyn.config import CompactionConfig, MultimodalConfig
+from reyn.config.chat import OffloadConfig
 from reyn.data.workspace.media_store import MediaStore
 from reyn.runtime.chat_message import CONTENT_REF_META_KEY, SPILLED_META_KEY
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.tool_result_cap import cap_tool_result_content
 from reyn.tools.scheme import ExecutionResult
+from tests._support.agent_session import make_session
 
 _MODEL = "gpt-4o"
 _BIG = "\n".join(f"line {i}: " + "z" * 60 for i in range(400))  # well over the offload trigger
@@ -98,6 +103,53 @@ def test_unoffloaded_tool_result_is_never_stamped_spilled(tmp_path) -> None:
     meta = tool_entry["meta"]
     assert SPILLED_META_KEY not in meta
     assert CONTENT_REF_META_KEY not in meta
+
+
+def test_the_real_production_chain_stamps_spilled_meta_end_to_end(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: architect/lead-coder BLOCKING (#5372, head 8803bc020) — the 3
+    tests above all drive ``_RecordingHost``, a fake that REPLACES the real
+    ``RouterHostAdapter -> Session._cap_tool_result ->
+    ContextBudgetAdvisor.cap_tool_result`` forwarding chain (#5364 §1.2's
+    actual production path for ``on_offload``). Deleting any of those 3
+    forwarding sites' own ``on_offload=on_offload`` left every test above
+    green — the fake never exercised them.
+
+    This test drives the REAL chain instead: a real ``Session`` (via
+    ``make_session`` — no mocks, per ``tests/_support/router_host_adapter.py``'s
+    own "real collaborators" contract) built with ``offload.enabled: true``,
+    handing ``RouterLoop`` its real ``session.router_host`` (the actual
+    ``RouterHostAdapter`` production wires — same object ``_build_router_waist``
+    constructs, same as every real chat turn), and reading the persisted
+    ``ChatMessage`` back off ``session.history`` (not the wire-rendered
+    ``build_history()``, which the resolver already transforms — this test
+    wants the raw stamped meta the resolver's OWN write-side counterpart)."""
+    monkeypatch.chdir(tmp_path)
+    session = make_session(
+        agent_name="real-chain-agent",
+        multimodal_config=MultimodalConfig(),
+        offload_config=OffloadConfig(enabled=True),
+        compaction_config=CompactionConfig(use_chars4_estimate=True),
+    )
+
+    loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
+    result = ExecutionResult(
+        tool_results=[_mcp_env(content=_BIG)],
+        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "mcp"}}],
+        assistant_content="",
+    )
+    loop.feedback(result)
+
+    (tool_msg,) = [m for m in session.history if m.role == "tool"]
+    assert tool_msg.meta.get(SPILLED_META_KEY) is True, (
+        f"real production chain never stamped SPILLED_META_KEY, meta={tool_msg.meta!r}"
+    )
+    ref = tool_msg.meta.get(CONTENT_REF_META_KEY)
+    assert ref, f"expected a content ref in meta, got: {tool_msg.meta!r}"
+    full = tmp_path / ref
+    assert full.is_file(), f"the ref must name a file that actually exists: {full}"
+    assert full.read_text(encoding="utf-8") == _BIG
 
 
 def test_no_media_store_never_stamps_spilled(tmp_path) -> None:
