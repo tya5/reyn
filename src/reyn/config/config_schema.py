@@ -140,6 +140,43 @@ def resolve_config_value(config: Any, key: str) -> tuple[bool, Any]:
     return True, obj
 
 
+#: #5416: the two directions a known-key's parser fallback can land, named
+#: on the FIELD (``field(metadata={"fallback": FAILS_OPEN})``) rather than
+#: decided per-parser (architect's final ruling on #5416, issuecomment on
+#: that issue: "向きはfield、理由はfallbackの場所" — a NEW field a future
+#: author adds must declare one of these two, or the completeness check
+#: below fails; a parser-side decision would let a new field silently skip
+#: this entirely). ``FAILS_SAFE``: the fallback lands in the SAME state an
+#: operator who wrote nothing gets (e.g. ``StorageConfig.max_bytes`` — a
+#: malformed value falls back to ``None``/unlimited, harmless). ``FAILS_
+#: OPEN``: the fallback is MORE PERMISSIVE than unset — it silently drops
+#: a declared protection whose only real-world consequence is destructive
+#: (e.g. ``StorageConfig.pin`` — a malformed value falls back to ``[]``,
+#: removing a protection the operator explicitly wrote).
+FAILS_SAFE = "fails_safe"
+FAILS_OPEN = "fails_open"
+
+
+@_dataclass(frozen=True)
+class RejectedValueHint:
+    """#5416: a KNOWN key whose VALUE was present in the raw config but
+    type-invalid/malformed, so its parser fell back to the field's own
+    default — a DIFFERENT population than :class:`RenamedKeyHint` /
+    :class:`RemovedKeyHint` (both of which are about the KEY itself being
+    wrong; this is about a valid, known key carrying a bad VALUE).
+
+    Reported ONLY for a :data:`FAILS_OPEN` field — a :data:`FAILS_SAFE`
+    fallback lands in the exact state an operator who wrote nothing at
+    all would get, so there is nothing for this to warn about (see
+    :func:`unknown_config_keys`'s own combined report, which is where
+    this hint type is merged in alongside the unknown-key hints — one
+    CUI-visible surface, not a second parallel channel, per architect's
+    #5416 ruling: "変えるのはentryの種類を1つ足すだけ")."""
+
+    note: str
+    fallback: str
+
+
 @_dataclass(frozen=True)
 class RenamedKeyHint:
     """The reason an unknown config key isn't valid, when known.

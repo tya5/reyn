@@ -852,8 +852,26 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     render_template = _build_render_template_config(merged.get("render_template"))
     read_cap = _build_read_cap_config(merged.get("read_cap"))
     history_resident = _build_history_resident_config(merged.get("history_resident"))
+    # #5416: known-key/malformed-value FAIL-OPEN rejections a builder
+    # discovers while parsing — mutated in place by `_build_storage_config`
+    # below, then merged into `unknown_config_keys_found` (same combined
+    # report the "N config keys not applied" chrome already reads) BEFORE
+    # `_cfg` is built, so `unknown_config_key_count` includes them. See
+    # `config_schema.RejectedValueHint`'s own docstring for why only
+    # FAILS_OPEN fields ever populate this (a FAILS_SAFE fallback — e.g.
+    # StorageConfig.max_bytes -> None/unlimited — is the SAME state an
+    # operator who wrote nothing gets, never reported here).
+    rejected_known_key_values: "dict[str, Any]" = {}
+    storage_cfg = _build_storage_config(
+        merged.get("storage"), rejected=rejected_known_key_values,
+    )
     image = _build_image_config(merged.get("image"))
     tui = _build_tui_config(merged.get("tui"))
+    # #5416: fold FAIL-OPEN known-key rejections into the SAME combined
+    # report the unknown-key check already populates — one report, one
+    # CUI chrome line, not a second parallel channel (architect's #5416
+    # ruling: "変えるのはentryの種類を1つ足すだけ").
+    unknown_config_keys_found.update(rejected_known_key_values)
     # #4174 T3: model / models / model_class_by_purpose / api_base /
     # prompt_cache_enabled moved from top-level ReynConfig fields into
     # ``llm:`` — _build_llm_config parses all of it (router/retry AND the
@@ -876,7 +894,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         chat=_build_chat_config(merged.get("chat")),
         audit_events=_build_audit_events_config(merged.get("audit_events")),
         artifacts=_build_artifacts_config(merged.get("artifacts")),
-        storage=_build_storage_config(merged.get("storage")),
+        storage=storage_cfg,
         observability=_build_observability_config(merged.get("observability")),
         cost=cost,
         tool_use=_build_tool_use_config(merged.get("tool_use")),
