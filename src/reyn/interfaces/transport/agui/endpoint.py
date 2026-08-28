@@ -40,6 +40,7 @@ import asyncio
 import logging
 import uuid
 import weakref
+from dataclasses import dataclass
 from typing import Callable
 
 from fastapi import APIRouter, Request
@@ -228,6 +229,59 @@ def connection_current_agent(connection_id: str) -> "str | None":
     :func:`connection_retarget_has_subscribers`'s own reason for existing at
     module level rather than requiring a private-global reach-in."""
     return _CONNECTION_RETARGET_HUB.current_agent(connection_id)
+
+
+class _AgentResolutionToken:
+    """#5130: an unforgeable-in-practice marker. :class:`_ResolvedAgent`
+    requires one to construct, and only :func:`_resolve_agent_from_url` /
+    :func:`_resolve_agent_for_connection` ever mint one — mypy already
+    refuses ``_ResolvedAgent("some-name")`` on its own (the token argument
+    is required, no default; a plain ``NewType``-style str wrapper would
+    NOT have closed this, since that still converts freely from any str —
+    the exact half-measure lead-coder's #5130 review rejected). A caller
+    who wants to dodge this has to import this private class and mint
+    their own token — a visibly, greppably different shape from every
+    legitimate call site in this file."""
+
+
+@dataclass(frozen=True)
+class _ResolvedAgent:
+    """#5130: the ONLY way ``agui_events`` / ``agui_seize`` / ``agui_submit``
+    (and ``_handle_answer``) ever get an agent's name now — never a bare
+    ``agent_name: str`` handler parameter. FastAPI/Starlette only
+    auto-injects a path parameter into a handler that names it in its OWN
+    signature; removing that parameter from all three route functions
+    makes it structurally impossible for a handler body to receive the
+    unresolved URL segment directly — the only route to a name is through
+    one of the two resolver functions below, both of which return this
+    type."""
+    name: str
+    _token: _AgentResolutionToken
+
+
+def _resolve_agent_from_url(request: Request) -> "_ResolvedAgent":
+    """``agui_events``'s own resolution. This IS the connect call that
+    SEEDS #5129's connection hub in the first place (via
+    ``listen_for_retarget`` / ``attach`` inside the handler below) — there
+    is nothing yet in the hub to override the URL's own ``agent_name``
+    WITH, so this reads only the path segment (once), never a bare
+    handler parameter."""
+    return _ResolvedAgent(
+        request.path_params.get("agent_name", ""), _AgentResolutionToken(),
+    )
+
+
+def _resolve_agent_for_connection(request: Request, connection_id: str) -> "_ResolvedAgent":
+    """``agui_seize``'s / ``agui_submit``'s own resolution. #5129: both are
+    a DIFFERENT HTTP request than the connection's own SSE stream,
+    correlated only by *connection_id* — the URL's own ``agent_name``
+    (this connection's ORIGINAL agent, frozen into a long-lived client
+    URL) is only the FALLBACK. :func:`connection_current_agent` (seeded by
+    ``agui_events``, updated by a cross-agent ``/attach``, #5116) is
+    authoritative whenever the hub has seen this connection before."""
+    url_agent_name = request.path_params.get("agent_name", "")
+    resolved_name = connection_current_agent(connection_id) or url_agent_name
+    return _ResolvedAgent(resolved_name, _AgentResolutionToken())
 
 
 def _auth_context(request: Request) -> "AuthContext | None":
@@ -981,7 +1035,7 @@ class _SessionFrameSource:
 
 
 @router.get("/agui/chat/{agent_name}/events")
-async def agui_events(request: Request, agent_name: str):
+async def agui_events(request: Request):
     """SSE stream of the session's frames as AG-UI events (server→client).
 
     On connect the surface is attached to the per-agent :class:`SurfaceManager`
@@ -989,6 +1043,9 @@ async def agui_events(request: Request, agent_name: str):
     surface, the operator intervention listener is registered so an ``ask_user``
     reaches this remote operator. On disconnect the surface detaches; when it was
     the last, the listener is unregistered and the grace window arms.
+
+    #5130: no bare ``agent_name: str`` parameter — see
+    :func:`_resolve_agent_from_url`'s own docstring for why.
     """
     auth = _auth_context(request)
     if auth is None:
@@ -997,6 +1054,7 @@ async def agui_events(request: Request, agent_name: str):
     identity = authenticate_request(request, auth, connection_id=connection_id)
     if not identity.authenticated:
         return JSONResponse({"error": "authentication required"}, status_code=401)
+    agent_name = _resolve_agent_from_url(request).name
 
     registry = get_registry()
     _ensure_remove_listener_wired(registry)
@@ -1129,7 +1187,7 @@ async def agui_events(request: Request, agent_name: str):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-async def _handle_answer(request, auth, identity, connection_id, agent_name, payload):
+async def _handle_answer(request, auth, identity, connection_id, resolved, payload):
     """TOOL_CALL_RESULT → deliver BY ID (R1) through the single funnel.
 
     Delivery-time authorization (the client is UNTRUSTED): re-check
@@ -1138,7 +1196,12 @@ async def _handle_answer(request, auth, identity, connection_id, agent_name, pay
     intervention BY the echoed ``toolCallId``; the server validates the id (and any
     ``choiceId``) against its OWN registry entry — the client's prompt copy is not
     trusted (R6).
+
+    #5130: *resolved* is a :class:`_ResolvedAgent`, never a bare
+    ``agent_name: str`` — this function is ``agui_submit``'s own delegate,
+    downstream of that handler's resolution, not a second resolution site.
     """
+    agent_name = resolved.name
     if not auth.authorize_write(identity):
         return JSONResponse({"error": "unauthorized"}, status_code=403)
     manager = surface_registry().get(agent_name)
@@ -1175,12 +1238,15 @@ async def _handle_answer(request, auth, identity, connection_id, agent_name, pay
 
 
 @router.post("/agui/chat/{agent_name}/seize")
-async def agui_seize(request: Request, agent_name: str):
+async def agui_seize(request: Request):
     """Symmetric, auth-gated seize of the active-driver token (D4).
 
     Any authorized attached surface may seize equally (no handshake). Refused for
     an unauthenticated connection (Axis-A), an unauthorized identity, or a
     connection with no attached surface. Emits ``client_seized`` attribution.
+
+    #5130: no bare ``agent_name: str`` parameter — see
+    :func:`_resolve_agent_for_connection`'s own docstring for why.
     """
     auth = _auth_context(request)
     if auth is None:
@@ -1194,8 +1260,9 @@ async def agui_seize(request: Request, agent_name: str):
     # seizes driver authority ON BEHALF OF — resolve from the connection,
     # never the URL's own path param, or a post-attach seize grabs the
     # ORIGINAL agent's surface instead of the one this connection is
-    # actually attached to now.
-    agent_name = connection_current_agent(connection_id) or agent_name
+    # actually attached to now. #5130: this fold-in now lives in
+    # _resolve_agent_for_connection, the SOLE place either name is read.
+    agent_name = _resolve_agent_for_connection(request, connection_id).name
     manager = surface_registry().get(agent_name)
     if manager is None or not manager.seize(connection_id, identity.user_id, monotonic()):
         return JSONResponse({"seized": False, "error": "seize refused"}, status_code=409)
@@ -1212,12 +1279,15 @@ async def agui_seize(request: Request, agent_name: str):
 
 
 @router.post("/agui/chat/{agent_name}")
-async def agui_submit(request: Request, agent_name: str):
+async def agui_submit(request: Request):
     """Client→server: turn submit, HITL answer, cancel, and heartbeat.
 
     Server-side actions only (A3): a client may submit a turn / answer / cancel /
     keepalive — it may NEVER shut the single-writer server down (there is no
     shutdown verb here).
+
+    #5130: no bare ``agent_name: str`` parameter — see
+    :func:`_resolve_agent_for_connection`'s own docstring for why.
     """
     auth = _auth_context(request)
     if auth is None:
@@ -1242,7 +1312,10 @@ async def agui_submit(request: Request, agent_name: str):
     # different shape). Falls back to the URL when the hub has never seen
     # this connection_id (no SSE stream subscribed under it — a POST that
     # outraces its own connect, or a test driving this endpoint directly).
-    agent_name = connection_current_agent(connection_id) or agent_name
+    # #5130: this fold-in now lives in _resolve_agent_for_connection, the
+    # SOLE place either name is read.
+    resolved = _resolve_agent_for_connection(request, connection_id)
+    agent_name = resolved.name
 
     try:
         payload = await request.json()
@@ -1283,7 +1356,7 @@ async def agui_submit(request: Request, agent_name: str):
     # HITL answer (R1 by-id) — delivery-time authorized.
     if ptype == "TOOL_CALL_RESULT":
         return await _handle_answer(
-            request, auth, identity, connection_id, agent_name, payload
+            request, auth, identity, connection_id, resolved, payload
         )
 
     # Turn submit / cancel are permission-gated writes (server actions).
