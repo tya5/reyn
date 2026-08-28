@@ -2478,12 +2478,23 @@ async def retry_loop(
                 # cause on its own, with an accurate message, independent
                 # of this floor (predates this arc).
                 if _last_recover_is_byte_limit:
+                    # #5367②: the OLD text past this point claimed
+                    # "shrinking it further is not possible" — false. Only
+                    # the TURN-COUNT floor is reached here (mid is already
+                    # one turn; halving cannot produce a smaller nonzero
+                    # slice, #4947 ③). Nothing checked here about whether
+                    # mid's CONTENT could still shrink — a turn whose body
+                    # is a spillable tool result (owner: "spill は turn の
+                    # 中身を小さくします — 分割ではなく縮小") could still be
+                    # reduced without splitting it into more turns; this
+                    # retry_loop does not attempt that today (tracked as
+                    # #5367③).
                     raise UnrecoveredError(
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
                         "recurred compacting a single raw_middle turn "
-                        "alone — mid cannot be split any further; this is "
-                        "not a token-shrink problem, shrinking it further "
-                        "is not possible." + _learned_byte_limit_clause(
+                        "alone — mid cannot be split any further (this is "
+                        "the turn-count floor, not a claim that mid's "
+                        "content is already minimal)." + _learned_byte_limit_clause(
                             last_accepted_wire_bytes=_last_accepted_wire_bytes,
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
                         ),
