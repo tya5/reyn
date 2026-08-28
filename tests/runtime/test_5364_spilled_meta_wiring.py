@@ -29,7 +29,15 @@ class _RecordingHost:
     """Mirrors test_2425_step1c_chat_chokepoint.py's own ``_CapHost`` +
     captures every ``append_history_entry`` call so this test can assert
     on the persisted ``meta`` dict — the ONE thing ``RouterLoop.feedback``
-    actually hands a real Session in production."""
+    actually hands a real Session in production.
+
+    architect (#5372): a fast unit-level stand-in, not a substitute for the
+    real production chain — since
+    ``test_the_real_production_chain_stamps_spilled_meta_end_to_end`` below
+    closes the one risk a fake host posed here (wiring silently dropped
+    between ``RouterHostAdapter``/``Session``/``ContextBudgetAdvisor``),
+    this class stays legitimate for the fast per-branch coverage the 3
+    tests above want."""
 
     offload_enabled = True
 
