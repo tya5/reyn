@@ -90,7 +90,7 @@ def test_media_followup_materialises_only_within_budget(tmp_path: Path) -> None:
     blocks = _path_blocks(store, 8)
     budget = 5 * _MEDIA_IMAGE_TOKEN_COST  # room to materialise ~4 then refs
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=budget,
     )
     imgs = _imgs(fu)
     assert imgs, "images that fit the budget materialise"
@@ -106,7 +106,7 @@ def test_media_followup_unbounded_when_no_budget(tmp_path: Path) -> None:
     store = _store(tmp_path)
     blocks = _path_blocks(store, 3)
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=None,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=None,
     )
     assert len(_imgs(fu)) == len(blocks), "all blocks materialise when unbounded"
     assert not _texts(fu), "unbounded → nothing deferred to a ref/preview"
@@ -120,7 +120,7 @@ def test_overflow_image_is_lossless_individual_ref(tmp_path: Path) -> None:
     # Room for exactly one materialised image + at least one ref, no tail.
     budget = _MEDIA_IMAGE_TOKEN_COST + 400
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=budget,
     )
     refs = [p for p in _texts(fu) if "not loaded" in p["text"]]
     assert refs, "the over-budget image is preserved as an individual ref"
@@ -141,7 +141,7 @@ def test_total_followup_bounded_for_huge_image_count(tmp_path: Path) -> None:
     blocks = _path_blocks(store, 500)
     budget = 6 * _MEDIA_IMAGE_TOKEN_COST
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=budget,
     )
     assert _followup_tokens(fu) <= budget, "whole follow-up must stay within budget"
     # The 500 over-budget images collapse into a single tail preview (behavioural
@@ -158,7 +158,7 @@ def test_tail_preview_manifest_is_lossless(tmp_path: Path) -> None:
     blocks = _path_blocks(store, 40)
     budget = 4 * _MEDIA_IMAGE_TOKEN_COST
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=budget,
     )
     tail = [p for p in _texts(fu) if "manifest" in p["text"]]
     assert tail, "tail preview names a lossless manifest"
@@ -192,7 +192,7 @@ def test_inline_images_are_budget_accounted(tmp_path: Path) -> None:
     blocks = _inline_blocks(50)
     budget = 3 * _MEDIA_IMAGE_TOKEN_COST
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=store, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=store, budget_tokens=budget,
     )
     assert _followup_tokens(fu) <= budget, "inline images must not bypass the budget"
     assert len(_imgs(fu)) <= budget // _MEDIA_IMAGE_TOKEN_COST
@@ -205,7 +205,7 @@ def test_no_store_tail_degrades_to_bounded_note(tmp_path: Path) -> None:
     blocks = _inline_blocks(100)
     budget = 3 * _MEDIA_IMAGE_TOKEN_COST
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=None, budget_tokens=budget,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=None, budget_tokens=budget,
     )
     assert _followup_tokens(fu) <= budget
     notes = [p for p in _texts(fu) if "not shown" in p["text"]]

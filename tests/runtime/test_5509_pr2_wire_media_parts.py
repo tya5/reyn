@@ -214,7 +214,7 @@ def test_a_document_block_is_not_silently_dropped_by_the_type_filter_bounded_pat
     surfaces it as a real, modality-named ref."""
     blocks = [{"type": "document", "mime_type": "application/pdf", "path": "/tmp/x.pdf"}]
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=None, budget_tokens=10_000,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=None, budget_tokens=10_000,
     )
     assert fu is not None
     texts = [p["text"] for p in fu["content"] if p.get("type") == "text"]
@@ -238,6 +238,6 @@ def test_an_unknown_block_type_is_still_filtered_out() -> None:
     (5 named types), not "any dict with a type key"."""
     blocks = [{"type": "carrier_pigeon", "mime_type": "application/octet-stream"}]
     fu = _build_media_followup_message(
-        tool_name="t", media_blocks=blocks, media_store=None, budget_tokens=10_000,
+        tool_name="t", tool_call_id="tc1",media_blocks=blocks, media_store=None, budget_tokens=10_000,
     )
     assert fu is None

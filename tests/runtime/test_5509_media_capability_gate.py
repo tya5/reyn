@@ -118,7 +118,7 @@ def test_the_caller_reads_the_failure_reason_unbounded_path(
     block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
     with caplog.at_level(logging.DEBUG, logger="reyn.runtime.router_loop"):
         result = _build_media_followup_message(
-            tool_name="read_file", media_blocks=[block], model=model,
+            tool_name="read_file", tool_call_id="tc1",media_blocks=[block], model=model,
         )
     assert result is None  # the only image dropped -> no follow-up at all
     assert any(
@@ -137,7 +137,7 @@ def test_the_caller_reads_the_failure_reason_bounded_path(
     block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
     with caplog.at_level(logging.DEBUG, logger="reyn.runtime.router_loop"):
         result = _build_media_followup_message(
-            tool_name="read_file", media_blocks=[block], model=model,
+            tool_name="read_file", tool_call_id="tc1",media_blocks=[block], model=model,
             budget_tokens=10_000,
         )
     assert result is not None  # ref fallback still produced a follow-up
@@ -162,7 +162,7 @@ def test_capability_unavailable_also_warns_once_per_model(
     block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         _build_media_followup_message(
-            tool_name="read_file", media_blocks=[block, block], model=model,
+            tool_name="read_file", tool_call_id="tc1",media_blocks=[block, block], model=model,
         )
     warnings = [
         r for r in caplog.records
@@ -185,11 +185,11 @@ def test_a_second_session_with_the_same_model_still_warns(
     block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         _build_media_followup_message(
-            tool_name="read_file", media_blocks=[block], model=model,
+            tool_name="read_file", tool_call_id="tc1",media_blocks=[block], model=model,
             session_id="session-a",
         )
         _build_media_followup_message(
-            tool_name="read_file", media_blocks=[block], model=model,
+            tool_name="read_file", tool_call_id="tc1",media_blocks=[block], model=model,
             session_id="session-b",
         )
     # Unpack-enforces exactly 2 — one per session, not deduped across them.

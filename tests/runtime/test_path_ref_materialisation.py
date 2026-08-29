@@ -147,6 +147,7 @@ def test_followup_resolves_pathref_via_media_store(tmp_path, monkeypatch):
 
     msg = _build_media_followup_message(
         tool_name="mcp.tool__playwright.screenshot",
+        tool_call_id="tc1",
         media_blocks=[block],
         media_store=store,
     )
@@ -169,7 +170,7 @@ def test_followup_handles_mixed_pathref_and_inline(tmp_path, monkeypatch):
               "mimeType": "image/png"}
 
     msg = _build_media_followup_message(
-        tool_name="mixed", media_blocks=[pathref, inline], media_store=store,
+        tool_name="mixed",  tool_call_id="tc1",media_blocks=[pathref, inline], media_store=store,
     )
     assert msg is not None
     (url0, url1) = [p["image_url"]["url"] for p in msg["content"] if p.get("type") == "image_url"]

@@ -539,6 +539,7 @@ def _resolve_router_model_for_media_gate(host: Any, router_model: str) -> "str |
 def _build_media_followup_message(
     *,
     tool_name: str,
+    tool_call_id: str,
     media_blocks: list[dict],
     media_store: Any = None,
     budget_tokens: int | None = None,
@@ -552,16 +553,22 @@ def _build_media_followup_message(
     images in litellm-normalised shape — provider-agnostic, since user messages
     with content lists are universally supported (Anthropic, Gemini, OpenAI).
 
-    #272 + media-count cap (dead-end-free media axis): when ``budget_tokens`` is
-    given, the WHOLE follow-up (materialised images + individual refs + the tail
-    preview) is held ≤ ``budget_tokens`` so the result turn stays single-turn
-    compactable (the chat retry_loop's shrink can always fold it). Images are
-    materialised while they fit; the next become small LOSSLESS path-refs while
-    THOSE fit; the remaining tail collapses into ONE offloaded-manifest preview
-    (lossless). So neither the image bytes NOR the ref count can grow the
-    follow-up without bound — closing the inline-shape bypass (Gap A) and the
-    unbounded-ref count (Gap B). ``budget_tokens=None`` preserves the pre-#272
-    unbounded behaviour (partial/test hosts).
+    #5513: ``tool_call_id`` is embedded in the intro TEXT, not a dedicated
+    field — ``role="user"`` (this message's own role) cannot carry a
+    ``tool_call_id`` field at all (only ``role="tool"`` can, an OpenAI API
+    shape, not a litellm-specific limitation), so text is the only
+    structurally possible place (architect ruling, #5513). Without it, two
+    calls to the SAME tool in one turn produce byte-identical intro text —
+    traceable only by adjacent position, which compaction/rewind can
+    scramble (#5513's own motivating incident). ``meta`` was explicitly
+    NOT added alongside — architect's own default ("don't add a value
+    where the read side isn't named yet"): whether this follow-up message
+    even gets its own persisted history entry with a readable ``meta`` was
+    not confirmed at review time. Known limitation, disclosed rather than
+    silently outgrown: this id distinguishes the two calls only while
+    THIS text survives verbatim — once compaction folds it into a rolling
+    summary, the distinction is gone (summarization is not something
+    reordering-survival can promise against).
     """
     images = [
         b for b in media_blocks
@@ -571,7 +578,13 @@ def _build_media_followup_message(
         return None
 
     parts: list[dict] = [
-        {"type": "text", "text": f"Tool `{tool_name}` returned the following attachment(s):"},
+        {
+            "type": "text",
+            "text": (
+                f"Tool `{tool_name}` (tool_call_id={tool_call_id}) returned "
+                f"the following attachment(s):"
+            ),
+        },
     ]
 
     # Unbounded path (pre-#272 / partial-host): materialise all renderable images.
@@ -4059,6 +4072,12 @@ class RouterLoop:
                 )
                 followup = _build_media_followup_message(
                     tool_name=tc.get("function", {}).get("name", "tool"),
+                    # #5513: same tc["id"] already threaded to the sibling
+                    # role="tool" message's own tool_call_id field above —
+                    # embedded in the intro text here since role="user"
+                    # cannot carry the field itself (see this function's
+                    # own docstring).
+                    tool_call_id=tc["id"],
                     media_blocks=media_blocks,
                     media_store=getattr(host, "media_store", None),
                     budget_tokens=_budget_tokens,
