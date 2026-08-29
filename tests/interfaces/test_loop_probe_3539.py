@@ -339,49 +339,60 @@ def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path)
     )
 
 
-def test_consume_recovered_stays_false_when_the_stalls_own_onset_was_never_reported() -> None:
-    """Tier 2: #4855's root cause, reproduced directly against the unit
-    under test (no dump file, no real/virtual clock — ``_fired`` is a
-    permanent one-shot latch and needs no time to consume: a SECOND stall
-    episode alone is enough).
+def test_a_second_stall_after_recovery_is_reported_again() -> None:
+    """Tier 2: #4855 (owner decision B) — the once-only notice gate is now
+    "once per un-recovered episode," not "once per App session." Before
+    this fix, ``self._fired`` was a PERMANENT one-shot latch: a first
+    stall (even an unrelated app-mount startup hiccup) consumed the
+    session's only notice, and every LATER, possibly far more serious
+    freeze went unreported for the rest of the session — #4855's own
+    measured defect. ``observe()``'s recovery branch now resets
+    ``_fired`` at the exact point a stall recovers, so a genuinely NEW
+    episode after that point gets its own onset reported, exactly like
+    the first ever did.
 
-    Mechanism (confirmed by reading ``observe()``'s two branches):
-    ``self._fired`` silently swallows the ONSET return value for every
-    episode after the first (``if self._fired: return None`` — no notice
-    reaches the caller), but the pre-fix recovery branch set
-    ``self._just_recovered = True`` UNCONDITIONALLY on every recovery,
-    regardless of whether the episode it was "recovering from" ever had
-    its onset reported. In production this surfaces as
-    ``stall_recovered_log_line``'s literal text — "the interface recovered
-    from the stall reported above" — with no stall ever reported above,
-    exactly the CI-observed ``assert None is not None`` signature
-    (#4855's own PR-thread investigation: waiting for "recovered" then
-    asserting "unresponsive" never finds it, because episode 2's onset
-    line was never written).
-
-    A real host can reach episode 2's onset going unreported without any
-    injected delay at all: an unrelated stall during app-mount startup
-    jitter consumes ``_fired`` before the test's own intentional stall
-    ever runs — #4855's own root-cause comment traces exactly this path.
-    This test skips the mount-jitter framing and drives ``LoopTripwire``
-    directly through two consecutive episodes, which is sufficient to
-    exercise the same ``_fired``-already-True branch."""
+    This is the witness lead-coder asked for directly: "#4827①'s test
+    assumed 'my own stall produces a notice' — confirm that assumption
+    is TRUE AGAIN once B lands," not just that #4855's old symptom is
+    gone."""
     tripwire = LoopTripwire(threshold_ms=250.0)
 
-    tripwire.observe(1800.0)  # episode 1: stall — onset REPORTED (fired False -> True)
+    first_onset = tripwire.observe(1800.0)  # episode 1: stall
     tripwire.observe(50.0)  # episode 1: recovers
     assert tripwire.consume_recovered() is True, (
         "episode 1's own onset was reported, so its recovery must be too"
     )
 
-    tripwire.observe(1700.0)  # episode 2: stall — onset SWALLOWED (fired already True)
+    second_onset = tripwire.observe(1700.0)  # episode 2: a FRESH stall, post-recovery
     tripwire.observe(40.0)  # episode 2: recovers
-    assert tripwire.consume_recovered() is False, (
-        "episode 2's own onset was never reported (fired already True, "
-        "observe() returned None) — reporting its recovery would read as "
-        "\"recovered from the stall reported above\" with nothing ever "
-        "reported above, the exact #4855 defect"
+
+    assert first_onset is not None
+    assert second_onset is not None, (
+        "episode 2 comes AFTER episode 1's own recovery -- its onset must "
+        "be reported, the same as episode 1's was (owner decision B: "
+        "'once per session' was the defect this issue closes)"
     )
+    assert tripwire.consume_recovered() is True, (
+        "episode 2's own onset was reported, so its recovery must be too"
+    )
+
+
+def test_a_second_tick_within_the_same_still_ongoing_episode_is_not_reported_again() -> None:
+    """Tier 2: the ORIGINAL reason for "once, not per-tick" still holds
+    after #4855's fix — a stall that has not yet recovered must not
+    repeat its notice on every tick (a notice repeated per tick buries
+    the reply it's about). Only RECOVERY resets the gate; a later tick
+    that is STILL above threshold, with no recovery in between, must stay
+    quiet, same as before this fix."""
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    onset = tripwire.observe(1800.0)  # crosses — reports once
+    still_stalled = tripwire.observe(1900.0)  # same episode, no recovery yet
+    still_stalled_again = tripwire.observe(2000.0)  # same episode, still no recovery
+
+    assert onset is not None
+    assert still_stalled is None, "the same still-ongoing episode must not re-report"
+    assert still_stalled_again is None, "the same still-ongoing episode must not re-report"
 
 
 def test_consume_recovered_needs_no_dump_env_at_all(monkeypatch) -> None:
