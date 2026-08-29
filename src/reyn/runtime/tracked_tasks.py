@@ -309,6 +309,11 @@ class TrackedTaskSet:
             # round, so a normal (non-hanging) drain logs this at most once
             # and then never again once `pending` empties above — the noise
             # guard witness #4986's own acceptance table requires.
+            # `warning` is a requirement, not a default: lowering it to
+            # info/debug drops this out of pytest's own failure report,
+            # silently deleting the one trace a real hang leaves — do not
+            # lower it even though a normal shutdown also logs it once
+            # (a resident cancel_join task is routinely still pending).
             logger.warning(
                 "TrackedTaskSet.aclose(caller=%r): waiting on %d tracked "
                 "task(s): %s",
