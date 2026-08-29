@@ -28,6 +28,7 @@ because the two axes' composition functions differ — see
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,35 @@ if TYPE_CHECKING:
     from reyn.security.permissions.capability_profile import CapabilityProfile
 
 PROFILE_FILENAME = "profile.yaml"
+
+
+def unknown_profile_keys(data: "dict") -> "frozenset[str]":
+    """#5455 ①: every top-level key in a raw ``profile.yaml`` dict that is
+    not a real :class:`AgentProfile` field — the same class of gap #4501/
+    #4515 closed for ``reyn.yaml`` (an unknown key is silently dropped by
+    ``.get(...)``, never surfaced), now closed for this file too.
+
+    The registry is ``dataclasses.fields(AgentProfile)`` itself — the SAME
+    "the live dataclass is the complete population" idiom #5416 already
+    established (no separate hand-maintained key list to drift from the
+    real fields). A DEDICATED function, not a new entry into
+    :func:`reyn.config.config_schema.unknown_config_keys` — that function
+    walks ``ReynConfig``'s OWN, unrelated vocabulary; folding profile.yaml
+    into it would make ONE function know TWO closed vocabularies (the
+    #5057 "same guard, second copy" shape architect's #5455 review
+    explicitly rejected), not close anything.
+
+    Called from BOTH :meth:`AgentProfile.load` (so every real caller of
+    it — chat startup, ``AgentRegistry.spawn_session`` — gets the SAME
+    disclosure, a parse-time WARN; ``reyn doctor`` does NOT call
+    ``AgentProfile.load`` — it reads ``profile.yaml`` directly for its
+    own hook-env section, so it needs the SEPARATE walk below, not this
+    call site, to see this) and ``reyn config validate`` (a dedicated
+    CLI section, walking ``.reyn/agents/*/profile.yaml`` itself) —
+    mirroring how ``unknown_config_keys``
+    itself already serves 3 callers from one implementation."""
+    known = {f.name for f in dataclasses.fields(AgentProfile)}
+    return frozenset(data.keys()) - known
 
 
 @dataclass(frozen=True)
@@ -139,7 +169,13 @@ class AgentProfile:
 
         #4206 ②: a `bounding:` mapping with a key outside
         `reyn.runtime.bounding.BOUNDING_KEYS` raises `UnknownBoundingKeyError`
-        the same way."""
+        the same way.
+
+        #5455 ①: an unrecognized TOP-LEVEL key (e.g. a field removed from
+        this dataclass, like #5095's `broker_identity`) WARNs — never
+        raises, matching every other "not applied" disclosure in this
+        codebase (an operator's file stays loadable; the log is where the
+        mismatch surfaces) — see :func:`unknown_profile_keys`."""
         from reyn.runtime.bounding import validate_bounding
         from reyn.runtime.preferences import validate_preferences
 
@@ -147,6 +183,15 @@ class AgentProfile:
         if not path.is_file():
             raise FileNotFoundError(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        unknown_top_level = unknown_profile_keys(data)
+        if unknown_top_level:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "agent %r profile.yaml has unrecognized key(s) (not "
+                "applied): %s",
+                data.get("name", agent_dir.name), ", ".join(sorted(unknown_top_level)),
+            )
         # PR37: parse allowed_mcp — "all" sentinel normalizes to None.
         raw_allowed_mcp = data.get("allowed_mcp", None)
         if raw_allowed_mcp is None or raw_allowed_mcp == "all":

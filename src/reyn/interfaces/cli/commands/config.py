@@ -390,6 +390,7 @@ def _validate() -> None:
     """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import (
+        _CheckedElsewhere,
         _find_project_root,
         _load_yaml,
         build_policy_tier_config,
@@ -478,8 +479,12 @@ def _validate() -> None:
         "reyn.yaml": project_root / "reyn.yaml",
         "reyn.local.yaml": project_root / "reyn.local.yaml",
     }
+    # #5455 ②: each of these files' unknown-key check already runs above
+    # (policy_unknown, on the merged policy-tier view); this second
+    # read's own job is the mcp-placement/rename check, unrelated to the
+    # key vocabulary.
     for label, path in static_mcp_sources.items():
-        raw = _load_yaml(path)
+        raw = _load_yaml(path, vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE)
         mcp_section = raw.get("mcp")
         misplaced_found = _mcp_misplaced_server_entries(mcp_section)
         if misplaced_found:
@@ -487,7 +492,12 @@ def _validate() -> None:
         renamed_found = _mcp_renamed_http_transport_entries(mcp_section)
         if renamed_found:
             mcp_renamed_http[label] = renamed_found
-    dynamic_mcp_raw = _load_yaml(project_root / ".reyn" / "config" / "mcp.yaml")
+    # #5455 ②: this one is a hot-reload IN-set file — checked at ITS OWN
+    # load point (in_set_unknown, above), not the policy tier.
+    dynamic_mcp_raw = _load_yaml(
+        project_root / ".reyn" / "config" / "mcp.yaml",
+        vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+    )
     dynamic_mcp_section = dynamic_mcp_raw.get("mcp")
     dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_section)
     if dynamic_found:
@@ -496,11 +506,52 @@ def _validate() -> None:
     if dynamic_renamed_found:
         mcp_renamed_http[".reyn/config/mcp.yaml"] = dynamic_renamed_found
 
+    # #5455 ①: every .reyn/agents/<name>/profile.yaml, checked for
+    # top-level keys that are not real AgentProfile fields — a DIFFERENT
+    # operator-editable surface from the 3 above (policy tier / IN-set /
+    # hooks), with its OWN closed vocabulary (dataclasses.fields, not
+    # ReynConfig's schema) — see unknown_profile_keys's own docstring for
+    # why this is a dedicated function, not a new entry in
+    # unknown_config_keys.
+    from reyn.runtime.profile import unknown_profile_keys
+
+    profile_unknown: dict[str, "frozenset[str]"] = {}
+    if agents_dir.is_dir():
+        for agent_dir in sorted(agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            profile_path = agent_dir / "profile.yaml"
+            if not profile_path.is_file():
+                continue
+            # #5455 ②: CHECKED_BY_CALLER — the very next line runs
+            # unknown_profile_keys on this exact return value.
+            raw_profile = _load_yaml(
+                profile_path, vocabulary=_CheckedElsewhere.CHECKED_BY_CALLER,
+            )
+            found = unknown_profile_keys(raw_profile)
+            if found:
+                profile_unknown[agent_dir.name] = found
+
+    # #5455 ③: "no issues" must name what it walked — the exact defect
+    # this issue was filed over (reyn config validate declaring "No
+    # unknown ... config keys found" while never having looked at
+    # profile.yaml at all). This tuple is the population claim; a future
+    # surface added to this function must be added here too (no
+    # mechanism enforces that — this is the one place that says so).
+    _walked_surfaces = (
+        "the policy tier (reyn.yaml / reyn.local.yaml / ~/.reyn/config.yaml)",
+        "the hot-reload IN-set (.reyn/{mcp,cron,hooks,skills,pipelines,presentations}.yaml)",
+        "every .reyn/agents/<name>/hooks.yaml and profile.yaml",
+    )
     if (
         not policy_unknown and not disabled and not in_set_unknown
         and not hook_entry_errors and not mcp_misplaced and not mcp_renamed_http
+        and not profile_unknown
     ):
-        print("No unknown, renamed, or disabled-by-dependency config keys found.")
+        print(
+            "No unknown, renamed, or disabled-by-dependency config keys "
+            "found. Checked: " + "; ".join(_walked_surfaces) + "."
+        )
         return
 
     if policy_unknown:
@@ -631,6 +682,30 @@ def _validate() -> None:
                 "run `/reload` (or `reyn mcp refresh`) after fixing it there "
                 "to apply the change without restarting."
             )
+
+    if profile_unknown:
+        if (
+            policy_unknown or disabled or in_set_unknown or hook_entry_errors
+            or mcp_misplaced or mcp_renamed_http
+        ):
+            print()
+        print(
+            f"Agent profile.yaml — checked every .reyn/agents/<name>/"
+            f"profile.yaml — {len(profile_unknown)} agent(s) with "
+            f"unrecognized key(s):\n"
+        )
+        for agent_name, keys in sorted(profile_unknown.items()):
+            print(f"  [{agent_name}] " + ", ".join(sorted(keys)))
+        print(
+            "\nEach key above is not a recognized AgentProfile field "
+            "('reyn config fields' does not cover this file — see "
+            "reyn.runtime.profile.AgentProfile's own field list) — it is "
+            "read, kept in no in-memory state, and does nothing. A field "
+            "removed from AgentProfile (e.g. #5095's broker_identity) "
+            "leaves this line behind in an operator's file with no "
+            "further signal until now. Fix by hand: remove the key(s) "
+            "above from the file named."
+        )
 
 
 def _migrate(*, dry_run: bool = False) -> None:

@@ -1,0 +1,44 @@
+name: load-yaml-vocabulary gate
+
+# #5455 ②: reject any reyn.config.loader._load_yaml(...) call site
+# missing a vocabulary= keyword argument. _load_yaml has no default for
+# vocabulary (a TypeError already catches this at call time), but this
+# gate is the second line of defense against the SIGNATURE itself
+# regressing a default back in — see scripts/check_load_yaml_vocabulary.py's
+# module docstring for the full design rationale.
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# same shape as collect-events-settle-gate.yml / bare-tests-import-
+# reference-gate.yml. A shallow checkout is enough.
+#
+# Path filter is the whole src/ tree, not just loader.py/config.py — the
+# gate scans every file under src/ for a _load_yaml(...) call, so a NEW
+# file elsewhere importing and calling it (the exact failure mode this
+# gate exists for) must also trigger a run.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/**"
+
+permissions:
+  contents: read
+
+jobs:
+  load-yaml-vocabulary:
+    name: load-yaml-vocabulary gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_load_yaml_vocabulary.py is stdlib-only (ast /
+      # pathlib / sys). No pip install needed.
+      - name: Check every _load_yaml(...) call passes vocabulary=
+        run: |
+          python scripts/check_load_yaml_vocabulary.py
