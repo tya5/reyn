@@ -176,6 +176,7 @@ async def test_a_pipeline_nudge_still_runs_one_turn(
     await session._run_turn_body(
         TurnOrigin.PIPELINE_NUDGE, {"text": "", "chain_id": chain_id},
     )
+    await session._audit_events.drain()
     armed = [e for e in collected if e.type == "stall_trace_armed"]
     assert armed and armed[0].data["chain_id"] == chain_id, (
         "the pipeline-nudge kind ran no turn (stall_trace_armed never fired "
@@ -233,6 +234,7 @@ async def test_a_kind_restored_from_a_snapshot_as_a_plain_string_still_dispatche
 
     chain_id = "c-restored"
     await session._run_turn_body(restored_kind, {"text": "hi", "chain_id": chain_id})
+    await session._audit_events.drain()
     armed = [e for e in collected if e.type == "stall_trace_armed"]
     assert armed and armed[0].data["chain_id"] == chain_id, (
         "the restored plain-string kind ran no turn (stall_trace_armed never "
