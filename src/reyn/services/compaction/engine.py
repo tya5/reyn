@@ -65,6 +65,7 @@ from reyn.llm.litellm_bootstrap import (
 )
 from reyn.prompt import compaction as _prompt_compaction
 from reyn.runtime.error_format import is_quota_exhausted_error
+from reyn.runtime.session_pure import render_summary_for_storage
 
 if TYPE_CHECKING:
     from reyn.config import CompactionConfig
@@ -455,10 +456,32 @@ def wrap_summary_as_message(summary: dict) -> dict:
     in :attr:`HistoryChunkToCompact.messages`, distinguished only by
     :data:`SUMMARY_MESSAGE_ROLE`. This is the ONE place that wrapping
     happens, so every caller (the controller's tail-side path, retry_loop's
-    tail- and head-side paths) produces byte-identical shape — see
+    tail- and head-side paths, ``RouterHistoryBuffer._serialise_turn``'s
+    own summary branch) produces byte-identical shape — see
     ``CompactionEngine.compact``'s own docstring for why the field carries
-    no separate identity beyond this ``role`` marker."""
-    return {"role": SUMMARY_MESSAGE_ROLE, **summary}
+    no separate identity beyond this ``role`` marker.
+
+    #5531 (lead-coder ruling, option (y), issuecomment-5463125441): also
+    carries a rendered ``content`` string — the SAME "[summary of earlier
+    conversation]\\n" + text shape ``_router_main_call`` used to splice in
+    separately. Two reasons this lives HERE, not at each call site:
+    (1) ``estimate_tokens_for_turn``/``estimate_tokens_for_any_turn``
+    (this module) read ``content``/``text`` — a dict with neither falls
+    through to an empty-string estimate, so an un-rendered summary would
+    measure as near-zero and could legitimately get discarded by
+    ``trim_head`` once budget is exceeded elsewhere, silently dropping it
+    from the wire; (2) it lets every site that places a summary directly
+    into a message list (this function's own callers) skip carrying a
+    SEPARATE decoration step — the content IS the decoration, so there is
+    no second place a caller could decide whether/how to splice it in."""
+    rendered = render_summary_for_storage(summary)
+    return {
+        "role": SUMMARY_MESSAGE_ROLE,
+        **summary,
+        # Always wins over any stray "content" key `summary` itself might
+        # carry — this rendered form is the ONE the wire actually sends.
+        "content": f"[summary of earlier conversation]\n{rendered}",
+    }
 
 
 @dataclass
@@ -494,7 +517,7 @@ class HistoryChunkToCompact:
     call. Confirmed live (real LLM): setting ``topic_arc`` here to ~40 tokens
     had zero effect on the actual trim.
     """
-    messages: list[dict]                            # ordered, oldest-first: turns + at most one role=="summary" element
+    messages: list[dict]                            # ordered, oldest-first: turns + (usually) at most one role=="summary" element — but see #5531: history CAN hold more than one summary turn (an untouched original + a fresh fold's own output), so >1 can appear here if more than one falls inside the offered span
     section_token_caps: dict                        # {topic_arc, decisions, ...} — LLM hint only, see docstring above
 
 
@@ -1609,9 +1632,11 @@ class CompactionEngine:
         always check ``covers_through_unavailable_reason`` alongside it.
         """
         # #5531: new_turn_count/had_previous are now derived from the
-        # single ordered `messages` list — a "summary" element (at most
-        # one, per HistoryChunkToCompact's own contract) is not a "new
-        # turn" being summarised for the first time.
+        # single ordered `messages` list — every "summary" element (there
+        # can be more than one — see HistoryChunkToCompact's own
+        # docstring) is not a "new turn" being summarised for the first
+        # time. The list comprehension below already counts however many
+        # there are; nothing here assumes exactly one.
         summary_messages = [
             m for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
         ]
@@ -1869,10 +1894,12 @@ class CompactionEngine:
         # own summary) needs to re-derive whether the other still holds
         # before assuming this is still safe. See
         # tests/services/test_5498_retry_loop_covers_zero_never_persisted.py.
-        # #5531: derive from `messages` MINUS the (at most one) summary
-        # element — its own covers_through_seq is not a "new turn" seq,
-        # and it may sit anywhere in the ordered list now (condition④),
-        # not just at index 0.
+        # #5531: derive from `messages` MINUS every summary element (there
+        # can be more than one — see HistoryChunkToCompact's own
+        # docstring) — none of their own covers_through_seq values are a
+        # "new turn" seq, and each may sit anywhere in the ordered list
+        # now (condition④), not just at index 0. The filter below already
+        # excludes all of them, not just the first.
         covers = compute_covers_through_seq(
             [
                 t.get("seq", 0) for t in input_chunk.messages
@@ -2290,22 +2317,6 @@ async def retry_loop(
     # comment below for why re-slicing the SAME ``raw_middle`` on every
     # iteration without persisting this would just recreate the old cycle.
     _compact_attempt_len: int | None = None
-    # #5531 condition C: whether raw_middle has EVER been grown from the
-    # HEAD side (Phase 2, below) during this call — flipped True the
-    # first time that happens, never reset. Load-bearing for which order
-    # `summary` and `raw_middle`'s offered slice go into in
-    # `HistoryChunkToCompact.messages` below: Phase 1 (tail-shrink) and
-    # Phase 2 (head-shrink) are an `elif` chain, re-evaluated fresh each
-    # iteration, and NOTHING in this loop ever regrows `tail` once
-    # Phase 1 has shrunk it toward its floor — so Phase 1 firing and
-    # Phase 2 firing are never interleaved within one call: it is a
-    # ONE-WAY transition (tail-side growth, exhausted, THEN head-side
-    # growth, never back). While False, any content `raw_middle` holds
-    # is chronologically AFTER `summary` (condition③'s tail-side row);
-    # once True, the FRONT of `raw_middle` (which `_attempt_len` always
-    # offers first) is the most-recently-head-prepended, chronologically
-    # OLDEST content — BEFORE `summary` (condition③'s head-side row).
-    _raw_middle_grew_from_head = False
     # SP/new_msg never shrink (see the floor comment above) and never
     # change across iterations (both are fixed parameters) — computed once,
     # not on every floor check.
@@ -2357,20 +2368,24 @@ async def retry_loop(
                     _compact_attempt_len if _compact_attempt_len is not None
                     else len(raw_middle)
                 )
-                # #5531 conditions③④: order the single `messages` list by
-                # WHICH SIDE this offered slice came from, per the
-                # no-interleaving finding on `_raw_middle_grew_from_head`
-                # above — never a hand-decided "always append" (that was
-                # condition B's own bug).
+                # #5531 (lead-coder ruling, issuecomment-5463182279): the
+                # input to THIS compact() call is simply "the span being
+                # folded right now" — `_offered`. If a summary element
+                # already sits inside `raw_middle` (decompose's own turns
+                # filter places it there whenever it doesn't fit within
+                # head/tail — see `decompose_history_for_retry`), it rides
+                # along and gets folded together with the rest, same as
+                # any other turn; if it sits outside `raw_middle` (in
+                # `head`/`tail` instead), it simply isn't part of this
+                # fold. No line here decides WHICH — `_offered`'s own
+                # existing chronological order already answers it. A
+                # history can therefore end up holding more than one
+                # `role=="summary"` turn (the untouched original still in
+                # head/tail, plus a fresh one this fold produces) — see
+                # `HistoryChunkToCompact`'s own docstring for the
+                # consequence swept for callers assuming exactly one.
                 _offered = raw_middle[:_attempt_len]
-                if summary is None:
-                    _summary_messages: list[dict] = []
-                else:
-                    _summary_messages = [wrap_summary_as_message(summary)]
-                if _raw_middle_grew_from_head:
-                    _messages = _offered + _summary_messages
-                else:
-                    _messages = _summary_messages + _offered
+                _messages = _offered
                 input_chunk = HistoryChunkToCompact(
                     messages=_messages,
                     section_token_caps=section_caps,
@@ -2398,6 +2413,16 @@ async def retry_loop(
                     # raw_middle just clips naturally at the slice above;
                     # no explicit clamping needed.
                     raw_middle = raw_middle[_attempt_len:]
+                    # #5531 (lead-coder ruling, issuecomment-5463249759):
+                    # where the fold's OUTPUT lands is PR-2 scope, not
+                    # PR-1 — writing it back into `head` broke this loop's
+                    # termination proof (`head` is no longer monotonically
+                    # non-growing once a fold can re-add an element to it;
+                    # PR-2's own reservation redesign is what's needed
+                    # here). PR-1 leaves the fold's output exactly where
+                    # it always lived: the `summary` local below, handed
+                    # to `main_call` as its own `summary=` argument —
+                    # unchanged by this PR.
                     # #4947 ③ (CI red on #4950, architect-ruled): reset the
                     # same-cause streak here, and ONLY here — not on any
                     # other escalation branch. The cap's own words below
@@ -2474,6 +2499,10 @@ async def retry_loop(
                     # not a per-exception-type allowlist at this site.
                     raise CompactionOverflowError(str(exc)) from exc
 
+            # #5531 (lead-coder ruling, issuecomment-5463249759): the
+            # fold's OUTPUT placement (whether `main_call` still takes a
+            # separate `summary=` at all) is PR-2 scope, not PR-1 — kept
+            # unchanged here.
             _this_iteration_called_main_call = True
             response = await main_call(
                 SP=SP,
@@ -2755,7 +2784,6 @@ async def retry_loop(
             chunk = max(len(head) // 2, 1)
             raw_middle = head[-chunk:] + raw_middle
             head = head[:-chunk]
-            _raw_middle_grew_from_head = True  # #5531 condition③: flips the messages order below, permanently
         elif _last_recover_is_byte_limit:
             # #4885: token-only shrinking is exhausted (head/tail already at
             # or below their token minimums) but the triggering cause was an
@@ -2818,7 +2846,6 @@ async def retry_loop(
                 chunk = max(len(head) // 2, 1)
                 raw_middle = head[-chunk:] + raw_middle
                 head = head[:-chunk]
-                _raw_middle_grew_from_head = True  # #5531 condition③: same flag, byte-limit-override branch
             # If neither exceeds the new minimums either (head/tail were
             # ALREADY below even the halved ceiling), there is nothing left
             # to trim yet — still falls through without raising; the NEXT
