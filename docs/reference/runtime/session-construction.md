@@ -900,6 +900,15 @@ trust decision on a specific skill, discovered later if at all.
   sets `multimodal.base_url` in `reyn.yaml`), so path-refs also carry a `url` field
   pointing at the resources router — cross-host consumers can then HTTP GET the body; when
   unset, only same-host `path` is available.
+- `media_store_worker` (#5382 example②) — an optional `DurabilityWorker` forwarded
+  straight into `MediaStore(worker=...)`. `None` (the default) leaves `MediaStore`'s own
+  lazy-default in place — a dedicated, unshared worker per Session, unchanged from before
+  this param existed. A caller passes one explicitly to give multiple sessions in one
+  process a single shared write-serialization point. `MediaStore(worker=...)` already
+  existed (#5364 §1.4); Session simply wasn't threading a caller-supplied one through — this
+  is the one construction input added, not a general override seam (an `overrides=...`
+  catch-all was considered and rejected on #5382: no boundary, and it would undo #3133's
+  45→36 param-surface cut with one opaque param).
 - `_pending_user_images` (#366) — queue of image blocks the user attached via `/image PATH`
   or `--image PATH`, drained on the next user-message turn (attached to that
   `ChatMessage`'s `media` field). litellm-style content parts:

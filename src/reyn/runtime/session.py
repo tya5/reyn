@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from reyn.config.chat import CompactionConfig, ReasoningConfig
+    from reyn.core.events.durability_worker import DurabilityWorker
     from reyn.core.op_runtime.context import OpContext
     from reyn.hooks.bus import HookBus
     from reyn.hooks.composed_consumer import ComposedEventConsumer
@@ -893,6 +894,18 @@ class Session:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
+        # #5382 example②: the ONE construction input MediaStore's own
+        # `worker=` already accepts (see MediaStore.__init__'s own #5364
+        # §1.4 comment) — Session just wasn't passing it through. Real
+        # production reason (architect, #5382): a single process running
+        # multiple sessions wants ONE shared write-serialization point,
+        # not one DurabilityWorker per session. None -> MediaStore's own
+        # lazy-default (a dedicated worker, unshared) — unchanged
+        # behaviour for every caller that doesn't pass this. Deliberately
+        # NOT a general override/`overrides=` seam (architect rejected
+        # that shape explicitly — no boundary, and it would undo #3133's
+        # 45->36 param-surface cut with one opaque catch-all).
+        media_store_worker: "DurabilityWorker | None" = None,
         # #4274: reyn.yaml web_fetch.* → the chat-router OpContext's web_fetch_config
         # (verify_ssl / allow_private_ips / max_download_bytes). Plain value, same
         # shape as multimodal_config — not a per-turn supplier.
@@ -1086,6 +1099,11 @@ class Session:
                 session_id=session_id,
                 # #5366 §3: the project-wide (cross-session) storage cap/pin.
                 storage=self._storage_config,
+                # #5382 example②: forward a caller-shared worker through;
+                # None -> MediaStore's own lazy-default dedicated worker
+                # (unchanged behaviour — see the media_store_worker param's
+                # own comment above).
+                worker=media_store_worker,
             )
         else:
             self._media_store = None
