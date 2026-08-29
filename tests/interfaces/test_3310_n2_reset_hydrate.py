@@ -732,21 +732,12 @@ async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
         await reg.shutdown()
 
 
-def _install_hanging_run_turn(session: Session):
-    """Same no-mock seam ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` uses
-    (itself mirroring ``tests/core/test_2242_hard_cancel.py``): a real, plain
-    async function method-assigned onto the instance standing in for a
-    genuinely in-flight LLM call, so a turn can be held BUSY (never touching
-    a real LLM) while a SECOND submission queues behind it."""
-    call_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
-        call_started.set()
-        await release.wait()
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
-    return call_started, release
+def _collect(session: Session) -> list:
+    """Subscribe through the public seam (Session.subscribe_audit_events,
+    #5260) — for witness ②: turn_started proves the REAL driver ran (#5450)."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
 
 
 async def _stop_auto_driver(reg: AgentRegistry, name: str) -> None:
@@ -773,8 +764,9 @@ async def _stop_auto_driver(reg: AgentRegistry, name: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub(control="gated")
 async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, _llm_stub,
 ) -> None:
     """Tier 2: ``_queue_view`` / ``_queue_seeded`` witness, INDEPENDENT of the
     sent-queue WIDGET clear above (a strip check during review showed the
@@ -809,11 +801,11 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
         await reg.attach("alpha")
         beta = await reg.attach("beta")
         await _stop_auto_driver(reg, "beta")
+        events = _collect(beta)
 
-        call_started, release = _install_hanging_run_turn(beta)
         await beta.submit_user_text("beta busy trigger")
         turn_task = asyncio.create_task(beta.run_one_iteration())
-        await asyncio.wait_for(call_started.wait(), timeout=5)
+        await _llm_stub.call_started.wait()
 
         # A second submission arrives while the first is still in flight —
         # it stays undispatched (server-authoritative queue, #3300 §6b).
@@ -867,8 +859,12 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
                 "beta queued item" in t for t in sent_queue.rendered_texts()
             ), sent_queue.rendered_texts()
 
-        release.set()
-        await asyncio.wait_for(turn_task, timeout=5)
+        _llm_stub.release.set()
+        await turn_task
+
+        # witness ②: the real driver dispatched beta's own turn.
+        await beta._audit_events.drain()
+        assert any(e.type == "turn_started" for e in events)
     finally:
         await reg.shutdown()
 

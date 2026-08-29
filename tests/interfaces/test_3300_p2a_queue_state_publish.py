@@ -30,11 +30,12 @@ Covers (see the architect's #3300 design-pass comments on the issue):
      ``RemoteQueueView``, produce an accurate queue model end-to-end.
 
 Real ``Session``/``AgentRegistry``/``StateLog`` throughout — no
-``unittest.mock``. The only "fake" collaborator is the same controllable
-plain-async-function hang ``tests/core/test_2242_hard_cancel.py`` uses for
-``RouterLoopDriver.run_turn`` (a real method-assignment, not a mock), which is
-the established no-mock seam for putting a turn genuinely "mid-flight"
-without a real LLM call.
+``unittest.mock``. #5450 migration: the turn-mid-flight hang is now
+``@pytest.mark.llm_stub(control="gated")`` — the real
+``RouterLoopDriver``/``RouterLoop`` dispatch for real, hung at the real
+``litellm.acompletion`` boundary, replacing the private
+``_loop_driver.run_turn`` replacement ``tests/core/test_2242_hard_cancel.py``
+used before its own #5450 migration (#5468).
 """
 from __future__ import annotations
 
@@ -102,19 +103,12 @@ async def _stop_auto_driver(registry: AgentRegistry, name: str) -> None:
             pass
 
 
-def _install_hanging_run_turn(session: Session) -> tuple[asyncio.Event, asyncio.Event]:
-    """Same no-mock seam as ``tests/core/test_2242_hard_cancel.py``: a real, plain
-    async function method-assigned onto the instance, standing in for a
-    genuinely in-flight LLM call so a turn can be observed mid-flight."""
-    call_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
-        call_started.set()
-        await release.wait()
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
-    return call_started, release
+def _collect(session: Session) -> list:
+    """Subscribe through the public seam (Session.subscribe_audit_events,
+    #5260) — for witness ②: turn_started proves the REAL driver ran (#5450)."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
 
 
 async def _sse_lines(text):
@@ -147,24 +141,31 @@ async def _connect_snapshot_only(status_provider) -> "dict":
 
 
 @pytest.mark.asyncio
-async def test_turn_active_accessor_reflects_busy_then_idle(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_turn_active_accessor_reflects_busy_then_idle(tmp_path, _llm_stub):
     """Tier 2: ``Session.turn_active`` is False when idle, True once a turn is
     dispatched (mid-flight), and False again once it settles — an additive
-    read of the existing ``_turn_idle`` event, not a new authority."""
+    read of the existing ``_turn_idle`` event, not a new authority.
+
+    Witness ② (#5450): turn_started fires — proof the REAL driver
+    dispatched, not merely that the stub was called."""
     session = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
+    events = _collect(session)
     assert session.turn_active is False
 
-    call_started, release = _install_hanging_run_turn(session)
     await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
     turn_task = asyncio.create_task(session.run_one_iteration())
 
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     assert session.turn_active is True
 
-    release.set()
-    completed = await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    completed = await turn_task
     assert completed is True
     assert session.turn_active is False
+
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" and e.data.get("chain_id") == "c1" for e in events)
 
 
 # ── 2. queued_user_messages() ────────────────────────────────────────────────
@@ -222,7 +223,8 @@ async def test_remote_parity_state_snapshot_matches_local_accessors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path, _llm_stub):
     """Tier 2: #3300 P2a core correctness property. A client "connecting"
     DURING a turn — having missed the ``turn_started`` audit-event that
     dispatched the in-flight item — still reconstructs the CORRECT
@@ -240,12 +242,11 @@ async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path)
     _seed(tmp_path, AGENT)
     session = await registry.attach(AGENT)
     await _stop_auto_driver(registry, AGENT)
-
-    call_started, release = _install_hanging_run_turn(session)
+    events = _collect(session)
 
     await session.submit_user_text("dispatched-first")
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
 
     # A second submission arrives WHILE the first turn is still in flight —
     # it stays undispatched (server-authoritative queue, #3300 design-pass
@@ -266,13 +267,19 @@ async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path)
         "the dispatched one and not an empty queue"
     )
 
-    release.set()
-    await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    await turn_task
 
     # After the turn settles, a fresh connect reflects idle + still-queued.
     values_after = await _connect_snapshot_only(lambda: _snapshot(registry))
     assert values_after.get("turn_active") is False
     assert [item["text"] for item in values_after.get("queue", [])] == ["queued-second"]
+
+    # witness ②: the real driver dispatched "dispatched-first" — exactly one
+    # turn_started (the second submission stays queued, undispatched).
+    await session._audit_events.drain()
+    (started_ev,) = [e for e in events if e.type == "turn_started"]
+    assert started_ev.data.get("kind") == "user"
 
 
 # ── 5. order-race gate (design-pass pin D) ───────────────────────────────────
@@ -358,14 +365,19 @@ def test_remote_queue_view_snapshot_mid_stream_stays_consistent_with_redelivery(
 
 
 @pytest.mark.asyncio
-async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path, _llm_stub):
     """Tier 2: a real ``Session``'s ``user_submitted`` (enqueue) and
     ``turn_started`` (dispatch) audit-events — the SAME events P1 (C) already
     emits and the renderer/AG-UI transport already forward — drive a
     ``RemoteQueueView`` to an accurate final state end-to-end (subscribe via
-    the public ``subscribe_audit_events`` seam, no private-state peeking)."""
+    the public ``subscribe_audit_events`` seam, no private-state peeking).
+
+    Witness ② (#5450) is implicit here: ``next(e for e in captured if
+    e.type == "turn_started")`` below raises ``StopIteration`` if the real
+    driver never actually dispatched — the test's own core mechanism
+    already depends on it, unlike a stub-only check."""
     session = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    call_started, release = _install_hanging_run_turn(session)
 
     view = RemoteQueueView()
     view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
@@ -384,20 +396,21 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path):
     assert [i["text"] for i in view.queue()] == ["alpha"]
 
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
 
     await settle(session._audit_events)
     ts = next(e for e in captured if e.type == "turn_started")
     view.apply_turn_started(chain_id=ts.data["chain_id"], seq=ts.data["seq"])
     assert view.queue() == [], "the dispatched item must leave the queue model"
 
-    release.set()
-    await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    await turn_task
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub(control="gated")
 async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue_model(
-    tmp_path,
+    tmp_path, _llm_stub,
 ):
     """Tier 2: #3688 — a message submitted WHILE an earlier turn is still
     in-flight (dispatched, not yet finished) must still be accepted by
@@ -423,7 +436,6 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     this test does not cover.
     """
     session = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    call_started, release = _install_hanging_run_turn(session)
 
     view = RemoteQueueView()
     view.apply_snapshot(queue=[], turn_active=False, queue_seq=0)
@@ -440,7 +452,7 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     )
 
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
 
     await settle(session._audit_events)
     ts = next(e for e in captured if e.type == "turn_started")
@@ -463,5 +475,5 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     )
     assert [i["text"] for i in view.queue()] == ["beta"]
 
-    release.set()
-    await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    await turn_task

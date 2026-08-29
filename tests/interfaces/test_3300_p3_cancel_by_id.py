@@ -32,10 +32,12 @@ Covers (see the architect's #3300 design-pass comments on the issue):
      per-surface wiring needed — the completeness gates bind this).
 
 Real ``Session``/``StateLog``/``AgentSnapshot`` throughout — no
-``unittest.mock``. The only "fake" collaborator is the same controllable
-plain-async-function hang ``tests/core/test_2242_hard_cancel.py`` /
-``tests/interfaces/test_3300_p2a_queue_state_publish.py`` use for
-``RouterLoopDriver.run_turn`` (a real method-assignment, not a mock).
+``unittest.mock``. #5450 migration: the turn-mid-flight hang is now
+``@pytest.mark.llm_stub(control="gated")`` — the real
+``RouterLoopDriver``/``RouterLoop`` dispatch for real, hung at the real
+``litellm.acompletion`` boundary, replacing the private
+``_loop_driver.run_turn`` replacement ``tests/core/test_2242_hard_cancel.py``
+used before its own #5450 migration (#5468).
 """
 from __future__ import annotations
 
@@ -60,19 +62,12 @@ def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
     return session, state_log
 
 
-def _install_hanging_run_turn(session: Session) -> tuple[asyncio.Event, asyncio.Event]:
-    """Same no-mock seam as ``tests/core/test_2242_hard_cancel.py`` / P2a: a real,
-    plain async function method-assigned onto the instance, standing in for a
-    genuinely in-flight LLM call."""
-    call_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
-        call_started.set()
-        await release.wait()
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
-    return call_started, release
+def _collect(session: Session) -> list:
+    """Subscribe through the public seam (Session.subscribe_audit_events,
+    #5260) — for witness ②: turn_started proves the REAL driver ran (#5450)."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
 
 
 def _reconstruct(agent_name: str, snapshot_path: Path, state_log: StateLog) -> AgentSnapshot:
@@ -106,17 +101,18 @@ async def test_cancel_queued_removes_undispatched_item(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cancel_of_already_dispatched_message_is_a_noop(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_cancel_of_already_dispatched_message_is_a_noop(tmp_path, _llm_stub):
     """Tier 2: cancelling a msg_id that has ALREADY been dispatched (consumed
     off the inbox to start its turn) is a no-op — it must NOT escalate to
     ``cancel_inflight`` (a distinct intent for the running turn)."""
     session, _ = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    call_started, release = _install_hanging_run_turn(session)
+    events = _collect(session)
     await session.submit_user_text("dispatch-me")
     msg_id = session.queued_user_messages()[0]["msg_id"]
 
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     assert session.queued_user_messages() == [], "sanity: the item is now dispatched"
 
     cancelled = await session.cancel_queued(msg_id)
@@ -124,8 +120,12 @@ async def test_cancel_of_already_dispatched_message_is_a_noop(tmp_path):
     assert cancelled is False, "cancelling an already-dispatched item must be a no-op"
     assert session.turn_active is True, "the running turn must be UNAFFECTED by cancel_queued"
 
-    release.set()
-    await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    await turn_task
+
+    # witness ②: the real driver dispatched.
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
 
 
 @pytest.mark.asyncio
@@ -265,7 +265,8 @@ async def test_snapshot_journal_cancel_inbox_round_trip(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path, _llm_stub):
     """Tier 2: ★race gate (design-pass pin F, #79). ``cancel_queued`` and the
     dispatcher's own dequeue-then-promote (``run_one_iteration``) are launched
     as CONCURRENT asyncio tasks contending for the SAME queued item, cancel
@@ -274,9 +275,13 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
     cancel_queued`` docstrings), whichever task the loop runs first commits
     its exit atomically before the other can observe stale state: cancel wins
     here, EXCLUSIVELY — the item is discarded (skip-at-consume) when later
-    dequeued, never promoted (``turn_started`` never fires for it)."""
+    dequeued, never promoted (``turn_started`` never fires for it).
+
+    control="gated" is installed only as a safety net (no assertion needs
+    ``call_started``/``release`` here) — if dispatch ever DID win this race
+    (it must not), the LLM boundary must still be patched rather than
+    attempting a real network call."""
     session, _ = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    _install_hanging_run_turn(session)
 
     await session.submit_user_text("race-me")
     msg_id = session.queued_user_messages()[0]["msg_id"]
@@ -309,15 +314,18 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path, _llm_stub):
     """Tier 2: the REVERSE ordering of the race above — dispatch scheduled
     first. By the time cancel's task runs, the item is already consumed
     (its snapshot.inbox entry pruned + ``turn_started`` already emitted, both
     inside the dispatcher's own no-await synchronous prefix) — cancel
     observes "already dispatched" and correctly no-ops. EXACTLY ONE of the
-    two exits fires, never both, regardless of which ordering wins."""
+    two exits fires, never both, regardless of which ordering wins.
+
+    Witness ② (#5450) is implicit: ``assert "turn_started" in kinds`` below
+    already depends on the real driver having dispatched."""
     session, _ = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    call_started, release = _install_hanging_run_turn(session)
 
     await session.submit_user_text("race-me-2")
     msg_id = session.queued_user_messages()[0]["msg_id"]
@@ -328,8 +336,8 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
     iter_task = asyncio.create_task(session.run_one_iteration())
     cancel_task = asyncio.create_task(session.cancel_queued(msg_id))
 
-    await asyncio.wait_for(call_started.wait(), timeout=5)
-    cancelled = await asyncio.wait_for(cancel_task, timeout=5)
+    await _llm_stub.call_started.wait()
+    cancelled = await cancel_task
 
     assert cancelled is False, "dispatch won the race — cancel of an already-dispatched item is a no-op"
     await settle(session._audit_events)
@@ -339,8 +347,8 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
         "dispatch won the race — the item must NEVER ALSO be cancelled (exclusivity)"
     )
 
-    release.set()
-    finished = await asyncio.wait_for(iter_task, timeout=5)
+    _llm_stub.release.set()
+    finished = await iter_task
     assert finished is True
 
 
@@ -348,13 +356,18 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_skip_at_consume_discards_cancelled_item_without_dispatch(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_skip_at_consume_discards_cancelled_item_without_dispatch(tmp_path, _llm_stub):
     """Tier 2: a cancelled item still physically sitting in the plain
     ``asyncio.Queue`` (no removal API) is discarded — never dispatched, never
     staged as a ride-along — when it is eventually dequeued. A LATER queued
-    item is unaffected and dispatches normally."""
+    item is unaffected and dispatches normally.
+
+    Witness ② (#5450): turn_started fires for the SECOND (uncancelled)
+    item's chain_id — proof the real driver dispatched THAT item, not just
+    that the stub returned."""
     session, _ = _make_session(tmp_path / "state.wal", tmp_path / "snapshot.json")
-    call_started, release = _install_hanging_run_turn(session)
+    events = _collect(session)
 
     await session.submit_user_text("cancel-me")
     cancel_id = session.queued_user_messages()[0]["msg_id"]
@@ -365,11 +378,14 @@ async def test_skip_at_consume_discards_cancelled_item_without_dispatch(tmp_path
     # run_one_iteration must skip the cancelled item and dispatch the SECOND
     # (uncancelled) one instead — never a turn for the cancelled text.
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
-    release.set()
-    finished = await asyncio.wait_for(turn_task, timeout=5)
+    await _llm_stub.call_started.wait()
+    _llm_stub.release.set()
+    finished = await turn_task
     assert finished is True
     assert session.queued_user_messages() == []
+
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
 
 
 # ── 5. inbox_cancel delta / RemoteQueueView ──────────────────────────────────
