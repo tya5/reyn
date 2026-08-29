@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#5455 ②: a static gate — every call to
 ``reyn.config.loader._load_yaml`` passes a ``vocabulary=`` keyword
-argument.
+argument that is neither omitted nor a bare ``None``.
 
 ## The class this closes
 
@@ -16,6 +16,18 @@ CALL-SITE shape directly — a `vocabulary=` keyword argument present at
 every `_load_yaml(` call — so a regression on the SIGNATURE side (the
 default quietly coming back) still shows up here even though it would no
 longer be a Python-level TypeError.
+
+Also rejects a LITERAL ``None`` (architect BLOCKING finding on this PR's
+first revision): ``vocabulary`` accepts either a callable or one of
+``_CheckedElsewhere``'s named members (``CHECKED_BY_CONFIG_VALIDATE`` /
+``CHECKED_AT_LOAD_POINT`` / ``CHECKED_BY_CALLER``) — never ``None``,
+which would collapse those three distinct, reviewable claims into one
+value indistinguishable from "nobody decided". A future contributor
+copying a neighboring ``vocabulary=None`` for a genuinely new file would
+reopen the exact hole this issue closes while this gate stayed green (a
+bare presence check does not see WHAT was passed, only THAT something
+was) — see ``_CheckedElsewhere``'s own docstring (``reyn.config.loader``)
+for the full reasoning.
 
 ## Why AST, not a signature-default check
 
@@ -55,8 +67,15 @@ class _CallVisitor(ast.NodeVisitor):
             func.attr if isinstance(func, ast.Attribute) else None
         )
         if name == "_load_yaml":
-            has_vocabulary = any(kw.arg == "vocabulary" for kw in node.keywords)
-            if not has_vocabulary:
+            vocab_kw = next((kw for kw in node.keywords if kw.arg == "vocabulary"), None)
+            if vocab_kw is None:
+                self.violations.append((node.lineno, ast.dump(node)[:120]))
+            elif isinstance(vocab_kw.value, ast.Constant) and vocab_kw.value.value is None:
+                # #5455 ②, architect BLOCKING finding: a bare `None` is no
+                # longer a valid vocabulary= value at all (see
+                # _CheckedElsewhere's own docstring, reyn.config.loader) —
+                # it collapses 3 distinct reasons into one value nothing
+                # can tell apart. Flag it exactly like a missing kwarg.
                 self.violations.append((node.lineno, ast.dump(node)[:120]))
         self.generic_visit(node)
 
@@ -83,21 +102,28 @@ def find_violations(src_dir: Path = _SRC) -> "list[tuple[Path, int]]":
 def main() -> int:
     violations = find_violations()
     if not violations:
-        print("OK: every _load_yaml(...) call passes vocabulary= explicitly.")
+        print(
+            "OK: every _load_yaml(...) call passes vocabulary= with a "
+            "real reason (never a bare None)."
+        )
         return 0
     print("load-yaml-vocabulary gate FAILED:\n")
     print(
-        f"{len(violations)} call(s) to _load_yaml(...) omit the required "
-        f"vocabulary= keyword argument:\n"
+        f"{len(violations)} call(s) to _load_yaml(...) either omit the "
+        f"required vocabulary= keyword argument, or pass a bare None "
+        f"(no longer valid — see below):\n"
     )
     for path, lineno in violations:
         print(f"  {path.relative_to(_REPO_ROOT)}:{lineno}")
     print(
         "\nPass vocabulary=<unknown_config_keys-shaped callable> to WARN on "
-        "this file's own unknown keys at read time, or vocabulary=None — "
-        "EXPLICITLY, with a comment naming where the check actually "
-        "happens — if this file's content is validated elsewhere. See "
-        "_load_yaml's own docstring (src/reyn/config/loader.py)."
+        "this file's own unknown keys at read time, or one of "
+        "_CheckedElsewhere's named members (CHECKED_BY_CONFIG_VALIDATE / "
+        "CHECKED_AT_LOAD_POINT / CHECKED_BY_CALLER) if this file's content "
+        "is validated elsewhere — never a bare None, which collapses all "
+        "three of those distinct reasons into one value nothing can tell "
+        "apart. See _load_yaml's and _CheckedElsewhere's own docstrings "
+        "(src/reyn/config/loader.py)."
     )
     return 1
 

@@ -1,6 +1,7 @@
 """reyn.config.loader — config loading + yaml shape-wiring (load_config / _merge / _load_yaml). (#1682 #3 split)."""
 from __future__ import annotations
 
+import enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -56,7 +57,37 @@ class HookYamlReadError(ValueError):
         self.column = column
 
 
-def _load_yaml(path: Path, *, vocabulary: "Callable[[dict], dict] | None") -> dict:
+class _CheckedElsewhere(enum.Enum):
+    """#5455 ②, architect BLOCKING finding on this PR's first revision: a
+    bare ``vocabulary=None`` collapses THREE distinct facts into one
+    value indistinguishable from "I have not decided" — the exact "None
+    means two things" fail-open shape architect has hit before (#5084/
+    #5132). A future contributor adding a new operator-editable yaml
+    file would see ``vocabulary=None`` at every neighboring call site
+    and copy it without checking whether THEIR file is actually
+    validated anywhere — reopening the #4501/#4515 hole this issue
+    exists to close, with the gate itself (a bare presence check) still
+    reading GREEN. Each member below is a distinct, named, reviewable
+    claim — ``None`` is no longer a valid ``vocabulary=`` value at all,
+    so "I haven't decided" cannot be spelled the same way as any of
+    these."""
+
+    #: This file's unknown-key check runs on the MERGED policy tier by
+    #: ``_warn_unknown_config_keys`` — see that call site.
+    CHECKED_BY_CONFIG_VALIDATE = "checked on the merged policy tier by _warn_unknown_config_keys"
+    #: This file's unknown-key check runs on the MERGED hot-reload
+    #: IN-set at ITS OWN load point — see
+    #: ``reyn.runtime.hot_reload.validate_in_set`` /
+    #: ``_warn_unknown_hot_reload_keys``.
+    CHECKED_AT_LOAD_POINT = "checked on the merged IN-set by hot_reload.validate_in_set"
+    #: The caller of THIS ``_load_yaml`` call runs its own check on the
+    #: returned dict immediately after — see the call site itself.
+    CHECKED_BY_CALLER = "checked by the caller immediately after this read returns"
+
+
+def _load_yaml(
+    path: Path, *, vocabulary: "Callable[[dict], dict] | _CheckedElsewhere",
+) -> dict:
     """Read *path* as YAML, returning ``{}`` if absent or unparseable.
 
     #5455 ②: ``vocabulary`` is REQUIRED (no default) — every call site
@@ -67,15 +98,13 @@ def _load_yaml(path: Path, *, vocabulary: "Callable[[dict], dict] | None") -> di
     it a ``TypeError``, not a silent gap. Pass a callable matching
     :func:`reyn.config.config_schema.unknown_config_keys`'s own shape
     (``dict -> {dotted_key: hint_or_None}``) to WARN on this file's own
-    unknown keys the instant it's read; pass ``None`` — EXPLICITLY,
-    with a comment naming where the check actually happens — for a file
-    whose content is already validated elsewhere (most current call
-    sites: the policy tier and the 5 hot-reload registry files are
-    checked on their MERGED view by ``_warn_unknown_config_keys``/
-    ``validate_in_set`` respectively, so checking the pre-merge single
-    file here too would only double the same finding, not add one).
-    ``None`` is a real, visible decision a reviewer can question — the
-    structural guarantee is that NO call site can decide silently.
+    unknown keys the instant it's read; pass one of
+    :class:`_CheckedElsewhere`'s named members — NEVER a bare ``None``,
+    see that class's own docstring for why — for a file whose content is
+    already validated elsewhere. Each member is a real, visible,
+    falsifiable claim a reviewer can question — the structural guarantee
+    is that NO call site can decide silently, and no two DIFFERENT
+    reasons can look like the same value.
     """
     if not path.exists():
         return {}
@@ -84,7 +113,7 @@ def _load_yaml(path: Path, *, vocabulary: "Callable[[dict], dict] | None") -> di
         with path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         data = data if isinstance(data, dict) else {}
-        if vocabulary is not None and data:
+        if callable(vocabulary) and data:
             unknown = vocabulary(data)
             if unknown:
                 import logging
@@ -192,20 +221,27 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     from reyn.builtin.registry import build_builtin_config
     merged = _merge(merged, build_builtin_config(), tier_label="builtin")
 
-    # #5455 ②: vocabulary=None for all 3 policy-tier files here — checked
-    # downstream on the MERGED view by load_config's own
+    # #5455 ②: CHECKED_BY_CONFIG_VALIDATE for all 3 policy-tier files
+    # here — checked downstream on the MERGED view by load_config's own
     # _warn_unknown_config_keys(merged) call (see that call site's
     # comment); checking each pre-merge file here too would only
     # duplicate the same finding, not add one.
-    user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml", vocabulary=None)
+    user_global = _load_yaml(
+        Path.home() / ".reyn" / "config.yaml",
+        vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+    )
     merged = _merge(merged, user_global, tier_label="user_global")
 
     project_root = _find_project_root(cwd)
     if project_root:
-        project = _load_yaml(project_root / "reyn.yaml", vocabulary=None)
+        project = _load_yaml(
+            project_root / "reyn.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+        )
         merged = _merge(merged, project, tier_label="project")
         project_local = _load_yaml(
-            project_root / "reyn.local.yaml", vocabulary=None,
+            project_root / "reyn.local.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
         )
         merged = _merge(merged, project_local, tier_label="project_local")
 
@@ -723,7 +759,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # as the section in reyn.yaml, so ``_merge`` handles it
         # without special-casing.
         dynamic_mcp = _load_yaml(
-            project_root / ".reyn" / "config" / "mcp.yaml", vocabulary=None,
+            project_root / ".reyn" / "config" / "mcp.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_mcp)
 
@@ -737,7 +774,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # Shape: ``{"cron": {"jobs": [...]}}`` — same as reyn.yaml
         # cron section. Job-list union via _merge's cron handling.
         dynamic_cron = _load_yaml(
-            project_root / ".reyn" / "config" / "cron.yaml", vocabulary=None,
+            project_root / ".reyn" / "config" / "cron.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_cron)
 
@@ -750,7 +788,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # branch above. #2548 PR-B: this file is also in _HOT_RELOAD_FILES
         # (the IN-set) so skill declarations hot-reload at the turn boundary.
         dynamic_skills = _load_yaml(
-            project_root / ".reyn" / "config" / "skills.yaml", vocabulary=None,
+            project_root / ".reyn" / "config" / "skills.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_skills, tier_label="dynamic")
 
@@ -763,7 +802,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # the _merge pipelines branch above. Also in _HOT_RELOAD_FILES (the
         # IN-set) so pipeline declarations hot-reload at the turn boundary.
         dynamic_pipelines = _load_yaml(
-            project_root / ".reyn" / "config" / "pipelines.yaml", vocabulary=None,
+            project_root / ".reyn" / "config" / "pipelines.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_pipelines)
 
@@ -777,7 +817,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # branch above. Also in _HOT_RELOAD_FILES (the IN-set) so template
         # declarations hot-reload at the turn boundary.
         dynamic_presentations = _load_yaml(
-            project_root / ".reyn" / "config" / "presentations.yaml", vocabulary=None,
+            project_root / ".reyn" / "config" / "presentations.yaml",
+            vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_presentations)
 
@@ -1031,7 +1072,10 @@ def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
         # #5455 ②: checked downstream on the merged IN-set this function
         # returns, by hot_reload.validate_in_set's own
         # _warn_unknown_hot_reload_keys call — see _load_yaml's docstring.
-        merged = _merge(merged, _load_yaml(root / ".reyn" / fname, vocabulary=None))
+        merged = _merge(
+            merged,
+            _load_yaml(root / ".reyn" / fname, vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT),
+        )
     from reyn.security.secrets.interpolation import expand_env
     return expand_env(merged)
 

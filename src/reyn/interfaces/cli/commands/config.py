@@ -390,6 +390,7 @@ def _validate() -> None:
     """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import (
+        _CheckedElsewhere,
         _find_project_root,
         _load_yaml,
         build_policy_tier_config,
@@ -478,12 +479,12 @@ def _validate() -> None:
         "reyn.yaml": project_root / "reyn.yaml",
         "reyn.local.yaml": project_root / "reyn.local.yaml",
     }
-    # #5455 ②: vocabulary=None — each of these files' unknown-key check
-    # already runs above (policy_unknown / in_set_unknown, on the merged
-    # view); this second read's own job is the mcp-placement/rename check,
-    # unrelated to the key vocabulary.
+    # #5455 ②: each of these files' unknown-key check already runs above
+    # (policy_unknown, on the merged policy-tier view); this second
+    # read's own job is the mcp-placement/rename check, unrelated to the
+    # key vocabulary.
     for label, path in static_mcp_sources.items():
-        raw = _load_yaml(path, vocabulary=None)
+        raw = _load_yaml(path, vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE)
         mcp_section = raw.get("mcp")
         misplaced_found = _mcp_misplaced_server_entries(mcp_section)
         if misplaced_found:
@@ -491,8 +492,11 @@ def _validate() -> None:
         renamed_found = _mcp_renamed_http_transport_entries(mcp_section)
         if renamed_found:
             mcp_renamed_http[label] = renamed_found
+    # #5455 ②: this one is a hot-reload IN-set file — checked at ITS OWN
+    # load point (in_set_unknown, above), not the policy tier.
     dynamic_mcp_raw = _load_yaml(
-        project_root / ".reyn" / "config" / "mcp.yaml", vocabulary=None,
+        project_root / ".reyn" / "config" / "mcp.yaml",
+        vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
     )
     dynamic_mcp_section = dynamic_mcp_raw.get("mcp")
     dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_section)
@@ -519,7 +523,11 @@ def _validate() -> None:
             profile_path = agent_dir / "profile.yaml"
             if not profile_path.is_file():
                 continue
-            raw_profile = _load_yaml(profile_path, vocabulary=None)
+            # #5455 ②: CHECKED_BY_CALLER — the very next line runs
+            # unknown_profile_keys on this exact return value.
+            raw_profile = _load_yaml(
+                profile_path, vocabulary=_CheckedElsewhere.CHECKED_BY_CALLER,
+            )
             found = unknown_profile_keys(raw_profile)
             if found:
                 profile_unknown[agent_dir.name] = found
