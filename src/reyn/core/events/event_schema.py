@@ -357,6 +357,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "file_read_media_denied",
     "force_close_triggered",
     "hook_changed",
+    "hook_drain_task_died",
     "hook_event_emitted",
     "hook_push_fired",
     "hook_shell_executed",

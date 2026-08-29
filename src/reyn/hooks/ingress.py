@@ -51,6 +51,7 @@ shape Phase 1 eliminated). What IS unified is the two-step shape
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from typing import Any, Awaitable, Callable, Protocol, runtime_checkable
 
@@ -131,10 +132,18 @@ class _BoundedEventBridge:
         hook_trigger: "HookTrigger | None",
         maxsize: int,
         adapter_name: str,
+        emit_event: "Callable[..., Any] | None" = None,
     ) -> None:
         self._hook_trigger = hook_trigger
         self._maxsize = maxsize
         self._adapter_name = adapter_name
+        # #5521: audit-emit sink for observing a drain task's own death (see
+        # _ensure_drain_task's own comment) — deliberately the SAME
+        # None-tolerant, deferred-lambda-over-session pattern
+        # FsWatcher/MCPConnectionService already use for their own
+        # emit_event/emit_sink (this bridge's caller threads its own
+        # existing sink through here, not a new one).
+        self._emit_event = emit_event
         self._queue: "asyncio.Queue[HookEvent] | None" = None
         self._drain_task: "asyncio.Task | None" = None
         self._dropped_since_last_batch = 0
@@ -164,6 +173,20 @@ class _BoundedEventBridge:
             self._queue = asyncio.Queue(maxsize=self._maxsize)
         if self._drain_task is None or self._drain_task.done():
             self._drain_task = asyncio.create_task(self._drain())
+            # #5521 (architect ruling): observe — never swallow — this
+            # drain task's own eventual death. drain_folded's own
+            # try/except-free contract is unchanged; this only fires
+            # AFTER the task has already ended, and only records a
+            # genuine raise (a normal cancel — this class's own
+            # shutdown path — is excluded, see observe_drain_task_death's
+            # own docstring).
+            from reyn.hooks.fold import observe_drain_task_death
+            self._drain_task.add_done_callback(
+                functools.partial(
+                    observe_drain_task_death,
+                    emit_event=self._emit_event, label=self._adapter_name,
+                )
+            )
 
     async def _drain(self) -> None:
         from reyn.hooks.fold import drain_folded
@@ -236,9 +259,16 @@ class McpIngressAdapter:
     (:class:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter`). This
     adapter itself never branches on which of those produced the signal."""
 
-    def __init__(self, *, hook_trigger: "HookTrigger | None", maxsize: int = 32) -> None:
+    def __init__(
+        self,
+        *,
+        hook_trigger: "HookTrigger | None",
+        maxsize: int = 32,
+        emit_event: "Callable[..., Any] | None" = None,
+    ) -> None:
         self._bridge = _BoundedEventBridge(
             hook_trigger=hook_trigger, maxsize=maxsize, adapter_name="McpIngressAdapter",
+            emit_event=emit_event,
         )
 
     def to_event(
@@ -265,9 +295,16 @@ class FsIngressAdapter:
     watched-paths OUT-set is entirely owned by ``FsWatcher``/
     ``FsWatchConfig`` (restart-only, no op/tool call reaches it)."""
 
-    def __init__(self, *, hook_trigger: "HookTrigger | None", maxsize: int = 32) -> None:
+    def __init__(
+        self,
+        *,
+        hook_trigger: "HookTrigger | None",
+        maxsize: int = 32,
+        emit_event: "Callable[..., Any] | None" = None,
+    ) -> None:
         self._bridge = _BoundedEventBridge(
             hook_trigger=hook_trigger, maxsize=maxsize, adapter_name="FsIngressAdapter",
+            emit_event=emit_event,
         )
 
     def to_event(self, path: str, event_type: str) -> HookEvent:

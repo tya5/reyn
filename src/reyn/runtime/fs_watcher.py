@@ -169,6 +169,10 @@ class FsWatcher:
         # Byte-identical behaviour (same maxsize, same drop+log on overflow).
         self._fs_ingress_adapter = FsIngressAdapter(
             hook_trigger=hook_trigger, maxsize=_QUEUE_MAXSIZE,
+            # #5521: reuse this watcher's OWN emit_event sink (above) for
+            # the ingress bridge's drain-task-death observation — the
+            # same None-tolerant sink, not a second one.
+            emit_event=emit_event,
         )
         self._started = False
         # #2623: resolved-symlink-path -> operator-configured-path rewrites,

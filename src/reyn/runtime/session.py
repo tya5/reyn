@@ -5337,6 +5337,9 @@ class Session:
         )
         composed_consumer = ComposedEventConsumer(
             bus=hook_bus, dispatcher=hook_dispatcher,
+            # #5521: same deferred-lambda-over-self._audit_events pattern
+            # every sibling construction right above uses.
+            emit_event=lambda et, **kw: self._audit_events.emit(et, **kw),
         )
 # #2073 S1: the config hot-reloader reads ONLY the IN-set (.reyn/*.yaml); the
 # OUT-set (reyn.yaml) is restart-only and never picked up here. Applies at the
