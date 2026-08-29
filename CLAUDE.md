@@ -4,9 +4,13 @@ Tier 1 rules only. Rationale, instances and measurements live in the linked
 deep-dive docs — read those on demand, not every session.
 
 **Editing this file** — every line loads into every session. Before adding
-one, ask *would removing this cause a mistake?* If no, do not add it. **If CI
-can catch the violation, write the gate, not a rule here.** Prose is how this
-file grows: 1,310 → 2,443 words in three months, with no rules added at that
+one, ask two questions. *Would removing this cause a mistake?* If no, do not
+add it. **And: what act fires it?** Name that act in the line itself — a rule
+whose reader has to already suspect it is missing will not be read, because
+the failures it prevents are the ones that remove the suspicion. A rule with
+no trigger is not a rule; it is a line someone can quote after the fact.
+**If CI can catch the violation, write the gate, not a rule here.** Prose is
+how this file grows: 1,310 → 2,443 words in three months, with no rules added at that
 rate. Put `wc -w CLAUDE.md` in the PR that touches it. **A rule that binds one
 directory belongs in that directory's own `CLAUDE.md`, not here** — it loads
 when someone opens those files and costs nothing to everyone else.
