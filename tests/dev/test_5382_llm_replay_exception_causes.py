@@ -125,22 +125,6 @@ async def test_three_distinct_keys_express_the_same_cause_without_a_count_field(
         )
 
 
-def test_strip_the_exception_kind_branch_makes_witness_1_fall_through_to_a_miss() -> None:
-    """Tier 1: witness 4 -- the strip witness. This test does not modify
-    production code (see this repo's testing policy); it documents the
-    manual strip-falsify already performed: temporarily removing the
-    ``if key in self._exception_records:`` branch from ``_replay()``
-    makes witness 1 (``test_a_rate_limit_fixture_raises_the_real_litellm_
-    exception``) go RED -- the key falls through to the ``key not in
-    self._records`` check and raises ``MissingFixture`` instead of
-    ``RateLimitError`` (confirmed via a real commit -> edit -> revert
-    pass, not merely asserted here)."""
-    assert True  # documentation-only; see docstring — the strip itself
-    # cannot be encoded as a live test without duplicating production
-    # logic into the test (there is no public seam to disable the branch
-    # from outside _replay() without reaching into private state).
-
-
 @pytest.mark.asyncio
 async def test_a_fixture_with_no_kind_still_replays_a_normal_response(tmp_path: Path) -> None:
     """Tier 1: witness 5 -- the backward-compatibility guard. An existing
