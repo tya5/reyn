@@ -1,0 +1,115 @@
+name: BLOCKING PR has a re-read note
+
+# #5453: house rule 8's TESTS-READ note gate (`check-tests-read-names-its-tree.yml`)
+# only fires when a PR touches `tests/` — a `src`-only PR that raises and
+# clears a BLOCKING point (house rule 7's `BLOCKING`/`BLOCKING-CLEARED`
+# pair, enforced by `check-open-blocking-checkboxes.yml`) has no
+# mechanical trigger for a SEPARATE re-read record at all: the author can
+# post `BLOCKING-CLEARED` about their own fix, quoting the point back
+# verbatim, and merge — with nobody's comment ever naming the CURRENT
+# tree. architect's ruling (quoted on #5453): a PR with at least one
+# `BLOCKING` comment needs one TESTS-READ-shaped note naming its current
+# head, regardless of whether it touches `tests/`.
+#
+# This workflow mirrors `check-tests-read-names-its-tree.yml`'s own
+# 3-trigger / commit-status shape exactly (see that workflow's own
+# comments for the full history of why each piece is there:
+# `issue_comment` for a note arriving as a new comment; a commit STATUS,
+# never a check run, because a check run attaches to the triggering
+# event's own sha and `issue_comment` carries the DEFAULT BRANCH's sha,
+# not the PR's; `pending` posted before the script runs and
+# `success`/`failure` after, un-skippable via `if: always()`, so a job
+# that dies mid-run leaves `pending` rather than going silent).
+#
+# #5453 (lead-coder's own scoping): report-only. NOT added to branch
+# protection's required checks in this PR — lead-coder decides that
+# separately, after watching it run against real BLOCKING PRs, the same
+# caution `check_tests_read_names_its_tree.py`'s own module docstring
+# names for #5265's `startup_failure` exposure risk on required checks.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+env:
+  STATUS_CONTEXT: blocking-has-reread-note
+
+jobs:
+  blocking-has-reread-note:
+    name: BLOCKING PR carries a re-read note naming its tree
+    if: github.event_name == 'pull_request' || github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # No checkout of the PR — the comment/commit list is read from the
+      # API as DATA (mirrors check-tests-read-names-its-tree.yml's own
+      # reasoning: a contributor's tree is never executed here).
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Resolve this PR's number and head sha
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          SHA="$(gh pr view "$NUMBER" --json headRefOid -q .headRefOid)"
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Post pending status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending \
+            -f context="$STATUS_CONTEXT" \
+            -f description="Checking whether a BLOCKING PR carries a re-read note..."
+
+      # scripts/check_blocking_has_reread_note.py is stdlib-only. No pip
+      # install needed. No `continue-on-error` — #5328's own fix
+      # (check-tests-read-names-its-tree.yml's sibling comment): that
+      # setting forces this step's (and so the job's own check-run's)
+      # conclusion to `success` regardless of the script's real exit
+      # code, disagreeing with the commit status posted below at the
+      # SAME push-time evaluation.
+      - name: Check the PR carries a re-read note if it has a BLOCKING comment
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_blocking_has_reread_note.py --pr "${{ steps.pr.outputs.number }}"
+
+      # `if: always()` — this step must run whether the check step above
+      # passed, failed, or (runner died first) never ran, so a dead job
+      # leaves the status `pending` (blocking merge) rather than silent.
+      - name: Post final status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            STATE=success
+            DESC="No BLOCKING comment, or a re-read note names this tree."
+          else
+            STATE=failure
+            DESC="BLOCKING comment with no re-read note naming this tree -- see the job log."
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$STATE" \
+            -f context="$STATUS_CONTEXT" \
+            -f description="$DESC"
