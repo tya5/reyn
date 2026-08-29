@@ -1,0 +1,50 @@
+name: Axis label gate
+
+# #5499 — an issue with no priority-axis label gets `needs-axis`; an
+# issue that gains one has it removed. See scripts/axis_label_gate.py's
+# own module docstring for the vocabulary design, why it is one small
+# hand-written pattern reconciled against the live repo label list every
+# run (not a hand-enumerated list of every current axis label, and not
+# derivable from label description/color — both measured and rejected),
+# and why both directions (add / remove) are required.
+#
+# Trigger: opened AND labeled/unlabeled (not opened-only) — architect's
+# own accept criterion is explicitly BOTH directions ("ラベル無しで
+# needs-axis が付く／付けると外れる"), so `labeled`/`unlabeled` are not
+# optional extras here, they are what makes the second direction fire at
+# all: `opened` alone can only ever ADD needs-axis, never remove it.
+#
+# Scope: never closes, never blocks (`docs/deep-dives/contributing/
+# issue-management.md`'s own design constraint) — this workflow only
+# ever adds/removes the needs-axis label and posts a comment naming the
+# vocabulary it checked; it never comments to close, lock, or otherwise
+# act on the issue beyond that.
+
+on:
+  issues:
+    types: [opened, labeled, unlabeled]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  axis-label-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Reconcile axis-label vocabulary and update needs-axis
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/axis_label_gate.py \
+            --repo "${{ github.repository }}" \
+            --issue "${{ github.event.issue.number }}"
