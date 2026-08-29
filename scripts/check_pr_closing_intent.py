@@ -567,6 +567,46 @@ def find_closing_declarations(body: str) -> set[int]:
     return {int(m.group(1)) for m in _CLOSING_RE.finditer(text)}
 
 
+def find_declared_closing_intent(body: str) -> set[int]:
+    """Return issue numbers the body DECLARES closing intent for (#5490) —
+    the canonical vocabulary (:data:`_CANONICAL_CLOSING_RE`: Closes/Fixes/
+    Resolves), read with fences DEFUSED (:func:`_body_as_author_declared`)
+    so a backtick-fenced ``Closes #N`` still counts as the author's
+    declaration — the #2990/#3006 shape check 1 exists to catch, the same
+    fence-handling :func:`find_closing_declarations` already uses.
+
+    This is the THIRD combination this module needs, distinct from both
+    existing helpers:
+
+    ============================== ================= ==================
+    function                        vocabulary         fence reading
+    ============================== ================= ==================
+    ``find_closing_declarations``   broad (GitHub's)   author (defused)
+    ``find_canonical_closing_...``  narrow (declares)  GitHub (stripped)
+    ``find_declared_closing_intent``narrow (declares)  author (defused)
+    ============================== ================= ==================
+
+    Checks 1 and 3 (real incident #5490, 2026-08-29 — PR #5484 auto-closed
+    #5467 despite an open phase 2) both ask "did the author DECLARE
+    anything about #N", which is a narrow-vocabulary, author-perspective
+    question — the SAME "declares" checks 1/3 always meant, just computed
+    from the wrong vocabulary before this fix. ``find_closing_declarations``
+    (broad) let bare, GitHub-honored-but-never-declaring prose like
+    "auto-closed #N" register as a "declaration": check 3's own docstring
+    already named this exact shape as the case it must catch (`` `e.g.
+    "auto-close #N" in a sentence` ``) but could not, because it read
+    "declared" through the broad vocabulary that prose matches. Swapping to
+    the canonical vocabulary here — while KEEPING the author-defused fence
+    reading (NOT :func:`find_canonical_closing_declarations`'s GitHub-
+    stripped reading, which would blind check 1 to the fenced-Closes
+    incidents #2990/#3006 exist to catch — architect correction, #5490)
+    — closes exactly this gap without touching check 2's own, deliberately
+    different, use-vs-mention reading.
+    """
+    text = _body_as_author_declared(body)
+    return {int(m.group(1)) for m in _CANONICAL_CLOSING_RE.finditer(text)}
+
+
 def find_nonclosing_declarations(body: str) -> set[int]:
     """Return the set of issue numbers the body declares non-closing-intent for."""
     text = _body_as_author_declared(body)
@@ -680,11 +720,40 @@ def check_contradictions(
     the scan cannot be gated on commit count at all — see this module's
     own docstring (check 4's "Title source" note) for the full reasoning.
     """
+    # closing_declared stays BROAD (find_closing_declarations, unchanged) —
+    # this is check 1's OWN affirmative question ("did the body use ANY
+    # GitHub-honored keyword form, even bare/past-tense, that got fenced
+    # away") and deliberately does not narrow: test_boundary_1_check1_
+    # still_fires_when_only_the_number_is_fenced pins that a bare "fix"
+    # (no -es) fenced only around the number must still fire check 1;
+    # narrowing this set to the canonical vocabulary was tried and
+    # regressed that boundary (#5490 review) — check 1 needs the SAME
+    # breadth GitHub's own parser has, so it can catch what a fence hid
+    # FROM that breadth.
     closing_declared = find_closing_declarations(body)
     nonclosing_declared = find_nonclosing_declarations(body)
     discussing_declared = find_discussing_declarations(body)
     closing_refs_set = set(closing_refs)
     findings: list[Finding] = []
+
+    # #5490: check 3 (and check 4's exemption below) ask a DIFFERENT,
+    # narrower question than check 1 — "did the body engage with #N at
+    # all", for the purpose of NOT reporting "no declaration whatsoever"
+    # when something more specific already covers it. Two components:
+    #   - the CANONICAL vocabulary (find_declared_closing_intent) — the
+    #     real #5490 incident: "auto-closed #5467" (bare past-tense prose,
+    #     no genuine declaring intent) must NOT count as a declaration, or
+    #     check 3 stays silent exactly like it did when #5467 auto-closed
+    #     despite an open phase 2. Using the BROAD closing_declared here
+    #     instead (check 1's set) reintroduces that exact hole.
+    #   - the NEGATED set (find_negated_closing_declarations) — a body
+    #     like "it does not claim to close #4834" DOES engage with #4834
+    #     (a broken attempt at a non-closing declaration), and check 5
+    #     already reports that shape more precisely; omitting this half
+    #     made check 3 double-report every check-5 finding (regressed
+    #     6 existing tests — caught by the scoped pytest run, not assumed
+    #     from architect's own #5484-only measurement).
+    narrowly_declared = find_declared_closing_intent(body) | find_negated_closing_declarations(body)
 
     # Check 1 (false negative): declared closing but parser did not close.
     #
@@ -777,7 +846,7 @@ def check_contradictions(
     # not reported twice — the marker-vs-parser contradiction is already
     # reported by check 2 above, with a more precise message. No N in
     # closing_refs can escape: it is covered by check 2 or check 3.
-    declared_any = closing_declared | nonclosing_declared | discussing_declared
+    declared_any = narrowly_declared | nonclosing_declared | discussing_declared
     for n in sorted(closing_refs_set - declared_any):
         findings.append(
             Finding(
@@ -807,11 +876,21 @@ def check_contradictions(
     # the PR body's discussing markers — see module docstring "Check 4's
     # escape hatch" section for why a body-wide exemption would silently
     # defeat this check on the #3187 shape it exists to catch.
+    # #5490 scope note (disclosed, not silently different): this side still
+    # reads a commit message's OWN declaration through the BROAD vocabulary
+    # (find_closing_declarations), not the narrow swap above — a commit
+    # message containing bare "auto-closed #N" prose would still register
+    # here as a "declaration" needing the body's cover. Architect's
+    # prescription scoped the #5490 fix to the body-side `closing_declared`
+    # variable (the exemption's subtrahend, read by checks 1/3/4); this
+    # side computes what a commit independently asserts, a different
+    # question the #5490 incident did not exercise. Left as-is rather than
+    # widened without a design ruling on it.
     commit_closing_declared: set[int] = set()
     for msg in commit_messages or []:
         commit_closing_declared |= find_closing_declarations(msg) - find_discussing_declarations(msg)
 
-    for n in sorted(commit_closing_declared - closing_declared):
+    for n in sorted(commit_closing_declared - narrowly_declared):
         findings.append(
             Finding(
                 check=4,
@@ -860,7 +939,7 @@ def check_contradictions(
         title_closing_declared = (
             find_closing_declarations(title) - find_discussing_declarations(title)
         )
-        for n in sorted(title_closing_declared - closing_declared):
+        for n in sorted(title_closing_declared - narrowly_declared):
             findings.append(
                 Finding(
                     check=4,

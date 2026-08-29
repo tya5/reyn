@@ -903,3 +903,92 @@ def test_title_scan_does_not_duplicate_a_commit_message_finding():
         title="fix #5299 regression in the cron runner",
     )
     assert _checks(findings) == [(4, 5299), (4, 5299)]
+
+
+# ---------------------------------------------------------------------------
+# Check 3: bare past-tense prose is not a declaration (real PR #5484 shape,
+# #5490 — check 3 stayed silent while #5467 auto-closed with an open phase 2).
+#
+# Real data, verbatim excerpt from `gh pr view 5484 --json body,
+# closingIssuesReferences` (#5484 was open when this fix was written; #5467
+# was already in closingIssuesReferences the whole time — check_contradictions
+# on the real body/refs pair returned 0 findings before this fix, architect's
+# own measurement). The excerpt below is the body's own description of the
+# hazard it had just fixed elsewhere in the SAME PR — the sentence that
+# would itself have auto-closed #5467 had it not already been superseded by
+# a real `#5467 stays open` fix earlier in the body; kept here exactly as the
+# live body reads (unfenced "auto-closed #5467"), since that unfenced prose
+# is the actual defect this fix closes.
+# ---------------------------------------------------------------------------
+
+_PR5484_BODY_EXCERPT = (
+    "**Closing-intent hazard, more severe, fixed first**: this PR body's "
+    "own first line placed a negated closing keyword next to `#5467` — "
+    "GitHub's parser does not read the negation, only the keyword+number "
+    "substring, so this **would have auto-closed #5467 on squash merge**, "
+    "exactly as #4834 and #4986 both did (the live `closing-intent "
+    "contradiction check` gate on this PR caught the identical shape)."
+)
+
+
+def test_check3_fires_on_the_real_5484_auto_closed_prose_shape():
+    """Tier 1: real reproduction, #5490 — PR #5484's own body. Bare
+    past-tense prose ("auto-closed #5467") is not a canonical declaration
+    (Closes/Fixes/Resolves), so it must not count as "the body said
+    something about #5467" for check 3's purpose — GitHub's parser
+    resolved #5467 via closingIssuesReferences regardless, and the body's
+    ONLY engagement with #5467 in this excerpt is descriptive prose about a
+    hazard, not a declaration. Real incident: #5467 auto-closed on #5484's
+    actual merge despite an open phase 2 (~82 remaining call sites) and had
+    to be reopened by hand — this gate was green throughout.
+
+    Before this fix: 0 findings (architect's own measurement against the
+    live PR). After: exactly this one."""
+    findings = m.check_contradictions(_PR5484_BODY_EXCERPT, closing_refs=[5467])
+    assert _checks(findings) == [(3, 5467)]
+
+
+def test_check3_positive_control_silent_with_the_broad_reader(monkeypatch):
+    """Tier 1: positive control (architect's own acceptance criterion) —
+    reverting ``find_declared_closing_intent`` to the OLD broad reader
+    (``find_closing_declarations``, the pre-#5490 behavior) makes the SAME
+    #5484 fixture go silent again. Without this, "red" on the test above
+    could be an artifact of the fixture or the test method rather than of
+    the vocabulary-narrowing fix itself; this isolates the ONE factor."""
+    monkeypatch.setattr(m, "find_declared_closing_intent", m.find_closing_declarations)
+    findings = m.check_contradictions(_PR5484_BODY_EXCERPT, closing_refs=[5467])
+    assert findings == []
+
+
+def test_check1_real_harm_unaffected_by_the_5490_narrowing():
+    """Tier 1: #5490 acceptance criterion — check 1's own real harm
+    (#2990/#3006's backtick-fenced `Closes #N`, already pinned by
+    ``test_check1_fires_on_backtick_fenced_closing_keyword_not_resolved``
+    above) must stay red. check 1 was deliberately NOT narrowed to the
+    canonical vocabulary — only check 3/4's "was anything declared at
+    all" question was (see ``find_declared_closing_intent``'s own
+    docstring for why narrowing check 1 too regressed a real boundary
+    test, ``test_boundary_1_check1_still_fires_when_only_the_number_is_
+    fenced``, during this fix's own development). Restated explicitly
+    here under this name so #5490's own acceptance criterion is pinned by
+    a test that names it, not only inferred from an existing test with an
+    unrelated name."""
+    findings = m.check_contradictions("`Closes #2620`", closing_refs=[])
+    assert _checks(findings) == [(1, 2620)]
+
+
+def test_find_declared_closing_intent_rejects_bare_past_tense():
+    """Tier 1: unit-level pin for the new finder — "auto-closed #N" (bare,
+    past tense) is not canonical; "Closes #N" is."""
+    assert m.find_declared_closing_intent("auto-closed #5467") == set()
+    assert m.find_declared_closing_intent("Closes #5467") == {5467}
+
+
+def test_find_declared_closing_intent_still_defuses_a_fence():
+    """Tier 1: unlike ``find_canonical_closing_declarations`` (GitHub-view,
+    fences stripped), ``find_declared_closing_intent`` uses the
+    AUTHOR-view fence reading (defused, not stripped) — a fenced
+    ``Closes #N`` still counts, the same behavior
+    ``find_closing_declarations`` already has and check 1 depends on."""
+    assert m.find_declared_closing_intent("`Closes #2620`") == {2620}
+    assert m.find_canonical_closing_declarations("`Closes #2620`") == set()
