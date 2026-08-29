@@ -1,14 +1,22 @@
 """Tier 2: ContextBudgetAdvisor incremental history-token cache (#2940).
 
 The status-bar ctx chip's dropdown calls context_window_status() every time
-it opens, and maybe_force_compact() calls the same estimate every pre-frame
-overflow check. Both previously re-ran json.dumps(FULL history) + estimate_
+it opens — that call previously re-ran json.dumps(FULL history) + estimate_
 tokens on every single call — O(history size) each time, growing unbounded
 over a long session (the reported freeze). _incremental_history_tokens()
 caches (history length, cumulative estimate) and only estimates the NEW tail
 slice on growth, returning the cached total unchanged (O(1)) when history
 hasn't grown, and fully recomputing (not silently returning stale data) when
 history SHRINKS (compaction/rewind truncated it).
+
+#5528: this cache used to ALSO be primed by maybe_force_compact()'s own
+pre-frame overflow check (that method called the same estimate every
+turn, proactively) — that call site is gone (renamed to
+enforce_new_msg_budget, which checks only the new message's own size,
+never history) — context_window_status() is this cache's only reader
+now. See this file's own test_enforce_new_msg_budget_does_not_touch_
+the_history_cache for the witness that the rename didn't quietly leave
+a second, still-live cache-priming call site behind.
 
 #2957 PR-B: the per-call estimate switched from
 ``estimate_tokens(json.dumps(combined_or_delta_slice))`` to summing
@@ -201,11 +209,25 @@ def test_shrinking_history_recomputes_rather_than_returning_stale_cache() -> Non
     assert used == expected
 
 
-def test_maybe_force_compact_shares_the_same_incremental_cache() -> None:
-    """Tier 2: maybe_force_compact's pre-frame history estimate is the SAME
-    incremental path as context_window_status (#2940 fix-class: both call
-    sites had the identical full-redump pathology) — a call to one primes
-    the cache the other then hits.
+def test_enforce_new_msg_budget_does_not_touch_the_history_cache(
+    monkeypatch,
+) -> None:
+    """Tier 2: #5528 — ``enforce_new_msg_budget`` (the renamed, narrowed
+    survivor of the old ``maybe_force_compact``) checks ONLY the new
+    message's own size; it no longer reads history, primes the
+    incremental cache, or triggers compaction AT ALL — the proactive,
+    estimate-based history check that used to also live in this method is
+    removed, same family as #5367's elide removal.
+
+    History is deliberately sized to EXCEED a tiny forced trigger — the
+    exact condition the removed branch used to gate ``force_compact_now``
+    on. Strip-falsify performed by hand while writing this test: the
+    removed branch reinstated (unconditionally, same logic) made this
+    test's own ``AssertionError`` guard fire (confirmed red); a first
+    version of this test used an UNDER-budget history — reinstating the
+    same branch left it green (a vacuous witness, six-questions ④) — this
+    version's oversized history is what actually makes the strip-falsify
+    bite.
 
     Uses a REAL ``CompactionEngine`` (cheaply constructible — literal model
     string, no network) for ``budgets`` rather than a hand-rolled stand-in,
@@ -217,10 +239,12 @@ def test_maybe_force_compact_shares_the_same_incremental_cache() -> None:
     """
     import asyncio
 
+    import reyn.llm.model_budget as _mb
     from reyn.core.events.events import EventLog
     from reyn.services.compaction.engine import CompactionEngine
 
-    history = [{"role": "user", "content": "hello world"}]
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: 2_800)
+    history = [{"role": "user", "content": "x" * 40_000}]  # far over a 2_800-token trigger
     advisor = _make_advisor(lambda: history)
 
     engine = CompactionEngine(model="openai/gpt-4o", events=EventLog())
@@ -229,14 +253,20 @@ def test_maybe_force_compact_shares_the_same_incremental_cache() -> None:
         _engine = engine
 
         async def force_compact_now(self):
-            raise AssertionError("must not be called — history is far under budget")
+            raise AssertionError(
+                "must not be called — enforce_new_msg_budget no longer "
+                "triggers compaction at all, proactive or otherwise, even "
+                "when history genuinely exceeds the trigger"
+            )
 
     advisor._compaction_controller = _FakeController()
 
     status_before = advisor.context_window_status()
-    asyncio.run(advisor.maybe_force_compact())
+    asyncio.run(advisor.enforce_new_msg_budget(new_msg_text="hi"))
     status_after = advisor.context_window_status()
-    expected_free_window = status_before["effective_trigger"] - _from_scratch_tokens(
-        history, "openai/gpt-4o"
-    )
-    assert status_before["free_window"] == status_after["free_window"] == expected_free_window
+    # free_window is clamped to >= 0 (context_window_status's own contract) —
+    # this history is deliberately over budget, so both reads clamp to 0;
+    # the point being witnessed is that the two reads are IDENTICAL (the
+    # call in between touched nothing), not the clamped value's own math
+    # (covered by this file's other tests).
+    assert status_before == status_after

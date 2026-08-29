@@ -1,17 +1,22 @@
 """CompactionController — synchronous head/body/tail compaction.
 
 Extracted from Session (FP-0019 Wave 1).  Drives OS-internal compaction
-(PR-N3: a direct Python helper) via
-:meth:`force_compact_now`, the synchronous pre-frame guard path.
+(PR-N3: a direct Python helper) via :meth:`force_compact_now`.
 
 #1128 PR-a: the background fire-and-forget path (``spawn_maybe`` →
 ``_maybe_compact``, the 30K-absolute ``trigger_total_tokens`` trigger) was
-removed. Auto-compaction is now driven solely by the synchronous pre-frame
-guard (``ContextBudgetAdvisor.maybe_force_compact`` → :meth:`force_compact_now`,
-window-relative ``effective_trigger``, token-budget candidate selection per
-step 3), plus on-demand (the ``compact`` op / ``/compact``) and the
-``retry_loop`` overflow backstop. With no background task, compaction always
-runs synchronously inside the serial router handler.
+removed. #5528 (owner ruling, same family as #5367's elide removal): the
+synchronous pre-frame guard (``ContextBudgetAdvisor.maybe_force_compact``,
+estimate-based, proactive) that used to ALSO drive auto-compaction is gone
+— a local token estimate cannot know what the actual provider payload will
+look like, so acting on it risked compacting a conversation that would
+have fit fine (#5296 decided this in principle, #5528 carried it out).
+Auto-compaction is now driven solely by the ``retry_loop`` overflow
+recovery path (:meth:`force_compact_now`, reached reactively on an actual
+measured overflow — see ``router_loop_driver.py``'s own byte-limit
+recovery call), plus on-demand (the ``compact`` op / ``/compact``). With
+no background task, compaction always runs synchronously inside the
+serial router handler.
 
 All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; Session
@@ -276,9 +281,12 @@ class CompactionController:
     async def force_compact_now(self) -> None:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
-        Used by the pre-frame guard in ``ContextBudgetAdvisor.maybe_force_compact`` when
-        the projected prompt would exceed the model's max_input_tokens.  Emits
-        ``compaction_check`` with ``outcome="forced_sync"``.
+        #5528: the pre-frame guard that used to call this proactively, on
+        an ESTIMATE, is gone — this is now reached only reactively (a real
+        overflow the router's own LLM call actually raised —
+        ``router_loop_driver.py``'s byte-limit recovery path) or on-demand
+        (``/compact`` / the ``compact`` op). Emits ``compaction_check``
+        with ``outcome="forced_sync"``.
 
         #1128 PR-c: collapsed from the former Option-B race-recovery loop
         (``max_passes`` re-measure + ``ForceCompactRaceUnrecoveredError``) to a

@@ -2,11 +2,29 @@
 
 Owns the five budget-arithmetic methods:
 
-  - cap_tool_result       — truncate oversized tool-result text (#1128 size axis)
-  - per_turn_cap_tokens   — derive B_M-relative per-turn token ceiling
-  - media_followup_budget — tokens left for media after capped text (#272)
-  - context_window_status — {free_window, effective_trigger} for SP header
-  - maybe_force_compact   — pre-frame overflow guard (#1128)
+  - cap_tool_result        — truncate oversized tool-result text (#1128 size axis)
+  - per_turn_cap_tokens    — derive B_M-relative per-turn token ceiling
+  - media_followup_budget  — tokens left for media after capped text (#272)
+  - context_window_status  — {free_window, effective_trigger} for SP header
+  - enforce_new_msg_budget — reject an oversized new message before the turn starts (Axis 11)
+
+#5528 (owner ruling): the pre-frame, ESTIMATE-based proactive history
+compaction this method used to also run (a second, bundled behavior —
+"if the current history estimate exceeds effective_trigger, force-compact
+now, before ever sending") is REMOVED — same family as #5367's elide
+removal: a local token estimate cannot know what the actual provider
+payload will look like (system prompt, tool schemas, transport wrapping,
+inline media), so acting on it risked compacting a conversation that
+would have fit fine, and #5296 already decided this — that decision was
+never carried out. The genuinely distinct OTHER behavior this method
+always had — rejecting a single oversized new message outright, which
+drops nothing (the message is refused, never accepted then summarized
+away) — is owner's own "force close" (#4381 PR-4: "予算のための force
+close は残すで良い"), kept and renamed to say what it does. Recovery
+from an actual overflow (never predicted, only ever measured) is now
+entirely the reactive ladder's job — see #5531's `retry_loop`
+(``reyn.services.compaction.engine``) and `router_loop_driver.py`'s own
+byte-limit reactive `force_compact_now()` call.
 
 Plus the shared helper:
 
@@ -202,7 +220,10 @@ class ContextBudgetAdvisor:
     def _free_window_now(self) -> tuple[int, int]:
         """Return (effective_trigger, estimated_history_tokens).
 
-        Used by context_window_status and maybe_force_compact.
+        Used by context_window_status — a display-only estimate. #5528:
+        no longer used by any proactive compaction decision (that call
+        site is removed; enforce_new_msg_budget checks only the new
+        message's own size, never the history estimate).
         """
         effective_trigger = self._get_effective_trigger()
         estimated = self._incremental_history_tokens()
@@ -339,20 +360,30 @@ class ContextBudgetAdvisor:
             "source": get_max_input_tokens_source(model),
         }
 
-    async def maybe_force_compact(
+    async def enforce_new_msg_budget(
         self,
         *,
         new_msg_text: str | None = None,
     ) -> None:
-        """Pre-frame context-overflow guard (PR-N3).
+        """Force-close an oversized new message before the turn starts
+        (Axis 11 / #4381 PR-4 "force close" — owner: "予算のための force
+        close は残すで良い"). Drops nothing: the message is refused
+        outright, never accepted into history then summarized away — the
+        distinction #5528 draws against the REMOVED proactive-compact
+        behavior this method used to also run (see this module's own
+        docstring).
 
-        Recomputes budgets, checks new_msg_budget (axis 11), and runs
-        force_compact_now() if the current history exceeds effective_trigger.
+        ``new_msg_text=None`` (the caller has no new message to check yet,
+        or chooses not to) is a pure no-op — this method no longer touches
+        history or the compaction controller at all.
         """
         from reyn.services.compaction.engine import (
             NewMsgExceedsBudgetError,
             estimate_tokens_for_turn,
         )
+
+        if new_msg_text is None:
+            return
 
         # ISSUE #4: re-measure T_SP dynamically.
         engine = self._compaction_controller._engine
@@ -364,40 +395,23 @@ class ContextBudgetAdvisor:
         engine = self._compaction_controller._engine
         budgets = getattr(engine, "budgets", None)
         if budgets is not None:
-            effective_trigger = budgets.effective_trigger
             new_msg_budget = budgets.new_msg_budget
         else:
             from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(self._model, events=self._events)
-            new_msg_budget = effective_trigger
+            new_msg_budget = get_max_input_tokens(self._model, events=self._events)
 
-        # Axis 11 (ISSUE #5): check new_msg_budget before estimating history.
-        if new_msg_text is not None:
-            new_msg_turn = {"role": "user", "content": new_msg_text}
-            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-            new_msg_tokens = estimate_tokens_for_turn(
-                new_msg_turn, self._model, use_chars4=use_chars4
-            )
-            if new_msg_tokens > new_msg_budget:
-                self._events.emit(
-                    "new_msg_exceeds_budget",
-                    new_msg_tokens=new_msg_tokens,
-                    new_msg_budget=new_msg_budget,
-                )
-                raise NewMsgExceedsBudgetError(
-                    new_msg_tokens=new_msg_tokens,
-                    new_msg_budget=new_msg_budget,
-                )
-
-        # Quick estimate of the current history slice (#2940: incremental, not a
-        # full re-dump every call — shares the cache with context_window_status).
-        estimated = self._incremental_history_tokens()
-
-        if estimated > effective_trigger:
+        new_msg_turn = {"role": "user", "content": new_msg_text}
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        new_msg_tokens = estimate_tokens_for_turn(
+            new_msg_turn, self._model, use_chars4=use_chars4
+        )
+        if new_msg_tokens > new_msg_budget:
             self._events.emit(
-                "compaction_check",
-                outcome="pre_frame_overflow",
-                estimated_tokens=estimated,
-                effective_trigger=effective_trigger,
+                "new_msg_exceeds_budget",
+                new_msg_tokens=new_msg_tokens,
+                new_msg_budget=new_msg_budget,
             )
-            await self._compaction_controller.force_compact_now()
+            raise NewMsgExceedsBudgetError(
+                new_msg_tokens=new_msg_tokens,
+                new_msg_budget=new_msg_budget,
+            )
