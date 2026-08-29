@@ -909,7 +909,7 @@ trust decision on a specific skill, discovered later if at all.
   is the one construction input added, not a general override seam (an `overrides=...`
   catch-all was considered and rejected on #5382: no boundary, and it would undo #3133's
   45→36 param-surface cut with one opaque param).
-- `_pending_user_images` (#366) — queue of image blocks the user attached via `/image PATH`
+- `_pending_user_attachments` (#366) — queue of image blocks the user attached via `/image PATH`
   or `--image PATH`, drained on the next user-message turn (attached to that
   `ChatMessage`'s `media` field). litellm-style content parts:
   `{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}`.

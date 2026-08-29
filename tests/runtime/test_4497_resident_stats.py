@@ -37,7 +37,7 @@ def test_approx_bytes_grows_with_dict_contents():
 
 def test_approx_bytes_grows_with_list_contents():
     """Tier 2: same monotonicity check for a list-shaped container
-    (_pending_user_images / _cancel_forward_targets's own shape)."""
+    (_pending_user_attachments / _cancel_forward_targets's own shape)."""
     empty = _approx_bytes([])
     populated = _approx_bytes(["x" * 1000, "y" * 1000])
     assert populated > empty
@@ -63,7 +63,7 @@ def test_session_container_stats_reads_a_real_sessions_attributes():
     session = make_session(agent_name="resident-test")
     stats = session_container_stats(session)
     names = {s.name for s in stats}
-    assert "_pending_user_images" in names
+    assert "_pending_user_attachments" in names
     assert "_safety_extensions" in names
     assert "_background_tasks" in names
     assert "_buffered_intervention_answers" in names
@@ -76,11 +76,11 @@ def test_session_container_stats_reflects_real_writes():
     """Tier 2: not just presence — a real write to a real Session
     container is reflected in the reported count."""
     session = make_session(agent_name="resident-test")
-    session._pending_user_images.append({"data": "x"})
-    session._pending_user_images.append({"data": "y"})
+    session._pending_user_attachments.append({"data": "x"})
+    session._pending_user_attachments.append({"data": "y"})
 
     stats = session_container_stats(session)
-    row = next(s for s in stats if s.name == "_pending_user_images")
+    row = next(s for s in stats if s.name == "_pending_user_attachments")
     assert row.count == 2
 
 

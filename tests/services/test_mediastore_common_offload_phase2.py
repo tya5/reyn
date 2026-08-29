@@ -343,7 +343,7 @@ def test_attach_cross_host_fields_unchanged_with_agent_name(tmp_path: Path) -> N
 
 
 def test_save_image_is_unchanged_by_phase2_migration(tmp_path: Path) -> None:
-    """Tier 2: save_image is NOT migrated in Phase 2 (out of scope) and
+    """Tier 2: save_media is NOT migrated in Phase 2 (out of scope) and
     must continue to work byte-for-byte identically.
     """
     store = MediaStore(
@@ -351,7 +351,7 @@ def test_save_image_is_unchanged_by_phase2_migration(tmp_path: Path) -> None:
         session_id="test-session",
     )
     data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
-    block = store.save_image(
+    block = store.save_media(
         data, mime_type="image/png", chain_id="c2", tool="web_fetch", seq=1,
     )
 

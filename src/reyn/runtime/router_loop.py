@@ -7,6 +7,7 @@ outbox and stop. Bounded by max_iterations.
 from __future__ import annotations
 
 import asyncio
+import enum
 import functools
 import json
 import logging
@@ -190,32 +191,82 @@ def _render_context_size_signal_for_host(host: "RouterLoopHost") -> "str | None"
         return None
 
 
-def _materialise_image_part(block: dict, media_store: Any) -> dict | None:
+class MediaMaterialiseFailure(enum.Enum):
+    """#5509 (architect ruling, same family as #5475's ``SeqUnavailable``):
+    named reasons :func:`_materialise_media_part` could not render a block
+    inline. A bare ``None`` was rejected for the same reason architect
+    rejected it there — a caller cannot tell "no store was wired" apart
+    from "the model can't take this modality" apart from "we don't know
+    if the model can take it yet", and each of those wants a DIFFERENT
+    caller response (the first two are permanent for this call; the third
+    means "declare the capability and this stops degrading")."""
+
+    #: Path-ref block, but no ``media_store`` was wired to read it back.
+    NO_STORE = "no_store"
+    #: ``media_store.read_media`` raised ``PermissionError`` (path escaped
+    #: ``media_dir`` — see ``MediaStore.read_media``'s own docstring).
+    PERMISSION_DENIED = "permission_denied"
+    #: The store had no matching file (deleted, or the ref never resolved).
+    NOT_FOUND = "not_found"
+    #: Block carries neither a ``path`` nor inline ``data`` to render.
+    NO_DATA = "no_data"
+    #: #5509: the model's capability for this block's modality resolved
+    #: UNSUPPORTED or UNKNOWN (``reyn.llm.model_media_capability`` — see
+    #: that module's own docstring for the 3-state rule and the operator
+    #: escape hatch for UNKNOWN).
+    CAPABILITY_UNAVAILABLE = "capability_unavailable"
+
+
+def _materialise_media_part(
+    block: dict, media_store: Any, *, model: "str | None" = None,
+) -> "dict | MediaMaterialiseFailure":
     """Render one image block into a litellm ``image_url`` part.
 
     Path-ref blocks (``{"type":"image","path":...}``) are read via the
     MediaStore and base64-embedded; inline blocks (``{"data":"<b64>"}``) embed
-    their base64 directly. Returns ``None`` when the block cannot be rendered
-    (path-ref without a store, missing/unreadable bytes, or no data).
+    their base64 directly. Returns a :class:`MediaMaterialiseFailure` naming
+    WHY when the block cannot be rendered — see that enum's own docstring.
+
+    #5509: only ``image/*`` mime types reach the capability-gated inline
+    path today — every OTHER modality has no established per-item token
+    bound yet (a PDF's cost scales with page count; a single constant
+    would be a wish, not a bound — see this module's own ``_MEDIA_
+    IMAGE_TOKEN_COST`` comment), so a non-image block always degrades to
+    :attr:`MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE` regardless of
+    *model* — the caller's ref-degrade path is exactly where the wire door
+    for those modalities currently opens (architect ruling: "上界が取れ
+    ない媒体は materialise の段に載せない — ref の段へ").
+
+    ``model=None`` (partial/test hosts with no resolvable model string)
+    skips the capability gate entirely — the pre-#5509 unconditional
+    behavior, preserved for callers that never had a model to check
+    against in the first place.
     """
     mime = block.get("mime_type") or block.get("mimeType") or "image/png"
+    if not mime.startswith("image/"):
+        return MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
+    if model is not None:
+        from reyn.llm.model_media_capability import MediaCapability, get_media_capability
+
+        if get_media_capability(model, "supports_vision") is not MediaCapability.SUPPORTED:
+            return MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
     path = block.get("path")
     if isinstance(path, str) and path:
         if media_store is None:
-            return None
+            return MediaMaterialiseFailure.NO_STORE
         try:
-            data_bytes, found = media_store.read_image(path)
+            data_bytes, found = media_store.read_media(path)
         except PermissionError:
-            return None
+            return MediaMaterialiseFailure.PERMISSION_DENIED
         if not found:
-            return None
+            return MediaMaterialiseFailure.NOT_FOUND
         import base64
         data_b64 = base64.b64encode(data_bytes).decode("ascii")
         return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_b64}"}}
     data = block.get("data")
     if isinstance(data, str) and data:
         return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
-    return None
+    return MediaMaterialiseFailure.NO_DATA
 
 
 def _as_path_ref(
@@ -225,7 +276,7 @@ def _as_path_ref(
 
     A path-ref block is returned as-is (its on-disk path is the handle, valid
     even without a live store object). An inline-base64 block is persisted to
-    the MediaStore (``save_image``) so it gains a path — requires a store.
+    the MediaStore (``save_media``) so it gains a path — requires a store.
     Returns ``None`` when no path can be obtained (inline + no store, or
     undecodable base64) — the caller then degrades consciously.
     """
@@ -243,7 +294,7 @@ def _as_path_ref(
         except (ValueError, TypeError):
             return None
         mime = block.get("mime_type") or block.get("mimeType") or "image/png"
-        saved = media_store.save_image(raw, mime_type=mime, tool=tool_name, seq=seq)
+        saved = media_store.save_media(raw, mime_type=mime, tool=tool_name, seq=seq)
         return {"path": saved["path"], "mime_type": saved.get("mime_type", mime)}
     return None
 
@@ -299,12 +350,28 @@ def _build_media_tail_preview(
     )}
 
 
+def _resolve_router_model_for_media_gate(host: Any, router_model: str) -> "str | None":
+    """Best-effort model-string resolution for the #5509 capability gate —
+    a partial/test host may not implement ``resolve_model`` at all, and a
+    missing resolution must never break media handling (the gate itself
+    already treats ``model=None`` as "skip the check", the pre-#5509
+    unconditional-embed behavior), only widen what it can protect."""
+    resolve = getattr(host, "resolve_model", None)
+    if resolve is None:
+        return None
+    try:
+        return resolve(router_model)
+    except Exception:  # noqa: BLE001 — best-effort; absence just skips the gate
+        return None
+
+
 def _build_media_followup_message(
     *,
     tool_name: str,
     media_blocks: list[dict],
     media_store: Any = None,
     budget_tokens: int | None = None,
+    model: "str | None" = None,
 ) -> dict | None:
     """Build a multimodal follow-up user message for tool results carrying image
     content (issue #362 → #383 PR-C; bounded by #272 + the media-count cap).
@@ -337,8 +404,8 @@ def _build_media_followup_message(
     # Unbounded path (pre-#272 / partial-host): materialise all renderable images.
     if budget_tokens is None:
         for block in images:
-            part = _materialise_image_part(block, media_store)
-            if part is not None:
+            part = _materialise_media_part(block, media_store, model=model)
+            if not isinstance(part, MediaMaterialiseFailure):
                 parts.append(part)
         return {"role": "user", "content": parts} if len(parts) > 1 else None
 
@@ -349,8 +416,8 @@ def _build_media_followup_message(
     for i, block in enumerate(images):
         # Prefer materialising (usable by the vision model) while it fits.
         if spent + _MEDIA_IMAGE_TOKEN_COST <= budget_tokens:
-            part = _materialise_image_part(block, media_store)
-            if part is not None:
+            part = _materialise_media_part(block, media_store, model=model)
+            if not isinstance(part, MediaMaterialiseFailure):
                 parts.append(part)
                 emitted.append(("img", part))
                 spent += _MEDIA_IMAGE_TOKEN_COST
@@ -3792,6 +3859,13 @@ class RouterLoop:
                     media_blocks=media_blocks,
                     media_store=getattr(host, "media_store", None),
                     budget_tokens=_budget_tokens,
+                    # #5509: the resolved model string the capability gate
+                    # checks against — same resolution call other router_loop
+                    # sites already use (e.g. the retry-loop's own
+                    # `host.resolve_model(self.router_model)`). Best-effort:
+                    # a partial/test host without a real `resolve_model`
+                    # skips the gate (model=None), the pre-#5509 behavior.
+                    model=_resolve_router_model_for_media_gate(host, self.router_model),
                 )
                 if followup is not None:
                     out.append(followup)

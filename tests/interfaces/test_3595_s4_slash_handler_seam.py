@@ -226,7 +226,7 @@ _SESSION_RESIDUE: "dict[str, _Residue]" = {
             "delivery alone would leave the resolution needing the same object."
         ),
     ),
-    "_pending_user_images": _Residue(
+    "_pending_user_attachments": _Residue(
         needed_for=("/image",),
         resolution=(
             "★ Should not be on Session at all — an image staged for the NEXT "
@@ -240,7 +240,7 @@ _SESSION_RESIDUE: "dict[str, _Residue]" = {
     ),
     "_multimodal_config": _Residue(
         needed_for=("/image",),
-        resolution="The media-size gate's config half — moves with _pending_user_images.",
+        resolution="The media-size gate's config half — moves with _pending_user_attachments.",
     ),
     "_perm": _Residue(
         needed_for=("/image",),

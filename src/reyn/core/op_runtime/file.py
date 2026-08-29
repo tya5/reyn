@@ -225,7 +225,7 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
     # fall back to inline base64 when not configured.
     media_block: dict
     if ctx.media_store is not None:
-        media_block = ctx.media_store.save_image(
+        media_block = ctx.media_store.save_media(
             image_bytes, mime_type=mime_type,
             chain_id=ctx.run_id or "", tool="file_read", seq=1,
         )

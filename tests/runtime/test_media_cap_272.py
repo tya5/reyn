@@ -43,7 +43,7 @@ def _store(tmp_path: Path) -> MediaStore:
 def _path_blocks(store: MediaStore, n: int) -> list[dict]:
     """n real path-ref image blocks (bytes written to the store on disk)."""
     return [
-        store.save_image(b"PNGBYTES" * 8, mime_type="image/png", tool="t", seq=i)
+        store.save_media(b"PNGBYTES" * 8, mime_type="image/png", tool="t", seq=i)
         for i in range(n)
     ]
 

@@ -8,7 +8,7 @@ The command:
   3. Applies the shared media-size gate landed in #364
      (``PermissionResolver.require_media_load`` — 4-layer approval).
   4. Base64-encodes the bytes into a litellm-style ``image_url`` content
-     part and queues it on ``session._pending_user_images``.
+     part and queues it on ``session._pending_user_attachments``.
   5. The next user message in this session consumes the queue: its
      ``ChatMessage.media`` carries the queued blocks, and the router
      loop's history builder switches that turn to content-list shape.
@@ -221,7 +221,7 @@ async def image_cmd(ctx: "SlashContext", args: str) -> None:
     }
     # Queue is drained by Session._handle_inbox_text on the next
     # user turn (= attached to that ChatMessage.media).
-    queue: list[dict] = getattr(ctx.session, "_pending_user_images", None)
+    queue: list[dict] = getattr(ctx.session, "_pending_user_attachments", None)
     if queue is None:
         # Session variants without #366 wiring shouldn't accept the
         # command — surface a clear error rather than silently no-op.

@@ -433,7 +433,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         # so the pre-PR-C behaviour is preserved.
         media_block: dict
         if ctx.media_store is not None:
-            media_block = ctx.media_store.save_image(
+            media_block = ctx.media_store.save_media(
                 image_bytes, mime_type=content_type,
                 chain_id=ctx.run_id or "", tool="web_fetch", seq=1,
             )

@@ -32,7 +32,7 @@ contract Phase 1 = "(a) Persistent until user delete"; #5364 §1.6 /
 the split below):
 
   - **Media (``.reyn/media/``) — still no auto-GC.** Files written by
-    :meth:`save_image` remain on disk until a user / operator deletes
+    :meth:`save_media` remain on disk until a user / operator deletes
     them out-of-band (= ``rm``, file explorer, cleanup script). No TTL,
     max-N, or session-end cleanup exists for this directory today.
   - **History-content (``.reyn/memory/history-content/``, #5364) — auto-GC
@@ -824,7 +824,7 @@ class MediaStore:
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
-    def save_image(
+    def save_media(
         self,
         data: bytes,
         *,
@@ -859,7 +859,7 @@ class MediaStore:
         self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
         return block
 
-    def read_image(self, path_str: str) -> tuple[bytes, bool]:
+    def read_media(self, path_str: str) -> tuple[bytes, bool]:
         """Read image binary by project-relative path.
 
         Validates the resolved path lives inside ``media_dir`` (=

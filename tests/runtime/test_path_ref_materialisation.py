@@ -52,12 +52,12 @@ def test_materialise_no_pathref_passes_through(tmp_path):
 
 def test_materialise_resolves_media_store_pathref(tmp_path, monkeypatch):
     """Tier 2: a path-ref pointing inside the MediaStore resolves to a
-    data URL via ``media_store.read_image``.
+    data URL via ``media_store.read_media``.
     """
     monkeypatch.chdir(tmp_path)
     store = _new_store(tmp_path)
     raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 80
-    block = store.save_image(raw, mime_type="image/png", tool="test", seq=1)
+    block = store.save_media(raw, mime_type="image/png", tool="test", seq=1)
 
     content = [{"type": "text", "text": "look"}, block]
     out = _materialise_path_ref_content(content, media_store=store)
@@ -141,7 +141,7 @@ def test_followup_resolves_pathref_via_media_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     store = _new_store(tmp_path)
     raw = b"binary content"
-    block = store.save_image(
+    block = store.save_media(
         raw, mime_type="image/jpeg", tool="mcp_playwright", seq=1,
     )
 
@@ -164,7 +164,7 @@ def test_followup_handles_mixed_pathref_and_inline(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     store = _new_store(tmp_path)
-    pathref = store.save_image(b"first", mime_type="image/png", seq=1)
+    pathref = store.save_media(b"first", mime_type="image/png", seq=1)
     inline = {"type": "image", "data": base64.b64encode(b"second").decode("ascii"),
               "mimeType": "image/png"}
 

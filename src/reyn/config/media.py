@@ -325,6 +325,21 @@ class MultimodalConfig:
             can fetch the body via the resources router. Unset → no
             ``url`` field minted, same-host fast-path only (= backward
             compat for legacy / CLI-only deployments).
+        model_capability_overrides:
+            #5509 (architect ruling) — the declared-not-guessed escape
+            hatch for a model litellm's own catalog doesn't know (a
+            custom proxy alias, a self-hosted deployment): ``{model:
+            {capability_field: bool}}``, e.g. ``{"my-proxy-model":
+            {"supports_vision": true}}``. ``capability_field`` is a
+            litellm ``get_model_info`` boolean field name (``supports_
+            vision`` / ``supports_pdf_input`` / ``supports_audio_input``
+            / ...). Registered into ``reyn.llm.model_media_capability``'s
+            process-shared override registry at Session construction —
+            see that module's own docstring for the full 3-state
+            (supported/unsupported/unknown) resolution rule this feeds.
+            Without a declaration, an uncataloged model's capability
+            reads UNKNOWN forever, routing every non-text attachment to
+            the lossless path-ref degrade stage rather than embedding it.
 
     Issue #364 lands this config + the shared ``require_media_load`` gate;
     paths #365 (read_file binary) and #366 (user chat input image) reuse
@@ -335,6 +350,7 @@ class MultimodalConfig:
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
     base_url: str | None = None
+    model_capability_overrides: "dict[str, dict[str, bool]]" = field(default_factory=dict)
 
 
 def _build_multimodal_config(raw: object) -> MultimodalConfig:
@@ -376,10 +392,27 @@ def _build_multimodal_config(raw: object) -> MultimodalConfig:
         if isinstance(base_url_raw, str) and base_url_raw
         else None
     )
+    # #5509: {model: {capability_field: bool}} — malformed entries (a
+    # non-dict model value, a non-bool capability value) are dropped
+    # individually rather than discarding the whole block, matching this
+    # function's own "unknown keys ignored, bad types fall back" contract.
+    overrides_raw = raw.get("model_capability_overrides")
+    model_capability_overrides: "dict[str, dict[str, bool]]" = {}
+    if isinstance(overrides_raw, dict):
+        for model, fields_raw in overrides_raw.items():
+            if not isinstance(model, str) or not isinstance(fields_raw, dict):
+                continue
+            fields: dict[str, bool] = {
+                k: v for k, v in fields_raw.items()
+                if isinstance(k, str) and isinstance(v, bool)
+            }
+            if fields:
+                model_capability_overrides[model] = fields
     return MultimodalConfig(
         max_bytes=max_bytes, on_oversize=on_oversize,
         media_dir=media_dir, tool_results_dir=tool_results_dir,
         base_url=base_url,
+        model_capability_overrides=model_capability_overrides,
     )
 
 

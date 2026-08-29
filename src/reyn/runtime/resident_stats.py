@@ -93,7 +93,7 @@ def _stat(name: str, container: Any) -> ContainerStat:
 # the same generic `_stat`/`_approx_bytes` machinery unmodified.
 _SESSION_ATTRS = (
     "history",
-    "_pending_user_images",
+    "_pending_user_attachments",
     "_safety_extensions",
     "_background_tasks",
     "_buffered_intervention_answers",
