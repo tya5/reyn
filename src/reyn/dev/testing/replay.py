@@ -101,7 +101,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -131,6 +131,56 @@ class PreconditionMismatch(MissingFixture):
     and, because the message names the difference, makes their logs strictly
     more informative than before.
     """
+
+
+class UnknownReplayCause(Exception):
+    """Raised in replay mode when a ``kind="exception"`` fixture entry names
+    a ``cause`` outside :data:`_REPLAY_EXCEPTION_CAUSES` — #5382 witness 6:
+    an unrecognised cause must fail EXPLICITLY, never silently fall back to
+    replaying a (nonexistent) success response, the same "diagnose, don't
+    guess" posture :class:`MissingFixture` already has for a key miss."""
+
+
+def _make_rate_limit_error(message: str) -> Exception:
+    import litellm
+
+    return litellm.RateLimitError(message=message, llm_provider="replay", model="replay")
+
+
+def _make_context_overflow_error(message: str) -> Exception:
+    import litellm
+
+    return litellm.ContextWindowExceededError(
+        message=message, model="replay", llm_provider="replay",
+    )
+
+
+def _make_byte_limit_error(message: str) -> Exception:
+    import litellm
+
+    exc = litellm.BadRequestError(message=message, model="replay", llm_provider="replay")
+    # #4381 stage 1 / engine.py's own `saw_byte_limit` classifier reads
+    # `getattr(exc, "status_code", None) == 413` directly off the exception
+    # — litellm.BadRequestError defaults status_code to 400, so this is set
+    # explicitly to reproduce the real HTTP 413 (request-BODY-byte limit)
+    # shape that classifier is looking for.
+    exc.status_code = 413  # type: ignore[assignment]  # litellm types this Literal[400]
+    return exc
+
+
+#: #5382: the CLOSED vocabulary of replayable exception causes (architect
+#: ruling — a fixture's ``cause`` is a declared enum member, never a class
+#: name imported from a string: "data" must never be a channel that points
+#: at arbitrary code, and this is the one place "what can LLMReplay
+#: reproduce" has a single, readable answer). Each factory builds a REAL
+#: litellm exception instance shaped the way reyn's own classifiers
+#: (``services/compaction/engine.py``) already read it — not a synthetic
+#: stand-in class.
+_REPLAY_EXCEPTION_CAUSES: "dict[str, Callable[[str], Exception]]" = {
+    "rate_limit": _make_rate_limit_error,
+    "context_overflow": _make_context_overflow_error,
+    "byte_limit": _make_byte_limit_error,
+}
 
 
 class LLMReplay:
@@ -188,6 +238,16 @@ class LLMReplay:
         self._records: dict[str, dict] = {}
         # key → serialised EmbeddingResponse dict (kind="embedding")
         self._embed_records: dict[str, dict] = {}
+        # #5382: key → {"cause": <closed vocabulary member>, "message": str
+        # | None} (kind="exception") — a fixture that replays a raised
+        # exception instead of a response. Read-only dict, never consumed
+        # (same "same key = same answer every time" semantics _records
+        # already has — architect ruling: no repeat-count axis; a fixture
+        # replayed by the SAME key answers the SAME way every time, and a
+        # "same cause N times" scenario is written as N distinct keys, one
+        # per distinct request, matching the real #5296/#5364 shape where
+        # each retry's request actually differs (history shrinks)).
+        self._exception_records: dict[str, dict] = {}
         # #5283: keys actually served by a REPLAY hit this instance's
         # lifetime (added by ``_replay``/``_replay_embedding``, never by
         # ``_record``/``_record_embedding`` — record mode has its own
@@ -316,6 +376,10 @@ class LLMReplay:
                     self._embed_records[entry["key"]] = entry["response"]
                 elif kind == "environment":
                     self._environment[str(entry["name"])] = entry["value"]
+                elif kind == "exception":
+                    self._exception_records[entry["key"]] = {
+                        "cause": entry["cause"], "message": entry.get("message"),
+                    }
                 else:
                     self._records[entry["key"]] = entry["response"]
                     recorded = entry.get("preconditions")
@@ -726,7 +790,34 @@ class LLMReplay:
         replayed under different tooling would answer as if the model had
         been offered capabilities it was not. A hit with a matching
         environment is served.
+
+        #5382: a ``kind="exception"`` fixture entry is checked FIRST — it
+        lives in a separate dict (``_exception_records``) from the normal
+        completion fixtures, and raises a REAL litellm exception (from the
+        closed :data:`_REPLAY_EXCEPTION_CAUSES` vocabulary) instead of
+        returning a response. Same key = same answer every call, no
+        repeat-count tracked or consumed — architect ruling: a "same cause
+        N times" scenario is written as N distinct keys (one per distinct
+        request — the real #5296/#5364 shape, where each retry's request
+        actually differs as history shrinks), never as one key answering
+        differently on its Nth read; mixing "which call number this is"
+        into the answer would make the fixture depend on call ORDER/COUNT
+        instead of purely on request CONTENT, the property that keeps a
+        fixture stable across unrelated prompt edits.
         """
+        if key in self._exception_records:
+            entry = self._exception_records[key]
+            cause = entry["cause"]
+            factory = _REPLAY_EXCEPTION_CAUSES.get(cause)
+            if factory is None:
+                raise UnknownReplayCause(
+                    f"Fixture entry for key={key!r} names cause={cause!r}, "
+                    f"which is not in the closed replay vocabulary "
+                    f"{sorted(_REPLAY_EXCEPTION_CAUSES)!r}. Fixture: "
+                    f"{self.fixture_path}."
+                )
+            self._consumed_keys.add(key)
+            raise factory(entry.get("message") or f"replayed {cause} (fixture)")
         if key not in self._records:
             preview = self._prompt_preview(messages)
             attribution = explain_miss(
