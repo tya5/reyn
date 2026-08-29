@@ -54,8 +54,8 @@ Reyn は**自律性よりも予測可能性**を重視します（プロジェ�
 
 - **Tier 2c — マルチコンポーネント統合 (e2e)**: 1 つのテストが複数モジュー
   ルを exercise して end-to-end 不変条件を verify する。 全工程 real 実装、
-  LLM のみ stub callable で fake (`LLMReplay` 経路は使わない — そちらは
-  Tier 3)。 例:
+  LLM のみ stub callable で fake — `@pytest.mark.llm_stub`（[LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)参照）、
+  `LLMReplay` 経路は使わない（そちらは Tier 3）。 例:
   - 「crash mid-skill → restart → resume → completes」 (`test_resume_e2e.py`)
   - 「schema mismatch → CLI が `--reset` 案内付きで clean exit」
   - 「BudgetTracker cap が crash + restart を跨いで enforce される」
@@ -70,7 +70,7 @@ Reyn は**自律性よりも予測可能性**を重視します（プロジェ�
 
 **固定対象**: `litellm.acompletion` 境界で `LLMReplay` Fake を通じて実行される、LLM 依存の OS パスの振る舞い。**Mock は禁止 — [Mock vs Fake](#mock-vs-fake)参照。**
 
-用語の note: Tier 3 テストは特に `LLMReplay` (録画 fixture を real `litellm` API surface に対して replay) を使う test を指す。 stub callable で LLM を fake する end-to-end 統合テストは **Tier 2c** に属する (Tier 3 ではない)。
+用語の note: Tier 3 テストは特に `LLMReplay` (録画 fixture を real `litellm` API surface に対して replay) を使う test を指す。 stub callable で LLM を fake する end-to-end 統合テスト（`@pytest.mark.llm_stub` — [LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)参照）は **Tier 2c** に属する (Tier 3 ではない)。
 
 #### Tier 3a — シングルコール・リプレイ（現在のスコープ）
 
@@ -159,6 +159,34 @@ Tier 1〜3 に明確に位置づけられないテストは、ほぼ例外なく
 LLM 依存テストは必ず Fake（`LLMReplay`）を使う必要があります。Mock は禁止です。
 **この禁止は litellm 固有ではありません — テストが構築するあらゆる collaborator（callable
 と plain な data/state object の両方）に適用されます**（下記「[data/state object の fake](#datastate-object-の-fake-同じ禁止より鋭い失敗モード)」参照）。litellm/`LLMReplay` は単に、このリポジトリの規範的な実例が存在する場所です。
+
+### LLMStub — 2 本目の Fake
+
+LLM 境界には Fake が 2 本あります。`LLMReplay`（`@pytest.mark.replay(path)`）
+は「model が実際に何を言ったか（byte for byte）」を録画済み fixture から
+答えます — 上記 Tier 3 の機構です。`LLMStub`（`@pytest.mark.llm_stub`、
+#5103）はもっと狭い問いに答えます — fixture を要らなかった問い「real な
+turn machinery が実際に走ったか」です — 上記 Tier 2c の stub-callable 機構
+です。
+
+**最も重要な違い**: `LLMStub` は fixture ファイルを一切読み書きしません
+— fixture key を作る必要が無く、構造上 #3662 の `MissingFixture` 安全網
+にも #5283 の未消費検査にも見えません（ディスク上にどちらも見るものが
+無いため）。`LLMReplay` はその両方を行いますが、`LLMStub` はどちらも
+行いません。
+
+**いつ使うか**: 主題が turn 周りの loop/valve/lifecycle/wiring の振る舞い
+であって、model 自身の出力ではないとき。model が何を言ったかを assert
+する必要があるなら `LLMReplay`（Tier 3）を使ってください。
+
+**Tier のルール**: `@pytest.mark.llm_stub` を使う test は Tier 3 を宣言し
+てはいけません — `test_tier_audit.py` がこの対応を強制します。この Fake
+の要点はまさに、completion 自身の内容がテスト対象ではないという点です。
+
+`LLMStub` 自身の module docstring（`reyn.dev.testing.llm_stub`）が現在の
+mode の正典です（本稿執筆時点: cause-injection mode と gating mode）—
+ここには複製しません。mode が増えたときにこのページが古くならないため
+です。
 
 ### 理由
 

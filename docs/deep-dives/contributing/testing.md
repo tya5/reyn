@@ -148,8 +148,9 @@ Two sub-categories:
 
 - **Tier 2c — Multi-component integration (e2e)**: a single test exercises
   several modules to verify end-to-end behavior of an invariant. Uses
-  real instances throughout; LLM is faked via a stub real callable
-  (NOT via `LLMReplay` — that path is Tier 3). **The LLM is the only
+  real instances throughout; LLM is faked via a stub real callable —
+  `@pytest.mark.llm_stub` (see [LLMStub — the second Fake](#llmstub-the-second-fake)
+  below), NOT via `LLMReplay` (that path is Tier 3). **The LLM is the only
   collaborator that may be faked.** Replacing a non-LLM collaborator
   (e.g. a backend, a launcher, an external service) with a fake
   exercises only the caller's logic — the collaborator's own construction
@@ -174,8 +175,9 @@ forbidden — see [Mock vs Fake](#mock-vs-fake) below.**
 
 Note on terminology: a Tier 3 test specifically uses `LLMReplay` (recorded
 fixture replay against the real `litellm` API surface). End-to-end
-integration tests that fake the LLM via a simpler stub callable belong
-in **Tier 2c** above, not Tier 3.
+integration tests that fake the LLM via a simpler stub callable
+(`@pytest.mark.llm_stub` — see [LLMStub — the second Fake](#llmstub-the-second-fake)
+below) belong in **Tier 2c** above, not Tier 3.
 
 #### Tier 3a — Single-call replay (current scope)
 
@@ -458,6 +460,35 @@ LLM-dependent tests **must** use the Fake (`LLMReplay`). Mocks are forbidden.
 constructs, callables and plain data/state objects alike** (see
 [Faking a data/state object](#faking-a-datastate-object-same-ban-sharper-failure-mode)
 below); litellm/`LLMReplay` is simply where the repo's normative example lives.
+
+### LLMStub — the second Fake
+
+Two Fakes exist at the LLM boundary, not one. `LLMReplay`
+(`@pytest.mark.replay(path)`) answers "what did the model actually say,
+byte for byte" from a recorded fixture — the Tier 3 mechanism above.
+`LLMStub` (`@pytest.mark.llm_stub`, #5103) answers a narrower question
+some tests never needed a fixture to ask: "did the real turn machinery
+actually run" — the Tier 2c stub-callable mechanism named above.
+
+**Difference that matters most**: `LLMStub` reads and writes NO fixture
+file at all — no fixture key to construct for it, and by construction it
+is invisible to both #3662's `MissingFixture` safety net and #5283's
+unconsumed-entry check (there is nothing on disk for either to see).
+`LLMReplay` does both of those things; `LLMStub` does neither.
+
+**When to reach for it**: the subject under test is loop/valve/lifecycle/
+wiring behavior around a turn, not the model's own output. If the test
+needs to assert on what the model said, use `LLMReplay` (Tier 3) instead.
+
+**Tier rule**: a test using `@pytest.mark.llm_stub` must NOT declare
+Tier 3 — `test_tier_audit.py` enforces this pairing. The point of this
+Fake is precisely that the completion's own content is not the subject
+under test.
+
+`LLMStub`'s own module docstring (`reyn.dev.testing.llm_stub`) is the
+SSoT for its current modes (as of this writing: a cause-injection mode
+and a gating mode) — not reproduced here, so this page does not go
+stale the next time a mode is added.
 
 ### Why
 
