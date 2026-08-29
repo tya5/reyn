@@ -136,6 +136,10 @@ Path-conditional gates:
 9. **`update-branch` only on a real conflict** (`mergeable=CONFLICTING`), and **never re-run a gate by hand** — a merely-behind branch is fine as it is, both PR pushes and comments already trigger the gates that read them, and each needless run costs a full matrix on a saturable resource (#4239).
 10. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
+**Filing an issue (READ BEFORE FILING)** — `docs/deep-dives/contributing/issue-management.md`.
+An issue gets its axis label(s) when it is **filed**, not later. No axis label
+means "not yet judged", so an unlabelled backlog carries no order to dispatch by.
+
 **Issue-triage label `blocked:external`** — needs owner judgment or an upstream
 dependency. An open issue WITHOUT it is pickable by any peer session.
 
