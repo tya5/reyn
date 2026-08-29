@@ -1797,6 +1797,32 @@ class CompactionEngine:
         # partial-slice remainder it was never offered) — with the echo
         # never read at all, there is nothing left to clamp; #4956/#4951-A
         # closes the exposure at its root instead of bounding its output.
+        #
+        # #5498 (architect ruling, on this exact call site): for
+        # retry_loop's own caller, ``input_chunk.new_turns`` are litellm
+        # wire dicts with no ``seq`` key at all (see ``SeqUnavailable.
+        # WIRE_DICTS_CARRY_NO_SEQ``'s own docstring) — every ``t.get("seq",
+        # 0)`` above falls to its default, so ``covers`` is structurally
+        # 0 on that path. Confirmed harmless by TWO independent facts, not
+        # one:
+        #   (1) retry_loop never persists this ChatSummary to
+        #       ``history.jsonl`` at all (it stays a pure TRANSPORT
+        #       operation — see its own module comment) — a bogus 0 that
+        #       is never written can never be read back wrong.
+        #   (2) for the OTHER caller (CompactionController), a real 0
+        #       here would ALSO be masked — ``compaction_controller.py``'s
+        #       own ``covers = chat_summary.covers_through_seq or
+        #       candidates[-1].seq`` falls back to a real seq whenever
+        #       this value is falsy. That ``or`` was written for a
+        #       DIFFERENT reason (a wrong/empty LLM echo, #4951-A) — it
+        #       was never intended as a defense against THIS 0, but it
+        #       happens to also BE one; do not remove it.
+        # Both facts are load-bearing SEPARATELY — either one alone would
+        # still make this 0 harmless today, so a future change that
+        # removes only one of them (e.g. starts persisting retry_loop's
+        # own summary) needs to re-derive whether the other still holds
+        # before assuming this is still safe. See
+        # tests/services/test_5498_retry_loop_covers_zero_never_persisted.py.
         covers = compute_covers_through_seq(
             [t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)]
         )
