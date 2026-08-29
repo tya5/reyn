@@ -1832,3 +1832,86 @@ def test_5531_head_side_growth_orders_offered_slice_before_summary(tmp_path) -> 
         f"condition③ (head-side growth): offered content must precede the "
         f"summary element in messages — got order {first_order!r}"
     )
+
+
+def test_5531_tail_side_growth_orders_summary_before_offered_slice(tmp_path) -> None:
+    """Tier 2: #5531 condition③ — the OTHER half of the order rule (the
+    head-side test above only witnesses one direction — architect BLOCKING
+    on PR #5533, head efa242321: a rule that only pins "head order" does
+    not distinguish "the rule is order-aware" from "the rule is hard-coded
+    to always head-order"). When raw_middle grows from the TAIL side only
+    (Phase 1; `_raw_middle_grew_from_head` stays False all call), the
+    offered slice is chronologically NEWER than the running summary, so
+    ``HistoryChunkToCompact.messages`` must place the summary element
+    FIRST — the reverse of the head-side order the test above pins. Drives
+    a REAL retry_loop with tail far over a tiny budget and head already
+    under a generous one, so Phase 1 fires on the very first overflow with
+    no Phase 2 activity to confound the order this test is isolating."""
+    from reyn.services.compaction.engine import ChatSummary, ComputedBudgets
+
+    captured_orders: list[list[str]] = []
+
+    class _TailShrinkEngine:
+        def __init__(self) -> None:
+            self.budgets = ComputedBudgets(
+                main_pool=100_000, head_budget=1_000, body_budget=500,
+                tail_budget=10, new_msg_budget=1_000,
+                B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+                section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                              "session_user_facts": 50, "artifacts_referenced": 175},
+            )
+            self._events = EventLog()
+            self._T_comp_SP = 100
+
+        async def compact(self, input_chunk, *, covers_through=None):
+            captured_orders.append([
+                "summary" if m.get("role") == "summary" else "turn"
+                for m in input_chunk.messages
+            ])
+            return ChatSummary(topic_arc="stub", covers_through_seq=0)
+
+    cfg = _make_cfg()
+    engine = _TailShrinkEngine()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    # tail is FAR over tail_budget=10 tokens (4 turns * ~100 tokens each,
+    # chars//4); head is a single tiny turn, well under head_budget=1_000
+    # — Phase 2 (head shrink) never fires, isolating Phase 1 (tail shrink).
+    tail = _turns(["t" * 400] * 4)
+    head = _turns(["h"])
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "hi", "seq": 99}
+    prior_summary = {"topic_arc": "already-compacted earlier span", "covers_through_seq": 1}
+
+    call_counts: list[int] = []
+    call_states: list[tuple] = []
+    # Overflow once (forces the Phase-1 tail shrink below), then succeed —
+    # the compact() call this test is inspecting happens on the NEXT
+    # iteration, once raw_middle (freshly grown from tail) is non-empty.
+    main_call = _make_shrink_call_count_main_call(1, call_counts, call_states)
+
+    asyncio.run(retry_loop(
+        SP="system",
+        head=head,
+        summary=prior_summary,
+        raw_middle=raw_middle,
+        tail=tail,
+        new_msg=new_msg,
+        cfg=cfg,
+        model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=main_call,
+        max_iterations=8,
+    ))
+
+    assert captured_orders, "expected at least one compact() call after Phase 1 fired"
+    first_order = captured_orders[0]
+    assert "summary" in first_order and "turn" in first_order, (
+        f"expected both a summary element and offered turns in the first "
+        f"post-Phase-1 compact() call, got {first_order!r}"
+    )
+    assert first_order.index("summary") < first_order.index("turn"), (
+        f"condition③ (tail-side growth): the summary element must precede "
+        f"offered content in messages — got order {first_order!r}"
+    )
