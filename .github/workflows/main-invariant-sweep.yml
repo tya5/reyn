@@ -1,4 +1,4 @@
-name: main hourly gate sweep
+name: main invariant sweep
 
 # #4257: 5 of the whole-tree gate scripts (bare-tests-import-reference,
 # fastmcp-import-boundary, file-depth-reference, tests-path-literal-reference,
@@ -48,23 +48,49 @@ name: main hourly gate sweep
 # composition-gap witness this workflow exists to provide could lag a
 # real break by up to ~13h. `push: branches: [main]` is ADDED below
 # (schedule stays, as the backstop for a run GitHub's scheduler drops
-# entirely) so the same 6-script sweep also runs once per merge, with no
-# delay. Cost: 1 extra workflow run per merge to main, a SINGLE job
-# running 6 scripts in sequence (never a matrix) — a different order of
-# magnitude from #4239's saturation concern, and #4257's owner ruling
-# ("don't touch the 5 existing per-PR workflows, keep this in one new
-# file") is untouched — only this one file's own trigger changes.
+# entirely) so the same sweep also runs once per merge, with no delay.
+# Cost: 1 extra workflow run per merge to main, a SINGLE job running its
+# steps in sequence (never a matrix) — a different order of magnitude
+# from #4239's saturation concern, and #4257's owner ruling ("don't
+# touch the 5 existing per-PR workflows, keep this in one new file") is
+# untouched — only this one file's own trigger changes. (This paragraph
+# was written for #5479, against the step list as it stood then — see
+# the step list below for the current count; not restated here, see
+# the naming-rationale section below for why.)
 # `pytest` itself (test.yml, `on: push: branches: [main]`) already runs
-# with no delay; only these 6 path-scoped, whole-tree gates were ever
+# with no delay; only these path-scoped, whole-tree gates (see the step
+# list below for the current count — not restated here) were ever
 # subject to the ~13h lag — never read this fix as "main could go a
 # half-day without any signal at all".
 #
-# Deliberately NOT renamed in this PR (architect, verbatim): "hourly" is
-# already inaccurate now, but the rename lands together with #5480's own
-# step migration, in ONE PR — splitting them would leave a half-accurate
-# name standing for the gap between, and #5480 already touches repo
-# config inspection, so settling "what does this sweep actually mean"
-# once, at that point, costs one PR instead of two.
+# #5480: renamed from "main-hourly-gate-sweep" (file and both `name:`
+# fields) — "hourly" was already false the moment #5479 added `push`
+# above (this sweep no longer has one single cadence). "invariant
+# sweep" names what every step below shares — each checks a fact about
+# `main` that must always hold — without committing to a cadence word
+# a future trigger change could falsify again, or to a step COUNT a
+# future step addition could falsify (lead-coder: cadence を名前に入れ
+# ない — a naming rule, not a one-off choice, for whoever edits this
+# file next; the step list below is the only place a count is ever
+# worth reading, never restated in prose here).
+#
+# #5480 was ALSO going to fold in `branch-protection-strict-stays-off`
+# as a step here — NOT done (architect BLOCKING, live-verified): that
+# standalone workflow has run exactly once since its own same-day
+# addition (#5435) and FAILED — `gh: Resource not accessible by
+# integration (HTTP 403)`. The default `GITHUB_TOKEN` cannot read
+# branch protection at all (`administration` is not grantable via this
+# workflow's own `permissions:` block the way `contents: read` is), so
+# this check has NEVER actually observed its own subject — its own
+# former "has no false positives" claim was already false the one time
+# it ran. Folding it in AS-IS would make every run of THIS sweep red
+# from the moment this PR merges, and that red would say nothing about
+# the other whole-tree gates this sweep exists to witness — destroying
+# the thing #5479 just fixed. See #5489 for the real fix (a token
+# scoped with `administration: read`, an owner-level decision this PR
+# does not make). `branch-protection-strict-stays-off.yml` stays
+# exactly as it was, still broken, filed separately — not silently
+# dropped by this PR.
 on:
   schedule:
     # GitHub's own scheduler is best-effort under load — "roughly hourly",
@@ -73,9 +99,9 @@ on:
     # the backstop for a run GitHub's scheduler drops entirely, alongside
     # `push` below (#5479).
     - cron: "0 * * * *"
-  # #5479: runs the same 6-script sweep once per merge to main, with no
-  # delay — `schedule` alone could lag a real composition break by up to
-  # ~13h (measured). See the module comment above for the full account.
+  # #5479: runs the same sweep once per merge to main, with no delay —
+  # `schedule` alone could lag a real composition break by up to ~13h
+  # (measured). See the module comment above for the full account.
   push:
     branches: [main]
   workflow_dispatch: {}
@@ -85,7 +111,7 @@ permissions:
 
 jobs:
   gate-sweep:
-    name: main hourly gate sweep
+    name: main invariant sweep
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -97,16 +123,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      # All 6 are stdlib-only (ast / pathlib / sys) — no pip install needed,
-      # same as their per-PR counterparts. Any non-zero exit fails its own
-      # step (default `run:` behaviour), which reddens the job overall — a
-      # single red gate is enough, #4257's own test-plan requirement ("a
-      # red gate you can't fail is a gate that says nothing"). Each step
-      # still carries `if: ${{ !cancelled() }}` so a step 1 failure does
-      # NOT skip steps 2-6 (the default without it) — this runs once an
-      # hour, so knowing all 6 outcomes from one run matters more here than
-      # in a per-PR gate: without it, only the first failure is visible and
-      # recovery has to wait a full cycle to learn about the rest.
+      # Every step below is stdlib-only (ast / pathlib / sys) — no pip
+      # install needed, same as their per-PR counterparts.
+      # Any non-zero exit fails its own step (default `run:` behaviour),
+      # which reddens the job overall — a single red gate is enough,
+      # #4257's own test-plan requirement ("a red gate you can't fail is a
+      # gate that says nothing"). Every step still carries
+      # `if: ${{ !cancelled() }}` so an earlier step's failure does NOT
+      # skip the later ones (the default without it) — this runs at most
+      # once an hour on the schedule side, so knowing every step's own
+      # outcome from one run matters more here than in a per-PR gate:
+      # without it, only the first failure is visible and recovery has to
+      # wait a full cycle to learn about the rest.
       - name: bare-tests-import-reference
         if: ${{ !cancelled() }}
         run: python scripts/check_bare_tests_import_reference.py
