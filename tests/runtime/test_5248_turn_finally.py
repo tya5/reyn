@@ -9,9 +9,14 @@ needle, ``_loop_driver.run_turn *=``): only ``test_external_cancel_reaches_
 cleanup_without_journal_cut`` migrated to ``@pytest.mark.llm_stub(control=
 "gated")`` — see that test's own docstring for why. ``test_router_failure_
 reaches_boundary_operations`` (``fail_run_turn``) stays on the private
-replacement; see ITS docstring for why #5382/#5461's raise mode (landed
-after this file was originally scoped there) does not reach it either —
-reported as a finding, not silently left unexplained.
+replacement FOR NOW; see ITS docstring — architect correction (#5450,
+2026-08-29): the exemption test is not "is this property LLM-boundary-
+related" but "is there actually a MEANS to produce the raise through the
+real boundary" (the same bar #5462's swallow-mode non-addition met, via a
+measured litellm/httpx report). #5474 (open at time of writing) generalizes
+LLMStub's raise mode past compaction-only — try that once it lands; only a
+MEASURED inability to reproduce this exact shape through it (not "the
+property seems unrelated to the LLM") justifies calling this permanent.
 """
 from __future__ import annotations
 
@@ -27,19 +32,23 @@ from tests._support.events import collect_events, settle
 async def test_router_failure_reaches_boundary_operations() -> None:
     """Tier 2: a normal router exception still reaches hook, reload, and cut.
 
-    Not migrated to LLMStub (#5450 population note, module docstring): this
-    test's subject is ``_run_router_loop``'s OWN exception-handling
-    structure — does the finally chain still fire when ``run_turn`` raises
-    ANY exception — independent of WHY it raised. #5382/#5461's LLMStub
-    raise mode (``raise_for="compaction"``) is deliberately narrow: it
-    discriminates a compaction call by its FIXED system-message constant
-    (``COMPACTION_SYSTEM_PROMPT``) — there is no equivalent discriminator
+    Not YET migrated to LLMStub (#5450 population note, module docstring):
+    at #5461, the raise mode was narrowly compaction-specific
+    (``raise_for="compaction"``, discriminated by the FIXED
+    ``COMPACTION_SYSTEM_PROMPT`` system message) — no discriminator existed
     for "the ordinary chat completion path, but make it raise a plain
-    RuntimeError", and adding one would be inventing a second, broader
-    raise mode for a single test, not migrating onto an existing one. The
-    private ``run_turn`` replacement here is the correct, permanent form —
-    the general-exception-resilience property it tests has nothing to do
-    with the LLM boundary specifically."""
+    RuntimeError". #5474 generalizes ``raise_for`` past compaction-only;
+    once it lands this should be tried for real. Production evidence this
+    is likely reachable: ``router_loop_terminated_by_exception`` fires 83
+    times in reyn-self (79 RateLimitError / 4 InternalServerError) — a real
+    provider exception genuinely does propagate out of ``run_turn`` in
+    production, so the same raise-based mechanism very plausibly reaches
+    this shape too. Architect correction (#5450, 2026-08-29): "the LLM
+    boundary is irrelevant to this property" is NOT itself an exemption —
+    only a MEASURED inability to reproduce this exact raise through the
+    real boundary (the same bar #5462's swallow-mode non-addition met)
+    would make the private replacement here permanent rather than
+    provisional."""
     session = make_session(agent_name="turn-finally-failure")
     events = collect_events(session._audit_events)
     calls: list[str] = []
