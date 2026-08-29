@@ -1337,6 +1337,25 @@ hooks:
 | `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A hook shell's floor carries no sensitive-read deny-list by default (#3901 — `read_deny_paths`'s dataclass default is now empty; the MCP server default is a deliberate opt-in exception, not the hook floor). Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 
+**Interpolating a project path — `${REYN_PROJECT_DIR}`, not an absolute
+path.** `reyn.yaml`'s `hooks:` block (this layer only — `exec`/`exec_capture`
+argv, `write_paths`) expands reyn's own `${REYN_PROJECT_DIR}` token to this
+project's root before running. Prefer it over a hardcoded absolute path
+for anything **inside** the project (`exec: ["${REYN_PROJECT_DIR}/scripts/
+lint.sh"]`, `write_paths: ["${REYN_PROJECT_DIR}/build"]`) — the config then
+still works if the project directory ever moves or is checked out
+elsewhere. An absolute path stays correct here only for something
+genuinely **outside** the project (a sibling repo, a system tool). `${REYN_
+AGENT_NAME}` is **not** available at this layer — this file is read once,
+project-wide, before any agent is resolved, so there is no per-agent value
+to supply; a per-agent value belongs in that agent's own `.reyn/agents/
+<name>/hooks.yaml` instead. A `${REYN_AGENT_NAME}` left in `reyn.yaml`
+itself resolves to an empty string with a warning naming it explicitly
+(#5351) — do **not** silence that warning by exporting
+`REYN_AGENT_NAME` as an environment variable; that pins the whole shared
+config to whichever agent's name happens to be in the process's
+environment, with no further signal.
+
 **`wake` / `push_when` truthiness, and why a typo fails differently
 depending on the field.** A rendered `wake`/`push_when`/`session` string
 is converted to bool by case-insensitive lookup: `true`/`1`/`yes`/`on` →
