@@ -1915,3 +1915,174 @@ def test_5531_tail_side_growth_orders_summary_before_offered_slice(tmp_path) -> 
         f"condition③ (tail-side growth): the summary element must precede "
         f"offered content in messages — got order {first_order!r}"
     )
+
+
+def test_5531_no_interleaving_tail_condition_stays_false_once_exhausted(tmp_path) -> None:
+    """Tier 2: #5531 investigation finding (architect BLOCKING #2, PR #5533,
+    head a78156291) — WITHIN one retry_loop call, once Phase 1's own
+    condition (tail token count > tail_min) goes False, it never becomes
+    True again. This is the finding that makes the 2-case order rule in
+    the two tests above sufficient — no interleaving means
+    `_raw_middle_grew_from_head` never needs to flip back to False once
+    True, so a 3-way "older-unsummarized / summary / newer-unsummarized"
+    sandwich order is never actually reachable.
+
+    Observable witness (no private-state read): tail's own token count, as
+    `main_call` receives it, is monotonically NON-INCREASING across every
+    call this retry_loop invocation makes — the only way Phase 1's
+    condition could go True again after going False is for something to
+    have grown tail back up, which this asserts never happens. Drives a
+    REAL retry_loop through BOTH Phase 1 (tail exhausts first) and Phase 2
+    (head shrinks next), so the assertion spans the exact transition
+    condition③ depends on, not just one phase in isolation."""
+    from reyn.services.compaction.engine import ChatSummary, ComputedBudgets
+
+    class _BothPhasesEngine:
+        def __init__(self) -> None:
+            self.budgets = ComputedBudgets(
+                main_pool=100_000, head_budget=10, body_budget=500,
+                tail_budget=10, new_msg_budget=1_000,
+                B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+                section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                              "session_user_facts": 50, "artifacts_referenced": 175},
+            )
+            self._events = EventLog()
+            self._T_comp_SP = 100
+
+        async def compact(self, input_chunk, *, covers_through=None):
+            return ChatSummary(topic_arc="stub", covers_through_seq=0)
+
+    cfg = _make_cfg()
+    engine = _BothPhasesEngine()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    # Both tail and head start FAR over their tiny (10-token) budgets, so
+    # Phase 1 fires repeatedly until tail is exhausted, THEN Phase 2 fires
+    # for head — the exact transition this test observes.
+    tail = _turns(["t" * 400] * 6)
+    head = _turns(["h" * 400] * 6)
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "hi", "seq": 99}
+
+    tail_token_history: list[int] = []
+
+    async def _main_call(**kwargs):
+        t = kwargs["tail"]
+        h = kwargs["head"]
+        tail_tokens = _estimate_tokens_list(t, "test-model", use_chars4=True)
+        head_tokens = _estimate_tokens_list(h, "test-model", use_chars4=True)
+        tail_token_history.append(tail_tokens)
+        if head_tokens > 10 or tail_tokens > 10:
+            raise ContextOverflowError("simulated overflow")
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
+
+    asyncio.run(retry_loop(
+        SP="system",
+        head=head,
+        summary=None,
+        raw_middle=raw_middle,
+        tail=tail,
+        new_msg=new_msg,
+        cfg=cfg,
+        model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_main_call,
+        max_iterations=30,
+    ))
+
+    assert any(
+        later < earlier for earlier, later in zip(tail_token_history, tail_token_history[1:])
+    ), (
+        "expected tail to actually shrink at least once (Phase 1 firing) "
+        f"during this call — got {tail_token_history!r}"
+    )
+    for earlier, later in zip(tail_token_history, tail_token_history[1:]):
+        assert later <= earlier, (
+            "condition③'s no-interleaving finding: tail's token count "
+            "must never increase within one retry_loop call (Phase 1's "
+            "own condition must stay False once it first goes False) — "
+            f"got history {tail_token_history!r}"
+        )
+
+
+def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
+    """Tier 2: #5531 condition④ (architect BLOCKING #3, PR #5533, head
+    a78156291) — HistoryChunkToCompact's own docstring contract is "AT
+    MOST ONE" element carries `role == SUMMARY_MESSAGE_ROLE`; with two,
+    which one is the actual prior summary becomes ambiguous. Drives a REAL
+    retry_loop through several overflow-recovery iterations (so `messages`
+    is rebuilt from scratch, with a real running `summary`, on every
+    compact() call) and asserts every single one of those calls' messages
+    carries at most one summary-role element — not merely that ONE
+    observed call happens to (the earlier order tests above only inspect
+    `captured_orders[0]`; this one inspects every call)."""
+    from reyn.services.compaction.engine import (
+        SUMMARY_MESSAGE_ROLE,
+        ChatSummary,
+        ComputedBudgets,
+    )
+
+    summary_role_counts: list[int] = []
+
+    class _CountingEngine:
+        def __init__(self) -> None:
+            self.budgets = ComputedBudgets(
+                main_pool=100_000, head_budget=10, body_budget=500,
+                tail_budget=10, new_msg_budget=1_000,
+                B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+                section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                              "session_user_facts": 50, "artifacts_referenced": 175},
+            )
+            self._events = EventLog()
+            self._T_comp_SP = 100
+
+        async def compact(self, input_chunk, *, covers_through=None):
+            summary_role_counts.append(sum(
+                1 for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
+            ))
+            return ChatSummary(topic_arc="stub", covers_through_seq=0)
+
+    cfg = _make_cfg()
+    engine = _CountingEngine()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    tail = _turns(["t" * 400] * 6)
+    head = _turns(["h" * 400] * 6)
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "hi", "seq": 99}
+    prior_summary = {"topic_arc": "already-compacted earlier span", "covers_through_seq": 1}
+
+    async def _main_call(**kwargs):
+        t = kwargs["tail"]
+        h = kwargs["head"]
+        tail_tokens = _estimate_tokens_list(t, "test-model", use_chars4=True)
+        head_tokens = _estimate_tokens_list(h, "test-model", use_chars4=True)
+        if head_tokens > 10 or tail_tokens > 10:
+            raise ContextOverflowError("simulated overflow")
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
+
+    asyncio.run(retry_loop(
+        SP="system",
+        head=head,
+        summary=prior_summary,
+        raw_middle=raw_middle,
+        tail=tail,
+        new_msg=new_msg,
+        cfg=cfg,
+        model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_main_call,
+        max_iterations=30,
+    ))
+
+    assert summary_role_counts, "expected at least one compact() call"
+    for count in summary_role_counts:
+        assert count <= 1, (
+            f"HistoryChunkToCompact.messages must carry AT MOST ONE "
+            f"{SUMMARY_MESSAGE_ROLE!r}-role element — got {count} in one "
+            f"call; full history {summary_role_counts!r}"
+        )
