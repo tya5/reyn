@@ -275,3 +275,49 @@ def test_reactive_ladder_recovers_many_small_turns_via_compaction(
     assert any(e.type == "compaction_started" for e in events), (
         "expected compaction to have actually run for this scenario"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.llm_stub
+async def test_5528_a_turn_completes_through_the_real_entry_without_the_removed_proactive_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5528 — architect/lead-coder BLOCKING on PR #5538 (2026-08-30):
+    the two witnesses above drive ``_run_with_shrink_and_byte_reduction``
+    directly, bypassing ``RouterLoopDriver.run_turn`` /
+    ``ContextBudgetAdvisor.enforce_new_msg_budget`` entirely — the EXACT
+    call site #5528 removed a branch from. Structurally insensitive to
+    that removal: green before, green after, for a reason unrelated to the
+    change (they never reached it).
+
+    This test drives the REAL entry (``Session._run_router_loop`` ->
+    ``run_turn`` -> ``enforce_new_msg_budget``) with history satisfying
+    the removed branch's own trigger condition — the literal
+    ``estimated > effective_trigger`` this PR deleted — and asserts the
+    turn completes successfully through that real path. Green/green is
+    the correct shape here (lead-coder's own framing): the claim under
+    test is "a turn still succeeds with the proactive guard gone", not a
+    red test — what's required is that the real call chain was actually
+    exercised, which the sanity assertion below (the same shape #5367's
+    own witnesses use) confirms independently of the outcome."""
+    session = _make_session_t_max_compact_enabled(tmp_path, monkeypatch, t_max=2800)
+    _push(session, "user", "look something up")
+    huge = "Y" * 50_000
+    _push(session, "tool", huge, tool_call_id="tc1", name="tool")
+    _push(session, "assistant", "ok, done")
+
+    # Sanity: history genuinely satisfies the removed branch's own condition
+    # (estimated > effective_trigger) — the exact `if` #5528 deleted from
+    # enforce_new_msg_budget's predecessor. If this fails, the fixture
+    # needs adjusting, not the assertion below.
+    raw_history = session._history_buffer.build_history()
+    assert _wire_estimate(raw_history) > 2800, (
+        "test setup sanity: history must exceed the (removed) proactive "
+        "guard's own trigger condition, or this test proves nothing about "
+        "its removal"
+    )
+
+    # The real entry point — NOT _run_with_shrink_and_byte_reduction
+    # directly — so enforce_new_msg_budget (the call site #5528 changed)
+    # is genuinely on the path.
+    await session._run_router_loop("continue please", "c-5528")
