@@ -131,12 +131,24 @@ def _is_reread_note(first_line: str) -> bool:
 
 
 def _has_blocking_comment(comment_bodies: "list[str]") -> bool:
-    """True iff ANY comment's first line matches the `BLOCKING (head <sha>)`
-    shape (reused from `check_open_blocking_checkboxes.py` — the same form
-    check that excludes prose merely discussing the word, #5318's own
-    false-positive fix)."""
+    """True iff ANY comment's first non-empty line matches the `BLOCKING
+    (head <sha>)` shape (reused from `check_open_blocking_checkboxes.py`
+    — the same form check that excludes prose merely discussing the
+    word, #5318's own false-positive fix).
+
+    #5522: reads `_blocking._first_nonempty_line`/`_undecorated`, not
+    the old `_first_line` (renamed) with no decoration-stripping — this
+    gate shares the EXACT same real incident #5522 fixed one level up:
+    a BLOCKING comment whose SHA was backtick-wrapped would make
+    `_BLOCKING_MARKER` not match here EITHER, so THIS gate would
+    silently conclude "no BLOCKING comment on this PR" and skip its own
+    TESTS-READ/RE-READ requirement entirely — the #5453 protection
+    quietly opting itself out on the exact same decoration that broke
+    the gate it is layered on top of."""
     return any(
-        _blocking._BLOCKING_MARKER.search(_blocking._first_line(body))
+        _blocking._BLOCKING_MARKER.search(
+            _blocking._undecorated(_blocking._first_nonempty_line(body)),
+        )
         for body in comment_bodies
     )
 

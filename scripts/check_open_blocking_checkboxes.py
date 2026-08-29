@@ -34,7 +34,7 @@ points on every PR that follows the existing convention and pass
 vacuously — closing the deletion bypass by opening a much bigger one
 (silence via omission, on 100% of PRs, not the rare deliberate edit).
 
-## The two conditions, both required (A ∨ B)
+## The three conditions (A ∨ B ∨ C)
 
 **Condition A (comment)**: a comment whose first line matches the
 `BLOCKING (head <sha>)` shape is unresolved unless some LATER comment's
@@ -59,6 +59,28 @@ rewrite that removes the line entirely satisfies neither B-1 (not open)
 nor B-2 (not checked, there is nothing left to check). A alone lets
 omission through (see above). Only A ∨ B closes what #5311 measured
 without opening a new hole in the direction just closed.
+
+**Condition C (near-miss, #5522)**: a comment whose FIRST NON-EMPTY LINE
+names `BLOCKING`/`BLOCKING-CLEARED` but does not parse as either marker
+regex is RED — a THIRD failure mode neither A nor B could see. Real
+incident (lead-coder, 2026-08-29): a BLOCKING comment's first line read
+``**BLOCKING (head `9862413f0`)**`` — the backtick around the SHA broke
+`_BLOCKING_MARKER`'s match, and the gate said nothing at all for 12
+minutes; the PR only stayed red by the accident of an unrelated
+BLOCKING from a different reviewer. Before #5522, "no marker on this
+comment" and "a marker written wrong" were the same silence — condition
+C makes the second one loud. Scoped to the SAME first-non-empty-line
+surface condition A's own regexes read (never the whole body — a
+mid-body mention, including this docstring's OWN repeated use of the
+word, must never trip it).
+
+Same PR (#5522) also strips backtick/`*` decoration from a line before
+either marker regex runs (`_undecorated`) — the root cause of the
+specific incident above, not just its silence. Aligns this gate with
+`check_tests_read_names_its_tree.py`'s own already-permissive `_SHA`
+regex (architect ruling: "許容側が自然" — people decorate SHAs and
+keywords by hand, a machine stripping it once is cheaper than asking
+every writer never to).
 
 ## What this does NOT buy (disclosed, not hidden)
 
@@ -145,6 +167,40 @@ _CHECKED_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[xX]\][ \t]*(?:\*\*[ \t]*)*�
 _BLOCKING_MARKER = re.compile(r"\bBLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
 _CLEARED_MARKER = re.compile(r"\bBLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
 
+#: #5522 — a bare word check, deliberately NOT anchored to the marker's own
+#: "(head <sha>)" shape: this is what NEAR-MISS DETECTION runs against, so
+#: it must catch exactly the cases the marker regexes above miss. Matches
+#: inside "BLOCKING-CLEARED" too (the `-` after "BLOCKING" is a non-word
+#: char, satisfying `\b` on both sides of the bare word) — deliberate, not
+#: an oversight: a decorated BLOCKING-CLEARED that fails _CLEARED_MARKER
+#: must ALSO be caught, and this one check does both without a second
+#: pattern. Case-sensitive, matching the marker regexes' own
+#: IGNORECASE-dropped posture (module docstring: prose is more likely to
+#: write "blocking" lowercase than a deliberate marker is).
+_BARE_WORD = re.compile(r"\bBLOCKING\b")
+
+#: #5522 (architect ruling on the issue thread): markdown decoration —
+#: backtick code-spans and `**`/`*` emphasis — is stripped from a line
+#: BEFORE either marker regex runs against it, aligning this gate's
+#: previously-strict posture with `check_tests_read_names_its_tree.py`'s
+#: own already-permissive one (that gate's `_SHA` regex tolerates a
+#: backtick between "head" and the hex run structurally; this one's
+#: `\s*` did not). "Align to the permissive side" (architect, quoting
+#: the reasoning): people decorate SHAs and keywords when they write by
+#: hand (lead-coder's own #5517 BLOCKING, architect's own separate
+#: instance, both real, both this same night) — a machine stripping
+#: decoration once is cheaper than asking every human writer never to.
+#: Precedent: `check_claude_md_doc_overlap.py` (#4928) already strips
+#: markdown decoration before tokenizing for the same reason. Neither
+#: a SHA nor the BLOCKING/BLOCKING-CLEARED keywords themselves ever
+#: contain a backtick or asterisk, so stripping cannot turn a
+#: non-marker line into a false-positive match.
+_DECORATION = re.compile(r"[`*]")
+
+
+def _undecorated(line: str) -> str:
+    return _DECORATION.sub("", line)
+
 
 def _normalize(text: str) -> str:
     """Whitespace-collapsed, stripped — the same "normalization is space-
@@ -153,8 +209,21 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _first_line(text: str) -> str:
-    return text.split("\n", 1)[0]
+def _first_nonempty_line(text: str) -> str:
+    """The comment's first non-empty line — the SAME scope both the
+    marker regexes and #5522's near-miss check read (architect ruling:
+    "marker規則が既に読んでいる面と同じ面に限る" — near-miss detection
+    must never widen the surface a formal marker match already uses,
+    or it would fire on prose anywhere the marker regex is not also
+    looking). A literal ``text.split("\\n", 1)[0]`` (this function's
+    pre-#5522 shape) would silently miss a comment that opens with a
+    blank line before its marker — a real gap this rename also closes,
+    not just the near-miss feature's own scoping."""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _identifying_line(comment_body: str) -> str:
@@ -226,13 +295,13 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # an unresolved point with no deliberate action at all, worse than
     # the deletion bypass #5311 measured.
     for i, blocking_body in enumerate(comment_bodies):
-        blocking_match = _BLOCKING_MARKER.search(_first_line(blocking_body))
+        blocking_match = _BLOCKING_MARKER.search(_undecorated(_first_nonempty_line(blocking_body)))
         if not blocking_match:
             continue
         identifying = _identifying_line(blocking_body)
         resolved = False
         for later_body in comment_bodies[i + 1:]:
-            cleared_match = _CLEARED_MARKER.search(_first_line(later_body))
+            cleared_match = _CLEARED_MARKER.search(_undecorated(_first_nonempty_line(later_body)))
             if not cleared_match:
                 continue
             cleared_sha = cleared_match.group(1)
@@ -250,6 +319,42 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
                 f"'BLOCKING-CLEARED (head {head[:9] or '<sha>'})' whose body "
                 "contains that line."
             )
+
+    # Condition C (#5522) — near-miss detection. lead-coder's own real
+    # incident: a BLOCKING comment's first line read
+    # "**BLOCKING (head `9862413f0`)**" — the backtick around the SHA
+    # made `_BLOCKING_MARKER` NOT match, and the gate said nothing at
+    # all for 12 minutes; the PR only stayed red because of an
+    # UNRELATED BLOCKING from another reviewer. "Marker not found" and
+    # "marker written wrong" were indistinguishable failure modes.
+    #
+    # Scope is deliberately the SAME first-non-empty-line surface
+    # condition A's own marker regexes read — never the whole comment
+    # body (architect ruling: "契機を『本文にBLOCKINGの語が在る』にしな
+    # いでください — 形式を論じる散文が全部鳴ります", concretely this
+    # issue's OWN body and #5517's review comments, both of which
+    # discuss the word "BLOCKING" without ever intending it as a
+    # marker). A near-miss is real only when the word appears on the
+    # SAME line a marker would have to be on to be read at all.
+    for comment_body in comment_bodies:
+        first_line = _first_nonempty_line(comment_body)
+        if not first_line:
+            continue
+        undecorated_first_line = _undecorated(first_line)
+        if not _BARE_WORD.search(undecorated_first_line):
+            continue  # no BLOCKING/BLOCKING-CLEARED word on this line at all
+        if _BLOCKING_MARKER.search(undecorated_first_line) or _CLEARED_MARKER.search(
+            undecorated_first_line,
+        ):
+            continue  # a real marker, already handled by condition A above
+        findings.append(
+            "RED (near-miss) — a comment's first line names BLOCKING/"
+            "BLOCKING-CLEARED but does not parse as the marker shape "
+            f"'BLOCKING(-CLEARED) (head <sha>)': {first_line!r}. This "
+            "comment was NOT read as a blocking point or a clear — if "
+            "you meant it as one, fix the shape; if you meant prose "
+            "discussing the word, keep it off the comment's first line."
+        )
 
     if findings:
         return 1, findings
