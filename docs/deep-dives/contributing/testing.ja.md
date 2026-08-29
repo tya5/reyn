@@ -156,9 +156,19 @@ Tier 1〜3 に明確に位置づけられないテストは、ほぼ例外なく
 
 ## Mock vs Fake
 
-LLM 依存テストは必ず Fake（`LLMReplay`）を使う必要があります。Mock は禁止です。
+LLM 依存テストは必ず Fake を使う必要があります。Mock は決して使いません。
 **この禁止は litellm 固有ではありません — テストが構築するあらゆる collaborator（callable
 と plain な data/state object の両方）に適用されます**（下記「[data/state object の fake](#datastate-object-の-fake-同じ禁止より鋭い失敗モード)」参照）。litellm/`LLMReplay` は単に、このリポジトリの規範的な実例が存在する場所です。
+
+どちらの Fake を使うかは、テストがどの問いを立てるかで決まります。どの
+Tier に落ちるかでは決まりません（Tier は選択の結果であって、選択の基準
+ではありません）: model 自身の出力がテスト対象なら `LLMReplay` を使う。
+主題が turn 周りの loop/wiring の振る舞いで、completion 自身の内容に
+assert しないなら `LLMStub` を使う（[LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)
+参照）。**completion 自身の内容に assert する test は `LLMStub` を使っては
+いけません** — `llm_stub.py` 自身の module docstring が主張する内容
+（"must not assert on the completion's own content … not Tier 3"）と同じ
+です。
 
 ### LLMStub — 2 本目の Fake
 

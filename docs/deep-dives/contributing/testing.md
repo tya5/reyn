@@ -455,11 +455,21 @@ obligation as any other Fake in this doc, not a lighter one.
 
 ## Mock vs Fake
 
-LLM-dependent tests **must** use the Fake (`LLMReplay`). Mocks are forbidden.
+LLM-dependent tests **must** use a Fake, never a mock.
 **This ban is not litellm-specific — it applies to every collaborator a test
 constructs, callables and plain data/state objects alike** (see
 [Faking a data/state object](#faking-a-datastate-object-same-ban-sharper-failure-mode)
 below); litellm/`LLMReplay` is simply where the repo's normative example lives.
+
+Which Fake depends on the question the test asks, not on which Tier it lands
+in (the Tier is a consequence of that choice, not the criterion for making
+it): if the model's own output is the subject under test, use `LLMReplay`;
+if the subject is loop/wiring behavior around a turn and the test does not
+assert on the completion's own content, use `LLMStub` (see
+[LLMStub — the second Fake](#llmstub-the-second-fake) below). **A test that
+asserts on the completion's own content must not use `LLMStub`** — the same
+claim `llm_stub.py`'s own module docstring makes ("must not assert on the
+completion's own content ... not Tier 3").
 
 ### LLMStub — the second Fake
 
