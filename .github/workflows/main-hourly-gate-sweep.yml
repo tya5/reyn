@@ -41,12 +41,43 @@ name: main hourly gate sweep
 # protection) — this runs on a schedule independent of any one PR, so
 # folding its result into a PR's merge gate would block merges on an
 # unrelated periodic run.
+#
+# #5479 (architect, self-correcting #5435/#5466's own acceptance basis):
+# `schedule` alone measured 2.7-12.8h between runs (GitHub's scheduler
+# under load), not the ~1h a reader of "hourly" would assume — the
+# composition-gap witness this workflow exists to provide could lag a
+# real break by up to ~13h. `push: branches: [main]` is ADDED below
+# (schedule stays, as the backstop for a run GitHub's scheduler drops
+# entirely) so the same 6-script sweep also runs once per merge, with no
+# delay. Cost: 1 extra workflow run per merge to main, a SINGLE job
+# running 6 scripts in sequence (never a matrix) — a different order of
+# magnitude from #4239's saturation concern, and #4257's owner ruling
+# ("don't touch the 5 existing per-PR workflows, keep this in one new
+# file") is untouched — only this one file's own trigger changes.
+# `pytest` itself (test.yml, `on: push: branches: [main]`) already runs
+# with no delay; only these 6 path-scoped, whole-tree gates were ever
+# subject to the ~13h lag — never read this fix as "main could go a
+# half-day without any signal at all".
+#
+# Deliberately NOT renamed in this PR (architect, verbatim): "hourly" is
+# already inaccurate now, but the rename lands together with #5480's own
+# step migration, in ONE PR — splitting them would leave a half-accurate
+# name standing for the gap between, and #5480 already touches repo
+# config inspection, so settling "what does this sweep actually mean"
+# once, at that point, costs one PR instead of two.
 on:
   schedule:
     # GitHub's own scheduler is best-effort under load — "roughly hourly",
     # not "always at :00". See the module comment above for why that's fine
-    # here (this is a composition-gap witness, not a merge gate).
+    # here (this is a composition-gap witness, not a merge gate) — kept as
+    # the backstop for a run GitHub's scheduler drops entirely, alongside
+    # `push` below (#5479).
     - cron: "0 * * * *"
+  # #5479: runs the same 6-script sweep once per merge to main, with no
+  # delay — `schedule` alone could lag a real composition break by up to
+  # ~13h (measured). See the module comment above for the full account.
+  push:
+    branches: [main]
   workflow_dispatch: {}
 
 permissions:
