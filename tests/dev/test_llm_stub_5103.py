@@ -12,11 +12,21 @@ catch the drift. This test pins OUR stub's own construction directly,
 independent of whatever litellm.ModelResponse happens to default to today.
 
 #5382 addition: the ``raise_for="compaction"``/``cause=`` mode's own 5
-witnesses (architect's table) — 1/2/4/5 below; witness 3 (selectivity: the
-SAME run's main router call still succeeds) needs a real Session/
-CompactionController, not just ``_handle`` called directly, and lives in
-``tests/runtime/test_5296_pr2_byte_reduction_same_turn_retry.py`` instead
-(the file this mode was built to unblock)."""
+witnesses (architect's table). Witness 3 (selectivity: the SAME run's
+main router call still succeeds) is
+``test_raise_for_compaction_leaves_the_main_router_call_untouched_end_to_end``
+in ``tests/dev/test_5382_llm_stub_compaction_selectivity.py`` — a SEPARATE
+file, deliberately (lead-coder BLOCKING, #5461: an earlier revision of
+this docstring claimed this witness lived in
+``test_5296_pr2_byte_reduction_same_turn_retry.py``; it did not — the
+unit-level ``test_raise_for_compaction_does_not_touch_a_non_compaction_
+call`` below uses a HAND-WRITTEN system-message string, which proves
+nothing about what the REAL router actually places there. Once written
+here, it needed a real Session/turn driving `force_compact_now`, and was
+found to only pass co-located in its OWN file — some cross-test/module
+interaction in THIS file's larger suite made the same code silently
+swallow the raise; see that file's own module docstring for the
+instrumented finding)."""
 from __future__ import annotations
 
 import pytest
@@ -171,3 +181,5 @@ def test_raise_for_and_cause_must_be_given_together() -> None:
         LLMStub(raise_for="compaction")
     with pytest.raises(ValueError):
         LLMStub(cause="rate_limit")
+
+
