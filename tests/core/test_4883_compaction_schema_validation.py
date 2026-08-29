@@ -71,8 +71,7 @@ def _engine(**cfg_kwargs) -> "tuple[CompactionEngine, list]":
 
 def _chunk() -> HistoryChunkToCompact:
     return HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "real content", "seq": 1}],
+        messages=[{"role": "user", "text": "real content", "seq": 1}],
         section_token_caps={},
     )
 
@@ -422,7 +421,7 @@ def test_partial_slices_eventually_cover_every_turn_with_no_gap(monkeypatch) -> 
         # driver below queues each chunk right before calling compact(),
         # so the next queued chunk IS the one this call was given.
         chunk = seen_inputs.pop(0)
-        seqs = [t["seq"] for t in chunk.new_turns]
+        seqs = [t["seq"] for t in chunk.messages]
         return _resp(json.dumps({
             "new_turn_seqs": seqs,
             "topic_arc": f"covers {seqs}",
@@ -434,8 +433,7 @@ def test_partial_slices_eventually_cover_every_turn_with_no_gap(monkeypatch) -> 
 
     slices = [
         HistoryChunkToCompact(
-            previous_summary=None,
-            new_turns=[{"role": "user", "text": "t", "seq": s}],
+            messages=[{"role": "user", "text": "t", "seq": s}],
             section_token_caps={},
         )
         for s in (1, 2, 3)
@@ -443,7 +441,7 @@ def test_partial_slices_eventually_cover_every_turn_with_no_gap(monkeypatch) -> 
     covered: list[int] = []
     for chunk in slices:
         seen_inputs.append(chunk)
-        summary = asyncio.run(engine.compact(chunk, covers_through=chunk.new_turns[-1]["seq"]))
+        summary = asyncio.run(engine.compact(chunk, covers_through=chunk.messages[-1]["seq"]))
         covered.append(summary.covers_through_seq)
 
     assert covered == [1, 2, 3], (

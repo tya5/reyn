@@ -55,8 +55,7 @@ _SUMMARY_CONTENT = {
 
 def _chunk() -> HistoryChunkToCompact:
     return HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        messages=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
 

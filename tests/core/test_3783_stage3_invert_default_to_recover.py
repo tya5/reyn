@@ -151,12 +151,12 @@ async def test_unrecognised_exception_recovers_when_shrinking_fixes_it(tmp_path)
     # keyword predicate) when the input is "too large" (mimics an output cut
     # off by an output-token cap); succeeds once the input has shrunk below it.
     async def _compact_fn(input_chunk: HistoryChunkToCompact):
-        if sum(1 for _ in input_chunk.new_turns) > 2:
+        if sum(1 for _ in input_chunk.messages) > 2:
             json.loads("{'unterminated")  # raises json.JSONDecodeError
         return ChatSummary(
             topic_arc="stub summary",
             covers_through_seq=max(
-                (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+                (t.get("seq", 0) for t in input_chunk.messages if isinstance(t, dict)),
                 default=0,
             ),
         )

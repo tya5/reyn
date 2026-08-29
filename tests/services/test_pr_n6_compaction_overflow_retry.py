@@ -411,7 +411,7 @@ class _OverflowingEngine:
         return ChatSummary(
             topic_arc="stub summary",
             covers_through_seq=max(
-                (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+                (t.get("seq", 0) for t in input_chunk.messages if isinstance(t, dict)),
                 default=0,
             ),
         )
@@ -1440,7 +1440,7 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
 
         async def compact(self, input_chunk, *, covers_through=None):
             self.compact_calls += 1
-            turn = input_chunk.new_turns[0]
+            turn = input_chunk.messages[0]
             if turn.get("content") == "OVERSIZED_TOOL_RESULT":
                 raise _FakeStatusError("compact 413", status_code=413)
             from reyn.services.compaction.engine import ChatSummary
@@ -1562,7 +1562,7 @@ def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
             return ChatSummary(
                 topic_arc="stub",
                 covers_through_seq=max(
-                    (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+                    (t.get("seq", 0) for t in input_chunk.messages if isinstance(t, dict)),
                     default=0,
                 ),
             )
@@ -1748,3 +1748,87 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
     message = str(excinfo.value)
     assert "413" in message
     assert "single raw_middle turn alone" in message
+
+
+def test_5531_head_side_growth_orders_offered_slice_before_summary(tmp_path) -> None:
+    """Tier 2: #5531 condition③ — once raw_middle has grown from the HEAD
+    side (Phase 2: head is over its token minimum, tail is not), the
+    offered slice is chronologically OLDER than the running summary, so
+    ``HistoryChunkToCompact.messages`` must place the offered slice BEFORE
+    the summary element — the reverse of the tail-side (Phase 1) order a
+    prior summary always used before this fix. Drives a REAL retry_loop
+    with head far over a tiny budget and tail already under a generous
+    one, so Phase 2 fires on the very first overflow with no Phase 1
+    activity to confound the order this test is isolating."""
+    from reyn.services.compaction.engine import ChatSummary, ComputedBudgets
+
+    captured_orders: list[list[str]] = []
+
+    class _HeadShrinkEngine:
+        def __init__(self) -> None:
+            self.budgets = ComputedBudgets(
+                main_pool=100_000, head_budget=10, body_budget=500,
+                tail_budget=1_000, new_msg_budget=1_000,
+                B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+                section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                              "session_user_facts": 50, "artifacts_referenced": 175},
+            )
+            self._events = EventLog()
+            self._T_comp_SP = 100
+
+        async def compact(self, input_chunk, *, covers_through=None):
+            # Record the ROLE sequence of this call's messages — "summary"
+            # for the wrapped prior summary, "turn" for an ordinary
+            # offered-slice element — witnessing order via the same public
+            # discriminator production code reads, never a private field.
+            captured_orders.append([
+                "summary" if m.get("role") == "summary" else "turn"
+                for m in input_chunk.messages
+            ])
+            return ChatSummary(topic_arc="stub", covers_through_seq=0)
+
+    cfg = _make_cfg()
+    engine = _HeadShrinkEngine()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    # head is FAR over head_budget=10 tokens (4 turns * ~100 tokens each,
+    # chars//4); tail is a single tiny turn, well under tail_budget=1_000
+    # — Phase 1 (tail shrink) never fires, isolating Phase 2 (head shrink).
+    head = _turns(["h" * 400] * 4)
+    tail = _turns(["t"])
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "hi", "seq": 99}
+    prior_summary = {"topic_arc": "already-compacted earlier span", "covers_through_seq": 1}
+
+    call_counts: list[int] = []
+    call_states: list[tuple] = []
+    # Overflow once (forces the Phase-2 head shrink below), then succeed —
+    # the compact() call this test is inspecting happens on the NEXT
+    # iteration, once raw_middle (freshly grown from head) is non-empty.
+    main_call = _make_shrink_call_count_main_call(1, call_counts, call_states)
+
+    asyncio.run(retry_loop(
+        SP="system",
+        head=head,
+        summary=prior_summary,
+        raw_middle=raw_middle,
+        tail=tail,
+        new_msg=new_msg,
+        cfg=cfg,
+        model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=main_call,
+        max_iterations=8,
+    ))
+
+    assert captured_orders, "expected at least one compact() call after Phase 2 fired"
+    first_order = captured_orders[0]
+    assert "summary" in first_order and "turn" in first_order, (
+        f"expected both a summary element and offered turns in the first "
+        f"post-Phase-2 compact() call, got {first_order!r}"
+    )
+    assert first_order.index("turn") < first_order.index("summary"), (
+        f"condition③ (head-side growth): offered content must precede the "
+        f"summary element in messages — got order {first_order!r}"
+    )

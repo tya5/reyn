@@ -127,8 +127,7 @@ def test_compact_does_not_clear_the_token_cache(monkeypatch) -> None:
         cfg=CompactionConfig(use_chars4_estimate=False),
     )
     chunk = HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        messages=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
     asyncio.run(engine.compact(chunk, covers_through=1))
@@ -167,7 +166,7 @@ def test_repeated_estimate_of_unchanged_text_is_a_cache_hit_across_compactions(m
         cfg=CompactionConfig(use_chars4_estimate=False),
     )
     chunk = HistoryChunkToCompact(
-        previous_summary=None, new_turns=[{"role": "user", "text": "t1", "seq": 1}],
+        messages=[{"role": "user", "text": "t1", "seq": 1}],
         section_token_caps={},
     )
     asyncio.run(engine.compact(chunk, covers_through=1))

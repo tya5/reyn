@@ -185,13 +185,16 @@ class _BMGatedEngine:
             ChatSummary,
             CompactionOverflowError,
         )
-        prev = json.dumps(input_chunk.previous_summary or {}, ensure_ascii=False)
-        turns = json.dumps(input_chunk.new_turns, ensure_ascii=False, default=str)
-        total = estimate_tokens(prev + turns, _MODEL, use_chars4=True)
+        # #5531: previous_summary/new_turns folded into one ordered
+        # `messages` list — everything in it (including any wrapped prior
+        # summary) counts toward the same token estimate the old
+        # prev+turns concatenation did.
+        turns = json.dumps(input_chunk.messages, ensure_ascii=False, default=str)
+        total = estimate_tokens(turns, _MODEL, use_chars4=True)
         if total > self.budgets.B_M:
             raise CompactionOverflowError(f"chunk {total} tok > B_M {self.budgets.B_M}")
         seq = max(
-            (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+            (t.get("seq", 0) for t in input_chunk.messages if isinstance(t, dict)),
             default=0,
         )
         return ChatSummary(topic_arc="folded", covers_through_seq=seq)

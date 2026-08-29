@@ -11,10 +11,13 @@ two emit sites for the same kind).
 
 ``new_turn_count``/``had_previous`` are genuinely derivable from
 ``input_chunk`` alone for EITHER caller. ``covers_through_seq`` is not:
-the controller's own ``new_turns`` carry a real ``seq`` per turn
-(``_turn_to_compactor_input``); ``retry_loop``'s own ``new_turns`` are
-litellm wire dicts (``_serialise_turn``'s output) with no ``seq`` field at
-all. ``compact()`` therefore takes ``covers_through`` as a REQUIRED
+the controller's own turn elements (in ``input_chunk.messages``) carry a
+real ``seq`` per turn (``_turn_to_compactor_input``); ``retry_loop``'s own
+turn elements are litellm wire dicts (``_serialise_turn``'s output) with
+no ``seq`` field at all (#5531 renamed the field from ``new_turns`` to a
+single ordered ``messages`` list — see ``HistoryChunkToCompact``'s own
+docstring — but this seq-shape difference between the two callers is
+unchanged). ``compact()`` therefore takes ``covers_through`` as a REQUIRED
 keyword-only argument (no default — an omission is a mypy error at the
 call site, never a silently-accepted null) typed
 ``CoversThrough = int | SeqUnavailable``, so a consumer of the emitted
@@ -58,7 +61,7 @@ from tests._support.session import make_session
 
 @pytest.mark.asyncio
 async def test_controller_path_carries_a_real_seq(tmp_path, monkeypatch):
-    """Tier 2: the CONTROLLER's own caller (whose new_turns carry a real
+    """Tier 2: the CONTROLLER's own caller (whose turn elements carry a real
     `seq` per turn) makes `compaction_started`'s `covers_through_seq` a
     real int, with no `covers_through_unavailable_reason` — driven through
     a real Session/CompactionController/CompactionEngine, no stand-in."""
@@ -93,7 +96,7 @@ async def test_controller_path_carries_a_real_seq(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_retry_loop_shaped_path_carries_a_named_absence():
     """Tier 2: the shape retry_loop's own caller actually has — wire-dict
-    `new_turns` with no `seq` — makes `covers_through_seq` None and names
+    turn elements with no `seq` — makes `covers_through_seq` None and names
     WHY via `covers_through_unavailable_reason`, never a bare, unexplained
     null. Drives the real `CompactionEngine.compact()` directly with the
     SAME `SeqUnavailable` sentinel `engine.py`'s own retry_loop call site
@@ -112,8 +115,7 @@ async def test_retry_loop_shaped_path_carries_a_named_absence():
         # key at all, matching what `decompose_history_for_retry`'s
         # `raw_middle` actually contains (see module docstring).
         chunk = HistoryChunkToCompact(
-            previous_summary=None,
-            new_turns=[{"role": "user", "content": "wire-shaped, no seq"}],
+            messages=[{"role": "user", "content": "wire-shaped, no seq"}],
             section_token_caps={},
         )
         await engine.compact(chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ)

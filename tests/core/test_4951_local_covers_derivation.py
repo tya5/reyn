@@ -1,6 +1,8 @@
 """Tier 2: OS invariant — #4951-A: ``covers_through_seq`` is derived
-UNCONDITIONALLY from ``compact()``'s own input (the ``new_turns`` reyn
-itself built and sent), never read from the LLM's ``new_turn_seqs`` echo.
+UNCONDITIONALLY from ``compact()``'s own input (the ``messages`` reyn
+itself built and sent — #5531 renamed this field from ``new_turns``, see
+``HistoryChunkToCompact``'s own docstring), never read from the LLM's
+``new_turn_seqs`` echo.
 
 Before this fix, a non-empty-but-WRONG echo passed straight through
 (``_validate_chat_summary_fields``'s emptiness check could not catch it,
@@ -56,8 +58,7 @@ def _engine(**cfg_kwargs) -> "tuple[CompactionEngine, list]":
 
 def _chunk(seqs: "list[int]") -> HistoryChunkToCompact:
     return HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[
+        messages=[
             {"role": "user", "text": f"turn {s}", "seq": s} for s in seqs
         ],
         section_token_caps={},
@@ -77,7 +78,7 @@ def test_covers_ignores_a_wrong_nonempty_echo(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[1]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.messages)))
     assert summary.covers_through_seq == 3, (
         f"expected covers_through_seq derived from the real input max "
         f"(3), not the wrong echo (1); got {summary.covers_through_seq}"
@@ -97,7 +98,7 @@ def test_covers_ignores_a_wrong_higher_echo(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[999]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.messages)))
     assert summary.covers_through_seq == 6, (
         f"expected covers_through_seq derived from the real input max (6), "
         f"not the inflated echo (999); got {summary.covers_through_seq}"
@@ -122,7 +123,7 @@ def test_empty_new_turn_seqs_no_longer_reprompts(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.messages)))
 
     assert calls["n"] == 1, "an empty new_turn_seqs must not trigger a re-prompt"
     assert summary.covers_through_seq == 7
@@ -145,7 +146,7 @@ def test_empty_topic_arc_still_reprompts_regardless_of_new_turn_seqs(monkeypatch
         return _resp(_json(new_turn_seqs=[1]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.messages)))
 
     assert calls["n"] == 2, "an empty topic_arc must still trigger exactly one re-prompt"
     assert summary.topic_arc == "did a thing"

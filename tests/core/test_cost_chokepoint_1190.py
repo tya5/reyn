@@ -130,8 +130,7 @@ def test_compaction_engine_records_compaction_purpose(monkeypatch) -> None:
         cfg=CompactionConfig(use_chars4_estimate=True), recorder=rec,
     )
     asyncio.run(engine.compact(HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        messages=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     ), covers_through=1))
     assert [c["purpose"] for c in rec.calls] == ["compaction"]
@@ -190,8 +189,7 @@ def test_compaction_engine_threads_agent(monkeypatch) -> None:
         recorder=rec, recorder_agent="researcher",
     )
     asyncio.run(engine.compact(HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        messages=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     ), covers_through=1))
     assert [c["agent"] for c in rec.calls] == ["researcher"]

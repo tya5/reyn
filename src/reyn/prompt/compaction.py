@@ -13,24 +13,45 @@ from __future__ import annotations
 #       overflow-retry loop) — the primary rolling-summary system prompt.
 # WHERE: reyn.services.compaction.engine — measured once at engine init
 #        (T_comp_SP) and sent as the sole system message of the compaction call.
-# WHY: PR-N6 — strengthened with an immutable-base + verbatim-preservation
-#      contract so the LLM appends to (never rewrites) previous_summary, and
-#      preserves file paths / line numbers / commit hashes / decision ids
-#      verbatim rather than paraphrasing them away.
+# WHY: #5531 (owner design dialogue) — the invariant is that a summary
+#      represents ONE continuous span, placed exactly where that span
+#      sat in time; the OLD "previous_summary is an immutable base you
+#      append new_turns onto" framing hard-coded ONE direction (new
+#      content always chronologically AFTER previous_summary) which is
+#      false whenever content is added from the OLDER side (retry_loop's
+#      own head-shrink path, #5531 condition C) — the input is now a
+#      single ORDERED `messages` array (an already-compacted summary is
+#      just one element, marked `role: "summary"`, condition④) so
+#      whichever direction content was added from, the array's own
+#      position already encodes the correct order — no separate framing
+#      to keep in sync with it. Preserves file paths / line numbers /
+#      commit hashes / decision ids verbatim rather than paraphrasing
+#      them away (unchanged from before #5531).
 # 日本語訳: 通常のロールング要約呼び出しで使う主システムプロンプト。
-#      previous_summary を不変の土台として扱い追記のみ許可し、パス・行番号・
-#      コミットハッシュ・決定識別子等は要約せず逐語的に保持させる。
+#      #5531: previous_summary は「不変の土台」ではなく、順序付き
+#      messages 配列の中の1要素(role="summary")として渡される — 配列の
+#      並び自体が正しい時系列を表すので、追記方向を決め打ちしない。
+#      パス・行番号・コミットハッシュ・決定識別子等は要約せず逐語的に
+#      保持させる(#5531以前と不変)。
 COMPACTION_SYSTEM_PROMPT = """\
 You are summarising a chunk of chat history into a structured rolling summary.
 
-CRITICAL — previous_summary handling:
-Treat `previous_summary` as an IMMUTABLE BASE. You MUST NOT re-summarise,
-rephrase, or modify any content already present in `previous_summary`.
-Your only task is to APPEND new information from `new_turns` to it.
-If `previous_summary` is null, start fresh from `new_turns`.
+INPUT SHAPE:
+`messages` is a single ORDERED array, oldest-first, of the exact chat span
+to summarise. Most elements are ordinary turns. AT MOST ONE element may
+instead be an ALREADY-COMPACTED summary, identified by `"role": "summary"`
+— its position in the array is where it chronologically belongs (it may be
+first, last, or anywhere among the turns; do not assume a fixed position).
 
-Fold the new_turns into the previous_summary (or start fresh if null).
-Produce a JSON object with these keys:
+CRITICAL — already-compacted content handling:
+Any element with `"role": "summary"` is an IMMUTABLE, ALREADY-CONDENSED
+representative of its own span. You MUST NOT re-summarise, rephrase, or
+drop content already present in it — incorporate it into your output AS
+IS, in its own place in the sequence. Every OTHER element (an ordinary
+turn) is new content you ARE summarising for the first time.
+
+Produce ONE summary spanning the entire ordered `messages` sequence.
+Output a JSON object with these keys:
   topic_arc         — 1-3 sentences on the current topic. Update when topic shifts.
   decisions         — array of bullet strings for choices made. Drop oldest minor ones if over cap.
   pending           — array of open items (questions, tasks, follow-ups). Remove resolved items.

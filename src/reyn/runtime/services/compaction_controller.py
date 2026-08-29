@@ -29,6 +29,7 @@ from reyn.services.compaction.engine import (
     HistoryChunkToCompact,
     trim_head,
     trim_tail,
+    wrap_summary_as_message,
 )
 
 # #1820 Part1: static reference-only preamble prepended to every rendered
@@ -392,9 +393,18 @@ class CompactionController:
         if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
             from reyn.security.secret_redaction import redact_secrets
             _redact = redact_secrets
+        # #5531 condition③: this caller is always tail-side — `candidates`
+        # comes from `_select_candidates(turns, prev_cover)`, which only
+        # ever returns turns chronologically AFTER `prev_cover` (the prior
+        # summary's own covers_through_seq) — so the order is always
+        # summary-then-new-turns, never the reverse (that only happens in
+        # retry_loop's own head-shrink path, engine.py).
+        _summary_messages = (
+            [wrap_summary_as_message(prev_structured)] if prev_structured else []
+        )
         input_chunk = HistoryChunkToCompact(
-            previous_summary=prev_structured,
-            new_turns=[_turn_to_compactor_input(t, redact=_redact) for t in candidates],
+            messages=_summary_messages
+            + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
             section_token_caps={
                 "topic_arc": cfg.section_token_caps.topic_arc,
                 "decisions": cfg.section_token_caps.decisions,
