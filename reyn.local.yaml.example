@@ -1196,6 +1196,19 @@
 #   base_url:         optional URL prefix for cross-host ``path_ref`` consumption
 #                     (set when running ``reyn web`` so A2A peers / MCP clients
 #                     can fetch artefacts via the resources router)
+#   model_capability_overrides: (#5509) declares a model's media capability
+#                     when litellm's own catalog doesn't know the model
+#                     string at all — the ORDINARY case for a proxy-routed
+#                     deployment (e.g. ``openai/my-proxy-model``). Without a
+#                     declaration, every attachment for that model silently
+#                     degrades to a lossless path-ref instead of being
+#                     embedded inline. The capability_field name is NOT any
+#                     litellm ``get_model_info`` field — only the ones reyn's
+#                     own code actually queries; see
+#                     ``reyn.llm.model_media_capability.
+#                     QUERIED_CAPABILITY_FIELDS_BY_MODALITY`` for the current
+#                     set (a wider litellm field is accepted but silently
+#                     does nothing).
 # -----------------------------------------------------------------------------
 # multimodal:
 #   max_bytes: 5000000
@@ -1203,6 +1216,9 @@
 #   media_dir: .reyn/media
 #   tool_results_dir: .reyn/tool-results
 #   base_url: null
+#   model_capability_overrides: {}
+#     # openai/my-proxy-model:
+#     #   supports_vision: true
 
 
 # -----------------------------------------------------------------------------

@@ -181,9 +181,17 @@ def _catalog_capability(model: str, capability_field: str) -> "tuple[MediaCapabi
 
 
 def get_media_capability(model: str, capability_field: str) -> MediaCapability:
-    """Return whether *model* supports *capability_field* (a litellm
-    ``get_model_info`` boolean field name — e.g. ``"supports_vision"``,
-    ``"supports_pdf_input"``, ``"supports_audio_input"``).
+    """Return whether *model* supports *capability_field* — any litellm
+    ``get_model_info`` boolean field name (this function stays generic,
+    a thin wrapper over litellm's own catalog — reyn does not narrow it).
+
+    A CALLER deciding whether to embed a piece of media should pass one
+    of :data:`QUERIED_CAPABILITY_FIELDS_BY_MODALITY`'s own values, the
+    single source of truth for "which field reyn's own code actually
+    queries" — see that constant's own docstring for why (architect
+    follow-up correction, #5517: this docstring itself used to list 3
+    illustrative field names here, one of the 3 example-surfaces that
+    drifted out of sync with the constant the same night it was added).
 
     Resolution order (operator override wins unconditionally, mirrors
     ``model_budget``'s own ``#4689`` priority — "catalog が外れた時だけ、
@@ -215,3 +223,26 @@ def get_media_capability(model: str, capability_field: str) -> MediaCapability:
     if not transient:
         _warn_uncataloged_once(model, capability_field)
     return MediaCapability.UNKNOWN
+
+
+#: #5509 architect follow-up (#5517 review): the capability fields reyn
+#: ITSELF actually queries, keyed by the reyn-internal modality name that
+#: uses each one — deliberately NOT litellm's own full catalog of
+#: ``supports_*`` fields (litellm declares many this dict does not list
+#: — see ``ModelInfoBase`` if you want the full set; deliberately not
+#: named here, so this docstring cannot itself go stale the way the
+#: #5517 review found 3 OTHER prose surfaces had). Using litellm's wider
+#: set as the operator-override vocabulary would make declaring an
+#: unlisted field "valid" while it silently does nothing — the exact
+#: same silence class as a typo, just correctly spelled. This is the
+#: single source of truth for three places that must stay in sync
+#: (enforced by ``tests/llm/test_5509_capability_field_prose_sync.py``):
+#: ① :func:`_materialise_media_part`'s own capability-field argument to
+#: :func:`get_media_capability` (``reyn.runtime.router_loop``), ②
+#: ``reyn.config.infra``'s override inner-vocabulary validator, ③
+#: :class:`~reyn.config.media.MultimodalConfig`'s own docstring example.
+#: When PR2 adds a modality with an established per-item token bound, add
+#: its own entry here and all three open together.
+QUERIED_CAPABILITY_FIELDS_BY_MODALITY: "dict[str, str]" = {
+    "image": "supports_vision",
+}

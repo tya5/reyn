@@ -308,9 +308,14 @@ def _materialise_media_part(
     if not mime.startswith("image/"):
         return MediaMaterialiseFailure.NO_TOKEN_BOUND
     if model is not None:
-        from reyn.llm.model_media_capability import MediaCapability, get_media_capability
+        from reyn.llm.model_media_capability import (
+            QUERIED_CAPABILITY_FIELDS_BY_MODALITY,
+            MediaCapability,
+            get_media_capability,
+        )
 
-        if get_media_capability(model, "supports_vision") is not MediaCapability.SUPPORTED:
+        capability_field = QUERIED_CAPABILITY_FIELDS_BY_MODALITY["image"]
+        if get_media_capability(model, capability_field) is not MediaCapability.SUPPORTED:
             return MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
     path = block.get("path")
     if isinstance(path, str) and path:

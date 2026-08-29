@@ -331,9 +331,14 @@ class MultimodalConfig:
             custom proxy alias, a self-hosted deployment): ``{model:
             {capability_field: bool}}``, e.g. ``{"my-proxy-model":
             {"supports_vision": true}}``. ``capability_field`` is a
-            litellm ``get_model_info`` boolean field name (``supports_
-            vision`` / ``supports_pdf_input`` / ``supports_audio_input``
-            / ...). Registered into ``reyn.llm.model_media_capability``'s
+            litellm ``get_model_info`` boolean field name — but NOT any
+            field litellm happens to declare: only the ones reyn's OWN
+            code actually queries, ``reyn.llm.model_media_capability.
+            QUERIED_CAPABILITY_FIELDS_BY_MODALITY``'s own values (today
+            just ``"supports_vision"``) — architect follow-up correction,
+            #5517: declaring a wider litellm field here would silently do
+            nothing, the same silence class as a typo, just correctly
+            spelled. Registered into ``reyn.llm.model_media_capability``'s
             process-shared override registry at Session construction —
             see that module's own docstring for the full 3-state
             (supported/unsupported/unknown) resolution rule this feeds.

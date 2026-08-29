@@ -1213,6 +1213,64 @@ def _register_declared_open_freeform_leaves() -> None:
 _register_declared_open_freeform_leaves()
 
 
+# `multimodal.model_capability_overrides` (#5509) — NOT fully open (lead-coder
+# review, real defect found, not a green-washing exercise): the OUTER key
+# (a model string) genuinely has no bounded vocabulary, but the INNER key
+# (a litellm `get_model_info` capability FIELD NAME) does — a closed set,
+# and NOT litellm's own catalog of `supports_*` fields (architect follow-
+# up correction, same review): litellm knows about many fields reyn never
+# actually queries — the closed set is `reyn.llm.model_media_capability.
+# QUERIED_CAPABILITY_FIELDS_BY_MODALITY`'s own VALUES, the single source
+# of truth for "which capability field reyn's own code looks up" (today
+# just `supports_vision`, for the `image` modality). Using litellm's
+# wider set would make declaring an unlisted field "valid" while it
+# silently does nothing — the same silence class as a typo, just
+# correctly spelled (the exact "override declared, accepted, never
+# honored, no warning" shape #4655 exists to catch, same family as
+# #5244③, cited in the #5410 arc this same night).
+def _multimodal_capability_overrides_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — the model-name level is genuinely open (never
+    flagged); the capability-field level is validated against reyn's OWN
+    consumption set (see the module-level comment above for why NOT
+    litellm's own catalog). A near-miss (``supports_vison`` for
+    ``supports_vision``) gets a "did you mean" hint, same courtesy
+    ``hooks/loader.py``'s own ``_WRONG_SCOPE_HINTS`` gives a misplaced
+    sandbox-policy key.
+    """
+    import difflib
+
+    from reyn.config.config_schema import RenamedKeyHint
+    from reyn.llm.model_media_capability import QUERIED_CAPABILITY_FIELDS_BY_MODALITY
+
+    known_fields = frozenset(QUERIED_CAPABILITY_FIELDS_BY_MODALITY.values())
+    result: "dict[str, object]" = {}
+    for model, fields in raw.items():
+        if not isinstance(model, str) or not isinstance(fields, dict):
+            continue
+        for capability_field in fields:
+            if capability_field in known_fields:
+                continue
+            close = difflib.get_close_matches(str(capability_field), known_fields, n=1)
+            hint = (
+                RenamedKeyHint(note=f"did you mean {close[0]!r}?", destination=None)
+                if close else None
+            )
+            result[f"{model}.{capability_field}"] = hint
+    return result
+
+
+def _register_multimodal_capability_overrides_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "multimodal.model_capability_overrides",
+        _multimodal_capability_overrides_freeform_validator,
+    )
+
+
+_register_multimodal_capability_overrides_validator()
+
+
 @dataclass
 class SandboxConfig:
     """`sandbox:` — backend selection and unsupported-platform policy (FP-0017).
