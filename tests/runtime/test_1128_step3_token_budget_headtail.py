@@ -5,11 +5,12 @@ Two tests pin the new behaviours introduced in #1128 step 3:
 1. Deprecation warning: loading a YAML config with ``chat.compaction.head_size``
    or ``chat.compaction.tail_size`` emits a ``DeprecationWarning``.
 
-2. Token-budget elide contract for ``_build_history_for_router``:
-   - Small chat (total tokens < effective_trigger): ALL turns returned raw,
-     no elide, no duplication.
-   - Large chat (total tokens > effective_trigger): middle turns elided;
-     head and tail present, at least one middle turn absent.
+2. The window-utilization case for ``build_history``: a small chat (total
+   tokens well under any real trigger) returns ALL turns raw, no
+   duplication. #5367 (owner ruling) retired the OTHER half of this
+   contract — the large-chat elide-the-middle branch — entirely; see
+   ``RouterHistoryBuffer.build_history``'s own docstring for why. Only
+   the surviving half is pinned here now.
 
 Policy compliance:
 - No unittest.mock.
@@ -147,17 +148,6 @@ def _push(session, role: str, content: str) -> None:
     session.history.append(ChatMessage(role=role, content=content, ts=_now()))
 
 
-# Content that yields 80 tokens (320 chars / 4) via use_chars4_estimate=True.
-# With T_max=2800 (headroom re-measured post-#3083 plugin_management SP
-# addition; #1128's original ≈570 pin went stale as the SP grew across many
-# unrelated PRs and finally crashed to a negative effective_trigger — #3083
-# was simply the straw that tipped it):
-#   effective_trigger≈489, head_budget≈74, tail_budget≈112.
-# 3 turns × 80 tokens = 240 < 489 → no elide.
-# 8 turns × 80 tokens = 640 > 489 → elide fires.
-_CONTENT_80TOK = "X" * 320
-
-
 def test_build_history_small_chat_returns_all_turns_raw(tmp_path, monkeypatch) -> None:
     """Tier 2: a small chat (total tokens < effective_trigger) returns ALL turns
     without elide, and no turn appears more than once.
@@ -179,40 +169,4 @@ def test_build_history_small_chat_returns_all_turns_raw(tmp_path, monkeypatch) -
     )
     assert len(set(contents)) == len(contents), (
         "window-utilization branch must not duplicate turns"
-    )
-
-
-def test_build_history_large_chat_elides_middle(tmp_path, monkeypatch) -> None:
-    """Tier 2: a large chat (total tokens > effective_trigger) elides the middle —
-    head is present, tail is present, and at least one middle turn is absent.
-
-    Uses T_max=2800 with 30 turns of 80-token content (total=2400 tokens).
-    30×80=2400 exceeds any effective_trigger for T_max=2800 regardless of the
-    SP size (effective_trigger < T_max by construction), making this test
-    default-independent: changing hot_list_n or other SP-affecting defaults
-    does not change whether elide fires.
-    """
-    session = _make_session_with_t_max(tmp_path, monkeypatch, t_max=2800)
-    texts = [f"turn-{i}:" + _CONTENT_80TOK for i in range(30)]
-    for i, text in enumerate(texts):
-        _push(session, "user" if i % 2 == 0 else "assistant", text)
-
-    msgs = session._history_buffer.build_history()
-    contents = [m["content"] for m in msgs]
-    present = set(contents)
-
-    # Head and tail turns must survive the elide.
-    assert texts[0] in present, "first turn (head) must be present after elide"
-    assert texts[-1] in present, "last turn (tail) must be present after elide"
-
-    # At least one middle turn must be absent (= elide actually fired).
-    middle_absent = any(t not in present for t in texts[1:-1])
-    assert middle_absent, (
-        "expected at least one middle turn elided, but all turns present — "
-        "elide branch did not fire; check that total > effective_trigger"
-    )
-
-    # No duplicates — the overlap deduplication guard must hold.
-    assert len(contents) == len(set(contents)), (
-        "duplicate messages in router view — elide overlap deduplication failed"
     )

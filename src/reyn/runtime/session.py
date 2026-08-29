@@ -5981,15 +5981,19 @@ class Session:
             # buffer's history entries came from).
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
             read_cap=self._read_cap_config,  # #4381 PR-5
-            # #4995/#5267: LIVE read of the session's current turn-owning
-            # task, for RouterHistoryBuffer's own ownership check when
-            # build_history() is dispatched off this coroutine (see
-            # RouterLoopDriver._run_with_shrink's own `expected_owner`
-            # capture and RouterHistoryBuffer.build_history's docstring).
-            # A bare attribute read/write is atomic under the GIL — no lock
-            # needed for this comparison itself.
-            current_turn_owner_fn=lambda: self._turn_owner_task,
         )
+        # #5367: `current_turn_owner_fn`/`expected_owner` (#4995/#5267)
+        # used to be threaded here — a concurrency guard for
+        # `RouterHistoryBuffer`'s own incremental elide-total CACHE (a
+        # stale/cancelled turn's background write could otherwise corrupt
+        # a later turn's cache arithmetically, #5267's own real incident).
+        # Removed in the SAME PR as the cache itself: #5367 retired
+        # `build_history`'s whole elide computation (owner ruling —
+        # "elide なんて仕様をこっちが提示したことないんだってば"), so
+        # there is no longer a shared, incrementally-mutated cache for a
+        # stale write to corrupt. This paragraph is the only place this
+        # reasoning survives — the removed lines themselves cannot carry
+        # a comment (lead-coder, #5367 review).
 
         # #3671 follow-up: a DEFERRED closure, not an eager construction —
         # same reasoning and same family as _build_chat_turn_budget_engine

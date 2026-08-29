@@ -5,14 +5,21 @@ by design: ``turn.get("content")`` raises ``AttributeError`` on nothing (a
 plain dataclass has no ``.get``), so ``isinstance(turn, dict)`` silently gates
 it to False for a ``ChatMessage`` and the function always fell through to its
 ``content is None`` fallback branch — counting only ``str(turn.text)`` (the
-first text part). Real callers (``RouterHistoryBuffer.build_history``,
-``decompose_history_for_retry``, and ``trim_head``/``trim_tail`` via
-``_trim_groups``) pass live ``ChatMessage`` instances, so:
+first text part). Real callers (``decompose_history_for_retry``, and
+``trim_head``/``trim_tail`` via ``_trim_groups``) pass live ``ChatMessage``
+instances, so:
 
-  - image content parts never hit ``_IMAGE_FIXED_TOKEN_COST`` (elide almost
-    never fires for image-heavy conversations — #1128 Fork B's "raw until the
-    window is full" intent was defeated), and
+  - image content parts never hit ``_IMAGE_FIXED_TOKEN_COST`` (under-counted
+    against the real per-item token cost), and
   - ``tool_calls`` were never counted at all.
+
+#5367: ``RouterHistoryBuffer.build_history`` itself was ALSO a real caller
+of this fix when this file was written — it used the estimate for its own
+elide/no-elide decision (#1128 Fork B). That decision (and the whole
+elide branch) is retired (owner ruling, #5367); the integration witness
+this file used to carry for it (``test_build_history_elides_when_image_
+cost_pushes_over_trigger``) is removed in the same PR — the two REMAINING
+real callers above still exercise this fix directly.
 
 ``estimate_tokens_for_any_turn`` is the new thin call-site adapter (NOT a
 change to ``estimate_tokens_for_turn`` itself — that function stays dict-only
@@ -21,7 +28,7 @@ dict shape the estimator already knows how to walk, without running
 ``_serialise_turn``'s path-ref -> base64 materialisation.
 
 Policy compliance:
-- No unittest.mock / fakes — real ChatMessage, real RouterHistoryBuffer, real
+- No unittest.mock / fakes — real ChatMessage, real
   engine functions throughout.
 - No private-state assertions.
 - Each docstring opens with ``Tier 2: ``.
@@ -29,7 +36,6 @@ Policy compliance:
 from __future__ import annotations
 
 from reyn.runtime.chat_message import ChatMessage
-from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.services.compaction.engine import (
     _IMAGE_FIXED_TOKEN_COST,
     estimate_tokens_for_any_turn,
@@ -164,65 +170,4 @@ def test_trim_tail_now_bounded_by_image_cost() -> None:
     assert kept_seqs == {3}, (
         f"expected only the last image turn (seq=3) kept under a ~1-image "
         f"budget, got seqs={kept_seqs}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# RouterHistoryBuffer.build_history — integration witness (elide threshold
-# now reflects real image cost)
-# ---------------------------------------------------------------------------
-
-
-def _make_buffer(history: list[ChatMessage]) -> RouterHistoryBuffer:
-    from reyn.config import CompactionConfig
-    from reyn.core.events.events import EventLog
-
-    return RouterHistoryBuffer(
-        history_fn=lambda: history,
-        compaction=CompactionConfig(use_chars4_estimate=True),
-        compaction_controller=None,  # forces the get_max_input_tokens fallback path
-        model_fn=lambda: "gpt-3.5-turbo",
-        events=EventLog(),
-        media_store=None,
-        router_host=None,
-        universal_wrappers_enabled=False,  # #4552 PR-3
-        non_interactive=True,
-    )
-
-
-def test_build_history_elides_when_image_cost_pushes_over_trigger(monkeypatch) -> None:
-    """Tier 2: witness — an image-bearing conversation that fits comfortably by
-    TEXT alone, but overflows once the image's fixed cost is correctly
-    counted, now elides (head+tail, at least one middle turn dropped).
-    Before the fix, image turns were near-zero cost and this history would
-    never have elided."""
-    import reyn.llm.model_budget as _mb
-
-    # effective_trigger fallback = get_max_input_tokens // ... resolved via
-    # _resolve_budgets' fallback branch (compaction_controller=None):
-    # effective_trigger = get_max_input_tokens(model); head/tail = trigger // 4.
-    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda *a, **kw: _IMAGE_FIXED_TOKEN_COST)
-
-    history = [
-        ChatMessage(role="user", content="hi", seq=1),
-        _big_image_message(2),
-        ChatMessage(role="assistant", content="ok", seq=3),
-        ChatMessage(role="user", content="bye", seq=4),
-    ]
-    buf = _make_buffer(history)
-    result = buf.build_history()
-    kept_texts = [m.get("content") for m in result]
-    # #5367: the elided middle is no longer silently dropped — an unspilled
-    # mid turn is bundled into a synthetic report turn naming its seq range,
-    # so a raw message-COUNT comparison against the original history no
-    # longer distinguishes "elided" from "kept" (this scenario elides
-    # exactly 1 turn into exactly 1 report turn — same count, different
-    # content). Assert on the CONTENT instead: the image turn's own seq (2)
-    # must be named in a report turn, never present as itself.
-    assert any(
-        "omitted to fit the context window" in str(text) and " 2-2" in str(text)
-        for text in kept_texts
-    ), (
-        f"expected the middle (seq 2, the image turn) to elide once the "
-        f"image's fixed cost is counted, got: {kept_texts}"
     )

@@ -126,21 +126,6 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # reader distinguishing the two never has to infer which one fired from
     # context (chain_id presence, call ordering, ...).
     "tool_result_offloaded": frozenset({"trigger"}),
-    # #5367: RouterHistoryBuffer.build_history's elide branch (head+tail
-    # window-utilization cut) drops a contiguous middle range of turns from
-    # the wire — previously with NO representation at all, model- or
-    # operator-side (owner: "llm に mid 渡さないとかありえないでしょ"). This
-    # fires once per build_history call that actually elides a non-empty
-    # middle, counting the WHOLE elided range (both the spilled turns now
-    # folded back in as a ref-preview, and the unspilled turns bundled into
-    # one synthetic report turn) — architect ruling (B): the wire payload
-    # this describes is not persisted by default (no REYN_LLM_TRACE_DUMP),
-    # so this is the one operator-visible record that an elide happened on
-    # this turn at all, and how much of it. `count`/`seq_start`/`seq_end`
-    # are mandatory — a reader needs the SIZE and RANGE to judge whether a
-    # given turn's context was meaningfully thinned, not just that some
-    # unspecified elision occurred.
-    "wire_turns_elided": frozenset({"count", "seq_start", "seq_end"}),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
@@ -556,7 +541,6 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "web_search_failed",
     "web_search_started",
     "webhook_received",
-    "wire_turns_elided",
     "workspace_updated",
 })
 

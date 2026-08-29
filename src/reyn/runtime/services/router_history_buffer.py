@@ -18,8 +18,9 @@ history_fn dependency: a zero-arg callable that returns the raw history list
 ``Session._active_branch_history`` (#2360's WAL-rewind-visibility filter,
 NOT a bare ``lambda: self.history``; the two differ after a rewind, and
 #4387 Phase B ② made that filtered view able to shrink/reorder call-to-call
-by extending ``self.history`` backward on demand — see
-``_incremental_elide_total``'s own docstring for why that matters here).
+by extending ``self.history`` backward on demand — every read of
+``self._history_fn()`` in this file re-derives fresh from it, never
+assumes append-only or monotonic growth across calls).
 """
 from __future__ import annotations
 
@@ -443,7 +444,6 @@ class RouterHistoryBuffer:
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
         read_cap: Any = None,             # #4381 PR-5: ReadCapConfig — the resource bound to check budgets against
-        current_turn_owner_fn: "Callable[[], Any] | None" = None,  # #4995/#5267: zero-arg → Session._turn_owner_task, LIVE — see build_history()'s own `expected_owner` docstring
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -457,10 +457,6 @@ class RouterHistoryBuffer:
         # #4381 PR-5: threaded into resolve_effective_trigger_and_budgets's
         # resource/budget invariant check (_check_resource_within_budget).
         self._read_cap = read_cap
-        # #4995/#5267: see build_history()'s own `expected_owner` docstring —
-        # None (every pre-#5267 construction site) makes the ownership check
-        # in _incremental_elide_total a no-op, byte-identical to before.
-        self._current_turn_owner_fn = current_turn_owner_fn
         # #1652/②: cross-turn reasoning rides the wire assistant messages
         # (native re-attach) instead of a router-SP text section. ReasoningConfig
         # gates it (.continuity) and bounds it (.recent_turns). None → off.
@@ -471,48 +467,6 @@ class RouterHistoryBuffer:
         # ``None`` (a legacy/test double with no workspace access) degrades to
         # "never refresh location tokens" — _serialise_turn's own None-check.
         self._project_dir_fn = project_dir_fn
-        # #4403: incremental elide-total cache. build_history() used to
-        # re-estimate EVERY turn's token count on EVERY call just to check
-        # "total <= effective_trigger" — O(session length) per turn, forever
-        # (compaction shrinks what's SENT to the LLM, never self.history).
-        # Measured (real litellm tokenizer, the config default): 5.13ms/turn
-        # -> 559s at 108,896 turns (#4403). ``_TOKEN_CACHE_MAXSIZE=8192``'s
-        # per-(model,text) cache cannot help here regardless of size: this
-        # loop visits turns in the SAME order every call, so an 8192-entry
-        # FIFO always evicts the early turns before a 100k-turn pass reaches
-        # them again next call — 100% miss, not a tuning problem.
-        # See ``_incremental_elide_total``'s own docstring for the
-        # invalidation contract these three fields exist to support.
-        #
-        # #4995/#5267 ⚠️ WHOEVER TOUCHES THESE FIELDS NEXT, READ THIS FIRST:
-        # these 5 attributes are safe to mutate WITHOUT a lock ONLY because
-        # today every write happens synchronously, inside the SAME coroutine
-        # that decided to call ``build_history()`` — a session processes one
-        # turn at a time, and a synchronous call cannot be interrupted or
-        # raced mid-flight by ``Session.cancel_inflight()``'s hard
-        # ``Task.cancel()`` (that cancel can only land at an ``await`` point,
-        # and there is none inside this computation today). The MOMENT any
-        # of these fields is written from code that has ALREADY awaited
-        # something (``asyncio.to_thread``, an actual I/O wait, anything
-        # that gives ``cancel_inflight`` a suspension point to land on),
-        # that safety is GONE: a cancelled turn's background work keeps
-        # running (a cancelled ``await`` does not stop a thread-pool worker
-        # already executing), the NEXT turn can start and reach this same
-        # write concurrently, and — because ``_incremental_elide_total``
-        # READS ``_cached_elide_total`` and ADDS to it rather than
-        # overwriting — an interleaved write is not merely stale, it can be
-        # arithmetically WRONG (#5267). ``_incremental_elide_total``'s own
-        # ``expected_owner``/``current_turn_owner_fn`` ownership check
-        # exists for exactly this: build privately, publish in ONE step,
-        # and only if the caller that started this computation is STILL the
-        # session's current turn owner. Do not add a NEW caller that awaits
-        # something before reaching this write without threading
-        # ``expected_owner`` through the same way.
-        self._cached_elide_total: int = 0
-        self._cached_elide_turn_count: int = 0
-        self._cached_elide_last_seq: "int | None" = None
-        self._cached_elide_model: "str | None" = None
-        self._cached_elide_use_chars4: "bool | None" = None
         # #5296 PR-2: session-lived, non-durable reactive-spill overlay —
         # maps a tool-result turn's content hash (``"sha256:<hex>"``, same
         # form/derivation as MediaStore's own ``content_hash``, #5296's own
@@ -685,122 +639,23 @@ class RouterHistoryBuffer:
             read_cap_config=self._read_cap,
         )
 
-    def _incremental_elide_total(
-        self, turns: list, wire_turns: list[dict], *, use_chars4: bool,
-        expected_owner: "object | None" = None,
-    ) -> int:
-        """#4403: the ``total`` build_history needs for its "total <=
-        effective_trigger" elide decision, computed incrementally instead
-        of re-estimating every turn every call.
-
-        ``turns`` (``ChatMessage`` list, pre-serialise) is what
-        ``self._history_fn()`` (``Session._active_branch_history``)
-        returned THIS call — append-only in the common case, but NOT
-        guaranteed monotonic: a rewind/branch-switch can make it shorter
-        or reorder it (``_active_branch_history`` re-derives WAL-branch
-        visibility fresh every call). The cache's validity check is
-        therefore structural, not a bare length comparison:
-
-          - ``len(turns) < cached_turn_count`` -> definitely shrank
-            (rewind past the cached boundary) -> recompute from scratch.
-          - the ``seq`` at the cached boundary position no longer matches
-            what was cached -> the prefix itself changed (branch-switch
-            landing on a same-length-but-different list) -> recompute.
-          - model or use_chars4 changed since the cache was built -> the
-            cached per-turn costs were measured against a different
-            tokenizer -> recompute (an O(1) check, not a reason to distrust
-            the whole mechanism).
-          - otherwise -> the cached prefix is still exactly what it was:
-            add only the cost of the turns appended since, an O(k) pass
-            where k is genuinely new turns, not O(session length).
-
-        Every fallback path recomputes correctly (just not cheaply) — this
-        is a performance cache, not a source of truth: a wrong invalidation
-        guess costs CPU, never correctness, because the ``else`` branch
-        always re-derives ``total`` from the real ``wire_turns`` this call
-        actually has.
-
-        #4995/#5267 ``expected_owner``: read the CACHE STATE once up front
-        (the ``cache_valid`` check below), do the (possibly slow, possibly
-        running on a worker thread via ``build_history``'s own
-        ``asyncio.to_thread`` caller) summing into the LOCAL ``total``
-        below, then COMMIT to ``self._cached_elide_*`` in one step only if
-        ``expected_owner`` (captured by the caller BEFORE dispatching this
-        work, e.g. ``asyncio.current_task()`` at the point it was still the
-        session's current turn) still matches
-        ``self._current_turn_owner_fn()`` (Session's LIVE
-        ``_turn_owner_task``, read fresh here — a bare attribute read/write
-        is atomic under the GIL, no lock needed for this comparison
-        itself). A caller that passes neither (``expected_owner=None`` and/
-        or no ``current_turn_owner_fn`` configured — every call site before
-        #5267, and the rare ``session.py`` limit-denied path, which stays
-        synchronous) always commits, byte-identical to before. This is
-        NEVER a correctness gate on ``total`` itself (the value returned to
-        THIS call's own caller is always the freshly computed, correct
-        one) — only on whether it gets written into the shared incremental
-        cache for the NEXT call to build on."""
-        from reyn.services.compaction.engine import estimate_tokens_for_any_turn
-
-        model = self._model
-        cache_valid = (
-            len(turns) >= self._cached_elide_turn_count
-            and self._cached_elide_model == model
-            and self._cached_elide_use_chars4 == use_chars4
-            and (
-                self._cached_elide_turn_count == 0
-                or (
-                    turns[self._cached_elide_turn_count - 1].seq
-                    == self._cached_elide_last_seq
-                )
-            )
-        )
-        if cache_valid:
-            new_wire_turns = wire_turns[self._cached_elide_turn_count:]
-            total = self._cached_elide_total + sum(
-                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
-                for wt in new_wire_turns
-            )
-        else:
-            total = sum(
-                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
-                for wt in wire_turns
-            )
-
-        # #4995/#5267: publish in ONE step, gated on still being the current
-        # turn owner — see this method's own docstring above and the
-        # `_cached_elide_*` field declarations' own comment for why.
-        still_owner = (
-            expected_owner is None
-            or self._current_turn_owner_fn is None
-            or self._current_turn_owner_fn() is expected_owner
-        )
-        if still_owner:
-            self._cached_elide_total = total
-            self._cached_elide_turn_count = len(turns)
-            self._cached_elide_last_seq = turns[-1].seq if turns else None
-            self._cached_elide_model = model
-            self._cached_elide_use_chars4 = use_chars4
-        return total
-
     def _elide_candidate_turns(self, history: list) -> "tuple[list, int]":
-        """Return ``(turns, watermark)`` — the turns considered for the
-        #1128/#4954(2) elide-threshold decision: role-filtered (E-full
-        #383 — user/assistant/tool/agent only, ``summary`` stays
-        Reyn-internal), then PERMANENTLY watermark-filtered (#4954(2) — a
-        compacted turn never re-enters this projection, regardless of
-        whether the elide branch fires). *watermark* is also returned
+        """Return ``(turns, watermark)`` — role-filtered (E-full #383 —
+        user/assistant/tool/agent only, ``summary`` stays Reyn-internal),
+        then PERMANENTLY watermark-filtered (#4954(2) — a compacted turn
+        never re-enters this projection). *watermark* is also returned
         (not just consumed here) because :meth:`build_history` needs the
         SAME value again afterward, to decide whether to attach the
         summary bridge — returning it avoids a second
         ``_compaction_watermark`` call computing the identical value the
         filter above already derived.
 
-        Factored out of ``build_history`` (#4977) so it and
-        :meth:`elide_total_and_trigger` share ONE implementation of this
-        filter instead of two copies that could drift apart — the same
-        concern the watermark predicate's own comment below already
-        flags for a 3rd copy appearing anywhere in the codebase; this
-        keeps THIS file at one, not two."""
+        #5367: this used to also be shared with :meth:`elide_total_and_
+        trigger` (#4977, retired — see :meth:`build_history`'s own
+        docstring for why the whole elide computation it fed is gone).
+        This method itself survives: the permanent-compaction watermark
+        filter is a separate concern from elide, still needed to keep a
+        compacted turn out of ``build_history``'s own projection."""
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
@@ -837,112 +692,64 @@ class RouterHistoryBuffer:
             turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
         return turns, watermark
 
-    def elide_total_and_trigger(self) -> "tuple[int, int]":
-        """Return ``(total, effective_trigger)`` — #4403's own incremental
-        elide-check computation, the SAME one :meth:`build_history` uses
-        for its elide/no-elide decision.
-
-        #4977 (owner + architect ruling): promoted from a private-only
-        computation whose only external observation point used to be the
-        (now-retired) ``elide_evaluated`` audit-event. Root cause named
-        by architect: an audit-event is operator/replay vocabulary, not
-        a test seam — using one to make private state observable to
-        tests was itself the mistake, not a missing opt-in on it. A
-        ``snapshot()``-style container holding "the last computed value"
-        was considered and rejected (architect: a second place to hold
-        the same fact, which can go stale relative to the first) —
-        instead, the computation itself becomes a normal public method.
-
-        Goes through the SAME pieces :meth:`build_history` itself calls —
-        :meth:`_elide_candidate_turns` for the turns filter, then
-        :meth:`_incremental_elide_total` (the #4403 incremental cache) —
-        not a parallel or bypassing recomputation. A caller (production
-        or a test) exercising this method exercises the exact cache path
-        production relies on; a test could not tell this method's answer
-        apart from what ``build_history`` itself just decided."""
-        history = self._history_fn()
-        turns, _watermark = self._elide_candidate_turns(history)
-        effective_trigger, _head_budget, _tail_budget = self._resolve_budgets()
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        wire_turns = [self._serialise_turn(m) for m in turns]
-        total = self._incremental_elide_total(turns, wire_turns, use_chars4=use_chars4)
-        return total, effective_trigger
-
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def build_history(self, *, expected_owner: "object | None" = None) -> list[dict]:
+    def build_history(self) -> list[dict]:
         """Slice history into OpenAI-style messages for RouterLoop.
 
-        #4995/#5267 ``expected_owner``: pass this when the CALLER dispatches
-        this method to a worker thread (``asyncio.to_thread`` — the #4995
-        motivating case, ``RouterLoopDriver._run_with_shrink``) rather than
-        calling it inline on the same coroutine that decided to. Capture it
-        BEFORE the dispatch — ``asyncio.current_task()`` from inside the
-        coroutine that IS the session's current turn (there is no running
-        task to ask from inside the worker thread itself). Threaded straight
-        through to :meth:`_incremental_elide_total`, the ONE place this
-        method mutates shared cache state — see that method's own docstring
-        for the ownership check itself, and the ``_cached_elide_*`` field
-        declarations' own comment for why this exists at all. Omit it (the
-        default, every pre-#5267 caller) for an inline/synchronous call —
-        there is no race to guard against when nothing was awaited before
-        reaching the write.
+        #5367 (owner, verbatim: "elide なんて仕様をこっちが提示したことない
+        んだってば。なんで残そうとするわけ？") — this method used to also
+        do estimate-based window-utilization elide: if the (already
+        watermark-filtered) turns' estimated token total exceeded
+        ``effective_trigger``, it silently dropped the middle turns (head +
+        tail only) before ever sending the request, standing in the
+        genuine shrink mechanisms' way. Retired — owner's own framing: the
+        two real shrink mechanisms are compact (turn-level, permanent —
+        see the watermark filter below) and spill (turn-CONTENT-level,
+        durable), and elide was a redundant THIRD path that "solved"
+        over-budget by just not sending, never specified anywhere as a
+        real mechanism (#5296's own reactive-shrink direction argued the
+        opposite: a local token ESTIMATE cannot know what the actual
+        provider payload will look like — system prompt, tool schemas,
+        transport wrapping, inline media — so acting on the estimate
+        risked shrinking a conversation that would have fit fine).
 
-        #4954(2): PERMANENT compaction. A turn at or below the compaction
-        watermark (``0 < seq <= self._compaction_watermark(history)`` —
-        ``seq == 0`` is the #3704 "no coordinate assigned" sentinel, not
-        the oldest turn, and is NEVER excluded; see the filter's own
-        comment below) is excluded from this projection UNCONDITIONALLY,
-        before any budget/elide reasoning runs — owner's own framing: "compaction
-        結果は永続的に会話を圧縮する" (compaction results permanently
-        compact the conversation), and "history.jsonl に残すことと llm
-        見せる会話は分けて考えて" (durable history and what the LLM sees
-        are two separate things). Before this, a covered turn's fate
-        depended entirely on whether ``total <= effective_trigger`` this
-        call — a conversation that is byte-heavy but token-light (e.g.
-        materialised images, which cost a FIXED token estimate regardless
-        of actual size — ``_IMAGE_FIXED_TOKEN_COST``) could stay under
-        ``effective_trigger`` forever, so its covered turns were resent
-        raw on EVERY turn, permanently duplicating whatever the summary
-        already represents and defeating the point of having compacted at
-        all (#4954's own real-machine symptom). The watermark itself is
-        NEVER re-derived here — it is read via ``self._compaction_watermark``,
-        the same concept ``Session._compaction_watermark`` (session.py)
-        already owns, not a second "what counts as compacted" notion.
+        What now happens on an over-budget history: this method sends the
+        full (watermark-filtered) turns raw — no local pre-check. If the
+        provider genuinely rejects it, ``router_loop_driver.py``'s own
+        REACTIVE shrink ladder (``retry_loop`` — compact via
+        ``force_compact_now``, spill via ``_attempt_reactive_spill``) is
+        what recovers, on the actual measured overflow, not a local
+        estimate; if that ladder is exhausted, ``UnrecoveredError`` is the
+        already-designed terminal failure — never a new, silent "sent
+        without the middle" degrade. See
+        ``tests/runtime/test_5367_reactive_ladder_absorbs_elide_sized_
+        overflow.py`` for the witness that this reactive path actually
+        catches a history sized the old elide branch used to silently
+        absorb.
+
+        #4954(2): PERMANENT compaction is UNCHANGED by this — a turn at or
+        below the compaction watermark (``0 < seq <=
+        self._compaction_watermark(history)`` — ``seq == 0`` is the #3704
+        "no coordinate assigned" sentinel, not the oldest turn, and is
+        NEVER excluded; see the filter's own comment below) is still
+        excluded from this projection UNCONDITIONALLY — owner's own
+        framing: "compaction 結果は永続的に会話を圧縮する" (compaction
+        results permanently compact the conversation), and "history.jsonl
+        に残すことと llm 見せる会話は分けて考えて" (durable history and
+        what the LLM sees are two separate things). The watermark itself
+        is NEVER re-derived here — it is read via
+        ``self._compaction_watermark``, the same concept
+        ``Session._compaction_watermark`` (session.py) already owns.
         ``history.jsonl`` itself is untouched by this — a covered turn is
         excluded from THIS PROJECTION only, still fully readable via
         ``extend_history_backward``.
 
         The latest summary is ALWAYS part of the projection once the
-        watermark is positive (never gated on which branch below fires —
-        an elide-only bridge would make a covered range's summary
-        disappear the instant the (now watermark-shrunk) conversation fits
-        the budget again, silently losing the represented content instead
-        of just not re-sending its raw form).
-
-        #1128 step 3 (Fork B — window-utilization-first), applied AFTER the
-        watermark filter above: the elide point coincides with
-        ``effective_trigger`` (the existing pre-frame compaction trigger)
-        instead of the old turn-count head_size/tail_size.
-
-        - If total token estimate (of the ALREADY watermark-filtered turns)
-          <= effective_trigger: return them all raw (no further elide, no
-          duplication) — plus the summary bridge, if any.
-        - Else: elide the middle of the (already watermark-filtered) turns
-          — head (trim_head) + tail (trim_tail) — plus the summary bridge,
-          if any. #5367②: the pre-frame guard ``maybe_force_compact``
-          (``router_loop_driver.py``) runs exactly ONCE, at the head of the
-          turn, before this method's FIRST call in that turn — so alignment
-          holds THEN, but this method has no way to know it is being called
-          again. A turn whose history is built more than once (a
-          shrink-ladder retry, a re-send) re-enters this elide logic with
-          no fresh ``maybe_force_compact`` run in between — nothing in this
-          file, or the call site, re-triggers it.
-
-        Overlap guard: if trim_head and trim_tail collectively cover all
-        turns (the chat is small relative to budgets but total > trigger —
-        unlikely but possible with large single turns), deduplication by
-        identity ensures no turn appears twice.
+        watermark is positive — not gated on any elide branch (there is
+        none any more); it silently vanishing the instant the conversation
+        happened to fit again was exactly the "elide-only decoration"
+        shape #4954(2) already closed, and stays closed.
 
         Returns [{role: 'user'|'assistant', content: str}, ...] ordered
         chronologically. The system prompt is prepended by RouterLoop itself.
@@ -950,187 +757,26 @@ class RouterHistoryBuffer:
         ``summary`` role itself remains Reyn-internal and is filtered out
         (its content rides the synthetic bridge turn instead).
         """
-        from reyn.services.compaction.engine import trim_head, trim_tail
-
         history = self._history_fn()
-        # #4954(2): permanent compaction — filter BEFORE any budget/elide
-        # reasoning below (both the `total` this method computes for its
-        # own elide decision, and the trim/elide steps that decision
-        # gates), so a covered turn never contributes to either. Position
-        # matters, two ways: (a) filtering AFTER `total`'s computation
-        # would let `total` count content this method is about to not
-        # send, running the elide yes/no decision against a payload that
-        # was never real; (b) filtering happens ONCE — inside
-        # ``_elide_candidate_turns`` — BEFORE `wire_turns` is built from
-        # it below — so the two stay positionally paired (architect
-        # review: filtering either list independently, or at two
-        # different points, would let them drift silently out of
-        # correspondence).
-        #
-        # Cost note for `_incremental_elide_total` (#4403) below: when a
-        # NEW compaction advances `watermark`, `turns` shrinks relative to
-        # the previous call — the cache's structural validity check
-        # (length + boundary seq) correctly detects this as it would a
-        # rewind, and falls back to a full O(n) recompute for that one
-        # call (its own docstring: "a wrong invalidation guess costs CPU,
-        # never correctness") — bounded to once per compaction, not a
-        # per-turn regression.
+        # #4954(2): permanent compaction — a covered turn never re-enters
+        # this projection, whatever the rest of this method does with the
+        # remainder.
         turns, watermark = self._elide_candidate_turns(history)
 
-        effective_trigger, head_budget, tail_budget = self._resolve_budgets()
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-
         # #2957 PR-B: serialise ALL candidate turns to their wire-dict shape
-        # UP FRONT, then measure/trim/select on THAT — the canonical quantity
-        # (see ``_serialise_turn``'s docstring). Before PR-B this elide-
-        # threshold total summed the pre-serialise ChatMessage instances
-        # (via ``estimate_tokens_for_any_turn``'s ChatMessage-adapting
-        # branch), while ContextBudgetAdvisor measured this method's
-        # returned (post-serialise) wire dicts — two different quantities
-        # for the same conversation. Both now go through
-        # ``estimate_tokens_for_any_turn`` on the SAME wire dicts (the dict
-        # branch is still needed here, not a direct
-        # ``estimate_tokens_for_turn`` call — a wire dict's ``tool_calls``
-        # is a separate top-level key, see that function's docstring).
-        # Serialising once here and reusing the result for both the
-        # total-check AND the final return also avoids a double
-        # ``_serialise_turn`` call on the surviving subset.
+        # (see ``_serialise_turn``'s docstring for why this is the
+        # canonical quantity to build the returned list from).
         #
         # #3185 (MEASURED, closed won't-fix — do NOT "optimise" this back into
-        # a lazy/partial serialise): serialising every CANDIDATE (not just the
-        # survivors) means an image-bearing turn is base64-materialised even
-        # when it is about to be elided away. Re-measured against the six
-        # largest real ``history.jsonl`` conversations available (up to 2969
-        # turns): whole-``build_history`` CPU is 0.11-4.2 ms, of which
-        # ``_serialise_turn`` over ALL turns is 2-35% (0.005-0.72 ms) — the
-        # rest is ``estimate_tokens_for_any_turn`` + trim, which a serialise
-        # cache cannot remove. A text turn serialises in ~0.24 us because
-        # ``_materialise_path_ref_content`` returns ``str`` content untouched,
-        # so the up-front cost is materially nonzero ONLY for inline images
-        # (synthetic 60 turns / 15x200KB elide: 5.2 ms; 15x1MB: 27 ms). Every
-        # such call precedes or accompanies a provider round-trip that is
-        # orders of magnitude slower and, in exactly the image-heavy case,
-        # uploads that same base64 payload. The saving does not justify a
-        # cross-call cache whose staleness would reintroduce the elide/advisor
-        # divergence PR-B closed.
-        wire_turns = [self._serialise_turn(m) for m in turns]
-
-        # #4403: the elide-check TOTAL — not the serialise pass above, #3185
-        # already measured and closed that as cheap — is computed
-        # incrementally rather than re-estimating every turn's token cost on
-        # every single call. Measured (real litellm tokenizer, the config
-        # default use_chars4_estimate=False): 5.13ms/turn -> 559s at
-        # 108,896 turns, because build_history() re-summed ALL of them EVERY
-        # call. _TOKEN_CACHE_MAXSIZE=8192's per-(model,text) cache cannot
-        # help here regardless of size: this loop visits turns in the SAME
-        # order every call, so an 8192-entry FIFO always evicts the early
-        # turns before a 100k-turn pass reaches them again next call — 100%
-        # miss, not a tuning problem. See _incremental_elide_total's own
-        # docstring for the invalidation contract.
-        total = self._incremental_elide_total(
-            turns, wire_turns, use_chars4=use_chars4, expected_owner=expected_owner,
-        )
-        # #4977: this method's own internal `total`/`effective_trigger` used
-        # to also be emitted here as a public P6 audit-event
-        # (`elide_evaluated`) so a test (or an operator inspecting `reyn
-        # events`) could observe what THIS method actually counted, as
-        # opposed to re-deriving a reference number from its returned wire
-        # dicts (which cannot detect a regression in THIS computation
-        # itself). Retired (owner + architect ruling): the payload was
-        # never an operation record — an internal estimate/threshold pair
-        # with zero transport consumers — and using an audit-event as a
-        # test observation seam was itself the mistake (CLAUDE.md: an
-        # absence with neither a public surface nor a `snapshot()`-style
-        # read IS the finding, not something to paper over with a new
-        # audit-event kind). See :meth:`elide_total_and_trigger` — the
-        # SAME computation, now a normal public method a test calls
-        # directly instead of observing indirectly through the audit log.
-
-        if total <= effective_trigger:
-            # Window-utilization: the (already watermark-filtered) turns
-            # fit raw — no further elide.
-            selected = wire_turns
-        else:
-            # Elide the middle: head + tail (summary bridge, if any, is
-            # attached below — unconditionally, not gated on this branch).
-            head = trim_head(wire_turns, head_budget, self._model, use_chars4=use_chars4)
-            tail = trim_tail(wire_turns, tail_budget, self._model, use_chars4=use_chars4)
-            # Overlap guard: dedupe by identity so no turn appears twice.
-            head_ids = {id(t) for t in head}
-            tail_deduped = [t for t in tail if id(t) not in head_ids]
-
-            # #5367 (owner: "llm に mid 渡さないとかありえないでしょ") — the
-            # elided MIDDLE used to vanish with nothing standing in for it:
-            # trim_head/trim_tail are genuine prefix/suffix cuts (their own
-            # docstrings), so everything between them fell through with no
-            # representation at all, model- or operator-side. (b) design
-            # (lead-coder/architect ruling): a SPILLED mid turn's own
-            # ``content`` is ALREADY the small ref-preview text (write-time
-            # cap, #5364 §1.2 — see ``_resolve_spilled_content``, this same
-            # module) — cheap to fold back in as-is, no new transform. An
-            # UNSPILLED mid turn's raw content is NOT cheap — every one of
-            # those is bundled into ONE synthetic report turn naming the
-            # affected seq range and count, so the model at least KNOWS
-            # turns were omitted (never "畳まずに捨てる", owner's own
-            # forbidden shape) instead of the omission being invisible to
-            # it too. Order matches the ruled processing order — fold (ref)
-            # first, report only for what could not be — folded/reported
-            # in original chronological order relative to each other.
-            #
-            # Disclosure (architect review, issuecomment-5450576257): this
-            # branch never re-checks the SIZE of what it folds back in — a
-            # middle dense with spilled turns folds in N ref-previews with
-            # no cap, which can partially defeat elide's own budget intent
-            # in that case. Not an unbounded loop (the driver's shrink
-            # ladder, #5391, still catches an over-budget result) but the
-            # projection this call returns is not guaranteed to fit
-            # head_budget/tail_budget in that scenario — the elide branch
-            # does not re-verify its own output against the trigger.
-            from reyn.runtime.chat_message import SPILLED_META_KEY
-
-            selected_ids = head_ids | {id(t) for t in tail_deduped}
-            mid_refs: "list[dict]" = []
-            unspilled_seqs: "list[int]" = []
-            mid_seqs: "list[int]" = []
-            for turn, wire in zip(turns, wire_turns):
-                if id(wire) in selected_ids:
-                    continue
-                mid_seqs.append(turn.seq)
-                if (turn.meta or {}).get(SPILLED_META_KEY):
-                    mid_refs.append(wire)
-                else:
-                    unspilled_seqs.append(turn.seq)
-
-            report_turns: "list[dict]" = []
-            if unspilled_seqs:
-                from reyn.runtime.chat_message import ChatMessage
-                seq_lo, seq_hi = min(unspilled_seqs), max(unspilled_seqs)
-                report_msg = ChatMessage(
-                    role="assistant",
-                    content=(
-                        f"[{len(unspilled_seqs)} earlier tool-result turn(s) "
-                        f"omitted to fit the context window — seq "
-                        f"{seq_lo}-{seq_hi}]"
-                    ),
-                )
-                report_turns = [self._serialise_turn(report_msg)]
-
-            if mid_seqs and self._events is not None:
-                # #5367 (B): the wire payload this describes is NOT persisted
-                # by default (no `REYN_LLM_TRACE_DUMP`) — architect ruling,
-                # this is the one place an operator can learn an elide
-                # happened at all on this turn. Counts the WHOLE elided
-                # middle (spilled-and-ref'd + unspilled-and-reported), not
-                # only the reported subset — "did an elide happen on this
-                # turn, how much" is the question this answers, and a
-                # spilled mid turn was equally invisible to an operator
-                # before this fix even though it is fully durable.
-                self._events.emit(
-                    "wire_turns_elided",
-                    count=len(mid_seqs), seq_start=min(mid_seqs), seq_end=max(mid_seqs),
-                )
-
-            selected = head + mid_refs + report_turns + tail_deduped
+        # a lazy/partial serialise): serialising every CANDIDATE means an
+        # image-bearing turn is base64-materialised even when — pre-#5367 —
+        # it was about to be elided away; #5367 removes that case (nothing
+        # is elided any more), but the measurement still stands: whole-
+        # ``build_history`` CPU is 0.11-4.2 ms on real conversations up to
+        # 2969 turns, materially nonzero only for inline images, and every
+        # such call precedes or accompanies a provider round-trip orders of
+        # magnitude slower.
+        selected = [self._serialise_turn(m) for m in turns]
 
         # #4954(2): the summary bridge is now attached HERE, unconditionally
         # once `watermark > 0` — not only on the elide branch above. Before
