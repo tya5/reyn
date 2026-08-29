@@ -1,9 +1,21 @@
-name: Doc-drift check
+name: Removed-identifier-in-docs check
 
 # #5003: flag a PR that removes an identifier from src/ without touching
 # any docs/ file that still names it. See
 # scripts/check_doc_drift.py's module docstring for the discriminator
 # (asks the PR, not the doc) and the structural exclusions.
+#
+# Renamed from "Doc-drift check" (#5478 ⑥, lead-coder): "doc drift"
+# reads as covering any way a doc goes stale, but this gate's needle is
+# narrowly REMOVED IDENTIFIERS — a name this script's grep can see.
+# lead-coder missed #5463 the same night (a doc's own COUNT claim,
+# "six things", going stale) precisely because a count is not an
+# identifier this gate's discriminator can ever catch; naming this
+# check "doc-drift" invited reading its green as broader coverage than
+# it provides — the same overclaim shape #5466 closed for
+# `events.ja.md`'s "every kind is listed" line. The rename is
+# cosmetic-only: the discriminator, exclusions, and warn-only posture
+# below are all unchanged.
 #
 # WARN-ONLY (architect ruling 2026-08-21, REVERTING the same day's
 # earlier promotion — #5010). Full account in
@@ -48,7 +60,7 @@ permissions:
 
 jobs:
   doc-drift:
-    name: doc-drift check (warn-only)
+    name: removed-identifier-in-docs check (warn-only)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

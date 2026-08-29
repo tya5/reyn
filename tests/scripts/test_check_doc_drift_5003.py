@@ -311,6 +311,25 @@ def test_exit_code_is_0_when_clean():
     assert exit_code == 0
 
 
+def test_printed_text_names_removed_identifier_not_bare_doc_drift(capsys):
+    """Tier 1: #5478 ⑥ (lead-coder) — the printed OK/FAIL lines must say
+    "removed-identifier", not the unqualified "doc-drift", so a reader
+    of a green run does not read broader coverage than this script
+    actually provides (lead-coder missed #5463's own COUNT-claim drift
+    — not an identifier — the same night, for exactly this reason)."""
+    m._print_findings_and_exit_code([], "test-source")
+    ok_out = capsys.readouterr().out
+    assert "removed-identifier" in ok_out
+    assert "doc-drift findings" not in ok_out
+
+    m._print_findings_and_exit_code(
+        [m.Finding(identifier="foo_bar_baz", doc_path="docs/x.md")], "test-source",
+    )
+    fail_out = capsys.readouterr().out
+    assert "removed-identifier" in fail_out
+    assert "doc-drift findings" not in fail_out
+
+
 def test_pure_only_flags_the_untouched_doc_among_several():
     """Tier 1: an identifier named in two docs, one touched one not — only
     the untouched one is flagged."""

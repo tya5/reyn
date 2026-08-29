@@ -779,12 +779,22 @@ def _print_findings_and_exit_code(findings: "list[Finding]", source: str) -> int
     reads — is directly testable without needing real PR/repo access
     (see tests/scripts/test_check_doc_drift_5003.py's `test_main_*`
     cases). 0 clean, 1 on any finding — see module docstring,
-    "Blocking" (promoted #5010)."""
+    "Blocking" (promoted #5010).
+
+    #5478 ⑥ (lead-coder): the printed text names its own needle —
+    "removed identifier" — rather than the unqualified "doc drift" this
+    script used to print. lead-coder missed #5463 (a doc's own COUNT
+    claim, "six things", going stale) precisely because a count is not
+    an identifier this script's grep can ever see; an "OK — no doc-drift
+    findings" line on that same PR would have read as a broader
+    all-clear than what this script actually checked. Never claim
+    coverage this script cannot back — the same overclaim shape #5466
+    closed for `events.ja.md`'s "every kind is listed" line."""
     if not findings:
-        print(f"OK — no doc-drift findings ({source}).")
+        print(f"OK — no removed-identifier-in-docs findings ({source}).")
         return 0
 
-    print(f"FAIL — doc-drift findings ({source}):\n")
+    print(f"FAIL — removed-identifier-in-docs findings ({source}):\n")
     for f in findings:
         print(f"  {f.identifier!r} removed from src/, still named in {f.doc_path} (untouched by this PR)")
     print(
