@@ -1,0 +1,61 @@
+name: deleted-files report
+
+# #5478 ⑤: report (never block) which files a PR's own merge would
+# DELETE. See scripts/detect_5478_deleted_files.py's module docstring
+# for the discriminant (three-dot `--diff-filter=D`), why this is the
+# gap #5478 closes (before this, exactly one person — lead-coder — ran
+# this check by hand on every PR), and why it stays report-only (a
+# deletion is not itself a defect; visibility is the point).
+#
+# WARN-ONLY, same shape as detect-5419-behind-files.yml and
+# check-doc-drift.yml — this workflow only ever annotates; it never
+# fails the job, and carries no `pull-requests: write` permission.
+#
+# Trigger includes `synchronize` (not just `opened`) so a later push
+# that adds a deletion still gets reported, same reasoning as its two
+# sibling workflows.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  deleted-files-report:
+    name: deleted-files report (warn-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # fetch-depth: 0 (full history) — the three-dot diff needs the
+      # PR's base and head commits, and their shared merge-base, present
+      # locally; a shallow checkout would fail with "unknown revision".
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/detect_5478_deleted_files.py is stdlib-only (argparse /
+      # json / subprocess, `git`/`gh` as external tools). No pip install
+      # needed.
+      - name: Report deleted files (never blocks)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/detect_5478_deleted_files.py --pr "${{ github.event.pull_request.number }}" > deleted_files_output.txt 2>&1
+          exit_code=$?
+          cat deleted_files_output.txt
+          if [ "$exit_code" -eq 1 ]; then
+            while IFS= read -r line; do
+              echo "::warning::${line}"
+            done < <(grep '^  - `' deleted_files_output.txt)
+          fi
+          exit 0
