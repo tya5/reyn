@@ -340,7 +340,7 @@ def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path)
 
 
 def test_a_second_stall_after_recovery_is_reported_again() -> None:
-    """Tier 2: #4855 (owner decision B) — the once-only notice gate is now
+    """Tier 2: lead-coder ruling, #4855 — the once-only notice gate is now
     "once per un-recovered episode," not "once per App session." Before
     this fix, ``self._fired`` was a PERMANENT one-shot latch: a first
     stall (even an unrelated app-mount startup hiccup) consumed the
@@ -369,7 +369,7 @@ def test_a_second_stall_after_recovery_is_reported_again() -> None:
     assert first_onset is not None
     assert second_onset is not None, (
         "episode 2 comes AFTER episode 1's own recovery -- its onset must "
-        "be reported, the same as episode 1's was (owner decision B: "
+        "be reported, the same as episode 1's was (lead-coder ruling, #4855: "
         "'once per session' was the defect this issue closes)"
     )
     assert tripwire.consume_recovered() is True, (

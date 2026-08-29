@@ -257,7 +257,7 @@ class LoopTripwire:
                 if self._current_stall_reported:
                     self._just_recovered = True
                     self._current_stall_reported = False
-                # #4855 (owner decision B): reset the one-shot notice gate
+                # lead-coder ruling, #4855: reset the one-shot notice gate
                 # HERE, at recovery — not "once per App session" but "once
                 # per un-recovered episode." Without this, an early stall
                 # (e.g. app-mount startup jitter) permanently consumed the
