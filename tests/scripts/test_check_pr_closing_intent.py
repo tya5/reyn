@@ -992,3 +992,61 @@ def test_find_declared_closing_intent_still_defuses_a_fence():
     ``find_closing_declarations`` already has and check 1 depends on."""
     assert m.find_declared_closing_intent("`Closes #2620`") == {2620}
     assert m.find_canonical_closing_declarations("`Closes #2620`") == set()
+
+
+# ---------------------------------------------------------------------------
+# Check 4, the #5490 shape (architect review, non-blocking, PR #5493): the
+# fixture above only pins check 3's own real occurrence in PR #5484's BODY.
+# Live verification against the real PR during that review surfaced a SECOND
+# real instance of the identical bare-past-tense phrase — independently
+# present in a commit message — which check 4 now also catches (same
+# `narrowly_declared` exemption swap covers both). Neither architect's own
+# design nor this fix's first version anticipated this second instance; a
+# dedicated test closes the gap architect flagged: "the discovery itself
+# gets left behind" without one.
+#
+# Real data, verbatim excerpt from `gh pr view 5484 --json commits` — the
+# real second commit's own messageBody (headline: "fix(#5467): correct an
+# overclaim, a closing-intent hazard, and 3 architect points").
+# ---------------------------------------------------------------------------
+
+_PR5484_COMMIT_WITH_LEAK = (
+    "fix(#5467): correct an overclaim, a closing-intent hazard, and 3 arch…\n"
+    "\n"
+    "BLOCKING 2 (lead-coder, most severe, fixed first per instruction): the\n"
+    "PR body's own first line placed a negated closing keyword next to\n"
+    "#5467 -- GitHub's own parser does not read the negation, only the\n"
+    "keyword+number substring, so it would have auto-closed #5467 on squash\n"
+    "merge exactly as #4834 and #4986 both did, reason=COMPLETED, no human\n"
+    "involved. Corrected to \"#5467 stays open\" (no verb adjacent to the\n"
+    "number, backtick-wrapped per the gate's own prescribed escape)."
+)
+
+
+def test_check4_fires_on_the_real_5484_commit_shape():
+    """Tier 1: real reproduction — PR #5484's actual commit message, #5490.
+    The SAME bare-past-tense "auto-closed #5467" shape that fooled check 3
+    in the PR body (see ``test_check3_fires_on_the_real_5484_auto_closed_
+    prose_shape`` above) is ALSO present in a commit message, independently
+    — check 4's exemption (``commit_closing_declared - narrowly_declared``)
+    must not let the body's own equally-non-canonical mention exempt it.
+    With a body that declares nothing about #5467 at all, check 4 fires."""
+    findings = m.check_contradictions(
+        "unrelated body text",
+        closing_refs=[],
+        commit_messages=[_PR5484_COMMIT_WITH_LEAK],
+    )
+    assert _checks(findings) == [(4, 5467)]
+
+
+def test_check4_stays_silent_when_the_body_canonically_covers_the_commit_leak():
+    """Tier 1: accept side, same fixture — a body that DOES canonically
+    declare closing #5467 (``Closes #5467``) exempts the identical commit
+    leak, same as the pre-existing #3187 accept-side test does for its own
+    fixture."""
+    findings = m.check_contradictions(
+        "Closes #5467",
+        closing_refs=[5467],
+        commit_messages=[_PR5484_COMMIT_WITH_LEAK],
+    )
+    assert findings == []
