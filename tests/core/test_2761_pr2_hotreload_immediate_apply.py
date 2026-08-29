@@ -48,6 +48,7 @@ from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
+from tests._support.hooks import collect_hook_events
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
@@ -365,9 +366,12 @@ def test_get_active_hot_reloader_is_this_sessions_reloader(
 # H5) is a thin pass-through to that same dispatch call. So the PUBLISH
 # side of this invariant is reachable without session._hook_bus at all;
 # only the SUBSCRIBE side (attaching a raw, deliberately-never-drained
-# subscriber to force the overflow) still needs it — Session publishes no
-# accessor for the bus itself, matching family6b's ①/②'s same "no public
-# route, own construction target" acceptance (docs on that file).
+# subscriber to force the overflow) needed it directly — Session itself
+# still publishes no production accessor for the bus (#5494's own ruling:
+# a production seam manufactured purely for tests was explicitly rejected,
+# the same posture family6b's ①/② already took). #5494 gave tests/_support
+# a narrow test-side seam instead (collect_hook_events(session)), which
+# this test now uses below rather than reaching session._hook_bus itself.
 
 
 @pytest.mark.asyncio
@@ -388,7 +392,7 @@ async def test_hook_bus_emit_event_reaches_session_audit_events(
 
     # HookBus's default subscriber queue is bounded (128), so >128
     # undrained publishes guarantees at least one drop.
-    sub = session._hook_bus.subscribe()
+    sub = collect_hook_events(session)
     try:
         for i in range(200):
             await session.dispatch_external_event("turn_end", {"i": i})
