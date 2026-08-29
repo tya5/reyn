@@ -42,6 +42,7 @@ from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 from reyn.runtime.fs_watcher import FsWatcher
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.hooks import assert_hook_trigger_signature
 
 watchdog = pytest.importorskip("watchdog", reason="fs-watch extra ('pip install reyn[fs-watch]') not installed")
 
@@ -55,19 +56,25 @@ class _Recorder:
     """A real recording async callable — the ``hook_trigger`` DI shape,
     no mock.
 
-    #5516: ``hook_trigger`` is now batch-shaped (``(point, payloads,
+    #5516: ``hook_trigger`` is now batch-shaped (``(point, payloads, *,
     skipped_session_wide=0)``). This recorder flattens each batch back to
     one ``(point, payload)`` tuple per event, preserving every existing
     call site's ``(point, template_vars) = trigger.calls[N]`` shape below
     unchanged — every test in this file only ever produces one file-write
     event per assertion, so batches stay length-1 in practice, but the
-    flatten is correct for N>1 too (never silently drops an event)."""
+    flatten is correct for N>1 too (never silently drops an event).
+
+    #5527: pins its own shape against the real hook_trigger target inside
+    ``__init__`` — once per instantiation, not per test — so a future
+    change to ``HookDispatcher.dispatch_external_batch`` breaks every one
+    of this file's 6 construction sites loudly (red) instead of hanging."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        assert_hook_trigger_signature(self)
 
     async def __call__(
-        self, point: str, payloads: list, skipped_session_wide: int = 0,
+        self, point: str, payloads: list, *, skipped_session_wide: int = 0,
     ) -> None:
         self.calls.extend((point, dict(payload)) for payload in payloads)
 

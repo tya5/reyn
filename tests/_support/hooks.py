@@ -38,6 +38,7 @@ shape architect explicitly weighed against).
 """
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -87,3 +88,58 @@ async def run_one_turn(session: "Session", user_text: str, chain_id: str) -> Non
     on its own.
     """
     await session._run_router_loop(user_text, chain_id)
+
+
+def _param_shape(sig: "inspect.Signature") -> "list[tuple[str, inspect._ParameterKind, bool]]":
+    """(name, kind, has-a-default) per parameter — deliberately NOT full
+    :class:`inspect.Parameter` equality: annotations differ harmlessly
+    between production's real string-quoted type hints and a test double's
+    own (often bare or absent) ones, and comparing exact default VALUES
+    would reject a double using an equivalent-but-not-``==``-identical
+    default. ``kind`` is load-bearing, not incidental: it is what
+    distinguishes a keyword-only parameter (``*, x=0``) from a
+    positional-or-keyword one with the same name and default (``x=0``) —
+    exactly the drift #5527 found in ``skipped_session_wide``, silent under
+    a name-and-default-only comparison."""
+    return [(p.name, p.kind, p.default is not inspect.Parameter.empty) for p in sig.parameters.values()]
+
+
+def assert_hook_trigger_signature(double: object) -> None:
+    """#5527 — pin a ``hook_trigger``-shaped test double's call signature
+    against the ONE real thing it stands in for
+    (``HookDispatcher.dispatch_external_batch``), inside the helper that
+    constructs the double — never per-test (architect's own prescription,
+    verbatim: "``inspect.signature(実物) == inspect.signature(double)`` を
+    ★double を作る helper の中で 1 度（test ごとに書かせない）").
+
+    Real incident this closes (#5516 arc, #5527): 3 hand-written
+    ``hook_trigger`` doubles kept the PRE-#5516 single-event signature
+    after production moved to the batch shape — each raised ``TypeError``
+    on the missing ``skipped_session_wide`` kwarg, silently swallowed by
+    ``HookDispatcher``'s own per-hook isolation ``try/except``, leaving an
+    unbounded ``_wait_for`` poll spinning forever (a hang, not a red test —
+    see this issue's own root-cause writeup). Call this once, right after
+    constructing the double, so a FUTURE signature change on
+    ``dispatch_external_batch`` breaks the double loudly (red) instead of
+    silently (a hang nobody can attribute to this).
+
+    Deliberately does not compare annotations or exact default identity —
+    see :func:`_param_shape`'s own docstring for why."""
+    from reyn.hooks.dispatcher import HookDispatcher
+
+    real_sig = inspect.signature(HookDispatcher.dispatch_external_batch)
+    # Drop ``self`` — the real target is an unbound function (accessed via
+    # the class, never instantiated here: constructing a HookDispatcher
+    # needs a HookRegistry + other DI this helper has no business knowing
+    # about), while *double* is called without a leading ``self`` (either
+    # a bare async function, or an instance whose own ``__call__`` already
+    # has ``self`` stripped by ``inspect.signature``'s bound-method rule).
+    real_shape = _param_shape(real_sig)[1:]
+    double_shape = _param_shape(inspect.signature(double))
+    assert real_shape == double_shape, (
+        f"hook_trigger double signature has drifted from the real "
+        f"HookDispatcher.dispatch_external_batch — real (self dropped): "
+        f"{real_shape!r}, double: {double_shape!r}. #5516/#5527: a "
+        f"drifted double's TypeError is swallowed by per-hook isolation "
+        f"and hangs the caller instead of failing loudly."
+    )
