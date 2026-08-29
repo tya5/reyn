@@ -117,7 +117,7 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
     engine = _MinimalCompactionEngine()
     compact_calls = 0
 
-    async def _compact(input_chunk):
+    async def _compact(input_chunk, *, covers_through=None):
         nonlocal compact_calls
         compact_calls += 1
         raise _QuotaExhaustedError()
@@ -167,7 +167,7 @@ def test_transient_rate_limit_still_enters_the_shrink_ladder_unaffected() -> Non
     engine = _MinimalCompactionEngine()
     compact_calls = 0
 
-    async def _compact(input_chunk):
+    async def _compact(input_chunk, *, covers_through=None):
         nonlocal compact_calls
         compact_calls += 1
         raise _TransientRateLimitError()

@@ -74,7 +74,7 @@ def test_chat_summary_carries_the_calls_own_real_usage(monkeypatch) -> None:
         model=_PRICED_MODEL, events=EventLog(),
         cfg=CompactionConfig(use_chars4_estimate=True),
     )
-    summary = asyncio.run(engine.compact(_chunk()))
+    summary = asyncio.run(engine.compact(_chunk(), covers_through=1))
     assert summary.prompt_tokens == 8200
     assert summary.completion_tokens == 340
     assert summary.cost_usd is not None and summary.cost_usd > 0.0
@@ -109,7 +109,7 @@ def test_usage_is_none_not_zero_when_the_response_carries_none(monkeypatch) -> N
         model=_PRICED_MODEL, events=EventLog(),
         cfg=CompactionConfig(use_chars4_estimate=True),
     )
-    summary = asyncio.run(engine.compact(_chunk()))
+    summary = asyncio.run(engine.compact(_chunk(), covers_through=1))
     assert summary.prompt_tokens is None
     assert summary.completion_tokens is None
     assert summary.cost_usd is None
@@ -131,13 +131,22 @@ def test_compaction_completed_event_carries_the_usage_end_to_end(monkeypatch) ->
         return _resp(prompt=500, completion=50, content=_SUMMARY_CONTENT)
     monkeypatch.setattr(litellm, "acompletion", _fake)
 
-    engine = CompactionEngine(
-        model=_PRICED_MODEL, events=EventLog(),
-        cfg=CompactionConfig(use_chars4_estimate=True),
-    )
-    engine._budgets = _STUB_BUDGETS  # noqa: SLF001 — test-setup shaping, not an assertion
+    def _build_engine(events: EventLog) -> CompactionEngine:
+        # #5475: built with the SAME EventLog `_make_controller` gives its
+        # controller — `compact()` now emits `compaction_started` through
+        # `self._events` itself, so an engine built against a separate,
+        # private EventLog (as this test did before #5475) would silently
+        # emit into a log nobody observes, exactly the disconnect
+        # `test_compaction_controller_invariants.py`'s own stub engines
+        # were fixed to avoid.
+        engine = CompactionEngine(
+            model=_PRICED_MODEL, events=events,
+            cfg=CompactionConfig(use_chars4_estimate=True),
+        )
+        engine._budgets = _STUB_BUDGETS  # noqa: SLF001 — test-setup shaping, not an assertion
+        return engine
 
-    ctrl, collected, _, events = _make_controller(history=_history(7), engine=engine)
+    ctrl, collected, _, events = _make_controller(history=_history(7), engine_factory=_build_engine)
 
     async def _run() -> None:
         await ctrl.force_compact_now()

@@ -49,13 +49,14 @@ Drop priority when over budget:
 from __future__ import annotations
 
 import asyncio
+import enum
 import hashlib
 import json
 import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import (
@@ -405,6 +406,40 @@ def estimate_tokens_for_any_turn(
 # ---------------------------------------------------------------------------
 # Dataclasses (replace the YAML artifact schemas)
 # ---------------------------------------------------------------------------
+
+
+class SeqUnavailable(enum.Enum):
+    """#5475 (architect ruling): named reasons a caller of :meth:`CompactionEngine.
+    compact` cannot supply a real ``covers_through_seq`` for its
+    ``compaction_started`` audit event.
+
+    A bare ``None`` was explicitly rejected — a consumer of the event cannot
+    tell "seq is absent" apart from "seq is unknown for a structural reason",
+    the same ambiguity architect named twice the same day (#5084/#5132) with
+    the same prescription: make the absence itself carry WHY, not just THAT.
+    """
+
+    #: `retry_loop`'s own internal compaction (`engine.py`'s own later
+    #: `engine.compact(input_chunk)` call, inside the halving/spill ladder)
+    #: builds `new_turns` from `RouterHistoryBuffer.decompose_history_for_
+    #: retry()`'s `raw_middle` — litellm WIRE dicts (`_serialise_turn`'s own
+    #: output), which structurally carry no `seq` field at all (that method's
+    #: own `seq_by_id` side-channel, keyed by `id(wire_dict)`, exists
+    #: specifically because the wire shape has no room for one). Threading
+    #: `seq_by_id` through to this call site was considered and rejected
+    #: (architect): an `id()`-keyed lookup silently breaks across any
+    #: copy/re-serialise, extending a fragile mechanism's lifetime rather
+    #: than fixing it.
+    WIRE_DICTS_CARRY_NO_SEQ = "wire_dicts_carry_no_seq"
+
+
+#: The `compaction_started` payload's `covers_through_seq` field: either a
+#: real seq (the controller's own caller, whose `new_turns` DO carry one —
+#: see `_turn_to_compactor_input`), or a named reason it cannot be supplied.
+#: No default anywhere `compact()` is called — an omitted value is a
+#: caller writing a payload it cannot actually back, caught by mypy at the
+#: call site, never a silently-accepted null.
+CoversThrough = Union[int, SeqUnavailable]
 
 
 @dataclass
@@ -1505,7 +1540,9 @@ class CompactionEngine:
             self._events.emit("summary_resummarize_failed", error=str(exc))
             return topic_arc
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
+    ) -> ChatSummary:
         """Run one compaction LLM call and return a ChatSummary.
 
         Axis 9: applies hard_truncate_summary to the returned topic_arc
@@ -1513,7 +1550,35 @@ class CompactionEngine:
 
         Raises on LLM error; callers wrap in try/except and emit
         ``compaction_failed`` if needed.
+
+        #5475 (architect ruling): emits ``compaction_started`` HERE, at the
+        one real entry both of this engine's callers share
+        (``CompactionController.force_compact_now`` and ``retry_loop``'s own
+        internal compaction attempts) — moved from ``CompactionController``,
+        not duplicated (the controller's own former emit is deleted in the
+        same change; see #5382/#5455 for why two emit sites for the same
+        kind is the shape this repo rejects). ``new_turn_count``/
+        ``had_previous`` are derived from *input_chunk* alone — both are
+        genuinely available to every caller. ``covers_through`` is NOT: the
+        controller's own caller can supply a real seq (its ``new_turns``
+        carry one), but ``retry_loop``'s cannot (its ``new_turns`` are wire
+        dicts with none) — a REQUIRED keyword-only argument, no default,
+        so the type checker catches an omission at the call site rather
+        than this method silently accepting a null it cannot justify.
         """
+        new_turn_count = len(input_chunk.new_turns)
+        covers_through_seq = covers_through if isinstance(covers_through, int) else None
+        covers_through_unavailable_reason = (
+            None if isinstance(covers_through, int) else covers_through.value
+        )
+        self._events.emit(
+            "compaction_started",
+            new_turn_count=new_turn_count,
+            covers_through_seq=covers_through_seq,
+            covers_through_unavailable_reason=covers_through_unavailable_reason,
+            had_previous=input_chunk.previous_summary is not None,
+        )
+
         # No `_token_cache.clear()` here (removed, #2937): text is immutable and
         # the tokenizer/fallback choice is a fixed per-session config, so a
         # cached (model, text) count is valid for the process's entire
@@ -2194,7 +2259,12 @@ async def retry_loop(
                     section_token_caps=section_caps,
                 )
                 try:
-                    chat_summary = await engine.compact(input_chunk)
+                    # #5475: raw_middle's turns are wire dicts (no `seq` —
+                    # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
+                    # docstring) — a real seq is not available to this caller.
+                    chat_summary = await engine.compact(
+                        input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
+                    )
                     summary = chat_summary.to_dict()
                     # Only the ATTEMPTED slice is compacted — a smaller
                     # remainder (if any) stays in raw_middle for a later

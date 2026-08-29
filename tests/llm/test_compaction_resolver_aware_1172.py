@@ -79,7 +79,7 @@ def _run_capture(monkeypatch, engine: CompactionEngine) -> str:
         new_turns=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
-    asyncio.run(engine.compact(chunk))
+    asyncio.run(engine.compact(chunk, covers_through=1))
     return seen["model"]
 
 

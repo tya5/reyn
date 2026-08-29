@@ -19,6 +19,7 @@ expose synthetic ``budgets``.
 from __future__ import annotations
 
 import asyncio
+from typing import Callable
 
 import pytest  # noqa: F401 — used implicitly by pytest discovery
 
@@ -30,6 +31,7 @@ from reyn.services.compaction.engine import (
     ChatSummary,
     CompactionEngine,
     ComputedBudgets,
+    CoversThrough,
     HistoryChunkToCompact,
 )
 from tests._support.events import collect_events, settle
@@ -49,27 +51,57 @@ _STUB_BUDGETS = ComputedBudgets(
 )
 
 
-class _AbortingEngine(CompactionEngine):
-    """Engine stub that always raises so compaction aborts early (no LLM call)."""
+def _emit_compaction_started(
+    events: EventLog, input_chunk: HistoryChunkToCompact, covers_through: CoversThrough,
+) -> None:
+    """#5475: mirrors ``CompactionEngine.compact()``'s own real entry-point
+    emit — the stub engines below call this instead of a real ``compact()``
+    body, so this test file's own ``compaction_started`` witnesses stay
+    meaningful (the SAME shape production now emits, not a shape this file
+    invented independently that could silently drift from it)."""
+    events.emit(
+        "compaction_started",
+        new_turn_count=len(input_chunk.new_turns),
+        covers_through_seq=covers_through if isinstance(covers_through, int) else None,
+        covers_through_unavailable_reason=(
+            None if isinstance(covers_through, int) else covers_through.value
+        ),
+        had_previous=input_chunk.previous_summary is not None,
+    )
 
-    def __init__(self) -> None:
+
+class _AbortingEngine(CompactionEngine):
+    """Engine stub that always raises so compaction aborts early (no LLM call).
+
+    #5475: takes the SAME ``EventLog`` the controller/test observe (not a
+    private, disconnected one) — ``compaction_started`` now emits inside
+    ``compact()``, not the controller, so a stub whose own event log nobody
+    watches would silently stop producing that event for every test here."""
+
+    def __init__(self, events: EventLog) -> None:
         self._model = ""
-        self._events = EventLog()
+        self._events = events
         self._budgets = _STUB_BUDGETS
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
+    ) -> ChatSummary:
+        _emit_compaction_started(self._events, input_chunk, covers_through)
         raise RuntimeError("aborting engine stub: test-time abort")
 
 
 class _SucceedingEngine(CompactionEngine):
     """Engine stub that returns a minimal ChatSummary without an LLM call."""
 
-    def __init__(self) -> None:
+    def __init__(self, events: EventLog) -> None:
         self._model = ""
-        self._events = EventLog()
+        self._events = events
         self._budgets = _STUB_BUDGETS
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
+    ) -> ChatSummary:
+        _emit_compaction_started(self._events, input_chunk, covers_through)
         seqs = [int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)]
         return ChatSummary(topic_arc="stub", covers_through_seq=max(seqs) if seqs else 0)
 
@@ -77,11 +109,18 @@ class _SucceedingEngine(CompactionEngine):
 def _make_controller(
     *,
     history: list[ChatMessage],
-    engine: CompactionEngine,
+    engine_factory: "Callable[[EventLog], CompactionEngine]",
 ) -> tuple[CompactionController, list, list[ChatMessage], EventLog]:
-    """Return a (controller, collected, history, events) tuple ready for testing."""
+    """Return a (controller, collected, history, events) tuple ready for testing.
+
+    #5475: takes an ``engine_factory(events)`` rather than a pre-built
+    ``engine`` — the stub engines need the SAME ``events`` this function
+    builds below (their own ``compaction_started`` now lives inside
+    ``compact()``, see ``_emit_compaction_started`` above), which does not
+    exist yet at the caller's own call site."""
     events = EventLog()
     collected = collect_events(events)
+    engine = engine_factory(events)
 
     def _latest_summary():
         for m in reversed(history):
@@ -140,7 +179,7 @@ def test_force_compact_no_candidates_emits_forced_sync_no_started():
     to compact), force_compact_now emits compaction_check(outcome='forced_sync')
     with candidate_count=0 and does NOT emit compaction_started.
     """
-    ctrl, collected, _, events = _make_controller(history=_history(2), engine=_AbortingEngine())
+    ctrl, collected, _, events = _make_controller(history=_history(2), engine_factory=_AbortingEngine)
 
     asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
 
@@ -162,7 +201,7 @@ def test_force_compact_with_candidates_appends_summary():
     """Tier 2: with a compactable middle, force_compact_now runs the engine
     (compaction_started + compaction_completed) and appends a summary entry.
     """
-    ctrl, collected, hist, events = _make_controller(history=_history(7), engine=_SucceedingEngine())
+    ctrl, collected, hist, events = _make_controller(history=_history(7), engine_factory=_SucceedingEngine)
 
     asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
 
@@ -182,7 +221,7 @@ def test_force_compact_engine_failure_emits_failed():
     """Tier 2: when the engine raises mid-compaction, force_compact_now emits
     compaction_failed and returns (the try/except swallows the engine error
     rather than propagating it to the caller)."""
-    ctrl, collected, _, events = _make_controller(history=_history(7), engine=_AbortingEngine())
+    ctrl, collected, _, events = _make_controller(history=_history(7), engine_factory=_AbortingEngine)
 
     asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))  # must not raise
 

@@ -77,7 +77,7 @@ def test_covers_ignores_a_wrong_nonempty_echo(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[1]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
     assert summary.covers_through_seq == 3, (
         f"expected covers_through_seq derived from the real input max "
         f"(3), not the wrong echo (1); got {summary.covers_through_seq}"
@@ -97,7 +97,7 @@ def test_covers_ignores_a_wrong_higher_echo(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[999]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
     assert summary.covers_through_seq == 6, (
         f"expected covers_through_seq derived from the real input max (6), "
         f"not the inflated echo (999); got {summary.covers_through_seq}"
@@ -122,7 +122,7 @@ def test_empty_new_turn_seqs_no_longer_reprompts(monkeypatch) -> None:
         return _resp(_json(new_turn_seqs=[]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
 
     assert calls["n"] == 1, "an empty new_turn_seqs must not trigger a re-prompt"
     assert summary.covers_through_seq == 7
@@ -145,7 +145,7 @@ def test_empty_topic_arc_still_reprompts_regardless_of_new_turn_seqs(monkeypatch
         return _resp(_json(new_turn_seqs=[1]))
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(chunk))
+    summary = asyncio.run(engine.compact(chunk, covers_through=max(t["seq"] for t in chunk.new_turns)))
 
     assert calls["n"] == 2, "an empty topic_arc must still trigger exactly one re-prompt"
     assert summary.topic_arc == "did a thing"

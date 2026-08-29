@@ -405,14 +405,18 @@ class CompactionController:
         )
 
         new_turn_count = len(candidates)
-        self._events.emit(
-            "compaction_started",
-            new_turn_count=new_turn_count,
-            covers_through_seq=candidates[-1].seq,
-            had_previous=previous_summary is not None,
+        # #5475 (architect ruling): compaction_started now emits at
+        # CompactionEngine.compact()'s own entry — the one real entry both
+        # of its callers (this method, and retry_loop's own internal
+        # compaction attempts) share — not here. Moved, not duplicated
+        # (the old emit here is deleted, not left alongside the new one;
+        # see #5382/#5455 for why two emit sites for the same kind is
+        # rejected). This caller's own real `seq` (`candidates[-1].seq` —
+        # unlike retry_loop's wire-dict turns, `_turn_to_compactor_input`
+        # keeps `seq` per turn) is passed through explicitly.
+        chat_summary = await self._engine.compact(
+            input_chunk, covers_through=candidates[-1].seq,
         )
-
-        chat_summary = await self._engine.compact(input_chunk)
         structured = chat_summary.to_dict()
         covers = chat_summary.covers_through_seq or candidates[-1].seq
         # #1820 Part1: frame the rendered summary with a static reference-only
