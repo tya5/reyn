@@ -1565,6 +1565,15 @@ class CompactionEngine:
         dicts with none) — a REQUIRED keyword-only argument, no default,
         so the type checker catches an omission at the call site rather
         than this method silently accepting a null it cannot justify.
+
+        #5475 (architect, non-blocking): the emitted ``compaction_started``
+        payload's ``covers_through_seq``/``covers_through_unavailable_
+        reason`` fields are a PAIR, meant to be read together — JSON has
+        no union type, so the ``int | SeqUnavailable`` distinction this
+        method's own type signature carries has to split across two
+        fields on the wire. A consumer reading only ``covers_through_seq``
+        still sees a bare, unexplained ``null`` on the retry_loop path;
+        always check ``covers_through_unavailable_reason`` alongside it.
         """
         new_turn_count = len(input_chunk.new_turns)
         covers_through_seq = covers_through if isinstance(covers_through, int) else None
