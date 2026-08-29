@@ -6,18 +6,18 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships an internal RAG **framework foundation** — the `embed` / `index_query` / `index_drop` / `semantic_search` / `index_update` control-IR ops, an extensible `IndexBackend` protocol, and an `EmbeddingProvider` protocol. **As of FP-0066 P1c, the in-core index is OS-internal only**: there is no user-facing way to create or search a source in it. This closes a longer retirement arc:
+reyn ships an internal RAG **framework foundation** — the `embed` / `index_query` / `index_drop` / `semantic_search` / `index_update` control-IR ops, an extensible `IndexBackend` protocol, and an `EmbeddingProvider` protocol. **As of FP-0066 P1c, creating, modifying, or removing a source in the in-core index is OS-internal only**: there is no user- or agent-facing way to do any of that. Reading is narrower than a general search tool but is no longer zero — `search_knowledge` (FP-0066 P3c, landed) reads across four OS-curated sources; see below. This closes a longer retirement arc:
 
 - **FP-0066 P1b** retired the four agent-facing LLM tools that used to ride the in-core store (`semantic_search`, `index_update`, `drop_source`, `list_rag_sources`).
 - **FP-0066 P1c (this state)** retired the two remaining user-facing entry points onto the SAME store: the safe-mode `index_update()` python call (`reyn.api.safe.index_update`) and the CLI `reyn source list / describe / rm` command group.
 
-All three surfaces were a pre-audience-split relic — user-RAG semantics riding reyn's own internal store, from before user RAG and in-core RAG were split into separate systems (proposal 0063). See [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) for the retire rationale and the later phases that make the in-core index reachable again from inside the OS (`search_actions` today; a future `search_knowledge` verb — not a general-purpose agent search tool).
+All three surfaces were a pre-audience-split relic — user-RAG semantics riding reyn's own internal store, from before user RAG and in-core RAG were split into separate systems (proposal 0063). See [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) for the retire rationale and the later phases that make the in-core index reachable again from inside the OS (`search_actions` today; `search_knowledge` too, as of FP-0066 P3c — neither is a general-purpose agent search tool over an arbitrary source you create).
 
 > **If you want an agent to search your own documents, use the builtin user RAG** (proposal 0063): two bundled pipelines that ingest a folder of documents (pdf / xlsx / pptx / docx / txt / md) into **an external sqlite vector store you name**, via MCP servers, and query it — no Python step to write, and it is agent-callable end-to-end. See [Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md). That is a *different* store with a *different* setup from the in-core index this page describes; the two share only the `embed` primitive and the `embedding:` class config below.
 
 ## The in-core index is OS-internal only
 
-There is no operator- or agent-facing way to add to, remove from, or search the in-core store any more — no safe-mode python call, no CLI command, no LLM tool. The substrate (`IndexUpdateIROp` / `SemanticSearchIROp` / `SqliteIndexBackend` / `EmbeddingProvider`) is kept because later FP-0066 phases (§8 ingest, §5 search) build reyn's own internal retrieval on top of it — action-catalog search (`search_actions`) already does; skill/memory/repo retrieval (a future `search_knowledge` verb) is planned. None of this is a general-purpose "index your own docs and have the LLM search them" surface — for that, use the FP-0063 plugin above.
+There is no operator- or agent-facing way to add to or remove from the in-core store any more — no safe-mode python call, no CLI command, no LLM tool for writing to it. Nor is the raw `semantic_search`/`index_update`/`index_drop` op kind itself agent-callable (architect ruling, #5495: intentional, not a gap — `src/` has zero registration sites for any of the three as an LLM tool). The substrate (`IndexUpdateIROp` / `SemanticSearchIROp` / `SqliteIndexBackend` / `EmbeddingProvider`) is kept because later FP-0066 phases (§8 ingest, §5 search) build reyn's own internal retrieval on top of it — action-catalog search (`search_actions`) does this, and so does skill/memory/repo retrieval (`search_knowledge`, FP-0066 P3c, landed): both are OS-curated read surfaces over a fixed, closed set of sources the OS itself indexes, never a way to point either tool at a source you created. None of this is a general-purpose "index your own docs and have the LLM search them" surface — for that, use the FP-0063 plugin above.
 
 `index_update` is a **reconcile**, not an append/replace toggle: internal callers pass the full current chunk set for whatever `source_path`s they are (re-)indexing in one call (add/update/remove/skip against `content_hash` — a re-run with the same chunks re-embeds nothing; a re-run with a changed hash under an already-indexed path re-embeds just that chunk and drops the stale one). This contract is unchanged from before the retirement; only who can call it has changed.
 
@@ -101,7 +101,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 ## Phase history
 
-**FP-0066 P1c (this state)**: the two remaining user-facing entry points onto the in-core store — the safe-mode `index_update()` python call and the CLI `reyn source` command group — are retired, clean-break, no shim. There is no operator- or agent-facing way to touch the in-core store any more; it is populated only by internal `index_update` op callers.
+**FP-0066 P1c (this state)**: the two remaining user-facing entry points onto the in-core store — the safe-mode `index_update()` python call and the CLI `reyn source` command group — are retired, clean-break, no shim. There is no operator- or agent-facing way to WRITE to the in-core store any more; it is populated only by internal `index_update` op callers. Reading is a separate axis — see FP-0066 P3c below.
 
 **Landed pre-retirement (historical):**
 
@@ -110,13 +110,16 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 - **FP-0057 Phase 2a/2b**: `recall` renamed `semantic_search` (later retired, FP-0066 P1b); a safe-mode ingestion entry point `index_update()` (`reyn.api.safe.index_update`, later retired FP-0066 P1c) replaced the retired `embed_and_index()` (`reyn.api.safe.embed_index`, clean-break, no shim), adding incremental/delta-reconcile (add/update/remove/skip against the source's current index).
 - **#3026** added `list_rag_sources` (later retired, FP-0066 P1b) as the discovery verb naming indexed corpora.
 
+**Landed post-retirement (reading, not writing):**
+
+- **FP-0066 P3c** added `search_knowledge` — an LLM tool that reads across four OS-curated sources (skill/memory/repo-doc/repo-src), entity-aggregated. Read-only, and scoped to those four fixed sources — not a way to search or point at a source you create yourself; see [§The in-core index is OS-internal only](#the-in-core-index-is-os-internal-only) above.
+
 **Deferred to a future phase:**
 
 - Alternative vector store backends (Qdrant, FAISS, Pinecone)
 - Advanced retrieval (rerank, HyDE, contextual retrieval)
 - Additional local backends (ollama, ONNX, GGUF)
 - RAG evaluation framework
-- Reachable in-core search (`search_knowledge`, per proposal 0066 §5/§11 P3)
 
 ## Limitations
 
