@@ -3,9 +3,18 @@ so a compaction/retry test can express "this call fails with cause X"
 without differing engine (or LLMReplay) instance from #5382's issue thread.
 
 Architect ruling (issuecomment on #5382 -- read that thread for the full
-reasoning): a fixture's ``cause`` is a CLOSED vocabulary
-(``rate_limit`` / ``context_overflow`` / ``byte_limit``), never a class
+reasoning): a fixture's ``cause`` is a CLOSED vocabulary, never a class
 name imported from a string ("data" must never point at arbitrary code).
+Vocabulary members (#5454 correction, same architect, quoting a real
+measurement: reyn-self's own event log, 83
+``router_loop_terminated_by_exception`` occurrences, 79
+``RateLimitError`` / 4 ``InternalServerError``) are ``rate_limit`` /
+``internal_server_error`` -- the two causes ever actually observed in
+production. #5452's original PR also shipped ``context_overflow`` /
+``byte_limit`` as illustrative examples from architect's own #5382
+design comment; #5454 struck them for the same reason a closed
+vocabulary exists at all -- an unused member makes "what LLMReplay can
+reproduce" a lie.
 No repeat-count axis: the key is already the request's own content hash,
 so "same cause N times" is written as N distinct keys (the real
 #5296/#5364 shape -- each retry's request actually differs as history
@@ -85,12 +94,12 @@ async def test_the_same_key_raises_the_same_exception_every_call(tmp_path: Path)
     on the second call)."""
     messages = [{"role": "user", "content": "same request twice"}]
     fixture = tmp_path / "f.jsonl"
-    _write_fixture(fixture, [_exception_entry(messages, cause="context_overflow")])
+    _write_fixture(fixture, [_exception_entry(messages, cause="internal_server_error")])
     replay = LLMReplay(fixture, mode="replay")
 
-    with pytest.raises(litellm.ContextWindowExceededError):
+    with pytest.raises(litellm.InternalServerError):
         await _replay_call(replay, messages)
-    with pytest.raises(litellm.ContextWindowExceededError):
+    with pytest.raises(litellm.InternalServerError):
         await _replay_call(replay, messages)
 
 
@@ -102,8 +111,10 @@ async def test_three_distinct_keys_express_the_same_cause_without_a_count_field(
     one that proves "count is unnecessary" actually holds). The real
     #5296/#5364 shape (a retry loop whose history shrinks each attempt,
     so each retry's REQUEST differs) is expressed as 3 distinct keys, all
-    with cause="byte_limit", with no count/index field anywhere in the
-    fixture format -- and all 3 requests raise it."""
+    with cause="rate_limit" (#5454: reyn-self's own production events
+    show exactly this pattern -- 79 RateLimitError occurrences, the
+    dominant real retry-loop cause), with no count/index field anywhere
+    in the fixture format -- and all 3 requests raise it."""
     messages_by_attempt = [
         [{"role": "user", "content": f"attempt {i}, history len {30 - i}"}]
         for i in range(3)
@@ -111,18 +122,13 @@ async def test_three_distinct_keys_express_the_same_cause_without_a_count_field(
     fixture = tmp_path / "f.jsonl"
     _write_fixture(
         fixture,
-        [_exception_entry(m, cause="byte_limit") for m in messages_by_attempt],
+        [_exception_entry(m, cause="rate_limit") for m in messages_by_attempt],
     )
     replay = LLMReplay(fixture, mode="replay")
 
     for messages in messages_by_attempt:
-        with pytest.raises(litellm.BadRequestError) as excinfo:
+        with pytest.raises(litellm.RateLimitError):
             await _replay_call(replay, messages)
-        assert getattr(excinfo.value, "status_code", None) == 413, (
-            "byte_limit must reproduce the real HTTP 413 shape "
-            "engine.py's own saw_byte_limit classifier reads "
-            "(getattr(exc, 'status_code', None) == 413)"
-        )
 
 
 @pytest.mark.asyncio

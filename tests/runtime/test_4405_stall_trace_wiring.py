@@ -20,12 +20,18 @@ The THIRD test (disarm-on-exception) keeps the private ``run_turn``
 replacement — it forces a genuine exception mid-turn, which
 ``LLMStub`` cannot do (it always returns a fixed non-erroring
 completion) and the new audit-events cannot inject either (they only
-OBSERVE, they do not CONTROL). This is #5103's own boundary: the new
-seam closes ③ (content) and ④ (ordering) observation, never ②
-(controlling what a turn does) — a controllable-failure stub is that
-class's own open design question (#5450), not this PR's scope. Reported
-to lead-coder/architect as the "does chain_id/turn_started work here"
-check #5103 asked implementers to do per file.
+OBSERVE, they do not CONTROL). architect (#5454 review, quoting
+production measurement — 83 real ``router_loop_terminated_by_exception``
+events in reyn-self's own event log, 79 ``RateLimitError`` / 4
+``InternalServerError``): the receiving mechanism for this failure shape
+is **#5382** (``LLMReplay``'s ``kind: "exception"`` fixtures), not a new
+"controllable-failure stub" design question — both observed causes are
+provider exceptions, exactly what #5382's closed vocabulary reproduces.
+This private replacement is provisional until #5382's vocabulary covers
+these causes (comment policy §8: the PR that extends #5382's vocabulary
+to `rate_limit`/`internal_server_error` owes this comment a rewrite).
+Reported to lead-coder/architect as the "does chain_id/turn_started work
+here" check #5103 asked implementers to do per file.
 
 No waiting, no sleeping, no threshold crossing: the point under test is
 WIRING (does the env var reaching a turn cause arm-then-disarm to be
@@ -160,8 +166,10 @@ async def test_stall_trace_disarmed_even_when_the_turn_raises(
     Not migrated to @pytest.mark.llm_stub (see module docstring): this
     test needs run_turn to genuinely RAISE, which LLMStub cannot do (it
     always completes normally) and the audit-event seam cannot inject
-    either (an observation seam, not a control seam) — a controllable-
-    failure stub is #5450's own open design question, not this file's."""
+    either (an observation seam, not a control seam). #5382 (LLMReplay
+    exception fixtures) is where this replaces itself once its vocabulary
+    covers rate_limit/internal_server_error (architect, #5454 review —
+    83 real production occurrences of exactly this failure shape)."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)

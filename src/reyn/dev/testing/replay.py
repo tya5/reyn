@@ -147,25 +147,10 @@ def _make_rate_limit_error(message: str) -> Exception:
     return litellm.RateLimitError(message=message, llm_provider="replay", model="replay")
 
 
-def _make_context_overflow_error(message: str) -> Exception:
+def _make_internal_server_error(message: str) -> Exception:
     import litellm
 
-    return litellm.ContextWindowExceededError(
-        message=message, model="replay", llm_provider="replay",
-    )
-
-
-def _make_byte_limit_error(message: str) -> Exception:
-    import litellm
-
-    exc = litellm.BadRequestError(message=message, model="replay", llm_provider="replay")
-    # #4381 stage 1 / engine.py's own `saw_byte_limit` classifier reads
-    # `getattr(exc, "status_code", None) == 413` directly off the exception
-    # — litellm.BadRequestError defaults status_code to 400, so this is set
-    # explicitly to reproduce the real HTTP 413 (request-BODY-byte limit)
-    # shape that classifier is looking for.
-    exc.status_code = 413  # type: ignore[assignment]  # litellm types this Literal[400]
-    return exc
+    return litellm.InternalServerError(message=message, llm_provider="replay", model="replay")
 
 
 #: #5382: the CLOSED vocabulary of replayable exception causes (architect
@@ -176,10 +161,21 @@ def _make_byte_limit_error(message: str) -> Exception:
 #: litellm exception instance shaped the way reyn's own classifiers
 #: (``services/compaction/engine.py``) already read it — not a synthetic
 #: stand-in class.
+#:
+#: #5454 correction (architect, quoting a real measurement — reyn-self's
+#: own ``.reyn/events/``, ``router_loop_terminated_by_exception``, 83
+#: occurrences): the two members here are the ONLY causes actually
+#: observed in production (79 ``rate_limit`` / 4 ``internal_server_error``).
+#: The original PR (#5452) also shipped ``context_overflow``/``byte_limit``
+#: as illustrative examples — architect's own #5382 design comment named
+#: them — but neither has ever actually been observed; a closed vocabulary
+#: exists so "what LLMReplay can reproduce" has one honest, readable
+#: answer, and an unused member makes that answer lie. Removed, not kept
+#: unused: add a cause back here only backed by its own real measurement,
+#: the same bar this correction itself was held to.
 _REPLAY_EXCEPTION_CAUSES: "dict[str, Callable[[str], Exception]]" = {
     "rate_limit": _make_rate_limit_error,
-    "context_overflow": _make_context_overflow_error,
-    "byte_limit": _make_byte_limit_error,
+    "internal_server_error": _make_internal_server_error,
 }
 
 
