@@ -18,15 +18,17 @@ Four tests verifying the new P6 events fire at the right points:
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No MagicMock / AsyncMock / patch for Session collaborators.
 - Real Session, real EventLog, real StateLog.
-- Test 3 (turn_started) drives the REAL `RouterLoopDriver.run_turn` /
+- Both tests 3 and 4 drive the REAL `RouterLoopDriver.run_turn` /
   RouterLoop chain via `@pytest.mark.llm_stub` (#5103, architect design
-  "C2") — only `litellm.acompletion` itself is stubbed. Test 4
-  (turn_completed) still replaces `_loop_driver.run_turn` directly with a
-  plain async callable: its own subject is the turn_completed emit's
-  ORDERING relative to `run_turn`'s own return, so replacing `run_turn`
-  itself is what the test needs, not what it is working around (#5103
-  triage: this is the "timing observation" class, not the "LLM
-  avoidance" class the llm_stub migration targets).
+  "C2") — only `litellm.acompletion` itself is stubbed, never `run_turn`.
+  Test 4 (turn_completed) used to replace `_loop_driver.run_turn`
+  directly with a plain async callable purely to get a "how many events
+  existed when run_turn was called" observation point (#5103 triage's
+  own "timing observation" class). It now reads the SAME before/after
+  bracket off the public `stall_trace_armed`/`stall_trace_disarmed`
+  audit-events (#5103 ④, this issue's own new seam) — REYN_STALL_TRACE
+  is set purely to arm this observation pair; the N-second stall
+  detection itself is untested by design (see stall_trace.py).
 - Events observed via add_subscriber (public EventLog API), not via
   private state assertions.
 """
@@ -215,6 +217,7 @@ async def test_turn_started_emits_with_kind(tmp_path: Path, monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_turn_completed_emits_after_router_turn(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: turn_completed is emitted in _run_router_loop() immediately after
     RouterLoopDriver.run_turn() returns — the terminal stop_reason point.
@@ -222,20 +225,26 @@ async def test_turn_completed_emits_after_router_turn(tmp_path: Path, monkeypatc
     One turn_completed is emitted per turn. It carries the chain_id that
     matches the user message's chain_id (cross-agent tracing, P6).
 
-    Same LLM-boundary fake approach as test_turn_started_emits_with_kind.
+    #5103 ④ migration: previously replaced `_loop_driver.run_turn` with a
+    private closure that recorded how many events had been collected at
+    the moment run_turn was CALLED, then asserted turn_completed's index
+    was >= that count — a private mid-dispatch observation point. Now a
+    REAL turn dispatches (`@pytest.mark.llm_stub`, only
+    `litellm.acompletion` is stubbed) and the SAME "before/after run_turn"
+    bracket is read off the public `stall_trace_armed`/
+    `stall_trace_disarmed` audit-events (#5103 ④, this issue) — armed is
+    the first statement inside `_run_turn_body`'s task, before run_turn is
+    dispatched; disarmed is in the outermost-of-innermost `finally`, after
+    run_turn has returned AND every subsequent boundary operation
+    (turn_end hooks, hot-reload, journal cut) has too. REYN_STALL_TRACE is
+    set purely to arm this observation pair — the N-second stall
+    detection itself is not this test's subject (stall_trace.py's own
+    docstring: no test exercises the actual firing, by design).
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)
     collected = _collect_events(session)
-
-    # Track order: record chain_id when run_turn is called, then verify
-    # turn_completed fires after (via event list ordering).
-    run_turn_called_at: list[int] = []
-
-    async def _noop_run_turn(user_text: str, chain_id: str) -> None:
-        run_turn_called_at.append(len(collected))
-
-    session._loop_driver.run_turn = _noop_run_turn  # type: ignore[method-assign]
 
     _chain_id = "test-chain-002"
     await session._put_inbox("user", {"text": "world", "chain_id": _chain_id})
@@ -251,21 +260,20 @@ async def test_turn_completed_emits_after_router_turn(tmp_path: Path, monkeypatc
         f"turn_completed.chain_id should be {_chain_id!r}, got: {completed_ev!r}"
     )
 
-    # turn_completed must appear after run_turn was called (= after the
-    # terminal stop_reason, not before).
     all_types = [e["type"] for e in collected]
+    idx_armed = all_types.index("stall_trace_armed")
     idx_completed = next(
         i for i, e in enumerate(collected) if e["type"] == "turn_completed"
     )
-    assert run_turn_called_at, "run_turn was never called"
-    run_turn_event_count = run_turn_called_at[0]
-    # turn_completed is at position idx_completed (0-based) in the event
-    # list. run_turn_event_count events were logged before run_turn
-    # returned. turn_completed must be at position >= run_turn_event_count
-    # (= it fires at or after the point where run_turn returned, never
-    # before).
-    assert idx_completed >= run_turn_event_count, (
-        f"turn_completed (at event idx {idx_completed}) must NOT appear before "
-        f"run_turn returns (run_turn saw {run_turn_event_count} events). "
+    idx_disarmed = all_types.index("stall_trace_disarmed")
+    # turn_completed must be strictly BETWEEN armed (before run_turn is
+    # dispatched) and disarmed (after run_turn returns AND the whole
+    # unwind chain completes) — proving it fires only after the terminal
+    # stop_reason, never before.
+    assert idx_armed < idx_completed < idx_disarmed, (
+        f"turn_completed (idx {idx_completed}) must fall strictly between "
+        f"stall_trace_armed (idx {idx_armed}) and stall_trace_disarmed "
+        f"(idx {idx_disarmed}) — it must not appear before run_turn "
+        f"dispatches or after the whole turn boundary has unwound. "
         f"Event sequence: {all_types}"
     )

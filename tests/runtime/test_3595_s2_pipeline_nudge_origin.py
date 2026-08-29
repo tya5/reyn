@@ -147,38 +147,49 @@ async def test_a_pipeline_nudge_turn_cannot_execute_a_slash_command(
 
 
 @pytest.mark.asyncio
-async def test_a_pipeline_nudge_still_runs_one_turn(tmp_path: Path) -> None:
+@pytest.mark.llm_stub
+async def test_a_pipeline_nudge_still_runs_one_turn(
+    tmp_path: Path, monkeypatch,
+) -> None:
     """Tier 2: the nudge still drives a turn — the behaviour the rename must NOT
     change, since pumping the driver-session's executor is its entire purpose.
 
-    ``_run_turn_body`` is driven directly with a real ``RouterLoopDriver.run_turn``
-    replaced by a real async function on the real instance (the established
-    no-mock seam for observing that a turn body ran without a live LLM call), so
-    a member that fell through the dispatch table to nothing at all — which is
-    what a new member with no branch does, silently — is RED here.
-    """
+    ``_run_turn_body`` is driven directly (it is called this way in
+    production too — by ``run_one_iteration`` — no seam is invented for
+    this test) with a REAL ``RouterLoopDriver.run_turn`` dispatch
+    (``@pytest.mark.llm_stub``, only ``litellm.acompletion`` is stubbed,
+    #5103 ③). ``_run_turn_body`` is called directly here rather than
+    through the inbox/``run_one_iteration`` path, so ``turn_started``
+    (emitted one level up, in ``run_one_iteration``) never fires — the
+    public read available AT this level is ``stall_trace_armed``, the
+    first statement inside ``_run_turn_body`` itself, unconditionally
+    reached before dispatch regardless of ``kind``. A member that fell
+    through the dispatch table to nothing at all — what a new member
+    with no branch does, silently — never reaches that statement, so
+    this is RED for exactly the same failure this test always caught."""
+    monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _session(tmp_path)
-    ran: list[str] = []
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
 
-    async def _record_turn(*args, **kwargs):
-        ran.append(kwargs.get("user_text", args[0] if args else ""))
-        return None
-
-    session._loop_driver.run_turn = _record_turn
-
+    chain_id = "c-nudge-turn"
     await session._run_turn_body(
-        TurnOrigin.PIPELINE_NUDGE, {"text": "", "chain_id": "c-nudge-turn"},
+        TurnOrigin.PIPELINE_NUDGE, {"text": "", "chain_id": chain_id},
     )
-    assert ran, (
-        "the pipeline-nudge kind ran no turn. A member with no branch in "
-        "_run_turn_body is dropped silently — the attached pipeline run it was "
-        "supposed to start would hang until its timeout"
+    await session._audit_events.drain()
+    armed = [e for e in collected if e.type == "stall_trace_armed"]
+    assert armed and armed[0].data["chain_id"] == chain_id, (
+        "the pipeline-nudge kind ran no turn (stall_trace_armed never fired "
+        "for chain_id={!r}). A member with no branch in _run_turn_body is "
+        "dropped silently — the attached pipeline run it was supposed to "
+        "start would hang until its timeout: {!r}".format(chain_id, collected)
     )
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_a_kind_restored_from_a_snapshot_as_a_plain_string_still_dispatches(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: a kind that comes back off disk as a bare ``str`` is still the same
     value as the member — recovery needs no conversion step.
@@ -193,6 +204,13 @@ async def test_a_kind_restored_from_a_snapshot_as_a_plain_string_still_dispatche
     payload is round-tripped through ``json`` rather than asserted on in memory,
     because in-memory equality is exactly the thing that would still hold under
     the broken version.
+
+    #5103 ③ migration: dispatch is now observed via ``stall_trace_armed``
+    (public, real dispatch — ``@pytest.mark.llm_stub``) instead of a
+    private ``run_turn`` replacement — see
+    ``test_a_pipeline_nudge_still_runs_one_turn`` above for the full
+    rationale (same seam, same reason ``turn_started`` is unavailable at
+    this call depth).
     """
     session = _session(tmp_path)
     await session.submit_user_text("queued before the crash")
@@ -210,15 +228,16 @@ async def test_a_kind_restored_from_a_snapshot_as_a_plain_string_still_dispatche
         "reach no branch in _run_turn_body, and nothing would say so"
     )
 
-    ran: list[str] = []
+    monkeypatch.setenv("REYN_STALL_TRACE", "5")
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
 
-    async def _record_turn(*args, **kwargs):
-        ran.append(kwargs.get("user_text", args[0] if args else ""))
-        return None
-
-    session._loop_driver.run_turn = _record_turn
-    await session._run_turn_body(restored_kind, {"text": "hi", "chain_id": "c-restored"})
-    assert ran, (
-        "the restored plain-string kind ran no turn — a recovered session would "
-        "drop every message it had queued"
+    chain_id = "c-restored"
+    await session._run_turn_body(restored_kind, {"text": "hi", "chain_id": chain_id})
+    await session._audit_events.drain()
+    armed = [e for e in collected if e.type == "stall_trace_armed"]
+    assert armed and armed[0].data["chain_id"] == chain_id, (
+        "the restored plain-string kind ran no turn (stall_trace_armed never "
+        f"fired for chain_id={chain_id!r}) — a recovered session would drop "
+        f"every message it had queued: {collected!r}"
     )
