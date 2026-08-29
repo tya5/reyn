@@ -8,27 +8,58 @@ shrink ladder (`RouterLoopDriver._run_with_shrink`, compact via
 `force_compact_now`, spill via `_attempt_reactive_spill`) picks up the
 slack was, until this test, an unverified assumption, not a witness.
 
-Scenario: one oversized tool-result turn whose estimate exceeds
-`effective_trigger` — the EXACT condition
-`test_history_exceeds_trigger_elides_middle` (deleted, #5367) used to
-construct to force the now-retired elide branch. Post-#5367,
-`build_history()` sends this raw on the first attempt (no local
-pre-check); the fake loop below raises a 413-shaped overflow while the
-oversized payload is what it was actually handed (content-driven, not a
-hardcoded call count — mirrors `test_5296_pr2_byte_reduction_same_turn_
-retry.py`'s own harness, whose "one huge tool result, spill alone fixes
-it" scenario this witness reuses directly), and the reactive ladder's
-spill path must recover the SAME turn.
+Two DISTINCT elide-absorbing shapes, both witnessed here (architect's own
+follow-up condition, same review): elide's real domain was never "one big
+turn" — the head/tail window can also overflow from MANY SMALL turns
+(each individually below any spill-worthy size), which spill has nothing
+to grab onto. That shape can only recover via compaction (turn-level
+folding into a summary), a genuinely different code path from spill.
 
-Strip-falsified by hand (not committed as a test — would itself need a
-witness that IT correctly detects vacuity, an infinite regress): with
-`_attempt_reactive_spill` monkeypatched to always report no progress,
-this same scenario correctly raises `UnrecoveredError` instead of
-succeeding — confirming the witness below is not vacuously green.
+1. One oversized tool-result turn — recovers via SPILL
+   (`_attempt_reactive_spill`).
+2. Many small turns whose SUM exceeds the trigger — recovers via
+   COMPACTION (`compact()`, invoked from `retry_loop`'s own
+   `if raw_middle:` fold).
+
+Real incident, disclosed (#5367 PR review, 2026-08-29): an EARLIER version
+of test ② was run WITHOUT `@pytest.mark.llm_stub`, so `compact()`'s real
+`litellm.acompletion` call failed with no network/API key available in
+the harness — misclassified by `retry_loop`'s own same-cause-recovered
+guard as "this cause cannot be resolved", raising `UnrecoveredError`. That
+was reported to architect/lead-coder as "the reactive ladder has no
+receiving mechanism for this shape" — a false alarm, retracted once
+lead-coder's own question ("did compact() actually run?") prompted
+re-running WITH `@llm_stub`, where it succeeds cleanly. Kept here as the
+concrete reason test ② below is marked `@llm_stub` and NOT optional —
+omitting it silently reproduces this exact false alarm.
+
+Both scenarios sent raw (no proactive pre-check) on the first attempt —
+`build_history()` no longer elides — and the fake loop raises a
+413-shaped overflow while the oversized payload is what it was actually
+handed (content-driven, not a hardcoded call count — mirrors
+`test_5296_pr2_byte_reduction_same_turn_retry.py`'s own harness, whose
+"one huge tool result, spill alone fixes it" scenario test ① reuses
+directly).
+
+Strip-falsified by hand for both (not committed as tests — each would
+itself need a witness that IT correctly detects vacuity, an infinite
+regress): with `_attempt_reactive_spill` monkeypatched to always report
+no progress, scenario ① correctly raises `UnrecoveredError` instead of
+succeeding; with `CompactionEngine.compact` monkeypatched to always raise
+(NOT `recovery_policy="never"` — measured directly: `retry_loop`'s own
+`if raw_middle:` compact call has no `recovery_policy` gate at all,
+`grep -n "recovery_policy" engine.py` finds zero hits in that module;
+`recovery_policy` only gates a DIFFERENT, driver-level side-effect
+compaction in `router_loop_driver.py`'s own except block, #4954(b) —
+setting it to `"never"` in a first draft of this strip-falsify did
+nothing, the test stayed green, which is exactly how a strip-falsify
+that targets the wrong mechanism looks), scenario ② does too.
 
 Real `Session` + real `RouterLoopDriver`/`RouterHistoryBuffer`/`MediaStore`
-throughout — a real spill genuinely shrinks the wire payload; no fakes
-except the LLM call itself (cannot run offline).
+throughout; the LLM call itself is stubbed (`@llm_stub`, test ② only —
+test ① never reaches it, spill alone resolves it) since it cannot run
+offline — see `reyn.dev.testing.llm_stub`'s own module docstring for what
+that stub does and does not claim to verify.
 """
 from __future__ import annotations
 
@@ -161,3 +192,86 @@ def test_reactive_ladder_recovers_an_elide_sized_overflow_via_spill(
 
 def _has_content(history: "list[dict]", needle: str) -> bool:
     return any(needle in str(m.get("content", "")) for m in history)
+
+
+def _make_session_t_max_compact_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, t_max: int,
+):
+    """Same shape as ``_make_session_t_max`` above, but with the default
+    ``recovery_policy`` (compaction enabled) instead of ``"never"`` — the
+    single-huge-tool-result witness above deliberately isolates spill;
+    this scenario needs compaction itself reachable."""
+    monkeypatch.chdir(tmp_path)
+    import reyn.llm.model_budget as _mb
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
+    cfg = CompactionConfig(
+        body_token_cap=1500,
+        use_chars4_estimate=True,
+        section_caps_spec_tokens=0,
+    )
+    return make_session(
+        agent_name="default",
+        agent_role="",
+        output_language="en",
+        budget_tracker=BudgetTracker(CostConfig()),
+        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+        compaction_config=cfg,
+        multimodal_config=MultimodalConfig(),
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
+
+
+@pytest.mark.llm_stub
+def test_reactive_ladder_recovers_many_small_turns_via_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the SECOND witness architect required (2026-08-29 follow-
+    up) — elide's real domain was never "one big turn"; many small turns
+    (none individually spill-worthy) whose SUM exceeds the trigger is the
+    shape spill has nothing to grab onto. This must recover via
+    compaction instead — a genuinely different code path.
+
+    ``@llm_stub`` is REQUIRED, not decorative — see this module's own
+    docstring for the real false-alarm this test's first draft produced
+    without it."""
+    session = _make_session_t_max_compact_enabled(tmp_path, monkeypatch, t_max=2800)
+    texts = [f"turn-{i}:" + ("X" * 320) for i in range(30)]  # 80 tok each, chars4
+    for i, text in enumerate(texts):
+        _push(session, "user" if i % 2 == 0 else "assistant", text)
+
+    # Sanity ①: the RAW wire estimate genuinely exceeds a plausible
+    # trigger — the same condition elide used to gate on.
+    raw_history = session._history_buffer.build_history()
+    assert _wire_estimate(raw_history) > 2800, (
+        "test setup sanity: the constructed history must actually be "
+        "oversized, or this test proves nothing about overflow recovery"
+    )
+    # Sanity ②: this fixture genuinely produces MIDDLE candidates (not
+    # all 30 turns landing in head/tail) — the scenario this test exists
+    # to cover, distinct from test ① above.
+    _head, raw_middle, _tail, _summary, _seq_by_id = (
+        session._history_buffer.decompose_history_for_retry()
+    )
+    assert raw_middle, (
+        "test setup sanity: expected non-empty raw_middle (candidates for "
+        "compaction) — if this fails, the fixture needs adjusting, not "
+        "the assertions below"
+    )
+
+    events: list = []
+    session._audit_events.add_subscriber(lambda e: events.append(e))
+
+    loop = _ContentDrivenLoop(
+        lambda history, user_text: _wire_estimate(history) > 2800
+    )
+
+    result = asyncio.run(
+        session._loop_driver._run_with_shrink_and_byte_reduction(
+            loop, "continue please", chain_id="c1",
+        )
+    )
+    assert result is None  # the fake loop's own successful return
+    # compact() was genuinely invoked — not "didn't crash by luck".
+    assert any(e.type == "compaction_started" for e in events), (
+        "expected compaction to have actually run for this scenario"
+    )
