@@ -19,34 +19,40 @@ structured summary. Three zones are fed to the LLM:
 
 Head and tail sizes are **token-budgeted** — derived from `component_weights`
 against the model's actual context window, not a fixed turn count. Chat fills
-the window raw first (up to the effective trigger); compaction FIRES only
-once the history exceeds it, but its effect is **permanent** once it does
-(#4954): every turn at or below the resulting `covers_through_seq`
-watermark is excluded from every subsequent LLM-facing projection —
-never resent raw, regardless of whether a LATER turn's token total drops
-back under the trigger. `history.jsonl` itself is untouched by this — a
-covered turn is excluded from the projection only, still fully readable
-via `extend_history_backward`; only what the LLM SEES permanently
-shrinks.
+the window raw first; compaction fires only once an ACTUAL overflow is
+measured (never predicted from a local estimate — #5528, see "Compaction
+paths" below), but its effect is **permanent** once it does (#4954): every
+turn at or below the resulting `covers_through_seq` watermark is excluded
+from every subsequent LLM-facing projection — never resent raw, regardless
+of whether a LATER turn's token total drops back under the trigger.
+`history.jsonl` itself is untouched by this — a covered turn is excluded
+from the projection only, still fully readable via
+`extend_history_backward`; only what the LLM SEES permanently shrinks.
 
 The `CompactionEngine` is an OS-internal Python helper that makes a direct
 LLM call to produce the summary. It is not a stdlib workflow.
 
 ## Compaction paths
 
-Compaction can be triggered by three independent paths. All three use the same
+Compaction can be triggered by two independent paths. Both use the same
 `CompactionEngine` and Head/Body/Tail slice logic.
 
-### 1. Synchronous pre-frame guard
+#5528 (owner ruling): a THIRD path used to exist — a synchronous pre-frame
+guard that estimated the current history's token usage before each router
+LLM call and proactively force-compacted when the estimate exceeded the
+effective trigger, before the LLM frame was even built. Removed, same
+family as #5367's elide removal: a local token estimate cannot know what
+the actual provider payload will look like (system prompt, tool schemas,
+transport wrapping, inline media), so acting on the estimate risked
+compacting a conversation that would have fit fine — #5296 decided this
+in principle and #5528 carried it out. What that guard used to ALSO do —
+refusing a single new message outright when IT ALONE is too large (drops
+nothing; the message is never accepted then summarized away) — is
+`ContextBudgetAdvisor.enforce_new_msg_budget`, kept because it is a
+genuinely different behavior (owner's own "force close" — #4381 PR-4),
+not compaction.
 
-Before each router LLM call, `_maybe_force_compact_for_router` checks the
-estimated token usage of the current history against the effective trigger
-budget (window-relative). If over budget, it calls `force_compact_now`
-synchronously before the LLM frame is built. This ensures the prompt never
-exceeds the budget *before* the call — a proactive shrink rather than a
-reactive one.
-
-### 2. Voluntary compact op (LLM-requested)
+### 1. Voluntary compact op (LLM-requested)
 
 When the window is filling, the OS injects a `## Context window` header with
 the exact-token free window (the context-size signal). The model may emit a
@@ -54,10 +60,11 @@ the exact-token free window (the context-size signal). The model may emit a
 and returns the freed tokens and new headroom.
 See [`control-ir.md`](../../reference/runtime/control-ir.md) for the op contract.
 
-### 3. `retry_loop` overflow backstop
+### 2. `retry_loop` overflow recovery
 
-When the pre-frame guard's token estimate under-counts and the router raises a
-context-length error, `retry_loop` takes over. The decreasing measure is
+When the router's actual LLM call raises a context-length error, `retry_loop`
+takes over — the ONLY path that recovers from an overflow now that the
+pre-frame guard is gone (#5528). The decreasing measure is
 `head`/`tail` token count, not the raw middle in isolation — the raw middle can
 grow (content moves in from `head`/`tail` when those are still above their
 minimum) and is compacted separately, split into smaller slices on repeated

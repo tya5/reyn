@@ -2438,14 +2438,14 @@ This is a real, current asymmetry, not a design intentionally scoped that
 way — no record motivating `topic_arc`-only enforcement was found; #1163
 replaced `topic_arc`'s previous blind character-cut, and the other four
 never had any bound of their own to begin with. It is not being closed:
-an oversized `decisions`/`pending`/etc. section survives at most one turn.
-`router_loop_driver.py`'s pre-frame guard (`context_budget_advisor.
-maybe_force_compact`) recomputes the effective token budget before every
-send and forces another compaction pass if the current history still
-exceeds it — so an overshoot from one of the four un-enforced sections is
-caught and re-compacted at the very next turn, at the cost of that one
-turn running with a larger-than-configured section rather than a hard
-failure or an unbounded blow-up.
+an oversized `decisions`/`pending`/etc. section is no longer caught
+proactively at all (#5528: the estimate-based pre-frame guard that used
+to recompute the effective token budget before every send and force
+another compaction pass on an overshoot is removed, same family as the
+elide removal — a local estimate cannot know what the actual provider
+payload will look like). Recovery is now entirely reactive: an actual
+overflow the LLM call raises is caught by `retry_loop`'s own overflow
+ladder, not pre-empted a turn ahead of time.
 
 | Field | Default | Description |
 |-------|---------|-------------|

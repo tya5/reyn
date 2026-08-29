@@ -75,7 +75,7 @@ class RouterLoopDriver:
         events: Any,                  # EventLog — emit events
         model_override_fn: "Callable[[], str | None]",  # () -> _model_override (None = unset)
         history_buffer: Any,          # RouterHistoryBuffer — history + SP
-        budget_advisor: Any,          # ContextBudgetAdvisor — maybe_force_compact
+        budget_advisor: Any,          # ContextBudgetAdvisor — enforce_new_msg_budget
         limit_checkpoint_fn: Callable,  # async; Session._handle_chat_limit_checkpoint
         next_seq_fn: Callable[[], int], # Session._next_seq reader
         append_history_fn: Callable,    # Session._append_history
@@ -796,8 +796,11 @@ class RouterLoopDriver:
         )
         if self._loop_observer:
             self._loop_observer(loop)
-        # PR-N3: pre-frame context-overflow guard.
-        await self._budget_advisor.maybe_force_compact(new_msg_text=user_text)
+        # PR-N3 / #5528: force-close (never compact) an oversized new
+        # message before the turn starts — the proactive, estimate-based
+        # history compaction this call used to ALSO trigger is removed
+        # (see ContextBudgetAdvisor's own module docstring).
+        await self._budget_advisor.enforce_new_msg_budget(new_msg_text=user_text)
 
         # #4381 PR-4 (owner ruling, verbatim: "２の force close 廃止して
         # spill にしよう。予算のための force close は残すで良い"): the

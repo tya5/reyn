@@ -52,7 +52,7 @@ class _FakeBudget:
 
 
 class _FakeBudgetAdvisor:
-    async def maybe_force_compact(self, **kwargs):
+    async def enforce_new_msg_budget(self, **kwargs):
         pass
 
 
