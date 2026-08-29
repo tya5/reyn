@@ -171,3 +171,20 @@ async def test_an_unknown_cause_fails_explicitly_not_a_silent_fallback(tmp_path:
 
     with pytest.raises(UnknownReplayCause):
         await _replay_call(replay, messages)
+
+
+@pytest.mark.asyncio
+async def test_a_never_observed_cause_now_fails_explicitly(tmp_path: Path) -> None:
+    """Tier 1: #5454 correction witness -- ``context_overflow`` and
+    ``byte_limit`` (#5452's original illustrative-example members, never
+    actually observed in production) are no longer in the vocabulary and
+    must raise ``UnknownReplayCause`` like any other unrecognised cause,
+    not silently succeed as they did before this correction."""
+    for removed_cause in ("context_overflow", "byte_limit"):
+        messages = [{"role": "user", "content": f"probes removed cause {removed_cause}"}]
+        fixture = tmp_path / f"f-{removed_cause}.jsonl"
+        _write_fixture(fixture, [_exception_entry(messages, cause=removed_cause)])
+        replay = LLMReplay(fixture, mode="replay")
+
+        with pytest.raises(UnknownReplayCause):
+            await _replay_call(replay, messages)
