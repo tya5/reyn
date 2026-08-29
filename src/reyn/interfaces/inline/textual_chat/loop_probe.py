@@ -174,7 +174,9 @@ class LoopTripwire:
 
     @property
     def fired(self) -> bool:
-        """Whether the threshold has been crossed at least once."""
+        """Whether the CURRENT stall episode's onset has already been
+        reported (#4855: reset at each recovery, not "ever, this
+        session" — see :meth:`observe`'s recovery branch for why)."""
         return self._fired
 
     def consume_recovered(self) -> bool:
@@ -255,6 +257,19 @@ class LoopTripwire:
                 if self._current_stall_reported:
                     self._just_recovered = True
                     self._current_stall_reported = False
+                # lead-coder ruling, #4855: reset the one-shot notice gate
+                # HERE, at recovery — not "once per App session" but "once
+                # per un-recovered episode." Without this, an early stall
+                # (e.g. app-mount startup jitter) permanently consumed the
+                # session's only notice, and every LATER, possibly far more
+                # serious freeze went unreported for the rest of the
+                # session — the exact hole #4855 measured. The original
+                # reason for "once, not per-tick" (a notice repeated per
+                # tick buries the reply it's about) is unaffected: this
+                # still reports at most once PER STALL, only the boundary
+                # between stalls moved from "session start" to "the
+                # previous stall's own recovery."
+                self._fired = False
                 write_record(
                     "tripwire_recovered", lateness_ms=round(lateness_ms, 1), **extra,
                 )
