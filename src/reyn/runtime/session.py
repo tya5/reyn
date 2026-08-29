@@ -2053,24 +2053,58 @@ class Session:
         value = raw.get("base_dir")
         if not value:
             return None
-        from reyn.plugins.tokens import expand_with_map
+
+        # #5428: the token-expand + boundary-check step is now the SHARED
+        # pure function `reyn.runtime.workspace_paths.resolve_base_dir_
+        # candidate` — `reyn doctor` (#5428's own real consumer) needs the
+        # identical validation with no session layer, and duplicating it
+        # would be the exact #5057 "same guard, second copy" class this
+        # repo already closed three instances of one night. The boundary
+        # check used to run at THIS method's own two call sites (the
+        # `_workspace_base_dir` property, below) instead of here; folding
+        # it in here does not weaken it — every caller still gets
+        # reject-and-None on an out-of-workspace value, only the log
+        # message's own wording moved (see the property's own comment at
+        # its two call sites for what it preserves).
+        from reyn.runtime.workspace_paths import resolve_base_dir_candidate
 
         workspace_root = self._reyn_state_root.parent.resolve()
-        # Order load-bearing (architect, issuecomment-5378958683): expand
-        # the token FIRST, so `${REYN_PROJECT_DIR}/...` is judged by what
-        # it expands to, never as a literal string or as "relative".
-        expanded = expand_with_map(str(value), {"REYN_PROJECT_DIR": str(workspace_root)})
-        candidate = Path(expanded)
-        if not candidate.is_absolute():
-            logger.warning(
-                "#5084: skipping base_dir override %r in %s -- a hand-written "
-                "value must be either an absolute path or "
-                "'${REYN_PROJECT_DIR}/...' (a bare relative path is rejected, "
-                "never silently reinterpreted as workspace-relative or as "
-                "relative to the reyn process's own working directory)",
-                str(value), path,
+        candidate = resolve_base_dir_candidate(str(value), workspace_root=workspace_root)
+        if candidate is None:
+            # #5428: the two rejection REASONS (not absolute / outside
+            # workspace) are distinguished here for the log message only —
+            # lead-coder's own TESTS-READ finding on #5086 (pinned by
+            # test_4200_session_base_dir_resolution.py's own caplog
+            # assertion on "must be either an absolute path or") requires
+            # the two stay distinguishable, so this re-runs the (cheap,
+            # NOT the hardened boundary/ordering logic) token-expansion
+            # step purely to pick which of the two pre-existing warning
+            # texts applies — the shared pure function above already made
+            # the real accept/reject decision; this never re-decides it.
+            from reyn.plugins.tokens import expand_with_map
+
+            expanded = expand_with_map(
+                str(value), {"REYN_PROJECT_DIR": str(workspace_root)},
             )
-            return None
+            if not Path(expanded).is_absolute():
+                logger.warning(
+                    "#5084: skipping base_dir override %r in %s -- a "
+                    "hand-written value must be either an absolute path "
+                    "or '${REYN_PROJECT_DIR}/...' (a bare relative path "
+                    "is rejected, never silently reinterpreted as "
+                    "workspace-relative or as relative to the reyn "
+                    "process's own working directory)",
+                    str(value), path,
+                )
+            else:
+                logger.warning(
+                    "#5081: base_dir override %r in %s resolves outside "
+                    "the project workspace %r -- ignoring (falls through "
+                    "to the next layer; restrict-only means this can "
+                    "only WIDEN toward that layer, never past the "
+                    "effective floor)",
+                    str(value), path, str(workspace_root),
+                )
         return candidate
 
     def _read_preferences_override(self, path: "Path") -> "dict[str, object]":
@@ -2172,39 +2206,28 @@ class Session:
         naive "reuse it" instruction would have produced a SECOND,
         independently-written copy of the same check instead — the exact
         "same guard, different code" family #5057 closed three instances
-        of a few hours earlier. Extracted once, both call sites here."""
-        from reyn.runtime.workspace_paths import within_workspace
+        of a few hours earlier. Extracted once, both call sites here.
 
-        workspace_root = self._reyn_state_root.parent.resolve()
-
+        #5428: the ⊆ workspace check itself now lives INSIDE
+        :meth:`_read_base_dir_override` (via the shared
+        ``workspace_paths.resolve_base_dir_candidate``) — a value this
+        method receives non-``None`` is therefore ALREADY known to be
+        within *workspace_root*; this property no longer re-checks it (a
+        second check here would be dead code, always true, and #5081's
+        own "falls through to the next layer" behavior is unchanged:
+        ``_read_base_dir_override`` returns ``None`` for an out-of-
+        workspace value exactly as before, just with the warning now
+        logged from inside that method instead of from here)."""
         session_override = self._read_base_dir_override(
             Path(self._snapshot_path).parent / "config.yaml"
         )
         if session_override is not None:
-            if within_workspace(session_override, workspace_root):
-                return session_override
-            logger.warning(
-                "#5081: session %s's config.yaml base_dir %r resolves "
-                "outside the project workspace %r -- ignoring (falls "
-                "through to the next layer; restrict-only means this can "
-                "only WIDEN toward that layer, never past the effective "
-                "floor)",
-                self.agent_name, str(session_override), str(workspace_root),
-            )
+            return session_override
         agent_override = self._read_base_dir_override(
             self._reyn_state_root / "agents" / self.agent_name / "profile.yaml"
         )
         if agent_override is not None:
-            if within_workspace(agent_override, workspace_root):
-                return agent_override
-            logger.warning(
-                "#5081: agent %s's profile.yaml base_dir %r resolves "
-                "outside the project workspace %r -- ignoring (falls "
-                "through to the next layer; restrict-only means this can "
-                "only WIDEN toward that layer, never past the effective "
-                "floor)",
-                self.agent_name, str(agent_override), str(workspace_root),
-            )
+            return agent_override
         return self._agent.workspace_base_dir
 
     @property
@@ -2468,15 +2491,15 @@ class Session:
         inline lambda) — a named, independently-callable builder rather
         than an anonymous closure buried in a large constructor call.
 
-        #5428: this extraction is deliberately NOT paired with a public
-        method in the same PR (architect BLOCKING on an earlier version
-        of this change, issuecomment on PR #5443): a public
-        ``hook_env_snapshot()`` with no production consumer would be the
-        exact #4866 shape #5442 spent that same PR closing 3 instances
-        of. #5428's own public read-surface, WITH its real consumer
-        (``reyn doctor`` — its own docstring already claims "reach into
-        sandbox / MCP / hook internals" / "a hook's argv actually
-        launched would be doctor's"), lands together in a follow-up.
+        #5428: this now has a real public read-surface,
+        :meth:`hook_env_snapshot`, WITH its real consumer (``reyn
+        doctor`` — its own docstring already claims "reach into sandbox
+        / MCP / hook internals" / "a hook's argv actually launched would
+        be doctor's") — landed in the SAME PR as that public method
+        (architect's own comment-policy §8 requirement: an earlier
+        revision of this paragraph said the public method was
+        deliberately deferred; that statement is now false, so this
+        paragraph is rewritten rather than left stale).
 
         Reads live state on every call (``_workspace_base_dir`` can change
         across this session's lifetime, #5081) — never frozen at
@@ -2493,6 +2516,28 @@ class Session:
             agent_name=self.agent_name,
             agent_state_dir=self._ensure_agent_state_dir(),
         )
+
+    def hook_env_snapshot(self) -> "dict[str, str]":
+        """#5428: the PUBLIC read of "what env would this agent's hook
+        get right now" — the gap architect's issue named: no public
+        surface answered this, so #5426's own test reached through two
+        private hops (``session._hook_dispatcher._hook_process_context()``),
+        and an operator had no way to look at all.
+
+        Returns the resolved ``REYN_*`` envelope as a plain
+        ``dict[str, str]`` (:meth:`HookProcessContext.as_env`'s own
+        shape) — never the callable itself, and never a free-form dict a
+        caller could widen; the four keys are exactly the closed set
+        :class:`~reyn.hooks.shell_runner.HookProcessContext` defines (see
+        that class's own docstring for why it is closed, not a general
+        ``Mapping[str, str]``).
+
+        Live on every call (:meth:`_build_hook_process_context`'s own
+        docstring: ``_workspace_base_dir`` can change across this
+        session's lifetime, #5081) — never a value frozen at
+        construction time. Real consumer: ``reyn doctor`` (see
+        ``interfaces/cli/commands/doctor.py``)."""
+        return self._build_hook_process_context().as_env()
 
     @property
     def _environment_backend(self) -> Any:

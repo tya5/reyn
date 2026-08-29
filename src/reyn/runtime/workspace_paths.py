@@ -76,4 +76,50 @@ def within_workspace(candidate: Path, workspace_root: Path) -> bool:
     return resolved == root or root in resolved.parents
 
 
-__all__ = ["within_workspace"]
+def resolve_base_dir_candidate(
+    raw_value: "str | None", *, workspace_root: Path,
+) -> "Path | None":
+    """#5428: the pure "one candidate → token-expand → boundary-check"
+    step, extracted out of
+    :meth:`reyn.runtime.session.Session._read_base_dir_override` so a
+    caller with NO session layer (``reyn doctor``, #5428's own real
+    consumer) can validate an agent-profile ``base_dir:`` candidate
+    without duplicating this logic — the exact #5057 "same guard, second
+    copy" class this module's own docstring already names.
+
+    Deliberately does NOT decide layer order (session-config vs
+    agent-profile vs Agent default) — lead-coder's own #5428 scoping: a
+    caller with no session layer would otherwise force a
+    session-layer-shaped branch into this function, growing its
+    signature for every new caller ("does the argument count grow when
+    the caller count grows?" — #5428's own discriminant). Callers own
+    their own layer order; this function only ever validates ONE
+    already-selected raw string.
+
+    Returns ``None`` for: absent/empty *raw_value*, a bare relative path
+    with no ``${REYN_PROJECT_DIR}`` token (rejected outright — never
+    silently reinterpreted as workspace-relative or as relative to the
+    calling process's own cwd, see this module's own docstring), or a
+    value that expands outside *workspace_root* (:func:`within_workspace`).
+    Never raises on a malformed value — the caller decides whether/how to
+    log a rejection; this function's own contract is validate-or-None,
+    not validate-or-raise (a malformed hand-written override must not
+    crash construction, #5081)."""
+    if not raw_value:
+        return None
+    from reyn.plugins.tokens import expand_with_map
+
+    root = workspace_root.resolve()
+    # Order load-bearing (architect, issuecomment-5378958683): expand the
+    # token FIRST, so `${REYN_PROJECT_DIR}/...` is judged by what it
+    # expands to, never as a literal string or as "relative".
+    expanded = expand_with_map(str(raw_value), {"REYN_PROJECT_DIR": str(root)})
+    candidate = Path(expanded)
+    if not candidate.is_absolute():
+        return None
+    if not within_workspace(candidate, root):
+        return None
+    return candidate
+
+
+__all__ = ["resolve_base_dir_candidate", "within_workspace"]
