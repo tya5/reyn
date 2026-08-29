@@ -36,34 +36,38 @@ comment):
      ``_turn_cancel_self_initiated``); ``run_one_iteration`` returns normally
      and a SUBSEQUENT turn runs to completion — the agent is not torn down.
 
-Real ``Session`` / ``StateLog`` / ``AgentSnapshot`` (no mocks) — only the LLM
-boundary is replaced with a plain, controllable async function assigned onto
-``session._loop_driver.run_turn``, exactly the seam
-``tests/core/test_2884_hook_driven_turns_truncation_falsify.py`` uses to isolate
-the mechanism under test from RouterLoop's own internals (already covered by
-``tests/llm/test_turn_cancel_1468.py``).
+Real ``Session`` / ``StateLog`` / ``AgentSnapshot`` (no mocks). #5450
+migration: the LLM boundary is no longer a private ``_loop_driver.
+run_turn`` replacement — ``@pytest.mark.llm_stub(control="gated")``
+hangs the REAL turn at the REAL ``litellm.acompletion`` await (the
+architect's own #5450 design cited THIS file's docstring — "simulating
+the moment RouterLoop would be suspended inside its litellm.acompletion
+await" — as proof the private replacement was standing in for a
+boundary the stub already patches). ``RouterLoopDriver``/``RouterLoop``/
+the driver now run for real; ``turn_started`` (the #5454 audit-event)
+is asserted per test as witness ② — "the real loop ran", not merely
+"the stub was called" (architect: "これがこの issue の存在理由").
 """
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.router_loop import _EMPTY_RESPONSE_MSG
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer
 from tests._support.agent_session import make_session
 
 AGENT = "hard-cancel-agent"
-_LANDED_REPLY = "SHOULD-NOT-LAND-IF-HARD-CANCELLED"
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+# #5450: the real stub's canned reply for an empty/no-tool-call completion
+# (router_loop.py's own constant) — the LITERAL content invariant 1 asserts
+# never lands for a hard-cancelled turn, replacing the old private helper's
+# own hand-picked sentinel string.
+_STUB_REPLY = _EMPTY_RESPONSE_MSG["en"]
 
 
 def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
@@ -72,27 +76,12 @@ def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
     return session, state_log
 
 
-def _install_hanging_run_turn(session: Session) -> tuple[asyncio.Event, asyncio.Event]:
-    """Replace RouterLoopDriver.run_turn with a controllable hang — a real,
-    plain async function method-assigned onto the instance (the SAME
-    no-mock seam ``test_2884_...``'s ``_fake_run_turn`` uses), not a
-    MagicMock/AsyncMock. ``call_started`` fires the instant the "LLM call"
-    begins (simulating the moment RouterLoop would be suspended inside its
-    ``litellm.acompletion`` await); ``release`` is set by the TEST, after the
-    cancel, to prove the resumed coroutine's post-await code never runs on a
-    truly hard-cancelled task."""
-    call_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
-        call_started.set()
-        await release.wait()  # simulates an in-flight LLM call, suspended
-        # Only reached if the awaiting task was NOT actually cancelled —
-        # mirrors what a real completed run_turn does (append the reply).
-        session._append_history(ChatMessage(role="assistant", content=_LANDED_REPLY, ts=_now()))
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
-    return call_started, release
+def _collect(session: Session) -> list:
+    """Subscribe through the public seam (Session.subscribe_audit_events,
+    #5260) — for witness ②: turn_started proves the REAL driver ran."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
 
 
 async def _seed_prior_fire_and_forget_wal_task(session: Session, run_id: str) -> None:
@@ -110,13 +99,22 @@ async def _seed_prior_fire_and_forget_wal_task(session: Session, run_id: str) ->
 
 
 @pytest.mark.asyncio
-async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(
+    tmp_path, _llm_stub,
+):
     """Tier 2: #2242 cancel-falsify. Cancelling DURING a hung "LLM call"
     (a) never lands the reply (invariant 1), (b) leaves the active branch
     clean — no partial/cancelled turn markers accumulate in history beyond
     the pre-cancel user message, (c) the agent survives — a subsequent
     ordinary turn completes normally, and (d) a fire-and-forget WAL-append
     task tracked before the hang settles via await_quiescent (invariant 2).
+
+    Witness ② (#5450, architect: "this issue's own reason to exist"):
+    turn_started fires for BOTH chain_ids — proof the REAL RouterLoopDriver/
+    RouterLoop dispatched, not merely that the stub was called (a stub
+    calling itself is not, by construction, evidence the real driver ran —
+    see LLMStub's own module docstring).
 
     STRIP-RED: reverting ``Session.run_one_iteration``'s per-turn sub-task
     (back to running the dispatch inline on the driver task, as before #2242)
@@ -128,16 +126,15 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(tm
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path)
+    events = _collect(session)
 
     prior_run_id = "prior-answer-run"
     await _seed_prior_fire_and_forget_wal_task(session, prior_run_id)
 
-    call_started, release = _install_hanging_run_turn(session)
-
     await session._put_inbox("user", {"text": "hello", "chain_id": "c-hard-cancel"})
     turn_task = asyncio.create_task(session.run_one_iteration())
 
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     # The "LLM call" is now in flight (suspended on `release.wait()`).
     result = await session.cancel_inflight()
     assert "cancel" in result.lower()
@@ -146,15 +143,15 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(tm
     # cooperatively (or not truly) cancelled, it would resume here and the
     # reply WOULD land — proving the difference between hard-cancel and a
     # merely-delayed completion.
-    release.set()
+    _llm_stub.release.set()
 
     # (c) agent survives: run_one_iteration returns normally (True), not an
     # exception — cancel_inflight() swallowed its own CancelledError.
-    completed = await asyncio.wait_for(turn_task, timeout=5)
+    completed = await turn_task
     assert completed is True
 
     # (a) the cancelled turn's result never landed.
-    assert not any(m.content == _LANDED_REPLY for m in session.history), (
+    assert not any(m.content == _STUB_REPLY for m in session.history), (
         "a hard-cancelled turn's LLM reply must never be appended, even after "
         "the underlying hung call is released post-cancel"
     )
@@ -183,24 +180,37 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(tm
     ), "the prior fire-and-forget intervention_answer_consumed append must survive the hard-cancel"
 
     # (c) continued: a SUBSEQUENT ordinary turn completes normally — the
-    # session/driver was not torn down by the hard-cancel.
-    async def _normal_run_turn(user_text: str, chain_id: str) -> None:
-        session._append_history(ChatMessage(role="assistant", content="normal reply", ts=_now()))
-
-    session._loop_driver.run_turn = _normal_run_turn  # type: ignore[method-assign]
+    # session/driver was not torn down by the hard-cancel. The SAME stub
+    # instance is still installed; its release Event is already set, so
+    # this turn's own litellm.acompletion call passes straight through.
     await session._put_inbox("user", {"text": "again", "chain_id": "c-after-cancel"})
-    next_completed = await asyncio.wait_for(session.run_one_iteration(), timeout=5)
+    next_completed = await session.run_one_iteration()
     assert next_completed is True
-    assert any(m.content == "normal reply" for m in session.history), (
+    assert any(
+        m.role == "assistant" and m.content == _STUB_REPLY for m in session.history
+    ), (
         "a normal turn after a hard-cancel must complete and append its reply — "
         "the agent must survive to serve the next turn"
+    )
+
+    # witness ②: the REAL driver dispatched for both chain_ids — turn_started
+    # is emitted in run_one_iteration BEFORE the turn's own task starts, so
+    # its presence for c-hard-cancel is unaffected by that turn's later
+    # cancellation.
+    await session._audit_events.drain()
+    started_chain_ids = {
+        e.data.get("chain_id") for e in events if e.type == "turn_started"
+    }
+    assert {"c-hard-cancel", "c-after-cancel"} <= started_chain_ids, (
+        f"expected turn_started for both chain_ids, got: {started_chain_ids!r}"
     )
 
     await state_log.aclose()
 
 
 @pytest.mark.asyncio
-async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path, _llm_stub):
     """Tier 2: #2242 truncate-falsify (CLAUDE.md recovery-feature PR gate).
 
     Repeats the hard-cancel scenario, then pushes filler WAL events past the
@@ -218,18 +228,21 @@ async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path):
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path)
+    events = _collect(session)
 
     prior_run_id = "prior-answer-run-truncate"
     await _seed_prior_fire_and_forget_wal_task(session, prior_run_id)
 
-    call_started, release = _install_hanging_run_turn(session)
     await session._put_inbox("user", {"text": "hello", "chain_id": "c-truncate"})
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     await session.cancel_inflight()
-    release.set()
-    await asyncio.wait_for(turn_task, timeout=5)
+    _llm_stub.release.set()
+    await turn_task
     await session.journal.flush()
+    # witness ②: the real driver dispatched for this turn.
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
 
     # sanity: the consumed marker's source event is durable pre-truncation.
     pre_truncate_lines = [line for line in wal.read_text().splitlines() if line.strip()]
@@ -276,32 +289,9 @@ async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path):
     await state_log2.aclose()
 
 
-def _install_hanging_run_turn_swallowing_cancel(
-    session: Session,
-) -> tuple[asyncio.Event, asyncio.Event]:
-    """Like ``_install_hanging_run_turn`` but the turn body CATCHES the
-    CancelledError and returns normally (does not re-raise). Models a turn
-    whose internal code suppresses the cancel and completes in the same tick
-    it lands — so ``await self._turn_owner_task`` returns NORMALLY and
-    ``run_one_iteration``'s ``except CancelledError`` block never runs. This is
-    the exact shape that leaves ``_turn_cancel_self_initiated`` un-reset unless
-    the reset lives in an unconditional ``finally`` (Finding 1)."""
-    call_started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _swallowing_run_turn(user_text: str, chain_id: str) -> None:
-        call_started.set()
-        try:
-            await release.wait()
-        except asyncio.CancelledError:
-            return  # swallow: complete normally instead of propagating
-
-    session._loop_driver.run_turn = _swallowing_run_turn  # type: ignore[method-assign]
-    return call_started, release
-
-
 @pytest.mark.asyncio
-async def test_external_cancel_of_driver_task_propagates(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_external_cancel_of_driver_task_propagates(tmp_path, _llm_stub):
     """Tier 2: #2242 Finding 2 — an EXTERNAL cancellation of the task running
     ``run_one_iteration`` (i.e. NOT via ``cancel_inflight()``, so
     ``_turn_cancel_self_initiated`` stays False) must PROPAGATE, not be
@@ -322,11 +312,11 @@ async def test_external_cancel_of_driver_task_propagates(tmp_path):
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path)
+    events = _collect(session)
 
-    call_started, release = _install_hanging_run_turn(session)
     await session._put_inbox("user", {"text": "hello", "chain_id": "c-external"})
     turn_task = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(call_started.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
 
     # External cancel: cancel the driver task DIRECTLY (an outer scope teardown),
     # NOT through cancel_inflight() — so this is NOT self-initiated.
@@ -336,63 +326,83 @@ async def test_external_cancel_of_driver_task_propagates(tmp_path):
         await turn_task
 
     # sanity: the hung reply never landed (the turn was torn down, not completed).
-    assert not any(m.content == _LANDED_REPLY for m in session.history)
-    release.set()  # release the (now-dead) coroutine's gate for clean teardown
+    assert not any(m.content == _STUB_REPLY for m in session.history)
+    # witness ②: the real driver dispatched before the external cancel hit it.
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
     await state_log.aclose()
 
 
 @pytest.mark.asyncio
-async def test_self_initiated_flag_does_not_leak_to_next_turn(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_self_initiated_flag_does_not_leak_to_next_turn(tmp_path, _llm_stub):
     """Tier 2: #2242 Finding 1 — the ``_turn_cancel_self_initiated`` flag must
     NOT leak past the turn that set it.
 
-    Turn 1: ``cancel_inflight()`` sets the flag True, but the turn body CATCHES
-    the CancelledError and returns normally — so ``await self._turn_owner_task``
-    returns normally and ``run_one_iteration``'s ``except`` block (which is
-    where a per-branch reset would live) never runs. Turn 2 is then cancelled
-    EXTERNALLY (not via ``cancel_inflight()``); its cancellation must PROPAGATE.
+    Turn 1: ``cancel_inflight()`` cancels the sub-task, and #2242's own
+    discrimination (``_turn_cancel_self_initiated``) swallows exactly that
+    cancellation — ``run_one_iteration`` returns True normally, matching
+    ``test_hard_cancel_mid_generation_...`` above (#5450: the private
+    swallowing-run_turn closure this test used before is GONE — see module
+    docstring; reyn's own self-swallow, discriminated via the flag, was
+    always the real mechanism producing "turn 1 completes normally", never
+    a third party swallowing inside run_turn's own body). Turn 2 is then
+    cancelled EXTERNALLY (not via ``cancel_inflight()``); its cancellation
+    must PROPAGATE.
 
-    If the flag leaked True from turn 1 (reset only on the swallow branch),
-    turn 2's external cancel would be mis-read as self-initiated and swallowed
-    — the driver task would complete normally instead of ending cancelled,
-    breaking the FP-0013 external-cancel contract.
+    If the flag leaked True from turn 1, turn 2's external cancel would be
+    mis-read as self-initiated and swallowed — the driver task would
+    complete normally instead of ending cancelled, breaking the FP-0013
+    external-cancel contract.
 
-    STRIP-RED: moving the ``_turn_cancel_self_initiated = False`` reset back out
-    of the unconditional ``finally`` and onto the swallow branch leaks the flag
-    → turn 2's external cancel is swallowed → ``pytest.raises`` sees no
-    exception (RED). Reproduced live during review."""
+    STRIP-RED: moving the ``_turn_cancel_self_initiated = False`` reset back
+    out of the unconditional ``finally`` and onto the swallow branch leaks
+    the flag → turn 2's external cancel is swallowed → ``pytest.raises``
+    sees no exception (RED). Reproduced live during review."""
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path)
+    events = _collect(session)
 
-    # ── Turn 1: self-initiated cancel that the body swallows (flag set, but the
-    #    except-block reset path is NOT exercised). ────────────────────────────
-    started1, release1 = _install_hanging_run_turn_swallowing_cancel(session)
+    # ── Turn 1: self-initiated cancel via cancel_inflight() (flag set, reset
+    #    happens in the unconditional finally). ────────────────────────────
     await session._put_inbox("user", {"text": "one", "chain_id": "c-leak-1"})
     turn1 = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(started1.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     await session.cancel_inflight()  # sets _turn_cancel_self_initiated True
-    # Body swallows the cancel → run_one_iteration returns True normally.
-    completed1 = await asyncio.wait_for(turn1, timeout=5)
+    _llm_stub.release.set()
+    completed1 = await turn1
     assert completed1 is True
 
-    # ── Turn 2: EXTERNAL cancel — must propagate (flag must have been reset). ──
-    started2, release2 = _install_hanging_run_turn(session)
+    # ── Turn 2: EXTERNAL cancel — must propagate (flag must have been reset).
+    #    Re-arm the shared stub for a second hang: release stays set forever
+    #    once set() (asyncio.Event has no auto-reset), so it must be
+    #    cleared before this turn can suspend again. ───────────────────────
+    _llm_stub.call_started.clear()
+    _llm_stub.release.clear()
     await session._put_inbox("user", {"text": "two", "chain_id": "c-leak-2"})
     turn2 = asyncio.create_task(session.run_one_iteration())
-    await asyncio.wait_for(started2.wait(), timeout=5)
+    await _llm_stub.call_started.wait()
     turn2.cancel()  # external — NOT via cancel_inflight()
 
     with pytest.raises(asyncio.CancelledError):
         await turn2
 
-    release1.set()
-    release2.set()
+    # witness ②: both turns really dispatched (turn2's is emitted before its
+    # own external cancel, in run_one_iteration, same ordering as witness ①
+    # test above).
+    await session._audit_events.drain()
+    started_chain_ids = {
+        e.data.get("chain_id") for e in events if e.type == "turn_started"
+    }
+    assert {"c-leak-1", "c-leak-2"} <= started_chain_ids
+
     await state_log.aclose()
 
 
 @pytest.mark.asyncio
-async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path):
+@pytest.mark.llm_stub(control="gated")
+async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path, _llm_stub):
     """Tier 2: #2242 Finding 3 — the ``await self.await_quiescent()`` call on
     the hard-cancel path is load-bearing: it settles a tracked fire-and-forget
     WAL-append task so no straggler outlives the reported-idle turn.
@@ -413,6 +423,7 @@ async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path):
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path)
+    events = _collect(session)
 
     never = asyncio.Event()  # never set → the task settles ONLY via cancellation
 
@@ -423,14 +434,17 @@ async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path):
     # WAL-append task); hold the handle so we can witness settling publicly.
     prior_task = session._track_wal_task(asyncio.ensure_future(_indefinite_prior_wal_task()))
     try:
-        call_started, release = _install_hanging_run_turn(session)
         await session._put_inbox("user", {"text": "hello", "chain_id": "c-quiescent"})
         turn_task = asyncio.create_task(session.run_one_iteration())
-        await asyncio.wait_for(call_started.wait(), timeout=5)
+        await _llm_stub.call_started.wait()
         await session.cancel_inflight()
-        release.set()
-        completed = await asyncio.wait_for(turn_task, timeout=5)
+        _llm_stub.release.set()
+        completed = await turn_task
         assert completed is True
+
+        # witness ②: the real driver dispatched.
+        await session._audit_events.drain()
+        assert any(e.type == "turn_started" for e in events)
 
         # The join happened: the tracked straggler is settled (cancelled+joined)
         # before run_one_iteration returned — no un-joined WAL-append task
