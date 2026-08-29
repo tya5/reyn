@@ -136,19 +136,24 @@ def test_resolve_log_passes_a_plain_eventlog_through_unchanged() -> None:
 
 
 def test_session_itself_has_neither_add_subscriber_nor_drain(tmp_path, monkeypatch) -> None:
-    """Tier 2: the deterministic, non-timing witness that ``_resolve_log``'s
-    ``Session``-detection branch is load-bearing, not incidental — a real
-    ``Session`` genuinely cannot satisfy ``collect_events``/``settle`` on
-    its own (no ``add_subscriber``, no ``drain`` method exists on the class
-    at all), so the two tests above passing is real evidence the resolution
-    ran, never a coincidence of ``Session`` already happening to duck-type
-    as a log. (Strip-falsify of ``_resolve_log`` itself — temporarily
-    forcing it to return *obj* unchanged — was run by hand: both
-    Session-acceptance tests above then fail with exactly this
+    """Tier 2: the witness that ``_resolve_log``'s ``Session``-detection
+    branch is load-bearing, not incidental — a real ``Session`` genuinely
+    cannot satisfy ``collect_events``/``settle`` on its own (no
+    ``add_subscriber``, no ``drain`` method exists on the class at all), so
+    the two tests above passing is real evidence the resolution ran, never
+    a coincidence of ``Session`` already happening to duck-type as a log.
+    The ``hasattr(session, "_audit_events")`` line is the deny-side
+    assert's own accept-side sibling — without it, a ``make_session`` that
+    broke and returned something with neither attribute (or nothing at
+    all) would make this test pass just as vacuously as a real ``Session``
+    does (architect review, #5484). (Strip-falsify of ``_resolve_log``
+    itself — temporarily forcing it to return *obj* unchanged — was run by
+    hand: both Session-acceptance tests above then fail with exactly this
     ``AttributeError``, confirmed and reverted; not pinned here as its own
-    test because this repo's testing policy bans an assertion whose failure
-    mode is timing-shaped, and re-deriving the exact same two tests' own
-    behavior a second time would be the implementation, transcribed.)"""
+    test — the assertion itself is deterministic, not timing-shaped, but
+    re-deriving the exact same two tests' own behavior a second time would
+    be the implementation, transcribed, this repo's six-questions rule 2.)"""
     session = make_session(tmp_path, monkeypatch=monkeypatch)
+    assert hasattr(session, "_audit_events")
     assert not hasattr(session, "add_subscriber")
     assert not hasattr(session, "drain")
