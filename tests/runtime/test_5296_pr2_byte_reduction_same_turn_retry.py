@@ -708,33 +708,93 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
     #5382: the real ``CompactionEngine`` now runs throughout (was a
     hand-rolled ``_SpillableByteLimitMidEngine`` stand-in whose own tiny
     injected ``ComputedBudgets`` forced the head/tail split — that
-    private-cache injection is exactly what #5382 closes). The SAME
-    ``t_max=2_500`` this test already used turns out to reproduce the
-    identical split with the REAL engine's own real budgets (measured
-    directly while migrating this test) — no budget injection needed at
-    all. ``LLMStub``'s ``raise_for=<callable(messages) -> bool>``
-    (architect ruling, #5382's "raise_for generalization") makes ONLY the
-    compact() call carrying the marker's content raise — a CONTENT
-    predicate, never a call count (architect: a counter that increments
-    at compact()'s own entry cannot say whether the right content
-    arrived — the exact weak witness #5386 corrected). One small head
-    turn + the marker (tool) + 7 filler (user, assistant) pairs reliably
-    lands the marker turn alone as ``raw_middle[0]`` — sized in spirit
-    only (the marker's actual content is tiny; only WIRING is this
-    test's subject, not byte-size behavior, which the engine-level tests
-    in ``test_pr_n6_compaction_overflow_retry.py`` already cover).
-    ``max_shrink_iterations=25`` is generous: the halving ladder needs a
-    few attempts to reach the mid=1 floor, then (after the spill succeeds)
-    retry_loop folds the remaining filler turns one at a time before ever
-    reaching ``main_call`` — a real, if wasteful, consequence of #4947 ③'s
-    "don't reset the discovered slice size to full" choice, not a bug this
-    test is pinning."""
+    private-cache injection is exactly what #5382 closes).
+
+    #5474 lead-coder BLOCKING: the FIRST revision re-hardcoded
+    ``t_max=2_500`` + hand-picked filler counts, assuming (untested) that
+    this reproduced the same head/raw_middle/tail split the retired
+    stand-in's FIXED ``budgets(20/20/3000)`` used to force — "replacing a
+    baked number with another baked number is not a migration" (lead-coder,
+    verbatim). It did not: the real engine derives its own
+    head_budget/tail_budget from ``t_max``, and the turn sizes below now
+    derive from THOSE real, read values instead of re-guessing a shape
+    that happened to work once.
+
+    The relationship this test needs — head turn alone in ``head``, the
+    marker turn alone in ``raw_middle``, every filler turn inside
+    ``tail`` — is built directly from ``trim_head``/``trim_tail``'s own
+    group-accumulation rule (``_trim_groups``, engine.py): the FIRST group
+    a trim scan sees is always kept whole even when it alone exceeds the
+    budget (Axis 7 keep-whole), and every later group is kept only while
+    the running total stays ``<= budget``.
+
+    - **Head**: the head turn's own token count is deliberately built to
+      exceed ``head_budget`` on its own (``effective_trigger + tail_budget
+      + a margin`` — always ``> head_budget``, since ``head_budget <=
+      main_M_room <= effective_trigger`` by ``compute_budgets``'s own
+      formula). ``trim_head`` then keeps this ONE turn via the
+      over-budget keep-whole branch and stops — the marker is never even
+      examined, independent of the exact head/tail split a given
+      ``t_max`` produces. The same oversize also guarantees the WHOLE
+      history's token total clears ``effective_trigger`` (the elide
+      branch this test needs at all), without touching the tail-side
+      arithmetic below.
+    - **Tail**: ``_FILLER_COUNT`` uniform filler turns are sized so their
+      summed tokens are ``tail_budget - r`` for some ``0 <= r <
+      _FILLER_COUNT`` (an integer-division remainder, never re-guessed) —
+      comfortably kept whole by ``trim_tail`` (total ``<= tail_budget``),
+      while the marker turn's own (fixed, ~5-token) size is built larger
+      than that remainder can ever be, so adding the marker to the
+      running total always overshoots ``tail_budget`` and ``trim_tail``
+      excludes it right there. This holds for ANY real ``tail_budget`` —
+      nothing here is re-fit to one ``t_max`` value.
+
+    ``LLMStub``'s ``raise_for=<callable(messages) -> bool>`` (architect
+    ruling, #5382's "raise_for generalization") makes ONLY the compact()
+    call carrying the marker's content raise — a CONTENT predicate, never
+    a call count (architect: a counter that increments at compact()'s own
+    entry cannot say whether the right content arrived — the exact weak
+    witness #5386 corrected). ``max_shrink_iterations=25`` is generous:
+    the halving ladder needs a few attempts to reach the mid=1 floor,
+    then (after the spill succeeds) retry_loop folds the remaining filler
+    turns one at a time before ever reaching ``main_call`` — a real, if
+    wasteful, consequence of #4947 ③'s "don't reset the discovered slice
+    size to full" choice, not a bug this test is pinning."""
     from reyn.dev.testing.llm_stub import LLMStub
 
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500, max_shrink_iterations=25,
         recovery_policy="never",
     )
+    budgets = session._compaction_controller._engine.budgets
+
+    marker_text = "OVERSIZED_MARKER_5367_3"
+    marker_tokens = max(1, len(marker_text) // 4)
+
+    # Head: deliberately larger than head_budget (and than
+    # effective_trigger + tail_budget) so `trim_head`'s FIRST group is
+    # kept whole via the over-budget branch and the scan stops there —
+    # the marker is structurally never reached, and the whole-history
+    # total structurally clears effective_trigger. See the docstring
+    # above for why this holds independent of the real t_max/budgets.
+    head_tokens = budgets.effective_trigger + budgets.tail_budget + 1_000
+    head_text = "H" * (head_tokens * 4)
+
+    # Tail: _FILLER_COUNT uniform turns summing to tail_budget - r
+    # (r = tail_budget % _FILLER_COUNT < _FILLER_COUNT <= marker_tokens),
+    # so trim_tail keeps every filler turn whole and then excludes the
+    # marker (filler_total + marker_tokens always overshoots tail_budget
+    # by construction). See the docstring above.
+    _FILLER_COUNT = 4
+    assert _FILLER_COUNT <= marker_tokens, (
+        "test setup sanity: _FILLER_COUNT must not exceed marker_tokens — "
+        "the remainder r = tail_budget % _FILLER_COUNT must stay strictly "
+        "below marker_tokens for the tail-exclusion arithmetic above to "
+        "hold for ANY real tail_budget"
+    )
+    per_filler_tokens = max(1, budgets.tail_budget // _FILLER_COUNT)
+    filler_text = "F" * (per_filler_tokens * 4)
+
     # #5382: content-based witness (architect ruling) — records whether
     # EACH compact() call that reached this predicate carried the marker,
     # rather than counting how many calls happened. The predicate's own
@@ -751,11 +811,10 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
     stub = LLMStub(raise_for=_raise_on_marker_content, cause="byte_limit")
     stub.install()
     try:
-        _push(session, "user", "small head content " * 5)
-        _push(session, "tool", "OVERSIZED_MARKER_5367_3", tool_call_id="tc-marker", name="big_tool")
-        for i in range(7):
-            _push(session, "user", f"filler question number {i} " * 40)
-            _push(session, "assistant", f"filler answer number {i} " * 40)
+        _push(session, "user", head_text)
+        _push(session, "tool", marker_text, tool_call_id="tc-marker", name="big_tool")
+        for _i in range(_FILLER_COUNT):
+            _push(session, "user", filler_text)
 
         head, raw_middle, _tail, _summary, _seq_by_id = (
             session._loop_driver._history_buffer.decompose_history_for_retry()
@@ -763,9 +822,11 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
         mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
         assert mid_ids == {"tc-marker"}, (
             f"test setup sanity: the marker turn must land alone in "
-            f"raw_middle's tool turns, got {mid_ids!r} — adjust t_max/turn "
-            f"placement (this mirrors test_retry_loop_chat_wiring_1125.py's "
-            f"own independently-measured t_max=2800/8-turn split)"
+            f"raw_middle's tool turns, got {mid_ids!r} — head_tokens="
+            f"{head_tokens}, per_filler_tokens={per_filler_tokens}, "
+            f"budgets={budgets!r} (derived from real budgets, not a "
+            f"re-guessed t_max — see this test's own docstring for the "
+            f"construction)"
         )
         assert raw_middle[0].get("tool_call_id") == "tc-marker", (
             "test setup sanity: the marker turn must be raw_middle[0] — the "
