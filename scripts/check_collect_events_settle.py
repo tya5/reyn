@@ -522,15 +522,16 @@ def main(argv: "list[str] | None" = None) -> int:
 
     if not offenders:
         print(
-            "OK: no collect_events()-derived list is read without a "
-            "settle()/drain() (or equivalent polling yield) earlier in "
-            "the same function."
+            "OK: no collect_events()- or subscriber-derived list is read "
+            "without a settle()/drain() (or equivalent polling yield) "
+            "earlier in the same function."
         )
         return 0
 
     print("collect-events-settle gate FAILED:\n", file=sys.stderr)
     print(
-        f"{len(offenders)} file(s) read a collect_events()-derived list "
+        f"{len(offenders)} file(s) read a collect_events()- or "
+        "subscriber-derived list "
         "with no settle()/drain()/polling-yield earlier in the same "
         "function (#4965/#4966) — dispatch to that list is asynchronous "
         "whenever a running loop exists, so this read can race the "

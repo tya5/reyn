@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.check_collect_events_settle import offending_files
 
 
@@ -119,3 +121,46 @@ def test_the_real_repo_tree_is_currently_clean() -> None:
         f"real regression(s) found: {offenders} — this gate's baseline is "
         "zero, so any hit here is new, not inherited debt"
     )
+
+
+def test_a_raw_subscriber_only_offender_is_not_misreported_as_collect_events(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch", capsys: "pytest.CaptureFixture[str]",
+) -> None:
+    """Tier 2: #5485 — `main()`'s failure output must not claim a file
+    read a "collect_events()-derived list" when that file never called
+    `collect_events()` at all (caught only via the raw
+    `add_subscriber(...)` path). That claim would be FALSE for this exact
+    file: an operator who greps it for `collect_events` finds nothing and
+    reasonably reads the gate as broken (the real #5484 confusion this
+    issue traces back to) — the gate's own real coverage (module
+    docstring, unchanged by this fix) always tracked both forms; only the
+    3 human-read surfaces (this one, the success message, and the
+    workflow step name) named just one.
+
+    Six questions §3 (who would miss this test if it were gone): the
+    consumer is the OPERATOR reading `main()`'s stderr on a real gate
+    failure, not this synthetic file itself — the file is the stage
+    built to reproduce that operator's exact view. `offending_files()`'s
+    own return value (exercised by `test_a_hand_rolled_add_subscriber_
+    read_is_also_flagged` above) carries no wording at all to assert on,
+    so nothing else in this suite would catch a silent regression back to
+    the collect_events()-only phrasing."""
+    import scripts.check_collect_events_settle as gate
+
+    (tmp_path / "test_only_subscriber.py").write_text(
+        "async def test_something(log):\n"
+        "    collected = []\n"
+        "    log.add_subscriber(collected.append)\n"
+        "    await trigger(log)\n"
+        "    assert not any(e.type == 'denied' for e in collected)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gate, "_ROOT", tmp_path)
+    monkeypatch.setattr(gate, "_TESTS_DIR", tmp_path)
+
+    exit_code = gate.main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "a collect_events()-derived list" not in captured.err
+    assert "collect_events()- or subscriber-derived" in captured.err
