@@ -99,3 +99,18 @@ def test_notification_names_the_issue_and_the_evidence_preservation_step():
     assert "32459227086" in text
     assert "attempts/1/logs" in text
     assert "before re-running" in text.lower()
+
+
+def test_notification_points_at_the_variant_b_pending_task_line():
+    """Tier 1: #4986 variant B — the notification must tell whoever picks
+    up a real detection to check attempt 1's log for the "waiting on N
+    tracked task(s)" line ``TrackedTaskSet.aclose()`` now emits (this
+    fix's own module) — the one thing the faulthandler-based
+    pytest-timeout dump cannot name (an asyncio Task, not an OS thread).
+    Architect ruling: "CI の実物で出ること" is deliberately NOT the
+    acceptance bar for the fix itself; THIS notification hook is instead
+    what makes the next real occurrence self-identify whether the line
+    was present."""
+    text = format_notification("32459227086")
+    assert "waiting on" in text
+    assert "tracked task" in text

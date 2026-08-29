@@ -294,6 +294,36 @@ class TrackedTaskSet:
             ]
             if not pending:
                 return
+            # #4986 variant B: name what's about to be waited on, BEFORE the
+            # wait below — the one thing a hang leaves no other trace of.
+            # `pytest-timeout`'s dump is faulthandler-based (OS-thread
+            # tracebacks); an asyncio Task is a coroutine on the ONE event-
+            # loop thread, not a thread of its own, so that dump can only
+            # ever say "the loop is polling" — never which task, which is
+            # why this line exists (see this method's own module for the
+            # #4986 design ruling; verified directly before this fix landed:
+            # faulthandler.dump_traceback() over a real hung task names only
+            # the loop's own frame, never the task). Logged once per
+            # fixpoint round, right here (not once per aclose() call): a
+            # task that finishes mid-round drops off this list on the NEXT
+            # round, so a normal (non-hanging) drain logs this at most once
+            # and then never again once `pending` empties above — the noise
+            # guard witness #4986's own acceptance table requires.
+            # `warning` is a requirement, not a default: lowering it to
+            # info/debug drops this out of pytest's own failure report,
+            # silently deleting the one trace a real hang leaves — do not
+            # lower it even though a normal shutdown also logs it once
+            # (a resident cancel_join task is routinely still pending).
+            logger.warning(
+                "TrackedTaskSet.aclose(caller=%r): waiting on %d tracked "
+                "task(s): %s",
+                caller, len(pending),
+                ", ".join(
+                    f"{t.get_name()!r} disposition={self._tasks[t][0]!r} "
+                    f"appends_wal={self._tasks[t][1]!r}"
+                    for t in pending
+                ),
+            )
             for task in pending:
                 disp, _wal = self._tasks[task]
                 if disp == "cancel_join":

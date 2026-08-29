@@ -202,3 +202,81 @@ async def test_non_reentrant_aclose_does_not_log_the_reentrancy_warning(caplog):
         await tracker.aclose()  # called from the TEST's own task, not a tracked one
 
     assert not any("reentrantly" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_aclose_names_a_still_pending_task_before_waiting_on_it(caplog):
+    """Tier 1: #4986 variant B, witness 1 -- an ``await``-disposition task
+    that has not finished yet is NAMED (its own name, disposition,
+    appends_wal) in a log line ``aclose()`` emits BEFORE it enters the wait
+    that round -- the one thing a real hang leaves no other trace of
+    (``pytest-timeout``'s dump is faulthandler-based: an OS-thread
+    traceback, never an individual asyncio Task's name -- verified
+    directly before this fix, see this fix's own commit message).
+
+    Also THIS fix's own witness #2 (strip): temporarily removing the
+    ``logger.warning(...)`` call ``aclose()``'s fixpoint loop adds makes
+    THIS test go RED (no 'waiting on' line in ``caplog.records`` at all)
+    -- confirmed via a real commit -> edit -> revert pass before this fix
+    landed, not merely asserted; see this fix's own commit message for
+    the exact strip performed."""
+    import logging
+
+    tracker = TrackedTaskSet()
+    release = asyncio.Event()
+
+    async def slow_task() -> None:
+        await release.wait()
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.tracked_tasks"):
+        tracker.spawn(slow_task(), disposition="await", name="slow-task")
+        await asyncio.sleep(0)  # let the spawned task actually start
+        aclose_task = asyncio.create_task(tracker.aclose(caller="test-caller"))
+        # Wait on the CONDITION (the log line landed), not a duration —
+        # testing policy Floor: "no sleep(N) the assertion depends on ...
+        # not to let a task settle" (#4844). Unbounded: CI's own
+        # --timeout=120 is the kill switch if this never becomes true.
+        while not any("waiting on" in r.message for r in caplog.records):
+            await asyncio.sleep(0)
+        release.set()
+        await aclose_task
+
+    assert any(
+        "slow-task" in record.message and "waiting on" in record.message
+        for record in caplog.records
+    ), f"expected the pending task's own name in a 'waiting on' log line, got: {[r.message for r in caplog.records]}"
+
+
+@pytest.mark.asyncio
+async def test_aclose_logs_nothing_once_every_task_has_finished(caplog):
+    """Tier 1: #4986 variant B, witness 3 -- the noise guard. A normal
+    drain where every tracked task finishes promptly logs the "waiting on"
+    line AT MOST ONCE (the round that observed it still pending) and never
+    again once the fixpoint loop's next round finds nothing pending --
+    without this, an "always log, whether or not anything is actually
+    pending" implementation would ALSO pass witness 1 trivially (six
+    questions #4: a positive-only witness is vacuous without this
+    negative control)."""
+    import logging
+
+    tracker = TrackedTaskSet()
+    started = asyncio.Event()
+
+    async def quick_task() -> None:
+        started.set()
+        await asyncio.sleep(0)
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.tracked_tasks"):
+        tracker.spawn(quick_task(), disposition="cancel_join", name="quick-task")
+        await started.wait()
+        await tracker.aclose(caller="test-caller")
+        # A second aclose() call on the now-empty tracker must log nothing
+        # new -- the fixpoint loop's very first check (`if not pending:
+        # return`) fires before the new log line is ever reached.
+        caplog.clear()
+        await tracker.aclose(caller="test-caller")
+
+    assert not any("waiting on" in record.message for record in caplog.records), (
+        f"an aclose() call with nothing pending must never log the "
+        f"'waiting on' line -- got: {[r.message for r in caplog.records]}"
+    )
