@@ -93,7 +93,7 @@ def test_valid_first_response_no_reprompt(monkeypatch) -> None:
         return _resp(_valid_json())
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(_chunk()))
+    summary = asyncio.run(engine.compact(_chunk(), covers_through=1))
 
     assert calls["n"] == 1
     assert summary.topic_arc == "did a thing"
@@ -119,7 +119,7 @@ def test_invalid_then_valid_recovers_via_reprompt(monkeypatch) -> None:
         return _resp(_valid_json())
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
-    summary = asyncio.run(engine.compact(_chunk()))
+    summary = asyncio.run(engine.compact(_chunk(), covers_through=1))
 
     assert calls["n"] == 2, "must re-prompt exactly once before succeeding"
     assert summary.topic_arc == "did a thing"
@@ -148,7 +148,7 @@ def test_persistently_invalid_exhausts_budget_and_raises(monkeypatch) -> None:
     monkeypatch.setattr("litellm.acompletion", _scripted)
 
     with pytest.raises(ValueError, match="missing required fields"):
-        asyncio.run(engine.compact(_chunk()))
+        asyncio.run(engine.compact(_chunk(), covers_through=1))
 
     assert calls["n"] == 2, "1 initial + 1 re-prompt attempt, per max_schema_reprompt_attempts=1"
     invalid_events = [e for e in collected if e.type == "compaction_schema_invalid"]
@@ -296,7 +296,7 @@ def test_structured_output_used_when_model_supports_it(monkeypatch) -> None:
         "reyn.services.compaction.engine._supports_structured_output",
         lambda model: _async_true(),
     )
-    asyncio.run(engine.compact(_chunk()))
+    asyncio.run(engine.compact(_chunk(), covers_through=1))
 
     rf = captured.get("response_format")
     assert rf is not None and rf.get("type") == "json_schema"
@@ -331,7 +331,7 @@ def test_json_object_used_when_model_does_not_support_structured_output(monkeypa
         "reyn.services.compaction.engine._supports_structured_output",
         lambda model: _async_false(),
     )
-    summary = asyncio.run(engine.compact(_chunk()))  # must NOT raise
+    summary = asyncio.run(engine.compact(_chunk(), covers_through=1))  # must NOT raise
 
     assert captured.get("response_format") == {"type": "json_object"}
     assert summary.topic_arc == "did a thing"
@@ -371,7 +371,7 @@ def test_provider_rejection_of_json_schema_is_not_caught_and_retried(monkeypatch
     )
 
     with pytest.raises(ValueError, match="provider rejected response_format"):
-        asyncio.run(engine.compact(_chunk()))
+        asyncio.run(engine.compact(_chunk(), covers_through=1))
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +443,7 @@ def test_partial_slices_eventually_cover_every_turn_with_no_gap(monkeypatch) -> 
     covered: list[int] = []
     for chunk in slices:
         seen_inputs.append(chunk)
-        summary = asyncio.run(engine.compact(chunk))
+        summary = asyncio.run(engine.compact(chunk, covers_through=chunk.new_turns[-1]["seq"]))
         covered.append(summary.covers_through_seq)
 
     assert covered == [1, 2, 3], (

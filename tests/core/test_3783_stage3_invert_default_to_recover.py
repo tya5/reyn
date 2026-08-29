@@ -90,7 +90,9 @@ class _StubEngineCompactRaises:
         self._compact_fn = compact_fn
         self._events = EventLog()
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through=None,
+    ) -> ChatSummary:
         return await self._compact_fn(input_chunk)
 
 

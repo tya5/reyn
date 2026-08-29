@@ -133,7 +133,7 @@ def test_compaction_engine_records_compaction_purpose(monkeypatch) -> None:
         previous_summary=None,
         new_turns=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
-    )))
+    ), covers_through=1))
     assert [c["purpose"] for c in rec.calls] == ["compaction"]
 
 
@@ -193,7 +193,7 @@ def test_compaction_engine_threads_agent(monkeypatch) -> None:
         previous_summary=None,
         new_turns=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
-    )))
+    ), covers_through=1))
     assert [c["agent"] for c in rec.calls] == ["researcher"]
 
 

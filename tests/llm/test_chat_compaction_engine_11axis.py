@@ -793,7 +793,9 @@ class _CountingEngine(CompactionEngine):
         )
         self.compact_call_count = 0
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through=None,
+    ) -> ChatSummary:
         """Tier 2 stub: increment call count and return a stub summary."""
         self.compact_call_count += 1
         return ChatSummary(topic_arc="stub", covers_through_seq=0)

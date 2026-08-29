@@ -69,7 +69,7 @@ def _run(monkeypatch, engine, collected, *, compaction_arc: str, resummarize_arc
         new_turns=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
-    summary = asyncio.run(engine.compact(chunk))
+    summary = asyncio.run(engine.compact(chunk, covers_through=1))
     return summary, calls, [e.type for e in collected]
 
 

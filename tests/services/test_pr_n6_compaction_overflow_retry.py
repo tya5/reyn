@@ -404,7 +404,7 @@ class _OverflowingEngine:
         # (engine.py's Axis 2, "measured once at init time").
         self._T_comp_SP = 100
 
-    async def compact(self, input_chunk: HistoryChunkToCompact):
+    async def compact(self, input_chunk: HistoryChunkToCompact, *, covers_through=None):
         if self._fail_compact:
             raise CompactionOverflowError("test: compaction overflow")
         from reyn.services.compaction.engine import ChatSummary
@@ -465,7 +465,7 @@ def test_retry_loop_shrinks_tail_on_overflow(tmp_path) -> None:
             )
             self._events = EventLog()
 
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             from reyn.services.compaction.engine import ChatSummary
             return ChatSummary(topic_arc="stub", covers_through_seq=0)
 
@@ -735,7 +735,7 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted(tmp_path
     )
 
     class _SameCauseOnCompactEngine(_OverflowingEngine):
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             raise ContextOverflowError("compact also overflows, same cause")
 
     engine = _SameCauseOnCompactEngine(fail_compact=False)
@@ -792,7 +792,7 @@ class _CompactFailsOnceEngine(_OverflowingEngine):
         super().__init__(fail_compact=False)
         self._compact_calls = 0
 
-    async def compact(self, input_chunk):
+    async def compact(self, input_chunk, *, covers_through=None):
         self._compact_calls += 1
         if self._compact_calls == 1:
             raise CompactionOverflowError("first compact overflows")
@@ -1310,7 +1310,7 @@ class _Always413CompactEngine(_OverflowingEngine):
         self._T_comp_SP = 100
         self.compact_calls = 0
 
-    async def compact(self, input_chunk):
+    async def compact(self, input_chunk, *, covers_through=None):
         self.compact_calls += 1
         raise _FakeStatusError("compact 413", status_code=413)
 
@@ -1438,7 +1438,7 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
             super().__init__()
             self.compact_calls = 0
 
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             self.compact_calls += 1
             turn = input_chunk.new_turns[0]
             if turn.get("content") == "OVERSIZED_TOOL_RESULT":
@@ -1553,7 +1553,7 @@ def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
             self._script = script
             self._idx = 0
 
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             should_fail = self._script[self._idx] if self._idx < len(self._script) else False
             self._idx += 1
             if should_fail:
@@ -1676,7 +1676,7 @@ def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit(tmp_pat
             super().__init__(fail_compact=False)
             self._called = False
 
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             if not self._called:
                 self._called = True
                 raise ValueError("not a byte-limit failure")
@@ -1721,7 +1721,7 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
     cfg = _make_cfg()
 
     class _AlwaysByteLimitEngine(_OverflowingEngine):
-        async def compact(self, input_chunk):
+        async def compact(self, input_chunk, *, covers_through=None):
             raise _FakeStatusError("compact 413", status_code=413)
 
     engine = _AlwaysByteLimitEngine(fail_compact=False)

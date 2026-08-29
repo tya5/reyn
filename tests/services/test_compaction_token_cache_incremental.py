@@ -131,7 +131,7 @@ def test_compact_does_not_clear_the_token_cache(monkeypatch) -> None:
         new_turns=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
-    asyncio.run(engine.compact(chunk))
+    asyncio.run(engine.compact(chunk, covers_through=1))
 
     # Re-estimating the SAME text after compact() must be a cache HIT: same
     # value, and the tokenizer is NOT invoked again (still exactly 1 call).
@@ -170,8 +170,8 @@ def test_repeated_estimate_of_unchanged_text_is_a_cache_hit_across_compactions(m
         previous_summary=None, new_turns=[{"role": "user", "text": "t1", "seq": 1}],
         section_token_caps={},
     )
-    asyncio.run(engine.compact(chunk))
-    asyncio.run(engine.compact(chunk))  # a SECOND compaction cycle
+    asyncio.run(engine.compact(chunk, covers_through=1))
+    asyncio.run(engine.compact(chunk, covers_through=1))  # a SECOND compaction cycle
 
     second = estimate_tokens(text, model, use_chars4=False)
     assert second == first

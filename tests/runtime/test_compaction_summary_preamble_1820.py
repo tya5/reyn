@@ -37,7 +37,9 @@ class _SucceedingEngine(CompactionEngine):
         self._events = EventLog()
         self._budgets = _STUB_BUDGETS
 
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through=None,
+    ) -> ChatSummary:
         return ChatSummary(topic_arc="STUB_ARC", covers_through_seq=0)
 
 

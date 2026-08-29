@@ -93,7 +93,7 @@ class _SameCauseOnCompactSpillableEngine(_OverflowingEngine):
         # the turns compact() was given.
         self.compact_calls_with_marker_gone = 0
 
-    async def compact(self, input_chunk):
+    async def compact(self, input_chunk, *, covers_through=None):
         self.compact_calls += 1
         turns = input_chunk.new_turns
         if any(t.get("content") == _SPILLABLE_MARKER for t in turns if isinstance(t, dict)):
