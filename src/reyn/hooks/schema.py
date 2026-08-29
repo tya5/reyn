@@ -346,6 +346,46 @@ class HookDef:
         regresses); the protection this field exists to provide only
         applies to a ``HookDef`` that actually went through the real
         session composition path, which always sets a real origin.
+    fold:
+        #5516 (owner ruling §1/§1b): OPERATOR opt-OUT for this ONE hook
+        entry from launch-folding — ``None``/omitted/``True`` = the
+        floor = FOLD (N queued events become ONE launch carrying an
+        ``N``-item array); an explicit ``False`` is the operator's
+        expressed will to opt OUT (each queued event gets its OWN
+        launch, still array-wrapped as a single-item ``[payload]`` —
+        the #5516 clean-break, payload is always an array, is
+        unconditional and this flag never touches it). Only meaningful
+        on ``exec``/``exec_capture``/``template_push`` — the three
+        schemes whose receiver CAN take N items in one call (stdin JSON
+        array / concatenated text); rejected on ``pipeline_launch``
+        (whose receiver takes ONE ``input: dict`` and can never fold at
+        all, unconditionally — see ``HookDispatcher._dispatch_one_batch``'s
+        own docstring), same eager-rejection posture as ``subprocess``/
+        ``network`` being rejected on a non-exec scheme (a
+        silently-ignored operator flag reads as an applied restriction
+        that was never applied).
+
+        Default is "fold" because folding loses nothing (every event's
+        data still arrives, just batched) and adds no latency (the
+        countdown launches on the FIRST item, never after a time
+        window). The one real reason to opt out: wanting MORE wake
+        opportunities — a hook design that wants to "think" once per
+        event rather than once per batch.
+
+        🔴 Causality an opted-out hook's operator MUST know (owner §1b,
+        stated here because #5516's issue thread is not somewhere a
+        future reader will look): an opted-out hook consumes
+        ``max_hook_driven_turns`` valve units ONE PER EVENT (see
+        ``dispatcher.py``'s own ``:270-272`` comment on that valve) —
+        N queued events opting out means N valve units spent where a
+        folded hook on the same burst would spend ONE. An operator who
+        does not know this stops at a DIFFERENT place (the valve cap)
+        than the one they were adjusting.
+
+        ⚪ ``skipped_session_wide`` still applies regardless of this
+        flag's value — folding vs. not-folding only decides what
+        happens to events that MADE IT into the queue; an event lost to
+        bridge queue overflow before that point is lost either way.
     """
 
     on: str
@@ -359,6 +399,7 @@ class HookDef:
     network: bool | None = field(default=None)
     write_paths: "tuple[str, ...] | None" = field(default=None)
     origin: str = field(default="unknown")
+    fold: bool | None = field(default=None)
 
 
 #: #5213: the 4 config layers ``hooks:`` composes across, in ORDER FROM LEAST

@@ -63,6 +63,7 @@ _log = logging.getLogger(__name__)
 _KNOWN_HOOK_ENTRY_KEYS: frozenset[str | bool] = frozenset({
     "on", True, "name", "template_push", "exec", "exec_capture",
     "pipeline_launch", "matcher", "subprocess", "network", "write_paths",
+    "fold",  # #5516: per-hook opt-out from launch-folding, see HookDef.fold
 })
 
 # The one wrong-scope key architect named as directly actionable (not a
@@ -554,6 +555,31 @@ def _parse_entry(
                 )
         write_paths_raw = tuple(value)
 
+    # ── fold opt-out (#5516 owner ruling §1/§1b) ───────────────────────────────
+    # Same eager-rejection model as subprocess/network/write_paths above: only
+    # exec/exec_capture/template_push CAN fold at all (their receiver takes N
+    # items in one call — stdin JSON array / concatenated text); pipeline_launch
+    # cannot (its receiver takes ONE `input: dict`, architect ruling, #5516) and
+    # never folds regardless of this flag — declaring `fold:` there would be a
+    # silently-ignored operator flag, exactly the antipattern this eager-rejection
+    # model exists to close for every other per-hook knob.
+    fold_raw: bool | None = None
+    if "fold" in raw:
+        if present[0] == "pipeline_launch":
+            raise HookConfigError(
+                f"hooks[{entry_index}].fold is not supported on pipeline_launch "
+                f"(its receiver takes one input: dict per launch and can never "
+                f"fold N events into one call — #5516). pipeline_launch always "
+                f"launches once per event, unconditionally; remove this key."
+            )
+        value = raw["fold"]
+        if not isinstance(value, bool):
+            raise HookConfigError(
+                f"hooks[{entry_index}].fold must be a boolean, got "
+                f"{type(value).__name__!r}."
+            )
+        fold_raw = value
+
     # ── pipeline_launch block (#2608 H3) ──────────────────────────────────────
     pipeline_launch: PipelineLaunchBlock | None = None
     if "pipeline_launch" in raw:
@@ -650,6 +676,7 @@ def _parse_entry(
         network=network_raw,
         write_paths=write_paths_raw,
         origin=origin,
+        fold=fold_raw,
     )
 
 
