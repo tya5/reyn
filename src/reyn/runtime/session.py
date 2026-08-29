@@ -10103,8 +10103,10 @@ class Session:
         json.dumps + token-estimate of the router-view history (re-paid only on
         a miss — history shrink, model/use_chars4 change, changed cached
         prefix); #2939 made ``build_history`` materialise its producer
-        (``_active_branch_history``) ONCE instead of 2x (3x on the elide path,
-        via each ``_latest_summary``); and #2939 made that producer's
+        (``_active_branch_history``) ONCE instead of 2x (3x when the
+        now-retired elide branch fired, #5367 — each of its 3 return
+        points called ``_latest_summary`` separately); and #2939 made that
+        producer's
         ``build_active_predicate`` derivation incremental, so it decodes only
         WAL entries appended since the previous turn rather than re-scanning
         every line. Measured (N=2000 msgs, warm token cache, Darwin/arm64):
@@ -10131,15 +10133,23 @@ class Session:
 
         Runs the existing synchronous compaction and reports what it did.
 
-        Axis note (#191, traced): the CHAT router prompt is head+tail TURN-COUNT
-        bounded (``_build_history_for_router``), so the router-view
-        ``freed_tokens`` is structurally ~0 even when compaction fires — chat
-        compaction COMPRESSES the already-elided middle into a summary bridge
-        rather than shrinking the bounded view. So the meaningful chat metric is
-        ``summarized_turns`` + ``compressed_tokens`` (raw middle) → ``bridge_tokens``
-        (the summary). ``freed_tokens`` is kept for the op contract shared with
-        the phase axis (where it IS the real control_ir shrink), but is ~0 for
-        chat — callers front the compression numbers, not freed, for chat.
+        Axis note (#191, traced; premise corrected #5367): this used to say
+        the CHAT router prompt is head+tail TURN-COUNT bounded, so the
+        router-view ``freed_tokens`` was structurally ~0 even when
+        compaction fires — compaction compressed a middle ``build_history``
+        had ALREADY excluded via its own (then-existing) proactive elide,
+        so nothing visible shrank. #5367 (owner ruling) retired that elide
+        branch — ``build_history`` now returns the full watermark-filtered
+        history raw, uncapped. Compaction's watermark filter is now the
+        ONLY thing excluding a covered turn from the projection at all, so
+        it DOES meaningfully shrink what a chat turn actually sends —
+        ``freed_tokens`` for chat is no longer structurally pinned to ~0.
+        The compression metric (``summarized_turns``/``compressed_tokens``/
+        ``bridge_tokens``) below is unaffected either way — it was always
+        the meaningful number for chat, freed or not. ``freed_tokens`` is
+        kept for the op contract shared with the phase axis (where it is
+        the real control_ir shrink); callers front the compression numbers
+        for chat regardless of what ``freed_tokens`` reads.
         """
         import json as _json
 

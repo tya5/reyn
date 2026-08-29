@@ -234,9 +234,13 @@ class RouterLoopDriver:
         largest-first WITHIN each stage.
 
         ``raw_middle`` (mid) is included even though spilling it moves
-        ZERO wire bytes (it is already elided out of ``build_history``'s
-        payload — ``estimate_wire_bytes`` never reads it, only ``summary``
-        does): #5364 §1.3 names two byte-independent reasons to spill it
+        ZERO wire bytes (conclusion unchanged by #5367's removal of
+        ``build_history``'s own elide branch — the real reason was always
+        structural, not "elided out": ``estimate_wire_bytes`` simply never
+        takes ``raw_middle`` as an argument at all, only ``summary`` —
+        ``build_history`` now returns every candidate turn raw regardless,
+        but that has no bearing on what THIS function measures):
+        #5364 §1.3 names two byte-independent reasons to spill it
         anyway — (1) ``spilled`` is PERSISTENT (D), so a mid turn that
         later slides into head/tail (as the window advances) is already
         done; (2) when overflow later folds ``raw_middle`` into a summary,
@@ -284,9 +288,12 @@ class RouterLoopDriver:
         #5364 §1.6 (owner/architect ruling, replacing the OLD "undo if it
         didn't help" behavior): a genuine new spill is ALWAYS kept, never
         undone — not by a byte-decrease check (a ``raw_middle`` candidate
-        can NEVER move wire bytes at all, being already elided out of
-        ``estimate_wire_bytes``'s inputs by construction — #5364 §1.3),
-        and not by a "made it bigger" check either (a tiny original body
+        can NEVER move wire bytes at all — ``estimate_wire_bytes`` simply
+        never takes ``raw_middle`` as an input at all, structural and
+        unaffected by #5367's removal of ``build_history``'s own elide
+        branch — see ``_spill_candidates``'s own docstring above for the
+        corrected reasoning — #5364 §1.3), and not by a "made it bigger"
+        check either (a tiny original body
         can genuinely become a larger fixed-overhead offloaded-preview
         replacement, and that is still real, durable progress: ``spilled``
         is persistent (D), and a mid-turn spill still shrinks a LATER

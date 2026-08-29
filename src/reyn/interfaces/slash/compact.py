@@ -47,11 +47,14 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
         await reply_error(ctx, f"compaction failed: {exc}")
         return
 
-    # #191: front the chat compression metric, not router-view `freed_tokens`
-    # (structurally ~0 for chat — the router prompt is head+tail TURN-bounded, so
-    # compaction COMPRESSES the already-elided middle into a summary bridge rather
-    # than shrinking the bounded view). What's meaningful: how many older turns
-    # were summarised and the raw→bridge token compression.
+    # #191: front the chat compression metric, not router-view `freed_tokens`.
+    # #5367 retired the router's own proactive elide (build_history now
+    # returns the full watermark-filtered history raw), so `freed_tokens`
+    # is no longer structurally pinned to ~0 for chat the way it used to be
+    # (see session.py's own `_compact_now_for_op` docstring for the full
+    # correction) -- but the compression metric below stays the meaningful
+    # number for chat regardless: how many older turns were summarised and
+    # the raw->bridge token compression.
     n = result.get("summarized_turns", 0)
     if n <= 0:
         free_after = result.get("free_window_after")

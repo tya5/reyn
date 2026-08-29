@@ -788,7 +788,7 @@ Default-**ALLOW**（own-write op — 書き込むのはソース自身の index 
 
 戻り値:
 - `status: "ok" | "error"`
-- `freed_tokens: int` — 正確なトークン数の削減量。**構造上ほぼ 0**: router prompt は head+tail の*ターン*数で bound されている（`_build_history_for_router`）ため、圧縮しても bound されたビューは縮みません — 既に elide された中間部分を summary bridge に圧縮するだけです。ここでの `freed_tokens` を前面に出さないでください — 下記の圧縮メトリクスを参照。
+- `freed_tokens: int` — 正確なトークン数の削減量。`#5367` で router 自身の proactive な window-utilization elide が廃止されました — router prompt はもう head+tail の*ターン*数で bound されておらず、実際の overflow が起きるまで watermark-filtered な履歴全体を raw で送ります。圧縮の watermark filter だけが covered turn を projection から除外する唯一の手段になったため、`freed_tokens` はもう chat 向けに構造上 ~0 に固定されていません。下記の圧縮メトリクスはどちらにせよ意味のある数値のままです。
 - `free_window_after` / `free_window_before: int` — 圧縮後/前の正確なトークン数の空き容量。
 - **圧縮メトリクス**（意味のあるシグナル）: `summarized_turns: int`（bridge に折り畳まれた古いターン数）、`compressed_tokens: int`（それらの生のトークンコスト）、`bridge_tokens: int`（summary のトークンコスト）。意味を持つのは `compressed_tokens → bridge_tokens` の圧縮であり、`freed_tokens` ではありません。
 - エラー時: `error_kind`（ここに圧縮コンテキストが配線されていない場合の `compaction_unavailable`；`compaction_failed`）+ `error`。

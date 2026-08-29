@@ -105,9 +105,11 @@ class ContextBudgetAdvisor:
         fixed cost per image part, top-level ``tool_calls`` folded in) rather
         than ``estimate_tokens(json.dumps(whole_or_delta_slice))`` (pre-PR-B).
         The history this reads is ``build_history``'s own returned wire
-        dicts (see this class's docstring) — the SAME canonical quantity
-        RouterHistoryBuffer's elide-threshold check now measures (see
-        ``RouterHistoryBuffer._serialise_turn``'s docstring). Before PR-B,
+        dicts (see this class's docstring) — the canonical, serialised
+        quantity (see ``RouterHistoryBuffer._serialise_turn``'s docstring;
+        #5367 retired the elide-threshold check that USED to measure this
+        same quantity for a different purpose — this method's own concern
+        is independent of that removal). Before PR-B,
         json.dumps-ing a wire dict counted an inlined image's FULL base64
         payload as text (huge, proportional token count) while the elide
         side (post PR-A) counted a fixed ``_IMAGE_FIXED_TOKEN_COST`` per

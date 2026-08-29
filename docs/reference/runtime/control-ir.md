@@ -1464,7 +1464,7 @@ Fields:
 
 Returns:
 - `status: "ok" | "error"`
-- `freed_tokens: int` — exact-token reduction. **~0 by construction**: the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` here — see the compression metric below.
+- `freed_tokens: int` — exact-token reduction. `#5367` retired the router's own proactive window-utilization elide — the router prompt is no longer head+tail *turn*-count bounded, it sends the full watermark-filtered history raw until an actual overflow. Compaction's watermark filter is now the only thing excluding a covered turn from the projection at all, so `freed_tokens` is no longer structurally pinned to ~0 for chat. Front the compression metric below regardless — it stays the meaningful number either way.
 - `free_window_after` / `free_window_before: int` — exact-token headroom after / before.
 - **Compression metric** (the meaningful signal): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The value that matters is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
 - On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.

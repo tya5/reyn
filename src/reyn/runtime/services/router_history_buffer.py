@@ -506,7 +506,8 @@ class RouterHistoryBuffer:
         ``_history_fn`` is not a cheap accessor: in production it is
         ``Session._active_branch_history``, a recomputed rewind-aware view over
         the whole conversation. Re-invoking it here made one ``build_history``
-        produce the view 2x (3x on the elide path, which calls this again) —
+        produce the view 2x (3x when the now-retired elide branch fired,
+        #5367 — its 3 return points each called this again) —
         multiplying the most expensive thing on the turn's hot path by 2-3.
         Omit it only where no history has been fetched yet (the fn is then
         invoked once, as before).
@@ -535,14 +536,15 @@ class RouterHistoryBuffer:
 
         #2957 PR-B: this method's output is the CANONICAL quantity for token
         accounting — it is what actually reaches the provider. Both the
-        elide-threshold check in :meth:`build_history` /
-        :meth:`decompose_history_for_retry` and
+        elide-threshold check in :meth:`decompose_history_for_retry`
+        (#5367 retired the analogous check :meth:`build_history` itself
+        used to have) and
         :class:`~reyn.runtime.services.context_budget_advisor.ContextBudgetAdvisor`
         (which measures ``build_history``'s own returned wire dicts) now
         estimate tokens over THIS output, closing a prior circularity where
         the elide side measured serialise-INPUT (raw ChatMessage, pre-image-
         materialisation) while the advisor measured serialise-OUTPUT (the
-        elided wire dicts) — two different quantities for the same
+        wire dicts) — two different quantities for the same
         conversation. Do not reintroduce a second "what does the provider
         see" quantity; measure this method's return value.
 

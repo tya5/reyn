@@ -162,6 +162,12 @@ present-tense claim the sweep found false):
 > "a turn whose history is built more than once (a shrink-ladder retry, a
 > re-send) re-enters this elide logic with no fresh `maybe_force_compact`
 > run in between — nothing in this file, or the call site, re-triggers it."
+>
+> (Source line since removed, #5367 — the elide logic this comment named
+> no longer exists. Kept here as a teaching example of the (c) pattern
+> itself; the historical claim was true when written, and its own removal
+> is the exact "the other side changed" case (b)/(c) exist to survive
+> without becoming a lie in place.)
 
 > "a turn whose body is a spillable tool result … could still be reduced
 > without splitting it into more turns; this retry_loop does not attempt
