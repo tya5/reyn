@@ -356,6 +356,80 @@ def run(args: argparse.Namespace) -> None:
     print("process currently alive on this machine, across every workspace:")
     _print_process_registry()
 
+    # ── #5428: hook env — what REYN_* an exec/exec_capture hook would see ──
+    print()
+    print("Hook env (REYN_* an exec/exec_capture child would receive right")
+    print("now, per configured agent — D-1: reads the SAME agent-profile")
+    print("override resolve_base_dir_candidate uses, not a restated declaration):")
+    _print_hook_env_snapshot(resolved_root)
+
+
+def _print_hook_env_snapshot(resolved_root: Path) -> None:
+    """#5428: the operator-facing consumer this issue required in the SAME
+    PR as the public read — architect's own reversal (issuecomment on
+    #5428): a public ``Session.hook_env_snapshot()`` with only a test
+    consumer is the #4866 shape #5442 already spent a PR closing; ``reyn
+    doctor`` is the declared receiving surface (module docstring: "reach
+    into sandbox / MCP / hook internals").
+
+    No live ``Session`` is constructed (doctor constructs none anywhere —
+    #5428's own investigation confirmed this: ``Session(`` has zero call
+    sites in this module). This resolves the SAME 4 values
+    :meth:`~reyn.runtime.session.Session.hook_env_snapshot` returns for a
+    LIVE session, via the SAME shared primitive
+    (:func:`~reyn.runtime.workspace_paths.resolve_base_dir_candidate`) —
+    with no session-layer override (doctor has no session), only the
+    agent-profile layer, mirroring what a session with no per-session
+    ``config.yaml`` override would resolve to anyway. Reads
+    ``.reyn/agents/<name>/profile.yaml`` directly for each configured
+    agent — the SAME enumeration ``_merged_hook_registry`` above already
+    uses for its own per-agent hook layer."""
+    from reyn.runtime.services.recovery import default_snapshot_path
+    from reyn.runtime.workspace_paths import resolve_base_dir_candidate
+
+    agents_dir = resolved_root / ".reyn" / "agents"
+    if not agents_dir.is_dir():
+        print("  no agents configured yet (.reyn/agents/ does not exist)")
+        return
+    found_any = False
+    for agent_dir in sorted(agents_dir.iterdir()):
+        if not agent_dir.is_dir():
+            continue
+        found_any = True
+        agent_name = agent_dir.name
+        profile_path = agent_dir / "profile.yaml"
+        base_dir_raw: "str | None" = None
+        if profile_path.is_file():
+            import yaml
+            try:
+                raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+                raw = None
+            if isinstance(raw, dict):
+                value = raw.get("base_dir")
+                base_dir_raw = str(value) if value else None
+        agent_base_dir = resolve_base_dir_candidate(
+            base_dir_raw, workspace_root=resolved_root,
+        )
+        if agent_base_dir is None:
+            # No valid agent-profile override -> the Agent object's own
+            # default, which for an unnarrowed agent is "no restriction"
+            # -> the project root itself (the SAME fallback
+            # Session._build_hook_process_context's own
+            # `self._workspace_base_dir or self._reyn_state_root.parent`
+            # resolves to when neither layer has a value).
+            agent_base_dir = resolved_root
+        agent_state_dir = default_snapshot_path(
+            agent_name, root=resolved_root / ".reyn",
+        ).parent
+        print(f"  {agent_name}:")
+        print(f"    REYN_PROJECT_DIR={resolved_root}")
+        print(f"    REYN_AGENT_BASE_DIR={agent_base_dir}")
+        print(f"    REYN_AGENT_NAME={agent_name}")
+        print(f"    REYN_AGENT_STATE_DIR={agent_state_dir}")
+    if not found_any:
+        print("  no agents configured yet (.reyn/agents/ is empty)")
+
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
     """Every configured ``exec``/``exec_capture`` ``HookDef`` — the caller
