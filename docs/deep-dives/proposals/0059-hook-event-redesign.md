@@ -388,3 +388,23 @@ hook entry の分とも言えない)。旧 `dict` 形との後方互換は無い
 `src/reyn/hooks/composed_consumer.py`(kind でグルーピングしてから畳む —
 `HookBus` の subscription queue は 1 種類の kind に限らないため、bridge とは
 違いこの1手間が要る)。
+
+**opt-OUT flag(`fold:`、#5516 §1/§1b — 初版実装が見落とし、issue を reopen
+させた1行)**: hook entry ごとの operator flag、既定は省略/`true` =「畳む」。
+明示的な `false` が opt-out — 配列化そのものは無条件(clean-break、N=1 でも
+`[payload]`)なので、この flag が変えるのは launch の**回数**だけ:
+opt-out した hook は N 件を `[1件]` の配列で N 回、別々に受け取る。理由は
+1つだけ、しかし実在する — wake の機会を増やしたい(1件ごとに考えさせたい設計)。
+
+opt-out の代償は `dispatcher.py:270-272` の `max_hook_driven_turns` valve
+消費が N になること(畳めば 1)— この因果を flag の docstring
+(`schema.py`、`HookDef.fold`)に明記(owner §1b)。`skipped_session_wide`
+は opt-out しても要る(queue に入る前の取りこぼしは畳む/畳まないと無関係)—
+N 回の launch のうち最初の 1 回だけがこの数を運ぶ(session 全体の数を N 回
+重複計上しないため)。`pipeline_launch` への `fold:` 宣言は
+eager-rejection(`HookConfigError`)— そもそも畳めないスキームに宣言しても
+何も起きない、という #2976 の沈黙禁止モデルに他の per-hook knob(`subprocess`
+/`network`/`write_paths`)と同じ形で従う。実装: `src/reyn/hooks/loader.py`
+(`_KNOWN_HOOK_ENTRY_KEYS`/parse)、`src/reyn/hooks/schema.py`
+(`HookDef.fold`)、`src/reyn/hooks/dispatcher.py`
+(`_dispatch_batch_for_point`)。両方向を実測(既定で畳む/opt-out で N 回)。

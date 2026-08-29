@@ -347,7 +347,17 @@ class HookDispatcher:
         attributed to any one hook entry — the SAME number is threaded
         into every hook's ``event_context`` for this batch, with a field
         name that says so (``skipped_session_wide``, never a bare
-        ``skipped`` that would read as "your entries were skipped")."""
+        ``skipped`` that would read as "your entries were skipped").
+
+        #5516 §1/§1b: ``hook.fold is False`` (the operator's explicit
+        opt-out) makes this hook receive its matched events as N
+        SEPARATE single-item-array launches instead of one N-item
+        launch — the array-wrapping itself is unconditional either way
+        (clean break), only the LAUNCH COUNT differs. ``skipped_session_
+        wide`` still rides along (owner §1b item ②: it applies
+        regardless of this flag), but only on the FIRST of the N calls
+        — the count is session-wide, not per-event, so reporting it N
+        times would over-count the same drop."""
         if republish_to_bus and self._bus is not None:
             for event in events:
                 self._bus.publish(event)
@@ -361,9 +371,18 @@ class HookDispatcher:
             if not matched:
                 continue  # #2608 H2: matcher didn't match any event's template_vars
             try:
-                await self._dispatch_one_batch(
-                    hook, point, matched, skipped_session_wide=skipped_session_wide,
-                )
+                if hook.fold is False:
+                    # #5516 opt-out: one launch per event, not one launch
+                    # for the whole matched batch.
+                    for i, event in enumerate(matched):
+                        await self._dispatch_one_batch(
+                            hook, point, [event],
+                            skipped_session_wide=(skipped_session_wide if i == 0 else 0),
+                        )
+                else:
+                    await self._dispatch_one_batch(
+                        hook, point, matched, skipped_session_wide=skipped_session_wide,
+                    )
             except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
                 _log.warning(
                     "Hook at point %r raised — skipped (siblings proceed). "
