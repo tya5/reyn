@@ -1,0 +1,37 @@
+name: subprocess-reyn-pin gate
+
+# #5028: every `tests/**/*.py` file that spawns `sys.executable` must
+# declare `out_of_process_reyn`/`reyn_console_scripts` (tests/conftest.py) —
+# without it, the spawned subprocess re-resolves `reyn` from the ambient
+# venv instead of the checkout pytest is running, and in a git worktree
+# that can silently be a DIFFERENT checkout entirely (six PRs cited the
+# resulting ImportError as "a known pre-existing flake" before anyone
+# noticed the foreign path in the traceback). See
+# scripts/check_subprocess_reyn_pin.py's module docstring for the full
+# design (why this replaces #5033's disclosure-only shape, the ratchet
+# baseline, population imprecision disclosed).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  subprocess-reyn-pin:
+    name: subprocess-reyn-pin gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_subprocess_reyn_pin.py is stdlib-only (json / re /
+      # subprocess / pathlib) plus a `git` invocation. No pip install needed.
+      - name: Check every tests/ subprocess spawn declares its reyn-identity fixture
+        run: |
+          python scripts/check_subprocess_reyn_pin.py

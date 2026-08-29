@@ -713,21 +713,30 @@ print("ISOLATION_OK")
 '''
 
 
-def test_phase5_accessor_imports_stay_tty_only() -> None:
+def test_phase5_accessor_imports_stay_tty_only(out_of_process_reyn) -> None:
     """Tier 2c: with ``textual`` / ``textual_flowview`` unimportable, the plain /
     non-TTY path — INCLUDING ``read_model`` (where the new ``conversation_history``
     accessor lives) and ``chat_message`` (its return type) — still imports green.
     The Phase-5 accessor added no top-level textual import to an always-loaded
-    module. Runs the strip in a clean subprocess."""
+    module. Runs the strip in a clean subprocess.
+
+    ``out_of_process_reyn`` (#5028): same sibling gap as
+    ``test_textual_chat_phase1_3273.py::test_plain_path_survives_flowview_absence``
+    (fixed by #5029) — pin the fixture's returned root as the subprocess's
+    ``PYTHONPATH`` so it reads the SAME ``reyn`` this test imported, rather
+    than whatever the ambient venv's editable install points at."""
+    import os
     import subprocess
     import sys
 
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", _ISOLATION_SUBPROCESS],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
+        env=env,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "ISOLATION_OK" in proc.stdout, f"stdout={proc.stdout}\nstderr={proc.stderr}"

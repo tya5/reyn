@@ -256,21 +256,32 @@ print("ISOLATION_OK")
 '''
 
 
-def test_phase3_chrome_imports_stay_tty_only() -> None:
+def test_phase3_chrome_imports_stay_tty_only(out_of_process_reyn) -> None:
     """Tier 2c: with ``textual`` / ``textual_flowview`` unimportable from a clean
     interpreter, the plain / non-TTY path still imports green — Phase 3's extra
     top-level textual widget imports (ContentSwitcher/OptionList/Tabs/…) live in
     ``textual_chat``, which stays lazily imported on the TTY path only. Runs the
-    strip in a subprocess (see the module comment) and asserts ``ISOLATION_OK``."""
+    strip in a subprocess (see the module comment) and asserts ``ISOLATION_OK``.
+
+    ``out_of_process_reyn`` (#5028): same sibling gap as
+    ``test_textual_chat_phase1_3273.py::test_plain_path_survives_flowview_absence``
+    (fixed by #5029) — this subprocess re-resolves ``reyn`` from the ambient
+    venv, not from pytest's own ``pythonpath``, which can silently be a
+    DIFFERENT checkout's ``src`` in a git worktree. Pinning the fixture's
+    returned root as ``PYTHONPATH`` makes it read the SAME ``reyn`` this test
+    imported."""
+    import os
     import subprocess
     import sys
 
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", _ISOLATION_SUBPROCESS],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
+        env=env,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "ISOLATION_OK" in proc.stdout, f"stdout={proc.stdout}\nstderr={proc.stderr}"
