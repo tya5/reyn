@@ -1232,7 +1232,7 @@ def _multimodal_capability_overrides_freeform_validator(raw: dict) -> "dict[str,
     """#4655 Kind① — the model-name level is genuinely open (never
     flagged); the capability-field level is validated against reyn's OWN
     consumption set (see the module-level comment above for why NOT
-    litellm's own catalog). A near-miss (``supports_vison`` for
+    litellm's own catalog). A near-miss (``supports_vison`` (prose-sync:allow-example) for
     ``supports_vision``) gets a "did you mean" hint, same courtesy
     ``hooks/loader.py``'s own ``_WRONG_SCOPE_HINTS`` gives a misplaced
     sandbox-policy key.
