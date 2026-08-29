@@ -578,13 +578,18 @@ def pytest_configure(config: pytest.Config) -> None:
         "subject is loop/valve/lifecycle/wiring behavior around a turn, not the "
         "model's own output (#5103). Takes no path — reads/writes no fixture "
         "file, so it is invisible to #3662's MissingFixture safety net and to "
-        "#5283's unconsumed-entry check. A test using this marker MUST NOT "
-        "declare Tier 3 (Tier 3 = the model's output IS the subject under "
-        "test — see test_tier_audit.py's enforcement of this pairing). "
-        "#5450: optional control='gated' kwarg (reyn.dev.testing.llm_stub."
-        "LLMStubControl's closed vocabulary) hangs the call at the real LLM "
-        "boundary until the test sets the fixture's .release event — see "
-        "LLMStub's own module docstring.",
+        "#5283's unconsumed-entry check. Optional control='gated' kwarg "
+        "(reyn.dev.testing.llm_stub.LLMStubControl's closed vocabulary) "
+        "hangs the call at the real LLM boundary until the test sets the "
+        "fixture's .release event (#5450). Optional raise_for='compaction' "
+        "+ cause=<#5382 vocabulary member> (both required together) makes "
+        "ONLY a real CompactionEngine.compact() call raise that cause, "
+        "leaving every other call (chiefly the main router's) on the "
+        "ordinary success response (#5382). Both are independent axes — "
+        "see LLMStub's own module docstring for either. A test using this "
+        "marker MUST NOT declare Tier 3 (Tier 3 = the model's output IS "
+        "the subject under test — see test_tier_audit.py's enforcement of "
+        "this pairing).",
     )
     config.addinivalue_line(
         "markers",
@@ -746,12 +751,15 @@ def _llm_stub(request: pytest.FixtureRequest):
 
     from reyn.dev.testing.llm_stub import LLMStub
 
-    # #5450: control= is an optional marker kwarg — @pytest.mark.llm_stub
-    # (no args) keeps #5103's original immediate-return behavior;
-    # @pytest.mark.llm_stub(control="gated") hangs at the real LLM
-    # boundary — see LLMStub's own module docstring.
-    control = marker.kwargs.get("control")
-    stub = LLMStub(control=control)
+    # #5450/#5382: control=/raise_for=/cause= are all optional marker
+    # kwargs — @pytest.mark.llm_stub (no args) keeps #5103's original
+    # immediate-return behavior; @pytest.mark.llm_stub(control="gated")
+    # hangs at the real LLM boundary (#5450);
+    # @pytest.mark.llm_stub(raise_for="compaction", cause=...) selectively
+    # raises for a compaction call (#5382). Plain kwargs passthrough —
+    # LLMStub validates each axis itself. See LLMStub's own module
+    # docstring for both.
+    stub = LLMStub(**marker.kwargs)
     stub.install()
     try:
         yield stub
