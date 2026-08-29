@@ -850,8 +850,50 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # per-agent token would be a disproportionate blast radius this
     # project-wide layer was never asked to take on (architect ruling on
     # #5166 scopes fail-close to the 4 enumerated hooks.yaml layers only).
-    from reyn.plugins.tokens import expand_with_map
+    # #5351: see the check right after this expansion for why a SEPARATE
+    # reyn-token warning runs here even though expand_env (further below,
+    # ADR-0030) already warns on any undefined ${VAR} it can't resolve.
+    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
     merged = expand_with_map(merged, {"REYN_PROJECT_DIR": str(project_root or cwd)})
+
+    # #5351 witness 4 (lead-coder measurement, issue thread) + architect
+    # BLOCKING on the first version of this fix (PR #5503, head
+    # 0237874a0): an operator who writes ${REYN_AGENT_NAME} in the shared
+    # reyn.yaml was NOT met with silence -- expand_env (below) already
+    # warns "Config references undefined environment variable:
+    # ${REYN_AGENT_NAME}" and degrades it to "" (verified directly: the
+    # token is not left literal). The real defect is that this EXISTING
+    # signal points at the WRONG fix: it reads exactly like a genuine
+    # unset env var, so an operator who "fixes" it by `export
+    # REYN_AGENT_NAME=...` succeeds -- expand_env's warning disappears,
+    # the token resolves to whichever value happens to be in THIS
+    # process's env, and the shared, project-wide config is now silently
+    # pinned to one agent's name with zero remaining signal. This check
+    # runs BEFORE expand_env and BEFORE any os.environ lookup, so it
+    # fires on reyn's own token vocabulary regardless of whether the
+    # operator already "fixed" it via export -- catching exactly the
+    # failure mode the existing warning's own wrong fix produces. Never
+    # refuses (#5166's fail-close scoping to the 4 hooks.yaml layers only
+    # stands unchanged) -- this adds a correctly-aimed signal, it does
+    # not change what happens to the value.
+    _unresolved_policy_tokens = find_unresolved_reyn_tokens(merged)
+    if _unresolved_policy_tokens:
+        import warnings
+        warnings.warn(
+            f"reyn.yaml/reyn.local.yaml references reyn token(s) "
+            f"{sorted(set(_unresolved_policy_tokens))} that this layer "
+            "has no per-agent context to resolve (config is loaded once, "
+            "project-wide, before any agent is resolved). Do NOT "
+            "`export` it as an environment variable to silence the "
+            "'undefined environment variable' warning that follows this "
+            "one; that pins this shared config to whichever agent's name "
+            "happens to be in this process's env, with no further "
+            "signal. Move a per-agent value to that agent's own "
+            ".reyn/agents/<name>/hooks.yaml, or use ${REYN_PROJECT_DIR} "
+            "if a project-relative path was intended.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
