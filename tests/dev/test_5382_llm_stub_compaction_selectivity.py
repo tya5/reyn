@@ -13,30 +13,28 @@ main call) is called directly here, catches the raise (emits
 through a REAL turn — the main router call is NOT recognized as a
 compaction call and must still complete normally.
 
-Isolated in its OWN file, and driven via SEPARATE top-level
-``asyncio.run(...)`` calls (never one ``await`` nested inside another
-``async def`` this test defines itself) — both deliberately, and both
-root-caused via direct instrumentation while building this test:
+Isolated in its OWN file, and reads the collected event list only after
+``await settle(session._audit_events)`` — both deliberately.
 
-- A nested ``async def _drive(): await session._compaction_controller.
-  force_compact_now()`` wrapper, run via ``asyncio.run(_drive())``, makes
-  the SAME exception ``LLMStub._handle`` genuinely raises (confirmed via
-  print instrumentation inside ``_handle`` — the raise statement executes)
-  simply never reach ``force_compact_now``'s own ``except Exception`` —
-  no ``compaction_failed`` event, no error, silently as if compact()
-  never raised at all. Calling ``asyncio.run(session._compaction_
-  controller.force_compact_now())`` DIRECTLY (the coroutine passed
-  straight to ``asyncio.run``, no extra ``async def`` layer this test
-  owns) does not have this problem — reproduced identically both inside
-  and outside this file, both co-located with other tests and fully
-  isolated. Root cause not fully chased into asyncio/litellm internals;
-  treated as a real, narrow gotcha of THIS SDK boundary, not a defect in
-  the raise-mode design itself. Multiple sequential ``asyncio.run(...)``
-  calls (one per production await this test drives) is what avoids it.
-- Also (a separate, now-moot-once-the-above-is-avoided finding, kept for
-  the next reader): the SAME nested-``async def`` pattern additionally
-  failed when this test was co-located inside ``test_llm_stub_5103.py``
-  even outside the nesting issue — moved to its own file regardless.
+The settle() requirement is #4961 C (architect ruling, see
+``tests/_support/events.py``'s own module docstring), not a new finding
+of this test's own: an earlier revision of this test read a raw
+``events`` list synchronously, right after an ``await``-triggering call,
+with no yield in between — a shape #4961 C already names as broken
+(dispatch to a collected list runs on a background consumer task; a
+synchronous read immediately after the triggering await can race it and
+miss the event). Root-caused with a targeted experiment (architect/
+lead-coder, #5461 review): a synchronous, non-event marker placed INSIDE
+``force_compact_now``'s own ``except Exception`` block was present after
+a run that otherwise showed 0 ``compaction_failed`` events — proving the
+exception WAS caught (control flow is fine) and the miss was purely
+event-DELIVERY, exactly #4961 C's shape, not a distinct control-flow
+defect in ``LLMStub``'s raise mode.
+
+Isolated in its OWN file for an unrelated, still-open reason: the SAME
+test also silently failed the same way when co-located inside
+``test_llm_stub_5103.py``, even with ``settle()`` correctly reasoned
+about — moved here regardless of the settle() fix.
 """
 from __future__ import annotations
 
@@ -44,14 +42,15 @@ import asyncio
 
 import pytest
 
+from tests._support.events import settle
+
 
 @pytest.mark.llm_stub(raise_for="compaction", cause="rate_limit")
 def test_raise_for_compaction_leaves_the_main_router_call_untouched_end_to_end(
     tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: see module docstring for the full design and the two
-    isolation rationales (separate file; separate top-level
-    ``asyncio.run`` calls, no nested ``async def``)."""
+    """Tier 2: see module docstring for the full design and the settle()
+    rationale (#4961 C)."""
     import reyn.llm.model_budget as _mb
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.chat_message import ChatMessage
@@ -79,16 +78,22 @@ def test_raise_for_compaction_leaves_the_main_router_call_untouched_end_to_end(
     events: list = []
     session.subscribe_audit_events(events.append)
 
-    asyncio.run(session._compaction_controller.force_compact_now())
+    async def _drive() -> bool:
+        await session._compaction_controller.force_compact_now()
+        # #4961 C: dispatch to `events` runs on a background consumer
+        # task — settle() before the synchronous read below, right at
+        # the spot that depends on delivery having already happened.
+        await settle(session._audit_events)
+        kinds = [e.type for e in events]
+        assert "compaction_failed" in kinds, (
+            f"test setup sanity: expected force_compact_now to have "
+            f"attempted and caught a real compact() raise — got: "
+            f"{kinds!r}"
+        )
+        await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
+        return await session.run_one_iteration()
 
-    kinds = [e.type for e in events]
-    assert "compaction_failed" in kinds, (
-        f"test setup sanity: expected force_compact_now to have attempted "
-        f"and caught a real compact() raise — got: {kinds!r}"
-    )
-
-    asyncio.run(session._put_inbox("user", {"text": "hi", "chain_id": "c1"}))
-    result = asyncio.run(session.run_one_iteration())
+    result = asyncio.run(_drive())
 
     assert result is True
     # The main call's own response landed — it was NOT touched by the
