@@ -56,6 +56,7 @@ from reyn.hooks.schema import HookDef, PushBlock
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.hooks import collect_hook_events
 
 # ---------------------------------------------------------------------------
 # Recording seam (mirrors test_hook_dispatcher_1800_5b.py's _Recorder)
@@ -332,8 +333,8 @@ async def test_per_session_bus_isolation(tmp_path):
     session_a = _make_session(tmp_path, name="a")
     session_b = _make_session(tmp_path, name="b")
 
-    sub_a = session_a._hook_bus.subscribe()
-    sub_b = session_b._hook_bus.subscribe()
+    sub_a = collect_hook_events(session_a)
+    sub_b = collect_hook_events(session_b)
 
     await session_a._hook_dispatcher.dispatch("turn_end", {"chain_id": "from-a"})
 

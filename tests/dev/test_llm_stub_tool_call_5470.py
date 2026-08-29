@@ -18,6 +18,7 @@ import pytest
 
 from reyn.dev.testing.llm_stub import LLMStub
 from tests._support.agent_session import make_session
+from tests._support.hooks import collect_hook_events, run_one_turn
 
 
 def _no_tool_result_yet(messages: "list[dict]") -> bool:
@@ -182,9 +183,15 @@ async def test_a_real_turn_dispatches_the_tool_call_and_terminates() -> None:
     "the model said nothing", the turn completes with zero tool calls, and
     `sub.get_nowait()` raises `asyncio.QueueEmpty` (RED), proving this
     assertion is load-bearing on the branch actually running, not a
-    tautology."""
+    tautology.
+
+    #5494: this test's own private reach into `session._hook_bus.
+    subscribe()` and `session._run_router_loop(...)` — the exact hole
+    architect found while reviewing this file — is now closed via
+    `tests/_support/hooks.py`'s `collect_hook_events`/`run_one_turn`;
+    migrated here as that fix's own first real consumer."""
     session = make_session(agent_name="tool-call-stub-witness")
-    sub = session._hook_bus.subscribe()
+    sub = collect_hook_events(session)
 
     stub = LLMStub(
         tool_call_for=_no_tool_result_yet,
@@ -193,7 +200,7 @@ async def test_a_real_turn_dispatches_the_tool_call_and_terminates() -> None:
     )
     stub.install()
     try:
-        await session._run_router_loop("hello", "tool-call-chain")
+        await run_one_turn(session, "hello", "tool-call-chain")
     finally:
         stub.restore()
 

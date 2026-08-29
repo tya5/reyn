@@ -34,6 +34,7 @@ from reyn.runtime.session_api import _spawn_pipeline_driver_session
 from reyn.runtime.session_params import PresentationWiring
 from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
+from tests._support.hooks import collect_hook_events
 
 
 def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
@@ -105,13 +106,14 @@ async def test_attached_spawn_bridges_child_hook_events_to_the_parent(tmp_path: 
     # actually register (the public `subscriber_count` surface, reached
     # via `driver._hook_bus` — the established convention roughly 20
     # other tests in this repo already use, since there is no public
-    # `hook_bus` property). This wait doubles as the "a bridge task
-    # started" proof itself — no dedicated public surface needed for
-    # that fact alone.
+    # `hook_bus` property or `subscriber_count` seam — #5494 only closed
+    # the SUBSCRIBE side, via `collect_hook_events` below). This wait
+    # doubles as the "a bridge task started" proof itself — no dedicated
+    # public surface needed for that fact alone.
     try:
         await wait_until(lambda: driver._hook_bus.subscriber_count >= 1)
 
-        async with parent._hook_bus.subscribe() as parent_sub:
+        async with collect_hook_events(parent) as parent_sub:
             probe = HookEvent(
                 kind="builtin:external:test_probe",
                 payload={"marker": "reyn-4215-probe"},
