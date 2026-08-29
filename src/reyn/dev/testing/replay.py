@@ -153,6 +153,27 @@ def _make_internal_server_error(message: str) -> Exception:
     return litellm.InternalServerError(message=message, llm_provider="replay", model="replay")
 
 
+def _make_context_overflow_error(message: str) -> Exception:
+    import litellm
+
+    return litellm.ContextWindowExceededError(
+        message=message, model="replay", llm_provider="replay",
+    )
+
+
+def _make_byte_limit_error(message: str) -> Exception:
+    import litellm
+
+    exc = litellm.BadRequestError(message=message, model="replay", llm_provider="replay")
+    # #4381 stage 1 / engine.py's own `saw_byte_limit` classifier reads
+    # `getattr(exc, "status_code", None) == 413` directly off the exception
+    # — litellm.BadRequestError defaults status_code to 400, so this is set
+    # explicitly to reproduce the real HTTP 413 (request-BODY-byte limit)
+    # shape that classifier is looking for.
+    exc.status_code = 413  # type: ignore[assignment]  # litellm types this Literal[400]
+    return exc
+
+
 #: #5382: the CLOSED vocabulary of replayable exception causes (architect
 #: ruling — a fixture's ``cause`` is a declared enum member, never a class
 #: name imported from a string: "data" must never be a channel that points
@@ -162,20 +183,37 @@ def _make_internal_server_error(message: str) -> Exception:
 #: (``services/compaction/engine.py``) already read it — not a synthetic
 #: stand-in class.
 #:
-#: #5454 correction (architect, quoting a real measurement — reyn-self's
-#: own ``.reyn/events/``, ``router_loop_terminated_by_exception``, 83
-#: occurrences): the two members here are the ONLY causes actually
-#: observed in production (79 ``rate_limit`` / 4 ``internal_server_error``).
-#: The original PR (#5452) also shipped ``context_overflow``/``byte_limit``
-#: as illustrative examples — architect's own #5382 design comment named
-#: them — but neither has ever actually been observed; a closed vocabulary
-#: exists so "what LLMReplay can reproduce" has one honest, readable
-#: answer, and an unused member makes that answer lie. Removed, not kept
-#: unused: add a cause back here only backed by its own real measurement,
-#: the same bar this correction itself was held to.
+#: #5454/#5458 correction history: architect's #5454 review proposed
+#: trimming this to only ``rate_limit``/``internal_server_error``, reading
+#: reyn-self's ``router_loop_terminated_by_exception`` event population (83
+#: occurrences: 79/4) as "what's actually observed". lead-coder's #5458
+#: review caught the flaw BEFORE merge: that event fires only for an
+#: exception NO inner handler recovered from (session.py's own "router loop
+#: caught an exception no inner handler took" path) — a STRUCTURALLY biased
+#: population that can never contain a cause reyn successfully recovers
+#: from. ``byte_limit`` (HTTP 413) is exactly such a cause: engine.py:869
+#: classifies it, and a whole recovery machinery (``force_compact_now`` /
+#: ``_run_with_shrink_and_byte_reduction`` / ``_attempt_reactive_spill`` /
+#: the #4944② learned ceiling) runs BEFORE the loop would ever reach the
+#: terminal-exception handler — recovering successfully means that handler
+#: never fires, so this cause is invisible to that measurement by
+#: construction, not because it doesn't happen. ``context_overflow`` WAS
+#: independently observed in a real environment regardless (#4381: "実環境
+#: で router failed: Router context overflow after bounded shrink"),
+#: directly contradicting "never actually observed". The correct
+#: membership test (lead-coder) is "does one of reyn's own production code
+#: paths classify/read this cause" (``is_context_overflow_error``,
+#: ``saw_byte_limit`` — both real, both read by real call sites), not "does
+#: it appear in one specific terminal-failure event's population". All four
+#: members below pass that test. #5382's own originating test
+#: (``test_5296_pr2_byte_reduction_same_turn_retry.py``) is itself a
+#: byte-reduction retry test — removing ``byte_limit`` would have left the
+#: very test that motivated this issue unable to use this mechanism.
 _REPLAY_EXCEPTION_CAUSES: "dict[str, Callable[[str], Exception]]" = {
     "rate_limit": _make_rate_limit_error,
     "internal_server_error": _make_internal_server_error,
+    "context_overflow": _make_context_overflow_error,
+    "byte_limit": _make_byte_limit_error,
 }
 
 
