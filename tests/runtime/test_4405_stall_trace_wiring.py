@@ -20,18 +20,12 @@ The THIRD test (disarm-on-exception) keeps the private ``run_turn``
 replacement — it forces a genuine exception mid-turn, which
 ``LLMStub`` cannot do (it always returns a fixed non-erroring
 completion) and the new audit-events cannot inject either (they only
-OBSERVE, they do not CONTROL). This is NOT #5103's ② (turn-cancel
-control) boundary, corrected by architect on this PR's own review:
-production genuinely raises out of ``run_turn`` — a real reyn-self
-measurement found ``router_loop_terminated_by_exception`` firing across
-11 files, ``cause`` values ``RateLimitError``/``InternalServerError`` —
-so this is not an unreachable branch being pinned. The real receiving
-mechanism is #5382 (``LLMReplay`` replaying exception fixtures, a
-closed cause vocabulary seeded from those same two measured causes) —
-merged after this file's own last revision. Migrating THIS test onto
-that fixture-driven replay is left for whoever picks up #5382's own
-consumer sweep; comment policy §8 obligates that PR to update this
-paragraph.
+OBSERVE, they do not CONTROL). This is #5103's own boundary: the new
+seam closes ③ (content) and ④ (ordering) observation, never ②
+(controlling what a turn does) — a controllable-failure stub is that
+class's own open design question (#5450), not this PR's scope. Reported
+to lead-coder/architect as the "does chain_id/turn_started work here"
+check #5103 asked implementers to do per file.
 
 No waiting, no sleeping, no threshold crossing: the point under test is
 WIRING (does the env var reaching a turn cause arm-then-disarm to be
@@ -166,12 +160,8 @@ async def test_stall_trace_disarmed_even_when_the_turn_raises(
     Not migrated to @pytest.mark.llm_stub (see module docstring): this
     test needs run_turn to genuinely RAISE, which LLMStub cannot do (it
     always completes normally) and the audit-event seam cannot inject
-    either (an observation seam, not a control seam). Production
-    genuinely raises here (measured: router_loop_terminated_by_exception,
-    11 files, RateLimitError/InternalServerError) — #5382's LLMReplay
-    exception-fixture replay is the real receiving mechanism for
-    migrating this test off the private replacement; see the module
-    docstring."""
+    either (an observation seam, not a control seam) — a controllable-
+    failure stub is #5450's own open design question, not this file's."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)
