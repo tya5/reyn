@@ -60,6 +60,11 @@ HOOK_STAGE_KIND = "hook"
 PutInbox = Callable[[str, dict], Awaitable[Any]]
 StageContext = Callable[[str, dict], Awaitable[Any]]
 RunShell = Callable[..., Awaitable[Any]]
+# #5516: the ingress bridges' hook_trigger callable now takes a BATCH of
+# payload dicts (never a bare single dict — clean break, no dual shape),
+# folded upstream by reyn.hooks.fold.drain_folded. See
+# HookDispatcher.dispatch_external_batch's own docstring.
+HookTriggerBatch = Callable[[str, "list[dict]"], Awaitable[Any]]
 # #2608 H3: launch a registered pipeline by name with a rendered input dict
 # (or None). Returns whatever the injected callable returns (unused by the
 # dispatcher — the launch is fire-and-continue).
@@ -230,19 +235,135 @@ class HookDispatcher:
         None`` (the default) skips this line — the no-bus happy path stays
         byte-identical to pre-Phase-4a.
         """
-        event = HookEvent(
+        await self._dispatch_batch_for_point(
+            point, [self._wrap_lifecycle_event(point, template_vars)],
+            republish_to_bus=True, skipped_session_wide=0,
+        )
+
+    def _wrap_lifecycle_event(self, point: str, template_vars: dict) -> HookEvent:
+        return HookEvent(
             kind=canonical_kind(point), payload=template_vars,
             chain_id=template_vars.get("chain_id"),
         )
-        if self._bus is not None:
-            self._bus.publish(event)
+
+    async def dispatch_external_batch(
+        self, point: str, payloads: "list[dict]", *, skipped_session_wide: int = 0,
+    ) -> None:
+        """#5516 — the batched entry point an ingress bridge's
+        ``hook_trigger`` is bound to (``_BoundedEventBridge``'s ``deliver``/
+        ``drain_folded``-driven drain, for ``mcp_resource_updated`` /
+        ``file_changed``). Replaces the old ``dispatch(point, template_vars)``
+        binding at the SAME injection site (``runtime/session.py``'s
+        ``hook_trigger=`` lambdas) — ``dispatch()`` itself is now used ONLY
+        by the six lifecycle call sites (which never batch — each fires
+        once per turn boundary, so their own event just rides through here
+        as a length-1 batch, see ``_wrap_lifecycle_event``).
+
+        *payloads* is the FOLDED batch ``reyn.hooks.fold.drain_folded``
+        assembled (never empty; owner ruling #5516 §2: N events -> 1
+        launch carrying N items, never N events -> 1 event). Each payload
+        becomes its own :class:`HookEvent`, independently published to the
+        Bus (§3.2's "every dispatched event observed independently" stays
+        true even when folded — folding is a SYNC-dispatch launch-count
+        optimization, not a Bus semantics change).
+
+        *skipped_session_wide* — #5516 §2: the count of events LOST to
+        bridge queue overflow since the last dispatch from THIS bridge
+        (before any per-hook matcher ever saw them, hence "session_wide",
+        never attributable to one hook entry — see
+        ``_dispatch_batch_for_point``'s own docstring for why the field
+        name must not claim an attribution it cannot make)."""
+        events = [self._wrap_lifecycle_event(point, p) for p in payloads]
+        await self._dispatch_batch_for_point(
+            point, events, republish_to_bus=True,
+            skipped_session_wide=skipped_session_wide,
+        )
+
+    async def dispatch_bus_event(self, event: HookEvent) -> None:
+        """Single-event convenience wrapper over
+        :meth:`dispatch_bus_event_batch` (``[event]``) — kept for any
+        caller that has exactly one event and no folding to do. See that
+        method's docstring for the full contract."""
+        await self.dispatch_bus_event_batch([event])
+
+    async def dispatch_bus_event_batch(self, events: "list[HookEvent]") -> None:
+        """#5516 — the batched sibling of ``dispatch_bus_event``: run every
+        Sync-registered hook whose ``on:`` equals ``events[0].kind`` (the
+        caller — ``reyn.hooks.composed_consumer.ComposedEventConsumer`` —
+        groups a raw ``drain_folded`` batch by kind BEFORE calling this,
+        since its own subscription queue is NOT single-kind like a bridge's
+        — see that module for the grouping step), for events that arrived
+        via the Bus rather than through ``dispatch()``'s own lifecycle call
+        sites.
+
+        Unlike ``dispatch_external_batch``, this method does NOT
+        re-publish to ``self._bus`` — every ``event`` here already arrived
+        via the bus, so re-broadcasting would be a duplicate delivery to
+        any sibling Composer/subscriber correlating on the same kind.
+        Per-hook isolation and the matcher/applicability gates are
+        otherwise identical.
+
+        A ``template_push`` hook's wake=true action lands in the inbox via
+        the SAME ``_push_resolved`` E-path (``TurnOrigin.HOOK``/kind="hook")
+        every other hook-driven wake uses, so a composed->wake turn is
+        counted by the Session's existing ``max_hook_driven_turns`` loop-valve
+        — folding N composed events into ONE launch is exactly what
+        IMPROVES that accounting (owner ruling #5516 §1/③: N pushes would
+        consume N valve units; folded + concatenated consumes 1)."""
+        if not events:
+            return
+        point = events[0].kind
+        # skipped_session_wide for the composed path is threaded by the
+        # caller (ComposedEventConsumer reads its own HookBus drop-count
+        # delta) — this method receives an already-grouped, same-kind
+        # batch and has no queue of its own to read from, so it always
+        # passes 0 here; ComposedEventConsumer folds its own skip count
+        # into event_context by calling dispatch_external_batch-shaped
+        # bookkeeping itself (see that module).
+        await self._dispatch_batch_for_point(
+            point, events, republish_to_bus=False, skipped_session_wide=0,
+        )
+
+    async def _dispatch_batch_for_point(
+        self, point: str, events: "list[HookEvent]", *,
+        republish_to_bus: bool, skipped_session_wide: int,
+    ) -> None:
+        """#5516 — the shared core both ``dispatch()``/
+        ``dispatch_external_batch`` and ``dispatch_bus_event_batch``
+        delegate to (one implementation, not two independently-drifting
+        copies — CLAUDE.md). ``events`` is the RAW, matcher-blind batch;
+        the fold unit is **(session, hook entry)**, not (session, point):
+        each hook in ``hooks_for(point)`` gets its OWN subset of ``events``
+        — only the ones whose ``template_vars`` match THAT hook's own
+        ``matcher`` (#5516 §2 — two hooks on the same point can have
+        different matchers, e.g. two ``mcp_resource_updated`` hooks scoped
+        to different ``uri`` globs; folding must happen AFTER that
+        per-hook filter, never before, or one hook's batch would silently
+        include events meant only for its sibling).
+
+        ``skipped_session_wide`` — by contrast — is a SESSION-scoped count
+        (#5516 §2): it happens BEFORE any matcher ever ran (queue overflow
+        at the bridge, upstream of this method entirely), so it cannot be
+        attributed to any one hook entry — the SAME number is threaded
+        into every hook's ``event_context`` for this batch, with a field
+        name that says so (``skipped_session_wide``, never a bare
+        ``skipped`` that would read as "your entries were skipped")."""
+        if republish_to_bus and self._bus is not None:
+            for event in events:
+                self._bus.publish(event)
         for hook in self._registry.hooks_for(point):
             if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
                 continue  # #2285: hook disabled for THIS session (live applicability toggle)
-            if not event_pattern_matches(from_legacy_matcher(hook.matcher), event):
-                continue  # #2608 H2: matcher didn't match this event's template_vars
+            matched = [
+                event for event in events
+                if event_pattern_matches(from_legacy_matcher(hook.matcher), event)
+            ]
+            if not matched:
+                continue  # #2608 H2: matcher didn't match any event's template_vars
             try:
-                await self._dispatch_one(hook, point, event)
+                await self._dispatch_one_batch(
+                    hook, point, matched, skipped_session_wide=skipped_session_wide,
+                )
             except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
                 _log.warning(
                     "Hook at point %r raised — skipped (siblings proceed). "
@@ -250,48 +371,40 @@ class HookDispatcher:
                     point, hook, type(exc).__name__, exc,
                 )
 
-    async def dispatch_bus_event(self, event: HookEvent) -> None:
-        """Hook-Event Redesign Phase 5 part 1 (proposal 0059 §9 item 3 / #2881):
-        run every Sync-registered hook whose ``on:`` equals ``event.kind``,
-        for an event that arrived via the Bus rather than through
-        ``dispatch()``'s own lifecycle call sites — the consumer half of the
-        composed->wake path (``reyn.hooks.composed_consumer.
-        ComposedEventConsumer`` calls this for every Bus-observed
-        ``composed:<name>`` event).
+    async def _dispatch_one_batch(
+        self, hook: HookDef, point: str, events: "list[HookEvent]", *,
+        skipped_session_wide: int,
+    ) -> None:
+        """Dispatch ONE hook against a (session, hook-entry)-scoped batch
+        of ``events`` (#5516 — never empty; the caller already filtered to
+        this hook's own matching subset). Scheme-by-scheme, per action:
 
-        Unlike ``dispatch()``, this method does NOT construct a new
-        ``HookEvent`` and does NOT re-publish to ``self._bus`` — ``event``
-        already arrived via the bus, so re-broadcasting it here would be a
-        duplicate delivery to any sibling Composer/subscriber correlating on
-        the same kind. Per-hook isolation and the matcher/applicability gates
-        are otherwise identical to ``dispatch()``'s Sync loop.
-
-        A ``template_push`` hook's wake=true action lands in the inbox via
-        the SAME ``_push_resolved`` E-path (``TurnOrigin.HOOK``/kind="hook")
-        every other hook-driven wake uses, so a composed->wake turn is
-        counted by the Session's existing ``max_hook_driven_turns`` loop-valve
-        with zero new bounding logic (architect-ratified §224
-        valve-metered-allow)."""
-        point = event.kind
-        for hook in self._registry.hooks_for(point):
-            if self._is_hook_disabled is not None and self._is_hook_disabled(hook):
-                continue
-            if not event_pattern_matches(from_legacy_matcher(hook.matcher), event):
-                continue
-            try:
-                await self._dispatch_one(hook, point, event)
-            except Exception as exc:  # noqa: BLE001 — per-hook isolation boundary
-                _log.warning(
-                    "Bus-consumed hook at kind %r raised — skipped (siblings proceed). "
-                    "hook=%r error=%s: %s",
-                    point, hook, type(exc).__name__, exc,
-                )
-
-    async def _dispatch_one(self, hook: HookDef, point: str, event: HookEvent) -> None:
-        """Dispatch a single hook by scheme: template_push (C/E) / exec (F)
-        / exec_capture (run + parse stdout → the same C/E path as
-        template_push) / pipeline_launch (#2608 H3: render input_template,
-        launch via the injected ``launch_pipeline`` callable).
+        - ``exec``/``exec_capture``: the subprocess's stdin JSON
+          (``event_context``) can carry N items in one call — always an
+          array (clean break, #5516 §1: N=1 too, ``[payload]``), wrapped
+          with ``skipped_session_wide`` (never attributable to this one
+          hook — see ``_dispatch_batch_for_point``'s docstring).
+        - ``template_push``: renders once PER event, then concatenates
+          the N resolved messages into ONE push (owner ruling #5516 §1
+          item ③ — improves ``max_hook_driven_turns`` valve accounting:
+          N pushes would consume N valve units, one concatenated push
+          consumes 1).
+        - ``pipeline_launch``: does **NOT fold** — architect ruling
+          (#5516 broker thread, 2026-08-29): the discriminator for
+          whether an action CAN fold is not "does it render" but "can the
+          receiver take N items in ONE call": exec/exec_capture take an
+          array on stdin (can); template_push takes one text (N texts
+          CAN be concatenated); ``pipeline_launch``'s receiver takes ONE
+          ``input: dict`` (``render.py``'s own
+          ``render_pipeline_input``'s return type) — no merge of N dicts
+          into one is lossless in general (any merge strategy silently
+          drops N-1 events' worth of fields, the exact "捨てるのはバグ"
+          owner named). So this scheme launches ONCE PER EVENT in the
+          batch, unconditionally — the fold flag has NO EFFECT on this
+          scheme. This is deliberate, not an oversight: a future
+          implementer adding folding here needs a CHANGED pipeline input
+          contract (a genuinely separate, larger issue than #5516), not a
+          cleverer merge function.
 
         #3226 Phase 4 renamed ``shell_exec``/``shell_push`` → ``exec``/
         ``exec_capture`` (naming honesty — the runner never ran
@@ -299,17 +412,17 @@ class HookDispatcher:
         ``shell=False``) and the payload from a shell-command string to an
         argv list (``HookDef.exec``/``HookDef.exec_capture`` are now
         ``tuple[str, ...]``)."""
-        template_vars = event.payload
         if hook.template_push is not None:
-            resolved = render_push(hook.template_push, template_vars, point)
-            await self._push_resolved(resolved, hook, point)
+            resolved = _render_and_fold_pushes(hook.template_push, events, point)
+            if resolved is not None:
+                await self._push_resolved(resolved, hook, point)
         elif hook.exec is not None:
             # exec — an external side-effect. Output IGNORED; never raises
             # (the runner logs + returns). Backend: the injected instance, else
             # run_shell_hook resolves get_default_backend(sandbox_config).
             await self._run_shell(
                 hook.exec,
-                template_vars,
+                _build_event_context(events, skipped_session_wide),
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 # #2827/#3005: the operator's per-hook sandbox knobs. None =
@@ -344,7 +457,7 @@ class HookDispatcher:
             # (→ _parse_exec_push None) skips the push (fail-safe).
             stdout = await self._run_shell(
                 hook.exec_capture,
-                template_vars,
+                _build_event_context(events, skipped_session_wide),
                 sandbox_backend=self._sandbox_backend,
                 sandbox_config=self._sandbox_config,
                 capture_stdout=True,
@@ -378,36 +491,45 @@ class HookDispatcher:
             if resolved is not None:
                 await self._push_resolved(resolved, hook, point)
         elif hook.pipeline_launch is not None:
-            # pipeline_launch (#2608 H3) — render input_template against
-            # template_vars, then hand off to the injected launch_pipeline
-            # callable (async/detached — the result returns later on this
-            # session's own inbox as a pipeline_result message, same as the
-            # run_pipeline_async tool verb). Fail-safe on either failure mode:
-            # a render error (bad Jinja2 / non-JSON-object output) or no
-            # launch_pipeline callable injected both log a clear WARNING and
-            # skip the launch — never raise out of this branch (dispatch()'s
-            # per-hook isolation would catch it anyway, but a specific message
-            # here names exactly what went wrong).
-            try:
-                input_data = render_pipeline_input(
-                    hook.pipeline_launch.input_template, template_vars,
-                )
-            except Exception as exc:  # noqa: BLE001 — render failure must not crash; skip launch
-                _log.warning(
-                    "Hook pipeline_launch input_template render failed — launch "
-                    "skipped. hook=%r pipeline=%r error=%s: %s",
-                    hook.name, hook.pipeline_launch.name, type(exc).__name__, exc,
-                )
-                return
-            if self._launch_pipeline is None:
-                _log.warning(
-                    "Hook %r declares pipeline_launch (pipeline=%r) but this "
-                    "session's HookDispatcher has no launch_pipeline callable "
-                    "injected — launch skipped.",
-                    hook.name or point, hook.pipeline_launch.name,
-                )
-                return
-            await self._launch_pipeline(hook.pipeline_launch.name, input_data)
+            # pipeline_launch (#2608 H3) — does NOT fold, see this method's
+            # own docstring. Launch ONCE PER EVENT in the batch,
+            # unconditionally.
+            for event in events:
+                await self._launch_one_pipeline(hook, point, event.payload)
+
+    async def _launch_one_pipeline(self, hook: HookDef, point: str, template_vars: dict) -> None:
+        """The unfolded, single-event pipeline_launch body (#2608 H3) —
+        render input_template against ``template_vars``, then hand off to
+        the injected ``launch_pipeline`` callable (async/detached — the
+        result returns later on this session's own inbox as a
+        ``pipeline_result`` message, same as the ``run_pipeline_async``
+        tool verb). Fail-safe on either failure mode: a render error (bad
+        Jinja2 / non-JSON-object output) or no ``launch_pipeline``
+        callable injected both log a clear WARNING and skip the launch —
+        never raise out of this method (the caller's per-hook isolation
+        would catch it anyway, but a specific message here names exactly
+        what went wrong)."""
+        assert hook.pipeline_launch is not None
+        try:
+            input_data = render_pipeline_input(
+                hook.pipeline_launch.input_template, template_vars,
+            )
+        except Exception as exc:  # noqa: BLE001 — render failure must not crash; skip launch
+            _log.warning(
+                "Hook pipeline_launch input_template render failed — launch "
+                "skipped. hook=%r pipeline=%r error=%s: %s",
+                hook.name, hook.pipeline_launch.name, type(exc).__name__, exc,
+            )
+            return
+        if self._launch_pipeline is None:
+            _log.warning(
+                "Hook %r declares pipeline_launch (pipeline=%r) but this "
+                "session's HookDispatcher has no launch_pipeline callable "
+                "injected — launch skipped.",
+                hook.name or point, hook.pipeline_launch.name,
+            )
+            return
+        await self._launch_pipeline(hook.pipeline_launch.name, input_data)
 
     async def _push_resolved(self, resolved, hook: HookDef, point: str) -> None:
         """Dispatch a resolved push directive via C/E (#1800 slice 5b/6) — shared
@@ -463,6 +585,59 @@ class HookDispatcher:
             # 4b API), NOT via the inbox (a wake=false-only inbox push never drains
             # alone — Decision A).
             await self._stage_next_turn_context(HOOK_STAGE_KIND, payload)
+
+
+def _build_event_context(events: "list[HookEvent]", skipped_session_wide: int) -> dict:
+    """#5516 §1/§2 — the wire shape for an exec/exec_capture hook's stdin
+    JSON. ``events`` (never empty) becomes the ``"events"`` array — always
+    an array, even a length-1 batch (clean break, no dual shape: a script
+    reading this never has to branch on "is this a dict or a list").
+    ``skipped_session_wide`` rides as a SIBLING key, never folded into the
+    array itself — it is session-scoped, not per-item (see
+    ``HookDispatcher._dispatch_batch_for_point``'s own docstring for why
+    it cannot be attributed to any one event)."""
+    return {
+        "events": [event.payload for event in events],
+        "skipped_session_wide": skipped_session_wide,
+    }
+
+
+def _render_and_fold_pushes(
+    push, events: "list[HookEvent]", point: str,
+) -> "ResolvedPush | None":
+    """#5516 §1 item ③ (owner ruling) — render ``push`` once PER event in
+    the batch (via the unchanged single-event ``render_push``), then
+    concatenate the N resolved messages into ONE :class:`ResolvedPush`.
+    Returns ``None`` when every render in the batch skips (``push_when``
+    false or a render failure — ``render_push``'s own fail-safe), so the
+    caller never pushes an empty message.
+
+    Two merge choices that are NOT specified anywhere in #5516's own
+    canonical spec — stated explicitly here rather than silently picked,
+    same posture as the pipeline_launch exemption above:
+
+    - ``wake``: ``True`` if ANY resolved push in the batch wants to wake
+      (never silently downgrades one event's genuine wake request because
+      it happened to be folded alongside quieter ones).
+    - ``session``: the FIRST resolved push's non-empty ``session`` (a
+      hook's own template rarely varies target session per-event; if it
+      ever does, later events' session targets are not represented — this
+      is a real, named limitation, not a guess dressed as a decision)."""
+    resolved_parts: "list[ResolvedPush]" = []
+    for event in events:
+        resolved = render_push(push, event.payload, point)
+        if resolved.push_when:
+            resolved_parts.append(resolved)
+    if not resolved_parts:
+        return None
+    return ResolvedPush(
+        message="\n".join(part.message for part in resolved_parts),
+        wake=any(part.wake for part in resolved_parts),
+        push_when=True,
+        session=next(
+            (part.session for part in resolved_parts if part.session), None,
+        ),
+    )
 
 
 def _parse_exec_push(stdout: str | None) -> ResolvedPush | None:

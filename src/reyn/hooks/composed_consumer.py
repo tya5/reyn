@@ -83,18 +83,40 @@ class ComposedEventConsumer:
         return self._task is not None and not self._task.done()
 
     async def _run(self) -> None:
+        from reyn.hooks.fold import drain_folded
+
         async with self._bus.subscribe() as sub:
-            while True:
-                event = await sub.get()
-                if not event.kind.startswith(COMPOSED_KIND_PREFIX):
-                    continue  # not a composed event — nothing for this bridge to do
-                try:
-                    await self._dispatcher.dispatch_bus_event(event)
-                except Exception as exc:  # noqa: BLE001 — a bridge fault must never kill the task
-                    _log.warning(
-                        "ComposedEventConsumer: dispatch_bus_event(%r) raised: %s: %s",
-                        event.kind, type(exc).__name__, exc,
-                    )
+
+            async def _dispatch_raw_batch(raw_batch: "list") -> None:
+                # #5516: raw_batch is matcher-blind AND kind-blind — this
+                # ONE HookBus subscription queue carries EVERY published
+                # kind (lifecycle points included, drop-oldest overflow),
+                # not just composed:* ones (unlike a bridge's own
+                # per-adapter queue, which only ever holds ONE kind — see
+                # ingress.py's _BoundedEventBridge, which skips this
+                # grouping step because it doesn't need it). Non-composed
+                # events are discarded here exactly as before #5516 (the
+                # `continue` this loop always had) — discarding still
+                # counts toward drain_folded's own N (condition ②: N is
+                # "dispatch attempts", matcher/kind-blind by construction),
+                # so this grouping step does not inflate or shrink that
+                # count, only decides what to DO with each item.
+                by_kind: "dict[str, list]" = {}
+                for event in raw_batch:
+                    if not event.kind.startswith(COMPOSED_KIND_PREFIX):
+                        continue
+                    by_kind.setdefault(event.kind, []).append(event)
+                for kind, events in by_kind.items():
+                    try:
+                        await self._dispatcher.dispatch_bus_event_batch(events)
+                    except Exception as exc:  # noqa: BLE001 — a bridge fault must never kill the task
+                        _log.warning(
+                            "ComposedEventConsumer: dispatch_bus_event_batch(%r, "
+                            "n=%d) raised: %s: %s",
+                            kind, len(events), type(exc).__name__, exc,
+                        )
+
+            await drain_folded(sub, _dispatch_raw_batch)
 
 
 __all__ = ["ComposedEventConsumer"]

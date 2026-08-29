@@ -166,20 +166,25 @@ async def test_in_process_adapter_deliver_reaches_bound_hook_trigger():
     """Tier 2: the shared in-process bridge (McpIngressAdapter / FsIngressAdapter)
     ``deliver`` reaches the bound ``hook_trigger`` closure — the exact
     mechanism ``MCPConnectionService``/``FsWatcher`` wire at session
-    construction (``runtime/session.py``)."""
-    captured: list[tuple[str, dict]] = []
+    construction (``runtime/session.py``).
 
-    async def _hook_trigger(point: str, payload: dict) -> None:
-        captured.append((point, payload))
+    #5516: ``hook_trigger`` is now batch-shaped
+    (``(point, payloads, skipped_session_wide=0)``) — one call, a
+    single-item ``payloads`` list, never a bare payload dict."""
+    captured: list[tuple[str, list, int]] = []
+
+    async def _hook_trigger(point: str, payloads: list, skipped_session_wide: int = 0) -> None:
+        captured.append((point, payloads, skipped_session_wide))
 
     mcp_adapter = McpIngressAdapter(hook_trigger=_hook_trigger)
     event = mcp_adapter.to_event("file:///x", server="s", agent_name="a", resync=True)
     mcp_adapter.deliver(event)
     await _wait_for(lambda: len(captured) >= 1)
     (call,) = captured  # exactly one — clean failure message if delivery ever drops/duplicates
-    point, payload = call
+    point, payloads, skipped = call
     assert point == "mcp_resource_updated"
-    assert payload == event.payload
+    assert payloads == [event.payload]
+    assert skipped == 0
     await mcp_adapter.aclose()
 
     captured.clear()
@@ -188,9 +193,10 @@ async def test_in_process_adapter_deliver_reaches_bound_hook_trigger():
     fs_adapter.deliver(event2)
     await _wait_for(lambda: len(captured) >= 1)
     (call2,) = captured  # exactly one — clean failure message if delivery ever drops/duplicates
-    point2, payload2 = call2
+    point2, payloads2, skipped2 = call2
     assert point2 == "file_changed"
-    assert payload2 == event2.payload
+    assert payloads2 == [event2.payload]
+    assert skipped2 == 0
     await fs_adapter.aclose()
 
 
@@ -326,7 +332,7 @@ async def test_strip_falsify_in_process_bridge_queue_overflow_drops_and_logs():
     release = asyncio.Event()
     started = asyncio.Event()
 
-    async def _slow_hook_trigger(point: str, payload: dict) -> None:
+    async def _slow_hook_trigger(point: str, payloads: list, skipped_session_wide: int = 0) -> None:
         started.set()
         await release.wait()
 

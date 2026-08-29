@@ -109,7 +109,11 @@ async def test_push_wake_false_routes_to_staging_C():
 @pytest.mark.asyncio
 async def test_shell_routes_to_run_shell_F():
     """Tier 2: an exec hook (F) invokes run_shell with the argv + the event
-    context (the observable side-effect); no push paths are taken."""
+    context (the observable side-effect); no push paths are taken.
+
+    #5516: event_context is now ALWAYS the array-wrapped shape
+    (``{"events": [...], "skipped_session_wide": N}``), even for a single
+    ``dispatch()`` call (clean break, no dual shape — N=1 still wraps)."""
     hook = HookDef(on="session_start", exec=("echo", "hi"))
     disp, seams = _dispatcher([hook])
 
@@ -117,7 +121,9 @@ async def test_shell_routes_to_run_shell_F():
 
     assert seams["run_shell"].kinds == [("echo", "hi")]
     (args, kwargs), = seams["run_shell"].calls
-    assert args[1] == {"point": "session_start"}          # event context forwarded
+    assert args[1] == {
+        "events": [{"point": "session_start"}], "skipped_session_wide": 0,
+    }          # event context forwarded, #5516 array-wrapped shape
     assert seams["put_inbox"].calls == []
     assert seams["stage_next_turn_context"].calls == []
 

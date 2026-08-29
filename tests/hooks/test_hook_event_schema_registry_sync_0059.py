@@ -87,19 +87,34 @@ def _llm_stub(result: LLMToolCallResult):
 
 
 def _capture_dispatch(monkeypatch, captured: list) -> None:
-    """Record (point, dict(template_vars)) on EVERY ``HookDispatcher.dispatch``
-    call, then delegate to the real implementation (per-hook isolation, matcher,
+    """Record (point, dict(template_vars)) on EVERY dispatched event, then
+    delegate to the real implementation (per-hook isolation, matcher,
     push/shell/pipeline routing all still run for real — only observation is
-    added). Every builtin producer (in-process or out-of-process) funnels
-    through some ``HookDispatcher`` instance's ``dispatch``, so patching the
-    class method here captures every builtin point uniformly."""
-    original = dispatcher_mod.HookDispatcher.dispatch
+    added).
 
-    async def _recording_dispatch(self, point, template_vars):
-        captured.append((point, dict(template_vars)))
-        return await original(self, point, template_vars)
+    #5516: patches ``HookDispatcher._dispatch_batch_for_point`` (one record
+    per event in the batch, flattening — this test's own "one record per
+    dispatched event" semantics predate #5516's folding and stay valid
+    unflattened), NOT the public ``dispatch`` — since #5516, ``dispatch``
+    (the 6 lifecycle points) is only ONE of three public entry points that
+    now funnel through this shared private method (the other two:
+    ``dispatch_external_batch`` for the in-process bridges + the
+    ``_SessionFireBridge``-driven out-of-process cron/webhook path, and
+    ``dispatch_bus_event_batch`` for the composed-consumer path). Patching
+    only ``dispatch`` would silently miss cron_fired/webhook_received
+    entirely — verified directly: this was the actual cause of a real hang
+    while implementing #5516, not a hypothetical."""
+    original = dispatcher_mod.HookDispatcher._dispatch_batch_for_point
 
-    monkeypatch.setattr(dispatcher_mod.HookDispatcher, "dispatch", _recording_dispatch)
+    async def _recording_dispatch_batch(self, point, events, **kwargs):
+        for event in events:
+            captured.append((point, dict(event.payload)))
+        return await original(self, point, events, **kwargs)
+
+    monkeypatch.setattr(
+        dispatcher_mod.HookDispatcher, "_dispatch_batch_for_point",
+        _recording_dispatch_batch,
+    )
 
 
 async def _noop(*args, **kwargs):

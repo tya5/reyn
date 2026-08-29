@@ -337,3 +337,54 @@ redesign が落としてはならない現行機能(v0.1 の簡略 Action モデ
 - [ ] hooks_add op は `template_push` のみ追加可(autonomy 境界: F は sandboxed, E は loop-valved, C は benign)
 - [ ] hot-reload(turn 境界, 1 turn = 1 config snapshot)
 - [x] hooks-free byte-identical(hook 無し時ゼロ overhead) — Phase 1(dispatch は同一 dict を wrap、値/署名不変)+ Phase 2(`hook_trigger=None` で bridge の queue/drain 機構が起動せず no-op)co-vet 検証済。
+
+## Addendum: #5516 — launch folding(2026-08-29、owner 裁定 + architect 裁定)
+
+Phase 1-5 の完了後、実測(coder-brown の event log)で「N 件の event に対し N 回
+hook が起動する」ことが判明した(98 回 `hook_shell_executed` に対し 97 件
+`mcp_resource_updated`)。owner 裁定: 「1 メッセージずつ hook 起動する意味ない
+でしょ」— N 件の event を 1 件に潰すのではなく(それだと `cron_fired` で仕事が
+消える)、N 回の起動を 1 回にして N 件を渡す。
+
+**この Addendum が変えるもの — item 6(上記、Phase 4 設計前提条件)の続報**:
+`hook_trigger` seam の signature が再び変わった — Phase 1-3 時点の
+`(bare_point, payload: dict)` から `(bare_point, payloads: list[dict],
+skipped_session_wide: int)` へ(``reyn.hooks.dispatcher.HookDispatcher.
+dispatch_external_batch`` / ``dispatch_bus_event_batch``)。item 6 が指摘した
+「HookEvent id が seam で失われる」という制約は不変のまま — 依然として生の
+dict のリストが渡り、受け手側(dispatcher)が改めて `HookEvent` を再構築する。
+
+**畳む単位は launch であり event ではない** — 3 箇所の accumulation point
+(`_BoundedEventBridge`(mcp_resource_updated/file_changed、drop-newest)、
+`_SessionFireBridge`(cron_fired/webhook_received)、`HookBus` の subscription
+queue(composed、drop-oldest))すべてで、`reyn.hooks.fold.drain_folded` という
+共有の countdown プリミティブ(`qsize()` を起動直前に読み、その時点で溜まって
+いる分だけを 1 バッチに畳む)を使う。3 つの受入条件(owner+architect 裁定):
+① 畳む機構は drop の向き(newest/oldest)に依存しない、② `qsize()` の読み取り
+は matcher 適用の前(N は「dispatch 試行の回数」)、③ `qsize()` は launch の
+直前に読む(直後に読むと走行中に届いた分まで N に含めてしまい、本当は取りこぼ
+していないのに取りこぼしたことになる — 保証は FIFO により新着が次のバッチに
+そのまま乗ることに依存する)。
+
+**action ごとに畳めるかどうかが違う**(architect 裁定、判別子は「render する
+か否か」ではなく「受け手が 1 回の呼び出しで N 件を受け取れる形か」):
+`exec`/`exec_capture` は stdin の JSON を配列にできる、`template_push` は N 回
+render して 1 つの text に連結できる — ✅ どちらも畳む。`pipeline_launch` の
+受け手は `input: dict` 1 つ(``render.py`` の `render_pipeline_input` の戻り値
+型)で、N 個の dict を可逆にマージする演算は存在しない(どんなマージでも N-1
+件が黙って消える)— ❌ 畳まない、1 event につき 1 launch を維持する。
+
+**新しい payload 形**: 配列は無条件(clean-break、N=1 でも `[payload]`)。
+`event_context`(hook の stdin JSON)は `{"events": [payload, ...],
+"skipped_session_wide": int}` — `skipped_session_wide` は bridge の queue
+overflow で失われた event 数(matcher の前に起きるので session 全体の数、どの
+hook entry の分とも言えない)。旧 `dict` 形との後方互換は無い(owner 裁定:
+技術負債、reyn-self 側の hook script も同じ PR で追従)。
+
+実装: `src/reyn/hooks/fold.py`(共有プリミティブ)、
+`src/reyn/hooks/dispatcher.py`(`dispatch_external_batch`/
+`dispatch_bus_event_batch`/`_dispatch_batch_for_point`)、
+`src/reyn/hooks/ingress.py`(`_BoundedEventBridge`)、
+`src/reyn/hooks/composed_consumer.py`(kind でグルーピングしてから畳む —
+`HookBus` の subscription queue は 1 種類の kind に限らないため、bridge とは
+違いこの1手間が要る)。
