@@ -903,3 +903,150 @@ def test_title_scan_does_not_duplicate_a_commit_message_finding():
         title="fix #5299 regression in the cron runner",
     )
     assert _checks(findings) == [(4, 5299), (4, 5299)]
+
+
+# ---------------------------------------------------------------------------
+# Check 3: bare past-tense prose is not a declaration (real PR #5484 shape,
+# #5490 — check 3 stayed silent while #5467 auto-closed with an open phase 2).
+#
+# Real data, verbatim excerpt from `gh pr view 5484 --json body,
+# closingIssuesReferences` (#5484 was open when this fix was written; #5467
+# was already in closingIssuesReferences the whole time — check_contradictions
+# on the real body/refs pair returned 0 findings before this fix, architect's
+# own measurement). The excerpt below is the body's own description of the
+# hazard it had just fixed elsewhere in the SAME PR — the sentence that
+# would itself have auto-closed #5467 had it not already been superseded by
+# a real `#5467 stays open` fix earlier in the body; kept here exactly as the
+# live body reads (unfenced "auto-closed #5467"), since that unfenced prose
+# is the actual defect this fix closes.
+# ---------------------------------------------------------------------------
+
+_PR5484_BODY_EXCERPT = (
+    "**Closing-intent hazard, more severe, fixed first**: this PR body's "
+    "own first line placed a negated closing keyword next to `#5467` — "
+    "GitHub's parser does not read the negation, only the keyword+number "
+    "substring, so this **would have auto-closed #5467 on squash merge**, "
+    "exactly as #4834 and #4986 both did (the live `closing-intent "
+    "contradiction check` gate on this PR caught the identical shape)."
+)
+
+
+def test_check3_fires_on_the_real_5484_auto_closed_prose_shape():
+    """Tier 1: real reproduction, #5490 — PR #5484's own body. Bare
+    past-tense prose ("auto-closed #5467") is not a canonical declaration
+    (Closes/Fixes/Resolves), so it must not count as "the body said
+    something about #5467" for check 3's purpose — GitHub's parser
+    resolved #5467 via closingIssuesReferences regardless, and the body's
+    ONLY engagement with #5467 in this excerpt is descriptive prose about a
+    hazard, not a declaration. Real incident: #5467 auto-closed on #5484's
+    actual merge despite an open phase 2 (~82 remaining call sites) and had
+    to be reopened by hand — this gate was green throughout.
+
+    Before this fix: 0 findings (architect's own measurement against the
+    live PR). After: exactly this one."""
+    findings = m.check_contradictions(_PR5484_BODY_EXCERPT, closing_refs=[5467])
+    assert _checks(findings) == [(3, 5467)]
+
+
+def test_check3_positive_control_silent_with_the_broad_reader(monkeypatch):
+    """Tier 1: positive control (architect's own acceptance criterion) —
+    reverting ``find_declared_closing_intent`` to the OLD broad reader
+    (``find_closing_declarations``, the pre-#5490 behavior) makes the SAME
+    #5484 fixture go silent again. Without this, "red" on the test above
+    could be an artifact of the fixture or the test method rather than of
+    the vocabulary-narrowing fix itself; this isolates the ONE factor."""
+    monkeypatch.setattr(m, "find_declared_closing_intent", m.find_closing_declarations)
+    findings = m.check_contradictions(_PR5484_BODY_EXCERPT, closing_refs=[5467])
+    assert findings == []
+
+
+def test_check1_real_harm_unaffected_by_the_5490_narrowing():
+    """Tier 1: #5490 acceptance criterion — check 1's own real harm
+    (#2990/#3006's backtick-fenced `Closes #N`, already pinned by
+    ``test_check1_fires_on_backtick_fenced_closing_keyword_not_resolved``
+    above) must stay red. check 1 was deliberately NOT narrowed to the
+    canonical vocabulary — only check 3/4's "was anything declared at
+    all" question was (see ``find_declared_closing_intent``'s own
+    docstring for why narrowing check 1 too regressed a real boundary
+    test, ``test_boundary_1_check1_still_fires_when_only_the_number_is_
+    fenced``, during this fix's own development). Restated explicitly
+    here under this name so #5490's own acceptance criterion is pinned by
+    a test that names it, not only inferred from an existing test with an
+    unrelated name."""
+    findings = m.check_contradictions("`Closes #2620`", closing_refs=[])
+    assert _checks(findings) == [(1, 2620)]
+
+
+def test_find_declared_closing_intent_rejects_bare_past_tense():
+    """Tier 1: unit-level pin for the new finder — "auto-closed #N" (bare,
+    past tense) is not canonical; "Closes #N" is."""
+    assert m.find_declared_closing_intent("auto-closed #5467") == set()
+    assert m.find_declared_closing_intent("Closes #5467") == {5467}
+
+
+def test_find_declared_closing_intent_still_defuses_a_fence():
+    """Tier 1: unlike ``find_canonical_closing_declarations`` (GitHub-view,
+    fences stripped), ``find_declared_closing_intent`` uses the
+    AUTHOR-view fence reading (defused, not stripped) — a fenced
+    ``Closes #N`` still counts, the same behavior
+    ``find_closing_declarations`` already has and check 1 depends on."""
+    assert m.find_declared_closing_intent("`Closes #2620`") == {2620}
+    assert m.find_canonical_closing_declarations("`Closes #2620`") == set()
+
+
+# ---------------------------------------------------------------------------
+# Check 4, the #5490 shape (architect review, non-blocking, PR #5493): the
+# fixture above only pins check 3's own real occurrence in PR #5484's BODY.
+# Live verification against the real PR during that review surfaced a SECOND
+# real instance of the identical bare-past-tense phrase — independently
+# present in a commit message — which check 4 now also catches (same
+# `narrowly_declared` exemption swap covers both). Neither architect's own
+# design nor this fix's first version anticipated this second instance; a
+# dedicated test closes the gap architect flagged: "the discovery itself
+# gets left behind" without one.
+#
+# Real data, verbatim excerpt from `gh pr view 5484 --json commits` — the
+# real second commit's own messageBody (headline: "fix(#5467): correct an
+# overclaim, a closing-intent hazard, and 3 architect points").
+# ---------------------------------------------------------------------------
+
+_PR5484_COMMIT_WITH_LEAK = (
+    "fix(#5467): correct an overclaim, a closing-intent hazard, and 3 arch…\n"
+    "\n"
+    "BLOCKING 2 (lead-coder, most severe, fixed first per instruction): the\n"
+    "PR body's own first line placed a negated closing keyword next to\n"
+    "#5467 -- GitHub's own parser does not read the negation, only the\n"
+    "keyword+number substring, so it would have auto-closed #5467 on squash\n"
+    "merge exactly as #4834 and #4986 both did, reason=COMPLETED, no human\n"
+    "involved. Corrected to \"#5467 stays open\" (no verb adjacent to the\n"
+    "number, backtick-wrapped per the gate's own prescribed escape)."
+)
+
+
+def test_check4_fires_on_the_real_5484_commit_shape():
+    """Tier 1: real reproduction — PR #5484's actual commit message, #5490.
+    The SAME bare-past-tense "auto-closed #5467" shape that fooled check 3
+    in the PR body (see ``test_check3_fires_on_the_real_5484_auto_closed_
+    prose_shape`` above) is ALSO present in a commit message, independently
+    — check 4's exemption (``commit_closing_declared - narrowly_declared``)
+    must not let the body's own equally-non-canonical mention exempt it.
+    With a body that declares nothing about #5467 at all, check 4 fires."""
+    findings = m.check_contradictions(
+        "unrelated body text",
+        closing_refs=[],
+        commit_messages=[_PR5484_COMMIT_WITH_LEAK],
+    )
+    assert _checks(findings) == [(4, 5467)]
+
+
+def test_check4_stays_silent_when_the_body_canonically_covers_the_commit_leak():
+    """Tier 1: accept side, same fixture — a body that DOES canonically
+    declare closing #5467 (``Closes #5467``) exempts the identical commit
+    leak, same as the pre-existing #3187 accept-side test does for its own
+    fixture."""
+    findings = m.check_contradictions(
+        "Closes #5467",
+        closing_refs=[5467],
+        commit_messages=[_PR5484_COMMIT_WITH_LEAK],
+    )
+    assert findings == []
