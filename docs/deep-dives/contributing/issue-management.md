@@ -43,6 +43,55 @@ Evidence for a grouping must be a **named artifact** — a file, function, or
 data structure both issues would change. A shared theme ("both about the
 TUI") is not evidence; a shared artifact is.
 
+## 2b. Fixing it here is the default; filing needs a reason
+
+When a review turns up a problem outside the PR's stated scope, the default
+is **fix it in that PR**. Filing instead is the exception and the review note
+has to say why.
+
+The only reason that counts is **"the fix requires a design decision this PR
+has not made"**. "Outside this PR's scope" on its own is not a reason —
+scope is a description of what the author set out to do, not a boundary on
+what the tree may become.
+
+Owner, verbatim (2026-08-29): 「なんで見つけた問題をその場で修正させないの？」
+
+What made the lead file instead was that a new head invalidates a TESTS-READ
+note. Both sides of that trade were measured the same night: re-reading a
+moved head cost one step twice (#5491, a one-line docstring; #5493, two added
+tests), while routing #5485 to its own PR cost a PR body, a BLOCKING, a fix,
+a BLOCKING-CLEARED, a TESTS-READ, a correction comment, a full CI matrix and
+a merge. The re-read is also already forced — `tests-read-names-its-tree`
+goes red on a moved head — so nothing is lost by fixing in place.
+
+This does not add a reviewer or a review of the review. It changes which way
+the lead's own default points.
+
+## 2c. Count the repeats — the count is what earns a gate
+
+Owner, verbatim (2026-08-29): 「issue-management.md には指摘回数もカウント
+するようにしたら？どうせ繰り返すんだろうから。」
+
+A rule that has been re-taught is evidence about the rule, not about the
+person: prose that needed saying twice will need saying a third time. Record
+each measured violation against the rule it broke, with a date and an issue
+or PR number, so the count is visible where the rule is.
+
+The count is not a scoreboard — it is the argument for **stopping writing
+prose and writing the gate instead** (`CLAUDE.md`: "If CI can catch the
+violation, write the gate, not a rule here"). No threshold is set here: a
+number picked without evidence would be exactly the kind of unjustified
+constant this repo rejects. Bring the count, and argue the gate from it.
+
+Measured so far — all 2026-08-29, all by the lead-coder session:
+
+| rule | repeats | instances |
+|---|---|---|
+| §2 consolidation — file the duplicate instead of folding | **2** | #5489 vs #5488 (concurrent, two sessions); #5487 vs #5488 (1 minute apart) |
+| §5 axis label at filing time | **9** | every issue filed that day: #5451 #5467 #5475 #5480 #5485 #5488 #5490 #5494 #5495 |
+| §2b fix here, do not file | **4** | #5485 #5494 #5451 #5490 — all found during review, all filed |
+| §2 consolidation — check the fix is even possible | **1** | #5451 filed to satisfy the arc-closure rule; its gate needs the same branch-protection token that #5487 is blocked on |
+
 ## 3. The only axis for closing
 
 **An issue closes when its claim is no longer true** — fixed, superseded, or
