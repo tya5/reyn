@@ -30,8 +30,8 @@ one genuine, structural marker that IS shared by every surface this gate
 must guard — a line naming ``QUERIED_CAPABILITY_FIELDS_BY_MODALITY`` or
 ``model_capability_overrides`` itself (the constant + the config key it
 governs; nothing about an unrelated feature would ever mention either) —
-and only inspects tokens *on or immediately after* such a marker line,
-never a whole file just because the marker appears somewhere else in it
+and only inspects tokens on that SAME line — never a whole file just
+because the marker appears somewhere else in it
 (``router_loop.py`` itself co-hosts the unrelated ``supports_response_
 schema`` precheck a few hundred lines away from this feature's own call
 site — file-level scoping alone was measured and rejected for exactly this
