@@ -104,13 +104,35 @@ def _param_shape(sig: "inspect.Signature") -> "list[tuple[str, inspect._Paramete
     return [(p.name, p.kind, p.default is not inspect.Parameter.empty) for p in sig.parameters.values()]
 
 
-def assert_hook_trigger_signature(double: object) -> None:
+def assert_hook_trigger_signature(double: object, real: object) -> None:
     """#5527 — pin a ``hook_trigger``-shaped test double's call signature
-    against the ONE real thing it stands in for
-    (``HookDispatcher.dispatch_external_batch``), inside the helper that
-    constructs the double — never per-test (architect's own prescription,
-    verbatim: "``inspect.signature(実物) == inspect.signature(double)`` を
-    ★double を作る helper の中で 1 度（test ごとに書かせない）").
+    against *real*, the SPECIFIC production callable it stands in for,
+    inside the helper that constructs the double — never per-test
+    (architect's own prescription, verbatim: "``inspect.signature(実物) ==
+    inspect.signature(double)`` を ★double を作る helper の中で 1 度（test
+    ごとに書かせない）").
+
+    *real* is REQUIRED, never defaulted — lead-coder's own BLOCKING finding
+    on this function's first version (PR #5534, head ce127578e): the
+    ``hook_trigger`` slot has TWO real occupants with genuinely different
+    signatures, not one —
+    ``HookDispatcher.dispatch_external_batch(point, payloads, *,
+    skipped_session_wide=0)`` (``skipped_session_wide`` KEYWORD-ONLY,
+    wired to ``Session.dispatch_external_event_batch`` for the H5 cron/
+    webhook out-of-process path) and ``Session._bridge_hook_trigger(point,
+    payloads, skipped_session_wide=0)`` (POSITIONAL-OR-KEYWORD, wired to
+    BOTH ``FsWatcher`` and ``MCPConnectionService`` via
+    ``hook_trigger=self._bridge_hook_trigger`` in ``session.py``). A
+    version of this function that hard-coded ONE of the two would pin some
+    doubles against the WRONG real target — catching no real drift for
+    them (a mismatched *kind* wrongly read as a pass, or a double made
+    STRICTER than the real thing it substitutes for, itself a #5527-shaped
+    hazard: a caller that legitimately passes ``skipped_session_wide``
+    positionally to the real occupant would 500 for real, red on the
+    double, exactly backwards). Production is not touched to unify the
+    two — out of #5527's own settled scope (architect: "production を
+    触らないでください") — so a caller must always say explicitly which
+    real occupant its double stands in for.
 
     Real incident this closes (#5516 arc, #5527): 3 hand-written
     ``hook_trigger`` doubles kept the PRE-#5516 single-event signature
@@ -119,27 +141,25 @@ def assert_hook_trigger_signature(double: object) -> None:
     ``HookDispatcher``'s own per-hook isolation ``try/except``, leaving an
     unbounded ``_wait_for`` poll spinning forever (a hang, not a red test —
     see this issue's own root-cause writeup). Call this once, right after
-    constructing the double, so a FUTURE signature change on
-    ``dispatch_external_batch`` breaks the double loudly (red) instead of
-    silently (a hang nobody can attribute to this).
+    constructing the double, so a FUTURE signature change on the real
+    target breaks the double loudly (red) instead of silently (a hang
+    nobody can attribute to this).
 
     Deliberately does not compare annotations or exact default identity —
     see :func:`_param_shape`'s own docstring for why."""
-    from reyn.hooks.dispatcher import HookDispatcher
-
-    real_sig = inspect.signature(HookDispatcher.dispatch_external_batch)
-    # Drop ``self`` — the real target is an unbound function (accessed via
-    # the class, never instantiated here: constructing a HookDispatcher
-    # needs a HookRegistry + other DI this helper has no business knowing
-    # about), while *double* is called without a leading ``self`` (either
-    # a bare async function, or an instance whose own ``__call__`` already
-    # has ``self`` stripped by ``inspect.signature``'s bound-method rule).
-    real_shape = _param_shape(real_sig)[1:]
+    real_shape = _param_shape(inspect.signature(real))
+    # Drop ``self`` ONLY when *real* is an unbound method accessed via its
+    # class (its first parameter is then literally named ``self``) — a
+    # bound method (``instance.method``) or a bare function already has no
+    # such leading parameter, so dropping unconditionally would wrongly
+    # eat *real*'s first real argument for those callers.
+    if real_shape and real_shape[0][0] == "self":
+        real_shape = real_shape[1:]
     double_shape = _param_shape(inspect.signature(double))
     assert real_shape == double_shape, (
-        f"hook_trigger double signature has drifted from the real "
-        f"HookDispatcher.dispatch_external_batch — real (self dropped): "
-        f"{real_shape!r}, double: {double_shape!r}. #5516/#5527: a "
-        f"drifted double's TypeError is swallowed by per-hook isolation "
-        f"and hangs the caller instead of failing loudly."
+        f"hook_trigger double signature has drifted from its real target "
+        f"{real!r} — real (self dropped if present): {real_shape!r}, "
+        f"double: {double_shape!r}. #5516/#5527: a drifted double's "
+        f"TypeError is swallowed by per-hook isolation and hangs the "
+        f"caller instead of failing loudly."
     )

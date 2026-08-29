@@ -28,6 +28,7 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPError
 from reyn.mcp.connection_service import MCPConnectionService
+from reyn.runtime.session import Session
 from tests._support.events import collect_events
 from tests._support.hooks import assert_hook_trigger_signature
 from tests._support.paths import REPO_ROOT
@@ -138,20 +139,28 @@ async def test_reconnect_resync_also_fires_hook_trigger_identically_to_real_push
     session.py/hooks/ involvement needed to prove this bridge fires."""
 
     class _RecordingTrigger:
-        """#5516: batch-shaped -- (point, payloads, *, skipped_session_wide)."""
+        """#5516: batch-shaped -- (point, payloads, skipped_session_wide).
+        #5527: matches ``Session._bridge_hook_trigger`` — the REAL callable
+        wired into ``MCPConnectionService(hook_trigger=...)`` in production
+        (``session.py``'s ``hook_trigger=self._bridge_hook_trigger``), not
+        ``HookDispatcher.dispatch_external_batch`` directly — the two have
+        different ``skipped_session_wide`` param kinds (see
+        ``assert_hook_trigger_signature``'s own docstring)."""
 
         def __init__(self) -> None:
             self.calls: list[tuple[str, list, int]] = []
 
         async def __call__(
-            self, point: str, payloads: list, *, skipped_session_wide: int = 0,
+            self, point: str, payloads: list, skipped_session_wide: int = 0,
         ) -> None:
             self.calls.append((point, payloads, skipped_session_wide))
 
     trigger = _RecordingTrigger()
-    # #5527: pin this double's shape against the real hook_trigger target
-    # ONCE, here at construction — not per test.
-    assert_hook_trigger_signature(trigger)
+    # #5527: pin this double's shape against the REAL callable it
+    # substitutes for in production (Session._bridge_hook_trigger, not
+    # HookDispatcher.dispatch_external_batch — see the double's own
+    # docstring above), ONCE, here at construction — not per test.
+    assert_hook_trigger_signature(trigger, real=Session._bridge_hook_trigger)
     events = EventLog(subscribers=[])
     collected = collect_events(events)
     service = MCPConnectionService(
