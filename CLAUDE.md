@@ -122,7 +122,7 @@ checkout. A green scoped `pytest` is **not** a green CI run.
 Path-conditional gates:
 
 - `docs/` → `mkdocs build --strict -f .mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py && python scripts/check_retired_config_keys_denylist.py`, in that order (anchors needs the built `site/`).
-- `tests/` → `python scripts/check_bare_tests_import_reference.py` and `python scripts/check_file_depth_reference.py`.
+- `tests/` → `python scripts/check_bare_tests_import_reference.py`, `python scripts/check_file_depth_reference.py`, and `python scripts/check_subprocess_reyn_pin.py`.
 
 1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Never tick a check that did not happen.** **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked — do not fabricate it.
 2. **Role-prefix every issue / PR body / PR comment** — `**[lead-coder]** — `, etc. The PR body counts. This is the ONLY cross-session signal.

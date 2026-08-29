@@ -92,6 +92,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python scripts/check_tests_path_literal_reference.py
 
+      - name: subprocess-reyn-pin
+        if: ${{ !cancelled() }}
+        run: python scripts/check_subprocess_reyn_pin.py
+
       - name: flat-tests-ratchet
         if: ${{ !cancelled() }}
         run: python scripts/flat_tests_ratchet.py
