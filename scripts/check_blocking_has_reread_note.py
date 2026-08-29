@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Fail a PR that carries a BLOCKING comment but no TESTS-READ-shaped note
-naming its CURRENT head — house rule 7's `BLOCKING-CLEARED` requires only
+"""Fail a PR that carries a BLOCKING comment but no TESTS-READ- or RE-READ-
+shaped note naming its CURRENT head — house rule 7's `BLOCKING-CLEARED`
+requires only
 a comment quoting the raised point back (already enforced by
 `check_open_blocking_checkboxes.py`), which any session can post about
 its own fix; nothing until now required a SEPARATE record of someone
@@ -31,17 +32,28 @@ BLOCKING comment land", not every PR — the review round-trip this asks
 for is a finite resource lead-coder does not want spent where no
 blocking point was ever raised.
 
-## Reused, not reinvented
+## Reused, not reinvented — plus one honest addition (architect, #5453)
 
-This deliberately does NOT invent a new marker or a new comment shape.
-A `TESTS-READ (head <sha>)`-marked comment naming the PR's current head
-already IS "a record that someone engaged with this exact tree" —
-requiring the SAME marker here (rather than a second, parallel concept)
-means a PR that satisfies house rule 8 for an unrelated reason (it also
-touches `tests/`) automatically satisfies this rule too, with the same
-comment. `check_tests_read_names_its_tree.py` and
-`check_open_blocking_checkboxes.py` are loaded via
-``importlib.util.spec_from_file_location`` (mirroring
+This deliberately does NOT invent a new marker or a new comment shape for
+the common case. A `TESTS-READ (head <sha>)`-marked comment naming the
+PR's current head already IS "a record that someone engaged with this
+exact tree" — accepting the SAME marker here (rather than a second,
+parallel concept) means a PR that satisfies house rule 8 for an
+unrelated reason (it also touches `tests/`) automatically satisfies this
+rule too, with the same comment.
+
+Architect's own non-blocking review of the first revision (quoted
+verbatim): reusing `TESTS-READ` UNCONDITIONALLY would make a `src`-only
+PR's re-read comment falsely claim "read a test that isn't in this diff
+at all" — 「`tests/` を触らない PR で `TESTS-READ` を出すと『diff に無い
+test を読んだ』と主張することになります」. `RE-READ (head <sha>)` is the
+honest form for exactly that case; `_is_reread_note` accepts EITHER
+marker, so a `tests/`-touching PR still clears both gates with ONE
+`TESTS-READ` comment, while a `src`-only PR can post the accurate
+`RE-READ` one instead of a claim it cannot back up.
+
+`check_tests_read_names_its_tree.py` and `check_open_blocking_checkboxes.py`
+are loaded via ``importlib.util.spec_from_file_location`` (mirroring
 `tests/scripts/test_check_tests_read_names_its_tree_5039.py`'s own
 established technique for reaching a `scripts/`-local module — this
 directory has no `__init__.py`, so a package import is not available)
@@ -72,6 +84,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -93,6 +106,28 @@ def _load(module_name: str, filename: str):
 
 _tests_read = _load("_check_blocking_reread_tests_read", "check_tests_read_names_its_tree.py")
 _blocking = _load("_check_blocking_reread_blocking", "check_open_blocking_checkboxes.py")
+
+#: architect's non-blocking recommendation on #5453 (quoted verbatim below,
+#: `evaluate`'s docstring) — reusing ONLY `_tests_read._NOTE_MARKER`
+#: (`TESTS-READ`/`TESTS-READY`) would make a `src`-only PR's re-read
+#: comment claim "read a test that isn't in this diff at all". `RE-READ
+#: (head <sha>)` is the honest form for that case; either marker satisfies
+#: THIS gate, so a PR that also touches `tests/` (and so already needs
+#: `TESTS-READ` for house rule 8) still clears both gates with ONE
+#: comment, while a `src`-only PR can post the accurate one.
+_RE_READ_MARKER = re.compile(r"RE-READ\s*\(\s*head\s", re.IGNORECASE)
+
+
+def _is_reread_note(first_line: str) -> bool:
+    """True iff *first_line* matches EITHER accepted note marker — house
+    rule 8's own `TESTS-READ`/`TESTS-READY` (reused unchanged, so a
+    `tests/`-touching PR's existing note keeps satisfying this gate too),
+    or this gate's own `RE-READ (head <sha>)` (architect's #5453
+    recommendation, for a PR where "TESTS-READ" would misstate what was
+    actually read)."""
+    return bool(
+        _tests_read._NOTE_MARKER.search(first_line) or _RE_READ_MARKER.search(first_line)
+    )
 
 
 def _has_blocking_comment(comment_bodies: "list[str]") -> bool:
@@ -124,16 +159,19 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     notes = [
         _tests_read._first_line(body)
         for body in comment_bodies
-        if _tests_read._NOTE_MARKER.search(_tests_read._first_line(body))
+        if _is_reread_note(_tests_read._first_line(body))
     ]
     if not notes:
         return 1, [
-            "RED — this PR carries a BLOCKING comment but no TESTS-READ-shaped "
-            "note at all.",
+            "RED — this PR carries a BLOCKING comment but no TESTS-READ- or "
+            "RE-READ-shaped note at all.",
             "  #5453: a PR with a raised BLOCKING point needs one comment naming",
             "  the tree that was re-read before merge — the marker and the head",
-            "  SHA must both be on a comment's FIRST line (same shape house rule",
-            "  8 already uses, e.g. `TESTS-READ (head abc1234)`).",
+            "  SHA must both be on a comment's FIRST line: `TESTS-READ (head",
+            "  abc1234)` (same shape house rule 8 already uses — one comment then",
+            "  satisfies both gates on a PR that also touches tests/) or, for a",
+            "  PR that does not touch tests/ at all, `RE-READ (head abc1234)`",
+            "  (architect, #5453 — TESTS-READ would misstate what was read).",
         ]
 
     commits = pr.get("commits", [])
@@ -160,18 +198,19 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
             continue
         resolved_count += 1
         if _tests_read._note_names_head(note, head, oids):
-            return 0, [f"OK — a TESTS-READ note names the current head {head}."]
+            return 0, [f"OK — a re-read note names the current head {head}."]
         stale.append((note, shas))
 
     if not resolved_count:
         return 1, [
-            "RED — a TESTS-READ-shaped note landed, but none of them names a",
-            "  commit of this PR. Add the head you read (e.g. `TESTS-READ (head",
-            "  abc1234)`), on the SAME first line as the marker.",
+            "RED — a TESTS-READ- or RE-READ-shaped note landed, but none of "
+            "them names a commit of this PR.",
+            "  Add the head you read (e.g. `TESTS-READ (head abc1234)` or",
+            "  `RE-READ (head abc1234)`), on the SAME first line as the marker.",
         ]
 
     lines = [
-        "RED — this PR has a BLOCKING comment, but no TESTS-READ note names",
+        "RED — this PR has a BLOCKING comment, but no re-read note names",
         f"  the current head {head}.",
         "  (∃ over the CURRENT head — an older note naming an earlier commit",
         "  does not count against a PR that has since moved. Post a FRESH note",
@@ -200,8 +239,8 @@ def fetch_pr(number: int) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Fail a PR with a BLOCKING comment but no TESTS-READ-shaped note "
-            "naming the tree it read (#5453)."
+            "Fail a PR with a BLOCKING comment but no TESTS-READ- or RE-READ-"
+            "shaped note naming the tree it read (#5453)."
         ),
     )
     group = parser.add_mutually_exclusive_group(required=True)

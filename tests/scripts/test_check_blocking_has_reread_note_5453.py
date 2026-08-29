@@ -71,6 +71,63 @@ def test_a_fresh_tests_read_note_naming_the_current_head_passes():
     assert code == 0
 
 
+def test_a_reread_note_naming_the_current_head_also_passes():
+    """Tier 1: architect's #5453 non-blocking recommendation — a `src`-only
+    PR's comment claiming `TESTS-READ` would misstate what was actually
+    read (nothing under `tests/` is even in the diff); `RE-READ (head
+    <sha>)` is the honest form for that case, and this gate accepts it as
+    an equal alternative to `TESTS-READ`, never a lesser one."""
+    code, _ = _MOD.evaluate(_pr(
+        comments=[
+            _blocking("aaaaaaa"),
+            {"body": "BLOCKING-CLEARED (head bbbbbbb)\n\nfixed."},
+            {"body": "RE-READ (head bbbbbbb)"},
+        ],
+        commits=[_commit("aaaaaaa"), _commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 0
+
+
+def test_one_tests_read_note_satisfies_both_this_gate_and_house_rule_8():
+    """Tier 1: architect's own stated benefit of reusing the SAME marker —
+    a PR that touches `tests/` (and so needs a `TESTS-READ` note for house
+    rule 8 regardless) does not need a SECOND, differently-marked comment
+    to also satisfy THIS gate. One `TESTS-READ` note, read through BOTH
+    gates' own `evaluate`, passes both — proven by actually invoking
+    `check_tests_read_names_its_tree.py`'s `evaluate` too (loaded the same
+    way the module under test loads it), not merely asserted in prose."""
+    import importlib.util as _ilu
+
+    tests_read_spec = _ilu.spec_from_file_location(
+        "_check_tests_read_names_its_tree_5453_dual",
+        REPO_ROOT / "scripts" / "check_tests_read_names_its_tree.py",
+    )
+    tests_read_mod = _ilu.module_from_spec(tests_read_spec)
+    assert tests_read_spec.loader is not None
+    tests_read_spec.loader.exec_module(tests_read_mod)
+
+    pr = _pr(
+        comments=[
+            _blocking("aaaaaaa"),
+            {"body": "BLOCKING-CLEARED (head bbbbbbb)\n\nfixed."},
+            {"body": "TESTS-READ (head bbbbbbb)"},
+        ],
+        commits=[_commit("aaaaaaa"), _commit("bbbbbbb")],
+        head="bbbbbbb",
+    )
+    blocking_code, _ = _MOD.evaluate(pr)
+    # check_tests_read_names_its_tree.evaluate additionally needs `files`
+    # (its own tests/-touching trigger) — absent here on purpose since
+    # this test's whole point is that the SAME comment clears both gates
+    # regardless of what triggered house rule 8's own check.
+    tests_read_code, _ = tests_read_mod.evaluate(
+        {**pr, "files": ["tests/scripts/test_check_doc_drift_5003.py"]}
+    )
+    assert blocking_code == 0
+    assert tests_read_code == 0
+
+
 # ── reject side ─────────────────────────────────────────────────────────────
 
 def test_a_blocking_comment_with_no_tests_read_note_at_all_is_rejected():
@@ -87,7 +144,7 @@ def test_a_blocking_comment_with_no_tests_read_note_at_all_is_rejected():
         head="bbbbbbb",
     ))
     assert code == 1
-    assert "no TESTS-READ-shaped" in "\n".join(lines)
+    assert "no TESTS-READ- or RE-READ-shaped" in "\n".join(lines)
 
 
 def test_a_tests_read_note_naming_a_stale_head_is_rejected():
