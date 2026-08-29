@@ -232,7 +232,12 @@ async def test_aclose_names_a_still_pending_task_before_waiting_on_it(caplog):
         tracker.spawn(slow_task(), disposition="await", name="slow-task")
         await asyncio.sleep(0)  # let the spawned task actually start
         aclose_task = asyncio.create_task(tracker.aclose(caller="test-caller"))
-        await asyncio.sleep(0.05)  # give aclose() a chance to log before we release
+        # Wait on the CONDITION (the log line landed), not a duration —
+        # testing policy Floor: "no sleep(N) the assertion depends on ...
+        # not to let a task settle" (#4844). Unbounded: CI's own
+        # --timeout=120 is the kill switch if this never becomes true.
+        while not any("waiting on" in r.message for r in caplog.records):
+            await asyncio.sleep(0)
         release.set()
         await aclose_task
 
