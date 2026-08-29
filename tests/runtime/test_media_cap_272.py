@@ -146,7 +146,7 @@ def test_total_followup_bounded_for_huge_image_count(tmp_path: Path) -> None:
     assert _followup_tokens(fu) <= budget, "whole follow-up must stay within budget"
     # The 500 over-budget images collapse into a single tail preview (behavioural
     # invariant: bounded follow-up), not one ref per image.
-    tail = [p for p in _texts(fu) if "more image(s) exceed" in p["text"]]
+    tail = [p for p in _texts(fu) if "more media item(s) exceed" in p["text"]]
     assert tail, "a tail preview stands in for the over-budget images"
 
 
@@ -210,7 +210,7 @@ def test_no_store_tail_degrades_to_bounded_note(tmp_path: Path) -> None:
     assert _followup_tokens(fu) <= budget
     notes = [p for p in _texts(fu) if "not shown" in p["text"]]
     assert notes, "the dropped tail is surfaced as a bounded note, not silently lost"
-    assert "more image(s)" in notes[0]["text"]
+    assert "more media item(s)" in notes[0]["text"]
 
 
 # #1449: the read_tool_result-tool image/text ref read-back tests moved to

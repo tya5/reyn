@@ -166,7 +166,7 @@ _MEDIA_REF_TOKEN_COST = 128
 # Reserved for the single tail preview (offload-manifest pointer or no-store
 # degrade note) so the WHOLE follow-up stays ≤ budget_tokens.
 _MEDIA_TAIL_PREVIEW_RESERVE_TOKENS = 256
-# The "Tool `X` returned the following image(s):" intro line.
+# The "Tool `X` returned the following attachment(s):" intro line.
 _MEDIA_INTRO_TOKEN_COST = 24
 
 
@@ -279,25 +279,70 @@ def _warn_capability_unavailable_once(session_id: str, model: str) -> None:
     )
 
 
+# #5509 PR2 (architect ruling, 2026-08-29): modality determination as a
+# REGISTRY — a mime-prefix → modality-name mapping, not a single hardcoded
+# ``if not mime.startswith("image/")``. Content is deliberately still just
+# ONE entry today ("architect: 中身が今日 image 1件なのが正しい状態") — a
+# new modality is added here ONLY once it has an established per-item
+# token bound (a real page/duration-derived estimate, never a constant —
+# see this module's own ``_MEDIA_IMAGE_TOKEN_COST`` comment for why a
+# constant can't bound a PDF). Do NOT add a `QUERIED_CAPABILITY_FIELDS_
+# BY_MODALITY` entry for a modality that isn't in this tuple yet — a
+# modality absent here never reaches the capability query at all (see
+# `_materialise_media_part` below), so a declared override for it would
+# be accepted and silently do nothing — the exact #5517 BLOCKING① shape
+# (remedy points the wrong direction), caught before it was written this
+# time.
+_MEDIA_MIME_PREFIX_MODALITY: "tuple[tuple[str, str], ...]" = (
+    ("image/", "image"),
+)
+
+# #5509 PR2 (architect item ①, 2026-08-29): the block "type" values
+# `_build_media_followup_message` recognises as media at all — widened
+# from "image" only, so a document/file/video_url/audio block a producer
+# emits in the future is picked up into the follow-up pipeline (and
+# degrades correctly to a ref via `MediaMaterialiseFailure.NO_TOKEN_
+# BOUND`, see `_MEDIA_MIME_PREFIX_MODALITY` above) instead of being
+# silently filtered out before it ever reaches this module's own gate.
+# No producer emits any of the 4 new values today (measured: `web.py`/
+# `mcp.py`/`file.py`/`interfaces/slash/image.py` all hardcode
+# ``"type": "image"``) — this widening has no live effect until one
+# does; it closes the filter-side half of "image decided" ahead of that.
+_KNOWN_MEDIA_BLOCK_TYPES: "frozenset[str]" = frozenset(
+    {"image", "document", "file", "video_url", "audio"}
+)
+
+
+def _resolve_media_modality(mime: str) -> "str | None":
+    """Pure. The modality name for *mime* under
+    :data:`_MEDIA_MIME_PREFIX_MODALITY`, or ``None`` if no modality with
+    an established per-item token bound claims this mime prefix yet."""
+    for prefix, modality in _MEDIA_MIME_PREFIX_MODALITY:
+        if mime.startswith(prefix):
+            return modality
+    return None
+
+
 def _materialise_media_part(
     block: dict, media_store: Any, *, model: "str | None" = None,
 ) -> "dict | MediaMaterialiseFailure":
-    """Render one image block into a litellm ``image_url`` part.
+    """Render one media block into a litellm content-part.
 
     Path-ref blocks (``{"type":"image","path":...}``) are read via the
     MediaStore and base64-embedded; inline blocks (``{"data":"<b64>"}``) embed
     their base64 directly. Returns a :class:`MediaMaterialiseFailure` naming
     WHY when the block cannot be rendered — see that enum's own docstring.
 
-    #5509: only ``image/*`` mime types reach the capability-gated inline
-    path today — every OTHER modality has no established per-item token
-    bound yet (a PDF's cost scales with page count; a single constant
-    would be a wish, not a bound — see this module's own ``_MEDIA_
-    IMAGE_TOKEN_COST`` comment), so a non-image block always degrades to
-    :attr:`MediaMaterialiseFailure.NO_TOKEN_BOUND` regardless of *model*
-    — the caller's ref-degrade path is exactly where the wire door for
-    those modalities currently opens (architect ruling: "上界が取れない
-    媒体は materialise の段に載せない — ref の段へ").
+    #5509: only mime types matching :data:`_MEDIA_MIME_PREFIX_MODALITY`
+    (today: ``image/*`` only) reach the capability-gated inline path —
+    every OTHER modality has no established per-item token bound yet (a
+    PDF's cost scales with page count; a single constant would be a
+    wish, not a bound — see this module's own ``_MEDIA_IMAGE_TOKEN_COST``
+    comment), so a block whose mime matches no registered modality always
+    degrades to :attr:`MediaMaterialiseFailure.NO_TOKEN_BOUND` regardless
+    of *model* — the caller's ref-degrade path is exactly where the wire
+    door for those modalities currently opens (architect ruling: "上界が
+    取れない媒体は materialise の段に載せない — ref の段へ").
 
     ``model=None`` (partial/test hosts with no resolvable model string)
     skips the capability gate entirely — the pre-#5509 unconditional
@@ -305,7 +350,8 @@ def _materialise_media_part(
     against in the first place.
     """
     mime = block.get("mime_type") or block.get("mimeType") or "image/png"
-    if not mime.startswith("image/"):
+    modality = _resolve_media_modality(mime)
+    if modality is None:
         return MediaMaterialiseFailure.NO_TOKEN_BOUND
     if model is not None:
         from reyn.llm.model_media_capability import (
@@ -314,7 +360,7 @@ def _materialise_media_part(
             get_media_capability,
         )
 
-        capability_field = QUERIED_CAPABILITY_FIELDS_BY_MODALITY["image"]
+        capability_field = QUERIED_CAPABILITY_FIELDS_BY_MODALITY[modality]
         if get_media_capability(model, capability_field) is not MediaCapability.SUPPORTED:
             return MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
     path = block.get("path")
@@ -329,17 +375,66 @@ def _materialise_media_part(
             return MediaMaterialiseFailure.NOT_FOUND
         import base64
         data_b64 = base64.b64encode(data_bytes).decode("ascii")
-        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_b64}"}}
+        return build_wire_media_part(block.get("type") or "image", mime, data_b64)
     data = block.get("data")
     if isinstance(data, str) and data:
-        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+        return build_wire_media_part(block.get("type") or "image", mime, data)
     return MediaMaterialiseFailure.NO_DATA
+
+
+#: #5509 PR2 (architect ruling: condition on item ④, 2026-08-29) — litellm's
+#: own content-part vocabulary (`litellm.types.llms.openai.
+#: ValidUserMessageContentTypesLiteral`), one shape per reyn block "type".
+#: A PURE function so its output shape can be pinned by a unit test per
+#: modality (`tests/runtime/test_5509_pr2_wire_media_parts.py`) — the
+#: condition architect attached: "呼ばれない分岐を置くならせめて形は固定
+#: を" (an unreachable branch that isn't shape-pinned would sleep wrong
+#: and silently break the "swap this one function" promise the day a
+#: modality gets a real per-item token bound). Only "image" is reachable
+#: from `_materialise_media_part` today (see `_MEDIA_MIME_PREFIX_MODALITY`
+#: above) — the other 4 branches exist so PR3+ only needs to widen that
+#: registry, never touch wire-shape construction again.
+def build_wire_media_part(block_type: str, mime: str, b64_data: str) -> dict:
+    """Pure. The litellm content-part for *block_type*, embedding *b64_data*
+    (already base64-encoded) with mime type *mime*. Raises ``ValueError``
+    for an unrecognised *block_type* — a caller reaching this with a type
+    outside the 5 known ones has its own bug to fix, not a value to guess
+    at silently."""
+    data_url = f"data:{mime};base64,{b64_data}"
+    if block_type == "image":
+        return {"type": "image_url", "image_url": {"url": data_url}}
+    if block_type == "video_url":
+        return {"type": "video_url", "video_url": {"url": data_url}}
+    if block_type == "document":
+        return {
+            "type": "document",
+            "source": {"type": "text", "media_type": mime, "data": b64_data},
+        }
+    if block_type == "file":
+        return {"type": "file", "file": {"file_data": data_url}}
+    if block_type == "audio":
+        # litellm's `input_audio` — `format` is one of "wav"/"mp3"
+        # (openai.types.chat.chat_completion_content_part_input_audio_
+        # param.InputAudio); derive it from the mime subtype (the only
+        # place that information exists at this call site).
+        audio_format = mime.split("/", 1)[1] if "/" in mime else mime
+        return {"type": "input_audio", "input_audio": {"data": b64_data, "format": audio_format}}
+    raise ValueError(f"unrecognised media block type: {block_type!r}")
+
+
+def _default_mime_for_block_type(block_type: str) -> str:
+    """#5509 PR2: the "image/png" fallback only makes sense for an actual
+    image block — a document/file/video/audio block with no declared
+    mime is a real gap in the producer, not something to mislabel as a
+    PNG. Generic media type per RFC 2046, never guessed more precisely."""
+    return "image/png" if block_type == "image" else "application/octet-stream"
 
 
 def _as_path_ref(
     block: dict, media_store: Any, *, tool_name: str, seq: int
 ) -> dict | None:
-    """Return a ``{"path","mime_type"}`` lossless handle for an image block.
+    """Return a ``{"path","mime_type","type"}`` lossless handle for a
+    media block, whatever its modality.
 
     A path-ref block is returned as-is (its on-disk path is the handle, valid
     even without a live store object). An inline-base64 block is persisted to
@@ -347,11 +442,14 @@ def _as_path_ref(
     Returns ``None`` when no path can be obtained (inline + no store, or
     undecodable base64) — the caller then degrades consciously.
     """
+    block_type = block.get("type") or "image"
+    default_mime = _default_mime_for_block_type(block_type)
     path = block.get("path")
     if isinstance(path, str) and path:
         return {
             "path": path,
-            "mime_type": block.get("mime_type") or block.get("mimeType") or "image/png",
+            "mime_type": block.get("mime_type") or block.get("mimeType") or default_mime,
+            "type": block_type,
         }
     data = block.get("data")
     if isinstance(data, str) and data and media_store is not None:
@@ -360,16 +458,17 @@ def _as_path_ref(
             raw = base64.b64decode(data)
         except (ValueError, TypeError):
             return None
-        mime = block.get("mime_type") or block.get("mimeType") or "image/png"
+        mime = block.get("mime_type") or block.get("mimeType") or default_mime
         saved = media_store.save_media(raw, mime_type=mime, tool=tool_name, seq=seq)
-        return {"path": saved["path"], "mime_type": saved.get("mime_type", mime)}
+        return {"path": saved["path"], "mime_type": saved.get("mime_type", mime), "type": block_type}
     return None
 
 
 def _overflow_ref_text(ref: dict) -> str:
+    label = ref.get("type") or "image"
     return (
-        f"[image not loaded — exceeds the per-turn media budget. "
-        f"Stored at {ref['path']} ({ref.get('mime_type', 'image')}); "
+        f"[{label} not loaded — exceeds the per-turn media budget. "
+        f"Stored at {ref['path']} ({ref.get('mime_type', label)}); "
         f"load it with read_file(path={ref['path']!r}) when the context has room.]"
     )
 
@@ -377,11 +476,16 @@ def _overflow_ref_text(ref: dict) -> str:
 def _build_media_tail_preview(
     tail: list[dict], media_store: Any, *, tool_name: str
 ) -> dict:
-    """One bounded text part standing in for ``len(tail)`` over-budget images.
+    """One bounded text part standing in for ``len(tail)`` over-budget media
+    items (any modality — see :data:`_MEDIA_MIME_PREFIX_MODALITY`).
 
-    With a MediaStore: offload a LOSSLESS JSON manifest of the tail images'
+    With a MediaStore: offload a LOSSLESS JSON manifest of the tail items'
     on-disk paths (``save_tool_result``) and point to it (read_tool_result-able)
-    — O(1) follow-up cost no matter how many images overflowed.
+    — O(1) follow-up cost no matter how many items overflowed. The manifest's
+    own ``"images"`` key is unchanged (#5509 PR2: kept — it is read back by
+    a real test, `test_media_cap_272.py`, and every producer today only
+    ever emits ``type=="image"`` blocks in practice, so renaming it would
+    be schema churn with no live consumer yet).
 
     Without a store (or if none could be persisted): a least-lossy bounded note
     naming the count. Losslessness requires a store, so this is a conscious
@@ -403,7 +507,7 @@ def _build_media_tail_preview(
                     manifest, mime_type="application/json", tool=tool_name,
                 )
                 return {"type": "text", "text": (
-                    f"[{n} more image(s) exceed the per-turn media budget and are "
+                    f"[{n} more media item(s) exceed the per-turn media budget and are "
                     f"not shown here. A lossless manifest of their on-disk paths is "
                     f"stored at {saved['path']}; load it with "
                     f"read_file(path={saved['path']!r}) to access them.]"
@@ -411,7 +515,7 @@ def _build_media_tail_preview(
             except Exception:  # noqa: BLE001 — offload best-effort; degrade below
                 pass
     return {"type": "text", "text": (
-        f"[{n} more image(s) exceed the per-turn media budget and are not shown. "
+        f"[{n} more media item(s) exceed the per-turn media budget and are not shown. "
         f"No media store is configured for lossless offload, so they cannot be "
         f"re-loaded from here — configure a media store to retain them.]"
     )}
@@ -460,13 +564,14 @@ def _build_media_followup_message(
     unbounded behaviour (partial/test hosts).
     """
     images = [
-        b for b in media_blocks if isinstance(b, dict) and b.get("type") == "image"
+        b for b in media_blocks
+        if isinstance(b, dict) and b.get("type") in _KNOWN_MEDIA_BLOCK_TYPES
     ]
     if not images:
         return None
 
     parts: list[dict] = [
-        {"type": "text", "text": f"Tool `{tool_name}` returned the following image(s):"},
+        {"type": "text", "text": f"Tool `{tool_name}` returned the following attachment(s):"},
     ]
 
     # Unbounded path (pre-#272 / partial-host): materialise all renderable images.
