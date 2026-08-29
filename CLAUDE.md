@@ -4,9 +4,13 @@ Tier 1 rules only. Rationale, instances and measurements live in the linked
 deep-dive docs — read those on demand, not every session.
 
 **Editing this file** — every line loads into every session. Before adding
-one, ask *would removing this cause a mistake?* If no, do not add it. **If CI
-can catch the violation, write the gate, not a rule here.** Prose is how this
-file grows: 1,310 → 2,443 words in three months, with no rules added at that
+one, ask two questions. *Would removing this cause a mistake?* If no, do not
+add it. **And: what act fires it?** Name that act in the line itself — a rule
+whose reader has to already suspect it is missing will not be read, because
+the failures it prevents are the ones that remove the suspicion. A rule with
+no trigger is not a rule; it is a line someone can quote after the fact.
+**If CI can catch the violation, write the gate, not a rule here.** Prose is
+how this file grows: 1,310 → 2,443 words in three months, with no rules added at that
 rate. Put `wc -w CLAUDE.md` in the PR that touches it. **A rule that binds one
 directory belongs in that directory's own `CLAUDE.md`, not here** — it loads
 when someone opens those files and costs nothing to everyone else.
@@ -154,18 +158,19 @@ confirmed / attractor / hallucination / regression.
 Re-frame instead of overstating: ❌ "X happens 100% in Y" → ✅ "Hypothesis: X may
 dominate in Y. Direct verification: 1/N."
 
-## When in doubt — read these
+## Read these — each line says WHEN it fires
 
-- **Verification hazards** (a green that means less, a red that overstates): `docs/deep-dives/contributing/verification-hazards.md`
-- **Tier-1 rules, full rationale** (Constitution, hard rules, comment policy, pre-conclusion): `docs/deep-dives/contributing/tier1-rationale.md`
-- **PR workflow, full rationale**: `docs/deep-dives/contributing/pr-workflow.md`
-- **Issue management** (what an issue is, consolidation, closing, priority axes, labels): `docs/deep-dives/contributing/issue-management.md`
-- **Six questions, full instances**: `docs/deep-dives/contributing/test-review-six-questions.md`
-- **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
-- **Events / replay**: `docs/concepts/runtime/events.md`
-- **`.reyn/` layout** (recovery-core vs persist/audit/cache, the write-gate): `docs/reference/runtime/reyn-dir-layout.md`
-- **Permission model**: `docs/concepts/runtime/permission-model.md`
-- **Op catalog and dispatch**: `src/reyn/core/op_runtime/`
-- **Tool naming convention**: `docs/reference/runtime/tool-naming.md`
-- **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the entry point; do not hand-parse JSONL.
-- **Full feature inventory**: `docs/feature-map.md`
+A rule nobody is told to read is not a rule. Every entry below names the act
+that triggers it; "when in doubt" is not a trigger, because the failures these
+prevent are the ones that remove the doubt.
+
+- **Before filing an issue** — `docs/deep-dives/contributing/issue-management.md`. An issue gets its axis label(s) when it is **filed**, not later; no axis label means "not yet judged", so an unlabelled backlog carries no order to dispatch by.
+- **Before reading a green or a red as evidence** — `docs/deep-dives/contributing/verification-hazards.md`
+- **Before writing a review's blocking point** — `docs/deep-dives/contributing/test-review-six-questions.md`
+- **When a Tier-1 rule above seems wrong or costly** — `docs/deep-dives/contributing/tier1-rationale.md`; **PR workflow's** own rationale: `docs/deep-dives/contributing/pr-workflow.md`
+- **When you touch session/agent state on disk** — `docs/concepts/runtime/workspace.md`; **`.reyn/` layout** (recovery-core vs persist/audit/cache, the write-gate): `docs/reference/runtime/reyn-dir-layout.md`
+- **When you emit, read, or replay an audit-event** — `docs/concepts/runtime/events.md`
+- **When you add or change a permission decision** — `docs/concepts/runtime/permission-model.md`
+- **When you add or rename an op or tool** — `src/reyn/core/op_runtime/` (catalog and dispatch); naming: `docs/reference/runtime/tool-naming.md`
+- **When you analyse an LLM trace** — `docs/reference/dogfood-tracing.md`; `scripts/dogfood_trace.py --mode llm-payloads` is the entry point, do not hand-parse JSONL.
+- **When you claim a feature does or does not exist** — `docs/feature-map.md`
