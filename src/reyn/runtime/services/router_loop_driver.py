@@ -586,6 +586,13 @@ class RouterLoopDriver:
                     return None
                 return {**turn, "content": replacement}
 
+            # #5531 (lead-coder ruling, issuecomment-5463249759): the
+            # fold's OUTPUT placement (whether `main_call` still needs a
+            # separate `summary=` at all) is PR-2 scope — the "no more
+            # position-computing" acceptance for PR-1 is only about the
+            # INPUT side (decompose's own turns filter, and the compact()
+            # -input splice in engine.py, both fixed elsewhere in this
+            # PR). This decoration is unchanged from before this PR.
             async def _router_main_call(*, SP, head, summary, tail, new_msg):
                 _msgs = list(head)
                 if summary:

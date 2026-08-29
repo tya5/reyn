@@ -555,6 +555,23 @@ class RouterHistoryBuffer:
         produce identical wire shapes (the retry_loop decomposition must
         rebuild the same prompt the normal path would have sent).
         """
+        # #5531: a summary-role ChatMessage's ``.content`` is a STRUCTURED
+        # dict (topic_arc/decisions/...), never plain text — it cannot go
+        # through the generic text/tool-call wire-dict construction below
+        # at all. Only :meth:`decompose_history_for_retry` ever includes a
+        # summary-role turn in what it hands this method (:meth:`build_
+        # history`'s own turns filter still excludes it — its own separate
+        # bridge-attach step owns that decoration); this branch produces
+        # the SAME shape :func:`~reyn.services.compaction.engine.wrap_
+        # summary_as_message` builds, so a summary flowing through
+        # decompose's head/raw_middle/tail is byte-identical to one built
+        # directly for :class:`HistoryChunkToCompact` — one construction,
+        # not two that could drift apart.
+        if m.role == "summary":
+            from reyn.services.compaction.engine import wrap_summary_as_message
+            structured = (m.meta or {}).get("structured")
+            return wrap_summary_as_message(structured if isinstance(structured, dict) else {})
+
         # Legacy "agent" stragglers (= migrated entries that somehow bypassed
         # _migrate_legacy_chat_message) → normalise on read.
         role = "assistant" if m.role == "agent" else m.role
@@ -816,9 +833,30 @@ class RouterHistoryBuffer:
         #1128 step 3: mirrors :meth:`build_history`'s token-budget
         elide threshold (effective_trigger) and exposes the elided ``raw_middle``
         explicitly so the bounded adaptive-shrink ``retry_loop`` (#1125 Item 2)
-        can fold it into the running summary under overflow.  ``summary`` is the
-        structured dict from the latest persisted summary turn (retry_loop treats
-        it as an immutable base).
+        can fold it into the running summary under overflow.
+
+        #5531 (owner design dialogue, invariant: a summary represents ONE
+        continuous span, placed exactly where that span sat in time) —
+        the ``turns`` filter below now INCLUDES ``role == "summary"``
+        (previously excluded, without also watermark-filtering — the bug
+        lead-coder's own re-check found: a summary's own covered turns
+        stayed in ``turns`` too, so "just prepend the summary" was never
+        correct). Including it lets the SAME head/raw_middle/tail
+        windowing below (``trim_head``/``trim_tail``, already correct for
+        every other turn) place the summary at its own natural
+        chronological position — no separate line computes WHERE it goes.
+        The returned ``summary`` value is then read back out of whichever
+        region it landed in (below), never re-derived by a second,
+        independent lookup that could disagree with where the window
+        actually put it.
+
+        #5531 PR-1/PR-2 boundary (lead-coder ruling, 2026-08-29): PR-1
+        only fixes WHERE the summary sits (this filter) — it does NOT
+        touch how ``retry_loop`` (``engine.py``) budgets against it (the
+        floor formula's own separate ``summary`` term, its own
+        independent token estimation) — that reservation-based redesign
+        is PR-2's scope. The ``summary`` value returned here still feeds
+        that SAME, unchanged formula.
 
         When total token estimate <= effective_trigger the full history goes into
         ``head`` with empty ``raw_middle`` / ``tail`` — there is nothing to elide,
@@ -830,9 +868,14 @@ class RouterHistoryBuffer:
         pass). It lets a caller that only receives a SUBSET of these wire dicts
         (e.g. the force-close wrap-up fallback, which may feed the LLM only
         ``tail`` or neither) recover exactly which seqs that subset covers,
-        instead of assuming the full decomposition was used.
+        instead of assuming the full decomposition was used. A summary-role
+        turn carries a real ``seq`` like any other role (#3704 — every
+        persisted entry gets one, regardless of role), so it needs no
+        special case here: it flows through the same ``zip`` as everything
+        else.
         """
         from reyn.services.compaction.engine import (
+            SUMMARY_MESSAGE_ROLE,
             estimate_tokens_for_any_turn,
             trim_head,
             trim_tail,
@@ -841,7 +884,7 @@ class RouterHistoryBuffer:
         history = self._history_fn()
         turns = [
             m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
+            if m.role in ("user", "assistant", "tool", "agent", SUMMARY_MESSAGE_ROLE)
         ]
 
         # Resolve token budgets from the compaction engine (same as build_history).

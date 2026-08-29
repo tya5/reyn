@@ -77,6 +77,83 @@ structured-failure guarantee, not a success guarantee: `retry_loop` always
 stops with a well-defined error instead of looping forever or silently losing
 content — it does not promise the request ultimately fits.
 
+## Overflow recovery
+
+> **Target state.** PR-1/2/3 of #5531 land this; **#5531 §3 tracks what is not
+> yet true**. Do not read this section as a description of today's code until
+> that line is gone.
+
+When a request overflows — an HTTP 413 (a **byte** limit) or a token-window
+rejection — reyn does not fail the turn. It shrinks and retries. Two orderings
+govern the shrink, and they are independent of each other:
+
+| axis | order | why |
+|---|---|---|
+| **position** | `mid > head > tail > open-turn` | "least needed to continue *now*" |
+| **mechanism** | `compact > spill` | what the model can still see: a spilled turn leaves only a path (the model must call a tool to read it), a compacted span stays visible as prose |
+
+### Invariants
+
+1. A summary **represents one contiguous span** and sits **where that span was**.
+2. A summary is **not a fourth region.** History is **one ordered list**; some
+   entries have `role == "summary"`. `head`/`mid`/`tail` are **windows over that
+   list** — change `T_max` and the windows move, so a summary can fall in `head`
+   or in `tail`.
+3. A span **grows only from its neighbours** (head's end, tail's start).
+4. The **open turn is never handed to the shrinker** — by construction, not by a
+   filter.
+5. **Reserved (not subject to the windows' share): `SP`, `new_msg`, `summary`.**
+   Only the remainder is apportioned. Reserved does **not** mean "excluded from
+   folding": a summary inside the span being folded is folded like any other
+   entry and replaced by a newer summary — the reservation is then recomputed.
+
+### The flow
+
+```
+send
+ └ ok → done
+ └ overflow (byte | token)
+     ├ 1. compact — fold mid            (entered only if ≥1 non-summary entry)
+     │    └ compact itself overflows → halve the count … floor = summary + 1
+     │       └ spill that one entry (tried on BOTH byte and non-byte paths)
+     │          └ still no → terminal (a)
+     ├ 2. compact — grow the span from its neighbours → 1
+     ├ 3. spill — mid → head → tail
+     └ 4. halve the room (byte AND token)
+          room      = candidate − SP − new_msg − summary
+          candidate = SP + new_msg + summary + room // 2
+          → re-derive the floors, move head/tail into mid in the same
+            iteration → 1
+          └ room exhausted → terminal (b)
+```
+
+### Terminals
+
+There are **two**, and both mean *impossible*, not *gave up*:
+
+| | meaning |
+|---|---|
+| **(a)** | one turn, already spilled, still will not fit into compaction together with the summary |
+| **(b)** | `room` is exhausted — everything else is already zero |
+
+Everything else that stops the loop is a **budget**, not an impossibility, and is
+reported as its own signal:
+
+- `max_iterations` — the cost brake. It is what answers "who stops this if it
+  repeats", so it stays.
+- the same-cause consecutive cap — a judgement that shrinking is not resolving
+  this cause.
+
+**Which path reached a terminal travels as a structured value, not as a
+distinct exception type** — this repo merged four diagnoses into one type once
+and renamed a correct diagnosis into a wrong one (`_UnrecoveredError` →
+"context window too small"); the field survives that merge, the type does not.
+
+### See also
+
+- **#5531** — the canonical expected behaviour and the remaining diff.
+- **#5514** — which content may be dropped, and in what order.
+
 ## What the compaction produces
 
 The `CompactionEngine` folds new turns into five sections with per-section

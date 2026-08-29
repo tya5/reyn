@@ -155,7 +155,12 @@ class ChatMessage:
       - ``assistant`` — LLM reply (= previously ``agent``)
       - ``tool`` — tool response (= new)
       - ``system`` — system prompt (rare; usually built at wire time)
-      - ``summary`` — chat-compactor output (Reyn-internal, filtered at wire boundary)
+      - ``summary`` — chat-compactor output (Reyn-internal; ``build_history``'s
+        own projection still filters it out and attaches its content via a
+        synthetic bridge turn instead — but ``RouterHistoryBuffer.
+        decompose_history_for_retry``'s projection (#5531) includes it
+        directly, positioned by ordinary chronological order like any
+        other turn, not filtered)
     """
     role: Literal[
         "user", "assistant", "tool", "system", "summary",
