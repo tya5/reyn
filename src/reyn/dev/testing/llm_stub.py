@@ -152,6 +152,64 @@ INDEPENDENT axes on the same stub, validated and applied independently —
 a test that needs BOTH (hang-then-release a main call, or gate a
 compaction call, etc.) may pass both; today's actual callers use at most
 one at a time, but nothing here couples them.
+
+#5470 — ``tool_call_for=``: a THIRD, independent axis
+------------------------------------------------------
+Architect ruling (#5470): NOT "a test needs it" — the reverse. A tool call
+is not an exceptional path through the agent loop, it is the MAIN one; this
+stub's original design (#5103 "C2") could only ever express "the model said
+nothing and asked for nothing" (``tool_calls=None`` on every call, verbatim
+above) — a minority shape in production. ``raise_for`` (#5382, "did this
+call raise") and ``control`` (#5450, "when does this call return") were
+both investigated as the home for this and both rejected on inspection:
+neither axis can express WHAT a call returns. #5382's own history is the
+precedent for that inspection step itself — its ``raise_for`` generalization
+turned out NOT to need a third axis; this one, inspected the same way,
+turned out to.
+
+``tool_call_for=<callable(messages) -> bool>`` (same predicate shape and
+acceptance condition as ``raise_for``: content only, never a call count —
+the SECOND call's ``messages`` already contains the tool's own result, so
+the predicate can discriminate "haven't called yet" from "already got a
+result" by content, exactly as #5382's repeat-count ruling already
+established) + ``tool=<a name from reyn.core.op_runtime.available_kinds()>``
++ optional ``args=<dict>`` (defaults to ``{}``) makes a matching call return
+a completion whose ``message.tool_calls`` carries ONE call naming that tool
+— the REAL router loop then dispatches it through the REAL tool/op-runtime
+plumbing, exactly as #5450's ``control="gated"`` let the REAL
+``RouterLoopDriver`` run instead of a private stand-in.
+
+``tool`` is validated EAGERLY, at construction time (unlike ``cause``,
+validated lazily on first matching call) — the closed vocabulary here is
+``reyn.core.op_runtime.available_kinds()`` itself: ``reyn.core.op_runtime``
+eagerly imports and self-registers every handler module at import time (see
+that package's own ``__init__.py``, the "Eagerly import handler modules"
+block), so the full registered-kind list is already populated the instant
+this module can even import it — there is no lazy-populate gap to work
+around, unlike ``cause``'s #5382 vocabulary (validated lazily so the error
+names the actual call that hit it; that reasoning does not transfer here,
+since a typo'd tool name is a construction-time authoring mistake, not a
+runtime content question). A single namespace (#3429 — "there is no second
+namespace") means there is exactly one name to check the typo against, not
+an ambiguous choice of which one. Closing this eagerly (not leaving an
+unknown name to silently walk the router's own "unknown tool" error path
+and read as a passing green) is the same "registry closes the vocabulary"
+posture #5416 (``dataclasses.fields``) and #5458 (the ``cause`` vocabulary)
+already take.
+
+Rejected alternatives (architect ruling): (b) a new PUBLIC entry point for
+triggering a hook-event emission mid-turn outside the LLM boundary — this
+would be manufacturing a production seam purely for a test to reach, the
+exact shape #5442/#5447/#5443 spent the same night removing. (c) leaving
+the gap as a permanent private-replacement exemption — a permanent
+exemption is earned only by a MEASURED inability to reproduce the shape
+through the real boundary (the bar #5462's swallow-mode non-addition met);
+here the opposite was true — a real, reachable production path (the LLM
+returning a tool call) obviously exists and merely wasn't expressible yet.
+
+``tool_call_for`` and ``raise_for`` are independent (a call can match at
+most one — ``tool_call_for`` is checked first; if it doesn't match, the
+existing ``raise_for``/compaction/plain-stop logic runs unchanged).
 """
 from __future__ import annotations
 
@@ -193,6 +251,12 @@ RaiseForPredicate = Callable[[list], bool]
 #: caller-supplied content predicate.
 RaiseFor = Union[Literal["compaction"], RaiseForPredicate]
 
+#: #5470: a caller-supplied predicate selecting WHICH call returns a tool
+#: call instead of the ordinary completion. Same shape/acceptance condition
+#: as :data:`RaiseForPredicate` — ``messages`` only, never a call count (see
+#: module docstring's #5470 section).
+ToolCallForPredicate = Callable[[list], bool]
+
 
 class LLMStub:
     """Install/restore a fixture-less ``litellm.acompletion`` stub.
@@ -218,6 +282,14 @@ class LLMStub:
     matching call (mirrors ``LLMReplay``'s own ``UnknownReplayCause`` —
     diagnose at the point of use, not eagerly at construction, so the
     error message can name the actual call that hit it).
+
+    #5470: ``tool_call_for``/``tool`` (both required together; ``args``
+    optional, defaults to ``{}``) make ONE matching call return a
+    ``tool_calls``-carrying completion for ``tool`` instead of the ordinary
+    empty-stop response — see the module docstring's #5470 section.
+    ``tool`` is validated EAGERLY (unlike ``cause``) against
+    ``reyn.core.op_runtime.available_kinds()`` — a typo is a construction-
+    time mistake, not a runtime content question.
     """
 
     def __init__(
@@ -225,6 +297,9 @@ class LLMStub:
         control: "LLMStubControl | None" = None,
         raise_for: "RaiseFor | None" = None,
         cause: "str | None" = None,
+        tool_call_for: "ToolCallForPredicate | None" = None,
+        tool: "str | None" = None,
+        args: "dict[str, Any] | None" = None,
     ) -> None:
         if control is not None and control not in _CONTROL_MODES:
             raise UnknownLLMStubControlError(
@@ -238,6 +313,31 @@ class LLMStub:
             )
         self._raise_for = raise_for
         self._cause = cause
+        if (tool_call_for is None) != (tool is None):
+            raise ValueError(
+                "LLMStub: tool_call_for and tool must be given together "
+                f"(tool_call_for={tool_call_for!r}, tool={tool!r})"
+            )
+        if tool is not None:
+            from reyn.core.op_runtime import available_kinds
+
+            known = available_kinds()
+            if tool not in known:
+                # #5470: closed vocabulary, checked EAGERLY (see class/module
+                # docstring for why this differs from `cause`'s lazy check) —
+                # a typo'd tool name must not silently walk the router's own
+                # "unknown tool" error path and read as a passing green.
+                raise ValueError(
+                    f"LLMStub: tool={tool!r} is not a registered op kind "
+                    f"({known!r}, from reyn.core.op_runtime.available_kinds())."
+                )
+        if args is not None and tool_call_for is None:
+            raise ValueError(
+                f"LLMStub: args={args!r} was given without tool_call_for/tool."
+            )
+        self._tool_call_for = tool_call_for
+        self._tool = tool
+        self._tool_args: "dict[str, Any]" = args if args is not None else {}
         self._original_acompletion: Any = None
         # #5450: created unconditionally (cheap) so a test can read
         # `.call_started`/`.release` even before `install()` runs — mirrors
@@ -277,6 +377,27 @@ class LLMStub:
             self.call_started.set()
             await self.release.wait()
         import litellm
+
+        if self._tool_call_for is not None and self._tool_call_for(messages):
+            # #5470: return ONE tool call for `self._tool` — the REAL router
+            # loop then dispatches it through the REAL tool/op-runtime
+            # plumbing (this stub only fabricates the LLM's OWN output, the
+            # same boundary every other axis here stays at). The predicate
+            # is content-only (see module docstring's acceptance condition)
+            # — a caller wanting the SECOND call to stop returning the tool
+            # call writes a predicate that reads the tool's own result back
+            # out of `messages` (present by the second call), not a counter.
+            from litellm.types.utils import ChatCompletionMessageToolCall, Function
+
+            function = Function(
+                name=self._tool, arguments=json.dumps(self._tool_args),
+            )
+            tool_call = ChatCompletionMessageToolCall(
+                id="llm_stub_tool_call", type="function", function=function,
+            )
+            message = litellm.Message(content=None, role="assistant", tool_calls=[tool_call])
+            choice = litellm.Choices(finish_reason="tool_calls", index=0, message=message)
+            return litellm.ModelResponse(model=model, choices=[choice])
 
         if self._raise_for is not None and _should_raise(self._raise_for, messages):
             # __init__ guarantees raise_for/cause are set together — cause
