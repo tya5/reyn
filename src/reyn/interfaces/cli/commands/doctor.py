@@ -365,25 +365,37 @@ def run(args: argparse.Namespace) -> None:
 
 
 def _print_hook_env_snapshot(resolved_root: Path) -> None:
-    """#5428: the operator-facing consumer this issue required in the SAME
-    PR as the public read — architect's own reversal (issuecomment on
-    #5428): a public ``Session.hook_env_snapshot()`` with only a test
-    consumer is the #4866 shape #5442 already spent a PR closing; ``reyn
+    """#5428: the operator-facing consumer this issue required — ``reyn
     doctor`` is the declared receiving surface (module docstring: "reach
-    into sandbox / MCP / hook internals").
+    into sandbox / MCP / hook internals"). #5447: ``Session`` no longer
+    has a matching public "hook env" read method to consume — a public
+    method with only a test consumer is the #4866 shape #5442 already
+    spent a PR closing, and this function has no live ``Session`` to call
+    such a method on anyway (see below), so it was removed rather than
+    wired in.
 
     No live ``Session`` is constructed (doctor constructs none anywhere —
     #5428's own investigation confirmed this: ``Session(`` has zero call
-    sites in this module). This resolves the SAME 4 values
-    :meth:`~reyn.runtime.session.Session.hook_env_snapshot` returns for a
-    LIVE session, via the SAME shared primitive
+    sites in this module), and no ``Session`` method is called either
+    (#5447, architect finding: an earlier revision of this function
+    resolved the same 4 values through its OWN literal ``print(f"...")``
+    lines instead of going through
+    :meth:`~reyn.hooks.shell_runner.HookProcessContext.as_env`, silently
+    duplicating that method's own docstring-declared single source of
+    the 4 ``REYN_*`` names). This function instead builds the SAME
+    :class:`~reyn.hooks.shell_runner.HookProcessContext`
+    :meth:`~reyn.runtime.session.Session._build_hook_process_context`
+    builds for a live session, via the SAME shared primitive
     (:func:`~reyn.runtime.workspace_paths.resolve_base_dir_candidate`) —
     with no session-layer override (doctor has no session), only the
     agent-profile layer, mirroring what a session with no per-session
-    ``config.yaml`` override would resolve to anyway. Reads
+    ``config.yaml`` override would resolve to anyway — then prints
+    ``context.as_env()`` verbatim, so a 5th key added to that method
+    shows up here with zero further changes to this file. Reads
     ``.reyn/agents/<name>/profile.yaml`` directly for each configured
     agent — the SAME enumeration ``_merged_hook_registry`` above already
     uses for its own per-agent hook layer."""
+    from reyn.hooks.shell_runner import HookProcessContext
     from reyn.runtime.services.recovery import default_snapshot_path
     from reyn.runtime.workspace_paths import resolve_base_dir_candidate
 
@@ -422,11 +434,15 @@ def _print_hook_env_snapshot(resolved_root: Path) -> None:
         agent_state_dir = default_snapshot_path(
             agent_name, root=resolved_root / ".reyn",
         ).parent
+        context = HookProcessContext(
+            project_dir=resolved_root,
+            agent_base_dir=agent_base_dir,
+            agent_name=agent_name,
+            agent_state_dir=agent_state_dir,
+        )
         print(f"  {agent_name}:")
-        print(f"    REYN_PROJECT_DIR={resolved_root}")
-        print(f"    REYN_AGENT_BASE_DIR={agent_base_dir}")
-        print(f"    REYN_AGENT_NAME={agent_name}")
-        print(f"    REYN_AGENT_STATE_DIR={agent_state_dir}")
+        for key, value in context.as_env().items():
+            print(f"    {key}={value}")
     if not found_any:
         print("  no agents configured yet (.reyn/agents/ is empty)")
 
