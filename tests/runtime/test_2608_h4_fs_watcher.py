@@ -40,8 +40,10 @@ import pytest
 from reyn.hooks.matcher import matches
 from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 from reyn.runtime.fs_watcher import FsWatcher
+from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
+from tests._support.hooks import assert_hook_trigger_signature
 
 watchdog = pytest.importorskip("watchdog", reason="fs-watch extra ('pip install reyn[fs-watch]') not installed")
 
@@ -61,10 +63,22 @@ class _Recorder:
     call site's ``(point, template_vars) = trigger.calls[N]`` shape below
     unchanged — every test in this file only ever produces one file-write
     event per assertion, so batches stay length-1 in practice, but the
-    flatten is correct for N>1 too (never silently drops an event)."""
+    flatten is correct for N>1 too (never silently drops an event).
+
+    #5527: matches ``Session._bridge_hook_trigger`` — the REAL callable
+    wired into ``FsWatcher(hook_trigger=...)`` in production (``session.
+    py``'s ``hook_trigger=self._bridge_hook_trigger``), not
+    ``HookDispatcher.dispatch_external_batch`` directly — the two have
+    different ``skipped_session_wide`` param kinds (see
+    ``assert_hook_trigger_signature``'s own docstring). Pins its own shape
+    against that real target inside ``__init__`` — once per instantiation,
+    not per test — so a future change to ``_bridge_hook_trigger`` breaks
+    every one of this file's 6 construction sites loudly (red) instead of
+    hanging."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        assert_hook_trigger_signature(self, real=Session._bridge_hook_trigger)
 
     async def __call__(
         self, point: str, payloads: list, skipped_session_wide: int = 0,
