@@ -149,7 +149,7 @@ Two sub-categories:
 - **Tier 2c — Multi-component integration (e2e)**: a single test exercises
   several modules to verify end-to-end behavior of an invariant. Uses
   real instances throughout; LLM is faked via a stub real callable —
-  `@pytest.mark.llm_stub` (see [LLMStub — the second Fake](#llmstub-the-second-fake)
+  `@pytest.mark.llm_stub` (see [LLMStub — the second Fake](#llmstub--the-second-fake)
   below), NOT via `LLMReplay` (that path is Tier 3). **The LLM is the only
   collaborator that may be faked.** Replacing a non-LLM collaborator
   (e.g. a backend, a launcher, an external service) with a fake
@@ -176,7 +176,7 @@ forbidden — see [Mock vs Fake](#mock-vs-fake) below.**
 Note on terminology: a Tier 3 test specifically uses `LLMReplay` (recorded
 fixture replay against the real `litellm` API surface). End-to-end
 integration tests that fake the LLM via a simpler stub callable
-(`@pytest.mark.llm_stub` — see [LLMStub — the second Fake](#llmstub-the-second-fake)
+(`@pytest.mark.llm_stub` — see [LLMStub — the second Fake](#llmstub--the-second-fake)
 below) belong in **Tier 2c** above, not Tier 3.
 
 #### Tier 3a — Single-call replay (current scope)
@@ -466,7 +466,7 @@ in (the Tier is a consequence of that choice, not the criterion for making
 it): if the model's own output is the subject under test, use `LLMReplay`;
 if the subject is loop/wiring behavior around a turn and the test does not
 assert on the completion's own content, use `LLMStub` (see
-[LLMStub — the second Fake](#llmstub-the-second-fake) below). **A test that
+[LLMStub — the second Fake](#llmstub--the-second-fake) below). **A test that
 asserts on the completion's own content must not use `LLMStub`** — the same
 claim `llm_stub.py`'s own module docstring makes ("must not assert on the
 completion's own content ... not Tier 3").

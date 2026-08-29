@@ -54,7 +54,7 @@ Reyn は**自律性よりも予測可能性**を重視します（プロジェ�
 
 - **Tier 2c — マルチコンポーネント統合 (e2e)**: 1 つのテストが複数モジュー
   ルを exercise して end-to-end 不変条件を verify する。 全工程 real 実装、
-  LLM のみ stub callable で fake — `@pytest.mark.llm_stub`（[LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)参照）、
+  LLM のみ stub callable で fake — `@pytest.mark.llm_stub`（[LLMStub — 2 本目の Fake](#llmstub--2-本目の-fake)参照）、
   `LLMReplay` 経路は使わない（そちらは Tier 3）。 例:
   - 「crash mid-skill → restart → resume → completes」 (`test_resume_e2e.py`)
   - 「schema mismatch → CLI が `--reset` 案内付きで clean exit」
@@ -70,7 +70,7 @@ Reyn は**自律性よりも予測可能性**を重視します（プロジェ�
 
 **固定対象**: `litellm.acompletion` 境界で `LLMReplay` Fake を通じて実行される、LLM 依存の OS パスの振る舞い。**Mock は禁止 — [Mock vs Fake](#mock-vs-fake)参照。**
 
-用語の note: Tier 3 テストは特に `LLMReplay` (録画 fixture を real `litellm` API surface に対して replay) を使う test を指す。 stub callable で LLM を fake する end-to-end 統合テスト（`@pytest.mark.llm_stub` — [LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)参照）は **Tier 2c** に属する (Tier 3 ではない)。
+用語の note: Tier 3 テストは特に `LLMReplay` (録画 fixture を real `litellm` API surface に対して replay) を使う test を指す。 stub callable で LLM を fake する end-to-end 統合テスト（`@pytest.mark.llm_stub` — [LLMStub — 2 本目の Fake](#llmstub--2-本目の-fake)参照）は **Tier 2c** に属する (Tier 3 ではない)。
 
 #### Tier 3a — シングルコール・リプレイ（現在のスコープ）
 
@@ -164,7 +164,7 @@ LLM 依存テストは必ず Fake を使う必要があります。Mock は決�
 Tier に落ちるかでは決まりません（Tier は選択の結果であって、選択の基準
 ではありません）: model 自身の出力がテスト対象なら `LLMReplay` を使う。
 主題が turn 周りの loop/wiring の振る舞いで、completion 自身の内容に
-assert しないなら `LLMStub` を使う（[LLMStub — 2 本目の Fake](#llmstub-2-本目の-fake)
+assert しないなら `LLMStub` を使う（[LLMStub — 2 本目の Fake](#llmstub--2-本目の-fake)
 参照）。**completion 自身の内容に assert する test は `LLMStub` を使っては
 いけません** — `llm_stub.py` 自身の module docstring が主張する内容
 （"must not assert on the completion's own content … not Tier 3"）と同じ
