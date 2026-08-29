@@ -580,7 +580,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "file, so it is invisible to #3662's MissingFixture safety net and to "
         "#5283's unconsumed-entry check. A test using this marker MUST NOT "
         "declare Tier 3 (Tier 3 = the model's output IS the subject under "
-        "test — see test_tier_audit.py's enforcement of this pairing).",
+        "test — see test_tier_audit.py's enforcement of this pairing). "
+        "#5450: optional control='gated' kwarg (reyn.dev.testing.llm_stub."
+        "LLMStubControl's closed vocabulary) hangs the call at the real LLM "
+        "boundary until the test sets the fixture's .release event — see "
+        "LLMStub's own module docstring.",
     )
     config.addinivalue_line(
         "markers",
@@ -742,7 +746,12 @@ def _llm_stub(request: pytest.FixtureRequest):
 
     from reyn.dev.testing.llm_stub import LLMStub
 
-    stub = LLMStub()
+    # #5450: control= is an optional marker kwarg — @pytest.mark.llm_stub
+    # (no args) keeps #5103's original immediate-return behavior;
+    # @pytest.mark.llm_stub(control="gated") hangs at the real LLM
+    # boundary — see LLMStub's own module docstring.
+    control = marker.kwargs.get("control")
+    stub = LLMStub(control=control)
     stub.install()
     try:
         yield stub

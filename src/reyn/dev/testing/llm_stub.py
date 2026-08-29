@@ -40,10 +40,60 @@ Design (architect ruling, #5103):
 Only ``litellm.acompletion`` is patched (not ``aembedding``) — the turns
 this stub exists for reach the completion boundary, never the embedding
 one; a test that needs both should use ``@replay`` instead.
+
+#5450 ``control=``: a SECOND, orthogonal axis (architect design, #5450)
+for tests whose subject is CONTROLLING the LLM call, not merely avoiding
+it — "呼ばれたら止まり、外から明示的に進められる" (called-then-hung,
+externally released; e.g. #2242's hard-cancel-mid-generation tests).
+Before this, those tests replaced ``Session._loop_driver.run_turn``
+itself with a private controllable-hang closure — the SAME "手が届かな
+かった" gap #5103 closed for the observation-only files: the test's OWN
+docstring (``test_2242_hard_cancel.py``) already said the real
+suspension point is "inside its ``litellm.acompletion`` await", so the
+private replacement was standing in for a boundary this stub already
+patches. ``control="gated"`` moves the hang/release to the REAL
+boundary, so the real ``RouterLoopDriver``/``RouterLoop``/driver runs
+for real (#5103's whole point), while still giving the test the same
+external-release handle (``call_started``/``release``, the SAME 2
+``asyncio.Event``s the original private helper returned).
+
+Architect's design also specified a SECOND mode, ``"gated_swallow_
+cancel"`` — a hang whose ``CancelledError`` is caught and swallowed,
+simulating a third party (litellm/httpx) absorbing a cancellation
+instead of propagating it, to test whether reyn's own ``finally``
+still resets state under that hypothetical. NOT implemented: architect's
+own explicit precondition for keeping it ("実装の1手目に、litellm/httpx
+が実際に握り潰し得るかを実行で確かめてください — 起こし得ないなら B は
+保存でなく削除") was checked for real, and came back negative — see
+#5450's PR for the executed evidence. A mode with a real implementation
+but zero reachable production scenario, and (once its one committed test
+is deleted for the same reason) zero test consumer either, is exactly
+the #4866/#5442 "public surface nobody calls" shape this codebase has
+repeatedly closed rather than ratified — so it was never added, not
+added-then-removed.
+
+Unlimited await on ``call_started`` (no ``sleep``/``timeout``/``range(N)``,
+testing-policy time discipline) is how a test proves the real loop
+actually reached the LLM boundary — joined with #5454's ``turn_started``
+audit-event for "did the REAL driver run" (a stub being called is not,
+by itself, proof of that — see #5450's own witness ②).
 """
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from typing import Any, Literal
+
+#: #5450: the closed vocabulary for `control=` — mirrors #5382's own
+#: closed `cause` vocabulary. A value outside this set raises at
+#: LLMStub construction time (fail fast, never a silently-ignored typo).
+#: Currently one member — see the module docstring for why
+#: "gated_swallow_cancel" was designed but never added.
+LLMStubControl = Literal["gated"]
+_CONTROL_MODES: "frozenset[str]" = frozenset({"gated"})
+
+
+class UnknownLLMStubControlError(ValueError):
+    """Raised when ``control=`` is not one of :data:`_CONTROL_MODES`."""
 
 
 class LLMStub:
@@ -57,10 +107,26 @@ class LLMStub:
             ...
         finally:
             stub.restore()
+
+    #5450: pass ``control="gated"`` (see module docstring) to hang the
+    call at the real LLM boundary until the test sets ``stub.release``;
+    ``stub.call_started`` fires the instant the call begins.
+    ``control=None`` (default) keeps #5103's original immediate-return
+    behavior unchanged.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, control: "LLMStubControl | None" = None) -> None:
         self._original_acompletion: Any = None
+        if control is not None and control not in _CONTROL_MODES:
+            raise UnknownLLMStubControlError(
+                f"control={control!r} is not one of {sorted(_CONTROL_MODES)!r}",
+            )
+        self.control = control
+        # #5450: created unconditionally (cheap) so a test can read
+        # `.call_started`/`.release` even before `install()` runs — mirrors
+        # the original private helper's own return-both-events shape.
+        self.call_started: "asyncio.Event" = asyncio.Event()
+        self.release: "asyncio.Event" = asyncio.Event()
 
     def install(self) -> None:
         import litellm
@@ -81,6 +147,15 @@ class LLMStub:
         # docstring). Kept as named params (not *args, **_) because litellm's
         # real callers invoke acompletion with keyword arguments.
         del messages, kwargs
+        if self.control == "gated":
+            # #5450: fire call_started the instant the call begins, then
+            # suspend on release — simulating the real await
+            # litellm.acompletion would be suspended inside. A
+            # CancelledError delivered here propagates normally (reyn's
+            # own code never swallows one here — see module docstring on
+            # why "gated_swallow_cancel" was never added).
+            self.call_started.set()
+            await self.release.wait()
         import litellm
 
         # #5103 TESTS-READ: finish_reason/tool_calls are set EXPLICITLY here
