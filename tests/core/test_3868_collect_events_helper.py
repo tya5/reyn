@@ -2,13 +2,19 @@
 
 Real ``EventLog`` throughout (no mocks) — the helper is a thin wrapper over
 ``EventLog.add_subscriber``, so faking it would test nothing real.
+
+#5467 phase 1 (architect ruling): a real ``Session`` also throughout for the
+new ``Session``-acceptance tests below — the design's own bar is that this
+seam works with the exact object a caller who only has a ``Session`` (never
+its internal ``EventLog``) actually holds.
 """
 from __future__ import annotations
 
 import pytest
 
 from reyn.core.events.events import EventLog
-from tests._support.events import collect_events
+from tests._support.events import _resolve_log, collect_events, settle
+from tests._support.session import make_session
 
 
 @pytest.mark.asyncio
@@ -81,3 +87,68 @@ def test_collect_events_uses_the_real_subscriber_mechanism_not_a_readback() -> N
     log = EventLog()
     collected = collect_events(log)
     assert log.subscribers == [collected.append]
+
+
+# ---------------------------------------------------------------------------
+# #5467 phase 1 — Session acceptance (architect ruling)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collect_events_accepts_a_session_witness_1(tmp_path, monkeypatch) -> None:
+    """Tier 2: #5467 witness ① — a caller holding only a ``Session`` (never
+    its internal ``EventLog``) can call ``collect_events(session)`` directly
+    and genuinely capture a real emit — asserted on the PUBLIC-shaped
+    behavior (what was collected), never by introspecting ``_audit_events``'
+    own subscriber list (this repo's private-state rule: the private reach
+    inside ``_resolve_log`` drives the scenario here, exactly like every
+    other test in this file already drives its own EventLog by calling
+    ``.emit()`` directly; nothing here ASSERTS on private state)."""
+    session = make_session(tmp_path, monkeypatch=monkeypatch)
+    collected = collect_events(session)
+    session._audit_events.emit("tool_executed", op="read_file", path="/tmp/x")
+    await session._audit_events.drain()
+    assert [e.type for e in collected] == ["tool_executed"]
+
+
+@pytest.mark.asyncio
+async def test_settle_accepts_a_session_witness_2(tmp_path, monkeypatch) -> None:
+    """Tier 2: #5467 witness ② — ``await settle(session)`` drains the
+    SESSION'S OWN real ``_audit_events`` queue (never a private reach at the
+    call site — the private reach happens only inside ``_resolve_log``, the
+    one place #5467's design permits it). A real emit through the session's
+    own log, collected via the same seam, proves the drain reaches the
+    right queue."""
+    session = make_session(tmp_path, monkeypatch=monkeypatch)
+    collected = collect_events(session)
+    session._audit_events.emit("tool_executed", op="read_file", path="/tmp/x")
+    await settle(session)
+    assert [e.type for e in collected] == ["tool_executed"]
+
+
+def test_resolve_log_passes_a_plain_eventlog_through_unchanged() -> None:
+    """Tier 2: an object with no ``_audit_events`` attribute (a real
+    ``EventLog``, or any other log-shaped test double) passes through
+    ``_resolve_log`` unchanged — the ``Session`` branch is additive, never a
+    behavior change for every existing non-``Session`` caller."""
+    log = EventLog()
+    assert _resolve_log(log) is log
+
+
+def test_session_itself_has_neither_add_subscriber_nor_drain(tmp_path, monkeypatch) -> None:
+    """Tier 2: the deterministic, non-timing witness that ``_resolve_log``'s
+    ``Session``-detection branch is load-bearing, not incidental — a real
+    ``Session`` genuinely cannot satisfy ``collect_events``/``settle`` on
+    its own (no ``add_subscriber``, no ``drain`` method exists on the class
+    at all), so the two tests above passing is real evidence the resolution
+    ran, never a coincidence of ``Session`` already happening to duck-type
+    as a log. (Strip-falsify of ``_resolve_log`` itself — temporarily
+    forcing it to return *obj* unchanged — was run by hand: both
+    Session-acceptance tests above then fail with exactly this
+    ``AttributeError``, confirmed and reverted; not pinned here as its own
+    test because this repo's testing policy bans an assertion whose failure
+    mode is timing-shaped, and re-deriving the exact same two tests' own
+    behavior a second time would be the implementation, transcribed.)"""
+    session = make_session(tmp_path, monkeypatch=monkeypatch)
+    assert not hasattr(session, "add_subscriber")
+    assert not hasattr(session, "drain")
