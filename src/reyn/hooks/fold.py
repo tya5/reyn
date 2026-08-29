@@ -74,6 +74,7 @@ proof above.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable, Protocol, TypeVar
 
 T = TypeVar("T")
@@ -136,6 +137,69 @@ async def drain_folded(
         for _ in range(n_more):
             batch.append(queue.get_nowait())
         await dispatch_batch(batch)
+
+
+def observe_drain_task_death(
+    task: "asyncio.Task[None]", *, emit_event: "Callable[..., Any] | None", label: str,
+) -> None:
+    """#5521 (architect ruling, on this issue's own thread) — wire via
+    ``task.add_done_callback(functools.partial(observe_drain_task_death,
+    emit_event=..., label=...))`` right where a caller creates the task
+    that runs :func:`drain_folded` forever (``asyncio.create_task``/
+    ``asyncio.ensure_future``).
+
+    This does NOT swallow anything and does NOT add a try/except anywhere
+    — :func:`drain_folded`'s own contract above ("this loop has NO
+    try/except of its own … a dispatch_batch that raises WOULD propagate
+    out and kill this while True loop with a single raise") is completely
+    unchanged. A ``done_callback`` fires strictly AFTER the task has
+    already ended, one way or another — it OBSERVES a death that already
+    happened, it cannot prevent or convert one. ``task.exception()`` on an
+    already-done, non-cancelled task returns the exception (never raises
+    it) — that is what makes this an observation, not a second isolation
+    layer of the #5516-arc-#5527 kind (this module deliberately does not
+    grow its own ``except Exception`` here).
+
+    ``task.cancelled()`` is checked FIRST and returns early — a cancelled
+    task is the NORMAL shutdown shape every one of this repo's 3 real
+    callers uses (``stop()``/``aclose()``: ``task.cancel()`` then await
+    with ``CancelledError`` suppressed), not a death. Calling
+    ``task.exception()`` on a cancelled task raises ``CancelledError``
+    itself, so this order is load-bearing, not incidental.
+
+    Real incident this closes (#5516 arc, #5521): the 3 current callers
+    each wrap their own ``dispatch_batch`` callback body in its own
+    ``try``/``except`` (see :func:`drain_folded`'s own docstring) — but
+    that convention is enforced NOWHERE. A future 4th caller that drops
+    that inner try/except would have its own callback's raise propagate
+    all the way up through this loop and kill the drain task PERMANENTLY
+    (the hook point it served never fires again) with — before this —
+    zero record anywhere an operator or ``doctor`` could read. #5356's
+    own ruling on the SAME "silent, persistent" shape
+    (``hooks_layer_rejected``) applies here directly: a log line alone is
+    invisible with the shipped config, and this failure is exactly the
+    kind #5356 was written for — permanent, not one-shot (contrast the
+    #5527 test-double-signature drift this issue was originally bundled
+    with: THAT failure is caught immediately, on the very next dispatch
+    attempt, by the callback's own surviving try/except, and is already
+    a WARNING-level log line at the shipped default — see architect's own
+    finding on this issue's thread for why the two get the OPPOSITE
+    visibility treatment).
+
+    ``emit_event`` is ``None``-tolerant (a caller/test double that hasn't
+    wired an audit-emit sink degrades to a silent no-op here, same
+    posture ``FsWatcher``'s own ``self._emit_event`` already has) —
+    OBSERVATION is best-effort by design; it must never itself become a
+    reason the drain task's real death is masked or delayed."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is None or emit_event is None:
+        return
+    emit_event(
+        "hook_drain_task_died", label=label,
+        reason=f"{type(exc).__name__}: {exc}",
+    )
 
 
 __all__ = ["drain_folded"]

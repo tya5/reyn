@@ -38,6 +38,7 @@ isolation).
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import weakref
 from typing import Any
@@ -133,6 +134,23 @@ class _SessionFireBridge:
                     "AgentRegistry.shutdown()'s drain (see tracked_tasks.py)."
                 )
                 self._drain_task = asyncio.create_task(self._drain())
+            # #5521 (architect ruling): observe — never swallow — this
+            # drain task's own eventual death, for EITHER branch above.
+            # ``self._session`` is typed Any (a test double may not carry
+            # ``_audit_events``) — same getattr-guarded posture as
+            # ``_background_tasks`` a few lines above, not a new idiom.
+            # See ingress.py's identical wiring / observe_drain_task_death's
+            # own docstring for the full contract.
+            from reyn.hooks.fold import observe_drain_task_death
+            audit_events = getattr(self._session, "_audit_events", None)
+            assert self._drain_task is not None  # just assigned by either branch above
+            self._drain_task.add_done_callback(
+                functools.partial(
+                    observe_drain_task_death,
+                    emit_event=(audit_events.emit if audit_events is not None else None),
+                    label="_SessionFireBridge",
+                )
+            )
         try:
             self._queue.put_nowait((point, template_vars))
         except asyncio.QueueFull:

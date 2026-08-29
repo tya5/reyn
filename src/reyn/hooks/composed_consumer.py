@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
+from typing import Any, Callable
 
 from reyn.hooks.bus import HookBus
 from reyn.hooks.composer import COMPOSED_KIND_PREFIX
@@ -55,9 +57,17 @@ class ComposedEventConsumer:
     :meth:`stop` at session teardown for a clean cancellation, mirroring
     ``reyn.hooks.composer.ComposerRegistry``'s start/stop shape."""
 
-    def __init__(self, *, bus: HookBus, dispatcher: HookDispatcher) -> None:
+    def __init__(
+        self, *, bus: HookBus, dispatcher: HookDispatcher,
+        emit_event: "Callable[..., Any] | None" = None,
+    ) -> None:
         self._bus = bus
         self._dispatcher = dispatcher
+        # #5521: audit-emit sink for this consumer's own drain-task-death
+        # observation (see :meth:`start`) — same None-tolerant,
+        # deferred-lambda-over-session pattern this class's own caller
+        # already uses for every sibling construction in session.py.
+        self._emit_event = emit_event
         self._task: "asyncio.Task | None" = None
 
     def start(self) -> None:
@@ -66,6 +76,16 @@ class ComposedEventConsumer:
         if self._task is not None:
             return
         self._task = asyncio.ensure_future(self._run())
+        # #5521 (architect ruling): observe — never swallow — this task's
+        # own eventual death. See ingress.py's own identical wiring /
+        # observe_drain_task_death's own docstring for the full contract.
+        from reyn.hooks.fold import observe_drain_task_death
+        self._task.add_done_callback(
+            functools.partial(
+                observe_drain_task_death,
+                emit_event=self._emit_event, label="ComposedEventConsumer",
+            )
+        )
 
     async def stop(self) -> None:
         """Cancel the background task and await its clean exit. Idempotent —

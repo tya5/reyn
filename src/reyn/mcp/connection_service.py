@@ -248,6 +248,10 @@ class MCPConnectionService:
         # duplicated.
         self._mcp_ingress_adapter = McpIngressAdapter(
             hook_trigger=hook_trigger, maxsize=_HOOK_EVENT_QUEUE_MAXSIZE,
+            # #5521: reuse this service's OWN emit_sink (above) for the
+            # ingress bridge's drain-task-death observation — the same
+            # None-tolerant sink, not a second one.
+            emit_event=emit_sink,
         )
         self._clients: dict[str, MCPClient] = {}
         # #2597 slice ②b: runtime-only, in-memory, NO WAL (Q4 — see module docstring).
