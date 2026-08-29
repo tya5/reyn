@@ -46,10 +46,13 @@ The detector is `sys.executable` appearing as a token in the file's text,
 which is the SAME needle #5028's own population census used throughout the
 issue, for continuity. It over-counts: a file spawning `sys.executable -c
 "print('ok')"` — code that never imports `reyn` — matches the population but
-gains nothing from the fixture. It also under-counts: a subprocess spawn
-that imports `reyn` through some OTHER interpreter reference would not
-match. Neither is fixed here; per-file "does this specific spawn need
-pinning" is exactly the ~30-years-old boundary a plain grep cannot draw
+gains nothing from the fixture. It also under-counts: a subprocess spawn wrapped behind a
+helper function (spawning `sys.executable` inside a `_support/` module, not
+as a literal token in the test file itself) would not match — this is the
+DANGEROUS direction, since it hides a real gap behind a green gate rather
+than merely flagging an irrelevant one. Neither is fixed here; per-file
+"does this specific spawn need pinning" is exactly the ~30-years-old
+boundary a plain grep cannot draw
 (#4006's own lesson, cited in `check_tests_path_literal_reference.py`), and
 demanding that judgment be resolved BEFORE adoption would defer the gate
 indefinitely — same reasoning as that script's own ratchet, and
@@ -91,14 +94,33 @@ def _iter_tests_py(root: Path = _ROOT) -> "list[Path]":
     """Every TRACKED `tests/**/*.py` file — `git ls-files`, not a directory
     walk (see `check_tests_path_literal_reference.py`'s module docstring for
     why: zero exclusion-list maintenance, a gitignored directory is simply
-    never in the output)."""
+    never in the output).
+
+    Guards the POPULATION here, not `gap_files()`'s offender count (#5482
+    lead-coder/architect review): every file adopting the fixture legitimately
+    drives the offender count to zero — that is the gate's own goal state and
+    must stay green. The scanned population reaching zero is a different
+    claim entirely (wrong `cwd`, a missing `.git`, `git ls-files` itself
+    failing silently in some future refactor) and can never be true for a
+    real checkout of this repo — a guard placed on the offender count instead
+    could not tell "everyone migrated" from "the scan saw nothing", which is
+    exactly the empty-collection shape `docs/deep-dives/contributing/
+    testing.md` names as wearing green's colour."""
     proc = subprocess.run(
         ["git", "ls-files", "tests"], cwd=root, capture_output=True, text=True, check=True,
     )
-    return [
+    files = [
         root / line for line in proc.stdout.splitlines()
         if line.endswith(".py")
     ]
+    if not files:
+        raise RuntimeError(
+            f"git ls-files tests returned zero .py files under {root} — this "
+            "gate cannot distinguish that from every tests/ file having been "
+            "deleted, so it refuses to report a (vacuously) clean gap rather "
+            "than risk reading an empty scan as 'nothing to fix'."
+        )
+    return files
 
 
 def gap_files(root: Path = _ROOT) -> "set[str]":

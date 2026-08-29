@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import subprocess
 
+import pytest
+
 from scripts.check_subprocess_reyn_pin import (
     _BASELINE_PATH,
     _ROOT,
@@ -35,6 +37,14 @@ from scripts.check_subprocess_reyn_pin import (
 # #4068).
 _SPAWN = "sys" + ".executable"
 _DECLARED = "out_of_process_reyn"
+
+# Illustrative `tests/...py`-shaped literals below (none are real files) —
+# same `_T` split `test_check_tests_path_literal_reference_4065.py` uses for
+# its own fixture literals: written contiguously, each would itself match
+# THAT gate's `tests/[\w][\w./-]*\.py` regex and grow ITS baseline every
+# time a test is added here (#5482 lead-coder review — reproduced live: 4
+# new, unexplained (file, literal) pairs from this file's own examples).
+_T = "tests" + "/"
 
 
 def _init_repo(tmp_path) -> None:
@@ -54,7 +64,7 @@ def test_a_spawn_without_the_fixture_is_in_the_gap(tmp_path) -> None:
         f"proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n", encoding="utf-8",
     )
     _init_repo(tmp_path)
-    assert gap_files(tmp_path) == {"tests/test_a.py"}
+    assert gap_files(tmp_path) == {_T + "test_a.py"}
 
 
 def test_a_spawn_declaring_out_of_process_reyn_is_not_in_the_gap(tmp_path) -> None:
@@ -99,23 +109,47 @@ def test_a_file_with_no_spawn_at_all_is_not_in_the_gap(tmp_path) -> None:
 
 def test_an_untracked_file_is_not_scanned(tmp_path) -> None:
     """Tier 1: the population is `git ls-files tests`, not a directory
-    walk — an untracked file must not contribute to the gap."""
+    walk — an untracked file must not contribute to the gap. A tracked
+    control file (`test_control.py`, no spawn) keeps the scanned population
+    non-empty, same as any real checkout — the untracked file is what this
+    test is actually about, not an incidentally-empty population."""
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
+    (tests_dir / "test_control.py").write_text("assert True\n", encoding="utf-8")
     (tests_dir / "test_a.py").write_text(
         f"proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n", encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", _T + "test_control.py"], cwd=tmp_path, check=True)
     # test_a.py is never `git add`-ed — untracked.
     assert gap_files(tmp_path) == set()
+
+
+def test_an_empty_scanned_population_raises_rather_than_reporting_clean(tmp_path) -> None:
+    """Tier 1: #5482 architect review — the guard belongs on the POPULATION
+    (`_iter_tests_py`), not on `gap_files`'s offender count. Every file
+    legitimately migrating drives offenders to zero (the gate's own goal
+    state, must stay green); a `git ls-files tests` that itself returns
+    nothing (wrong cwd, missing .git, a future refactor breaking the
+    subprocess call) is a different claim and must be LOUD, not read as
+    "nothing to fix" — the empty-collection shape testing.md names as
+    wearing green's colour."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "README.md").write_text("no .py files tracked here\n", encoding="utf-8")
+    _init_repo(tmp_path)  # real git repo, `git ls-files tests` succeeds — with zero .py hits
+    with pytest.raises(RuntimeError, match="zero .py files"):
+        gap_files(tmp_path)
 
 
 def test_a_non_python_tracked_file_is_not_scanned(tmp_path) -> None:
     """Tier 1: scope is `.py` files under `tests/` — a tracked non-Python
     file (a fixture data file, a README) mentioning `sys.executable` in
-    prose must not contribute."""
+    prose must not contribute. A tracked control `.py` file keeps the
+    scanned population non-empty, same as any real checkout."""
     tests_dir = tmp_path / "tests"
     tests_dir.mkdir()
+    (tests_dir / "test_control.py").write_text("assert True\n", encoding="utf-8")
     (tests_dir / "README.md").write_text(f"uses {_SPAWN} internally\n", encoding="utf-8")
     _init_repo(tmp_path)
     assert gap_files(tmp_path) == set()
@@ -126,17 +160,17 @@ def test_a_non_python_tracked_file_is_not_scanned(tmp_path) -> None:
 
 def test_a_file_in_the_baseline_is_not_new() -> None:
     """Tier 1: grandfathered debt does not fail the gate."""
-    baseline = {"tests/core/test_x.py"}
-    measured = {"tests/core/test_x.py"}
+    baseline = {_T + "core/test_x.py"}
+    measured = {_T + "core/test_x.py"}
     assert new_files(measured, baseline) == set()
 
 
 def test_a_file_absent_from_the_baseline_is_new() -> None:
     """Tier 1: the load-bearing case — a NEW file entering the gap after
     the baseline was written must be caught."""
-    baseline = {"tests/core/test_x.py"}
-    measured = {"tests/core/test_x.py", "tests/core/test_new_gap.py"}
-    assert new_files(measured, baseline) == {"tests/core/test_new_gap.py"}
+    baseline = {_T + "core/test_x.py"}
+    measured = {_T + "core/test_x.py", _T + "core/test_new_gap.py"}
+    assert new_files(measured, baseline) == {_T + "core/test_new_gap.py"}
 
 
 def test_a_file_leaving_the_measured_set_is_not_reported() -> None:
@@ -144,8 +178,8 @@ def test_a_file_leaving_the_measured_set_is_not_reported() -> None:
     silently drops out — nothing has to be edited in the baseline to let a
     fix "count", same discipline as check_tests_path_literal_reference.py's
     own ratchet."""
-    baseline = {"tests/core/test_x.py", "tests/core/test_fixed.py"}
-    measured = {"tests/core/test_x.py"}
+    baseline = {_T + "core/test_x.py", _T + "core/test_fixed.py"}
+    measured = {_T + "core/test_x.py"}
     assert new_files(measured, baseline) == set()
 
 
