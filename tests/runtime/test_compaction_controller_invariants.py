@@ -28,6 +28,7 @@ from reyn.core.events.events import EventLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.services.compaction.engine import (
+    SUMMARY_MESSAGE_ROLE,
     ChatSummary,
     CompactionEngine,
     ComputedBudgets,
@@ -59,14 +60,20 @@ def _emit_compaction_started(
     body, so this test file's own ``compaction_started`` witnesses stay
     meaningful (the SAME shape production now emits, not a shape this file
     invented independently that could silently drift from it)."""
+    # #5531: new_turn_count/had_previous mirror CompactionEngine.compact()'s
+    # own derivation — a "summary" element (at most one) is not a "new
+    # turn" being summarised for the first time.
+    _summary_messages = [
+        m for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
+    ]
     events.emit(
         "compaction_started",
-        new_turn_count=len(input_chunk.new_turns),
+        new_turn_count=len(input_chunk.messages) - len(_summary_messages),
         covers_through_seq=covers_through if isinstance(covers_through, int) else None,
         covers_through_unavailable_reason=(
             None if isinstance(covers_through, int) else covers_through.value
         ),
-        had_previous=input_chunk.previous_summary is not None,
+        had_previous=bool(_summary_messages),
     )
 
 
@@ -102,7 +109,7 @@ class _SucceedingEngine(CompactionEngine):
         self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
     ) -> ChatSummary:
         _emit_compaction_started(self._events, input_chunk, covers_through)
-        seqs = [int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)]
+        seqs = [int(t.get("seq", 0)) for t in input_chunk.messages if isinstance(t, dict)]
         return ChatSummary(topic_arc="stub", covers_through_seq=max(seqs) if seqs else 0)
 
 

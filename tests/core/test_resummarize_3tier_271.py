@@ -65,8 +65,7 @@ def _run(monkeypatch, engine, collected, *, compaction_arc: str, resummarize_arc
 
     monkeypatch.setattr("litellm.acompletion", _scripted)
     chunk = HistoryChunkToCompact(
-        previous_summary=None,
-        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        messages=[{"role": "user", "text": "hi", "seq": 1}],
         section_token_caps={},
     )
     summary = asyncio.run(engine.compact(chunk, covers_through=1))

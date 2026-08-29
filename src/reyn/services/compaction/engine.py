@@ -442,9 +442,43 @@ class SeqUnavailable(enum.Enum):
 CoversThrough = Union[int, SeqUnavailable]
 
 
+#: The ``role`` value marking an element of :attr:`HistoryChunkToCompact.
+#: messages` as an already-compacted summary rather than an ordinary turn
+#: — condition⑤'s own discriminator (#5531), matching the SAME convention
+#: the persisted-history layer already uses (a ``ChatMessage.role ==
+#: "summary"`` entry in ``history.jsonl``). One vocabulary, not two.
+SUMMARY_MESSAGE_ROLE = "summary"
+
+
+def wrap_summary_as_message(summary: dict) -> dict:
+    """#5531 condition④ — a previously-compacted summary is JUST a message
+    in :attr:`HistoryChunkToCompact.messages`, distinguished only by
+    :data:`SUMMARY_MESSAGE_ROLE`. This is the ONE place that wrapping
+    happens, so every caller (the controller's tail-side path, retry_loop's
+    tail- and head-side paths) produces byte-identical shape — see
+    ``CompactionEngine.compact``'s own docstring for why the field carries
+    no separate identity beyond this ``role`` marker."""
+    return {"role": SUMMARY_MESSAGE_ROLE, **summary}
+
+
 @dataclass
 class HistoryChunkToCompact:
     """Input to the compaction engine.
+
+    #5531 (owner design dialogue, invariant: a summary represents ONE
+    continuous span, placed exactly where that span sat in time):
+    ``messages`` is a SINGLE ordered list, oldest-first — the true
+    chronological sequence to compact. An already-compacted summary is
+    just one element of it (condition④), marked with
+    :data:`SUMMARY_MESSAGE_ROLE`, never assumed to sit at either end —
+    replaces the OLD ``previous_summary``/``new_turns`` two-field shape,
+    which could only express "previous_summary, then new_turns" (always
+    append) and had no way to represent content added from the OLDER
+    side (retry_loop's own head-shrink path, #5531 condition C's real
+    consequence — see that issue's own investigation comment for the
+    trace). Build via :func:`wrap_summary_as_message` for the summary
+    element, never a hand-rolled dict, so every caller uses the same
+    marker.
 
     #4389: ``section_token_caps`` is a HINT to the LLM only — it is
     serialised straight into the compaction prompt's user content (see
@@ -460,9 +494,8 @@ class HistoryChunkToCompact:
     call. Confirmed live (real LLM): setting ``topic_arc`` here to ~40 tokens
     had zero effect on the actual trim.
     """
-    new_turns: list[dict]                          # [{role, text, seq, ...}]
-    section_token_caps: dict                       # {topic_arc, decisions, ...} — LLM hint only, see docstring above
-    previous_summary: dict | None = None           # prior ChatSummary or None
+    messages: list[dict]                            # ordered, oldest-first: turns + at most one role=="summary" element
+    section_token_caps: dict                        # {topic_arc, decisions, ...} — LLM hint only, see docstring above
 
 
 @dataclass
@@ -1575,7 +1608,14 @@ class CompactionEngine:
         still sees a bare, unexplained ``null`` on the retry_loop path;
         always check ``covers_through_unavailable_reason`` alongside it.
         """
-        new_turn_count = len(input_chunk.new_turns)
+        # #5531: new_turn_count/had_previous are now derived from the
+        # single ordered `messages` list — a "summary" element (at most
+        # one, per HistoryChunkToCompact's own contract) is not a "new
+        # turn" being summarised for the first time.
+        summary_messages = [
+            m for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
+        ]
+        new_turn_count = len(input_chunk.messages) - len(summary_messages)
         covers_through_seq = covers_through if isinstance(covers_through, int) else None
         covers_through_unavailable_reason = (
             None if isinstance(covers_through, int) else covers_through.value
@@ -1585,7 +1625,7 @@ class CompactionEngine:
             new_turn_count=new_turn_count,
             covers_through_seq=covers_through_seq,
             covers_through_unavailable_reason=covers_through_unavailable_reason,
-            had_previous=input_chunk.previous_summary is not None,
+            had_previous=bool(summary_messages),
         )
 
         # No `_token_cache.clear()` here (removed, #2937): text is immutable and
@@ -1602,13 +1642,18 @@ class CompactionEngine:
         # without growing unboundedly (the memory-leak risk a naive removal
         # of the clear would have traded it for).
 
+        # #5531: `messages` (the single ordered list, condition④) is the
+        # whole wire payload — no separate previous_summary/new_turns
+        # keys to keep in sync with each other (that split is exactly
+        # what made B's append-only prompt framing unfixable per-call:
+        # 2 fields cannot express "which side did the new content come
+        # from").
         user_content = json.dumps({
-            "previous_summary": input_chunk.previous_summary,
-            "new_turns": input_chunk.new_turns,
+            "messages": input_chunk.messages,
             "section_token_caps": input_chunk.section_token_caps,
         }, ensure_ascii=False)
 
-        messages = [
+        llm_messages = [
             {"role": "system", "content": _COMPACTION_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ]
@@ -1692,7 +1737,7 @@ class CompactionEngine:
         parsed: dict = {}
         raw = ""
         response = None
-        reprompt_messages = list(messages)
+        reprompt_messages = list(llm_messages)
         validation_errors: list[str] = []
         for attempt in range(max_attempts):
             response = await self._acompletion(
@@ -1799,7 +1844,8 @@ class CompactionEngine:
         # closes the exposure at its root instead of bounding its output.
         #
         # #5498 (architect ruling, on this exact call site): for
-        # retry_loop's own caller, ``input_chunk.new_turns`` are litellm
+        # retry_loop's own caller, ``input_chunk.messages``' turn elements
+        # (#5531 renamed the field from ``new_turns``) are litellm
         # wire dicts with no ``seq`` key at all (see ``SeqUnavailable.
         # WIRE_DICTS_CARRY_NO_SEQ``'s own docstring) — every ``t.get("seq",
         # 0)`` above falls to its default, so ``covers`` is structurally
@@ -1823,8 +1869,15 @@ class CompactionEngine:
         # own summary) needs to re-derive whether the other still holds
         # before assuming this is still safe. See
         # tests/services/test_5498_retry_loop_covers_zero_never_persisted.py.
+        # #5531: derive from `messages` MINUS the (at most one) summary
+        # element — its own covers_through_seq is not a "new turn" seq,
+        # and it may sit anywhere in the ordered list now (condition④),
+        # not just at index 0.
         covers = compute_covers_through_seq(
-            [t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)]
+            [
+                t.get("seq", 0) for t in input_chunk.messages
+                if isinstance(t, dict) and t.get("role") != SUMMARY_MESSAGE_ROLE
+            ]
         )
 
         # #271 — 3-tier topic_arc bounding (replaces the lone Axis-9 blind cut):
@@ -2237,6 +2290,22 @@ async def retry_loop(
     # comment below for why re-slicing the SAME ``raw_middle`` on every
     # iteration without persisting this would just recreate the old cycle.
     _compact_attempt_len: int | None = None
+    # #5531 condition C: whether raw_middle has EVER been grown from the
+    # HEAD side (Phase 2, below) during this call — flipped True the
+    # first time that happens, never reset. Load-bearing for which order
+    # `summary` and `raw_middle`'s offered slice go into in
+    # `HistoryChunkToCompact.messages` below: Phase 1 (tail-shrink) and
+    # Phase 2 (head-shrink) are an `elif` chain, re-evaluated fresh each
+    # iteration, and NOTHING in this loop ever regrows `tail` once
+    # Phase 1 has shrunk it toward its floor — so Phase 1 firing and
+    # Phase 2 firing are never interleaved within one call: it is a
+    # ONE-WAY transition (tail-side growth, exhausted, THEN head-side
+    # growth, never back). While False, any content `raw_middle` holds
+    # is chronologically AFTER `summary` (condition③'s tail-side row);
+    # once True, the FRONT of `raw_middle` (which `_attempt_len` always
+    # offers first) is the most-recently-head-prepended, chronologically
+    # OLDEST content — BEFORE `summary` (condition③'s head-side row).
+    _raw_middle_grew_from_head = False
     # SP/new_msg never shrink (see the floor comment above) and never
     # change across iterations (both are fixed parameters) — computed once,
     # not on every floor check.
@@ -2288,9 +2357,22 @@ async def retry_loop(
                     _compact_attempt_len if _compact_attempt_len is not None
                     else len(raw_middle)
                 )
+                # #5531 conditions③④: order the single `messages` list by
+                # WHICH SIDE this offered slice came from, per the
+                # no-interleaving finding on `_raw_middle_grew_from_head`
+                # above — never a hand-decided "always append" (that was
+                # condition B's own bug).
+                _offered = raw_middle[:_attempt_len]
+                if summary is None:
+                    _summary_messages: list[dict] = []
+                else:
+                    _summary_messages = [wrap_summary_as_message(summary)]
+                if _raw_middle_grew_from_head:
+                    _messages = _offered + _summary_messages
+                else:
+                    _messages = _summary_messages + _offered
                 input_chunk = HistoryChunkToCompact(
-                    previous_summary=summary,
-                    new_turns=raw_middle[:_attempt_len],
+                    messages=_messages,
                     section_token_caps=section_caps,
                 )
                 try:
@@ -2673,6 +2755,7 @@ async def retry_loop(
             chunk = max(len(head) // 2, 1)
             raw_middle = head[-chunk:] + raw_middle
             head = head[:-chunk]
+            _raw_middle_grew_from_head = True  # #5531 condition③: flips the messages order below, permanently
         elif _last_recover_is_byte_limit:
             # #4885: token-only shrinking is exhausted (head/tail already at
             # or below their token minimums) but the triggering cause was an
@@ -2735,6 +2818,7 @@ async def retry_loop(
                 chunk = max(len(head) // 2, 1)
                 raw_middle = head[-chunk:] + raw_middle
                 head = head[:-chunk]
+                _raw_middle_grew_from_head = True  # #5531 condition③: same flag, byte-limit-override branch
             # If neither exceeds the new minimums either (head/tail were
             # ALREADY below even the halved ceiling), there is nothing left
             # to trim yet — still falls through without raising; the NEXT
