@@ -29,18 +29,26 @@ def test_spilled_and_file_present_resolves_ref() -> None:
     assert result.value == "spill/path.txt"
 
 
-def test_not_spilled_but_file_missing_resolves_lost() -> None:
-    """Tier 2: orthogonality (owner ruling, #5364: "spill/lost 判定は直
-    行性を持たせるべき") — an UNSPILLED entry's backing file can still be
-    gone (GC'd, or never persisted at all — #5364 §1.5's two reasons),
-    and that alone is enough to resolve ``lost``, independent of
-    ``spilled``."""
-    entry = HistoryContentEntry(spilled=False, content="never mattered", ref="gone/path.txt")
+def test_not_spilled_and_file_missing_still_resolves_inline() -> None:
+    """Tier 2: #5506 (architect ruling, quoted verbatim) — "分岐順序を直
+    す（``spilled`` を先に見る）。表の当該行は ``not spilled | file lost →
+    inline`` に。" This cell was never reachable through any real caller
+    (``router_history_buffer.py`` already short-circuits an unspilled
+    entry before calling ``resolve`` at all — verified, #5506: its only
+    call site hardcodes ``spilled=True`` and returns early on
+    ``not meta.get(SPILLED_META_KEY)``), which is exactly how a second,
+    wrong copy of this cell (the module's own prose said file existence
+    is IRRELEVANT for an unspilled entry; the table it used to implement
+    said the opposite) survived undetected inside code that calls itself
+    "the ONE place this 3-way branch is written." An unspilled entry's
+    content is self-sufficient regardless of whether its ``ref`` — set or
+    not — points at a file that exists."""
+    entry = HistoryContentEntry(spilled=False, content="still here", ref="gone/path.txt")
 
     result = resolve(entry, file_exists=lambda ref: False)
 
-    assert result.kind == "lost"
-    assert result.value == "gone/path.txt"
+    assert result.kind == "inline"
+    assert result.value == "still here"
 
 
 def test_spilled_and_file_missing_resolves_lost() -> None:
@@ -56,15 +64,20 @@ def test_spilled_and_file_missing_resolves_lost() -> None:
 def test_file_exists_is_called_with_this_entrys_own_ref() -> None:
     """Tier 2: the resolver checks THIS entry's ref, not some other path
     — a resolver that hardcoded or mismatched paths would still pass the
-    four branch tests above (they all resolve the SAME entry's own ref)
-    but fail this one, which uses distinguishable refs per call."""
+    spilled branch tests above (they all resolve the SAME entry's own
+    ref) but fail this one, which uses distinguishable refs per call.
+    Both entries here are spilled (#5506: an unspilled entry never calls
+    ``file_exists`` at all — see
+    ``test_not_spilled_and_file_missing_still_resolves_inline`` above —
+    so this test's own subject, THIS entry's ref reaching the callback,
+    can only be witnessed on the spilled path)."""
     seen: list[str] = []
 
     def _file_exists(ref: str) -> bool:
         seen.append(ref)
         return True
 
-    resolve(HistoryContentEntry(spilled=False, content="x", ref="entry-a.txt"), _file_exists)
+    resolve(HistoryContentEntry(spilled=True, content="x", ref="entry-a.txt"), _file_exists)
     resolve(HistoryContentEntry(spilled=True, content="y", ref="entry-b.txt"), _file_exists)
 
     assert seen == ["entry-a.txt", "entry-b.txt"]
