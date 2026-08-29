@@ -42,7 +42,7 @@ def _read_pathref_image(path: str, media_store: Any) -> bytes | None:
 
     Two cases:
       - Path inside the MediaStore's image directory (= Reyn-owned,
-        from a tool result): read via ``media_store.read_image``.
+        from a tool result): read via ``media_store.read_media``.
       - Path elsewhere (= user-attached via ``/image``): read directly
         from disk so user files don't need to be copied into the
         workspace.
@@ -56,7 +56,7 @@ def _read_pathref_image(path: str, media_store: Any) -> bytes | None:
     # Try the MediaStore first (= validates inside-media_dir + reads).
     if media_store is not None:
         try:
-            data_bytes, found = media_store.read_image(path)
+            data_bytes, found = media_store.read_media(path)
             if found:
                 return data_bytes
         except PermissionError:
@@ -86,7 +86,7 @@ def _materialise_path_ref_content(
       - str content → returned unchanged.
       - list content with no path-ref parts → returned unchanged.
       - list content with path-ref parts (= ``{"type":"image","path":...}``)
-        → each path-ref is resolved via ``media_store.read_image`` and
+        → each path-ref is resolved via ``media_store.read_media`` and
         emitted as ``{"type":"image_url","image_url":{"url":"data:..."}}``.
 
     When ``media_store`` is None OR the path resolves outside the storage

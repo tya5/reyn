@@ -279,7 +279,7 @@ class OpContext:
 
     # Issue #383 PR-C: flat-file storage for image binary + tool result
     # text dumps. Tool handlers (web_fetch / read_file / mcp) save
-    # binary via ``ctx.media_store.save_image`` and emit path-ref blocks
+    # binary via ``ctx.media_store.save_media`` and emit path-ref blocks
     # in their op result instead of inline base64. When None, handlers
     # fall back to the pre-#383 inline shape (= backward-compat for
     # direct-OpContext tests).

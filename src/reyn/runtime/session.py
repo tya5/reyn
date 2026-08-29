@@ -1052,6 +1052,17 @@ class Session:
         self._non_interactive = bool(non_interactive)
         # Media-size gate config, plumbed to spawned Agents + router host adapter (#364, see session-construction.md#multimodal-media)
         self._multimodal_config = multimodal_config
+        # #5509: register this config's operator-declared media-capability
+        # overrides into the process-shared registry
+        # reyn.llm.model_media_capability consults ahead of litellm's
+        # catalog — same call-once-at-construction-time discipline
+        # model_budget.register_max_input_overrides already uses (see that
+        # module's own docstring); conflict detection is the registry's
+        # own job, not this call site's.
+        if multimodal_config is not None and multimodal_config.model_capability_overrides:
+            from reyn.llm.model_media_capability import register_media_capability_overrides
+
+            register_media_capability_overrides(multimodal_config.model_capability_overrides)
         # #4274: stored so RouterOpContextSource can thread it into OpContext.web_fetch_config.
         self._web_fetch_config = web_fetch_config
         # #4381 PR-5: threaded into RouterHistoryBuffer (read_cap=) for the
@@ -1108,7 +1119,7 @@ class Session:
         else:
             self._media_store = None
         # Queue of /image-attached blocks drained on the next user-message turn (#366, see session-construction.md#multimodal-media)
-        self._pending_user_images: list[dict] = []
+        self._pending_user_attachments: list[dict] = []
         # Enabled skill registry snapshot for the ## Skills block; None -> omitted section (#2548 PR-A)
         self._available_skills = available_skills
         # #3100 Axis 4: same-name-across-config-tiers collision map, consulted
@@ -3680,10 +3691,10 @@ class Session:
 
         Tests and slash commands inspect this queue to verify that an
         uploaded image landed (= ``/image`` slash feeds this list). The write side stays on
-        ``self._pending_user_images`` so the lifecycle (= drain on
+        ``self._pending_user_attachments`` so the lifecycle (= drain on
         send, reset to []) is visible in the production call sites.
         """
-        return self._pending_user_images
+        return self._pending_user_attachments
 
     @property
     def journal(self) -> "SnapshotJournal":
@@ -7947,8 +7958,8 @@ class Session:
 
         # Issue #366 → #383: drain queued /image media blocks onto this turn —
         # see docs/reference/runtime/session-construction.md#multimodal-media
-        attached_media = self._pending_user_images
-        self._pending_user_images = []
+        attached_media = self._pending_user_attachments
+        self._pending_user_attachments = []
 
         if attached_media:
             content: str | list[dict] = (

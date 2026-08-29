@@ -195,7 +195,7 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             if ctx.media_store is None:
                 media_blocks.append(item)
                 continue
-            media_blocks.append(ctx.media_store.save_image(
+            media_blocks.append(ctx.media_store.save_media(
                 raw_bytes, mime_type=mime,
                 chain_id=ctx.run_id or "",
                 tool=f"mcp_{op.server}_{op.tool}",

@@ -49,13 +49,13 @@ class _FakeSession:
     _multimodal_config: MultimodalConfig | None = None
     _perm: PermissionResolver | None = None
     _intervention_bus: _FakeBus | None = None
-    _pending_user_images: list[dict] = field(default_factory=list)
+    _pending_user_attachments: list[dict] = field(default_factory=list)
     captured_outbox: list = field(default_factory=list)
 
     @property
     def pending_user_images(self) -> list[dict]:
         """Mirror of Session.pending_user_images for the fake stub."""
-        return self._pending_user_images
+        return self._pending_user_attachments
 
 
 def _ctx(session):

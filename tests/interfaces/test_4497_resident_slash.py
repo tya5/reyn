@@ -41,7 +41,7 @@ async def test_resident_output_names_the_enumerated_containers():
     await resident_cmd(ctx, "")
 
     text = ctx.transport.system_text()
-    assert "_pending_user_images" in text
+    assert "_pending_user_attachments" in text
     assert "_allowed_mcp" in text
     assert "_session_bridges" in text
     assert "_REWIND_INDEXES" in text
@@ -53,13 +53,13 @@ async def test_resident_reflects_a_real_session_write():
     shows up in the command's rendered count, not just in the
     lower-level module's own unit tests."""
     session = make_session(agent_name="resident-slash-test")
-    session._pending_user_images.extend([{"data": "x"}, {"data": "y"}, {"data": "z"}])
+    session._pending_user_attachments.extend([{"data": "x"}, {"data": "y"}, {"data": "z"}])
     ctx = slash_ctx(session)
 
     await resident_cmd(ctx, "")
 
     text = ctx.transport.system_text()
-    row = next(line for line in text.splitlines() if "_pending_user_images" in line)
+    row = next(line for line in text.splitlines() if "_pending_user_attachments" in line)
     assert "3" in row
 
 

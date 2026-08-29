@@ -17,7 +17,7 @@ from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 def _store(tmp_path: Path) -> MediaStore:
     # #5364 keyspace fix: save_tool_result now requires a real agent_name
     # (the write-time dir is agent-scoped) — every caller of this shared
-    # helper gets one, harmless for the save_image-only tests that never
+    # helper gets one, harmless for the save_media-only tests that never
     # touch the tool-result path.
     return MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent",
@@ -25,16 +25,16 @@ def _store(tmp_path: Path) -> MediaStore:
     )
 
 
-# ── save_image ─────────────────────────────────────────────────────────
+# ── save_media ─────────────────────────────────────────────────────────
 
 
 def test_save_image_writes_file_under_media_dir(tmp_path):
-    """Tier 2: save_image writes the binary under .reyn/media/ and the
+    """Tier 2: save_media writes the binary under .reyn/media/ and the
     returned path-ref's ``path`` is project-relative.
     """
     store = _store(tmp_path)
     data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 200
-    block = store.save_image(
+    block = store.save_media(
         data, mime_type="image/png", chain_id="abc123", tool="web_fetch", seq=1,
     )
 
@@ -51,7 +51,7 @@ def test_save_image_writes_file_under_media_dir(tmp_path):
 def test_save_image_filename_encodes_metadata(tmp_path):
     """Tier 2: filename has timestamp + chain_short + tool + seq + extension."""
     store = _store(tmp_path)
-    block = store.save_image(
+    block = store.save_media(
         b"x", mime_type="image/png", chain_id="abc123def", tool="web_fetch", seq=2,
     )
     name = Path(block["path"]).name
@@ -66,7 +66,7 @@ def test_save_image_unknown_mime_no_extension(tmp_path):
     can rename with their preferred tool. Storage still works.
     """
     store = _store(tmp_path)
-    block = store.save_image(
+    block = store.save_media(
         b"x", mime_type="application/octet-stream",
         chain_id="", tool="test", seq=1,
     )
@@ -78,7 +78,7 @@ def test_save_image_unknown_mime_no_extension(tmp_path):
 def test_save_image_sanitises_tool_token(tmp_path):
     """Tier 2: tool names with slashes / spaces are sanitised to safe tokens."""
     store = _store(tmp_path)
-    block = store.save_image(
+    block = store.save_media(
         b"x", mime_type="image/png", chain_id="abc",
         tool="mcp/playwright tool", seq=1,
     )
@@ -89,16 +89,16 @@ def test_save_image_sanitises_tool_token(tmp_path):
     assert "mcp_playwright_tool" in name
 
 
-# ── read_image ─────────────────────────────────────────────────────────
+# ── read_media ─────────────────────────────────────────────────────────
 
 
 def test_read_image_round_trips_saved_block(tmp_path):
     """Tier 2: save then read returns the same bytes."""
     store = _store(tmp_path)
     data = b"hello world bytes"
-    block = store.save_image(data, mime_type="image/png", tool="test", seq=1)
+    block = store.save_media(data, mime_type="image/png", tool="test", seq=1)
 
-    out, found = store.read_image(block["path"])
+    out, found = store.read_media(block["path"])
     assert found is True
     assert out == data
 
@@ -106,7 +106,7 @@ def test_read_image_round_trips_saved_block(tmp_path):
 def test_read_image_returns_not_found_for_missing(tmp_path):
     """Tier 2: missing path → (b"", False)."""
     store = _store(tmp_path)
-    out, found = store.read_image(".reyn/media/nope.png")
+    out, found = store.read_media(".reyn/media/nope.png")
     assert out == b""
     assert found is False
 
@@ -118,14 +118,14 @@ def test_read_image_rejects_path_outside_media_dir(tmp_path):
     store = _store(tmp_path)
     (tmp_path / "secret.txt").write_text("not media")
     with pytest.raises(PermissionError, match="outside media_dir"):
-        store.read_image("secret.txt")
+        store.read_media("secret.txt")
 
 
 def test_read_image_rejects_traversal_attempt(tmp_path):
     """Tier 2: a ../ traversal also rejected."""
     store = _store(tmp_path)
     with pytest.raises(PermissionError):
-        store.read_image("../etc/passwd")
+        store.read_media("../etc/passwd")
 
 
 # ── save_tool_result + read_tool_result ────────────────────────────────
@@ -184,7 +184,7 @@ def test_read_tool_result_round_trip(tmp_path):
 def test_read_tool_result_rejects_outside_dir(tmp_path):
     """Tier 2: path traversal outside BOTH tool_results_dir and
     history_content_root raises PermissionError — same defence as
-    read_image.
+    read_media.
     """
     store = _store(tmp_path)
     (tmp_path / "leak.txt").write_text("secret")
@@ -239,12 +239,12 @@ def test_read_tool_result_round_trip_for_a_pre_5383_flat_history_content_path(
 
 
 def test_image_and_tool_result_dirs_are_distinct(tmp_path):
-    """Tier 2: save_image writes to media_dir only; save_tool_result writes
+    """Tier 2: save_media writes to media_dir only; save_tool_result writes
     to history_content_root only (#5364). Each path-ref carries its own
     ``type``.
     """
     store = _store(tmp_path)
-    img_block = store.save_image(b"img", mime_type="image/png")
+    img_block = store.save_media(b"img", mime_type="image/png")
     txt_block = store.save_tool_result("txt", mime_type="text/plain")
 
     assert (tmp_path / ".reyn" / "media").is_dir()
@@ -268,7 +268,7 @@ def test_custom_dirs_via_config(tmp_path):
     store = MediaStore(
         cfg, project_root=tmp_path, agent_name="test-agent", session_id="test-session",
     )
-    img = store.save_image(b"x", mime_type="image/png")
+    img = store.save_media(b"x", mime_type="image/png")
     txt = store.save_tool_result("y", mime_type="text/plain")
     assert img["path"].startswith(".alt/img/")
     assert txt["path"].startswith(".reyn/memory/history-content/test-agent/test-session/")
@@ -326,14 +326,14 @@ def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
 
 def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
     """Tier 2: the cross-host field augmentation applies uniformly to
-    both save_image and save_tool_result — the path-ref contract is the
+    both save_media and save_tool_result — the path-ref contract is the
     same shape regardless of media type.
     """
     store = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="vision",
         session_id="test-session",
     )
-    block = store.save_image(b"\x89PNG\r\n", mime_type="image/png", chain_id="c2")
+    block = store.save_media(b"\x89PNG\r\n", mime_type="image/png", chain_id="c2")
 
     assert block["source_agent"] == "vision"
     assert block["resource_uri"].startswith("reyn-tool-result://vision/")
@@ -607,7 +607,7 @@ def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
     the URL path needs the agent segment. Without an identity, the URL
     can't be addressed; we don't fabricate a path with placeholder.
 
-    Driven via ``save_image`` (not ``save_tool_result``, #5364 keyspace
+    Driven via ``save_media`` (not ``save_tool_result``, #5364 keyspace
     fix): ``save_tool_result`` itself now refuses outright with no
     ``agent_name`` at all (a stricter, separate requirement — see
     ``test_save_tool_result_without_agent_name_refuses``); the
@@ -622,7 +622,7 @@ def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
         base_url="https://reyn.example.com",
         session_id="test-session",
     )
-    block = store.save_image(b"x", mime_type="image/png")
+    block = store.save_media(b"x", mime_type="image/png")
     assert "url" not in block
 
 
@@ -647,7 +647,7 @@ def test_base_url_trailing_slash_is_trimmed(tmp_path):
 
 def test_save_image_also_carries_url_when_base_url_set(tmp_path):
     """Tier 2: the ``url`` augmentation applies uniformly to both
-    save_image and save_tool_result — the path-ref contract is the
+    save_media and save_tool_result — the path-ref contract is the
     same shape regardless of media type. (Same intent as the
     ``resource_uri`` / ``source_agent`` parity test.)
     """
@@ -658,7 +658,7 @@ def test_save_image_also_carries_url_when_base_url_set(tmp_path):
         base_url="https://reyn.example.com",
         session_id="test-session",
     )
-    block = store.save_image(
+    block = store.save_media(
         b"\x89PNG\r\n", mime_type="image/png", chain_id="c2",
     )
 

@@ -32,14 +32,14 @@ def test_storage_stats_reports_zero_on_a_fresh_project(tmp_path):
 
 
 def test_storage_stats_counts_files_and_bytes_written_through_the_real_api(tmp_path):
-    """Tier 2: writes via save_image/save_tool_result — the real production
+    """Tier 2: writes via save_media/save_tool_result — the real production
     call paths, not hand-placed files — and confirms storage_stats reflects
     them exactly."""
     store = _store(tmp_path)
     img_a = b"\x89PNG" + b"\x00" * 100
     img_b = b"\x89PNG" + b"\x00" * 50
-    store.save_image(img_a, mime_type="image/png", chain_id="c1", tool="web_fetch", seq=1)
-    store.save_image(img_b, mime_type="image/png", chain_id="c1", tool="web_fetch", seq=2)
+    store.save_media(img_a, mime_type="image/png", chain_id="c1", tool="web_fetch", seq=1)
+    store.save_media(img_b, mime_type="image/png", chain_id="c1", tool="web_fetch", seq=2)
     store.save_tool_result("hello world", chain_id="c1", tool="exec", seq=1)
 
     stats = store.storage_stats()
@@ -54,7 +54,7 @@ def test_storage_stats_never_deletes_or_writes_anything(tmp_path):
     change the directory contents — this is a read, not a side-effecting
     scan."""
     store = _store(tmp_path)
-    store.save_image(b"x" * 10, mime_type="image/png", chain_id="c", tool="t", seq=1)
+    store.save_media(b"x" * 10, mime_type="image/png", chain_id="c", tool="t", seq=1)
     before = sorted(p.name for p in store.media_dir.iterdir())
 
     store.storage_stats()

@@ -2583,6 +2583,7 @@ multimodal:
   media_dir: .reyn/media          # project-relative dir for image binaries
   tool_results_dir: .reyn/tool-results   # project-relative dir for tool-result dumps
   base_url: null                  # optional canonical URL prefix for cross-host path_ref
+  model_capability_overrides: {}  # declared media capabilities for a proxied/uncataloged model
 ```
 
 | Field | Type | Default | Description |
@@ -2592,6 +2593,7 @@ multimodal:
 | `media_dir` | string | `.reyn/media` | Project-relative directory for image binary storage. Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
 | `tool_results_dir` | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps. |
 | `base_url` | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption. When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), saved artefacts carry a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
+| `model_capability_overrides` | `{model: {capability_field: bool}}` | `{}` | **(#5509)** Declares a model's media capability when litellm's own catalog doesn't know the model string at all. This is the ORDINARY case, not an edge case, for a proxy-routed deployment (a name like `openai/my-proxy-model` misses litellm's static catalog — `get_model_info` raises for it) — without a declaration, **every non-text attachment for that model silently degrades to a lossless path-ref instead of being embedded inline**, which reads to a user as "attachments stopped working". `capability_field` is NOT any litellm `get_model_info` field — only the ones reyn's own code actually queries (`reyn.llm.model_media_capability.QUERIED_CAPABILITY_FIELDS_BY_MODALITY`'s own values; today just `supports_vision`) — a wider litellm field would be accepted but silently do nothing. A one-time warning (`media_capability_unknown` in the log, naming the exact key to set) fires the first time this happens for a given `(model, capability_field)` pair. See `reyn.llm.model_media_capability`'s own module docstring for the full 3-state (supported / unsupported / unknown) resolution rule. Example: `{"openai/my-proxy-model": {"supports_vision": true}}`. |
 
 ## `external_transports` block
 
