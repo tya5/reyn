@@ -234,9 +234,13 @@ class RouterLoopDriver:
         largest-first WITHIN each stage.
 
         ``raw_middle`` (mid) is included even though spilling it moves
-        ZERO wire bytes (it is already elided out of ``build_history``'s
-        payload — ``estimate_wire_bytes`` never reads it, only ``summary``
-        does): #5364 §1.3 names two byte-independent reasons to spill it
+        ZERO wire bytes (conclusion unchanged by #5367's removal of
+        ``build_history``'s own elide branch — the real reason was always
+        structural, not "elided out": ``estimate_wire_bytes`` simply never
+        takes ``raw_middle`` as an argument at all, only ``summary`` —
+        ``build_history`` now returns every candidate turn raw regardless,
+        but that has no bearing on what THIS function measures):
+        #5364 §1.3 names two byte-independent reasons to spill it
         anyway — (1) ``spilled`` is PERSISTENT (D), so a mid turn that
         later slides into head/tail (as the window advances) is already
         done; (2) when overflow later folds ``raw_middle`` into a summary,
@@ -284,9 +288,12 @@ class RouterLoopDriver:
         #5364 §1.6 (owner/architect ruling, replacing the OLD "undo if it
         didn't help" behavior): a genuine new spill is ALWAYS kept, never
         undone — not by a byte-decrease check (a ``raw_middle`` candidate
-        can NEVER move wire bytes at all, being already elided out of
-        ``estimate_wire_bytes``'s inputs by construction — #5364 §1.3),
-        and not by a "made it bigger" check either (a tiny original body
+        can NEVER move wire bytes at all — ``estimate_wire_bytes`` simply
+        never takes ``raw_middle`` as an input at all, structural and
+        unaffected by #5367's removal of ``build_history``'s own elide
+        branch — see ``_spill_candidates``'s own docstring above for the
+        corrected reasoning — #5364 §1.3), and not by a "made it bigger"
+        check either (a tiny original body
         can genuinely become a larger fixed-overhead offloaded-preview
         replacement, and that is still real, durable progress: ``spilled``
         is persistent (D), and a mid-turn spill still shrinks a LATER
@@ -485,54 +492,29 @@ class RouterLoopDriver:
         # widened except exactly as #4885 established. This is not a
         # reversion of that fix.
 
-        # #4995/#5267: dispatched to a worker thread rather than run inline
-        # on this coroutine's own turn — build_history() re-serialises every
-        # elide-candidate turn (path-ref image materialise included, #3185's
-        # own measurement) every call, a cost proportional to session length
-        # that otherwise runs synchronously on the SAME event loop the TUI's
-        # own frame scheduling shares. `asyncio.to_thread` suspends THIS
-        # coroutine at the `await` (the GIL still time-slices with the
-        # default ~5ms `sys.getswitchinterval()`, so the loop gets scheduled
-        # while the thread runs) — same shape as this codebase's own
-        # existing `voice.py` precedent ("Inference is dispatched to
-        # asyncio.to_thread so the Textual event loop ...").
+        # #4995: dispatched to a worker thread rather than run inline on
+        # this coroutine's own turn — build_history() re-serialises every
+        # watermark-surviving turn (path-ref image materialise included,
+        # #3185's own measurement) every call, a cost proportional to
+        # session length that otherwise runs synchronously on the SAME
+        # event loop the TUI's own frame scheduling shares. `asyncio.
+        # to_thread` suspends THIS coroutine at the `await` (the GIL still
+        # time-slices with the default ~5ms `sys.getswitchinterval()`, so
+        # the loop gets scheduled while the thread runs) — same shape as
+        # this codebase's own existing `voice.py` precedent ("Inference is
+        # dispatched to asyncio.to_thread so the Textual event loop ...").
         #
-        # `expected_owner` MUST be captured here, before the dispatch — see
-        # RouterHistoryBuffer.build_history's own docstring and #5267:
-        # cancel_inflight()'s hard `Task.cancel()` can now land INSIDE this
-        # await (impossible when build_history() was purely synchronous),
-        # and a cancelled `to_thread` await does not stop the underlying
-        # worker thread — it keeps running and, without this ownership
-        # check, could race a NEXT turn's own build_history() call over the
-        # SAME shared `_cached_elide_*` fields. `asyncio.current_task()`
-        # from inside this coroutine IS the session's `_turn_owner_task`
-        # (this method runs on that task) — captured here, not on the
-        # worker thread, where there is no running task to ask.
-        #
-        # #5267 ⚠️ WHOEVER CHANGES THIS CALL CHAIN'S SHAPE, READ THIS: that
-        # identity holds ONLY because every step from
-        # `Session.run_one_iteration`'s `self._turn_owner_task =
-        # asyncio.create_task(self._run_turn_body(...))` down to THIS line
-        # is a plain `await` — verified by grepping every file on the path
-        # (`session.py`, `inter_agent_messaging.py`, this file) for
-        # `create_task`/`ensure_future` and confirming the only hits are
-        # either that ONE task-creation site itself or on entirely
-        # unrelated paths (intervention re-dispatch, buffered-answer
-        # persistence) — see #5267's own PR body for the exact commands
-        # run and their output. If a FUTURE change inserts a
-        # `create_task`/`ensure_future` ANYWHERE between those two points,
-        # `asyncio.current_task()` here silently stops being
-        # `_turn_owner_task` — `expected_owner` would then ALWAYS mismatch
-        # the live owner, and EVERY `build_history()` call would silently
-        # stop updating the shared incremental cache (a real perf
-        # regression, a full recompute every turn) with NOTHING going red
-        # to say so. This is the single point of fragility the ownership
-        # design has — see #5267's own disclosure of this as an absence,
-        # not a solved problem.
-        _expected_owner = asyncio.current_task()
-        history = await asyncio.to_thread(
-            self._history_buffer.build_history, expected_owner=_expected_owner,
-        )
+        # #5367: `expected_owner` capture/threading (#4995/#5267) removed
+        # from this call — it existed solely to guard
+        # `RouterHistoryBuffer`'s own incremental elide-total CACHE against
+        # a stale/cancelled turn's background write corrupting a later
+        # turn's shared state (#5267's real incident). #5367 retired that
+        # whole cache along with `build_history`'s elide computation (owner
+        # ruling — see `RouterHistoryBuffer.build_history`'s own
+        # docstring); `build_history()` no longer mutates any shared
+        # cross-call state, so there is nothing left for a stale write to
+        # corrupt, and no ownership check is needed to guard it.
+        history = await asyncio.to_thread(self._history_buffer.build_history)
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:

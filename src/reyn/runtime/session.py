@@ -5981,15 +5981,19 @@ class Session:
             # buffer's history entries came from).
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
             read_cap=self._read_cap_config,  # #4381 PR-5
-            # #4995/#5267: LIVE read of the session's current turn-owning
-            # task, for RouterHistoryBuffer's own ownership check when
-            # build_history() is dispatched off this coroutine (see
-            # RouterLoopDriver._run_with_shrink's own `expected_owner`
-            # capture and RouterHistoryBuffer.build_history's docstring).
-            # A bare attribute read/write is atomic under the GIL — no lock
-            # needed for this comparison itself.
-            current_turn_owner_fn=lambda: self._turn_owner_task,
         )
+        # #5367: `current_turn_owner_fn`/`expected_owner` (#4995/#5267)
+        # used to be threaded here — a concurrency guard for
+        # `RouterHistoryBuffer`'s own incremental elide-total CACHE (a
+        # stale/cancelled turn's background write could otherwise corrupt
+        # a later turn's cache arithmetically, #5267's own real incident).
+        # Removed in the SAME PR as the cache itself: #5367 retired
+        # `build_history`'s whole elide computation (owner ruling —
+        # "elide なんて仕様をこっちが提示したことないんだってば"), so
+        # there is no longer a shared, incrementally-mutated cache for a
+        # stale write to corrupt. This paragraph is the only place this
+        # reasoning survives — the removed lines themselves cannot carry
+        # a comment (lead-coder, #5367 review).
 
         # #3671 follow-up: a DEFERRED closure, not an eager construction —
         # same reasoning and same family as _build_chat_turn_budget_engine
@@ -10099,8 +10103,10 @@ class Session:
         json.dumps + token-estimate of the router-view history (re-paid only on
         a miss — history shrink, model/use_chars4 change, changed cached
         prefix); #2939 made ``build_history`` materialise its producer
-        (``_active_branch_history``) ONCE instead of 2x (3x on the elide path,
-        via each ``_latest_summary``); and #2939 made that producer's
+        (``_active_branch_history``) ONCE instead of 2x (3x when the
+        now-retired elide branch fired, #5367 — each of its 3 return
+        points called ``_latest_summary`` separately); and #2939 made that
+        producer's
         ``build_active_predicate`` derivation incremental, so it decodes only
         WAL entries appended since the previous turn rather than re-scanning
         every line. Measured (N=2000 msgs, warm token cache, Darwin/arm64):
@@ -10127,15 +10133,23 @@ class Session:
 
         Runs the existing synchronous compaction and reports what it did.
 
-        Axis note (#191, traced): the CHAT router prompt is head+tail TURN-COUNT
-        bounded (``_build_history_for_router``), so the router-view
-        ``freed_tokens`` is structurally ~0 even when compaction fires — chat
-        compaction COMPRESSES the already-elided middle into a summary bridge
-        rather than shrinking the bounded view. So the meaningful chat metric is
-        ``summarized_turns`` + ``compressed_tokens`` (raw middle) → ``bridge_tokens``
-        (the summary). ``freed_tokens`` is kept for the op contract shared with
-        the phase axis (where it IS the real control_ir shrink), but is ~0 for
-        chat — callers front the compression numbers, not freed, for chat.
+        Axis note (#191, traced; premise corrected #5367): this used to say
+        the CHAT router prompt is head+tail TURN-COUNT bounded, so the
+        router-view ``freed_tokens`` was structurally ~0 even when
+        compaction fires — compaction compressed a middle ``build_history``
+        had ALREADY excluded via its own (then-existing) proactive elide,
+        so nothing visible shrank. #5367 (owner ruling) retired that elide
+        branch — ``build_history`` now returns the full watermark-filtered
+        history raw, uncapped. Compaction's watermark filter is now the
+        ONLY thing excluding a covered turn from the projection at all, so
+        it DOES meaningfully shrink what a chat turn actually sends —
+        ``freed_tokens`` for chat is no longer structurally pinned to ~0.
+        The compression metric (``summarized_turns``/``compressed_tokens``/
+        ``bridge_tokens``) below is unaffected either way — it was always
+        the meaningful number for chat, freed or not. ``freed_tokens`` is
+        kept for the op contract shared with the phase axis (where it is
+        the real control_ir shrink); callers front the compression numbers
+        for chat regardless of what ``freed_tokens`` reads.
         """
         import json as _json
 

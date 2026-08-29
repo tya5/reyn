@@ -1,18 +1,17 @@
 """Tier 2: Session._build_history_for_router token-budget slicing correctness.
 
-#1128 step 3 (Fork B): elide threshold now coincides with effective_trigger
-(the existing pre-frame compaction trigger) instead of the old turn-count
-head_size/tail_size.  The router view returns ALL turns when total token
-estimate <= effective_trigger (window-utilization-first), and elides the
-middle only when the conversation exceeds the budget.
+#1128 step 3 (Fork B) introduced a token-budget elide (head+tail, dropping
+the middle) coinciding with effective_trigger. #5367 (owner ruling) retired
+that elide branch entirely — see ``RouterHistoryBuffer.build_history``'s
+own docstring for why — so the router view now always returns ALL
+(watermark-filtered) turns raw, whatever the total token estimate.
 
 Tests pin:
-- Small conversation (total < effective_trigger): all turns returned, no
+- Small/any-size conversation: all (watermark-filtered) turns returned, no
   duplication (the Q4 attractor root cause was exactly this duplication).
-- Large conversation (total > effective_trigger): head + tail with the middle
-  elided; deduplication guard so no turn appears twice.
 - Empty history: empty result.
-- Summary bridge inserted when a summary exists and elide fires.
+- Summary bridge inserted whenever a summary exists (watermark > 0) — never
+  gated on elide, which no longer exists.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ from tests._support.session import (
     push as _push,
 )
 
-# ── No-elide branch (total <= effective_trigger) ─────────────────────────────
+# ── Window-utilization: all turns returned raw ────────────────────────────────
 
 
 def test_history_fits_in_window_returns_all_turns(tmp_path, monkeypatch):
@@ -71,9 +70,11 @@ def test_watermark_excludes_covered_turns_even_when_conversation_fits_budget(
     fired this call — a byte-heavy-but-token-light conversation could stay
     under ``effective_trigger`` forever, resending covered turns raw on
     every single turn (the issue's own real-machine symptom). Now the
-    watermark filter runs unconditionally, before the fits-vs-elides
-    decision, so a covered turn is excluded here even though this
-    conversation is small enough that elide never fires at all.
+    watermark filter runs unconditionally, before anything else, so a
+    covered turn is excluded here regardless of conversation size — #5367
+    later retired elide itself, which only makes this filter's
+    unconditional positioning matter MORE (it is now the only thing
+    standing between a covered turn and being resent raw).
     """
     session = _make_session(tmp_path, t_max=1_000_000, monkeypatch=monkeypatch)
     session.history.append(ChatMessage(
@@ -244,55 +245,26 @@ def test_single_turn_returns_single_message(tmp_path, monkeypatch):
     assert msgs == [{"role": "user", "content": "hello"}]
 
 
-# ── Elide branch (total > effective_trigger) ─────────────────────────────────
+# ── Summary bridge ────────────────────────────────────────────────────────────
 
-# Each "XXXXXXXXXXX...X" text is 320 chars → 80 tokens (chars4).
-# 30 turns × 80 tokens = 2400 tokens. With t_max=2800, effective_trigger is
-# always < t_max by construction, so 2400 > effective_trigger regardless of SP
-# size — default-independent (hot_list_n changes don't affect this bound).
-
-_LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2800
-
-
-def test_history_exceeds_trigger_elides_middle(tmp_path, monkeypatch):
-    """Tier 2: when total tokens > effective_trigger, the middle turns are
-    elided and head + tail are returned without duplication.
-
-    Uses T_max=2800 with 30 turns of 80-token text (total=2400 tokens).
-    2400 > T_max=2800 so the elide branch fires regardless of SP size —
-    default-independent: hot_list_n and other SP-affecting defaults don't
-    change whether elide fires.
-    """
-    session = _make_session(tmp_path, t_max=2800, monkeypatch=monkeypatch)
-    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
-    for i, text in enumerate(texts):
-        _push(session, "user" if i % 2 == 0 else "assistant", text)
-
-    msgs = session._history_buffer.build_history()
-    contents = [m["content"] for m in msgs]
-
-    # The middle turn(s) must be absent.
-    present = set(contents)
-    assert texts[0] in present, "head turn must be present"
-    assert texts[-1] in present, "tail turn must be present"
-    # At least one middle turn must be absent (= elide occurred).
-    middle_texts = set(texts[1:-1])
-    assert not middle_texts.issubset(present), (
-        "expected at least one middle turn to be elided, but all middle turns present"
-    )
-    # No duplicates.
-    assert len(contents) == len(set(contents)), (
-        "duplicate messages in elide branch — overlap deduplication failed"
-    )
+# Each "XXXXXXXXXXX...X" text is 320 chars → 80 tokens (chars4). Sized large
+# only because the fixture below predates #5367 (when it needed to exceed
+# effective_trigger to trigger elide) — kept as-is, size no longer matters.
+_LONG_TEXT = "X" * 320
 
 
 def test_elide_inserts_summary_bridge_when_summary_present(tmp_path, monkeypatch):
-    """Tier 2: when a summary exists and elide fires, a bridge message is
-    inserted between head and tail.
+    """Tier 2: when a summary exists (watermark > 0), a bridge message is
+    inserted — unconditionally, not gated on any size/budget decision.
 
-    Uses 30 turns to guarantee elide fires regardless of SP size (see
-    test_history_exceeds_trigger_elides_middle for the default-independent
-    size rationale).
+    #5367 (owner ruling): this test used to also require a LARGE history
+    to "guarantee elide fires" — that whole size-triggered branch is
+    retired (see ``RouterHistoryBuffer.build_history``'s own docstring);
+    the bridge's OWN condition (#4954(2): watermark > 0) is untouched by
+    that removal, so this test still passes and needed only its stale
+    "when elide fires" framing corrected, not deletion. 35 turns is kept
+    here (not shrunk to a minimal size) only because the fixture already
+    existed at this size and there is no reason to churn it.
 
     #4954(2): the summary's ``covers_through_seq`` must be REALISTIC
     (> 0, and below the pushed turns' own seqs) — a real, #4951-A-derived
@@ -313,9 +285,9 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path, monkeypatch
         meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 5},
     ))
     # 35 turns × 80 tokens, 5 covered by the summary above (excluded from
-    # the projection by #4954(2)) leaves 30 uncovered turns — the same
-    # elide-triggering size test_history_exceeds_trigger_elides_middle
-    # documents as reliably > T_max=2800 regardless of SP size.
+    # the projection by #4954(2)) leaves 30 uncovered turns — size is not
+    # load-bearing post-#5367 (nothing depends on exceeding a trigger any
+    # more), kept only because the fixture predates that removal.
     texts = [f"turn-{i}:" + _LONG_TEXT for i in range(35)]
     for i, text in enumerate(texts):
         session.history.append(ChatMessage(
@@ -327,7 +299,7 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path, monkeypatch
     bridge_msgs = [m for m in msgs if isinstance(m.get("content"), str)
                    and m["content"].startswith("[summary")]
     assert bridge_msgs, (
-        "expected a summary bridge message when summary exists and elide fires"
+        "expected a summary bridge message when a summary exists (watermark > 0)"
     )
     contents = [m["content"] for m in msgs]
     covered_texts = set(texts[:5])
