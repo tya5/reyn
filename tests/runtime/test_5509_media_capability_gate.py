@@ -147,6 +147,52 @@ def test_the_caller_reads_the_failure_reason_bounded_path(
     )
 
 
+def test_capability_unavailable_also_warns_once_per_model(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #5509 architect review (BLOCKING ③) — ``logger.debug`` is
+    invisible under this repo's shipped config
+    (``interfaces/cli/commands/chat.py``'s own ``basicConfig(level=
+    WARNING, ...)``). CAPABILITY_UNAVAILABLE specifically (not
+    NO_TOKEN_BOUND — that's today's designed behavior, not a defect)
+    additionally logs at WARNING, ONCE per model even across multiple
+    dropped images (a WARNING per image would be the opposite visibility
+    failure — nobody reads a flood)."""
+    model = "openai/reyn-test-5509-warn-escalation-model"
+    block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
+        _build_media_followup_message(
+            tool_name="read_file", media_blocks=[block, block], model=model,
+        )
+    warnings = [
+        r for r in caplog.records
+        if r.name == "reyn.runtime.router_loop" and model in r.getMessage()
+    ]
+    (warning,) = warnings  # exactly one, not one per dropped image
+    assert "model_capability_overrides" in warning.getMessage()
+
+
+def test_no_token_bound_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
+    """Tier 2: accept side — NO_TOKEN_BOUND is today's designed behavior
+    for every non-image modality (architect's own rule), not a defect;
+    it must stay at debug, never escalate to WARNING the way
+    CAPABILITY_UNAVAILABLE does. Note ``_build_media_followup_message``
+    itself filters non-image blocks out of its own ``images`` list
+    before ever calling ``_materialise_media_part`` (module docstring's
+    own ``images = [b for b ... if b.get("type") == "image"]``), so a
+    PDF block reaching NO_TOKEN_BOUND happens only via a direct
+    ``_materialise_media_part`` call — asserted here at that level,
+    matching where the member is actually produced."""
+    model = "gpt-4o"  # real supports_pdf_input=True — proves this isn't a capability gap
+    with caplog.at_level(logging.DEBUG, logger="reyn.runtime.router_loop"):
+        result = _materialise_media_part(
+            {"type": "file", "mime_type": "application/pdf", "data": "AAAA"},
+            None, model=model,
+        )
+    assert result is MediaMaterialiseFailure.NO_TOKEN_BOUND
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
 def test_strip_falsify_the_gate_by_hand() -> None:
     """Tier 2: STRIP-FALSIFY, performed programmatically in-process (not a
     hand-edit, since the assertion itself needs to observe both states) —

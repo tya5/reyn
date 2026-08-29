@@ -233,6 +233,41 @@ class MediaMaterialiseFailure(enum.Enum):
     NO_TOKEN_BOUND = "no_token_bound"
 
 
+# #5509 architect review (BLOCKING ③): `logger.debug` is invisible under
+# this repo's shipped config (`interfaces/cli/commands/chat.py`'s own
+# `basicConfig(level=WARNING, ...)`) — same gap `model_media_capability.
+# py`'s own `_warned_uncataloged` closes for the CATALOG-lookup layer, but
+# a model reaching CAPABILITY_UNAVAILABLE via a DECLARED-unsupported
+# override (test_a_declared_unsupported_override_also_degrades) never
+# touches that layer at all — no warning fires anywhere for that case
+# without this. Escalates ONLY CAPABILITY_UNAVAILABLE to WARNING, once
+# per model (not per image — a WARNING on every dropped image is the
+# opposite visibility failure: nobody reads a flood). NO_TOKEN_BOUND and
+# every other member stay at debug — NO_TOKEN_BOUND is today's DESIGNED
+# behavior for every non-image modality, not a defect to surface loudly;
+# the others (NO_STORE/PERMISSION_DENIED/NOT_FOUND/NO_DATA) already
+# surface on a different, more specific face (a store/permission problem
+# has its own error path elsewhere) — see model_budget.py's own
+# "severity up, never touch setLevel" precedent for why this repo solves
+# shipped-config invisibility this way rather than a logging config change.
+_warned_capability_unavailable: "set[str]" = set()
+
+
+def _warn_capability_unavailable_once(model: str) -> None:
+    if model in _warned_capability_unavailable:
+        return
+    _warned_capability_unavailable.add(model)
+    logger.warning(
+        "media_capability_unavailable: model=%r cannot receive an image "
+        "inline (unsupported, or unknown with no declared override) — "
+        "attachments for this model degrade to a lossless path-ref "
+        "instead of being embedded. Fix: declare its real capability via "
+        "`multimodal.model_capability_overrides.%s.supports_vision` in "
+        "reyn.yaml.",
+        model, model,
+    )
+
+
 def _materialise_media_part(
     block: dict, media_store: Any, *, model: "str | None" = None,
 ) -> "dict | MediaMaterialiseFailure":
@@ -435,6 +470,8 @@ def _build_media_followup_message(
                     "media block dropped from follow-up for tool=%r: %s",
                     tool_name, part.value,
                 )
+                if part is MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE and model is not None:
+                    _warn_capability_unavailable_once(model)
                 continue
             parts.append(part)
         return {"role": "user", "content": parts} if len(parts) > 1 else None
@@ -459,6 +496,8 @@ def _build_media_followup_message(
                     "media block %d/%d for tool=%r degrading to ref: %s",
                     i + 1, len(images), tool_name, part.value,
                 )
+                if part is MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE and model is not None:
+                    _warn_capability_unavailable_once(model)
             else:
                 parts.append(part)
                 emitted.append(("img", part))
