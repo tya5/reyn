@@ -121,20 +121,24 @@ def test_the_real_production_chain_marks_the_entry_never_persisted(
     """Tier 2: architect/lead-coder's own #5372 precedent — a real
     ``Session``, real ``RouterHostAdapter`` (``session.router_host``),
     real ``ContextBudgetAdvisor``, driven end-to-end. The store's worker
-    is swapped for a fast one and seeded with one genuinely-exhausted
-    failure (same technique as the first test above) BEFORE the turn
-    runs, so the write-time cap's own attempt hits the pre-check and
-    raises — proving the full 4-hop ``on_write_unavailable`` wiring, not
-    just a fast unit-level stand-in."""
+    is a fast one, passed in through ``make_session(media_store_worker=...)``
+    — Session's own public construction seam (#5382 example②), not a
+    private write to ``media_store._worker`` — and seeded with one
+    genuinely-exhausted failure (same technique as the first test above)
+    BEFORE the turn runs, so the write-time cap's own attempt hits the
+    pre-check and raises — proving the full 4-hop ``on_write_unavailable``
+    wiring, not just a fast unit-level stand-in."""
     monkeypatch.chdir(tmp_path)
+    worker = _fast_worker()
     session = make_session(
         agent_name="broken-store-agent",
         multimodal_config=MultimodalConfig(),
         offload_config=OffloadConfig(enabled=True),
         compaction_config=CompactionConfig(use_chars4_estimate=True),
+        # #5382 example②: the public construction seam — Session forwards
+        # this straight into MediaStore(worker=...), no private write.
+        media_store_worker=worker,
     )
-    worker = _fast_worker()
-    session.router_host.media_store._worker = worker
 
     async def _always_fail() -> None:
         raise OSError("disk full")
