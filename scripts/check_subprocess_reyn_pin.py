@@ -60,11 +60,14 @@ indefinitely — same reasoning as that script's own ratchet, and
 
 ## A ratchet, not a zero baseline
 
-A real measurement against `origin/main` at the time this gate landed found
-59 files in the gap (84 total population, 25 already declaring one of the
-two fixtures). Requiring all 59 migrated before adoption defers the gate
+At the time this gate landed, the gap held enough pre-existing files that
+requiring all of them migrated before adoption would have deferred the gate
 indefinitely (and most are very likely genuinely exempt — see population
-imprecision above). So this is a committed BASELINE, same skeleton as
+imprecision above) — so this is a committed BASELINE (see
+``check_subprocess_reyn_pin_baseline.json`` for the current count; it is a
+plain JSON array whose length IS the live number, unlike a count typed into
+this prose, which would go stale the moment `origin/main` moved without
+anyone editing it here), same skeleton as
 ``check_tests_path_literal_reference.py``: a file in the baseline is
 grandfathered; a file newly entering the gap (a NEW test added later that
 spawns `sys.executable` without declaring either fixture) is not, and CI
