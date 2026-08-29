@@ -40,10 +40,74 @@ consumer may not have run yet, so ``collected`` can still be missing
 the event. If a test reads ``collected`` this way, make the "I assumed
 delivery already happened" assumption explicit in the code by awaiting
 :func:`settle` on the same log immediately before the read.
+
+#5467 (architect ruling) — ``Session`` acceptance, phase 1 of 2: a test
+holding only a ``Session`` (never the internal ``EventLog``) had no way
+to call either helper — ``Session``'s own public surface
+(``subscribe_audit_events``) takes a callback, not a log to poll/drain,
+so ``collect_events(session)`` had no target to subscribe onto, and
+there was no public way to SETTLE at all: a caller was left to reach
+into ``session._audit_events`` directly to drain it (the same
+private-reach pattern #5382/#5455 closed elsewhere that same night —
+#5461's own settle call was exactly this). architect's bar: production
+gets NO new public API for this (a ``Session.drain()`` with no real
+production meaning is not a seam worth adding) — instead BOTH helpers
+below now accept either an ``EventLog``-shaped object (anything with
+``add_subscriber``/``drain``) OR a ``Session``, resolving via
+:func:`_resolve_log`. The private reach (``session._audit_events``)
+narrows to this ONE function, in this ONE file — never a second copy
+elsewhere.
+
+A LATER, separate PR migrates the ~82 existing test call sites that
+currently reach ``session._audit_events``/build a raw
+``subscribe_audit_events`` subscriber onto this new seam. Until that
+migration lands, ``git grep '_audit_events' -- tests/`` and
+``git grep 'subscribe_audit_events(' -- tests/`` are NOT yet zero.
+
+lead-coder BLOCKING correction (architect-corrected wording, same
+conclusion): this seam removes the REASON to write a raw subscriber
+(a ``Session`` can now reach ``collect_events``/``settle`` directly)
+— it does NOT mechanically prevent one. ``scripts/check_collect_
+events_settle.py`` already tracks the two STATICALLY-RESOLVABLE
+subscriber shapes (``<x>.add_subscriber(<name>.append)`` /
+``<x>.subscribe_audit_events(lambda e: <name>.append(e))`` — see that
+script's own module docstring), so a plain
+``subscribe_audit_events(list.append)`` written after this PR is
+already caught, same as before this PR. The genuine, DISCLOSED gap
+that gate names is a hand-rolled Sink CLASS instance
+(``class XSink: def __call__(self, e): ...``), which cannot be
+statically resolved to a single tracked name. This is exactly why the
+gap issue (#5465) exists — not because this seam made anything less
+visible, but because it never made the Sink-class shape more visible
+either. Only once phase 2 migrates every existing site does the count
+of un-migrated private-reach sites reach zero; the gate's own disclosed
+gap is a separate, narrower concern this PR neither closes nor widens.
 """
 from __future__ import annotations
 
 from typing import Any
+
+
+def _resolve_log(obj: Any) -> Any:
+    """Resolve *obj* to the ``EventLog``-shaped thing :func:`collect_events`/
+    :func:`settle` should actually operate on.
+
+    A ``Session`` is recognized structurally (does it carry an
+    ``_audit_events`` attribute?), never by ``isinstance`` against the
+    production class — the same duck-typed posture ``add_subscriber``
+    itself already takes on *log*'s shape. Anything else (a real
+    ``EventLog``, or any other object with its own ``add_subscriber``/
+    ``drain``) passes through unchanged. This is the ONE place in
+    ``tests/`` allowed to read ``_audit_events`` FOR THE PURPOSE OF
+    SUBSCRIBING/DRAINING IT — a test may still reach ``session.
+    _audit_events.emit(...)`` directly to DRIVE its own scenario (the
+    same "arrange, not assert" distinction every test in this file
+    already relies on for a plain ``EventLog``'s own ``.emit()`` calls),
+    which is why this claim is scoped to subscribe/drain, not to every
+    read of the attribute anywhere in ``tests/``. See module docstring,
+    "#5467 (architect ruling)"."""
+    audit_events = getattr(obj, "_audit_events", None)
+    return obj if audit_events is None else audit_events
 
 
 def collect_events(log: Any) -> list[Any]:
@@ -52,7 +116,11 @@ def collect_events(log: Any) -> list[Any]:
     production's ``EventStore`` uses, not a read-back of history.
 
     Call this immediately after constructing *log* (or as soon as a test
-    holds a reference to it), before any ``emit()`` the test cares about."""
+    holds a reference to it), before any ``emit()`` the test cares about.
+
+    #5467: *log* may also be a ``Session`` — resolved via
+    :func:`_resolve_log` to its underlying ``EventLog`` before subscribing."""
+    log = _resolve_log(log)
     collected: list[Any] = []
     log.add_subscriber(collected.append)
     return collected
@@ -71,5 +139,9 @@ async def settle(log: Any) -> None:
     polling read (``lambda: any(e.type == "x" for e in collected)``, or
     anything driven through a ``_wait_for``-style retry) does not need this
     — polling yields between attempts and gives the consumer a chance to
-    run regardless."""
+    run regardless.
+
+    #5467: *log* may also be a ``Session`` — resolved via
+    :func:`_resolve_log` to its underlying ``EventLog`` before draining."""
+    log = _resolve_log(log)
     await log.drain()
