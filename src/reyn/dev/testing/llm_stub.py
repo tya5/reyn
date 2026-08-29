@@ -77,10 +77,63 @@ testing-policy time discipline) is how a test proves the real loop
 actually reached the LLM boundary — joined with #5454's ``turn_started``
 audit-event for "did the REAL driver run" (a stub being called is not,
 by itself, proof of that — see #5450's own witness ②).
+
+#5382 extension — the compaction "raise mode"
+-----------------------------------------------
+``CompactionEngine.compact()``'s request payload is built ENTIRELY inside
+``engine.py`` (candidates selected by ``CompactionController._select_
+candidates``, itself derived from the real engine's own computed budgets)
+— a test cannot predict, and therefore cannot key a fixture against, that
+exact payload without duplicating that selection logic (the #5382 dead
+end: reachable only via ``LLMReplay``, whose fixture entries ARE keyed by
+exact payload hash). ``LLMStub`` has no such key (see above — it reads no
+fixture at all), so it is the right layer to add selective behavior to
+INSTEAD of teaching ``LLMReplay`` to match on something other than a
+content hash.
+
+Architect ruling (#5382, quoting the ONE fact this hinges on): the
+compaction call's own system message is a FIXED constant
+(``reyn.prompt.compaction.COMPACTION_SYSTEM_PROMPT``, ``engine.py:964`` /
+``:1538``), never derived from conversation content. That constant — not a
+payload hash — is the one discriminator usable at the litellm boundary to
+tell "this is a compaction call" apart from "this is the main router's own
+call", since ``purpose="compaction"`` (the #1190 cost-attribution tag) is a
+reyn-layer argument that never reaches litellm's own call signature.
+Patching ``recorded_acompletion`` instead (one layer up, where ``purpose=``
+IS visible) was explicitly rejected — it would skip #1190's own cost
+recording, silently.
+
+``raise_for="compaction"`` + ``cause=<#5382 vocabulary member>`` makes ONLY
+compaction calls raise a real litellm exception (reusing #5382's own
+closed cause vocabulary — ``reyn.dev.testing.replay``'s
+``_REPLAY_EXCEPTION_CAUSES`` — rather than declaring a second one: one
+place answers "what can a stub/fixture reproduce"). Every other call
+(chiefly the main router's) keeps the ordinary, unconditional-empty-
+content success response, UNCHANGED. When a compaction call is recognized
+but NOT told to raise, it gets a MINIMAL VALID summary response instead of
+the ordinary empty one — ``compact()`` requires non-empty JSON with a
+``topic_arc`` (#4883's own validation), so the plain "" response this
+stub gives every other call would ALWAYS fail compaction's own parsing
+(confirmed empirically while building this: ``ValueError: compaction LLM
+returned empty response``) — a compaction call recognized as such must
+get a response its own caller can actually accept, or "compaction
+succeeds" could never be expressed through this stub at all.
+
+Not a second ``LLMReplay`` wildcard (#5103 C1's own rejection does not
+apply): this mode lives entirely OUTSIDE the fixture mechanism — no key,
+no fixture file, invisible to ``MissingFixture``/#5283 by the same
+construction the rest of this module already has.
+
+``control=`` (#5450) and ``raise_for=``/``cause=`` (#5382) are two
+INDEPENDENT axes on the same stub, validated and applied independently —
+a test that needs BOTH (hang-then-release a main call, or gate a
+compaction call, etc.) may pass both; today's actual callers use at most
+one at a time, but nothing here couples them.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Literal
 
 #: #5450: the closed vocabulary for `control=` — mirrors #5382's own
@@ -94,6 +147,15 @@ _CONTROL_MODES: "frozenset[str]" = frozenset({"gated"})
 
 class UnknownLLMStubControlError(ValueError):
     """Raised when ``control=`` is not one of :data:`_CONTROL_MODES`."""
+
+
+#: #5382: the closed vocabulary of call KINDS this stub can selectively
+#: recognize and raise for. Currently one member — closed so a future
+#: caller cannot silently invent a second discriminator shape (a payload
+#: hash, a free-form string) without a design ruling, the same posture
+#: #5382's own ``_REPLAY_EXCEPTION_CAUSES`` vocabulary already takes for
+#: *what* raises, applied here to *which call* raises.
+RaiseFor = Literal["compaction"]
 
 
 class LLMStub:
@@ -113,15 +175,34 @@ class LLMStub:
     ``stub.call_started`` fires the instant the call begins.
     ``control=None`` (default) keeps #5103's original immediate-return
     behavior unchanged.
+
+    #5382: ``raise_for``/``cause`` (both required together, or both
+    omitted) select ONE call kind to raise for — see the module docstring
+    for the full design. ``cause`` is validated lazily, on the first
+    matching call (mirrors ``LLMReplay``'s own ``UnknownReplayCause`` —
+    diagnose at the point of use, not eagerly at construction, so the
+    error message can name the actual call that hit it).
     """
 
-    def __init__(self, *, control: "LLMStubControl | None" = None) -> None:
-        self._original_acompletion: Any = None
+    def __init__(
+        self, *,
+        control: "LLMStubControl | None" = None,
+        raise_for: "RaiseFor | None" = None,
+        cause: "str | None" = None,
+    ) -> None:
         if control is not None and control not in _CONTROL_MODES:
             raise UnknownLLMStubControlError(
                 f"control={control!r} is not one of {sorted(_CONTROL_MODES)!r}",
             )
         self.control = control
+        if (raise_for is None) != (cause is None):
+            raise ValueError(
+                "LLMStub: raise_for and cause must be given together "
+                f"(raise_for={raise_for!r}, cause={cause!r})"
+            )
+        self._raise_for = raise_for
+        self._cause = cause
+        self._original_acompletion: Any = None
         # #5450: created unconditionally (cheap) so a test can read
         # `.call_started`/`.release` even before `install()` runs — mirrors
         # the original private helper's own return-both-events shape.
@@ -142,11 +223,14 @@ class LLMStub:
             self._original_acompletion = None
 
     async def _handle(self, model: str, messages: list[dict], **kwargs: Any) -> Any:
-        # messages/kwargs intentionally unused — every call gets the same
-        # minimal completion regardless of what was asked (see module
-        # docstring). Kept as named params (not *args, **_) because litellm's
-        # real callers invoke acompletion with keyword arguments.
-        del messages, kwargs
+        # kwargs intentionally unused — every call gets a fixed completion
+        # regardless of what was asked, EXCEPT the two selective axes
+        # documented above (which call KIND for raise_for, hang-then-
+        # release for control — never which call CONTENT). Kept as a
+        # named param (not **_) because litellm's real callers invoke
+        # acompletion with keyword arguments. `messages` stays live (not
+        # deleted) — `_is_compaction_call` below reads it.
+        del kwargs
         if self.control == "gated":
             # #5450: fire call_started the instant the call begins, then
             # suspend on release — simulating the real await
@@ -158,11 +242,53 @@ class LLMStub:
             await self.release.wait()
         import litellm
 
-        # #5103 TESTS-READ: finish_reason/tool_calls are set EXPLICITLY here
-        # — this is OUR contract, not litellm.ModelResponse's own default
-        # (see module docstring). content="" (not None) so a caller that
-        # does `response.choices[0].message.content or ""`-style handling
-        # sees an ordinary empty string, not an absent field.
-        message = litellm.Message(content="", role="assistant", tool_calls=None)
+        if self._raise_for == "compaction" and _is_compaction_call(messages):
+            # __init__ guarantees raise_for/cause are set together — cause
+            # is never None here, but mypy can't see that invariant across
+            # the two attributes. A type-level cast, not a runtime check
+            # (nothing to strip under -O): __init__'s own ValueError already
+            # enforces this at construction time.
+            from typing import cast
+
+            from reyn.dev.testing.replay import _REPLAY_EXCEPTION_CAUSES, UnknownReplayCause
+
+            cause = cast(str, self._cause)
+            factory = _REPLAY_EXCEPTION_CAUSES.get(cause)
+            if factory is None:
+                raise UnknownReplayCause(
+                    f"LLMStub(raise_for='compaction', cause={cause!r}): "
+                    f"not in the closed replay vocabulary "
+                    f"{sorted(_REPLAY_EXCEPTION_CAUSES)!r}."
+                )
+            raise factory(f"stubbed {cause} (LLMStub raise_for='compaction')")
+
+        if _is_compaction_call(messages):
+            # #4883: compact() requires non-empty JSON with `topic_arc` (and
+            # the other 4 required array fields) — the ordinary "" response
+            # below would ALWAYS fail this call's own validation.
+            content = json.dumps({
+                "topic_arc": "stub summary", "decisions": [], "pending": [],
+                "session_user_facts": [], "artifacts_referenced": [],
+            })
+        else:
+            # #5103 TESTS-READ: finish_reason/tool_calls are set EXPLICITLY
+            # here — this is OUR contract, not litellm.ModelResponse's own
+            # default (see module docstring). content="" (not None) so a
+            # caller that does `response.choices[0].message.content or ""`
+            # -style handling sees an ordinary empty string, not an absent
+            # field.
+            content = ""
+        message = litellm.Message(content=content, role="assistant", tool_calls=None)
         choice = litellm.Choices(finish_reason="stop", index=0, message=message)
         return litellm.ModelResponse(model=model, choices=[choice])
+
+
+def _is_compaction_call(messages: list[dict]) -> bool:
+    """True iff ``messages`` is a real ``CompactionEngine.compact()`` call
+    — discriminated by its own fixed system-message constant
+    (``engine.py:1538``), never by conversation content (see module
+    docstring for why this is the only discriminator usable at the
+    litellm boundary)."""
+    from reyn.prompt.compaction import COMPACTION_SYSTEM_PROMPT
+
+    return bool(messages) and messages[0].get("content") == COMPACTION_SYSTEM_PROMPT

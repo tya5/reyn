@@ -54,59 +54,6 @@ class _FakeStatusError(Exception):
         self.status_code = status_code
 
 
-class _NoNetworkCompactionEngine:
-    """A real-shaped, network-free ``CompactionEngine`` stand-in — mirrors
-    ``test_pr_n6_compaction_overflow_retry.py``'s own ``_OverflowingEngine``
-    (the sibling PR-N6 test file's documented way to exercise ``retry_loop``
-    without a real LLM call). ``compact()`` always succeeds trivially,
-    matching whatever ``covers_through_seq`` the offered turns imply — a
-    real ``CompactionEngine.compact()`` would attempt an actual litellm
-    call, which this test's `_run_with_shrink_and_byte_reduction` harness
-    (driven through a real Session, unlike the sibling file's own
-    ``retry_loop``-direct calls) has no way to stub via a `main_call`
-    parameter alone; `force_compact_now`/retry_loop's own raw_middle fold
-    BOTH reach this same seam."""
-
-    def __init__(self) -> None:
-        from reyn.core.events.events import EventLog
-        from reyn.services.compaction.engine import ComputedBudgets
-        self.budgets = ComputedBudgets(
-            main_pool=10_000, head_budget=1_000, body_budget=500,
-            tail_budget=1_500, new_msg_budget=1_000,
-            B_M=8_000, main_M_room=7_000, effective_trigger=7_000,
-            section_caps={
-                "topic_arc": 50, "decisions": 200, "pending": 150,
-                "session_user_facts": 50, "artifacts_referenced": 175,
-            },
-        )
-        self._events = EventLog()
-        self._T_comp_SP = 100
-        self._model = "openai/test-standard-model"
-
-    async def compact(self, input_chunk):
-        from reyn.services.compaction.engine import ChatSummary
-
-        def _seq(t: object) -> int:
-            if isinstance(t, dict):
-                return t.get("seq", 0)
-            return getattr(t, "seq", 0)
-
-        return ChatSummary(
-            topic_arc="stub summary",
-            covers_through_seq=max((_seq(t) for t in input_chunk.new_turns), default=0),
-        )
-
-
-def _inject_fake_engine(session) -> None:
-    """Bypass ``CompactionController``'s lazy real-engine factory (private,
-    name-mangled cache field — the same seam that property's own docstring
-    names as "computed at most once") with a network-free stand-in, BEFORE
-    anything triggers the real factory."""
-    session._compaction_controller._CompactionController__engine_cache = (
-        _NoNetworkCompactionEngine()
-    )
-
-
 class _ContentDrivenLoop:
     """A fake ``RouterLoop`` whose ``run()`` raises a 413-shaped error
     exactly while ``should_fail(history)`` says so, driven by the REAL
@@ -145,7 +92,7 @@ def _push(session, role: str, text: str, **kw) -> None:
 def _make_spill_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     max_shrink_iterations: int = 1, t_max: "int | None" = None,
-    fake_compaction_engine: bool = False, recovery_policy: str = "next_turn",
+    recovery_policy: str = "next_turn",
 ):
     """A real Session with a real MediaStore (default ``make_session`` gives
     ``media_store=None`` — the spill mechanism needs a real one to have any
@@ -153,10 +100,15 @@ def _make_spill_session(
     py``'s own harness) forces a small ``effective_trigger`` so a real
     history genuinely produces compaction candidates instead of fitting
     comfortably under the real (fallback ~128k-token) model window.
-    ``fake_compaction_engine`` swaps in ``_NoNetworkCompactionEngine`` — ONLY
-    the one scenario that needs a `compact()` call to actually SUCCEED
-    (rather than merely be attempted and fail/be avoided) needs this; the
-    others never let ``compact()`` run for real at all.
+
+    #5382: the ``CompactionController``'s engine is ALWAYS the real
+    ``CompactionEngine`` now — construction is offline (model-string
+    resolution + local token estimation, no litellm call; confirmed by
+    architect/lead-coder before this migration), so no fake stand-in is
+    needed just to build a session. A test whose OWN scenario reaches an
+    actual ``compact()`` call must mark itself ``@pytest.mark.llm_stub``
+    (optionally ``raise_for="compaction", cause=...``) — see
+    ``reyn.dev.testing.llm_stub``'s own module docstring.
 
     ``recovery_policy`` — lead-coder review: default ``"next_turn"`` means
     ``_run_with_shrink``'s own PRE-EXISTING #4954(b) side-effect ALSO
@@ -191,8 +143,6 @@ def _make_spill_session(
         multimodal_config=MultimodalConfig(),
         snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
     )
-    if fake_compaction_engine:
-        _inject_fake_engine(session)
     return session
 
 
@@ -266,6 +216,7 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
 # ── PRE-EXISTING next_turn side-effect, which this wrapper must detect ─────
 
 
+@pytest.mark.llm_stub
 def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -287,24 +238,39 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     strictly increasing = compact progress, alongside the pre-existing
     spill-candidate-consumed signal) and failing only when NEITHER moved.
 
-    ``fake_compaction_engine`` (a network-free stand-in, same shape the
-    PR-N6 test file's own ``_OverflowingEngine`` uses — a real
-    ``CompactionEngine.compact()`` would attempt an actual litellm call)
-    declares FIXED, small budgets (``head_budget=1000``,
-    ``tail_budget=1500``, ``effective_trigger=7000``) — 50 turns of 80
-    tokens each (4000 total, measured directly while building this test)
-    exceeds ``head_budget + tail_budget`` (real compaction candidates
-    exist) while staying under ``effective_trigger``
-    (``decompose_history_for_retry`` keeps ``raw_middle`` EMPTY —
-    retry_loop's own internal fold never triggers, isolating the
-    pre-existing except-block side-effect as the only compaction path
-    exercised)."""
+    #5382: was ``fake_compaction_engine`` (a private-cache-injected stand-in
+    declaring FIXED, hand-picked budgets) — the real ``CompactionEngine``
+    now computes its OWN budgets (``t_max=7_000`` below forces a small,
+    real ``effective_trigger``, mirroring how ``t_max`` is already used
+    elsewhere in this file), and the history size below is DERIVED from
+    those real, read ``session._compaction_controller._engine.budgets``
+    values (never re-hardcoded) — the relationship this test actually
+    needs (turns exceed ``head_budget + tail_budget`` so real compaction
+    candidates exist, while staying under ``effective_trigger`` so
+    ``decompose_history_for_retry`` keeps ``raw_middle`` EMPTY, isolating
+    the pre-existing except-block side-effect as the only compaction path
+    exercised), not the exact numbers a stand-in used to declare."""
     session = _make_spill_session(
-        tmp_path, monkeypatch, max_shrink_iterations=1,
-        fake_compaction_engine=True,  # recovery_policy="next_turn" (default)
+        tmp_path, monkeypatch, max_shrink_iterations=1, t_max=7_000,
+        # recovery_policy="next_turn" (default)
     )
-    for _i in range(50):
-        _push(session, "user", "X" * 320)
+    budgets = session._compaction_controller._engine.budgets
+    turn_text = "X" * 320
+    turn_tokens = len(turn_text) // 4  # matches CompactionConfig(use_chars4_estimate=True)
+    # Comfortably clear head+tail (real candidates exist) while staying
+    # under effective_trigger (raw_middle stays empty) — a margin, not an
+    # exact boundary; the assert below is this test's own sanity check
+    # that the relationship still holds against whatever the real engine
+    # computed, not a re-hardcoded number.
+    turn_count = (budgets.head_budget + budgets.tail_budget) // turn_tokens + 10
+    total_tokens = turn_count * turn_tokens
+    assert total_tokens < budgets.effective_trigger, (
+        f"test setup sanity: {turn_count} turns ({total_tokens} tokens) must "
+        f"stay under effective_trigger={budgets.effective_trigger} — adjust "
+        f"t_max or turn_text if this ever fires"
+    )
+    for _i in range(turn_count):
+        _push(session, "user", turn_text)
 
     events: list = []
     compacted = {"done": False}
@@ -333,20 +299,22 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     )
 
 
+@pytest.mark.llm_stub
 def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: contract acceptance ①b — the TRUE-exhaustion sibling of
     the test above: nothing spillable (no tool-result turns) AND
     compaction ALSO cannot progress (too few durable turns for
-    ``force_compact_now``'s own candidate scan to find anything —
-    ``fake_compaction_engine``'s ``compact()`` never even gets called).
+    ``force_compact_now``'s own candidate scan to find anything — the
+    real engine's ``compact()`` never even gets called; ``@llm_stub`` is
+    a defensive safety net, not load-bearing for this scenario).
     Together the two tests distinguish "one axis dry" (recovers) from
     "both axes dry" (true exhaustion, #5364 §1.6's unqualified failure
     predicate: raise immediately, no generous extra attempts)."""
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1,
-        fake_compaction_engine=True,  # recovery_policy="next_turn" (default)
+        # recovery_policy="next_turn" (default)
     )
     _push(session, "user", "hi")
     _push(session, "assistant", "ok")
@@ -377,6 +345,7 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
     )
 
 
+@pytest.mark.llm_stub
 def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -389,10 +358,13 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     was (no ``compaction_completed`` at all — not the pre-existing
     side-effect, and not a resurrected wrapper-owned call) and (②)
     terminate cleanly (raise ``UnrecoveredError``, not hang or loop
-    forever) rather than silently compacting anyway."""
+    forever) rather than silently compacting anyway. ``@llm_stub`` is a
+    defensive safety net here too (``recovery_policy="never"`` disables
+    compaction entirely regardless of candidate count — a real
+    ``compact()`` call, if this ever regressed, should fail loudly rather
+    than silently hitting network)."""
     session = _make_spill_session(
-        tmp_path, monkeypatch, max_shrink_iterations=1,
-        fake_compaction_engine=True, recovery_policy="never",
+        tmp_path, monkeypatch, max_shrink_iterations=1, recovery_policy="never",
     )
     for _i in range(50):
         _push(session, "user", "X" * 320)
