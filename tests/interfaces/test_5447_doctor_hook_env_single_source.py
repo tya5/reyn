@@ -21,12 +21,16 @@ Witnesses:
        appear in doctor's output with ZERO changes to ``doctor.py`` —
        proving doctor iterates the returned mapping rather than printing
        4 hardcoded literal lines.
-    4. Gate: ``git grep '\\.hook_env_snapshot(' -- src/`` is empty (the
-       method has zero production callers, #4866/#5442 shape) and
-       ``git grep '\\.as_env(' -- src/reyn/interfaces/cli/commands/doctor.py``
+    4. Gate: ``git grep -nE 'def hook_env_snapshot' -- src/`` is empty
+       (the method itself does not exist — pinning NON-EXISTENCE, not
+       "no call site": the latter would read GREEN the moment the
+       method is reintroduced with zero callers, which IS #5447's
+       defect, and would push a fixer toward deleting a legitimate
+       future caller instead of the method — architect finding on this
+       PR's first revision) and
+       ``git grep 'context\\.as_env(' -- src/reyn/interfaces/cli/commands/doctor.py``
        is non-empty (doctor's own call-site, not merely a docstring
-       mention of the name) — architect's own corrected, observable
-       phrasing of the #5428 acceptance criterion.
+       mention of the name).
 """
 from __future__ import annotations
 
@@ -142,23 +146,23 @@ def test_a_fifth_as_env_key_reaches_doctor_output_with_no_doctor_py_change(
 # ── witness 4: the observable, grep-able gate itself ───────────────────────
 
 
-def test_hook_env_snapshot_has_zero_production_callers(tmp_path: Path) -> None:
-    """Tier 2: gate — architect's own corrected #5428 acceptance criterion
-    (originally phrased as "a real consumer exists", which a human read as
-    satisfied while the consumer independently re-derived the same values
-    instead of calling the method; #5447 restates it as a grep fact).
-    ``Session.hook_env_snapshot()`` does not exist (removed, #5447) so
-    this is vacuously true going forward — the assertion is kept as the
-    regression gate: reintroducing that method without a real call site
-    reproduces the exact defect this issue closed."""
+def test_hook_env_snapshot_does_not_exist(tmp_path: Path) -> None:
+    """Tier 2: gate — pins ABSENCE of the method itself, not absence of a
+    call site to it (architect finding on this PR's first revision: a
+    "no call site" gate reads GREEN the moment the method is
+    reintroduced with zero callers — which IS #5447's defect, so that
+    phrasing pushed a fixer toward deleting a legitimate future caller
+    rather than the method). ``def hook_env_snapshot`` in ``src/`` is 0
+    hits today (removed, #5447); reintroducing the method — called or
+    not — must turn this RED."""
     result = subprocess.run(
-        ["git", "grep", "-n", r"\.hook_env_snapshot(", "--", "src/"],
+        ["git", "grep", "-nE", r"def hook_env_snapshot", "--", "src/"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     assert result.returncode != 0, (
-        "found a production call site for Session.hook_env_snapshot() — "
-        "that method does not exist; this is either a stale grep target "
-        f"or a reintroduction:\n{result.stdout}"
+        "Session.hook_env_snapshot() was reintroduced — this is the "
+        "#4866/#5442 shape (a public method with no guaranteed real "
+        f"consumer) #5447 removed it to close:\n{result.stdout}"
     )
 
 
