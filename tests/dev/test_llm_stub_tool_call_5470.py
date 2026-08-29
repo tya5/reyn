@@ -87,7 +87,13 @@ async def test_the_predicate_flips_once_a_tool_result_is_in_messages() -> None:
     (no tool result yet) as True and call 2 (tool result appended, the
     shape the real loop produces after dispatching) as False. This is the
     mechanism the production-level test below relies on to prove the turn
-    actually terminates rather than looping forever."""
+    actually terminates rather than looping forever.
+
+    The ``role="tool"`` message below is hand-built (a plausible SHAPE, not
+    a pin) — the production test below is what actually pins the REAL
+    shape the real router loop produces; this test's own subject is only
+    whether the predicate correctly discriminates "has a tool result" from
+    "doesn't", not the exact wire format of that result."""
     stub = LLMStub(tool_call_for=_no_tool_result_yet, tool="emit_hook_event")
     stub.install()
     try:
