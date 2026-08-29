@@ -147,6 +147,12 @@ def _make_rate_limit_error(message: str) -> Exception:
     return litellm.RateLimitError(message=message, llm_provider="replay", model="replay")
 
 
+def _make_internal_server_error(message: str) -> Exception:
+    import litellm
+
+    return litellm.InternalServerError(message=message, llm_provider="replay", model="replay")
+
+
 def _make_context_overflow_error(message: str) -> Exception:
     import litellm
 
@@ -176,8 +182,36 @@ def _make_byte_limit_error(message: str) -> Exception:
 #: litellm exception instance shaped the way reyn's own classifiers
 #: (``services/compaction/engine.py``) already read it — not a synthetic
 #: stand-in class.
+#:
+#: #5454/#5458 correction history: architect's #5454 review proposed
+#: trimming this to only ``rate_limit``/``internal_server_error``, reading
+#: reyn-self's ``router_loop_terminated_by_exception`` event population (83
+#: occurrences: 79/4) as "what's actually observed". lead-coder's #5458
+#: review caught the flaw BEFORE merge: that event fires only for an
+#: exception NO inner handler recovered from (session.py's own "router loop
+#: caught an exception no inner handler took" path) — a STRUCTURALLY biased
+#: population that can never contain a cause reyn successfully recovers
+#: from. ``byte_limit`` (HTTP 413) is exactly such a cause: engine.py:869
+#: classifies it, and a whole recovery machinery (``force_compact_now`` /
+#: ``_run_with_shrink_and_byte_reduction`` / ``_attempt_reactive_spill`` /
+#: the #4944② learned ceiling) runs BEFORE the loop would ever reach the
+#: terminal-exception handler — recovering successfully means that handler
+#: never fires, so this cause is invisible to that measurement by
+#: construction, not because it doesn't happen. ``context_overflow`` WAS
+#: independently observed in a real environment regardless (#4381: "実環境
+#: で router failed: Router context overflow after bounded shrink"),
+#: directly contradicting "never actually observed". The correct
+#: membership test (lead-coder) is "does one of reyn's own production code
+#: paths classify/read this cause" (``is_context_overflow_error``,
+#: ``saw_byte_limit`` — both real, both read by real call sites), not "does
+#: it appear in one specific terminal-failure event's population". All four
+#: members below pass that test. #5382's own originating test
+#: (``test_5296_pr2_byte_reduction_same_turn_retry.py``) is itself a
+#: byte-reduction retry test — removing ``byte_limit`` would have left the
+#: very test that motivated this issue unable to use this mechanism.
 _REPLAY_EXCEPTION_CAUSES: "dict[str, Callable[[str], Exception]]" = {
     "rate_limit": _make_rate_limit_error,
+    "internal_server_error": _make_internal_server_error,
     "context_overflow": _make_context_overflow_error,
     "byte_limit": _make_byte_limit_error,
 }
