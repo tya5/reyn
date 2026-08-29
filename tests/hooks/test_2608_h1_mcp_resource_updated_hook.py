@@ -234,14 +234,21 @@ class _BlockingTrigger:
     """A real recording async callable that blocks on an ``asyncio.Event`` — used
     to hold the drain task's first dispatch open long enough to observe the
     bounded queue's overflow-drop behavior deterministically (not a mock: a plain
-    async function object, exactly the ``hook_trigger`` DI shape)."""
+    async function object, exactly the ``hook_trigger`` DI shape).
+
+    #5516: batch-shaped — ``calls`` records ``(point, payloads,
+    skipped_session_wide)`` per BATCH, not per event (folding means a
+    burst that fits entirely in the queue before the drain task gets its
+    first scheduling chance becomes ONE call carrying all of it)."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, list, int]] = []
         self.gate = asyncio.Event()
 
-    async def __call__(self, point: str, template_vars: dict) -> None:
-        self.calls.append((point, template_vars))
+    async def __call__(
+        self, point: str, payloads: list, skipped_session_wide: int = 0,
+    ) -> None:
+        self.calls.append((point, payloads, skipped_session_wide))
         await self.gate.wait()
 
 
@@ -251,9 +258,16 @@ async def test_bounded_queue_drops_overflow_without_blocking_or_raising():
     ``enqueue_external_event`` calls (all synchronous, no ``await`` between them —
     so the drain task never gets a scheduling chance mid-burst) beyond the bounded
     queue's capacity must never raise or block the caller; the excess is DROPPED
-    (never queued unboundedly), and once the (blocked) drain task's first dispatch
-    is released, only the events that actually fit in the queue were ever
-    delivered to ``hook_trigger``."""
+    (never queued unboundedly).
+
+    #5516: because the ENTIRE burst lands in the queue before the drain
+    task ever runs (no await interleaves), the fold mechanism (#5516,
+    ``reyn.hooks.fold.drain_folded``) picks up the first item, reads
+    ``qsize()`` (== every remaining queued item, since nothing else can
+    have arrived yet), and folds ALL of them into ONE ``hook_trigger``
+    call — never one call per event. Exactly the overflow drop (never
+    fewer items delivered, never more) is what this test now asserts via
+    the folded batch's own length, not via a call count."""
     from reyn.mcp.connection_service import _HOOK_EVENT_QUEUE_MAXSIZE
 
     trigger = _BlockingTrigger()
@@ -264,18 +278,27 @@ async def test_bounded_queue_drops_overflow_without_blocking_or_raising():
             # Must never raise / never block, regardless of queue fullness.
             service.enqueue_external_event("mcp_resource_updated", {"i": i})
 
-        # Let the drain task start; its first dispatch blocks on the gate.
+        # Let the drain task start; its one dispatch blocks on the gate.
         await asyncio.sleep(0.05)
-        (first_call,) = trigger.calls  # exactly one item drained so far (blocked on the gate)
-        assert first_call[0] == "mcp_resource_updated"
-        trigger.gate.set()  # release — every item that DID fit in the queue drains now
+        (first_call,) = trigger.calls  # exactly one BATCH call so far (blocked on the gate)
+        point, payloads, skipped = first_call
+        assert point == "mcp_resource_updated"
+        assert len(payloads) == _HOOK_EVENT_QUEUE_MAXSIZE, (
+            "the bounded queue must drop exactly the overflow — the folded batch "
+            "must carry everything that fit (never fewer, a stall) and never more "
+            f"(unbounded growth) -- got {len(payloads)} payloads"
+        )
+        trigger.gate.set()  # release — nothing further is queued (no second batch expected)
         await asyncio.sleep(0.05)
 
-        assert len(trigger.calls) == _HOOK_EVENT_QUEUE_MAXSIZE, (
-            "the bounded queue must drop exactly the overflow — everything beyond "
-            "its capacity, never fewer (a stall) and never more (unbounded growth)"
+        # Exactly ONE batch call — tuple-unpacking raises its own clear
+        # error if the whole burst did NOT fold into a single call, without
+        # pinning a literal count via len(...).
+        (only_call,) = trigger.calls
+        assert only_call is first_call, (
+            "the whole burst landed before the drain task's first scheduling "
+            "chance, so it must fold into exactly ONE batch call, not a second"
         )
-        assert len(trigger.calls) < burst  # the overflow really was dropped
     finally:
         await service.aclose()
 

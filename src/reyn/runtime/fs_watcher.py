@@ -132,7 +132,10 @@ class FsWatcher:
 
     Usage (mirrors ``MCPConnectionService``)::
 
-        watcher = FsWatcher(paths=["/repo/src"], hook_trigger=dispatcher.dispatch)
+        watcher = FsWatcher(
+            paths=["/repo/src"],
+            hook_trigger=dispatcher.dispatch_external_batch,  # #5516: batch-shaped
+        )
         await watcher.start()      # no-op if paths=[] or watchdog not installed
         ...
         await watcher.aclose()     # session teardown — idempotent

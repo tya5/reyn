@@ -54,11 +54,23 @@ class _SessionFireBridge:
     """Per-Session bounded dispatch bridge (#2620) — the ``_BoundedEventBridge``
     shape (``reyn.hooks.ingress``) applied to the out-of-process H5 path: a
     bounded ``asyncio.Queue`` plus a lazily-created background drain task
-    that awaits ``session.dispatch_external_event`` for each queued
-    ``(point, template_vars)`` pair, ONE AT A TIME (never concurrently for
-    the same session), with per-event ``try/except`` (one bad dispatch must
-    never kill the drain task, same discipline as
+    that folds whatever is queued at drain time into ONE
+    ``session.dispatch_external_event_batch`` call per POINT (#5516 — was
+    one call per event; see ``reyn.hooks.fold.drain_folded``, the shared
+    countdown/qsize()-before-dispatch primitive this bridge,
+    ``ingress._BoundedEventBridge``, and ``composed_consumer.
+    ComposedEventConsumer`` all use), with per-BATCH ``try/except`` (one
+    bad dispatch must never kill the drain task, same discipline as
     ``_BoundedEventBridge._drain``).
+
+    Unlike ``_BoundedEventBridge`` (one queue per ADAPTER, hence single-
+    kind), this bridge is one queue per SESSION — ``cron_fired`` and
+    ``webhook_received`` fires for the same session share it (both route
+    through :func:`fire_and_forget`), so a raw drained batch can mix
+    points. Grouped by point BEFORE dispatch (same shape
+    ``ComposedEventConsumer`` uses for its own kind-mixing subscription
+    queue) — folding one point's events must never silently include a
+    different point's.
 
     One instance per Session, created lazily on first :func:`fire_and_forget`
     call for that session and cached in the module-level
@@ -75,7 +87,11 @@ class _SessionFireBridge:
         # ``dropped_dispatch_count``) alongside the WARNING log line — a test
         # or operator can confirm the bound actually triggered without
         # scraping logs or reaching into this bridge's private state.
+        # Cumulative (never reset) — distinct from ``_dropped_since_last_batch``
+        # below (#5516), which read-and-resets per dispatched batch to feed
+        # ``skipped_session_wide``.
         self._drop_count = 0
+        self._dropped_since_last_batch = 0
 
     def submit(self, point: str, template_vars: dict) -> None:
         """SYNCHRONOUS, non-blocking, never raises. Lazily starts this
@@ -121,6 +137,7 @@ class _SessionFireBridge:
             self._queue.put_nowait((point, template_vars))
         except asyncio.QueueFull:
             self._drop_count += 1
+            self._dropped_since_last_batch += 1
             logger.warning(
                 "external-event hook dispatch queue full (maxsize=%d) — dropping "
                 "point=%r (fires arriving faster than hooks can be dispatched "
@@ -142,15 +159,40 @@ class _SessionFireBridge:
         return self._drop_count
 
     async def _drain(self) -> None:
+        from reyn.hooks.fold import drain_folded
+
         assert self._queue is not None
-        while True:
-            point, template_vars = await self._queue.get()
-            try:
-                await self._session.dispatch_external_event(point, template_vars)
-            except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
-                logger.warning(
-                    "external-event hook dispatch failed for point=%r", point, exc_info=True,
-                )
+
+        async def _dispatch_raw_batch(raw_batch: "list[tuple[str, dict]]") -> None:
+            # #5516 §1 item ①: read-and-reset atomically, right before the
+            # dispatch(es) this count is FOR (mirrors
+            # ingress._BoundedEventBridge's own identical pattern).
+            skipped, self._dropped_since_last_batch = self._dropped_since_last_batch, 0
+            # This bridge is per-SESSION, not per-adapter (unlike
+            # _BoundedEventBridge) -- cron_fired and webhook_received share
+            # it, so a raw batch can mix points. Group before dispatch,
+            # same shape ComposedEventConsumer uses for its own
+            # kind-mixing subscription queue. The FIRST group absorbs the
+            # skip count (it is session-wide, not attributable to one
+            # point either — see HookDispatcher._dispatch_batch_for_point's
+            # own docstring for the same reasoning one level down); every
+            # other group in this raw batch gets 0, so the count is
+            # reported exactly once per batch, never duplicated per point.
+            by_point: "dict[str, list[dict]]" = {}
+            for point, template_vars in raw_batch:
+                by_point.setdefault(point, []).append(template_vars)
+            for i, (point, payloads) in enumerate(by_point.items()):
+                try:
+                    await self._session.dispatch_external_event_batch(
+                        point, payloads, skipped_session_wide=(skipped if i == 0 else 0),
+                    )
+                except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
+                    logger.warning(
+                        "external-event hook dispatch failed for point=%r "
+                        "(n=%d)", point, len(payloads), exc_info=True,
+                    )
+
+        await drain_folded(self._queue, _dispatch_raw_batch)
 
 
 # Module-level, keyed by session identity (weak so a garbage-collected

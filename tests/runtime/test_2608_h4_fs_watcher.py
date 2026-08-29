@@ -52,14 +52,24 @@ watchdog = pytest.importorskip("watchdog", reason="fs-watch extra ('pip install 
 
 
 class _Recorder:
-    """A real recording async callable — the ``hook_trigger`` DI shape
-    (``(point, template_vars) -> Awaitable``), no mock."""
+    """A real recording async callable — the ``hook_trigger`` DI shape,
+    no mock.
+
+    #5516: ``hook_trigger`` is now batch-shaped (``(point, payloads,
+    skipped_session_wide=0)``). This recorder flattens each batch back to
+    one ``(point, payload)`` tuple per event, preserving every existing
+    call site's ``(point, template_vars) = trigger.calls[N]`` shape below
+    unchanged — every test in this file only ever produces one file-write
+    event per assertion, so batches stay length-1 in practice, but the
+    flatten is correct for N>1 too (never silently drops an event)."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
-    async def __call__(self, point: str, template_vars: dict) -> None:
-        self.calls.append((point, dict(template_vars)))
+    async def __call__(
+        self, point: str, payloads: list, skipped_session_wide: int = 0,
+    ) -> None:
+        self.calls.extend((point, dict(payload)) for payload in payloads)
 
 
 async def _wait_for(predicate, *, delay: float = 0.02) -> None:

@@ -137,11 +137,15 @@ async def test_reconnect_resync_also_fires_hook_trigger_identically_to_real_push
     session.py/hooks/ involvement needed to prove this bridge fires."""
 
     class _RecordingTrigger:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, dict]] = []
+        """#5516: batch-shaped -- (point, payloads, skipped_session_wide)."""
 
-        async def __call__(self, point: str, template_vars: dict) -> None:
-            self.calls.append((point, template_vars))
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, list, int]] = []
+
+        async def __call__(
+            self, point: str, payloads: list, skipped_session_wide: int = 0,
+        ) -> None:
+            self.calls.append((point, payloads, skipped_session_wide))
 
     trigger = _RecordingTrigger()
     events = EventLog(subscribers=[])
@@ -163,8 +167,9 @@ async def test_reconnect_resync_also_fires_hook_trigger_identically_to_real_push
         )
         await _wait_for(lambda: len(trigger.calls) >= 1)
 
-        (point, template_vars) = trigger.calls[0]
+        (point, payloads, _skipped) = trigger.calls[0]
         assert point == "mcp_resource_updated"
+        (template_vars,) = payloads  # #5516: single-item folded batch
         assert template_vars.get("uri") == _URI
         assert template_vars.get("server") == "srv"
         assert template_vars.get("resync") is True

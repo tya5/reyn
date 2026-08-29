@@ -103,6 +103,15 @@ class HookBusSubscription:
         if nothing has been broadcast to this subscription yet."""
         return self._queue.get_nowait()
 
+    def qsize(self) -> int:
+        """#5516 — the count of already-broadcast events sitting in this
+        subscription's own queue, not yet drained. Public passthrough
+        (same posture as :meth:`get`/:meth:`get_nowait` above) so a
+        caller (``reyn.hooks.composed_consumer.ComposedEventConsumer``'s
+        ``reyn.hooks.fold.drain_folded``-driven drain) can fold a batch
+        without reaching into ``self._queue`` directly."""
+        return self._queue.qsize()
+
     def close(self) -> None:
         """Detach from the bus. Idempotent — safe to call more than once."""
         if self._closed:

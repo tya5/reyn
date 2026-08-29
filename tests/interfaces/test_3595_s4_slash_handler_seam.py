@@ -556,7 +556,34 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: persisted (spawn-time priority resolution happens in the spawn seam,
 #: which runs after ``Session.__init__``), so it cannot be threaded
 #: through construction without restructuring the spawn seam itself.
-_PUBLIC_MEMBER_CEILING = 119
+#: Raised 119 -> 120 for #5516: ``dispatch_external_event_batch`` — a NEW method.
+#: ① What was added: the batched sibling of ``dispatch_external_event``
+#: (#2608 H5's own public entry point for an out-of-process source to
+#: fire a hook on this session's dispatcher) — folds N queued events
+#: into ONE hook launch instead of N (the issue's own driving
+#: measurement: 98 launches for 97 real events in one session).
+#: ② Why not private: same external-seam shape ``dispatch_external_event``
+#: itself already has — ``reyn.hooks.external_fire._SessionFireBridge``
+#: (a module OUTSIDE Session, the H5 cron/webhook out-of-process ingress)
+#: calls it directly, resolved from the ``AgentRegistry`` at fire time,
+#: long after ``__init__`` — the exact shape ``dispatch_external_event``'s
+#: own docstring already documents for why IT needs a public seam.
+#: ③ Why not a constructor argument: not a value to inject — it is a
+#: METHOD invoked repeatedly, once per folded batch, for the lifetime of
+#: the session; there is no single value to thread through construction.
+#: ④ Why the OLDER singular ``dispatch_external_event`` was kept, not
+#: removed in favor of this one (architect ruling, #5518 review):
+#: ``git grep 'dispatch_external_event\b' -- src/`` finds 7 prose
+#: references to this seam BY NAME (``external_fire.py:32/211``,
+#: ``ingress.py:6/40``, ``schema.py:66``, ``inter_agent_messaging.py:
+#: 210/644``) — removing it would falsify all 7, requiring same-PR fixes
+#: for a redundant-alias problem that is not actually redundant: it is
+#: architecture vocabulary now, not just an unused alias. The singular
+#: form's own body is delegation-only (see its docstring) — it does not
+#: build its own ``event_context``, so the two entry points cannot drift
+#: on the #5516 clean-break (payload is always an array) even though
+#: both remain public.
+_PUBLIC_MEMBER_CEILING = 120
 
 
 def test_session_public_surface_does_not_grow() -> None:

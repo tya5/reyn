@@ -59,7 +59,16 @@ from reyn.hooks.schema_registry import bare_point, build_hook_payload, canonical
 
 logger = logging.getLogger(__name__)
 
-HookTrigger = Callable[[str, dict], Awaitable[Any]]
+# #5516: batch-shaped — called as ``hook_trigger(point, payloads,
+# skipped_session_wide=N)``: the folded batch (never empty, never a bare
+# single dict — clean break) plus the session-wide drop count since the
+# last dispatch from THIS bridge. Matches
+# ``reyn.hooks.dispatcher.HookDispatcher.dispatch_external_batch``'s own
+# signature, the ONE real binding (``runtime/session.py``'s ``hook_trigger=``
+# lambdas) — loosely typed (``...``), same posture as ``dispatcher.
+# RunShell``, since the keyword-only tail isn't expressible in a plain
+# ``Callable[[...], ...]`` alias.
+HookTrigger = Callable[..., Awaitable[Any]]
 
 
 @runtime_checkable
@@ -86,9 +95,12 @@ class IngressAdapter(Protocol):
 
 class _BoundedEventBridge:
     """The in-process ingress delivery mechanism: a bounded ``asyncio.Queue``
-    + a lazily-created background drain task that ``await``s ``hook_trigger``
-    for each queued :class:`HookEvent`, one at a time, with per-event
-    ``try/except`` (one bad dispatch must never kill the drain loop — mirrors
+    + a lazily-created background drain task that folds whatever is queued
+    at drain time into ONE ``hook_trigger`` call per batch (#5516 — was one
+    call per event; see ``reyn.hooks.fold.drain_folded``, the shared
+    countdown/qsize()-before-dispatch primitive this bridge and
+    ``ComposedEventConsumer`` both use), with per-BATCH ``try/except`` (one
+    bad dispatch must never kill the drain loop — mirrors
     ``HookDispatcher.dispatch``'s own per-hook isolation one level up).
 
     The THREAD/task hand-off that gets a raw signal safely onto the session's
@@ -97,12 +109,21 @@ class _BoundedEventBridge:
     receive-task origin) is NOT this bridge's concern — that happens BEFORE
     :meth:`deliver` is called, in each adapter's own producer callback. This
     bridge only owns what happens once already running on the session's loop:
-    bound the queue, drop-newest-and-log on overflow, drain.
+    bound the queue, drop-newest-and-log on overflow, fold-and-drain.
 
     ``hook_trigger=None`` (no hook wired for this session) makes
     :meth:`deliver` a no-op and the whole queue/drain-task machinery never
     activates — byte-identical to a build with no hook mechanism at all.
-    """
+
+    #5516 §2: ``self._dropped_since_last_batch`` counts events lost to
+    queue overflow SINCE THE LAST BATCH WAS DISPATCHED — read-and-reset
+    atomically (a plain tuple-assignment; both :meth:`deliver` and the
+    drain loop run on the same event loop, so no ``await`` can interleave
+    between the read and the reset) right before each ``hook_trigger``
+    call, so a drop that happens DURING that same tick is never silently
+    erased by a stale reset (owner ruling #5516 §1 item ①'s general
+    principle — read the count immediately before consuming it, not
+    before-and-separately-cleared)."""
 
     def __init__(
         self,
@@ -116,6 +137,7 @@ class _BoundedEventBridge:
         self._adapter_name = adapter_name
         self._queue: "asyncio.Queue[HookEvent] | None" = None
         self._drain_task: "asyncio.Task | None" = None
+        self._dropped_since_last_batch = 0
 
     def deliver(self, event: HookEvent) -> None:
         """SYNCHRONOUS, non-blocking. Never awaits, never raises."""
@@ -128,7 +150,10 @@ class _BoundedEventBridge:
         except asyncio.QueueFull:
             # Bounded by construction: a burst faster than hooks can be
             # dispatched drops the NEWEST event rather than growing the queue
-            # unboundedly or blocking the producer.
+            # unboundedly or blocking the producer. #5516 §2: also counted,
+            # so the next batch's event_context names this loss instead of
+            # only a log line (band gate 2: visible with the shipped config).
+            self._dropped_since_last_batch += 1
             logger.warning(
                 "%s: hook-event queue full (maxsize=%d) — dropping %r event",
                 self._adapter_name, self._maxsize, event.kind,
@@ -141,17 +166,29 @@ class _BoundedEventBridge:
             self._drain_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
+        from reyn.hooks.fold import drain_folded
+
         assert self._queue is not None
         assert self._hook_trigger is not None
-        while True:
-            event = await self._queue.get()
+
+        async def _dispatch_batch(events: "list[HookEvent]") -> None:
+            assert self._hook_trigger is not None
+            # #5516 §1 item ①: read-and-reset atomically, right before the
+            # call this count is FOR — see this class's own docstring.
+            skipped, self._dropped_since_last_batch = self._dropped_since_last_batch, 0
+            point = bare_point(events[0].kind)  # single adapter -> single kind, by construction
             try:
-                await self._hook_trigger(bare_point(event.kind), event.payload)
+                await self._hook_trigger(
+                    point, [event.payload for event in events],
+                    skipped_session_wide=skipped,
+                )
             except Exception:  # noqa: BLE001 — one bad dispatch must not kill the drain task
                 logger.warning(
-                    "%s: hook_trigger failed for %r", self._adapter_name, event.kind,
+                    "%s: hook_trigger failed for %r", self._adapter_name, point,
                     exc_info=True,
                 )
+
+        await drain_folded(self._queue, _dispatch_batch)
 
     async def aclose(self) -> None:
         """Cancel the drain task. Idempotent — safe to call repeatedly and

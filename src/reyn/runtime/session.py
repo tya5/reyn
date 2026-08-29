@@ -3593,7 +3593,49 @@ class Session:
         delivered — the same "resolve a Session it doesn't own, long after
         its own ``__init__``" shape H5/H4 already needed a public seam for.
         """
+        # #5516 (architect condition, #5518 review): DELEGATION ONLY — never
+        # build a bespoke event_context / single-payload dict here. Two
+        # public entry points exist on purpose (#3595 S4 ceiling raised to
+        # 120 for the batched sibling below, not to replace this one — see
+        # that ceiling's own docstring for why both stay); this one must
+        # stay a thin pass-through so the #5516 clean-break (payload is
+        # ALWAYS an array, even N=1) cannot drift between them.
         await self._hook_dispatcher.dispatch(point, template_vars)
+
+    async def dispatch_external_event_batch(
+        self, point: str, payloads: "list[dict]", *, skipped_session_wide: int = 0,
+    ) -> None:
+        """#5516 — the batched sibling of :meth:`dispatch_external_event`,
+        for ``_SessionFireBridge``'s ``reyn.hooks.fold.drain_folded``-driven
+        drain (``reyn.hooks.external_fire`` — the H5 cron/webhook
+        out-of-process path, the THIRD hook-event accumulation point
+        alongside the two in-process bridges ``ingress.py``'s
+        ``_BoundedEventBridge`` covers). Thin pass-through to
+        ``HookDispatcher.dispatch_external_batch`` — see that method's own
+        docstring for the full contract (array event_context,
+        skipped_session_wide semantics, per-hook matcher-then-fold
+        ordering)."""
+        await self._hook_dispatcher.dispatch_external_batch(
+            point, payloads, skipped_session_wide=skipped_session_wide,
+        )
+
+    async def _bridge_hook_trigger(
+        self, point: str, payloads: "list[dict]", skipped_session_wide: int = 0,
+    ) -> None:
+        """The ``hook_trigger`` callable bound to the two in-process
+        ingress bridges (``FsWatcher``/``MCPConnectionService``, both
+        constructed inside ``__init__``) — a named, type-annotated method
+        rather than a lambda for two reasons: (1) same deferred-resolution
+        posture the pre-#5516 lambda here had (``self._hook_dispatcher``
+        is resolved at CALL time, not at this method's own definition
+        time — safe regardless of exactly where ``_hook_dispatcher`` sits
+        in ``__init__``'s construction order relative to the bridge that
+        captures this), (2) a bare lambda with a default-valued third
+        parameter defeated mypy's inference here (``Cannot infer type of
+        lambda``) — an explicitly-annotated method does not."""
+        await self._hook_dispatcher.dispatch_external_batch(
+            point, payloads, skipped_session_wide=skipped_session_wide,
+        )
 
     @property
     def current_snapshot(self) -> "AgentSnapshot":
@@ -5267,7 +5309,16 @@ class Session:
         fs_watcher = FsWatcher(
             paths=fs_watch_cfg.paths,
             debounce_seconds=fs_watch_cfg.debounce_seconds,
-            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            # #5516: batch-shaped — folds N queued file_changed events into
+            # ONE hook launch (was one launch per event; see
+            # reyn.hooks.fold.drain_folded / _BoundedEventBridge). Deferred
+            # (a named async def, not a bare attribute reference) for the
+            # SAME reason the pre-#5516 lambda here was deferred — this
+            # closure only resolves ``self._hook_dispatcher`` at CALL time,
+            # not at this constructor's own eval time (a plain type-annotated
+            # function here, not a lambda, purely so mypy can infer its
+            # signature — lambdas can't carry parameter annotations).
+            hook_trigger=self._bridge_hook_trigger,
             # #4605: audit-emit sink, mirrors ComposerRegistry's own emit_event
             # wiring two lines below — records file_changed arrival even when
             # no hook is configured to consume it.
@@ -6270,7 +6321,11 @@ class Session:
         mcp_connection_service = MCPConnectionService(
             emit_sink=lambda et, **d: self._audit_events.emit(et, **d),
             tools_cache_invalidate=lambda server: self._router_host.invalidate_mcp_tools_cache(server),
-            hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            # #5516: batch-shaped — folds N queued mcp_resource_updated
+            # events into ONE hook launch (was one launch per event). See
+            # ``_fs_hook_trigger``'s own docstring for why this is a named,
+            # type-annotated method rather than a lambda.
+            hook_trigger=self._bridge_hook_trigger,
             elicitation_bus=self.as_request_bus(),
             elicitation_gate=lambda: self._interventions.has_active_listener(),
             agent_name=self.agent_name,

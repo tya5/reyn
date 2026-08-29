@@ -97,10 +97,26 @@ async def test_fire_and_forget_drops_newest_beyond_bound_not_unbounded_tasks(tmp
     await asyncio.sleep(0.05)  # let the last dispatch's hook push land in the inbox
 
     hook_texts = _drain_hook_texts(session)
-    # Exactly `maxsize` hooks actually dispatched — the dropped overflow
-    # never reached HookDispatcher at all (bounded by construction, not by
-    # HookDispatcher happening to be fast).
-    assert len(hook_texts) == maxsize
+    # #5516: N queued fires fold into ONE hook launch (concatenated
+    # template_push), not N separate ones — the bound is still proven by
+    # pending_dispatch_count/dropped_dispatch_count above (queue-level,
+    # unaffected by folding); this assertion now checks that exactly the
+    # `maxsize` events that DID fit in the queue are represented in the
+    # single concatenated push, and the dropped overflow never reached it.
+    # Exactly ONE push — tuple-unpacking raises its own clear ValueError
+    # if folding produced zero or more than one, without pinning a
+    # literal count via len(...).
+    (message,) = hook_texts
+    represented_senders = {
+        f"webhook:sender-{i}" for i in range(total_fires)
+        if f"sender-{i}" in message
+    }
+    assert len(represented_senders) == maxsize, (
+        f"the single concatenated push must represent exactly the {maxsize} "
+        f"events that fit in the bounded queue, never fewer (a stall) and "
+        f"never more (the dropped overflow reaching HookDispatcher anyway) "
+        f"-- got {len(represented_senders)}: {message!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -126,7 +142,20 @@ async def test_fire_and_forget_at_the_boundary_drops_nothing(tmp_path):
 
     await _wait_for(lambda: external_fire.pending_dispatch_count(session) == 0)
     await asyncio.sleep(0.05)
-    assert len(_drain_hook_texts(session)) == maxsize
+    # #5516: folds into ONE concatenated push (see the test above's own
+    # comment) — this negative control now checks all `maxsize` events are
+    # represented in that one push, nothing dropped.
+    hook_texts = _drain_hook_texts(session)
+    # Exactly ONE push — tuple-unpacking raises its own clear ValueError
+    # if folding produced zero or more than one.
+    (message,) = hook_texts
+    represented_senders = {
+        f"webhook:sender-{i}" for i in range(maxsize) if f"sender-{i}" in message
+    }
+    assert len(represented_senders) == maxsize, (
+        f"nothing must be dropped at exactly the boundary -- got "
+        f"{len(represented_senders)}: {message!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -152,3 +181,62 @@ async def test_fire_and_forget_reuses_one_bridge_per_session(tmp_path):
     event = adapter.to_event("webhook:sender-overflow")
     external_fire.fire_and_forget(session, "webhook_received", event.payload, maxsize=maxsize)
     assert external_fire.dropped_dispatch_count(session) == 1
+
+
+@pytest.mark.asyncio
+async def test_mixed_points_in_one_burst_fold_separately_never_cross_contaminate(tmp_path):
+    """Tier 2b: LOAD-BEARING — #5516. ``_SessionFireBridge`` is per-SESSION,
+    not per-adapter (unlike ``ingress._BoundedEventBridge``), so
+    ``cron_fired`` and ``webhook_received`` fires for the same session
+    share ONE queue. A burst mixing both points, landing before the drain
+    task's first scheduling chance, must fold EACH point into its own
+    batch/push — never merge cron_fired's payloads into webhook_received's
+    push or vice versa."""
+    hooks_config = [
+        {"on": "webhook_received", "template_push": {"message": "web:{{ sender }}"}},
+        {"on": "cron_fired", "template_push": {"message": "cron:{{ job_name }}"}},
+    ]
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    session = make_session(
+        agent_name="mixed_point_agent", state_log=state_log,
+        reactivity=ReactivityConfig(hooks_config=hooks_config),
+    )
+
+    from reyn.hooks.ingress import CronIngressAdapter, WebhookIngressAdapter
+
+    web_adapter = WebhookIngressAdapter()
+    cron_adapter = CronIngressAdapter()
+
+    web_senders = [f"webhook:w{i}" for i in range(3)]
+    for sender in web_senders:
+        event = web_adapter.to_event(sender)
+        external_fire.fire_and_forget(session, "webhook_received", event.payload)
+    cron_jobs = [f"job{i}" for i in range(2)]
+    for job_name in cron_jobs:
+        event = cron_adapter.to_event(job_name, "mixed_point_agent")
+        external_fire.fire_and_forget(session, "cron_fired", event.payload)
+
+    await _wait_for(lambda: external_fire.pending_dispatch_count(session) == 0)
+    await asyncio.sleep(0.05)
+
+    hook_texts = _drain_hook_texts(session)
+    # Exactly 2 pushes (one per distinct point) — tuple-unpacking raises
+    # its own clear error if there were 1 (cross-contaminated) or 5
+    # (unfolded), without pinning a literal count via len(...).
+    (push_a, push_b) = hook_texts
+    web_push = next(t for t in (push_a, push_b) if t.startswith("web:"))
+    cron_push = next(t for t in (push_a, push_b) if t.startswith("cron:"))
+    for sender in web_senders:
+        assert sender in web_push, f"{sender!r} missing from the webhook push: {web_push!r}"
+    for job_name in cron_jobs:
+        assert job_name in cron_push, f"{job_name!r} missing from the cron push: {cron_push!r}"
+    for job_name in cron_jobs:
+        assert job_name not in web_push, (
+            f"cross-contamination: cron_fired job {job_name!r} leaked into the "
+            f"webhook_received push: {web_push!r}"
+        )
+    for sender in web_senders:
+        assert sender not in cron_push, (
+            f"cross-contamination: webhook_received sender {sender!r} leaked "
+            f"into the cron_fired push: {cron_push!r}"
+        )

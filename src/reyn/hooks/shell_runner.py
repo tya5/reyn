@@ -447,7 +447,7 @@ def _report_unapplied_agent_policy(
 
 async def run_shell_hook(
     argv: "list[str] | tuple[str, ...]",
-    event_context: dict,
+    event_context: dict,  # #5516: shape is {"events": [payload, ...], "skipped_session_wide": int}
     *,
     timeout_seconds: int = 60,
     cwd: str | None = None,
@@ -491,6 +491,18 @@ async def run_shell_hook(
         payload SHAPE changed, not the execution mechanism).
     event_context:
         Dict serialised as JSON and passed to the subprocess on stdin.
+        #5516: always shaped ``{"events": [payload, ...],
+        "skipped_session_wide": int}`` — ``"events"`` is always an ARRAY
+        (clean break, no dual shape: even a single, un-folded dispatch
+        wraps its one payload as ``[payload]``), assembled by
+        ``HookDispatcher._dispatch_batch_for_point``/``_build_event_context``
+        from a folded batch (``reyn.hooks.fold.drain_folded`` — N
+        queued events become ONE launch carrying all N, not N separate
+        launches). ``"skipped_session_wide"`` is the count of events LOST
+        to bridge queue overflow since this hook's last launch — a
+        SESSION-scoped count (it happens before any per-hook matcher ever
+        runs), never attributable to this one hook entry, hence the field
+        name.
     timeout_seconds:
         Wall-clock cap; default 60 s.
     cwd:
