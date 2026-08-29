@@ -10,9 +10,17 @@ own module-level call.
 """
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_media_capability import register_media_capability_overrides
-from reyn.runtime.router_loop import MediaMaterialiseFailure, _materialise_media_part
+from reyn.runtime.router_loop import (
+    MediaMaterialiseFailure,
+    _build_media_followup_message,
+    _materialise_media_part,
+)
 
 ensure_litellm_ready()
 
@@ -83,10 +91,60 @@ def test_non_image_mime_always_degrades_regardless_of_capability() -> None:
     two-question rule; question ② (can the cost be bounded) has no answer
     yet for these modalities. Uses gpt-4o (real supports_pdf_input=True)
     to prove this is NOT a capability-lookup gap — the gate deliberately
-    never reaches the capability check for a non-image mime at all."""
+    never reaches the capability check for a non-image mime at all.
+
+    #5509 architect review (BLOCKING): this is a DIFFERENT failure reason
+    than an actual capability check failing — NO_TOKEN_BOUND (question ②),
+    not CAPABILITY_UNAVAILABLE (question ①). Conflating them into one
+    member pointed an operator at a useless remedy (declaring a
+    capability override cannot fix "this modality has no per-item token
+    bound yet")."""
     pdf_block = {"type": "file", "mime_type": "application/pdf", "data": "AAAA"}
     result = _materialise_media_part(pdf_block, None, model="gpt-4o")
-    assert result is MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
+    assert result is MediaMaterialiseFailure.NO_TOKEN_BOUND
+
+
+def test_the_caller_reads_the_failure_reason_unbounded_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #5509 architect review (BLOCKING) — every
+    ``MediaMaterialiseFailure`` member's own docstring promises a caller
+    reads it; before this fix, ``_build_media_followup_message`` silently
+    dropped the reason (``if not isinstance(part, MediaMaterialiseFailure)``
+    with no ``else``). This is the ONE place that read now happens:
+    dropping a block in the unbounded path (no ref fallback there) logs
+    the reason name, not just "something failed"."""
+    model = "openai/reyn-test-5509-caller-reads-reason-unbounded"
+    block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
+    with caplog.at_level(logging.DEBUG, logger="reyn.runtime.router_loop"):
+        result = _build_media_followup_message(
+            tool_name="read_file", media_blocks=[block], model=model,
+        )
+    assert result is None  # the only image dropped -> no follow-up at all
+    assert any(
+        "capability_unavailable" in r.getMessage() and "read_file" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_the_caller_reads_the_failure_reason_bounded_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: same witness as above, for the BOUNDED path — the block
+    still degrades to a ref (real fallback exists here), but the reason
+    is logged before the ref-degrade, not silently."""
+    model = "openai/reyn-test-5509-caller-reads-reason-bounded"
+    block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
+    with caplog.at_level(logging.DEBUG, logger="reyn.runtime.router_loop"):
+        result = _build_media_followup_message(
+            tool_name="read_file", media_blocks=[block], model=model,
+            budget_tokens=10_000,
+        )
+    assert result is not None  # ref fallback still produced a follow-up
+    assert any(
+        "capability_unavailable" in r.getMessage() and "read_file" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_strip_falsify_the_gate_by_hand() -> None:

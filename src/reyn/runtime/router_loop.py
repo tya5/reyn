@@ -210,11 +210,27 @@ class MediaMaterialiseFailure(enum.Enum):
     NOT_FOUND = "not_found"
     #: Block carries neither a ``path`` nor inline ``data`` to render.
     NO_DATA = "no_data"
-    #: #5509: the model's capability for this block's modality resolved
+    #: #5509 architect review (BLOCKING, split from a single conflated
+    #: member): the model's capability for this block's modality resolved
     #: UNSUPPORTED or UNKNOWN (``reyn.llm.model_media_capability`` — see
-    #: that module's own docstring for the 3-state rule and the operator
-    #: escape hatch for UNKNOWN).
+    #: that module's own docstring for the 3-state rule). Question ① of
+    #: architect's two-question rule — "can this model receive these
+    #: bytes at all". The remedy is declaring the model's real capability
+    #: via ``multimodal.model_capability_overrides``.
     CAPABILITY_UNAVAILABLE = "capability_unavailable"
+    #: #5509 architect review: this block's modality has no ESTABLISHED
+    #: per-item token bound yet (anything other than ``image/*`` today —
+    #: a PDF's cost scales with page count, so no single constant
+    #: upper-bounds it; see this module's own ``_MEDIA_IMAGE_TOKEN_COST``
+    #: comment). Question ② of architect's rule — "can the cost be
+    #: bounded before sending" — independent of whether the model COULD
+    #: take the bytes. Declaring a capability override does NOT fix
+    #: this — the remedy is a real per-item bound becoming available for
+    #: this modality, not yet implemented (PR2). Deliberately a
+    #: DIFFERENT member than CAPABILITY_UNAVAILABLE: conflating them
+    #: (the #5517 review finding) sends an operator toward a useless
+    #: override declaration for a problem an override cannot fix.
+    NO_TOKEN_BOUND = "no_token_bound"
 
 
 def _materialise_media_part(
@@ -232,10 +248,10 @@ def _materialise_media_part(
     bound yet (a PDF's cost scales with page count; a single constant
     would be a wish, not a bound — see this module's own ``_MEDIA_
     IMAGE_TOKEN_COST`` comment), so a non-image block always degrades to
-    :attr:`MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE` regardless of
-    *model* — the caller's ref-degrade path is exactly where the wire door
-    for those modalities currently opens (architect ruling: "上界が取れ
-    ない媒体は materialise の段に載せない — ref の段へ").
+    :attr:`MediaMaterialiseFailure.NO_TOKEN_BOUND` regardless of *model*
+    — the caller's ref-degrade path is exactly where the wire door for
+    those modalities currently opens (architect ruling: "上界が取れない
+    媒体は materialise の段に載せない — ref の段へ").
 
     ``model=None`` (partial/test hosts with no resolvable model string)
     skips the capability gate entirely — the pre-#5509 unconditional
@@ -244,7 +260,7 @@ def _materialise_media_part(
     """
     mime = block.get("mime_type") or block.get("mimeType") or "image/png"
     if not mime.startswith("image/"):
-        return MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE
+        return MediaMaterialiseFailure.NO_TOKEN_BOUND
     if model is not None:
         from reyn.llm.model_media_capability import MediaCapability, get_media_capability
 
@@ -405,8 +421,22 @@ def _build_media_followup_message(
     if budget_tokens is None:
         for block in images:
             part = _materialise_media_part(block, media_store, model=model)
-            if not isinstance(part, MediaMaterialiseFailure):
-                parts.append(part)
+            if isinstance(part, MediaMaterialiseFailure):
+                # #5509 architect review: the ONE place this failure's
+                # reason is actually read — every MediaMaterialiseFailure
+                # member's own docstring promises a caller reads it, this
+                # is that read. Silently dropping the block (no fallback
+                # in the unbounded path — the pre-#272 shape has no ref
+                # stage) would leave an operator with no way to tell
+                # "declare a capability override" apart from "this
+                # modality has no bound yet" apart from "the store lost
+                # the file".
+                logger.debug(
+                    "media block dropped from follow-up for tool=%r: %s",
+                    tool_name, part.value,
+                )
+                continue
+            parts.append(part)
         return {"role": "user", "content": parts} if len(parts) > 1 else None
 
     # Bounded path (#272 + media-count cap): keep the whole follow-up ≤ budget.
@@ -417,7 +447,19 @@ def _build_media_followup_message(
         # Prefer materialising (usable by the vision model) while it fits.
         if spent + _MEDIA_IMAGE_TOKEN_COST <= budget_tokens:
             part = _materialise_media_part(block, media_store, model=model)
-            if not isinstance(part, MediaMaterialiseFailure):
+            if isinstance(part, MediaMaterialiseFailure):
+                # #5509 architect review: read here too — the bounded path
+                # has a real fallback (the ref below) so this block isn't
+                # LOST the way the unbounded path's drop is, but the
+                # reason is still worth 1 line: "why did this go to ref
+                # instead of embedding" is exactly the question an
+                # operator asks when images silently stop being usable
+                # by the model.
+                logger.debug(
+                    "media block %d/%d for tool=%r degrading to ref: %s",
+                    i + 1, len(images), tool_name, part.value,
+                )
+            else:
                 parts.append(part)
                 emitted.append(("img", part))
                 spent += _MEDIA_IMAGE_TOKEN_COST
