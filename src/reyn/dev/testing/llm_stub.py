@@ -124,6 +124,29 @@ apply): this mode lives entirely OUTSIDE the fixture mechanism — no key,
 no fixture file, invisible to ``MissingFixture``/#5283 by the same
 construction the rest of this module already has.
 
+``raise_for`` generalization — a caller-supplied content predicate
+(architect ruling, same #5382 arc): ``raise_for="compaction"`` was
+ALREADY a content predicate (``_is_compaction_call``, fixed to one
+constant) — not a new axis, a generalization of the one that already
+existed. ``raise_for=<callable(messages) -> bool>`` lets a caller supply
+its OWN predicate over the request content directly, for a scenario
+`"compaction"`'s fixed check cannot express: "raise on THIS specific
+compaction content, succeed on a DIFFERENT one" (e.g. a spill-recovery
+test where compact() must fail on an oversized turn, then succeed once
+that turn's content has been replaced). ``#5103 C1``'s wildcard rejection
+still does not apply for the same reason as above — no fixture mechanism
+is touched either way.
+
+Acceptance condition (architect): the predicate receives ``messages``
+ONLY — never a call count, never internal state. Deciding by "how many
+times has this been called" resurrects the exact weak witness architect
+corrected in #5386 (a counter that increments at ``compact()``'s own
+entry proves nothing about whether the right CONTENT arrived) — the
+consumer test's own main-call fake (``_ContentDrivenLoop`` in
+``test_5296_pr2_byte_reduction_same_turn_retry.py``) already lives by
+the same rule ("never a hardcoded call-count script"); this predicate
+form makes the compaction axis match that same content-driven shape.
+
 ``control=`` (#5450) and ``raise_for=``/``cause=`` (#5382) are two
 INDEPENDENT axes on the same stub, validated and applied independently —
 a test that needs BOTH (hang-then-release a main call, or gate a
@@ -134,7 +157,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Literal
+from typing import Any, Callable, Literal, Union
 
 #: #5450: the closed vocabulary for `control=` — mirrors #5382's own
 #: closed `cause` vocabulary. A value outside this set raises at
@@ -149,13 +172,26 @@ class UnknownLLMStubControlError(ValueError):
     """Raised when ``control=`` is not one of :data:`_CONTROL_MODES`."""
 
 
-#: #5382: the closed vocabulary of call KINDS this stub can selectively
-#: recognize and raise for. Currently one member — closed so a future
-#: caller cannot silently invent a second discriminator shape (a payload
-#: hash, a free-form string) without a design ruling, the same posture
-#: #5382's own ``_REPLAY_EXCEPTION_CAUSES`` vocabulary already takes for
-#: *what* raises, applied here to *which call* raises.
-RaiseFor = Literal["compaction"]
+#: #5382: the closed vocabulary of NAMED call KINDS this stub can
+#: selectively recognize and raise for. Currently one member — closed so
+#: a future caller cannot silently invent a second discriminator shape
+#: (a payload hash, a free-form string) without a design ruling, the
+#: same posture #5382's own ``_REPLAY_EXCEPTION_CAUSES`` vocabulary
+#: already takes for *what* raises, applied here to *which call* raises.
+#: A caller needing a NARROWER predicate than "compaction" (e.g. "this
+#: compaction call, not that one") supplies a callable instead — see
+#: :data:`RaiseFor` and the module docstring's "raise_for generalization"
+#: section.
+_NAMED_RAISE_FOR: "frozenset[str]" = frozenset({"compaction"})
+
+#: A caller-supplied predicate: receives the request's ``messages`` list
+#: ONLY (never a call count — see the module docstring's acceptance
+#: condition) and returns whether THIS call should raise.
+RaiseForPredicate = Callable[[list], bool]
+
+#: Either a NAMED call kind (:data:`_NAMED_RAISE_FOR`'s vocabulary) or a
+#: caller-supplied content predicate.
+RaiseFor = Union[Literal["compaction"], RaiseForPredicate]
 
 
 class LLMStub:
@@ -242,7 +278,7 @@ class LLMStub:
             await self.release.wait()
         import litellm
 
-        if self._raise_for == "compaction" and _is_compaction_call(messages):
+        if self._raise_for is not None and _should_raise(self._raise_for, messages):
             # __init__ guarantees raise_for/cause are set together — cause
             # is never None here, but mypy can't see that invariant across
             # the two attributes. A type-level cast, not a runtime check
@@ -256,11 +292,11 @@ class LLMStub:
             factory = _REPLAY_EXCEPTION_CAUSES.get(cause)
             if factory is None:
                 raise UnknownReplayCause(
-                    f"LLMStub(raise_for='compaction', cause={cause!r}): "
+                    f"LLMStub(raise_for={self._raise_for!r}, cause={cause!r}): "
                     f"not in the closed replay vocabulary "
                     f"{sorted(_REPLAY_EXCEPTION_CAUSES)!r}."
                 )
-            raise factory(f"stubbed {cause} (LLMStub raise_for='compaction')")
+            raise factory(f"stubbed {cause} (LLMStub raise_for={self._raise_for!r})")
 
         if _is_compaction_call(messages):
             # #4883: compact() requires non-empty JSON with `topic_arc` (and
@@ -292,3 +328,23 @@ def _is_compaction_call(messages: list[dict]) -> bool:
     from reyn.prompt.compaction import COMPACTION_SYSTEM_PROMPT
 
     return bool(messages) and messages[0].get("content") == COMPACTION_SYSTEM_PROMPT
+
+
+def _should_raise(raise_for: "RaiseFor", messages: list[dict]) -> bool:
+    """Resolve ``raise_for`` (a NAMED call kind or a caller-supplied
+    predicate — see the module docstring's "raise_for generalization")
+    against ``messages``. The named form is itself just
+    ``_is_compaction_call`` under a fixed name — both branches are
+    content predicates over ``messages``, never a call count."""
+    if isinstance(raise_for, str):
+        if raise_for not in _NAMED_RAISE_FOR:
+            # #5382: closed named vocabulary — a string outside it is a
+            # typo, not a silently-ignored no-op.
+            raise ValueError(
+                f"LLMStub: raise_for={raise_for!r} is not a known named "
+                f"call kind ({sorted(_NAMED_RAISE_FOR)!r}) and is not "
+                f"callable — pass a callable(messages) -> bool for a "
+                f"custom predicate."
+            )
+        return _is_compaction_call(messages)
+    return raise_for(messages)

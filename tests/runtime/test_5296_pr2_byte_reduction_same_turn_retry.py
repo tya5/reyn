@@ -686,51 +686,6 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     )
 
 
-class _SpillableByteLimitMidEngine:
-    """Real-shaped ``CompactionEngine`` stand-in whose ``compact()`` 413s
-    while the offered slice's FIRST turn still carries the ORIGINAL
-    marker content, succeeds once it is the SPILLED content — the driver-
-    path witness that ``RouterLoopDriver``'s own ``spill_fn`` wiring (not
-    merely ``retry_loop``'s internal logic, already covered directly in
-    ``test_pr_n6_compaction_overflow_retry.py``) is what makes this
-    resolve. ``raw_middle[0]`` is always the offered slice's first turn
-    regardless of how far ``_compact_attempt_len`` has halved (the slice
-    is always ``raw_middle[:_attempt_len]``, taken from index 0), so
-    checking only ``new_turns[0]`` is sufficient here."""
-
-    def __init__(self) -> None:
-        from reyn.core.events.events import EventLog
-        from reyn.services.compaction.engine import ComputedBudgets
-        self.budgets = ComputedBudgets(
-            main_pool=10_000, head_budget=20, body_budget=500,
-            tail_budget=20, new_msg_budget=1_000,
-            B_M=8_000, main_M_room=7_000, effective_trigger=3_000,
-            section_caps={
-                "topic_arc": 50, "decisions": 200, "pending": 150,
-                "session_user_facts": 50, "artifacts_referenced": 175,
-            },
-        )
-        self._events = EventLog()
-        self._T_comp_SP = 100
-        self._model = "openai/test-standard-model"
-        self.compact_calls = 0
-
-    async def compact(self, input_chunk):
-        self.compact_calls += 1
-        turn = input_chunk.new_turns[0]
-        content = turn.get("content") if isinstance(turn, dict) else None
-        if content == "OVERSIZED_MARKER_5367_3":
-            raise _FakeStatusError("compact 413", status_code=413)
-        from reyn.services.compaction.engine import ChatSummary
-
-        def _seq(t: object) -> int:
-            return t.get("seq", 0) if isinstance(t, dict) else getattr(t, "seq", 0)
-
-        return ChatSummary(
-            topic_arc="ok", covers_through_seq=max((_seq(t) for t in input_chunk.new_turns), default=0),
-        )
-
-
 def test_run_with_shrink_wires_spill_fn_into_retry_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -750,86 +705,122 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
     directly and supplies its own ``spill_fn=`` cannot catch this — only
     a test that goes through the real caller can).
 
-    The injected ``_SpillableByteLimitMidEngine`` carries its OWN tiny
-    budgets (``effective_trigger=3_000``, ``head_budget``/``tail_budget``
-    ``=20``) — ``resolve_effective_trigger_and_budgets`` reads these off
-    the compaction controller's cached engine, not from ``t_max``, once an
-    engine is injected (measured directly while building this test:
-    ``t_max`` alone left everything in ``head`` regardless of its value).
-    One small head turn + the marker (tool) + 7 filler (user, assistant)
-    pairs reliably lands the marker turn alone as ``raw_middle[0]`` — sized
-    in spirit only (the marker's actual content is tiny; only WIRING is
-    this test's subject, not byte-size behavior, which the engine-level
-    tests in ``test_pr_n6_compaction_overflow_retry.py`` already cover).
+    #5382: the real ``CompactionEngine`` now runs throughout (was a
+    hand-rolled ``_SpillableByteLimitMidEngine`` stand-in whose own tiny
+    injected ``ComputedBudgets`` forced the head/tail split — that
+    private-cache injection is exactly what #5382 closes). The SAME
+    ``t_max=2_500`` this test already used turns out to reproduce the
+    identical split with the REAL engine's own real budgets (measured
+    directly while migrating this test) — no budget injection needed at
+    all. ``LLMStub``'s ``raise_for=<callable(messages) -> bool>``
+    (architect ruling, #5382's "raise_for generalization") makes ONLY the
+    compact() call carrying the marker's content raise — a CONTENT
+    predicate, never a call count (architect: a counter that increments
+    at compact()'s own entry cannot say whether the right content
+    arrived — the exact weak witness #5386 corrected). One small head
+    turn + the marker (tool) + 7 filler (user, assistant) pairs reliably
+    lands the marker turn alone as ``raw_middle[0]`` — sized in spirit
+    only (the marker's actual content is tiny; only WIRING is this
+    test's subject, not byte-size behavior, which the engine-level tests
+    in ``test_pr_n6_compaction_overflow_retry.py`` already cover).
     ``max_shrink_iterations=25`` is generous: the halving ladder needs a
     few attempts to reach the mid=1 floor, then (after the spill succeeds)
     retry_loop folds the remaining filler turns one at a time before ever
     reaching ``main_call`` — a real, if wasteful, consequence of #4947 ③'s
     "don't reset the discovered slice size to full" choice, not a bug this
     test is pinning."""
+    from reyn.dev.testing.llm_stub import LLMStub
+
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500, max_shrink_iterations=25,
         recovery_policy="never",
     )
-    session._compaction_controller._CompactionController__engine_cache = (
-        _SpillableByteLimitMidEngine()
-    )
-    _push(session, "user", "small head content " * 5)
-    _push(session, "tool", "OVERSIZED_MARKER_5367_3", tool_call_id="tc-marker", name="big_tool")
-    for i in range(7):
-        _push(session, "user", f"filler question number {i} " * 40)
-        _push(session, "assistant", f"filler answer number {i} " * 40)
+    # #5382: content-based witness (architect ruling) — records whether
+    # EACH compact() call that reached this predicate carried the marker,
+    # rather than counting how many calls happened. The predicate's own
+    # decision (raise or not) is exactly "did this call carry the
+    # marker", so recording that decision IS the content record — no
+    # separate tracking mechanism, no call count.
+    seen_marker_per_call: "list[bool]" = []
 
-    head, raw_middle, _tail, _summary, _seq_by_id = (
-        session._loop_driver._history_buffer.decompose_history_for_retry()
-    )
-    mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
-    assert mid_ids == {"tc-marker"}, (
-        f"test setup sanity: the marker turn must land alone in "
-        f"raw_middle's tool turns, got {mid_ids!r} — adjust t_max/turn "
-        f"placement (this mirrors test_retry_loop_chat_wiring_1125.py's "
-        f"own independently-measured t_max=2800/8-turn split)"
-    )
-    assert raw_middle[0].get("tool_call_id") == "tc-marker", (
-        "test setup sanity: the marker turn must be raw_middle[0] — the "
-        "halving ladder always offers raw_middle[:_attempt_len] from "
-        "index 0"
-    )
+    def _raise_on_marker_content(messages: list) -> bool:
+        has_marker = "OVERSIZED_MARKER_5367_3" in messages[-1].get("content", "")
+        seen_marker_per_call.append(has_marker)
+        return has_marker
 
-    # The FIRST call (via build_history()) must fail unconditionally to
-    # enter retry_loop at all — build_history's own elide logic already
-    # hides raw_middle's content from the wire before any real overflow
-    # occurs (this scenario's content is elidable-away by construction),
-    # so a marker-presence check alone would never see the first call
-    # fail. Every call AFTER the first goes through retry_loop's own
-    # internal main_call (head+summary+tail only, never raw_middle), so
-    # once compact() succeeds on the spilled content, that call's payload
-    # genuinely no longer carries the marker either way — checking call
-    # ORDER (first vs. later), not payload shape, is what this predicate
-    # actually needs.
-    _seen_first_call = {"done": False}
+    stub = LLMStub(raise_for=_raise_on_marker_content, cause="byte_limit")
+    stub.install()
+    try:
+        _push(session, "user", "small head content " * 5)
+        _push(session, "tool", "OVERSIZED_MARKER_5367_3", tool_call_id="tc-marker", name="big_tool")
+        for i in range(7):
+            _push(session, "user", f"filler question number {i} " * 40)
+            _push(session, "assistant", f"filler answer number {i} " * 40)
 
-    def _fail_only_the_very_first_call(history: list, user_text: str) -> bool:
-        if _seen_first_call["done"]:
-            return False
-        _seen_first_call["done"] = True
-        return True
-
-    loop = _ContentDrivenLoop(_fail_only_the_very_first_call)
-
-    # No exception raised (the assertion is the ABSENCE of one — retry_loop
-    # only returns via the fake loop's OWN return value, None on success,
-    # matching the sibling test's convention).
-    asyncio.run(
-        session._loop_driver._run_with_shrink(
-            loop, "continue please", chain_id="c1",
+        head, raw_middle, _tail, _summary, _seq_by_id = (
+            session._loop_driver._history_buffer.decompose_history_for_retry()
         )
+        mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+        assert mid_ids == {"tc-marker"}, (
+            f"test setup sanity: the marker turn must land alone in "
+            f"raw_middle's tool turns, got {mid_ids!r} — adjust t_max/turn "
+            f"placement (this mirrors test_retry_loop_chat_wiring_1125.py's "
+            f"own independently-measured t_max=2800/8-turn split)"
+        )
+        assert raw_middle[0].get("tool_call_id") == "tc-marker", (
+            "test setup sanity: the marker turn must be raw_middle[0] — the "
+            "halving ladder always offers raw_middle[:_attempt_len] from "
+            "index 0"
+        )
+
+        # The FIRST call (via build_history()) must fail unconditionally to
+        # enter retry_loop at all — build_history's own elide logic already
+        # hides raw_middle's content from the wire before any real overflow
+        # occurs (this scenario's content is elidable-away by construction),
+        # so a marker-presence check alone would never see the first call
+        # fail. Every call AFTER the first goes through retry_loop's own
+        # internal main_call (head+summary+tail only, never raw_middle), so
+        # once compact() succeeds on the spilled content, that call's payload
+        # genuinely no longer carries the marker either way — checking call
+        # ORDER (first vs. later), not payload shape, is what this predicate
+        # actually needs.
+        _seen_first_call = {"done": False}
+
+        def _fail_only_the_very_first_call(history: list, user_text: str) -> bool:
+            if _seen_first_call["done"]:
+                return False
+            _seen_first_call["done"] = True
+            return True
+
+        loop = _ContentDrivenLoop(_fail_only_the_very_first_call)
+
+        # No exception raised (the assertion is the ABSENCE of one — retry_loop
+        # only returns via the fake loop's OWN return value, None on success,
+        # matching the sibling test's convention).
+        asyncio.run(
+            session._loop_driver._run_with_shrink(
+                loop, "continue please", chain_id="c1",
+            )
+        )
+    finally:
+        stub.restore()
+
+    # #5382: content-based witness, replacing the old `compact_calls >= 2`
+    # counter. `seen_marker_per_call` is a record of what content EACH
+    # compact() call actually carried, filled by the predicate itself —
+    # `True in ...` proves the marker's own content genuinely reached
+    # compact() and was made to fail; `False in ...` proves a LATER call,
+    # with DIFFERENT (spilled) content, also reached compact() and
+    # succeeded — the spilled content actually got there, not merely "2
+    # calls happened" (a counter alone cannot distinguish "spilled content
+    # arrived" from "the SAME marker content was retried twice").
+    assert True in seen_marker_per_call, (
+        f"test setup sanity: expected at least one compact() call to "
+        f"carry the marker content — got {seen_marker_per_call!r}"
     )
-    engine = session._compaction_controller._CompactionController__engine_cache
-    assert engine.compact_calls >= 2, (
-        f"expected at least 2 compact() calls (failing attempts on the "
-        f"original marker content, then a succeeding one on the spilled "
-        f"content) — got {engine.compact_calls}, meaning the spilled "
+    assert False in seen_marker_per_call, (
+        f"expected a LATER compact() call to carry DIFFERENT (spilled) "
+        f"content — got {seen_marker_per_call!r}, meaning the spilled "
         f"content never reached engine.compact() at all"
     )
 
