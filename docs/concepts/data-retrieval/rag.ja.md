@@ -6,132 +6,36 @@ audience: [human, agent]
 
 # RAG（Retrieval-Augmented Generation）
 
-> **このページは stale です — 英語版 [Concepts: RAG](rag.md) が正です。** 特に:
-> `semantic_search` / `drop_source` / `list_rag_sources` はエージェント向けツールとして
-> 既に retire 済み（FP-0066 P1b）、safe-mode `index_update()`（`reyn.api.safe.
-> index_update`）と CLI `reyn source list / describe / rm` も retire 済み（FP-0066
-> P1c、本 PR）— in-core index は現在 OS-internal 専用で、ユーザー向け/エージェント向けの
-> 作成・検索手段は一切ありません。以下の本文（Phase 1/1.5/2 の表記、`index_update()`
-> クイックスタート例、`reyn source` への言及を含む）はこの retire 前の状態を記述した
-> ままの historical スナップショットです。ユーザー向け RAG は FP-0063 plugin
-> （[Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md)）を使用してください。
+reyn は内部 RAG **framework foundation** を提供します — `embed` / `index_query` / `index_drop` / `semantic_search` / `index_update` の control-IR op 群、拡張可能な `IndexBackend` protocol、`EmbeddingProvider` protocol です。**FP-0066 P1c 以降、in-core index の source を作成・変更・削除するのは OS-internal のみ**です: ユーザー向け/agent 向けにそれを行う手段は一切ありません。読み取りは汎用検索より狭いものの、もうゼロではありません — `search_knowledge`（FP-0066 P3c、landed）が 4 つの OS-curated source を横断して読みます。詳細は下記を参照。これは長い retire の経緯を閉じるものです:
 
-reyn は RAG **framework foundation** を提供します — 5 つの primitive op（`embed` / `index_query` / `index_drop` / `semantic_search` / `index_update`）、 拡張可能な `IndexBackend` protocol、 `EmbeddingProvider` protocol、 safe-mode の `index_update()` エントリーポイント（FP-0057 Phase 2b; 旧 `embed_and_index()` を clean-break で retire）。 任意のドキュメントコーパスを index し、 クエリ時に LLM が関連する chunk を取得できます。コーパス全体をコンテキストウィンドウに展開する必要はありません。
+- **FP-0066 P1b** が、in-core store に乗っていた agent 向け LLM ツール 4 つ（`semantic_search` / `index_update` / `drop_source` / `list_rag_sources`）を retire しました。
+- **FP-0066 P1c（現状）** が、同じ store への残り 2 つのユーザー向けエントリーポイント — safe-mode `index_update()` python 呼び出し（`reyn.api.safe.index_update`）と CLI `reyn source list / describe / rm` コマンド群 — を retire しました。
 
-**差別化: 検索は組み込みツール、ライブラリ呼び出しではない。** LangChain や LlamaIndex は自分のドライバーコードから呼び出す Python pipeline を提供しますが、reyn の `semantic_search`/`drop_source` は通常の `reyn chat` セッション中に LLM 自身が呼び出す組み込みツールです — 検索側にオーケストレーションコードは不要です。
+この 3 つの surface はいずれも、user RAG と in-core RAG が別システムに分割される（proposal 0063）以前の残留物 — reyn 自身の内部 store に user-RAG のセマンティクスが乗っていた形でした。retire の根拠と、in-core index を OS 内部から再び到達可能にした後続フェーズ（`search_actions` は現在稼働、`search_knowledge` も FP-0066 P3c 以降 稼働 — どちらも自分で作った source を汎用に検索する agent ツールではありません）については [proposal 0066 §9](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) を参照してください。
 
-**Phase 1 scope (= 1.0 release)** で出荷されるのは framework foundation、 SQLite default backend (≤100K chunks、 sub-second query)、 LiteLLM embedding passthrough。 vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone)、 advanced retrieval (rerank / HyDE / contextual retrieval)、 RAG eval framework、 IDE integration は post-1.0 (= phase 2) territory ([../architecture/care-boundary.md](../architecture/care-boundary.md) 参照)。 これらの mature ecosystem が今すぐ必要なら、 LangChain / LlamaIndex の方が fit します。
+> **agent に自分のドキュメントを検索させたい場合は、builtin user RAG**（proposal 0063）を使ってください: ドキュメントフォルダ（pdf / xlsx / pptx / docx / txt / md）を **自分で名付けた外部 sqlite vector store** に取り込む 2 つのバンドル済み pipeline を、MCP server 経由で使い、クエリします — 書くべき Python step は無く、agent 呼び出しで end-to-end に完結します。[Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) を参照。これは本ページが説明する in-core index とは *別の* store・*別の* セットアップです — 両者が共有するのは `embed` primitive と、下記の `embedding:` class 設定だけです。
 
-**TL;DR:** 検索は自動 — LLM が必要な情報を組み込みの `semantic_search` ツールで自動的に取得します。source を作るには自分のファイルを読んで `index_update()` を呼ぶ短い safe-mode Python step が必要です（一発コマンドの indexing skill はもうバンドルされていません）。
+## in-core index は OS-internal only
 
-## クイックスタート {#quick-start}
+in-core store に対して operator/agent が追加・削除する手段は、もはや一切ありません — safe-mode python 呼び出しも、CLI コマンドも、書き込み用の LLM ツールもありません。生の `semantic_search`/`index_update`/`index_drop` op kind 自体も agent から呼び出せません（architect 裁定、#5495: これは意図であって取りこぼしではありません — `src/` にはこの 3 つを LLM ツールとして登録している箇所が 0 件です）。substrate（`IndexUpdateIROp` / `SemanticSearchIROp` / `SqliteIndexBackend` / `EmbeddingProvider`）が残されているのは、後続の FP-0066 フェーズ（§8 ingest、§5 search）がこの上に reyn 自身の内部検索を構築するためです — action-catalog 検索（`search_actions`）は既にそうしていますし、skill/memory/repo 検索（`search_knowledge`、FP-0066 P3c、landed）も同様です: どちらも、OS 自身が index する固定の閉じた source 集合に対する OS-curated な読み取り surface であって、自分で作った source をどちらかのツールに指し示す方法ではありません。これは「何でも index して LLM に検索させる」汎用 surface ではありません — そのためには上記の FP-0063 plugin を使ってください。
 
-コーパスの indexing は一度だけ実行する小さなスクリプト — ファイルを読んで chunk に分割し、`index_update` に渡します（`python` step、デフォルトは safe mode）：
+`index_update` は **reconcile** であり、追記/置換の切り替えではありません: internal caller は、(再)index する `source_path` の現在の chunk 集合すべてを 1 回の呼び出しで渡します（`content_hash` に対する add/update/remove/skip — 同じ chunk での再実行は re-embed せず、変更されたハッシュを持つ既存パス配下の chunk はその chunk だけを re-embed して古いものを破棄します）。この契約は retire 前から変わっていません — 変わったのは誰が呼べるかだけです。
 
-```python
-# my_project/index_docs.py — python step として一度だけ実行(mode: safe がデフォルト)
-from reyn.api.safe import file, index_update as iu
+## 「source」とは何か
 
-paths = file.glob("docs/**/*.md")
-chunks = []
-for path in paths:
-    text = file.read(path)
-    # 単純な段落分割 — コーパスに合わせて置き換えてください
-    for i, para in enumerate(text.split("\n\n")):
-        if not para.strip():
-            continue
-        chunks.append({
-            "text": para,
-            "metadata": {"content_hash": f"{path}:{i}", "source_path": path},
-        })
+**source** とは、ファイル集合から取られた chunk の名前付きコレクションで、以下で識別されます:
 
-iu.index_update(
-    chunks,
-    source="my_docs",
-    model="text-embedding-3-small",
-    description="プロジェクトドキュメント",
-    path="docs/**/*.md",
-)
-```
+| フィールド | 用途 |
+|-------|---------|
+| `source` | この chunk コレクションの論理名 |
+| `path` | index 対象となったすべてのファイルにマッチした glob パターン |
+| `description` | source の自由記述ラベル |
 
-`index_update` は append/replace の切り替えではなく **reconcile**（差分整合）です — add/update/remove/skip の契約は英語版 [Concepts: RAG](rag.md) を参照してください（同じ chunk での再実行は re-embed せず、`content_hash` が変わった `source_path` はその chunk だけ再 embed して古い hash を削除します）。
-
-```bash
-# チャットを開始する — LLM は必要に応じて chunk を semantic_search で取得する
-reyn chat
-> 認証設計の概要をドキュメントから要約して
-```
-
-実 `gemini-embedding-001` を LiteLLM proxy 経由でエンドツーエンド検証済み: EN concept doc 21 本 → chunk 418 個を index (~$0.001)、自然な概念クエリ（"What is X in Reyn?"、"Explain Reyn's permission model"）が chat 3 回中 3 回で index 済みのセマンティック回答を返しました（= batch 22、2026-05-10）。`docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md` 参照。（この検証は `embed_and_index()` エントリーポイントおよびその FP-0057 Phase 2b 後継 `index_update()` 以前・当時削除前の `index_docs` skill を使用したものですが、embed/index/recall の内部メカニズムは変わっていません。）
-
-裏側では LLM が `semantic_search` を呼び出し、上位の chunk を取得します：
-
-```
-LLM internally calls: semantic_search(query="認証設計", sources=["my_docs"], top_k=5)
-```
-
-同じスクリプトパターンで任意のファイル glob を index できます — ユーザーノート、ソースコード、JSONL ログなど。`file.glob()` のパスと `source` 名を変えるだけです。
-
-## source とは何か
-
-**source** は、一連のファイルからの chunk の名前付きコレクションです。次の情報を指定します：
-
-| フィールド | 例 | 目的 |
-|----------|-----|------|
-| `source` | `my_docs` | `semantic_search` 呼び出しと `reyn source` コマンドで使用する論理名 |
-| `path` | `docs/**/*.md` | 単一の glob パターン — マッチしたすべてのファイルがまとめて index される |
-| `description` | `"プロジェクトドキュメント"` | 必須。LLM がいつこの source を検索するかを判断するために使用 |
-
-1 回の indexing 実行で 1 source、1 path、1 chunking 方式をカバーします。異なる chunking で複数のファイル種類を index したい場合は、source ごとに indexing スクリプトを実行し、クエリ時に `sources=[...]` で組み合わせます：
-
-```
-semantic_search(query="...", sources=["python_src", "my_docs", "memory"], top_k=5)
-```
-
-source のメタデータは `.reyn/config/index/sources.yaml` に保存されます。LLM は
-`list_rag_sources` を呼んで、index 済みの source を名前・説明・チャンク数つきで
-取得します：
-
-```
-list_rag_sources()
-→ {"sources": [
-    {"name": "memory",    "description": "User notes / past session memos", "chunk_count": 142},
-    {"name": "reyn_code", "description": "Reyn Python framework code",      "chunk_count": 1247},
-    {"name": "my_docs",   "description": "Project documentation",           "chunk_count": 89}
-  ]}
-```
-
-ここで返る name が、`semantic_search` の `sources` 引数に渡す名前です。discovery は
-system prompt の常設ブロックではなくツール呼び出しなので、corpus を多数持つ運用者でも
-モデルが実際に尋ねたターンでしかコストを払いません。
-
-## `semantic_search` ツール
-
-`semantic_search`（FP-0057 Phase 2a; `recall` から rename）はすべてのチャットセッションで LLM が利用できる組み込みツールです。自然言語クエリを受け取り、指定した source を検索して上位 K 件の chunk を返します：
-
-```
-semantic_search(query="plan-mode の議論", sources=["memory"], top_k=5)
-```
-
-LLM はインデックス時に指定した source の description に基づいて、どの source を検索するかを判断します。どの source にアクセスできるかをワークフローごとに設定する必要はありません。
-
-内部的に `semantic_search` はインデックス時と同じモデルを使ってクエリを embed し、各 source の SQLite index に対してコサイン類似度検索を行い、スコア順でマージします。処理全体は決定論的です。LLM が受け取るのはテキストとしての上位 K 件の chunk のみで、生のベクトルは渡りません。
-
-もう 1 つの組み込みツール `drop_source` を使うと、chunking を試行錯誤するときなどに LLM がインデックスを削除できます：
-
-```
-drop_source(source="my_docs")
-```
-
-## Chunking は自分のコードで書く
-
-バンドルされた chunker や LLM 主導の戦略選択はもうありません — [クイックスタート](#quick-start)の chunking ロジック（段落分割）は自分で書いてコーパスに合わせて調整する plain Python です。専門的なコーパス（Python ソースコード、SQL スキーマ、構造化 YAML）には、`index_update` を呼ぶ前にその corpus に合った分割ロジック（例: ソースコード用の AST ベース分割、Markdown 用の見出しベース分割）を差し込んでください。
-
-chunking ステップは自分の `python` step 内で決定論的に実行されます。LLM の関与はなく、attractor surface もありません。`index_update` が add/update/remove/skip の reconcile・embedding・index 書き込みを処理し、それより上流（ファイル読み込み、chunk 分割）はすべて普通の Python です。1 回の呼び出しには、(再)index する `source_path` の現在の chunk 集合すべてを渡してください — 削除検出には reconcile がそのパスの完全な集合を見る必要があります。
+source のメタデータは `.reyn/config/index/sources.yaml` に永続化されます。
 
 ## ストレージの場所
 
-すべての index データはプロジェクトの `.reyn/` ディレクトリ内に保存されます：
+すべての index データはワークスペースの `.reyn/` ディレクトリ内に保存されます:
 
 ```
 .reyn/
@@ -140,90 +44,97 @@ chunking ステップは自分の `python` step 内で決定論的に実行さ�
       sources.yaml                 # Source manifest — 名前、path、モデル、chunk 数
   cache/
     index/
-      my_docs/
+      <source>/
         index.db                   # この source の SQLite vector store
       memory/
         index.db
 ```
 
-`sources.yaml` は何が index されているかの単一の信頼できる情報源であり、operator が編集可能な状態なので `config/` 配下にあります。SQLite の index データは派生・再構築可能な状態なので `cache/` 配下にあります。recovery-core / cache / audit の分割詳細は [`.reyn/` ディレクトリレイアウト](../../reference/runtime/reyn-dir-layout.md) を参照。SQLite ファイルには chunk テキストと embedding ベクトルが含まれます。任意の SQLite クライアントで閲覧できますが、スキーマは内部仕様です。
-
-Phase 1 では SQLite のみをストレージバックエンドとして使用します。Phase 2 では `register_backend()` 拡張ポイントを通じて、Qdrant、FAISS、Pinecone などのプラグインバックエンドが追加されます。
-
-## パーミッション
-
-RAG 操作を保護するパーミッションゲートは 1 つです（LLM 向け側）：
-
-| パーミッション | デフォルト | トリガー |
-|------------|----------|---------|
-| `permissions.index_drop` | `ask` | `drop_source` ツール呼び出しまたは `reyn source rm` |
-
-`index_update()` 自体には専用のパーミッションゲートはありません — それを呼ぶ safe-mode `python` step は、RAG 固有のゲートではなく、呼び出し元 phase の通常の python-step パーミッションの下で実行されます。
+`sources.yaml` は何が index されているかの単一の信頼できる情報源で、operator が編集可能な状態なので `config/` 配下にあります。SQLite の index データは派生・再構築可能な状態なので `cache/` 配下にあります。recovery-core / cache / audit の分割の詳細は [`.reyn/` ディレクトリレイアウト](../../reference/runtime/reyn-dir-layout.md) を参照してください。SQLite ファイルには chunk テキストと embedding ベクトルが含まれます。スキーマは internal です。
 
 ## コスト
 
-embedding コストは（add/update の dedup 後の）to-embed chunk 数に比例し、コーパスサイズと embedding モデルによって異なります — デフォルトは `text-embedding-3-small` です。削除された `index_docs` skill のラッパーとは異なり、safe-mode エントリーにはインタラクティブなコスト事前チェックはありませんが、to-embed バッチが `embedding.cost_warn_threshold` を超えると `index_update_cost_warning` の audit-event と、戻り値の envelope の `cost_warning` フィールドで警告が表示されるようになりました — indexing スクリプトで反応させたい場合は `result["cost_warning"]` を確認してください。
+embedding コストは（add/update の dedup 後の）to-embed chunk 数に線形です — 変更の無い chunk は skip され、re-embed されません。to-embed バッチが大きい場合（`embedding.cost_warn_threshold` を超える場合。[§Embedding の設定](#embedding-の設定)参照）、`index_update_cost_warning` audit-event と、`index_update` の返り値 envelope の `cost_warning` フィールドで警告が表示されます。
 
 ## Embedding の設定
 
-embedding モデルとバッチ処理の動作は `reyn.yaml` の `embedding:` セクションで設定します：
+embedding モデルとバッチ処理の挙動は `reyn.yaml` の `embedding:` 配下で設定します — この設定は in-core index（internal caller）と `search_actions` の両方を統べます。デフォルトで 3 つの built-in class が出荷され、すべて OpenAI backed です:
 
 ```yaml
 embedding:
+  enabled: true
   default_class: standard
   classes:
-    light:    openai/text-embedding-3-small
-    standard: openai/text-embedding-3-small
-    strong:   openai/text-embedding-3-large
+    light:      openai/text-embedding-3-small
+    standard:   openai/text-embedding-3-small
+    strong:     openai/text-embedding-3-large
   batch_size: 100
   max_retries: 3
+  timeout: 60.0
   cost_warn_threshold: 10000
 ```
 
-API キーは `~/.reyn/secrets.env` から `${OPENAI_API_KEY}` 経由で読み込まれます。`reyn.yaml` にリテラル値を記述する必要はありません。`reyn secret set OPENAI_API_KEY` でキーを設定すれば、追加設定なしで indexing が動作します。
+`embedding.enabled`（デフォルト `false`、opt-in）は embed op 自体をゲートします — [proposal 0066 §7](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md#7-opt-in-embeddingenabled-symmetric-model) を参照。#4156 は後に、このゲートが実際にどのワークロードを有効化するかを分割しました: `embedding.index.actions`（デフォルト **on**）は `search_actions` が読む約 10 件の action catalog を構築し、`embedding.index.repo_knowledge`（デフォルト **off**）は別枠の、はるかに大きい FP-0066 P3b repo 全体の knowledge index です — [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields) を参照。
 
-## Phase 1 スコープ
+`timeout` は 1 試行あたりの締切（秒）です — 1 回の embedding 試行を reyn がどれだけ待つか。これが存在するのは、停止した embedding endpoint が litellm 自身の `request_timeout` デフォルト（1 試行あたり 6000 秒）でしか制限されず、operator にはハングと区別できないからです。`<= 0` で opt-out します。
 
-**Phase 1（1.0 リリース）に含まれるもの:**
+**コストの制御ではありません。** `timeout` は待機を制限するのであって送信を制限するのではありません — OpenAI SDK クライアントはこの下でリトライするため、1 試行が最大 3 リクエストを wire に乗せ、`max_retries: 3` により最大 9 リクエストになります — デフォルトの 60.0 秒の締切内で、9 件すべてが約 7.6 秒で配達されることが実測されており、この締切自体は作動しません。`timeout` を下げても provider 側の計算量は減りません。[reyn.yaml § `embedding` fields](../../reference/config/reyn-yaml.md#embedding-fields) と [#3047](https://github.com/tya5/reyn/issues/3047) を参照。
 
-- すべてのチャットセッションで LLM が利用できる `semantic_search` ツール
-- クリーンアップ用の `drop_source` ツール
-- SQLite vector store バックエンド
-- `reyn source list / describe / rm` CLI
-- チャットシステムプロンプトの empty-state ヒント
+Reyn は embedding を litellm に **排他的に** 依存します — in-process のモデル backend はありません（#3128 が、FP-0043 で出荷された sentence-transformers backed の `local-mini` / `local-e5` class を削除しました）。各 class の `model` 文字列は LiteLLM-routable な名前で、dispatch は LiteLLM を通して provider 自身の API に直接届くか、`LITELLM_API_BASE` 環境変数が設定されていれば **litellm proxy** を経由します（`call_llm` が読むのと同じ変数です）。
 
-**Phase 1.5（1.1+）に延期:**
+OpenAI API key は `~/.reyn/secrets.env` から `${OPENAI_API_KEY}` 経由で読まれます — `reyn.yaml` にリテラル値は書きません。`reyn secret set OPENAI_API_KEY` で設定してください。
 
-- memory layer のインライン展開から `semantic_search(sources=["memory"])` への移行。1.0 では memory は従来通り動作します。
+### ローカル/オフラインの embedding モデル
 
-**1.0 以降に landed:**
+Reyn は in-process のローカル embedding backend を出荷していません。ローカルモデル（API key 不要、またはオフライン/air-gapped なセットアップ）を使いたい operator は、それを **litellm proxy** の裏で動かして reyn をそこに向けます — proxy が、ローカルサーバー（Ollama / HuggingFace `text-embeddings-inference` / `infinity`）を reyn が既に期待している OpenAI 互換 endpoint に変換します。reyn 自身がローカルサーバーと直接話すことはありません。`embedding.classes` 配下に、proxy 経由のモデルを指すエントリを追加してください。例:
 
-- **FP-0057 Phase 2a/2b**: `recall` は `semantic_search` に rename。safe-mode の indexing エントリーポイントは `index_update()`（`reyn.api.safe.index_update`）になりました — source の現在の index に対する差分 reconcile（add/update/remove/skip）呼び出しで、retire された `embed_and_index()`（`reyn.api.safe.embed_index`、clean-break・shim なし）を置き換えます。これにより下記「差分 indexing なし」のギャップも解消されました — reconcile が `content_hash` で削除・変更されたファイルを検出するため、通常のファイル変更には別の rebuild モードは不要です。
+```yaml
+embedding:
+  classes:
+    local:
+      model: openai/nomic-embed-text   # LITELLM_API_BASE が provider/ 接頭辞を剥がした後の名前
+```
 
-**Phase 2（1.1 以降）に延期:**
+その上で reyn を起動する前に `export LITELLM_API_BASE=http://localhost:4000`（自分の proxy のアドレス）としてください。セットアップの完全な手順（サーバー選択、proxy の `config.yaml`、`provider/` 名前剥がしのルール、事前検証）は [Guide: enable semantic search § Case B](../../guide/for-users/enable-semantic-search.md#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) にあります — `search_actions` 向けに書かれていますが、同じ仕組みが in-core index の internal caller にも使えます。
 
-- 代替 vector store バックエンド（Qdrant、FAISS、Pinecone）
-- 高度な retrieval（rerank、HyDE、contextual retrieval）
-- ローカル embedding モデル（ollama、ONNX、GGUF）
-- RAG 評価フレームワーク
+チャット側の action retrieval（= `search_actions`）については、[Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) と、キャッシュ管理のための [`reyn embeddings`](../../reference/cli/embeddings.md) CLI を参照してください。
+
+## Phase の経緯
+
+**FP-0066 P1c（現状）**: in-core store への残り 2 つのユーザー向けエントリーポイント — safe-mode `index_update()` python 呼び出しと CLI `reyn source` コマンド群 — が clean-break・shim 無しで retire されました。in-core store に **書き込む** operator/agent 向け手段は、もはや一切ありません。読み取りは別軸です — 下記 FP-0066 P3c を参照。
+
+**Retire 前に landed していたもの（historical）:**
+
+- **FP-0066 P1b**: agent 向け layer-1 ツール（`semantic_search` / `index_update` / `drop_source` / `list_rag_sources`）が retire されました。
+- **FP-0043** が、chat 側 action retrieval（`search_actions`）向けのローカル embedding パスを追加しました。当初は in-process の `sentence-transformers` backend として出荷されましたが、**#3128 がその in-process backend を削除**しました — reyn は今や embedding を litellm に排他的に依存し、「ローカル」が欲しければ operator 自身が動かす litellm proxy 経由で到達します — [§ローカル/オフラインの embedding モデル](#ローカルオフラインの-embedding-モデル)を参照。
+- **FP-0057 Phase 2a/2b**: `recall` が `semantic_search` に rename（後に FP-0066 P1b で retire）。safe-mode の ingestion エントリーポイント `index_update()`（後に FP-0066 P1c で retire）が、retire された `embed_and_index()`（`reyn.api.safe.embed_index`、clean-break・shim 無し）を置き換え、incremental/delta-reconcile（source の現在の index に対する add/update/remove/skip）を追加しました。
+- **#3026** が `list_rag_sources`（後に FP-0066 P1b で retire）を、index 済みコーパスを列挙する discovery verb として追加しました。
+
+**Retire 後に landed したもの（読み取りのみ、書き込みではない）:**
+
+- **FP-0066 P3c** が `search_knowledge` を追加しました — skill/memory/repo-doc/repo-src の 4 つの OS-curated source を横断して読む LLM ツールで、entity 単位に集約されます。読み取り専用で、その 4 つの固定 source に限定されます — 自分で作った source を検索したり指し示したりする手段ではありません。[上記「in-core index は OS-internal only」](#in-core-index-は-os-internal-only)を参照。
+
+**将来フェーズへの延期:**
+
+- 代替 vector store backend（Qdrant、FAISS、Pinecone）
+- Advanced retrieval（rerank / HyDE / contextual retrieval）
+- 追加のローカル backend（ollama、ONNX、GGUF）
+- RAG 評価 framework
 
 ## 制限事項
 
-- **Phase 1 SQLite バックエンドの推奨最大値は source あたり 100K chunk** です。それ以上のコーパスも動作しますが、クエリレイテンシが増加します。
-- **フルリビルドモードなし。** `index_update` は reconcile 専用です（現在の index に対する add/update/remove/skip）— `mode="replace"` のような全消去・再構築呼び出しはありません。フルリビルドを強制するには、まず `index_drop` ツール（または `reyn source rm`）で source を削除してから、空の source に対して `index_update` を再実行してください。
-- **Phase 1 では memory layer は変更なし。** セッション memory は引き続きインラインのシステムプロンプト展開を使用します。このリリースでは `semantic_search` ツールと memory は独立したシステムです。
-- **高度な retrieval なし。** Phase 1 はコサイン類似度のみを使用します。rerank、HyDE、contextual retrieval はありません。
-- **機密データについて。** reyn は index 前に機密コンテンツを削除しません。シークレット、認証情報、個人情報を index する場合はその影響を理解した上で行ってください。削除ポリシーは Phase 2 で予定されています。
-- **Embedding API が必要。** Phase 1 にはローカル embedding のパスがありません。OpenAI 互換の API キーが必要です。
-
-## Operational Intelligence — イベントへの `semantic_search`
-
-同じ `semantic_search` op（FP-0057 Phase 2a; `recall` から rename）は、他のコーパスと同じ `index_update()` パターンで index された Reyn 自身の P6 実行イベントログにも動作します（source 名は慣習的に `"events"`）。チャンクメタデータの形、クエリ例、この indexing 経路の現状は [コンセプト: Operational Intelligence](operational-intelligence.ja.md) を参照。
+- **source あたり推奨最大 100K chunk**（SQLite backend）。より大きいコーパスも動作しますが、クエリ遅延が増加します。
+- **フルリビルドモードなし。** `index_update` は reconcile 専用です（現在の index に対する add/update/remove/skip）— `mode="replace"` のような全消去・再構築呼び出しはありません。ゼロからの再構築は、まず対象 source に `index_drop` を実行し、空になった source に対して `index_update` を再実行してください。
+- **user-facing なエントリーポイントが一切ない。** FP-0066 P1c 以降、in-core index には safe-mode python 呼び出しも、CLI コマンドも、LLM ツールもありません。自分のドキュメントに対する agent 駆動検索が必要な場合は FP-0063 user RAG plugin を使ってください。
+- **Advanced retrieval なし。** Cosine 類似度のみ — reranking、HyDE、contextual retrieval はありません。
+- **機微データ。** reyn は index 前に機微な内容を redact しません。その影響を理解していない限り、secret・credential・PII を index しないでください。
+- **Embedding には API key か、自前で動かす litellm proxy のどちらかが必要です。** built-in class（`light` / `standard` / `strong`）は `OPENAI_API_KEY` を必要とします。credential 不要な経路が欲しい場合は、operator がローカル embedding server を litellm proxy の裏に立て、それを指す `embedding.classes` エントリを追加する必要があります（[§ローカル/オフラインの embedding モデル](#ローカルオフラインの-embedding-モデル)参照）。[§Embedding の設定](#embedding-の設定)も参照してください。
 
 ## 関連項目
 
-- [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — 設計の根拠と完全な技術仕様（内部向け）
-- [コンセプト: workspace](../runtime/workspace.md) — `.reyn/` の状態構造
-- [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `index_drop` パーミッションゲート
-- [コンセプト: シークレット管理](../runtime/secret-handling.md) — embedding API キー管理
+- [Guide: Build a RAG corpus](../../guide/for-users/build-a-rag-corpus.md) — agent 呼び出し可能な user RAG: 外部 sqlite store 上の builtin pipeline（proposal 0063）
+- [Proposal 0066: retrieval redesign](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md) — in-core のユーザー向け surface がなぜ retire されたか、何がそれに代わるか
+- [ADR-0033](../../deep-dives/decisions/0033-rag-extensible-os.md) — 設計根拠と完全な技術仕様（internal、historical）
+- [Concepts: workspace](../runtime/workspace.md) — `.reyn/` state の構造
+- [Concepts: secret handling](../runtime/secret-handling.md) — embedding API key の管理
 - [Reference: `reyn.yaml`](../../reference/config/reyn-yaml.md) — `embedding:` セクションのスキーマ
