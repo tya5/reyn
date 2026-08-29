@@ -45,9 +45,9 @@ reyn config migrate-mcp [--dry-run]
 `reyn config set` always writes to `reyn.local.yaml` (gitignored) — never to `reyn.yaml`.
 
 `reyn config validate` always exits `0`, even when it reports findings — it REPORTS, it
-never gates (owner ruling: warn, never hard-fail, anywhere). It checks six things,
+never gates (owner ruling: warn, never hard-fail, anywhere). It checks seven things,
 each printed as its own labeled section (never merged into one list — the fix differs
-per section, and merging would lose "which one do I fix, and how"). Note the last
+per section, and merging would lose "which one do I fix, and how"). Note the middle
 three checks (hook entries, MCP server placement, MCP transport type) each cover
 multiple separate config *files* under one section, not one:
 
@@ -106,10 +106,27 @@ multiple separate config *files* under one section, not one:
   same 3 static locations + the dynamic `.reyn/config/mcp.yaml` the placement check
   above scans). Fix: change `type: http` to `type: streamable-http` by hand in the
   file the finding names.
+- **Agent `profile.yaml` unknown keys** (#5455 ①) — every
+  `.reyn/agents/<name>/profile.yaml`, checked against `AgentProfile`'s own field
+  list (`reyn.runtime.profile.unknown_profile_keys`) — a different operator-editable
+  surface from the three above, with its own closed vocabulary (dataclass fields,
+  not `ReynConfig`'s schema), so it is its own check rather than an entry folded
+  into the top-level unknown-key checks. Reported one line per agent directory
+  that has an unrecognized key. A key that is real today but later removed from
+  `AgentProfile` (e.g. #5095's `broker_identity`) leaves this line behind in an
+  operator's file with no other signal — it is read, kept in no in-memory state,
+  and does nothing. Fix: remove the key(s) from the file named.
 
 `reyn config migrate` only rewrites an entry whose registered rename has an automatic
 destination (a plain rename, no value transform); a rename that also transforms the
 value is reported as "needs manual review" instead, never guessed at.
+
+When every check above comes back clean, the "no issues" line names the population
+it actually walked (#5455 ③ — the earlier text just said "no unknown ... config keys
+found" without saying it had never looked at `profile.yaml` at all): the policy
+tier, the hot-reload IN-set, and every `.reyn/agents/<name>/hooks.yaml` and
+`profile.yaml`. A future eighth check added to this command must be added to that
+same walked-population list too — nothing enforces that automatically.
 
 ## Examples
 
