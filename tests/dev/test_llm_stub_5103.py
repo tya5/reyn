@@ -183,3 +183,41 @@ def test_raise_for_and_cause_must_be_given_together() -> None:
         LLMStub(cause="rate_limit")
 
 
+@pytest.mark.asyncio
+async def test_raise_for_callable_predicate_raises_when_it_returns_true() -> None:
+    """Tier 1: #5382's raise_for generalization (architect ruling) — a
+    caller-supplied predicate over `messages` (never a call count) can
+    select a call to raise for, the same way the named "compaction" form
+    already does under the hood (`_is_compaction_call` IS a content
+    predicate, fixed to one constant)."""
+    import litellm
+
+    stub = LLMStub(raise_for=lambda messages: "MARKER" in messages[-1]["content"], cause="rate_limit")
+
+    with pytest.raises(litellm.RateLimitError):
+        await stub._handle("m", [{"role": "user", "content": "has MARKER in it"}])
+
+
+@pytest.mark.asyncio
+async def test_raise_for_callable_predicate_does_not_raise_when_it_returns_false() -> None:
+    """Tier 1: the predicate's negative case — a call the predicate
+    rejects keeps the ordinary success response, same selectivity
+    property the named form already has."""
+    stub = LLMStub(raise_for=lambda messages: "MARKER" in messages[-1]["content"], cause="rate_limit")
+
+    response = await stub._handle("m", [{"role": "user", "content": "no marker here"}])
+
+    assert response.choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_named_raise_for_string_is_a_construction_time_style_error() -> None:
+    """Tier 1: a string that is neither the "compaction" name nor callable
+    fails explicitly at CALL time (not silently doing nothing) — same
+    "diagnose, don't guess" posture as the unrecognised-cause witness."""
+    stub = LLMStub(raise_for="some_typo", cause="rate_limit")
+
+    with pytest.raises(ValueError):
+        await stub._handle("m", [{"role": "user", "content": "anything"}])
+
+
