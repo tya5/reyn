@@ -66,6 +66,15 @@ from tests._support.router_loop import FakeRouterHost, text_result
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 from tests._support.session import make_session as _make_session
 
+
+def _collect(session) -> list:
+    """Subscribe through the public seam (Session.subscribe_audit_events,
+    #5260) — for witness ②: turn_started proves the REAL driver ran (#5450)."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
+
+
 # ── (a) shape ────────────────────────────────────────────────────────────
 
 
@@ -223,8 +232,9 @@ async def test_cooperative_cancel_persists_the_marker_via_real_router_loop() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub(control="gated")
 async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_marker(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, _llm_stub,
 ):
     """Tier 2: arm (f) — Session.run_one_iteration's hard-cancel catch only
     calls notify_turn_cancelled when the cancellation was
@@ -236,10 +246,10 @@ async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_mark
     Delivered through the REAL mechanism ``test_3377_run_loop_survives_turn_
     cancel.py`` itself uses: ``session._turn_owner_task.cancel()`` directly
     — bypassing ``cancel_inflight()`` entirely, so
-    ``_turn_cancel_self_initiated`` stays False. Real ``Session`` (no
-    mocks); only ``RouterLoopDriver.run_turn`` is replaced with a
-    controllable hang, the same seam ``test_2242_hard_cancel.py`` and
-    ``test_3377_...`` both use.
+    ``_turn_cancel_self_initiated`` stays False. Real ``Session``/real
+    ``RouterLoopDriver``/``RouterLoop`` (#5450: the LLM boundary is hung via
+    ``@pytest.mark.llm_stub(control="gated")``, not a private ``run_turn``
+    replacement).
 
     Falsification (performed for real): removing the ``else:`` gate
     (calling ``notify_turn_cancelled`` unconditionally) makes this test go
@@ -247,28 +257,25 @@ async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_mark
     cancel ever happened.
     """
     session = _make_session(tmp_path, monkeypatch=monkeypatch)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text, chain_id):
-        started.set()
-        await release.wait()
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
+    events = _collect(session)
 
     await session._put_inbox("user", {"text": "hello", "chain_id": "c-unknown-origin"})
     turn_task = asyncio.create_task(session.run_one_iteration())
     try:
-        await asyncio.wait_for(started.wait(), timeout=5)
+        await _llm_stub.call_started.wait()
 
         # The REAL "not self-initiated" delivery mechanism — NOT cancel_inflight().
         session._turn_owner_task.cancel()
 
-        release.set()
-        completed = await asyncio.wait_for(turn_task, timeout=5)
+        _llm_stub.release.set()
+        completed = await turn_task
         assert completed is True  # the driver survives (per #3377)
     finally:
-        release.set()
+        _llm_stub.release.set()
+
+    # witness ②: the real driver dispatched before the cancel hit it.
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
 
     cancelled_markers = [
         m for m in session.history
@@ -284,7 +291,10 @@ async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_mark
 
 
 @pytest.mark.asyncio
-async def test_hard_cancel_via_cancel_inflight_persists_the_marker(tmp_path) -> None:
+@pytest.mark.llm_stub(control="gated")
+async def test_hard_cancel_via_cancel_inflight_persists_the_marker(
+    tmp_path, _llm_stub,
+) -> None:
     """Tier 2: arm (g) — the ② receiver, witnessed IN THIS FILE (not only
     cross-referenced) so a reader/reviewer of this file alone sees the
     positive path for the "more common" case the module docstring itself
@@ -303,19 +313,12 @@ async def test_hard_cancel_via_cancel_inflight_persists_the_marker(tmp_path) -> 
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snapshot.json",
     )
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def _hanging_run_turn(user_text: str, chain_id: str) -> None:
-        started.set()
-        await release.wait()
-
-    session._loop_driver.run_turn = _hanging_run_turn  # type: ignore[method-assign]
+    events = _collect(session)
 
     await session._put_inbox("user", {"text": "hello", "chain_id": "c-hard-cancel-g"})
     turn_task = asyncio.create_task(session.run_one_iteration())
     try:
-        await asyncio.wait_for(started.wait(), timeout=5)
+        await _llm_stub.call_started.wait()
 
         # The REAL delivery mechanism: cancel_inflight() (NOT a raw
         # Task.cancel()) — sets _turn_cancel_self_initiated=True FIRST,
@@ -323,11 +326,15 @@ async def test_hard_cancel_via_cancel_inflight_persists_the_marker(tmp_path) -> 
         result = await session.cancel_inflight()
         assert "cancel" in result.lower()
 
-        release.set()
-        completed = await asyncio.wait_for(turn_task, timeout=5)
+        _llm_stub.release.set()
+        completed = await turn_task
         assert completed is True
     finally:
-        release.set()
+        _llm_stub.release.set()
+
+    # witness ②: the real driver dispatched before the cancel hit it.
+    await session._audit_events.drain()
+    assert any(e.type == "turn_started" for e in events)
 
     (marker,) = [
         m for m in session.history
