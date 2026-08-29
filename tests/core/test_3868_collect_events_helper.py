@@ -135,25 +135,29 @@ def test_resolve_log_passes_a_plain_eventlog_through_unchanged() -> None:
     assert _resolve_log(log) is log
 
 
-def test_session_itself_has_neither_add_subscriber_nor_drain(tmp_path, monkeypatch) -> None:
-    """Tier 2: the witness that ``_resolve_log``'s ``Session``-detection
-    branch is load-bearing, not incidental — a real ``Session`` genuinely
-    cannot satisfy ``collect_events``/``settle`` on its own (no
-    ``add_subscriber``, no ``drain`` method exists on the class at all), so
-    the two tests above passing is real evidence the resolution ran, never
-    a coincidence of ``Session`` already happening to duck-type as a log.
-    The ``hasattr(session, "_audit_events")`` line is the deny-side
-    assert's own accept-side sibling — without it, a ``make_session`` that
-    broke and returned something with neither attribute (or nothing at
-    all) would make this test pass just as vacuously as a real ``Session``
-    does (architect review, #5484). (Strip-falsify of ``_resolve_log``
-    itself — temporarily forcing it to return *obj* unchanged — was run by
-    hand: both Session-acceptance tests above then fail with exactly this
-    ``AttributeError``, confirmed and reverted; not pinned here as its own
-    test — the assertion itself is deterministic, not timing-shaped, but
-    re-deriving the exact same two tests' own behavior a second time would
-    be the implementation, transcribed, this repo's six-questions rule 2.)"""
+def test_session_itself_carries_the_underlying_audit_events_attribute(tmp_path, monkeypatch) -> None:
+    """Tier 2: accept-side half of the load-bearing witness — a real
+    ``Session`` genuinely carries ``_audit_events`` (what ``_resolve_log``
+    actually resolves to), so the two Session-acceptance tests above are
+    exercising real resolution, not a coincidence of a broken
+    ``make_session`` vacuously satisfying them (architect review, #5484).
+
+    #5507 correction (lead-coder BLOCKING, same family #5449/#5500
+    already closed — see ``test_5447_doctor_hook_env_single_source.py:
+    24-30`` and ``test_5494_hooks_helper.py``'s own module docstring for
+    the two prior instances): this test used to ALSO assert ``not
+    hasattr(session, "add_subscriber")`` / ``"drain"`` as the deny-side
+    half of the "load-bearing" witness. That shape is inverted (the day
+    ``Session`` legitimately grows an ``add_subscriber``/``drain``-named
+    method for a real reason, this test turns red and punishes the
+    fixer, not a regression) and incomplete (a differently-named
+    equivalent leaves it green while the claim goes false). Deleted.
+
+    Load-bearing-ness of ``_resolve_log``'s ``Session``-detection branch
+    is shown by STRIP-FALSIFY instead, performed BY HAND (#5507):
+    temporarily forcing ``_resolve_log`` to return *obj* unchanged makes
+    both Session-acceptance tests above fail with ``AttributeError:
+    'Session' object has no attribute 'add_subscriber'`` — confirmed,
+    reverted."""
     session = make_session(tmp_path, monkeypatch=monkeypatch)
     assert hasattr(session, "_audit_events")
-    assert not hasattr(session, "add_subscriber")
-    assert not hasattr(session, "drain")
