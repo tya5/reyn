@@ -99,17 +99,45 @@ async def test_emit_event_none_degrades_silently_without_raising() -> None:
     audit-emit sink wired, same posture ``FsWatcher``'s own
     ``self._emit_event`` already has) must not itself raise or otherwise
     interfere with the task's own real death — observation is
-    best-effort, never a NEW point of failure."""
-    queue: "asyncio.Queue[int]" = asyncio.Queue()
+    best-effort, never a NEW point of failure.
 
-    task = asyncio.create_task(drain_folded(queue, _raising_dispatch_batch))
-    task.add_done_callback(
-        functools.partial(observe_drain_task_death, emit_event=None, label="test-caller")
+    A ``done_callback`` that itself raises does NOT propagate into this
+    test's own coroutine — asyncio routes it to the event LOOP's own
+    exception handler instead (never awaited, never surfaced as a red
+    test on its own) — so this installs a real handler to CAPTURE that,
+    the only way this test can actually witness the claim in its own
+    docstring. Waits on a REAL ``asyncio.Event`` set by a SECOND
+    ``done_callback`` (added right after the one under test — asyncio
+    runs a task's done-callbacks in the order they were added, so this
+    second one is guaranteed to run only once the first has already run)
+    — no ``sleep(N)``, unbounded."""
+    loop = asyncio.get_running_loop()
+    captured_loop_exceptions: list[BaseException] = []
+    original_handler = loop.get_exception_handler()
+
+    def _capture(loop: "asyncio.AbstractEventLoop", context: dict) -> None:
+        exc = context.get("exception")
+        if exc is not None:
+            captured_loop_exceptions.append(exc)
+
+    loop.set_exception_handler(_capture)
+    observed_done = asyncio.Event()
+    try:
+        queue: "asyncio.Queue[int]" = asyncio.Queue()
+        task = asyncio.create_task(drain_folded(queue, _raising_dispatch_batch))
+        task.add_done_callback(
+            functools.partial(observe_drain_task_death, emit_event=None, label="test-caller")
+        )
+        task.add_done_callback(lambda _t: observed_done.set())
+        await queue.put(1)
+        await observed_done.wait()
+    finally:
+        loop.set_exception_handler(original_handler)
+
+    assert not captured_loop_exceptions, (
+        f"observe_drain_task_death must not itself raise when emit_event=None "
+        f"— the event loop's own exception handler caught: {captured_loop_exceptions!r}"
     )
-    await queue.put(1)
-    await asyncio.sleep(0)  # let the task run and die; add_done_callback fires synchronously after
-    await asyncio.sleep(0)
-
     assert task.done()
     with pytest.raises(ValueError, match="simulated"):
-        task.result()
+        task.result()  # the drain task's OWN real death — unrelated to observe_drain_task_death's return
