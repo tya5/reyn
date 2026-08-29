@@ -172,6 +172,33 @@ def test_capability_unavailable_also_warns_once_per_model(
     assert "model_capability_overrides" in warning.getMessage()
 
 
+def test_a_second_session_with_the_same_model_still_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #5517 architect follow-up (non-blocking, resolved not just
+    disclosed) — reyn genuinely hosts multiple ``Session`` instances in
+    one process (``AgentRegistry.spawn_session``), so keying the
+    warn-once dedupe on model ALONE would silently suppress the warning
+    for a SECOND session's operator using the same model. Two DIFFERENT
+    session_ids, same model → two separate warnings, one per session."""
+    model = "openai/reyn-test-5509-two-sessions-model"
+    block = {"type": "image", "mime_type": "image/png", "data": "AAAA"}
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
+        _build_media_followup_message(
+            tool_name="read_file", media_blocks=[block], model=model,
+            session_id="session-a",
+        )
+        _build_media_followup_message(
+            tool_name="read_file", media_blocks=[block], model=model,
+            session_id="session-b",
+        )
+    # Unpack-enforces exactly 2 — one per session, not deduped across them.
+    _warning_a, _warning_b = [
+        r for r in caplog.records
+        if r.name == "reyn.runtime.router_loop" and model in r.getMessage()
+    ]
+
+
 def test_no_token_bound_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     """Tier 2: accept side — NO_TOKEN_BOUND is today's designed behavior
     for every non-image modality (architect's own rule), not a defect;

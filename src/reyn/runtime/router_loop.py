@@ -241,22 +241,33 @@ class MediaMaterialiseFailure(enum.Enum):
 # override (test_a_declared_unsupported_override_also_degrades) never
 # touches that layer at all — no warning fires anywhere for that case
 # without this. Escalates ONLY CAPABILITY_UNAVAILABLE to WARNING, once
-# per model (not per image — a WARNING on every dropped image is the
-# opposite visibility failure: nobody reads a flood). NO_TOKEN_BOUND and
-# every other member stay at debug — NO_TOKEN_BOUND is today's DESIGNED
-# behavior for every non-image modality, not a defect to surface loudly;
-# the others (NO_STORE/PERMISSION_DENIED/NOT_FOUND/NO_DATA) already
-# surface on a different, more specific face (a store/permission problem
-# has its own error path elsewhere) — see model_budget.py's own
-# "severity up, never touch setLevel" precedent for why this repo solves
-# shipped-config invisibility this way rather than a logging config change.
-_warned_capability_unavailable: "set[str]" = set()
+# per (session, model) — not per image (a WARNING on every dropped image
+# is the opposite visibility failure: nobody reads a flood), and not per
+# model ALONE either (architect follow-up, #5517: reyn genuinely hosts
+# MULTIPLE Session instances in one process — AgentRegistry.spawn_session,
+# a spawned sub-agent or pipeline driver — so a process-global,
+# model-only key would silently suppress the warning for a SECOND
+# session using the same model, even with a config that also lacks the
+# override; verified via a real grep, not assumed). Keyed on
+# `host.live_session_id` — the same "sid, falling back to main" idiom
+# this file already uses elsewhere for the identical multi-session
+# concern (see `live_session_id`'s own usage a few hundred lines down).
+# NO_TOKEN_BOUND and every other member stay at debug — NO_TOKEN_BOUND is
+# today's DESIGNED behavior for every non-image modality, not a defect to
+# surface loudly; the others (NO_STORE/PERMISSION_DENIED/NOT_FOUND/
+# NO_DATA) already surface on a different, more specific face (a store/
+# permission problem has its own error path elsewhere) — see
+# model_budget.py's own "severity up, never touch setLevel" precedent for
+# why this repo solves shipped-config invisibility this way rather than a
+# logging config change.
+_warned_capability_unavailable: "set[tuple[str, str]]" = set()
 
 
-def _warn_capability_unavailable_once(model: str) -> None:
-    if model in _warned_capability_unavailable:
+def _warn_capability_unavailable_once(session_id: str, model: str) -> None:
+    key = (session_id, model)
+    if key in _warned_capability_unavailable:
         return
-    _warned_capability_unavailable.add(model)
+    _warned_capability_unavailable.add(key)
     logger.warning(
         "media_capability_unavailable: model=%r cannot receive an image "
         "inline (unsupported, or unknown with no declared override) — "
@@ -423,6 +434,7 @@ def _build_media_followup_message(
     media_store: Any = None,
     budget_tokens: int | None = None,
     model: "str | None" = None,
+    session_id: str = "main",
 ) -> dict | None:
     """Build a multimodal follow-up user message for tool results carrying image
     content (issue #362 → #383 PR-C; bounded by #272 + the media-count cap).
@@ -471,7 +483,7 @@ def _build_media_followup_message(
                     tool_name, part.value,
                 )
                 if part is MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE and model is not None:
-                    _warn_capability_unavailable_once(model)
+                    _warn_capability_unavailable_once(session_id, model)
                 continue
             parts.append(part)
         return {"role": "user", "content": parts} if len(parts) > 1 else None
@@ -497,7 +509,7 @@ def _build_media_followup_message(
                     i + 1, len(images), tool_name, part.value,
                 )
                 if part is MediaMaterialiseFailure.CAPABILITY_UNAVAILABLE and model is not None:
-                    _warn_capability_unavailable_once(model)
+                    _warn_capability_unavailable_once(session_id, model)
             else:
                 parts.append(part)
                 emitted.append(("img", part))
@@ -3947,6 +3959,16 @@ class RouterLoop:
                     # a partial/test host without a real `resolve_model`
                     # skips the gate (model=None), the pre-#5509 behavior.
                     model=_resolve_router_model_for_media_gate(host, self.router_model),
+                    # #5509 architect follow-up: keys the CAPABILITY_
+                    # UNAVAILABLE warn-once by session too, not model alone
+                    # — reyn genuinely hosts multiple Session instances in
+                    # one process (AgentRegistry.spawn_session), so a
+                    # model-only key would silently suppress the warning
+                    # for a second session's operator. Same idiom this
+                    # file already uses elsewhere for the identical
+                    # concern (`live_session_id`, sid falling back to
+                    # "main").
+                    session_id=getattr(host, "live_session_id", None) or "main",
                 )
                 if followup is not None:
                     out.append(followup)
