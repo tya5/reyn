@@ -6,6 +6,19 @@ Session-acceptance tests — architect's own bar here is the same: this seam
 works with the exact object a caller who only holds a ``Session`` (no inbox
 access, no internal ``HookBus``/``RouterLoopDriver`` reference) actually
 has. Real ``Session``/``HookBus``/``RouterLoop`` throughout, no mocks.
+
+Load-bearing-ness (lead-coder BLOCKING, PR #5500): NOT pinned via a
+name-absence assert on ``Session`` (``not hasattr(session, "...")``) — that
+shape is inverted (turns red the day a legitimate public seam is added for
+a real consumer) and incomplete (blind to a differently-named seam). Both
+helpers' private reach is instead shown load-bearing by STRIP-FALSIFY,
+performed BY HAND: neutralizing ``collect_hook_events``'s body (raise
+instead of subscribing) turns 3 tests below RED; neutralizing
+``run_one_turn``'s delegate call turns ``test_run_one_turn_drives_the_
+real_router_loop`` RED. Both restored, confirmed GREEN again. See each
+removed test's own comment, at its former location below, for the
+detailed reasoning (same family #5449 already closed the opposite
+direction of — see ``test_5447_doctor_hook_env_single_source.py:24-30``).
 """
 from __future__ import annotations
 
@@ -83,17 +96,26 @@ def test_collect_hook_events_returns_the_hook_bus_own_subscription_type() -> Non
     assert isinstance(sub, HookBusSubscription)
 
 
-def test_session_itself_has_no_public_hook_bus_seam() -> None:
-    """Tier 2: the witness that ``collect_hook_events``'s private-reach
-    branch is load-bearing, not incidental — ``Session`` genuinely has no
-    public method for subscribing to hook events (architect's own ruling:
-    a production seam manufactured purely for tests was explicitly
-    rejected), so the tests above passing is real evidence the helper's
-    OWN private reach ran, never a coincidence of some public alternative
-    already existing."""
-    session = make_session(agent_name="hooks-helper-witness-noise")
-    assert hasattr(session, "_hook_bus")
-    assert not hasattr(session, "subscribe_hook_events")
+# load-bearing-ness witness (lead-coder BLOCKING, PR #5500): a prior version
+# of this file pinned NON-EXISTENCE of a specific method name
+# (`assert not hasattr(session, "subscribe_hook_events")`) as the load-
+# bearing witness for `collect_hook_events`'s private reach. Wrong on two
+# counts (same family #5449 already closed — see test_5447_doctor_hook_
+# env_single_source.py:24-30 — for the opposite direction of the same
+# "what absence means" mistake): (1) inverted — the day a public seam is
+# legitimately added for a real production consumer (architect's own
+# rejection condition was "no consumer TODAY", not "never"), this test
+# turns red and punishes the fixer, not the regression; (2) incomplete —
+# a public seam added under any OTHER name (`hook_events()`,
+# `observe_hooks()`, ...) leaves this assert green while the claim it
+# encodes goes false. Deleted; load-bearing-ness is shown by
+# STRIP-FALSIFY instead (performed by hand, #5500): replacing
+# `collect_hook_events`'s body with `raise RuntimeError(...)` turns the
+# three tests above RED (confirmed); restoring makes them green again.
+# `test_collect_hook_events_returns_the_hook_bus_own_subscription_type`
+# above already covers the "what exists" half safely (asserts the
+# returned object's type, which cannot go stale the way a name-absence
+# check does).
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +148,11 @@ async def test_run_one_turn_drives_the_real_router_loop() -> None:
     assert any(e.type == "turn_completed" for e in events)
 
 
-def test_session_itself_has_no_public_run_one_turn_seam() -> None:
-    """Tier 2: same discipline as the hook-bus noise guard above —
-    ``Session`` genuinely has no public "run one turn" method; the
-    private reach lives only inside ``run_one_turn`` (this file), never a
-    second copy elsewhere."""
-    from reyn.runtime.session import Session
-
-    assert hasattr(Session, "_run_router_loop")
-    assert not hasattr(Session, "run_one_turn")
+# load-bearing-ness witness: same correction as collect_hook_events's own
+# above (lead-coder BLOCKING, PR #5500) — a name-absence assert on Session
+# would be inverted (turns red the day a legitimate public seam is added)
+# and incomplete (blind to a differently-named one). Load-bearing-ness of
+# `run_one_turn`'s private reach is already shown by strip-falsify, BY
+# HAND, earlier in this arc (documented in the module docstring above):
+# neutralizing the delegate call inside `run_one_turn` turned
+# `test_run_one_turn_drives_the_real_router_loop` RED; restored, GREEN.
