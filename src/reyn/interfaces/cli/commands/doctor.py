@@ -323,7 +323,7 @@ def run(args: argparse.Namespace) -> None:
     print()
     print("Hook launch probe (argv[0] only, no configured args — a launch")
     print("probe, not a run; D-2: doctor never executes a hook for real):")
-    _print_hook_probe_results(config)
+    _print_hook_probe_results(config, resolved_root)
 
     # ── C-2: zero-responder external subscription (#4364 PR-2b) ────────────
     print()
@@ -447,19 +447,23 @@ def _print_hook_env_snapshot(resolved_root: Path) -> None:
         print("  no agents configured yet (.reyn/agents/ is empty)")
 
 
-def _configured_exec_hooks(config: object) -> "list[HookDef]":
-    """Every configured ``exec``/``exec_capture`` ``HookDef`` — the caller
-    reads ``.name``/``.on``/``.exec``/``.exec_capture``/``.subprocess``/
-    ``.network``/``.write_paths`` directly off it, so the per-hook sandbox
-    knobs travel with the argv rather than being stripped here."""
-    from reyn.hooks.loader import load_hooks
+def _configured_exec_hooks(config: object, project_root: Path) -> "list[HookDef]":
+    """Every configured ``exec``/``exec_capture`` ``HookDef``, across ALL
+    layers (startup/runtime/per-agent — #5351 (B-2), was startup-only
+    before: this used to build its own single-layer ``load_hooks(config.
+    hooks)`` registry, silently never probing a runtime or per-agent
+    hook's argv at all) — the caller reads ``.name``/``.on``/``.exec``/
+    ``.exec_capture``/``.subprocess``/``.network``/``.write_paths``/
+    ``.origin`` directly off it, so the per-hook sandbox knobs AND the
+    layer that declared it travel with the argv rather than being
+    stripped here."""
     from reyn.hooks.schema import ALLOWED_HOOK_POINTS
 
-    registry = load_hooks(getattr(config, "hooks", None) or [])
+    registry = _merged_hook_registry(config, project_root)
     all_defs = [
         hook_def
         for point in ALLOWED_HOOK_POINTS
-        for hook_def in registry.hooks_for(point)
+        for hook_def in registry.hooks_for(point)  # type: ignore[attr-defined]
     ]
     return [
         hook_def for hook_def in all_defs
@@ -467,14 +471,14 @@ def _configured_exec_hooks(config: object) -> "list[HookDef]":
     ]
 
 
-def _print_hook_probe_results(config: Any) -> None:
+def _print_hook_probe_results(config: Any, project_root: Path) -> None:
     import asyncio
 
     from reyn.security.sandbox import SandboxPolicy as _SandboxPolicy
     from reyn.security.sandbox.launcher import resolve_backend
     from reyn.security.sandbox.probe_argv import probe_argv
 
-    hooks = _configured_exec_hooks(config)
+    hooks = _configured_exec_hooks(config, project_root)
     if not hooks:
         print("  no exec/exec_capture hooks configured")
         return
@@ -489,7 +493,17 @@ def _print_hook_probe_results(config: Any) -> None:
             # `_configured_exec_hooks` already filtered to `exec is not None or
             # exec_capture is not None` — one of the two is always set here.
             assert argv is not None
-            label = hook_def.name or hook_def.on
+            # #5351 (B-2): name the layer alongside the hook — the (B-2)
+            # item from the #5351 issue thread. hook_def.origin comes
+            # from _merged_hook_registry's own load_hooks(..., origin=)
+            # call (#5213's provenance field), so every layer this
+            # doctor process can read (startup/runtime/per-agent) is
+            # named, not just "which hook" — a per-agent hook whose
+            # write_paths silently never took effect at THIS layer
+            # (#5244③/#5356) is now visible as "(per-agent)" right next
+            # to its probe result, not indistinguishable from a startup
+            # one.
+            label = f"{hook_def.name or hook_def.on} ({hook_def.origin})"
             # #2827/#3005: the SAME per-hook knobs -> the SAME default policy
             # shape `run_shell_hook` builds for a real dispatch (shell_runner.py)
             # — "same backend, same profile" (architect's own C-1 spec), not a
@@ -666,6 +680,25 @@ def _merged_hook_registry(config: object, project_root: Path) -> object:
     Session combine), so one bad file cannot hide a real zero-responder
     gap in the layers that DID load.
 
+    #5351 (B-2): each layer is now parsed by its OWN ``load_hooks`` call
+    with ``origin=<label>`` and the resulting ``HookDef`` LISTS are
+    merged — never concatenated as raw dicts first, the shape this
+    function used before (``load_hooks(combined + list(layer))``,
+    re-parsing every earlier layer's entries on every iteration with no
+    ``origin=`` at all, so every ``HookDef.origin`` here silently read
+    the "unknown" default regardless of which file actually declared the
+    hook). This was the SAME pre-#5213 defect that field's own docstring
+    describes for ``Session._build_hook_registry``'s history — it had
+    already been fixed there but not here, a second copy of the same
+    fact that drifted (CLAUDE.md). Doctor's own per-agent granularity
+    (a doctor process reads EVERY agent's hooks.yaml at once, unlike a
+    live Session which only ever reads its own) is preserved separately
+    in *layers*' agent-name labels — ``HookDef.origin`` itself stays the
+    canonical #5213 vocabulary (``"per-agent"``, not ``"per-agent:
+    <name>"``), so a future comparison against
+    :func:`~reyn.hooks.schema.hook_origin_is_at_least_as_specific_as`
+    (which only recognises the 4 canonical strings) keeps working.
+
     The startup layer is read off *config* (``config.hooks`` — the SAME
     already-``project_root``-resolved ``load_config`` result ``run()``
     builds every other C-2/C-7 reading from), not a second, separately-
@@ -676,10 +709,12 @@ def _merged_hook_registry(config: object, project_root: Path) -> object:
     any test driving ``run()`` directly with a ``tmp_path``)."""
     from reyn.config.loader import load_hot_reload_config, load_per_agent_hooks
     from reyn.hooks.loader import HookConfigError, load_hooks
+    from reyn.hooks.registry import HookRegistry
 
     policy_hooks = getattr(config, "hooks", None) or []
     combined = list(policy_hooks) if isinstance(policy_hooks, list) else []
-    registry = load_hooks(combined)  # trusted startup layer — fail loud
+    # trusted startup layer — fail loud (unchanged from pre-#5351 behavior).
+    defs = load_hooks(combined, origin="startup").all_defs()
 
     in_set_merged = load_hot_reload_config(project_root)
     in_set_hooks = in_set_merged.get("hooks") or []
@@ -692,19 +727,18 @@ def _merged_hook_registry(config: object, project_root: Path) -> object:
                 continue
             agent_hooks = load_per_agent_hooks(project_root, agent_dir.name)
             if agent_hooks:
-                layers.append((f"per-agent:{agent_dir.name}", agent_hooks))
+                layers.append(("per-agent", agent_hooks))
 
-    for _label, layer in layers:
+    for origin, layer in layers:
         if not layer:
             continue
         try:
-            registry = load_hooks(combined + list(layer))
-            combined = combined + list(layer)
+            defs = defs + load_hooks(layer, origin=origin).all_defs()
         except HookConfigError:
             # Untrusted layer, malformed — dropped, siblings kept (same
             # resilience as Session._build_hook_registry's real combine).
             continue
-    return registry
+    return HookRegistry(defs)
 
 
 def _print_external_point_pairing(config: object, project_root: Path) -> None:
