@@ -1,6 +1,6 @@
 # `main`'s required_status_checks.strict is deliberately false (#4239). What
 # that costs, and what already pays for it, is written once — in
-# main-hourly-gate-sweep.yml's own header (#4257). Do not restate it here.
+# main-invariant-sweep.yml's own header (#4257). Do not restate it here.
 #
 # This gate exists because the pressure to switch strict back ON is real and
 # recurring: it looks like the fix the first time two independently-green PRs
@@ -30,7 +30,7 @@ jobs:
           if [ "${strict}" != "false" ]; then
             echo "::error::strict is '${strict}', expected 'false'. Turning it back on"
             echo "::error::re-creates the update-branch storm #4239 measured. If a red main"
-            echo "::error::sent you here, see main-hourly-gate-sweep.yml's header: that gap"
+            echo "::error::sent you here, see main-invariant-sweep.yml's header: that gap"
             echo "::error::already has a witness, and the fix is a fixing PR."
             exit 1
           fi
