@@ -152,7 +152,7 @@ def test_followup_builds_litellm_image_url_format() -> None:
     blocks = [
         {"type": "image", "data": "AAAA", "mimeType": "image/png"},
     ]
-    msg = _build_media_followup_message(tool_name="screenshot", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="screenshot", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is not None
     assert msg["role"] == "user"
@@ -167,7 +167,7 @@ def test_followup_builds_litellm_image_url_format() -> None:
 def test_followup_defaults_mime_type_to_png() -> None:
     """Tier 2: when an image block omits mimeType, default to image/png."""
     blocks = [{"type": "image", "data": "XYZ"}]
-    msg = _build_media_followup_message(tool_name="t", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="t", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is not None
     assert msg["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
@@ -178,7 +178,7 @@ def test_followup_handles_snake_case_mime_type() -> None:
     (= depending on SDK version); both keys should resolve.
     """
     blocks = [{"type": "image", "data": "XYZ", "mime_type": "image/webp"}]
-    msg = _build_media_followup_message(tool_name="t", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="t", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is not None
     assert "data:image/webp;base64,XYZ" in msg["content"][1]["image_url"]["url"]
@@ -194,7 +194,7 @@ def test_followup_skips_non_image_blocks() -> None:
         {"type": "resource", "resource": {"uri": "file:///x"}},
         {"type": "unknown_kind", "data": "..."},
     ]
-    msg = _build_media_followup_message(tool_name="t", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="t", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is None
 
@@ -207,7 +207,7 @@ def test_followup_drops_image_block_with_empty_data() -> None:
         {"type": "image", "data": "", "mimeType": "image/png"},
         {"type": "image", "mimeType": "image/png"},  # no data key at all
     ]
-    msg = _build_media_followup_message(tool_name="t", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="t", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is None  # both dropped → no usable blocks → no follow-up
 
@@ -220,7 +220,7 @@ def test_followup_preserves_block_order() -> None:
         {"type": "image", "data": "FIRST", "mimeType": "image/png"},
         {"type": "image", "data": "SECOND", "mimeType": "image/jpeg"},
     ]
-    msg = _build_media_followup_message(tool_name="t", media_blocks=blocks)
+    msg = _build_media_followup_message(tool_name="t", tool_call_id="tc1",media_blocks=blocks)
 
     assert msg is not None
     urls = [p["image_url"]["url"] for p in msg["content"] if p["type"] == "image_url"]
