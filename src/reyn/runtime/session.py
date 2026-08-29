@@ -10165,6 +10165,15 @@ class Session:
         _stall_seconds = stall_trace_seconds_from_env()
         if _stall_seconds is not None:
             _arm_stall_trace(_stall_seconds)
+            # #5103 ④: the ordering-observation pair — see this kind's own
+            # entry in event_schema.py for why armed/disarmed bracket
+            # run_turn on the audit-event stream instead of a private
+            # run_turn replacement asserting inside a monkeypatched
+            # closure. Emitted only when armed (mirrors arm/disarm's own
+            # off-by-default gate) — never fires on a normal run.
+            self._audit_events.emit(
+                "stall_trace_armed", chain_id=chain_id, seconds=_stall_seconds,
+            )
         _turn_completed = False
         _external_cancelled = False
         _cancel_targeted_this_turn = False
@@ -10256,3 +10265,8 @@ class Session:
                         finally:
                             if _stall_seconds is not None:
                                 _disarm_stall_trace()
+                                # #5103 ④: pairs with the armed emit above —
+                                # see that call site's comment.
+                                self._audit_events.emit(
+                                    "stall_trace_disarmed", chain_id=chain_id,
+                                )

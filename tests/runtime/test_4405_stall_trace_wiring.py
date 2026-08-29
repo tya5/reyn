@@ -1,32 +1,38 @@
 """Tier 2: #4405 — the ``REYN_STALL_TRACE`` wiring in
 ``Session._run_router_loop`` actually calls ``reyn.runtime.stall_trace``'s
-real ``arm``/``disarm``.
+real ``arm``/``disarm``, bracketing a REAL turn dispatch.
 
-``stall_trace.py``'s own module docstring (per lead-coder's review) claimed
-this wiring was tested when it was not — a declared-vs-actual gap in the
-exact class this session's own convention exists to catch. This closes it
-with the one test lead-coder's review asked for: real ``arm``/``disarm``
-calls observed through a public seam (monkeypatched to plain recorder
-functions — not ``unittest.mock`` — so the assertion is "was the real
-function replaced and invoked", never a private-state read).
+#5103 ④ migration: the first two tests below used to replace
+``Session._loop_driver.run_turn`` with a private ``_noop``/recorder
+closure — the LLM-avoidance seam AND the ordering-observation seam
+tangled into one private monkeypatch (#5103's own triage of this file).
+architect's ruling (#5103 ③④ design): a public, append-only ordering
+seam already exists — ``stall_trace_armed``/``stall_trace_disarmed``
+audit-events (new, this PR), ordered after ``turn_started`` and around
+the real turn dispatch inside it. Real
+``RouterLoopDriver.run_turn`` now runs for real (only
+``litellm.acompletion`` is stubbed, ``@pytest.mark.llm_stub``, #5103
+"C2"); the two tests below observe the real armed/turn_started/disarmed
+sequence through the public ``Session.subscribe_audit_events`` seam, no
+patch/mock, no private attribute assignment.
+
+The THIRD test (disarm-on-exception) keeps the private ``run_turn``
+replacement — it forces a genuine exception mid-turn, which
+``LLMStub`` cannot do (it always returns a fixed non-erroring
+completion) and the new audit-events cannot inject either (they only
+OBSERVE, they do not CONTROL). This is #5103's own boundary: the new
+seam closes ③ (content) and ④ (ordering) observation, never ②
+(controlling what a turn does) — a controllable-failure stub is that
+class's own open design question (#5450), not this PR's scope. Reported
+to lead-coder/architect as the "does chain_id/turn_started work here"
+check #5103 asked implementers to do per file.
 
 No waiting, no sleeping, no threshold crossing: the point under test is
 WIRING (does the env var reaching a turn cause arm-then-disarm to be
-called with the right value), not the N-second stall-detection behavior
-itself, which stall_trace.py's own docstring already explains cannot be
-tested without violating the testing-policy time-limit ban — see that
-module for why no test exercises the actual firing.
-
-``monkeypatch.setattr(stall_trace, "arm", ...)`` only intercepts the call
-because ``Session._run_router_loop`` does ``from reyn.runtime.stall_trace
-import arm as _arm_stall_trace`` INSIDE the method body (a fresh
-module-attribute lookup on every call), not at module import time. If
-that import were ever hoisted to session.py's top level, it would bind
-``_arm_stall_trace`` to the original function object once at import time
-— this file's ``monkeypatch.setattr`` would then silently stop
-intercepting anything, and all three tests here would go green for the
-wrong reason (nothing left to fail). Keep the import function-local if
-you touch that call site.
+called with the right value, and does that bracket the turn in the
+right order), not the N-second stall-detection behavior itself, which
+stall_trace.py's own docstring already explains cannot be tested
+without violating the testing-policy time-limit ban.
 """
 from __future__ import annotations
 
@@ -48,70 +54,97 @@ def _make_session(tmp_path: Path) -> Session:
     )
 
 
+def _collect(session: Session) -> list:
+    """Subscribe through the public seam (``Session.subscribe_audit_events``,
+    #5260) — never ``session._audit_events`` directly."""
+    collected: list = []
+    session.subscribe_audit_events(collected.append)
+    return collected
+
+
 @pytest.mark.asyncio
-async def test_stall_trace_armed_and_disarmed_around_a_turn_when_env_set(
+@pytest.mark.llm_stub
+async def test_stall_trace_brackets_a_real_turn_when_env_set(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    """Tier 2: with REYN_STALL_TRACE set, a turn calls stall_trace.arm(N)
-    before RouterLoopDriver.run_turn() and stall_trace.disarm() after —
-    real functions swapped for recorders, real call observed."""
+    """Tier 2: with REYN_STALL_TRACE set, a REAL turn (RouterLoopDriver.
+    run_turn actually dispatches; only litellm.acompletion is stubbed)
+    emits turn_started -> stall_trace_armed -> ... -> stall_trace_disarmed
+    (turn_started fires in run_one_iteration before the turn's own task
+    is even created; stall_trace_armed is the first statement inside
+    that task, before run_turn dispatch) -- all carrying the SAME
+    chain_id the test chose."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)
+    collected = _collect(session)
 
-    calls: list[str] = []
-
-    def _fake_arm(seconds: float) -> None:
-        calls.append(f"arm:{seconds}")
-
-    def _fake_disarm() -> None:
-        calls.append("disarm")
-
-    monkeypatch.setattr(stall_trace, "arm", _fake_arm)
-    monkeypatch.setattr(stall_trace, "disarm", _fake_disarm)
-
-    async def _noop_run_turn(user_text: str, chain_id: str) -> None:
-        # arm() must have already run by the time run_turn is reached.
-        assert calls == ["arm:5.0"], (
-            "arm() must fire BEFORE RouterLoopDriver.run_turn(), not after"
-        )
-
-    session._loop_driver.run_turn = _noop_run_turn  # type: ignore[method-assign]
-
-    await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
+    chain_id = "c-stall-armed"
+    await session._put_inbox("user", {"text": "hi", "chain_id": chain_id})
     result = await session.run_one_iteration()
 
     assert result is True
-    assert calls == ["arm:5.0", "disarm"], (
-        "expected exactly one arm() then one disarm() bracketing the turn"
+    kinds = [e.type for e in collected]
+
+    (armed_ev,) = [e for e in collected if e.type == "stall_trace_armed"]
+    (started_ev,) = [e for e in collected if e.type == "turn_started"]
+    (disarmed_ev,) = [e for e in collected if e.type == "stall_trace_disarmed"]
+
+    assert armed_ev.data["seconds"] == 5.0
+    for ev in (armed_ev, started_ev, disarmed_ev):
+        assert ev.data["chain_id"] == chain_id, (
+            f"{ev.type} carried the wrong chain_id: {ev.data!r}"
+        )
+
+    idx_armed = kinds.index("stall_trace_armed")
+    idx_started = kinds.index("turn_started")
+    idx_disarmed = kinds.index("stall_trace_disarmed")
+    assert idx_started < idx_armed < idx_disarmed, (
+        "expected turn_started -> stall_trace_armed -> stall_trace_disarmed, "
+        f"got: {kinds!r}"
+    )
+    # The essential witness (architect finding on this PR's own review):
+    # armed/disarmed both happening BEFORE/AFTER stall_trace_disarmed is
+    # not enough — disarm is always last regardless of where arm actually
+    # sits, so that alone cannot catch arm() being moved to AFTER
+    # run_turn's real dispatch work. `llm_request` fires from INSIDE
+    # run_turn's own real dispatch (the litellm.acompletion boundary
+    # LLMStub stands in for) — bracketing THAT is what proves arm/disarm
+    # genuinely wrap run_turn's work, not merely "somewhere before the
+    # end of the turn". Strip-verified by hand: moving the arm()+emit
+    # call to AFTER `await self._loop_driver.run_turn(...)` left the
+    # idx_started < idx_armed < idx_disarmed assertion above GREEN
+    # (disarm is still last either way) but turns THIS assertion RED.
+    idx_llm_request = kinds.index("llm_request")
+    assert idx_armed < idx_llm_request < idx_disarmed, (
+        "stall_trace_armed must fire BEFORE run_turn's own dispatch work "
+        "(llm_request) and stall_trace_disarmed AFTER it — "
+        f"got: {kinds!r}"
     )
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_stall_trace_not_touched_when_env_unset(
     tmp_path: Path, monkeypatch,
 ) -> None:
     """Tier 2: accept-side — with REYN_STALL_TRACE unset (the default),
-    neither arm() nor disarm() is called. Proves the wiring costs nothing
-    for the overwhelming majority of turns that never opt in."""
+    neither stall_trace_armed nor stall_trace_disarmed fires. Proves the
+    wiring costs nothing (not even an event) for the overwhelming
+    majority of turns that never opt in."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
     session = _make_session(tmp_path)
-
-    calls: list[str] = []
-    monkeypatch.setattr(stall_trace, "arm", lambda seconds: calls.append("arm"))
-    monkeypatch.setattr(stall_trace, "disarm", lambda: calls.append("disarm"))
-
-    async def _noop_run_turn(user_text: str, chain_id: str) -> None:
-        pass
-
-    session._loop_driver.run_turn = _noop_run_turn  # type: ignore[method-assign]
+    collected = _collect(session)
 
     await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
     result = await session.run_one_iteration()
 
     assert result is True
-    assert calls == [], "arm/disarm must not be touched when the env var is unset"
+    kinds = {e.type for e in collected}
+    assert "stall_trace_armed" not in kinds and "stall_trace_disarmed" not in kinds, (
+        f"stall_trace_* must not fire when REYN_STALL_TRACE is unset: {kinds!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -122,10 +155,13 @@ async def test_stall_trace_disarmed_even_when_the_turn_raises(
     path — the ``finally`` block's own reason for existing. Without this,
     a turn that raises leaves the background timer armed past turn end:
     it later dumps an UNRELATED stack into reyn.log, a false lead in
-    exactly the shape #4403's investigation was fighting. Removing the
-    ``finally`` (or the disarm call inside it) would leave the other two
-    tests in this file green — only an exception-path turn exercises
-    this line, so it needed its own witness."""
+    exactly the shape #4403's investigation was fighting.
+
+    Not migrated to @pytest.mark.llm_stub (see module docstring): this
+    test needs run_turn to genuinely RAISE, which LLMStub cannot do (it
+    always completes normally) and the audit-event seam cannot inject
+    either (an observation seam, not a control seam) — a controllable-
+    failure stub is #5450's own open design question, not this file's."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)
