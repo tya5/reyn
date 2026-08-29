@@ -41,6 +41,6 @@ jobs:
 
       # scripts/check_collect_events_settle.py is stdlib-only (ast /
       # pathlib / sys). No pip install needed.
-      - name: Check no collect_events()-derived list is read without settle()
+      - name: Check no collect_events()- or subscriber-derived list is read without settle()
         run: |
           python scripts/check_collect_events_settle.py

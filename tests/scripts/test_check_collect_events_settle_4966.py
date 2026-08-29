@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.check_collect_events_settle import offending_files
 
 
@@ -119,3 +121,60 @@ def test_the_real_repo_tree_is_currently_clean() -> None:
         f"real regression(s) found: {offenders} — this gate's baseline is "
         "zero, so any hit here is new, not inherited debt"
     )
+
+
+def test_a_raw_subscriber_only_offender_is_not_misreported_as_collect_events(
+    tmp_path: Path, capsys: "pytest.CaptureFixture[str]",
+) -> None:
+    """Tier 2: #5485 — `main()`'s failure output must not claim a file
+    read a "collect_events()-derived list" when that file never called
+    `collect_events()` at all (caught only via the raw
+    `add_subscriber(...)` path). That claim would be FALSE for this exact
+    file: an operator who greps it for `collect_events` finds nothing and
+    reasonably reads the gate as broken (the real #5484 confusion this
+    issue traces back to) — the gate's own real coverage (module
+    docstring, unchanged by this fix) always tracked both forms; only the
+    3 human-read surfaces (this one, the success message, and the
+    workflow step name) named just one.
+
+    Tier answer, in my own words (§1): this pins an invariant of the
+    gate's OWN reporting surface — the printed message is itself an
+    OS-facing contract an operator reads to pick their next action, same
+    category of invariant as "does the detector catch this AST shape"
+    (the existing 6 tests above). Restated for §6: those 6 pin "does it
+    catch" and this one pins "does it describe what it caught
+    correctly" — two different invariants of the same file, not one
+    borrowing the other's Tier because they're neighbors.
+
+    §3 (who would miss this test if it were gone): the consumer is the
+    OPERATOR reading `main()`'s stderr on a real gate failure, not this
+    synthetic file itself — the file is the stage built to reproduce
+    that operator's exact view. `offending_files()`'s own return value
+    (exercised by `test_a_hand_rolled_add_subscriber_read_is_also_
+    flagged` above) carries no wording at all to assert on, so nothing
+    else in this suite would catch a silent regression back to the
+    collect_events()-only phrasing.
+
+    Uses `main()`'s own `tests_dir=`/`root=` keywords (#5485,
+    lead-coder BLOCKING) rather than monkeypatching this module's
+    private `_TESTS_DIR`/`_ROOT` globals — those two params exist
+    specifically so a caller can point the real CLI entry point at a
+    fixture tree through a public seam, mirroring
+    `offending_files(tests_dir=...)`'s own established shape."""
+    import scripts.check_collect_events_settle as gate
+
+    (tmp_path / "test_only_subscriber.py").write_text(
+        "async def test_something(log):\n"
+        "    collected = []\n"
+        "    log.add_subscriber(collected.append)\n"
+        "    await trigger(log)\n"
+        "    assert not any(e.type == 'denied' for e in collected)\n",
+        encoding="utf-8",
+    )
+
+    exit_code = gate.main([], tests_dir=tmp_path, root=tmp_path)
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "a collect_events()-derived list" not in captured.err
+    assert "collect_events()- or subscriber-derived" in captured.err

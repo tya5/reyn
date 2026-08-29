@@ -516,21 +516,32 @@ def offending_files(tests_dir: Path = _TESTS_DIR) -> "list[tuple[Path, list[tupl
     return offenders
 
 
-def main(argv: "list[str] | None" = None) -> int:
+def main(
+    argv: "list[str] | None" = None,
+    *,
+    tests_dir: Path = _TESTS_DIR,
+    root: Path = _ROOT,
+) -> int:
+    """#5485: ``tests_dir``/``root`` mirror :func:`offending_files`'s own
+    keyword-with-real-default shape — a public seam a test can pass a
+    ``tmp_path`` tree through, instead of monkeypatching this module's
+    private ``_TESTS_DIR``/``_ROOT`` globals to redirect the real CLI
+    entry point at a fixture."""
     del argv  # no options — a whole-tree scan against a baseline of zero
-    offenders = offending_files(_TESTS_DIR)
+    offenders = offending_files(tests_dir)
 
     if not offenders:
         print(
-            "OK: no collect_events()-derived list is read without a "
-            "settle()/drain() (or equivalent polling yield) earlier in "
-            "the same function."
+            "OK: no collect_events()- or subscriber-derived list is read "
+            "without a settle()/drain() (or equivalent polling yield) "
+            "earlier in the same function."
         )
         return 0
 
     print("collect-events-settle gate FAILED:\n", file=sys.stderr)
     print(
-        f"{len(offenders)} file(s) read a collect_events()-derived list "
+        f"{len(offenders)} file(s) read a collect_events()- or "
+        "subscriber-derived list "
         "with no settle()/drain()/polling-yield earlier in the same "
         "function (#4965/#4966) — dispatch to that list is asynchronous "
         "whenever a running loop exists, so this read can race the "
@@ -540,7 +551,7 @@ def main(argv: "list[str] | None" = None) -> int:
         file=sys.stderr,
     )
     for path, hits in offenders:
-        rel = path.relative_to(_ROOT)
+        rel = path.relative_to(root)
         for line, name in hits:
             print(f"  {rel}:{line}: read of {name!r}", file=sys.stderr)
 
