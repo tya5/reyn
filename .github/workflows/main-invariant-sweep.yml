@@ -86,7 +86,7 @@ name: main invariant sweep
 # it ran. Folding it in AS-IS would make every run of THIS sweep red
 # from the moment this PR merges, and that red would say nothing about
 # the other whole-tree gates this sweep exists to witness — destroying
-# the thing #5479 just fixed. See #5489 for the real fix (a token
+# the thing #5479 just fixed. See #5488 for the real fix (a token
 # scoped with `administration: read`, an owner-level decision this PR
 # does not make). `branch-protection-strict-stays-off.yml` stays
 # exactly as it was, still broken, filed separately — not silently
