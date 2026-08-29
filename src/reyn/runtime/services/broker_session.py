@@ -37,6 +37,15 @@ Two structural rules the design explicitly calls out (architect, #5350 §3):
    ("this session's agent?", which could have more than one right answer).
    This module does not build or expose an index; it re-derives on every
    call, matching "computed, never persisted" (see the ruling above).
+
+In-repo call sites are 0 by DESIGN, not by omission (architect, #5457
+review): ``reyn doctor`` cannot call this — its own charter (D-2, "doctor
+never connects") forbids reaching out to broker to fetch a live session
+listing. The real consumer is #5410's ``broker_drain.py`` hook, which lives
+in an operator's own config repo (``reyn-self``), outside this repo
+entirely. A future "0-consumer public surface" census (the #4866/#5442/
+#5447 family) should read this paragraph before flagging this function —
+the absence is structural, not a leftover.
 """
 from __future__ import annotations
 
