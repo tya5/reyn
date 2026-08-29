@@ -136,10 +136,6 @@ Path-conditional gates:
 9. **`update-branch` only on a real conflict** (`mergeable=CONFLICTING`), and **never re-run a gate by hand** — a merely-behind branch is fine as it is, both PR pushes and comments already trigger the gates that read them, and each needless run costs a full matrix on a saturable resource (#4239).
 10. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
-**Filing an issue (READ BEFORE FILING)** — `docs/deep-dives/contributing/issue-management.md`.
-An issue gets its axis label(s) when it is **filed**, not later. No axis label
-means "not yet judged", so an unlabelled backlog carries no order to dispatch by.
-
 **Issue-triage label `blocked:external`** — needs owner judgment or an upstream
 dependency. An open issue WITHOUT it is pickable by any peer session.
 
@@ -158,18 +154,19 @@ confirmed / attractor / hallucination / regression.
 Re-frame instead of overstating: ❌ "X happens 100% in Y" → ✅ "Hypothesis: X may
 dominate in Y. Direct verification: 1/N."
 
-## When in doubt — read these
+## Read these — each line says WHEN it fires
 
-- **Verification hazards** (a green that means less, a red that overstates): `docs/deep-dives/contributing/verification-hazards.md`
-- **Tier-1 rules, full rationale** (Constitution, hard rules, comment policy, pre-conclusion): `docs/deep-dives/contributing/tier1-rationale.md`
-- **PR workflow, full rationale**: `docs/deep-dives/contributing/pr-workflow.md`
-- **Issue management** (what an issue is, consolidation, closing, priority axes, labels): `docs/deep-dives/contributing/issue-management.md`
-- **Six questions, full instances**: `docs/deep-dives/contributing/test-review-six-questions.md`
-- **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
-- **Events / replay**: `docs/concepts/runtime/events.md`
-- **`.reyn/` layout** (recovery-core vs persist/audit/cache, the write-gate): `docs/reference/runtime/reyn-dir-layout.md`
-- **Permission model**: `docs/concepts/runtime/permission-model.md`
-- **Op catalog and dispatch**: `src/reyn/core/op_runtime/`
-- **Tool naming convention**: `docs/reference/runtime/tool-naming.md`
-- **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the entry point; do not hand-parse JSONL.
-- **Full feature inventory**: `docs/feature-map.md`
+A rule nobody is told to read is not a rule. Every entry below names the act
+that triggers it; "when in doubt" is not a trigger, because the failures these
+prevent are the ones that remove the doubt.
+
+- **Before filing an issue** — `docs/deep-dives/contributing/issue-management.md`. An issue gets its axis label(s) when it is **filed**, not later; no axis label means "not yet judged", so an unlabelled backlog carries no order to dispatch by.
+- **Before reading a green or a red as evidence** — `docs/deep-dives/contributing/verification-hazards.md`
+- **Before writing a review's blocking point** — `docs/deep-dives/contributing/test-review-six-questions.md`
+- **When a Tier-1 rule above seems wrong or costly** — `docs/deep-dives/contributing/tier1-rationale.md`; **PR workflow's** own rationale: `docs/deep-dives/contributing/pr-workflow.md`
+- **When you touch session/agent state on disk** — `docs/concepts/runtime/workspace.md`; **`.reyn/` layout** (recovery-core vs persist/audit/cache, the write-gate): `docs/reference/runtime/reyn-dir-layout.md`
+- **When you emit, read, or replay an audit-event** — `docs/concepts/runtime/events.md`
+- **When you add or change a permission decision** — `docs/concepts/runtime/permission-model.md`
+- **When you add or rename an op or tool** — `src/reyn/core/op_runtime/` (catalog and dispatch); naming: `docs/reference/runtime/tool-naming.md`
+- **When you analyse an LLM trace** — `docs/reference/dogfood-tracing.md`; `scripts/dogfood_trace.py --mode llm-payloads` is the entry point, do not hand-parse JSONL.
+- **When you claim a feature does or does not exist** — `docs/feature-map.md`
