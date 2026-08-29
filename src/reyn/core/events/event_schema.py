@@ -260,6 +260,22 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   reliable "the turn is done" signal for UI working-indicators. kind mirrors
     #   turn_started; chain_id may be absent for non-user triggers.
     "turn_settled": frozenset({"kind"}),
+    # #5103 ④: emitted around the #4405 REYN_STALL_TRACE bracket in
+    # Session._run_turn_body — armed on entry (before run_turn dispatch),
+    # disarmed in the finally (after run_turn returns or raises). Gives
+    # ordering-only tests a public, append-only way to observe "the stall
+    # bracket really wraps run_turn" (join on chain_id against turn_started,
+    # index order = time order) instead of a private run_turn replacement
+    # that asserts inside a monkeypatched closure — architect's own #5103
+    # ruling: append-only order beats a counter (no content) or a snapshot
+    # (overwrites between polls) because only a monotonically growing series
+    # can be waited on without a duration. Only emitted when
+    # REYN_STALL_TRACE is set (mirrors arm/disarm's own off-by-default gate,
+    # #4405) — the pair is fully absent from a run with the env var unset,
+    # itself the noise/cost control test_4405_stall_trace_wiring.py already
+    # asserted before this PR.
+    "stall_trace_armed": frozenset({"chain_id", "seconds"}),
+    "stall_trace_disarmed": frozenset({"chain_id"}),
     # #5221: emitted by the `emit_behavior_anomaly_verdict` tool, the ONLY
     # producer — called from a registered pipeline's own `tool` step after its
     # judge `agent` step returns a schema-constrained verdict (never by a
@@ -497,6 +513,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "skill_installed",
     "skill_invoke_body_loaded",
     "skill_invoke_collision",
+    "stall_trace_armed",
+    "stall_trace_disarmed",
     "state_change_notified",
     "summary_resummarize_failed",
     "summary_resummarized",
