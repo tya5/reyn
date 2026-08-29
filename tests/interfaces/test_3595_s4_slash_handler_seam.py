@@ -556,26 +556,7 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: persisted (spawn-time priority resolution happens in the spawn seam,
 #: which runs after ``Session.__init__``), so it cannot be threaded
 #: through construction without restructuring the spawn seam itself.
-#: Raised 119 -> 120 for #5428: ``hook_env_snapshot`` — a NEW method.
-#: ① What was added: a live read of the 4 REYN_* values a hook's
-#: exec/exec_capture child process would receive right now (delegates
-#: to the existing ``_build_hook_process_context()``, returned as a
-#: plain ``dict[str, str]`` — ``HookProcessContext.as_env()``'s own
-#: shape, never the callable itself).
-#: ② Why not private: TWO real readers outside Session (architect's own
-#: #5428 finding — the issue existed BECAUSE neither had a way to look):
-#: an operator via ``reyn doctor``'s own ``_print_hook_env_snapshot``
-#: (``interfaces/cli/commands/doctor.py``), and any test that used to
-#: reach through two private hops (``session._hook_dispatcher.
-#: _hook_process_context()``, #5426's own shape) now reads this
-#: instead — not a slash handler reaching into session internals
-#: (#3595 S4's own failure mode); doctor has no Session at all to
-#: reach into.
-#: ③ Why not a constructor argument: the value is live-computed on
-#: every call (``_workspace_base_dir`` can change across this
-#: session's own lifetime, #5081) — there is no single value to supply
-#: at construction time that would stay correct.
-_PUBLIC_MEMBER_CEILING = 120
+_PUBLIC_MEMBER_CEILING = 119
 
 
 def test_session_public_surface_does_not_grow() -> None:

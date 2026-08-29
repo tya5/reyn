@@ -2491,15 +2491,24 @@ class Session:
         inline lambda) — a named, independently-callable builder rather
         than an anonymous closure buried in a large constructor call.
 
-        #5428: this now has a real public read-surface,
-        :meth:`hook_env_snapshot`, WITH its real consumer (``reyn
-        doctor`` — its own docstring already claims "reach into sandbox
-        / MCP / hook internals" / "a hook's argv actually launched would
-        be doctor's") — landed in the SAME PR as that public method
-        (architect's own comment-policy §8 requirement: an earlier
-        revision of this paragraph said the public method was
-        deliberately deferred; that statement is now false, so this
-        paragraph is rewritten rather than left stale).
+        #5428/#5447: an earlier revision of this paragraph pointed at a
+        public ``hook_env_snapshot()`` method as #5428's own operator
+        read-surface. Removed (#5447, architect finding): ``reyn
+        doctor`` — the ONLY real production consumer either issue ever
+        named — constructs no live ``Session`` at all (confirmed: 0
+        ``Session(`` call sites in that module) and never called that
+        method; it built the same 4 values through its OWN literal
+        ``print(f"...")`` lines instead, duplicating
+        ``HookProcessContext.as_env()``'s own docstring-declared single
+        source of the 4 ``REYN_*`` names. A public method with zero
+        reachable production callers is the #4866 shape #5442 already
+        spent a PR closing 3 instances of — kept private here rather
+        than ratifying a consumer that can't exist under doctor's own
+        no-Session architecture. doctor now builds its own
+        ``HookProcessContext`` (mirroring this method's own
+        construction below) and prints ``.as_env()`` directly — see
+        ``interfaces/cli/commands/doctor.py``'s own
+        ``_print_hook_env_snapshot``.
 
         Reads live state on every call (``_workspace_base_dir`` can change
         across this session's lifetime, #5081) — never frozen at
@@ -2516,28 +2525,6 @@ class Session:
             agent_name=self.agent_name,
             agent_state_dir=self._ensure_agent_state_dir(),
         )
-
-    def hook_env_snapshot(self) -> "dict[str, str]":
-        """#5428: the PUBLIC read of "what env would this agent's hook
-        get right now" — the gap architect's issue named: no public
-        surface answered this, so #5426's own test reached through two
-        private hops (``session._hook_dispatcher._hook_process_context()``),
-        and an operator had no way to look at all.
-
-        Returns the resolved ``REYN_*`` envelope as a plain
-        ``dict[str, str]`` (:meth:`HookProcessContext.as_env`'s own
-        shape) — never the callable itself, and never a free-form dict a
-        caller could widen; the four keys are exactly the closed set
-        :class:`~reyn.hooks.shell_runner.HookProcessContext` defines (see
-        that class's own docstring for why it is closed, not a general
-        ``Mapping[str, str]``).
-
-        Live on every call (:meth:`_build_hook_process_context`'s own
-        docstring: ``_workspace_base_dir`` can change across this
-        session's lifetime, #5081) — never a value frozen at
-        construction time. Real consumer: ``reyn doctor`` (see
-        ``interfaces/cli/commands/doctor.py``)."""
-        return self._build_hook_process_context().as_env()
 
     @property
     def _environment_backend(self) -> Any:
