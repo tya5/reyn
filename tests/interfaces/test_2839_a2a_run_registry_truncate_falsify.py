@@ -19,16 +19,17 @@ then proven to compose correctly after restart:
     snapshot; survives a restart on its own persistence, no WAL involved.
   - Session's ``AgentSnapshot`` + WAL (the actual resume-capable state: the
     outstanding intervention + the buffered answer) — survives WAL truncation
-    below its OWN source events (the classic #2884/#2259 truncate-falsify
-    shape), because the value is baked into the durable snapshot, not derived
-    solely from the (now-dropped) WAL events.
+    below its OWN source events (the classic #2259 truncate-falsify shape:
+    set the state, truncate the WAL past its source events, reconstruct,
+    assert it survives), because the value is baked into the durable
+    snapshot, not derived solely from the (now-dropped) WAL events.
 
 Real ``Session`` / ``StateLog`` / ``AgentSnapshot`` / ``RunRegistry`` /
 ``A2AInterventionBus`` throughout — no mocks (CLAUDE.md mock ban). The only
 stand-in is the LLM boundary, which this test never reaches (the intervention
-is dispatched directly via ``Session.handle_intervention``, mirroring how
-``tests/core/test_2884_hook_driven_turns_truncation_falsify.py`` isolates the WAL
-mechanism from the router/LLM loop).
+is dispatched directly via ``Session.handle_intervention``, isolating the
+WAL mechanism from the router/LLM loop the same way any of this repo's
+truncate-falsify tests do).
 """
 from __future__ import annotations
 

@@ -373,15 +373,13 @@ class HookDef:
         opportunities — a hook design that wants to "think" once per
         event rather than once per batch.
 
-        🔴 Causality an opted-out hook's operator MUST know (owner §1b,
-        stated here because #5516's issue thread is not somewhere a
-        future reader will look): an opted-out hook consumes
-        ``max_hook_driven_turns`` valve units ONE PER EVENT (see
-        ``dispatcher.py``'s own ``:270-272`` comment on that valve) —
-        N queued events opting out means N valve units spent where a
-        folded hook on the same burst would spend ONE. An operator who
-        does not know this stops at a DIFFERENT place (the valve cap)
-        than the one they were adjusting.
+        Causality an opted-out hook's operator should still know: an
+        opted-out hook spends ONE inbox turn PER EVENT, where a folded
+        hook on the same burst spends ONE turn total — N queued events
+        opting out means N turns instead of 1. (Pre-#5561 this was framed
+        as "N valve units spent" against the ``max_hook_driven_turns``
+        loop valve; that valve is retired, but the raw turn-count
+        difference this paragraph warns about is unchanged.)
 
         ⚪ ``skipped_session_wide`` still applies regardless of this
         flag's value — folding vs. not-folding only decides what

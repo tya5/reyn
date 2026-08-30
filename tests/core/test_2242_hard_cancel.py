@@ -216,7 +216,8 @@ async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path, _llm_s
 
     Repeats the hard-cancel scenario, then pushes filler WAL events past the
     surviving fire-and-forget append's source events and truncates below
-    them (mirroring ``test_2884_hook_driven_turns_truncation_falsify.py``).
+    them (the same set-truncate-reconstruct-assert shape every
+    truncate-falsify test in this repo uses).
     Reconstructing (fresh Session + StateLog: load snapshot, replay the WAL
     tail) must still show the buffered-answer-consumed state as durable —
     proving the hard-cancel path does not leave the fire-and-forget append in

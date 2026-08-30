@@ -41,23 +41,28 @@ class LoopConfig:
             (un-executed, un-appended), and appends a single re-grounding notice.
             Default ``50`` is generous headroom over legitimate parallel tool use
             (observed < 10) yet ~70x below the runaway. ``0`` = unlimited.
-        max_hook_driven_turns:
-            #1800 slice 7: the loop valve. Caps hook self-continuation — an
-            ``E`` (wake=true) hook firing at ``turn_end`` triggers a new turn,
-            which can fire another, … This bounds that chain: each
-            hook-originated (``kind="hook"``) turn counts 1; the counter resets
-            on each human user turn (``kind="user"`` re-arms the budget). When
-            the count would exceed the cap the next hook turn hits the
-            ``safety.on_limit`` checkpoint (warn → ask_user → abort) instead of
-            running. A backstop only — does NOT obstruct intentional
-            loop-engineering (the operator raises the cap). ``0`` = unlimited.
+
+    #5561 (owner ruling, 2026-08-30): ``max_hook_driven_turns`` — the #1800
+    slice 7 hook self-continuation loop valve — RETIRED. Owner, verbatim:
+    "hook 起動を回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か
+    誰も判断できない" — no operator can derive a correct value for this cap
+    (unlike the other fields above, each bounding a concretely-reasoned
+    runaway shape), so its default was a de-facto, unreasoned answer
+    dressed as a deliberate one. Replaced by: ``CostConfig`` (total spend,
+    cause-independent — never punishes legitimate work by call count),
+    #5516's own N-events-into-one-push folding (reduces turn count for a
+    burst directly), and per-push size bounds (#5210/#5244,
+    ``spillability_max_chars``, ``Spillability``). A predicate catching a
+    self-continuation CYCLE specifically (as opposed to bounding call
+    count) was considered and rejected — no such cycle has ever been
+    observed; reviving it needs one real occurrence first (owner: revival
+    condition is a single observed cycle, observer lead-coder).
     """
 
     max_router_calls_per_turn: int = 3
     max_agent_hops: int = 3
     max_router_iterations: int = 5
     max_tool_calls_per_turn: int = 50
-    max_hook_driven_turns: int = 25
 
 
 @dataclass
@@ -1244,9 +1249,6 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         max_tool_calls_per_turn=int(loop_raw.get(
             "max_tool_calls_per_turn", loop_defaults.max_tool_calls_per_turn,
-        )),
-        max_hook_driven_turns=int(loop_raw.get(
-            "max_hook_driven_turns", loop_defaults.max_hook_driven_turns,
         )),
     )
     timeout = TimeoutConfig(

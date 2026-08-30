@@ -583,6 +583,15 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: build its own ``event_context``, so the two entry points cannot drift
 #: on the #5516 clean-break (payload is always an array) even though
 #: both remain public.
+#: #5561 (owner ruling, 2026-08-30) REMOVED 3 public members: the
+#: hook-driven-turns loop-valve's ``hook_driven_turns``,
+#: ``remaining_hook_driven_turns``, and ``max_hook_driven_turns``
+#: properties, retired entirely (no replacement value/method — the valve
+#: itself is gone, see ``LoopConfig``'s own docstring, config/chat.py, for
+#: the rationale). This is a REMOVAL, not an addition — the ceiling was
+#: not raised, it stays at 120 and the count now sits further below it;
+#: logged here anyway, matching this file's own convention of disclosing
+#: every surface change, not only the ones that push the ceiling.
 _PUBLIC_MEMBER_CEILING = 120
 
 

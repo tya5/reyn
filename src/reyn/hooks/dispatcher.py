@@ -326,11 +326,11 @@ class HookDispatcher:
 
         A ``template_push`` hook's wake=true action lands in the inbox via
         the SAME ``_push_resolved`` E-path (``TurnOrigin.HOOK``/kind="hook")
-        every other hook-driven wake uses, so a composed->wake turn is
-        counted by the Session's existing ``max_hook_driven_turns`` loop-valve
-        — folding N composed events into ONE launch is exactly what
-        IMPROVES that accounting (owner ruling #5516 §1/③: N pushes would
-        consume N valve units; folded + concatenated consumes 1)."""
+        every other hook-driven wake uses, so folding N composed events into
+        ONE launch reduces N inbox turns to 1 directly (owner ruling #5516
+        §1/③) — this is now the primary way to bound a hook-driven turn
+        burst, #5561 having retired the ``max_hook_driven_turns`` valve
+        this comment used to cite here."""
         if not events:
             return
         point = events[0].kind
@@ -426,9 +426,9 @@ class HookDispatcher:
           hook — see ``_dispatch_batch_for_point``'s docstring).
         - ``template_push``: renders once PER event, then concatenates
           the N resolved messages into ONE push (owner ruling #5516 §1
-          item ③ — improves ``max_hook_driven_turns`` valve accounting:
-          N pushes would consume N valve units, one concatenated push
-          consumes 1).
+          item ③ — reduces N inbox turns to 1 directly, now the primary
+          way to bound a hook-driven turn burst since #5561 retired the
+          count-capping loop valve this comment used to cite here).
         - ``pipeline_launch``: does **NOT fold** — architect ruling
           (#5516 broker thread, 2026-08-29): the discriminator for
           whether an action CAN fold is not "does it render" but "can the

@@ -4,6 +4,14 @@
 **Scope:** reyn の **hook-event(reactivity)層のみ** — CLAUDE.md の 3-event 区別における hook-event(lifecycle + external reactivity trigger)。**audit-event (P6, `.reyn/events`) と WAL-event (recovery) は本 proposal の対象外・置換しない**(§0 で境界固定)。
 **Language note:** owner との設計討議言語(日本語)で起票。既存 proposal は英語 primary ゆえ、必要なら docs-maintainer が英語 mirror を配置。
 
+> **#5561 追記(owner ruling, 2026-08-30)**: 本 proposal が随所で前提とする **loop-valve**
+> (`max_hook_driven_turns`、hook-driven turn の生カウンタ)は **廃止済み**。owner 曰く「hook 起動を
+> 回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も判断できない」。以下の本文は
+> 設計当時(2026-07)の記録として意図的に温存するが、`loop-valve`/`max_hook_driven_turns` への言及は
+> **もはや現在の実装を指さない** — 現行のバウンディング機構は `CostConfig`・#5516 の N-into-one push
+> folding・`spillability_max_chars` であり、詳細は [Concepts: hooks § Loop valve](../../concepts/runtime/hooks.md#loop-valve)
+> を参照。
+
 > **本文について**: 以下は v0.2 spec 本体。各節冒頭の `[reconcile]`(v0.1→reyn 実態の調整根拠, file:line)と `[review-pass]`(fable5 レビュー findings)は、外部 draft からの逸脱理由・レビュー判断を追える設計記録として意図的に残す。
 
 ---

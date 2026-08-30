@@ -166,9 +166,10 @@ async def test_cancelled_message_survives_wal_truncation_below_its_source_events
     (the snapshot holds it) — proving this isn't "everything before the floor
     vanishes" but specifically that inbox correctness survives.
 
-    ★Strip-falsify (verified manually per repo discipline, mirroring
-    ``tests/core/test_2884_hook_driven_turns_truncation_falsify.py``): commenting
-    out the ``self._snapshot.inbox = [...]`` prune line in
+    ★Strip-falsify (verified manually per repo discipline, the same
+    set-truncate-reconstruct-assert shape every truncate-falsify test in
+    this repo uses): commenting out the ``self._snapshot.inbox = [...]``
+    prune line in
     ``SnapshotJournal.cancel_inbox`` (leaving only the WAL ``inbox_cancel``
     tombstone) makes the cancelled item's ``snapshot.inbox`` entry survive
     into the on-disk snapshot; after the SAME truncation below its source

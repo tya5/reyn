@@ -201,9 +201,8 @@ async def test_a_real_queue_overflow_is_counted_and_reported_as_skipped_session_
 @pytest.mark.asyncio
 async def test_template_push_folds_n_renders_into_one_concatenated_push():
     """Tier 2: owner ruling #5516 §1 item ③ — N template_push renders
-    concatenate into ONE push, improving max_hook_driven_turns valve
-    accounting (N pushes would consume N valve units; one concatenated
-    push consumes 1 -- observable here as exactly one put_inbox call)."""
+    concatenate into ONE push, reducing N inbox turns to 1 directly
+    (observable here as exactly one put_inbox call)."""
     hook = HookDef(
         on="mcp_resource_updated",
         template_push=PushBlock(message="uri={{ uri }}", wake=True),

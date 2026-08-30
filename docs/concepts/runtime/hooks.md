@@ -608,19 +608,32 @@ propagate to the LLM output.
 
 ## Loop valve
 
-`E` (self-continuation) is bounded to prevent runaway hook-driven sessions:
+**Retired (#5561, owner ruling, 2026-08-30).** `E` (self-continuation) was
+previously bounded by a raw hook-driven-turn counter,
+`safety.loop.max_hook_driven_turns` (default `25`, counting hook-driven
+turns since the last human user turn, resetting on every human turn,
+tripping the `safety.on_limit` checkpoint past the cap). The owner, verbatim:
+"hook 起動を回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も
+判断できない" — no operator could derive a correct cap value, so the
+default was a de-facto, unreasoned answer dressed as a deliberate one.
 
-- **Counter**: `safety.loop.max_hook_driven_turns` (default `25`) counts
-  hook-driven turns since the last human user turn.
-- **Reset**: the counter resets to zero on every human turn.
-- **On cap**: the configured `safety.on_limit` action fires —
-  `warn` → `ask_user` → `abort`. All three leave the session alive (no silent
-  kill).
-- **Unlimited**: set `max_hook_driven_turns: 0` to disable the cap entirely.
+The valve is gone; no replacement counts raw hook-driven turns. Runaway
+hook-driven activity is now bounded by:
 
-The valve is a backstop, not an obstruction. A well-designed self-continuation
-hook will finish before the cap; the cap catches runaway loops that a bug or
-unexpected workflow behavior would otherwise leave open.
+- **`CostConfig`** — a total-spend cap, cause-independent (never punishes
+  legitimate work by call count alone).
+- **#5516's N-into-one push folding** — several queued events fired
+  together fold into ONE launch instead of N, reducing turn count for a
+  burst directly (see `fold` in the
+  [hooks: block reference](../../reference/config/reyn-yaml.md#hooks-block)).
+- **Per-push size bounds** (#5210/#5244) — `spillability_max_chars` /
+  `Spillability` cap a single push's payload size.
+
+A predicate detecting a genuine self-continuation CYCLE (as opposed to
+bounding raw call count) was considered and rejected — no such cycle has
+ever been observed; the old valve's default of 25 stopped a `turn_end`-
+self-driving instance historically, not because a cycle was ever caught.
+Revival needs one real occurrence first.
 
 ## Sandbox
 
@@ -881,18 +894,18 @@ Setting `durable: false` on a `deadline` composer is allowed — an in-process
 nudge does not need an fsync per arm — but emits a load-time `UserWarning`, so
 a dead-man switch that dies with its process is never a silent posture.
 
-**The composed→wake loop-valve bound.** A `composed:<name>` hook's
-wake=true push lands in the inbox via the exact same `kind="hook"` E-path
-every other hook-driven wake uses, so a self-stimulating composed→wake
-chain (a composer counting a lifecycle point its own consumer hook's next
-turn re-triggers — e.g. `turn_end`) is bounded by the session's existing
-`max_hook_driven_turns` loop-valve with **zero new bounding logic**: every
-wake path, composed→wake included, is counted by the same
-`_hook_driven_turns` cap check. This is the architect-ratified "structural
-non-reentry → valve-metered allow" transition (proposal
-[0059](../../deep-dives/proposals/0059-hook-event-redesign.md) §9 item 3) —
-pinned by a flip-witness Tier-2 test that drives a chain whose natural turn
-count is unbounded and asserts the force-close fires at the cap.
+**The composed→wake path.** A `composed:<name>` hook's wake=true push lands
+in the inbox via the exact same `kind="hook"` E-path every other
+hook-driven wake uses, so a self-stimulating composed→wake chain (a
+composer counting a lifecycle point its own consumer hook's next turn
+re-triggers — e.g. `turn_end`) adds no new dispatch machinery of its own.
+This is the architect-ratified "structural non-reentry → valve-metered
+allow" transition (proposal
+[0059](../../deep-dives/proposals/0059-hook-event-redesign.md) §9 item 3).
+(Pre-#5561 this section also pinned such a chain force-closing at the
+`max_hook_driven_turns` cap with a flip-witness Tier-2 test; #5561 retired
+that valve — see [§ Loop valve](#loop-valve) above for the current
+bounding mechanisms.)
 
 ## Agent self-directed hooks (`hooks_add`)
 
@@ -910,8 +923,7 @@ context (`wake: false`), without a restart.
   `turn_end`, `session_start`, `session_end`.
 - `message` (required) — the push message (Jinja2 template allowed).
 - `wake` (optional, default `true`) — `true` starts a new turn
-  (self-continuation, bounded by `safety.loop.max_hook_driven_turns`); `false`
-  rides along as context with the next turn.
+  (self-continuation); `false` rides along as context with the next turn.
 - `push_when` (optional) — a Jinja2 → bool guard; the push is skipped when it
   renders false.
 - `name` (optional) — a label surfaced as a `[hook:name]` attribution prefix
@@ -1018,10 +1030,10 @@ The following capabilities are designed but not yet implemented:
 
 - **Agent-level and phase-level hooks** — fine-grained points inside a turn
   (rare use cases; session/turn covers the common ones).
-- **valve-persist** — `_hook_driven_turns` (the loop-valve counter) is
-  in-memory-only (resets on crash); a separate, recovery-gated follow-up
-  would make it snapshot-backed. Flagged as more load-bearing now that the
-  Composer/Bus redesign adds new hook-driven-turn-generating paths.
+
+(Pre-#5561 this list also carried **valve-persist** — making the
+hook-driven-turns loop-valve counter crash-durable. #5561 retired the
+valve itself, mooting the deferred item with it.)
 
 ## See also
 

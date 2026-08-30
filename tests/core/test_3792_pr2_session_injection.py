@@ -18,7 +18,11 @@ RouterLoop-level wire-position / strip-falsify witnesses live in
 - **truncate-falsify** (CLAUDE.md recovery-feature PR gate) — a committed
   injection's inbox entry does not resurrect after a WAL truncation below
   its source events.
-- **loop valve** — commit does not reset ``_hook_driven_turns``.
+(Pre-#5561 this list also had a "loop valve — commit does not reset
+``_hook_driven_turns``" bullet with its own dedicated test; #5561 retired
+that counter entirely, and the test with it — see
+``test_commit_does_not_reset_hook_driven_turns``'s old location, git
+history.)
 
 Real ``Session``/``StateLog``/``SnapshotJournal`` throughout (the
 ``tests/interfaces/test_3300_p3_cancel_by_id.py`` convention) — no ``unittest.mock``.
@@ -246,28 +250,10 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     await state_log.aclose()
 
 
-@pytest.mark.asyncio
-async def test_commit_does_not_reset_hook_driven_turns(tmp_path):
-    """Tier 2: #3792 — architect's point 4 (the loop valve): a mid-turn
-    injection rides inside the ALREADY-running turn's budget, so committing
-    one must NOT reset ``_hook_driven_turns`` (unlike an ordinary
-    ``CLIENT_INPUT`` turn dispatched via ``run_one_iteration``, which DOES
-    reset it — that is a different code path, deliberately not this one).
-
-    Falsification (performed during review): adding
-    ``self._hook_driven_turns = 0`` to ``_commit_mid_turn_injection`` (as if
-    it were an ordinary new turn) makes this test go RED.
-    """
-    session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
-    session._hook_driven_turns = 7  # setup (write): no public setter exists
-
-    msg_id = await session.submit_user_text("inject me")
-    await session._inbox_arbiter.peek_mid_turn_injection()
-    await session._commit_mid_turn_injection(msg_id)
-
-    assert session.hook_driven_turns == 7
-
-    await state_log.aclose()
+# (#3792 added a test_commit_does_not_reset_hook_driven_turns here, pinning
+# architect's point 4 — a mid-turn injection commit must not reset the
+# loop-valve counter. #5561 retired the valve and the counter; there is
+# nothing left for this test to pin, so it was deleted with them.)
 
 
 # ---------------------------------------------------------------------------
