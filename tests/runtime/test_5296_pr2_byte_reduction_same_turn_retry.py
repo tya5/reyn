@@ -369,6 +369,11 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     compaction entirely regardless of candidate count — a real
     ``compact()`` call, if this ever regressed, should fail loudly rather
     than silently hitting network)."""
+    # #5531 §10: max_shrink_iterations no longer bounds retry_loop at all
+    # (the parameter is orphaned, see router_loop_driver.py's own call
+    # site comment) — kept here only because _make_spill_session still
+    # accepts it; termination is now genuinely bounded by the T_max-
+    # halving floor instead of this knob.
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1, recovery_policy="never",
     )
@@ -398,16 +403,14 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
         "wrapper-owned call (removed entirely)"
     )
     # ② clean, bounded termination — not a hang. #5364 §1.6: the bound is
-    # candidate exhaustion, not a fixed constant. All 50 turns here are
-    # ``role="user"`` — zero spillable candidates — so
-    # ``_attempt_reactive_spill`` reports failure on its very FIRST call,
-    # and the wrapper must raise right after exactly ONE outer attempt (a
-    # wall-clock timeout is never needed to prove this): sliced past that
-    # single attempt's own ``_run_with_shrink`` call count (2, measured
-    # directly — ``max_shrink_iterations=1`` plus retry_loop's own initial
-    # full-history attempt, unrelated to and unchanged by this fix), the
-    # tail must be empty.
-    assert loop.calls[2:] == []
+    # candidate exhaustion, not a fixed constant; #5531 §10 additionally
+    # removed retry_loop's own max_iterations, so "bounded" is no longer
+    # witnessable as a specific call count pinned to a config knob (that
+    # would now be a Tier-4 implementation-detail pin, not a structural
+    # fact) — the `with pytest.raises(UnrecoveredError)` context manager
+    # above IS the bounded-termination witness: this test function
+    # returning at all (not timing out under CI's own kill switch) proves
+    # the loop genuinely stopped rather than hanging.
 
 
 # ── ③ oversized user message alone — both levers fail, clean termination ───
@@ -1007,6 +1010,7 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
 # ── #5364 §1.6 REQUIRED acceptance: mid-only, multi-round, bytes constant ──
 
 
+@pytest.mark.llm_stub
 def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1026,6 +1030,17 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     condition makes this test go RED on the very FIRST round — that
     check reads "mid spill moved zero bytes" as failure and raises
     immediately, before a second of the 3 candidates is ever reached.
+
+    #5531 §10: ``@pytest.mark.llm_stub`` (added this PR) — the second
+    scenario below (``session2``) drives ``_run_with_shrink_and_byte_
+    reduction``, which now genuinely reaches ``engine.compact()`` (§10's
+    own rung① spill-first reordering means retry_loop's internal ladder,
+    not just this test's own direct ``_attempt_reactive_spill`` calls,
+    participates) — an unstubbed real completion call is exactly the gap
+    ``_make_spill_session``'s own docstring already names ("a test whose
+    own scenario reaches an actual compact() call must mark itself
+    llm_stub"), previously latent because the old, slower per-candidate
+    ladder never happened to reach it for this specific fixture shape.
     """
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
     # #5514 §7-1: NEVER — see the staged-order test's own comment above;
@@ -1108,14 +1123,17 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     # candidates are spilled, driven through the real wrapper end-to-end
     # (a fresh session — the one above already spent its candidates).
     session2 = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above;
+    # this test's own "exactly 3" isolation depends on the filler turns
+    # never being offered.
     for i in range(3):
         for j in range(8):
-            _push(session2, "user", f"filler {i}-{j} " * 8)
-            _push(session2, "assistant", f"filler reply {i}-{j} " * 8)
+            _push(session2, "user", f"filler {i}-{j} " * 8, spillability=Spillability.NEVER)
+            _push(session2, "assistant", f"filler reply {i}-{j} " * 8, spillability=Spillability.NEVER)
         _push(session2, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
     for i in range(3):
-        _push(session2, "user", f"tail filler {i} " * 8)
-        _push(session2, "assistant", f"tail reply {i} " * 8)
+        _push(session2, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session2, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
     spilled_so_far = {"n": 0}
     session2._audit_events.add_subscriber(
         lambda e: spilled_so_far.__setitem__("n", spilled_so_far["n"] + 1)

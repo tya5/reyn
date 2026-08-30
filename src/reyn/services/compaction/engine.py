@@ -2282,25 +2282,17 @@ def estimate_wire_bytes(
     ).total
 
 
-# #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
-# default classification so more exception types recover-by-default instead
-# of raising fatally; without this cap, a cause that shrinking can never fix
-# (a bug misclassified as recoverable, not an actual overflow) would grind
-# through all `max_iterations` LLM calls before giving up. This is a tighter,
-# earlier check than `max_iterations` — it fires on the SAME cause repeating,
-# not on iteration count alone, so a turn that alternates between two
-# different real overflow causes is not penalised.
-#
-# #4947 ③ (architect-ruled, CI red on #4950): the counted quantity is
-# consecutive same-cause recovers SINCE LAST PROGRESS, not since the start
-# of the call — a ``compact()`` SUCCESS (including a partial one) resets
-# both this counter and the recorded cause, at that one success site only
-# (never on the OTHER escalation branches, which only MOVE content between
-# head/tail/raw_middle rather than permanently reducing it — a cause
-# recurring across a pure move is still evidence nothing is being fixed).
-# Without the reset, a genuinely-shrinking cause (#3783 stage 3 arm (a)'s
-# own motivating case) can trip this cap even while making real progress.
-_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2
+# #3783 stage 2's same-cause consecutive-recover cap (T3) is RETIRED
+# (#5531 §10, settled (a), 2026-08-30) — see retry_loop's own "Bounded
+# termination proof" docstring for why: once #5543's classify_llm_failure
+# keeps Fatal/Retryable exceptions out of this ladder entirely, the ONLY
+# thing that can recur here is a genuine, shrinkable Overflow — the
+# halving ladder's own two floors already are the terminal condition,
+# so a cap layered on top of them could only fire EARLIER, cutting the
+# search off with real headroom still remaining. ``_last_recover_cause``/
+# ``_consecutive_same_cause`` (retry_loop's own locals) are kept as pure
+# telemetry on the ``compaction_shrink_recovered`` audit-event — nothing
+# reads them to decide anything any more.
 
 
 def _learned_byte_limit_clause(
@@ -2343,72 +2335,114 @@ async def retry_loop(
     engine: "CompactionEngine",
     learner: "TokenMultiplierLearner",
     main_call: Callable[..., Awaitable[Any]],
-    max_iterations: int = 8,
-    spill_fn: "Callable[[dict], dict | None] | None" = None,
+    spill_fn: "Callable[[list[dict]], tuple[int, dict] | None] | None" = None,
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
 
     On success (normal path or after shrink), calls ``learner.observe`` with
     the actual vs estimated token count so the adaptive estimator learns.
 
-    Bounded termination proof
-    -------------------------
-    - The decreasing measure is ``(head, tail)`` token count, NOT
-      ``raw_middle`` in isolation — ``raw_middle`` can GROW (Phase 1/2
-      below move content FROM tail/head INTO it) and is not itself
-      bounded below by ``head_min``/``tail_min``. #4947 ③ is what makes
-      this measure well-founded: stage 1 (a failed ``compact()`` retrying
-      a smaller slice of ``raw_middle``) touches ONLY ``raw_middle``,
-      never ``head`` or ``tail`` — before ③, stage 1 moved the failing
-      half of ``raw_middle`` INTO ``tail``, which could grow ``tail`` back
-      up after Phase 1 had just shrunk it, defeating this proof (measured,
-      #4947: a real 5-iteration period that reproduced the exact same
-      ``(head, tail)`` state forever).
-    - Lower bounds: ``head_min = budgets.head_budget``,
-      ``tail_min = budgets.tail_budget`` (derived from
-      ``component_weights["head|tail"] / total_weight * main_pool``).
-    - Terminal condition: when ``head``/``tail`` are at or below their
-      minimum token budgets AND ``raw_middle`` cannot be split any
-      smaller (down to a single turn, #4947 ③'s floor) AND spilling that
-      turn's content either was not available/possible or did not resolve
-      the overflow (#5367③, below), ``UnrecoveredError`` is raised — this
-      is a **structured-failure guarantee, not a success guarantee**: it
-      promises retry_loop always STOPS instead of looping forever or
-      silently dropping content, not that it always converges.
-    - #5367③: ``spill_fn`` (optional, injected by the caller — this module
-      never imports the caller, matching ``tool_result_cap.cap_tool_
-      result_content``'s own ``save_fn``-injection style) is tried EXACTLY
-      ONCE per distinct ``raw_middle[0]`` object, at BOTH terminal floors
-      below (the byte-limit mid-split floor and the non-byte same-cause
-      cap), regardless of which mode caused the overflow — a floor is a
-      floor either way, and the fix (replacing an oversized tool-result
-      body with a ref) is not byte/token-specific. A local per-call
-      ``id()`` set bounds this to at most one extra ``continue`` per
-      unique turn object, so it strictly tightens (never loosens) the
-      existing ``max_iterations``-bounded termination proof above.
-    - ``max_iterations=8`` is a safety cap independent of the above — even
-      a well-founded decreasing measure can still take more steps than an
-      operator wants to wait for real LLM calls, so this cap can fire
-      first. Whether it is USUALLY the limiting factor is not measured
-      here (#4947 found one specific repro where it was NOT the limiting
-      factor — the mid-split floor raised first — but that is a single
-      data point, not a frequency claim).
+    Bounded termination proof (#5531 §10 — ``max_iterations`` abolished)
+    ----------------------------------------------------------------
+    🔴 This loop no longer has an iteration-count safety cap. Stopping
+    is carried ENTIRELY by a lexicographic measure that strictly
+    decreases on every path that does not return or raise:
+    ``(T_max halvings remaining, total turn count (len(head)+len(mid)+
+    len(tail)), unspilled candidate count)``. band Q1's own "who stops
+    this if it repeats" is answered by "the measure" — not by counting
+    attempts. Two preconditions this abolition depends on, BOTH landed
+    in this same PR (owner ruling: removing either alone reopens #3783
+    §2's own named silent-degradation hazard):
+
+    1. ``classify_llm_failure`` (Fatal/Retryable/Overflow, this module)
+       exists and Fatal/Retryable are kept OUT of this ladder — a bug in
+       reyn's own code (``AttributeError`` etc.) must never be shrunk;
+       shrinking it here (pre-#5543) would let it run all the way to
+       the T_max floor before failing, burning real LLM calls chasing a
+       cause no shrink can fix.
+    2. The old ``elif _last_recover_is_byte_limit:`` gate on the T_max
+       halving floor is gone (already true since PR-2, #5531 §3 item 7)
+       — without it, a TOKEN-shaped overflow would have no halving
+       lever at all and could recur forever with nothing to make the
+       measure shrink.
+
+    Each component of the measure, and why it cannot increase forever:
+
+    - ``T_max halvings remaining`` — ``_t_max_override`` only ever
+      halves (never grows); floor (b) below raises the moment a
+      candidate can no longer fit ``SP``/``new_msg``/the current
+      summary even with head+tail at zero. Finite by construction:
+      ``get_max_input_tokens(model) // 2**k`` reaches that floor in
+      O(log T_max) halvings.
+    - ``total turn count`` — Phase 1/2 (refill from tail/head into
+      ``raw_middle``) each PERMANENTLY move content out of tail/head
+      (never back); bounded by the initial head+tail turn count. A
+      successful ``compact()`` call PERMANENTLY removes the compacted
+      slice from ``raw_middle`` (folded into the summary); the total
+      raw_middle content across the WHOLE call is therefore
+      non-increasing except for the bounded moves Phase 1/2 contribute.
+    - ``unspilled candidate count`` — #5531 §10's own rung①: on a
+      ``compact()``-overflow, the spill population is ``raw_middle``
+      ENTIRELY (never a slice, #9.6), tried one candidate at a time by
+      the caller's own priority order, looping (``continue`` → re-run
+      ``compact()``) until either the overflow resolves or candidates
+      are exhausted — each attempt strictly reduces this count by one
+      (a candidate is never offered twice, #9.5's own no-cursor rule:
+      the SET shrinks even though there is no persisted position in
+      it). Only once this is exhausted does rung② (halving
+      ``_compact_attempt_len``) fire.
+    - ``_compact_attempt_len`` itself is "fail → halve, succeed →
+      double (capped at ``len(raw_middle)``)" — a genuine binary
+      search, not a one-way ratchet (architect/owner correction,
+      2026-08-30: a DOMINANT single turn that resolves at attempt=1
+      should NOT keep the rest of raw_middle folded one turn at a time
+      for N more LLM calls — doubling back up lets a mixed input
+      recover its full-slice throughput once the dominant turn is
+      gone). This does not weaken the proof above: doubling only ever
+      follows a genuine SUCCESS, which already strictly shrank
+      ``raw_middle`` — the measure's "total turn count" component is
+      what actually bounds this, ``_compact_attempt_len`` is a THROUGHPUT
+      knob layered on top of it, not a separate unbounded axis.
+    - Terminal condition (a): the spill population is exhausted AND
+      ``_compact_attempt_len`` has floored at 1 (a single turn, alone,
+      still overflows) — ``UnrecoveredError``, mode-independent (byte
+      or token; #5531 §3 item 12: the old "defer the failing turn to
+      tail" escape hatch for a non-byte cause is REMOVED — a floor is a
+      floor regardless of which HTTP shape triggered it).
+    - Terminal condition (b): the T_max-halved candidate can no longer
+      fit ``SP + new_msg + summary`` even with head/tail at zero —
+      ``UnrecoveredError``.
+    - #5531 §10 (owner, architect's withdrawn T4 proposal): no third
+      terminal is needed — a T_max halving lowers
+      ``compute_budgets``'s own ``head_min``/``tail_min``, which makes
+      Phase 1/2 true again on a LATER iteration and refills
+      ``raw_middle`` — the ladder does not get permanently stuck empty,
+      it resolves itself one halving later.
+    - Episode boundary: ``_compact_attempt_len`` resets to ``None`` at
+      the start of every NEW ``retry_loop`` call (a fresh local, never
+      persisted across turns) — the binary search re-discovers its
+      working size every episode. Architect's own named cost (accepted,
+      not silently paid): a single-turn-dominant episode immediately
+      followed by another episode pays one extra halving round-trip to
+      re-discover ``attempt=1`` rather than carrying that knowledge
+      forward — carrying it forward would add a SECOND piece of
+      cross-episode state (alongside "content changed" risk
+      ``_compact_attempt_len``'s own #14 defect already showed once).
+    - T3 (the same-cause-recover cap, #3783 stage 2) is RETIRED
+      (#5531 §10, settled (a): "don't fire T3 until the halving ladder
+      is exhausted" — since the halving ladder already IS the terminal
+      condition once exhausted, T3 never had anything left to catch).
+      A ``compaction_shrink_recovered`` audit-event still names the
+      cause per iteration (unchanged, pure telemetry now).
     - Scope: this proof covers ``retry_loop`` and its one current
       production call site (``router_loop_driver.py``'s reactive
-      bounded-shrink call). ``retry_loop`` is also re-exported from
-      ``reyn.services.compaction`` (``__init__.py``), so it is a public
-      API surface even with a single caller today.
-    - #3783 stage 2: a SAME-cause recover cap (``_MAX_CONSECUTIVE_SAME_CAUSE_
-      RECOVERS``, currently 2) raises ``UnrecoveredError`` earlier than
-      ``max_iterations`` when the identical exception type keeps recovering
-      in a row — a real overflow shrinks its way to success within a few
-      iterations, so a cause that keeps recurring unchanged is evidence
-      shrinking cannot fix it (a misclassification, not an overflow), and
-      grinding through the remaining iterations would just spend LLM calls
-      to arrive at the same ``UnrecoveredError`` anyway. A per-iteration
-      ``compaction_shrink_recovered`` audit-event names the cause, so this
-      cap (and stage 3's later default-classification flip) is observable
-      in the event log, not just inferred from the final exception.
+      bounded-shrink call, entered only on a ``main_call``-origin
+      overflow — a ``compact()``-origin overflow is a NESTED failure
+      inside that same recovery, not a second entry point, #5531
+      unwritten condition 6 as corrected 2026-08-30). ``retry_loop`` is
+      also re-exported from ``reyn.services.compaction``
+      (``__init__.py``), so it is a public API surface even with a
+      single caller today.
 
     Failure-mode separation
     -----------------------
@@ -2550,29 +2584,47 @@ async def retry_loop(
     # not on every floor check.
     _sp_tokens_floor = estimate_tokens(SP, model, use_chars4=use_chars4)
     _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
-    # #5367③: which raw_middle[0] objects a spill has already been tried
-    # on this call — bounds the retry to at most one extra iteration per
-    # unique turn (never the same object twice), so this can only tighten
-    # the existing max_iterations-bounded termination proof, never loosen it.
-    _spill_attempted_ids: "set[int]" = set()
+    def _try_spill_one_from_raw_middle() -> bool:
+        """#5531 §10 rung① — the spill population is ``raw_middle``
+        ENTIRELY (never a slice, #9.6's own population/payload split),
+        one candidate at a time by the CALLER's own priority order
+        (``spill_fn`` owns that ordering — this function stays
+        Spillability-agnostic, matching ``tool_result_cap.cap_tool_
+        result_content``'s own ``save_fn``-injection style: this module
+        never imports the caller).
 
-    def _try_spill_first_mid_turn() -> bool:
-        """#5367③: if a turn is available and spillable, spill it in place
-        and report whether the caller should retry this iteration instead
-        of raising. Never attempts the SAME object twice."""
+        #9.5's own "no cursor" rule: every call re-scans the CURRENT
+        ``raw_middle`` fresh via ``spill_fn(raw_middle)`` — no persisted
+        position, no ``_spill_attempted_ids`` set (#5531 §10's own
+        acceptance: "a candidate not tried must never be recorded as
+        tried" is now structural, not a bookkeeping rule — a candidate
+        ``spill_fn`` already skipped last time is either already
+        reflected as skippable in the caller's own state (e.g.
+        ``is_already_spilled``, #5531 §10's own accept item 1) or was a
+        genuine attempt that changed ``raw_middle[idx]`` in place, so
+        the SAME unmodified object is never re-offered without this
+        function's own state at all).
+
+        Returns whether real progress happened (a candidate was
+        consumed) — never reads wire bytes to decide (#5364 §1.6: a
+        ``raw_middle`` spill cannot move wire bytes by construction,
+        elided out of ``estimate_wire_bytes``; reading bytes here would
+        discard every mid spill outright)."""
         if spill_fn is None or not raw_middle:
             return False
-        turn = raw_middle[0]
-        if id(turn) in _spill_attempted_ids:
+        result = spill_fn(raw_middle)
+        if result is None:
             return False
-        _spill_attempted_ids.add(id(turn))
-        spilled = spill_fn(turn)
-        if spilled is None:
-            return False
-        raw_middle[0] = spilled
+        idx, replacement = result
+        raw_middle[idx] = replacement
         return True
 
-    for _iteration in range(max_iterations):
+    # 0-indexed, matching the pre-#5531-§10 ``for _iteration in
+    # range(max_iterations)`` numbering exactly (existing telemetry
+    # consumers read the first pass as iteration 0).
+    _iteration = -1
+    while True:
+        _iteration += 1
         # #4944①: tracks whether THIS iteration reached main_call — a
         # compact() call that overflows raises from a DIFFERENT payload
         # (raw_middle + section_caps, not head/summary/tail/new_msg) that
@@ -2651,30 +2703,42 @@ async def retry_loop(
                     # what to pull (`_split_off_non_summary`) — Phase 2
                     # structurally cannot pull the element this line just
                     # appended back into raw_middle any more, which is
-                    # what the old oscillation depended on. (Not a
-                    # lexicographic-measure argument — that measure is
-                    # #5531 PR-3's own future scope, not built by this
-                    # PR; `max_iterations` remains PR-2's real, final
-                    # backstop — lead-coder correction, issuecomment-
-                    # 5465786061.)
+                    # what the old oscillation depended on. (#5531 PR-3:
+                    # this is now ALSO covered by the lexicographic
+                    # measure this function's own docstring proves —
+                    # ``max_iterations`` no longer exists as a backstop.)
                     head = [
                         t for t in head if t.get("role") != SUMMARY_MESSAGE_ROLE
                     ] + [wrap_summary_as_message(chat_summary.to_dict())]
                     # Only the ATTEMPTED slice is compacted — a smaller
                     # remainder (if any) stays in raw_middle for a later
-                    # iteration. ``_compact_attempt_len`` is deliberately
-                    # NOT reset to None (full remainder) here: a slice
-                    # size discovered by halving down to what just worked
-                    # is a reasonable size to try again on the remainder
-                    # (measured: resetting to full every success made a
-                    # uniformly-hard-to-compact input re-discover the same
-                    # halving from scratch every round, taking ~11
-                    # iterations for a fixture the OLD move-to-tail
-                    # direction converged in 3 — #4950 review). Any slice
-                    # that turns out too large for the new, smaller
-                    # raw_middle just clips naturally at the slice above;
-                    # no explicit clamping needed.
+                    # iteration. #5531 §10 (architect/owner correction,
+                    # 2026-08-30): ``_compact_attempt_len`` now DOUBLES
+                    # here (capped at the new, shorter raw_middle's own
+                    # length) rather than staying at whatever size just
+                    # worked — a slice that succeeded at a SMALL size
+                    # after prior halvings means the turn(s) that made it
+                    # fail before are now GONE (folded into the summary
+                    # just appended to ``head``), so the remainder is
+                    # more likely to compact in fewer, larger attempts;
+                    # holding the small size would keep folding the
+                    # remainder one attempt at a time for no reason once
+                    # the dominant turn is gone (owner: "1 件で 入った
+                    # ∴ その turn が 支配的だった ── それが消えた今 残りは
+                    # まとめて入る可能性が高い"). This does not reopen
+                    # #4950's own "uniformly-hard-to-compact input
+                    # re-discovers the same halving from scratch"
+                    # finding — THAT measured a full reset to ``None``
+                    # (the whole remainder) on every success; doubling is
+                    # bounded (a uniformly-hard input immediately fails
+                    # at the doubled size and halves right back down —
+                    # #10's own docstring works through both input
+                    # shapes). Any slice that turns out too large for the
+                    # new, smaller raw_middle just clips naturally at the
+                    # slice below; no explicit clamping needed there.
                     raw_middle = raw_middle[_attempt_len:]
+                    if raw_middle:
+                        _compact_attempt_len = min(_attempt_len * 2, len(raw_middle))
                     # #4947 ③ (CI red on #4950, architect-ruled): reset the
                     # same-cause streak here, and ONLY here — not on any
                     # other escalation branch. The cap's own words below
@@ -2708,48 +2772,51 @@ async def retry_loop(
                         # summary.
                         continue
                 except Exception as exc:
-                    # #5329: a provider usage-window/plan quota exhaustion
-                    # (429 usage_limit_reached) is the ONE exception #3783
-                    # stage 3's own "no per-exception-type allowlist"
-                    # ruling below does not cover — it is genuinely never
-                    # shrinkable (the window resets on a clock, not on
-                    # input size, #5256's own finding for the SAME
-                    # predicate at the outer _run_with_shrink gate). Real
-                    # incident (owner, reyn-self): compact()'s own LLM call
-                    # hit the SAME exhausted quota that had already failed
-                    # main_call, got wrapped as CompactionOverflowError by
-                    # the general rule below, and burned 2 more calls into
-                    # the SAME dead window before the stage-2 cap finally
-                    # gave up — 3 wasted round-trips during an active
-                    # outage, not 1. Re-raised BARE (never wrapped), the
-                    # SAME shape #5256's outer gate already uses and
-                    # ``_handle_inbox_text``'s generic catch-all already
-                    # handles safely — this is reuse of an existing,
-                    # already-battle-tested seam, not a new one.
+                    # #5543 / #5531 §10 (owner precondition for abolishing
+                    # `max_iterations`, landed in this SAME PR — see this
+                    # function's own "Bounded termination proof" docstring
+                    # item 1): classify BEFORE deciding whether to enter
+                    # the shrink ladder at all. Only OVERFLOW ever gets
+                    # wrapped as `CompactionOverflowError` and offered to
+                    # the ladder below — the ladder's own termination
+                    # proof depends on every exception that reaches it
+                    # being genuinely shrinkable.
                     #
-                    # Deliberately NARROWER than "remove RateLimitError
-                    # from the shrinkable family" (architect ruling,
-                    # #5329): an ordinary per-request 429 (no structured
-                    # ``usage_limit_reached`` body) is NOT touched here —
-                    # #3783 stage 3's own reasoning for including it stays
-                    # intact, this predicate only carves out the ONE
-                    # subtype that can never recover regardless of how
-                    # many times shrinking retries it.
-                    if is_quota_exhausted_error(exc):
+                    # FATAL (owner, #3783 verbatim): "An AttributeError in
+                    # our own code must not become 'quietly shrink, then
+                    # UnrecoveredError'" — re-raised bare, immediately,
+                    # never shrunk. Without T3 (retired, #5531 §10) this
+                    # is now the ONLY thing standing between a genuine
+                    # reyn-side bug and the whole T_max floor being walked
+                    # burning real LLM calls first.
+                    #
+                    # RETRYABLE (5xx/rate-limit/network/quota, including
+                    # #5329's own quota-exhaustion incident this replaces
+                    # — a provider usage-window exhaustion that used to
+                    # get wrapped here and burn 2+ wasted round-trips into
+                    # the SAME dead window before T3 finally gave up):
+                    # re-raised bare too — shrinking the input cannot fix
+                    # an infra condition or a wait-bound quota window
+                    # either. #5543's own spec routes RETRYABLE through
+                    # the SAME backoff machinery the router already uses
+                    # (`llm.py`'s `_llm_call_with_retry`) rather than
+                    # here — compact()'s own LLM call is not yet wired
+                    # into that machinery (a disclosed, separate gap: it
+                    # has never been retried, #5543's own second named
+                    # defect) — re-raising bare, unwired, is still SAFE
+                    # (the SAME bare-propagation shape #5256's quota gate
+                    # and `_handle_inbox_text`'s generic catch-all already
+                    # handle without ending the session), just not yet
+                    # backoff-retried; wiring that in is future scope, not
+                    # a regression this PR introduces (quota's own bare
+                    # re-raise, the ONE RETRYABLE member this site already
+                    # special-cased, is UNCHANGED behavior).
+                    #
+                    # OVERFLOW: unchanged from #3783 stage 3's own
+                    # ratified default — wrapped and offered to the
+                    # shrink ladder below.
+                    if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
                         raise
-                    # #3783 stage 3 (owner-ratified): EVERY compact()-call
-                    # exception now recovers by default — shrinking the
-                    # input is a general remedy (a truncated JSON response,
-                    # a transient 5xx, a rate limit), not an overflow-
-                    # specific one, so gating the wrap on
-                    # ``is_context_overflow_error`` locked out exactly the
-                    # failures shrinking helps most (a response cut off by
-                    # an output cap raises a plain ``JSONDecodeError`` that
-                    # shares no keyword with the overflow predicate). No new
-                    # predicate here — the discriminator that stops a
-                    # never-recoverable cause from looping forever is the
-                    # stage-2 cap below (``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS``),
-                    # not a per-exception-type allowlist at this site.
                     raise CompactionOverflowError(str(exc)) from exc
 
             # #5531 PR-2: `main_call` no longer takes a separate `summary=`
@@ -2900,137 +2967,80 @@ async def retry_loop(
             # without ever changing anything — evidence shrinking cannot fix
             # THAT cause.
             #
-            # #4947 ③: the ORIGINAL reasoning here said "the same cause
-            # recovering repeatedly is the expected shape of active
-            # binary-search progress" — that is false for a compact()-
-            # origin 413 (measured, #4947: the search never even starts,
-            # ``_t_max_override`` stays ``None`` the entire time, and the
-            # SAME cause recovers because mid-splitting hadn't been fixed
-            # yet, not because a search was in progress). The exemption
-            # itself is left in place (①: whether it should key on
-            # binary-search progress instead of the raw cause is a
-            # separate, still-open question) — only the reasoning changes:
-            # this cause's terminal case is NOT this cap, it is the floor
-            # below (either the T_max-override floor for a main_call-origin
-            # 413, or the mid=1-turn floor for a compact()-origin one) —
-            # applying this cap on top of either floor would cut the
-            # search off after only 2 recovers regardless of how much
-            # headroom remains.
-            if (
-                _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS
-                and not _last_recover_is_byte_limit
-            ):
-                # #4954 (b): ``saw_byte_limit`` defaults to False here, and
-                # this site is REACHABLE — its own guard clause
-                # (``and not _last_recover_is_byte_limit``) is what makes
-                # False the only value this raise can ever carry, not an
-                # unreachable branch where the default happens not to
-                # matter.
-                # #5367③: before giving up, try spilling raw_middle[0]'s
-                # content (mode-independent — a floor is a floor whether
-                # the recurring cause is byte- or token-shaped) and retry
-                # this iteration if it made progress.
-                if _try_spill_first_mid_turn():
-                    continue
-                raise UnrecoveredError(
-                    f"retry_loop: cause {_cause!r} recovered "
-                    f"{_consecutive_same_cause} consecutive times (limit "
-                    f"{_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS}) — the "
-                    "turn-count shrink ladder attempted, plus any "
-                    "content-level spill of raw_middle[0] this call had "
-                    "available, did not resolve this cause; stopping "
-                    "rather than exhausting max_iterations."
-                ) from _overflow_exc
+            # #5531 §10 (settled (a), 2026-08-30): T3 (the same-cause
+            # cap) is RETIRED — "don't fire T3 until the halving ladder
+            # is exhausted" turned out to mean T3 never had anything
+            # left to catch: the halving ladder's own floors ((a) below
+            # and (b), the T_max-candidate floor) ARE the terminal
+            # condition once exhausted, so a cap layered on top of them
+            # could only ever fire EARLIER, cutting the search off with
+            # headroom still remaining (the #4947 ③ finding that first
+            # exempted the byte-limit cause from this cap, generalised:
+            # #5543's classify_llm_failure now keeps Fatal/Retryable
+            # OUT of this ladder entirely, closing the "genuinely stuck
+            # cause" case T3 used to exist to catch). ``_cause``/
+            # ``_consecutive_same_cause`` stay as pure telemetry on the
+            # ``compaction_shrink_recovered`` event below — no branch
+            # reads them to decide anything any more.
 
         # Shrink escalation: reduce context size monotonically.
         if raw_middle:
-            # #4947 ③ (architect-ruled, replaces the old "move half of
-            # raw_middle into tail" direction): ``compact()`` just failed
-            # on the ``_attempt_len``-turn slice offered above. The OLD
-            # direction pushed the failing half INTO ``tail`` — fattening
-            # exactly the request ``main_call`` was about to retry, for a
-            # failure that happened before compaction ever succeeded once.
-            # This was a real bug, not a style choice: with ``tail`` never
-            # shrinking back down (main_call's own overflow, if it also
-            # 413s, refills raw_middle FROM tail via the Phase-1 branch
-            # below, undoing this iteration's compaction attempt entirely)
-            # the state returns to exactly where it started — this
-            # function's own "Bounded termination proof" docstring
-            # promises raw_middle/tail/head shrink monotonically, and this
-            # line was the one violation (measured: #4947, a real
-            # 5-iteration period with an always-413 ``compact()``).
-            #
-            # New direction: halve how much of raw_middle NEXT attempt
-            # offers, leaving ``tail`` untouched — ``_compact_attempt_len``
-            # is the state that must persist and decrease for this to
-            # terminate (see its declaration above); recomputing a slice
-            # from the unchanged ``raw_middle`` on every iteration without
-            # persisting it would just recreate the same cycle.
+            # #5531 §10 rung① (owner ruling, "spill is the ladder's
+            # first rung"): try spilling ONE candidate from raw_middle
+            # ENTIRELY (never a slice — #9.6) before touching
+            # ``_compact_attempt_len`` at all. Looping via ``continue``
+            # re-runs ``compact()`` on the SAME ``_attempt_len`` slice
+            # (unchanged by a spill — only the CONTENT of one candidate
+            # inside it shrank) — #9.5's own no-cursor rule: each call
+            # re-scans the current raw_middle fresh, so this naturally
+            # keeps consuming candidates until either the overflow
+            # resolves or the population is exhausted.
+            if _try_spill_one_from_raw_middle():
+                continue
+            # rung① exhausted (or no spill_fn at all) — only now fall to
+            # rung②: ``_compact_attempt_len``. #5531 §10 (architect/owner
+            # correction, 2026-08-30): "fail → halve, succeed → double"
+            # — a genuine binary search, not the old one-way ratchet. A
+            # SUCCESS's own doubling happens at the success site itself
+            # (below, right after ``raw_middle = raw_middle[_attempt_len:]``
+            # — the only place that knows "this attempt just succeeded"),
+            # never here; this branch only ever HALVES, because reaching
+            # it means the LAST attempt at the current ``_attempt_len``
+            # just failed.
             _current_attempt = (
                 _compact_attempt_len if _compact_attempt_len is not None
                 else len(raw_middle)
             )
             if _current_attempt <= 1:
-                # Floor: even a single turn offered alone still fails —
-                # halving further cannot produce a smaller nonzero slice.
-                #
-                # #4947 ③ (architect review on #4950): raising here is
-                # correct ONLY for a byte limit. #3783 stage 3's own
-                # reasoning ("EVERY compact()-call exception now recovers
-                # by default — shrinking the input is a general remedy")
-                # still applies to a NON-byte-limit failure (a transient
-                # 5xx, a rate limit, a truncated JSON response) — this
-                # split direction IS that shrinking; there is nothing
-                # inconsistent about falling back to the OLD defer-to-tail
-                # behavior for a single turn that keeps failing for a
-                # reason unrelated to size. Compaction success is not a
-                # precondition for ``main_call`` — deferring this one
-                # turn and letting ``main_call`` run is a legitimate
-                # outcome. This does NOT reopen #4947's own cycle: that
-                # cycle was only reachable because a byte-limit cause is
-                # EXEMPT from the same-cause cap above — a non-byte-limit
-                # cause is NOT exempt, so ``_MAX_CONSECUTIVE_SAME_CAUSE_
-                # RECOVERS`` already catches a genuinely stuck non-byte
-                # cause on its own, with an accurate message, independent
-                # of this floor (predates this arc).
-                if _last_recover_is_byte_limit:
-                    # #5367②: the OLD text past this point claimed
-                    # "shrinking it further is not possible" — false. Only
-                    # the TURN-COUNT floor is reached here (mid is already
-                    # one turn; halving cannot produce a smaller nonzero
-                    # slice, #4947 ③). #5367③: mid's CONTENT could still
-                    # shrink — a turn whose body is a spillable tool result
-                    # (owner: "spill は turn の中身を小さくします — 分割で
-                    # はなく縮小") can be reduced without splitting it into
-                    # more turns, so that is tried here (below) before
-                    # this raise, not skipped.
-                    if _try_spill_first_mid_turn():
-                        continue
-                    raise UnrecoveredError(
+                # Floor (a): a single turn offered alone still overflows,
+                # AND spilling it (just tried above) did not resolve it
+                # either — halving further cannot produce a smaller
+                # nonzero slice. #5531 §3 item 12: mode-independent now
+                # (the old byte-limit-only raise / non-byte "defer this
+                # turn to tail" fork is REMOVED — a floor is a floor
+                # regardless of which HTTP shape triggered the overflow;
+                # deferring used to let a non-byte cause dodge this floor
+                # by growing tail, which is exactly the kind of
+                # non-monotonic escape #4947 ③ closed for the OTHER
+                # branch of this same fork).
+                raise UnrecoveredError(
+                    (
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                        "recurred compacting a single raw_middle turn "
-                        "alone — mid cannot be split any further (the "
-                        "turn-count floor), and a content-level spill of "
-                        "it, where available, did not resolve this "
-                        "either." + _learned_byte_limit_clause(
+                        if _last_recover_is_byte_limit
+                        else "retry_loop: shrinking "
+                    ) + "recurred compacting a single raw_middle turn "
+                    "alone — mid cannot be split any further (the "
+                    "turn-count floor), and spilling every available "
+                    "candidate in raw_middle did not resolve this "
+                    "either." + (
+                        _learned_byte_limit_clause(
                             last_accepted_wire_bytes=_last_accepted_wire_bytes,
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
-                        ),
-                        saw_byte_limit=True,
-                    )
-                # Defer: move ONLY the one turn that was just attempted
-                # (not the rest of raw_middle, which may still hold more
-                # — the attempt size shrank to 1, not raw_middle itself)
-                # into tail, the OLD stage-1 direction narrowed to this
-                # one turn — a non-byte-limit compact() failure is not
-                # evidence main_call itself would also fail. Any
-                # remaining raw_middle stays for a later iteration,
-                # attempted in full (reset to None) next time.
-                tail = raw_middle[:1] + tail
-                raw_middle = raw_middle[1:]
-                _compact_attempt_len = None
-            else:
-                _compact_attempt_len = max(_current_attempt // 2, 1)
+                        ) if _last_recover_is_byte_limit else ""
+                    ),
+                    saw_byte_limit=_last_recover_is_byte_limit,
+                )
+            _compact_attempt_len = max(_current_attempt // 2, 1)
         elif (
             _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens
             and _has_non_summary(tail)
@@ -3065,6 +3075,14 @@ async def retry_loop(
             chunk = max(_non_summary_head_count // 2, 1)
             _removed, head = _split_off_non_summary(head, chunk, from_end=True)
             raw_middle = _removed + raw_middle
+            # #5531 §10 (table #14's own asymmetry, corrected): Phase 2
+            # PREPENDS to raw_middle — a stale ``_compact_attempt_len``
+            # ("the first N turns failed") would now name a DIFFERENT
+            # prefix than the one that fact was ever true of. Phase 1
+            # (below-this-branch's sibling, APPENDS to the end) does NOT
+            # reset — the prefix stays unchanged there, so the knowledge
+            # stays valid.
+            _compact_attempt_len = None
         else:
             # #5531 PR-2 (owner ruling, §2/§3 item 7): token-only
             # shrinking is exhausted (head/tail already at or below their
@@ -3197,45 +3215,22 @@ async def retry_loop(
                 chunk = max(_non_summary_head_count // 2, 1)
                 _removed, head = _split_off_non_summary(head, chunk, from_end=True)
                 raw_middle = _removed + raw_middle
+                # #5531 §10: same Phase-2-prepends-so-reset reasoning as
+                # this branch's own sibling above.
+                _compact_attempt_len = None
             # If neither exceeds the new minimums either (head/tail were
             # ALREADY below even the halved ceiling), there is nothing left
             # to trim yet — still falls through without raising; the NEXT
             # overflow (same content, same call) halves the ceiling again
             # on its own next pass through this branch, continuing the
             # search.
-
-    # #4947 ②: name the byte limit when it was the LAST recovered cause —
-    # a compact()-origin 413 is currently exempt from the same-cause cap
-    # above (see the #4885 comment on that skip) and from every shrink
-    # step in this ladder (all token-measured; a byte limit says nothing
-    # about them), so it can ride every iteration to here unchanged. The
-    # generic message below said nothing about WHY nothing converged;
-    # this branch reports the actual last-known cause instead of leaving
-    # an operator to re-derive "413" from event-log archaeology.
-    # #4957: name the config key an operator can actually change here — not
-    # just the bare number this call happened to be given. This is an
-    # ESCAPE VALVE message, not a diagnosis: raising the cap only delays
-    # exhaustion if the underlying cause never resolves (a persistent
-    # 413/5xx/rate-limit keeps failing regardless of how many attempts are
-    # allowed) — it does not mean the cap itself was the wrong size.
-    if _last_recover_is_byte_limit:
-        raise UnrecoveredError(
-            f"retry_loop exceeded max_iterations={max_iterations} "
-            "(chat.compaction.max_shrink_iterations) without convergence — "
-            "the last recovered cause was an HTTP 413 (a request-BODY-BYTE "
-            "limit), which this ladder's token-only shrink steps cannot "
-            "resolve on their own. Raising this config value is an escape "
-            "valve, not a cure: if the same 413 recurs every turn, it will "
-            "only delay exhaustion, not prevent it." + _learned_byte_limit_clause(
-                last_accepted_wire_bytes=_last_accepted_wire_bytes,
-                last_rejected_wire_bytes=_last_rejected_wire_bytes,
-            ),
-            saw_byte_limit=True,
-        )
-    raise UnrecoveredError(
-        f"retry_loop exceeded max_iterations={max_iterations} "
-        "(chat.compaction.max_shrink_iterations) without convergence"
-    )
+        # #5531 §10: no code follows the loop body any more — every path
+        # through it either returns (success), raises UnrecoveredError
+        # (terminal (a) or (b), both inside the loop body above), or
+        # falls through to `while True`'s own next pass. `max_iterations`
+        # used to bound this loop from the OUTSIDE and its exhaustion
+        # message lived here; both are gone (this function's own docstring
+        # "Bounded termination proof" section is the replacement).
 
 
 # Keep TokenMultiplierLearner importable from this module for convenience.

@@ -180,7 +180,7 @@ class _BMGatedEngine:
         from reyn.core.events.events import EventLog
         self._events = EventLog()
 
-    async def compact(self, input_chunk):
+    async def compact(self, input_chunk, *, covers_through=None):
         from reyn.services.compaction.engine import (
             ChatSummary,
             CompactionOverflowError,
@@ -250,7 +250,6 @@ def _retry_loop_with(raw_middle_turn: dict):
         engine=_BMGatedEngine(_budgets()),  # type: ignore[arg-type]
         learner=learner,
         main_call=_size_aware_main_call,
-        max_iterations=8,
     ))
 
 

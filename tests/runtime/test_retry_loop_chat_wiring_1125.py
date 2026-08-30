@@ -323,65 +323,15 @@ def test_router_usage_shim_exposes_usage(tmp_path) -> None:
     assert shim.usage.prompt_tokens == 42
 
 
-# ── #4957: chat.compaction.max_shrink_iterations reaches retry_loop's OWN bound ──
-
-
-def test_max_shrink_iterations_config_value_bounds_the_real_driver_call(
-    tmp_path, monkeypatch,
-) -> None:
-    """Tier 1: RouterLoopDriver._run_with_shrink passes
-    ``self._compaction.max_shrink_iterations`` — NOT the retry_loop
-    signature default (8) — as retry_loop's ``max_iterations``. Uses a
-    non-default value (3) per the issue's own explicit requirement: the
-    same value as the signature default would prove nothing (the wiring
-    could be entirely absent and this would still pass).
-
-    Drives the REAL ``RouterLoopDriver._run_with_shrink`` (the literal
-    production call site #4957 changed), not a re-implementation of it —
-    only ``loop.run`` is a scripted async fn (a ``_run_with_shrink``
-    parameter, the same shape ``main_call`` is a ``retry_loop`` parameter
-    in the sibling tests above), since a real ``RouterLoop`` LLM call
-    cannot run offline.
-    """
-    from reyn.services.compaction.engine import UnrecoveredError
-
-    class _FakeStatusError(Exception):
-        def __init__(self, message: str, *, status_code: int) -> None:
-            super().__init__(message)
-            self.status_code = status_code
-
-    cfg = CompactionConfig(
-        body_token_cap=1500,
-        use_chars4_estimate=True,
-        section_caps_spec_tokens=0,
-        max_shrink_iterations=3,  # non-default — see docstring
-    )
-    state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
-    bt = BudgetTracker(CostConfig())
-    session = make_session(
-        agent_name="default",
-        agent_role="",
-        output_language="en",
-        budget_tracker=bt,
-        state_log=state_log,
-        compaction_config=cfg,
-        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-    )
-    _push(session, "user", "hi")
-
-    class _AlwaysOverflowLoop:
-        async def run(self, *, user_text: str, history: list) -> None:
-            raise _FakeStatusError("request too large", status_code=413)
-
-    with pytest.raises(UnrecoveredError) as excinfo:
-        asyncio.run(
-            session._loop_driver._run_with_shrink(_AlwaysOverflowLoop(), "hi again")
-        )
-
-    # Names the ACTUAL config value (3), proving it reached retry_loop —
-    # the signature default (8) appearing here instead would mean the
-    # wiring silently regressed back to always-8.
-    assert "max_iterations=3" in str(excinfo.value)
+# #5531 §10: test_max_shrink_iterations_config_value_bounds_the_real_
+# driver_call removed — retry_loop no longer takes max_iterations at all
+# (see its own "Bounded termination proof" docstring), so
+# chat.compaction.max_shrink_iterations no longer reaches it; the config
+# knob itself is now orphaned (disclosed at its one remaining reference,
+# router_loop_driver.py's own call-site comment) — removing the knob's
+# schema/validation/docs/its own dedicated test file
+# (test_4957_max_shrink_iterations_config.py) is a separate, scoped
+# follow-up, not folded into this already-large PR.
 
 
 # ── #4954 (b): a byte-limit exhaustion triggers a real compaction ────────────

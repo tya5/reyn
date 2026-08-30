@@ -12,10 +12,16 @@ Named `max_shrink_iterations`, not `max_iterations` — `RouterLoop` has its
 own unrelated `max_iterations` (the tool-call loop bound,
 `router_loop_driver.py`'s `_router_max_iterations`); the same spelling
 already caused one same-name-different-meaning confusion this session
-(#4942). The wiring itself (config value reaching retry_loop's actual
-bound) is proven in
-tests/runtime/test_retry_loop_chat_wiring_1125.py::test_max_shrink_iterations_config_value_bounds_the_real_driver_call
-— this file covers only the config-parsing layer.
+(#4942).
+
+#5531 §10 (2026-08-30): `retry_loop` no longer takes `max_iterations` at
+all (removed — see its own "Bounded termination proof" docstring), so
+this field is now ORPHANED — nothing reads it. The wiring test this
+docstring used to point to
+(`test_max_shrink_iterations_config_value_bounds_the_real_driver_call`)
+was removed for the same reason. Removing the field itself
+(schema/validation/docs) is a disclosed, separate follow-up — this file
+still parses correctly and is left as-is pending that follow-up.
 """
 from __future__ import annotations
 
