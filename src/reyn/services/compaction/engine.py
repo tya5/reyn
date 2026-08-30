@@ -1036,7 +1036,14 @@ class LLMFailureClass(enum.Enum):
 #: fall through to OVERFLOW's keyword fallback, not be treated as
 #: unshrinkable-and-fatal) — only the THREE types a bug in reyn's own
 #: code plausibly raises through this call path.
-_FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
+#:
+#: #5536 group C: made PUBLIC (was ``_FATAL_EXC_TYPES``) so
+#: ``reyn.hooks.shell_runner``'s own outer catch-all can reuse the SAME
+#: allowlist to exclude reyn's-own bugs from its best-effort "the hook
+#: run failed" catch, rather than inventing a second, divergent set (the
+#: exact "5 independent copies" failure class ``is_context_overflow_
+#: error``'s own docstring already names once for a sibling predicate).
+FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
 
 
 def _is_fatal_auth_error(exc: BaseException) -> bool:
@@ -1088,7 +1095,7 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     construction) — this function does not widen what reaches it, only
     names what was already implicitly assumed.
     """
-    if isinstance(exc, _FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
+    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
         return LLMFailureClass.FATAL
     if is_quota_exhausted_error(exc):
         return LLMFailureClass.RETRYABLE

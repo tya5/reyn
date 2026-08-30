@@ -894,5 +894,25 @@ async def run_shell_hook(
         return result.stdout.decode("utf-8", errors="replace")
 
     except Exception as exc:
+        # #5536 group C (architect ruling): this is a SCOPE question, not
+        # a silence question — this catch already logs at ERROR. The
+        # defect is that ``except Exception`` also swallows a bug in
+        # REYN'S OWN code here (an AttributeError/TypeError/KeyError from
+        # this function's own logic) into the exact same "the hook run
+        # failed" outcome an external command failure gets — hiding a
+        # real reyn defect behind an indistinguishable-looking hook
+        # failure. Excluded via the SAME closed allowlist ``classify_
+        # llm_failure``'s own FATAL branch already uses (#3783 §2's own
+        # reasoning, reused here rather than re-derived: "An AttributeError
+        # in our own code must not become [silently absorbed]") — never a
+        # new concept, the existing one applied at a second call site.
+        # Re-raising here reaches dispatcher.py's own per-hook isolation
+        # boundary one level up (a WARNING there, still bounded to this
+        # one hook — see that except clause's own docstring for why that
+        # boundary's scope is already correct and untouched by #5536).
+        from reyn.services.compaction.engine import FATAL_EXC_TYPES
+
+        if isinstance(exc, FATAL_EXC_TYPES):
+            raise
         _log.error("shell-hook %r: unexpected error: %s", command, exc)
         return None
