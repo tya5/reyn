@@ -112,6 +112,11 @@ async def test_a_relevant_event_marks_dirty_but_does_not_itself_recompute(
     s.mcp_subscription_state()  # lazy fill: 1 real call
     assert call_count["n"] == 1
 
+    # #5557: this emit only drives the dirty-marking scenario — every
+    # assert in this test reads `call_count` (an unrelated collaborator's
+    # own call tally via `_counting_wrapper`), never this emit's own
+    # type/data. The event kind matters only insofar as it's IN the
+    # subscribed set; the payload is arbitrary.
     s._audit_events.emit("mcp_resource_subscribed", server="srv", uri="resource://x")
     await settle(s._audit_events)
 
@@ -152,6 +157,8 @@ async def test_mcp_reconnect_failed_also_marks_dirty(tmp_path, monkeypatch) -> N
     s.mcp_subscription_state()  # lazy fill: 1 real call
     assert call_count["n"] == 1
 
+    # #5557: same reasoning as the previous test — drives dirty-marking,
+    # every assert reads `call_count`, not this emit's own event.
     s._audit_events.emit("mcp_reconnect_failed", server="srv")
     await settle(s._audit_events)
 
@@ -178,6 +185,8 @@ async def test_an_unrelated_event_does_not_trigger_a_recompute(tmp_path, monkeyp
     s.mcp_subscription_state()  # lazy fill: 1 real call
     assert call_count["n"] == 1
 
+    # #5557: same reasoning — this is the falsification contrast (an
+    # unrelated kind), asserts still only read `call_count`.
     s._audit_events.emit("user_submitted", text="hello", chain_id="c1", msg_id="m1", seq=1)
     await settle(s._audit_events)
 

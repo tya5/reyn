@@ -69,6 +69,10 @@ async def test_shutdown_drains_event_store(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     session = reg.get_or_load("owner")
 
+    # #5557: "budget_warn" is an arbitrary payload — this test's claim is
+    # about registry.shutdown()'s DRAIN mechanism (a queued-but-unwritten
+    # event lands on disk before exit), any real event type would serve
+    # identically. Not a claim that production emits budget_warn here.
     session._audit_events.emit("budget_warn", dimension="daily_tokens")
     await reg.shutdown()
 
@@ -196,6 +200,9 @@ async def test_remove_session_closes_event_store_synchronously_before_cancel(tmp
     spawned = reg.get_session("owner", spawned_sid)
     spawned.register_intervention_listener("test")
 
+    # #5557: same reasoning as the sibling test above — this claim is
+    # about remove_session()'s own synchronous-close ordering, not about
+    # production emitting budget_warn.
     spawned._audit_events.emit("budget_warn", dimension="daily_tokens")
 
     await reg.remove_session("owner", spawned_sid, record=False)

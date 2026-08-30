@@ -489,6 +489,13 @@ async def test_switch_announce_precedes_any_new_session_audit_event(tmp_path) ->
         source.start()
 
         async def _adversary() -> None:
+            # #5557: this emit is a flood/racing SIGNAL for the ordering
+            # witness below (announce-before-subscribe) — the assertion
+            # reads the POSITION of these events relative to a barrier, not
+            # their content or whether production would emit turn_started
+            # here specifically. "turn_started" is chosen only because it's
+            # in the renderer-forwarded type set; any forwarded type would
+            # serve identically.
             for _ in range(200):
                 session_b._audit_events.emit("turn_started")
                 await asyncio.sleep(0)
