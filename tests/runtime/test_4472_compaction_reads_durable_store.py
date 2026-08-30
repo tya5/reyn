@@ -47,9 +47,9 @@ from tests._support.agent_session import make_session
 from tests._support.events import settle
 
 
-async def _run_and_settle(coro, log):
+async def _run_and_settle(coro, source):
     result = await coro
-    await settle(log)
+    await settle(source)
     return result
 
 
@@ -223,7 +223,7 @@ def test_a_capped_batch_makes_honest_incremental_progress_across_passes(
 
     from tests._support.events import collect_events
 
-    events = collect_events(s._audit_events)
+    events = collect_events(s)
 
     # A real, sizeable backlog -- each turn ~4KB, 30 turns -> ~120KB raw,
     # comfortably larger than a small forced batch cap below.
@@ -245,7 +245,7 @@ def test_a_capped_batch_makes_honest_incremental_progress_across_passes(
 
     monkeypatch.setattr(htr, "read_history_after", _tiny_batch_reader)
 
-    result1 = asyncio.run(_run_and_settle(s._compact_now_for_op(), s._audit_events))
+    result1 = asyncio.run(_run_and_settle(s._compact_now_for_op(), s))
     assert result1["summarized_turns"] > 0, "sanity: the first pass must make real progress"
 
     first_summary = s._latest_summary()

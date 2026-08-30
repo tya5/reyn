@@ -294,7 +294,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
     distinct from the regular ``"user_channel"`` route event.
     """
     session = make_session(agent_name="test")
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -308,7 +308,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
         await asyncio.sleep(0)
         await session.discard_pending_intervention(iv.id)
         await task
-        await settle(session._audit_events)
+        await settle(session)
 
     asyncio.run(_drive())
 
@@ -364,7 +364,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
     trail when the iv was actually discarded.
     """
     session = make_session(agent_name="test")
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     session.register_intervention_listener("tui:current")
 
     async def _drive() -> None:
@@ -381,7 +381,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
         )
         assert ok is True
         await task
-        await settle(session._audit_events)
+        await settle(session)
 
     asyncio.run(_drive())
 

@@ -395,7 +395,7 @@ async def test_session_skill_invoke_collision_is_loud(tmp_path):
     session = _session_with_skills(
         tmp_path, [entry], collisions={"shared": ["project", "dynamic"]},
     )
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     consumed, text = await session._maybe_handle_skill_invoke(":shared go")
     assert consumed is False
@@ -409,7 +409,7 @@ async def test_session_skill_invoke_collision_is_loud(tmp_path):
 
     # (2) a real audit-event was emitted (P6 band member) — read through the
     # session's real EventLog, not a private queue.
-    await settle(session._audit_events)
+    await settle(session)
     collision_events = [e for e in collected if e.type == "skill_invoke_collision"]
     assert collision_events, "expected a skill_invoke_collision audit-event to fire"
     assert all(e.data.get("name") == "shared" for e in collision_events)

@@ -109,12 +109,12 @@ async def test_engage_fires_once_on_the_transition_not_on_repeated_reads(
     ``untrusted_narrowing_engaged`` event must result, however many of those
     reads happen."""
     s = _session(tmp_path)
-    events = collect_events(s._audit_events)
+    events = collect_events(s)
 
     # Reads before the taint: no engage yet, must emit nothing.
     for _ in range(3):
         assert _UNTRUSTED_DENIED_TOOL not in _denied_by_turn_context(s)
-    await settle(s._audit_events)
+    await settle(s)
     assert _kinds(events, "untrusted_narrowing_engaged") == []
 
     _mark_untrusted(s)
@@ -125,7 +125,7 @@ async def test_engage_fires_once_on_the_transition_not_on_repeated_reads(
     # read count.
     for _ in range(5):
         assert _UNTRUSTED_DENIED_TOOL in _denied_by_turn_context(s)
-    await settle(s._audit_events)
+    await settle(s)
 
     assert _kinds(events, "untrusted_narrowing_engaged") == ["untrusted_narrowing_engaged"], (
         "5 identical-state reads must still produce exactly 1 engage event — "
@@ -145,11 +145,11 @@ async def test_lift_fires_once_when_the_taint_leaves_the_context(tmp_path: Path)
     taint_leaves_the_context``'s own removal shape), read several times
     while lifted. Exactly one lift event, not one per post-lift read."""
     s = _session(tmp_path)
-    events = collect_events(s._audit_events)
+    events = collect_events(s)
 
     _mark_untrusted(s)
     assert _UNTRUSTED_DENIED_TOOL in _denied_by_turn_context(s)
-    await settle(s._audit_events)
+    await settle(s)
     assert _kinds(events, "untrusted_narrowing_engaged") == ["untrusted_narrowing_engaged"], (
         "control arm: engage must have fired before lift is meaningful to test"
     )
@@ -159,7 +159,7 @@ async def test_lift_fires_once_when_the_taint_leaves_the_context(tmp_path: Path)
 
     for _ in range(5):
         assert _UNTRUSTED_DENIED_TOOL not in _denied_by_turn_context(s)
-    await settle(s._audit_events)
+    await settle(s)
 
     assert _kinds(events, "untrusted_narrowing_lifted") == ["untrusted_narrowing_lifted"], (
         "5 identical-state reads must still produce exactly 1 lift event — "
@@ -185,14 +185,14 @@ async def test_engage_then_lift_then_engage_again_is_one_of_each_per_flip(
     manually and not committed here per this repo's no-duration test
     policy)."""
     s = _session(tmp_path)
-    events = collect_events(s._audit_events)
+    events = collect_events(s)
 
     for _ in range(2):
         _mark_untrusted(s)
         assert _UNTRUSTED_DENIED_TOOL in _denied_by_turn_context(s)
         s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
         assert _UNTRUSTED_DENIED_TOOL not in _denied_by_turn_context(s)
-    await settle(s._audit_events)
+    await settle(s)
 
     assert _kinds(events, "untrusted_narrowing_engaged") == [
         "untrusted_narrowing_engaged", "untrusted_narrowing_engaged",

@@ -98,7 +98,7 @@ async def _user_submitted(session: Session, sink: _EventSink):
     # #4961 C / #4966: emit() dispatches to subscribers off the synchronous
     # caller — settle() before the read makes that wait explicit instead of
     # racing the background consumer.
-    await settle(session._audit_events)
+    await settle(session)
     matches = [e for e in sink.events if e.type == "user_submitted"]
     assert matches, "no user_submitted event observed"
     return matches[0]

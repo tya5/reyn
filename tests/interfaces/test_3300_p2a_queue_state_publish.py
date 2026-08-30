@@ -164,7 +164,7 @@ async def test_turn_active_accessor_reflects_busy_then_idle(tmp_path, _llm_stub)
     assert completed is True
     assert session.turn_active is False
 
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" and e.data.get("chain_id") == "c1" for e in events)
 
 
@@ -277,7 +277,7 @@ async def test_late_joiner_mid_turn_connect_reconstructs_correct_state(tmp_path,
 
     # witness ②: the real driver dispatched "dispatched-first" — exactly one
     # turn_started (the second submission stays queued, undispatched).
-    await session._audit_events.drain()
+    await settle(session)
     (started_ev,) = [e for e in events if e.type == "turn_started"]
     assert started_ev.data.get("kind") == "user"
 
@@ -387,7 +387,7 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path, _ll
 
     await session.submit_user_text("alpha")
     # Apply the just-emitted user_submitted delta.
-    await settle(session._audit_events)
+    await settle(session)
     ev = next(e for e in captured if e.type == "user_submitted")
     view.apply_user_submitted(
         msg_id=ev.data["msg_id"], chain_id=ev.data["chain_id"],
@@ -398,7 +398,7 @@ async def test_real_session_deltas_keep_remote_queue_view_accurate(tmp_path, _ll
     turn_task = asyncio.create_task(session.run_one_iteration())
     await _llm_stub.call_started.wait()
 
-    await settle(session._audit_events)
+    await settle(session)
     ts = next(e for e in captured if e.type == "turn_started")
     view.apply_turn_started(chain_id=ts.data["chain_id"], seq=ts.data["seq"])
     assert view.queue() == [], "the dispatched item must leave the queue model"
@@ -444,7 +444,7 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
-    await settle(session._audit_events)
+    await settle(session)
     ev = next(e for e in captured if e.type == "user_submitted")
     view.apply_user_submitted(
         msg_id=ev.data["msg_id"], chain_id=ev.data["chain_id"],
@@ -454,7 +454,7 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     turn_task = asyncio.create_task(session.run_one_iteration())
     await _llm_stub.call_started.wait()
 
-    await settle(session._audit_events)
+    await settle(session)
     ts = next(e for e in captured if e.type == "turn_started")
     view.apply_turn_started(chain_id=ts.data["chain_id"], seq=ts.data["seq"])
     assert view.queue() == []  # alpha dispatched; turn now "streaming" (hung)
@@ -462,7 +462,7 @@ async def test_a_submission_while_the_reply_is_still_streaming_reaches_the_queue
     # The reply is in flight (streaming) — submit a SECOND message now.
     captured.clear()
     await session.submit_user_text("beta")
-    await settle(session._audit_events)
+    await settle(session)
     ev2 = next(e for e in captured if e.type == "user_submitted")
     applied = view.apply_user_submitted(
         msg_id=ev2.data["msg_id"], chain_id=ev2.data["chain_id"],

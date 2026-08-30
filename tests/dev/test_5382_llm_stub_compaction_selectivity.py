@@ -14,7 +14,7 @@ through a REAL turn — the main router call is NOT recognized as a
 compaction call and must still complete normally.
 
 Isolated in its OWN file, and reads the collected event list only after
-``await settle(session._audit_events)`` — both deliberately.
+``await settle(session)`` — both deliberately.
 
 The settle() requirement is #4961 C (architect ruling, see
 ``tests/_support/events.py``'s own module docstring), not a new finding
@@ -83,7 +83,7 @@ def test_raise_for_compaction_leaves_the_main_router_call_untouched_end_to_end(
         # #4961 C: dispatch to `events` runs on a background consumer
         # task — settle() before the synchronous read below, right at
         # the spot that depends on delivery having already happened.
-        await settle(session._audit_events)
+        await settle(session)
         kinds = [e.type for e in events]
         assert "compaction_failed" in kinds, (
             f"test setup sanity: expected force_compact_now to have "

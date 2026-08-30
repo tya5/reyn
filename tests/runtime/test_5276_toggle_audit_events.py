@@ -73,10 +73,10 @@ async def test_visibility_toggle_emits_visibility_changed(tmp_path, monkeypatch)
     exactly once."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path)
-    collected = collect_events(s._audit_events)
+    collected = collect_events(s)
 
     s.set_capability_visible("tool", "grep", False)
-    await settle(s._audit_events)
+    await settle(s)
 
     seen = [e for e in collected if e.type == "visibility_changed"]
     assert seen, "expected a visibility_changed event, got none"
@@ -97,11 +97,11 @@ async def test_hook_toggle_emits_hook_changed_on_both_outcomes(tmp_path, monkeyp
     on record, not silence."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path, hooks_config=_STARTUP_HOOKS)
-    collected = collect_events(s._audit_events)
+    collected = collect_events(s)
 
     # Refused: startup-origin hook — no state change, but the ATTEMPT is recorded.
     refused = s.set_hook_enabled(_STARTUP_HOOK_NAME, False)
-    await settle(s._audit_events)
+    await settle(s)
     seen_refused = [e for e in collected if e.type == "hook_changed"]
     assert refused.applied is False
     assert seen_refused, "a refused hook-disable attempt must still emit hook_changed"
@@ -115,7 +115,7 @@ async def test_hook_toggle_emits_hook_changed_on_both_outcomes(tmp_path, monkeyp
 
     # Applied: an unknown/per-session name is freely disableable → applied=True.
     applied = s.set_hook_enabled("some-per-session-hook", False)
-    await settle(s._audit_events)
+    await settle(s)
     seen_applied = [e for e in collected if e.type == "hook_changed" and e is not seen_refused[0]]
     assert applied.applied is True
     assert seen_applied, "expected a hook_changed event for the applied toggle"
