@@ -30,6 +30,11 @@ WHAT GETS RECORDED, AND WHY NOT MORE
     arguments and workspace-internal paths belong to the invocation,
     not to a liveness marker.
 
+    Plus (#5350) ``{agent_name, broker_session_id}`` — both absent
+    (``None``) until a later call to :func:`record_process_identity`
+    sets one or both; never guessed, never derived from ``cwd`` (see
+    the "IDENTITY vs LIVENESS" section below for why).
+
 WHERE THE MARKER LIVES
     ``~/.reyn/processes/<pid>.json`` — a PID-keyed filename, never a
     shared subtree multiple processes both write into. This matters:
@@ -57,6 +62,32 @@ LIVENESS: REUSE, DON'T REINVENT (#5296's own lesson)
     this issue's own scope; a consolidation would need to weigh
     ``api/safe/``'s own sandbox-boundary reasoning, which this module
     has no business deciding).
+
+IDENTITY vs LIVENESS (#5350, owner-observed incident 2026-08-30)
+    A real incident: an operator-side script joined "which OS process is
+    this reyn/broker identity" on ``cwd`` — and sent ``SIGTERM`` to
+    unrelated ``zsh``/``nvim`` processes that merely happened to share a
+    directory with a registered agent. ``cwd`` never carries identity
+    (this module's own markers already recorded it as diagnostic
+    metadata only, never a join key — see :func:`live_processes`'s own
+    ``cwd``-based reap-event lookup, which resolves a PROJECT root from
+    it, never an IDENTITY). Architect ruling (#5350): identity must be
+    answered from a RECORDED fact (a marker this process wrote about
+    itself), never derived from ``cwd``/``comm`` (rewritten by
+    :mod:`reyn.runtime.proctitle`) or from ``list_sessions().active``
+    (registration, not liveness). :func:`record_process_identity` +
+    :func:`process_for_agent` close this — a process states its own
+    ``agent_name``/``broker_session_id`` (it already knows both; no
+    guessing), and a reader filters :func:`live_processes` by that
+    RECORDED field, never by position (``cwd``). Liveness stays a
+    SEPARATE question this module does not answer for a reyn agent
+    (that is ``.reyn/agents/<name>/state/``'s own mtime, per #5350's own
+    table) — this module only ever answers "is the OS process alive"
+    (:func:`~reyn.data.index.build_lock.pid_alive`), a narrower claim.
+
+    Explicitly OUT OF SCOPE (same posture as the rest of this module,
+    #5350 architect ruling): no kill/TTL decision lives here — this
+    closes "identity is readable", never "an identity gets acted on".
 
 WHAT THIS MODULE DOES NOT DO
     No cleanup of another process's live marker, ever (D-2 posture,
@@ -134,6 +165,13 @@ def register_process(subcommand: "str | None") -> None:
         "cwd": os.getcwd(),
         "subcommand": subcommand,
         "started_at": time.time(),
+        # #5350: absent (never guessed) until a later, more-informed call
+        # to :func:`record_process_identity` sets one or both — this
+        # process's own agent_name/broker_session_id are usually not yet
+        # resolved at THIS call site (register_process runs at CLI
+        # startup, before Session construction).
+        "agent_name": None,
+        "broker_session_id": None,
     }
     try:
         PROCESSES_DIR.mkdir(parents=True, exist_ok=True)
@@ -191,6 +229,71 @@ def unregister_process(pid: "int | None" = None) -> None:
         pid = os.getpid()
     _cleanup(pid)
     atexit.unregister(_cleanup)
+
+
+def record_process_identity(
+    *,
+    agent_name: "str | None" = None,
+    broker_session_id: "str | None" = None,
+    pid: "int | None" = None,
+) -> None:
+    """#5350 — a process records its OWN identity onto its already-written
+    marker, once it actually knows it (``register_process`` runs at CLI
+    startup, before that is usually resolved). Never a guess: the caller
+    is always the process itself (or code acting on its behalf) stating
+    a fact it already has — never a lookup, never derived from ``cwd``.
+
+    Only fields the caller actually passes are updated (``None`` here
+    means "nothing new to say", not "clear the existing value" — a
+    second caller that only knows ``broker_session_id`` must not erase
+    an ``agent_name`` a first caller already recorded). Best-effort,
+    matching this module's own posture throughout: no marker (the
+    process never called :func:`register_process`, or its write failed)
+    degrades to a silent no-op, never an exception that could interrupt
+    the caller's own real work over a diagnostic aid.
+    """
+    if pid is None:
+        pid = os.getpid()
+    marker_path = _marker_path(pid)
+    try:
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if agent_name is not None:
+        data["agent_name"] = agent_name
+    if broker_session_id is not None:
+        data["broker_session_id"] = broker_session_id
+    try:
+        tmp_path = _tmp_marker_path(pid)
+        tmp_path.write_text(json.dumps(data), encoding="utf-8")
+        tmp_path.replace(marker_path)
+    except OSError:
+        logger.warning(
+            "process_registry: failed to record identity for pid %d "
+            "(diagnostic-only, does not block the caller)", pid, exc_info=True,
+        )
+
+
+def process_for_agent(agent_name: str) -> "list[dict]":
+    """#5350 — every currently-alive process whose OWN recorded
+    ``agent_name`` matches *agent_name* (via :func:`live_processes`,
+    which already reaps dead-PID markers as it reads). NEVER matched by
+    ``cwd`` — the architect-named incident this exists to prevent: an
+    unrelated process (a shell, an editor) sharing a directory with a
+    reyn agent is not that agent, and must never be returned here.
+    Ordinarily a list of 0 or 1 — more than one means two processes
+    both recorded the SAME ``agent_name`` (a caller error upstream, not
+    something this function corrects or hides)."""
+    return [m for m in live_processes() if m.get("agent_name") == agent_name]
+
+
+def process_for_broker_session(broker_session_id: str) -> "list[dict]":
+    """#5350 — the ``broker_session_id``-keyed sibling of
+    :func:`process_for_agent`, identical contract (never matched by
+    ``cwd``)."""
+    return [
+        m for m in live_processes() if m.get("broker_session_id") == broker_session_id
+    ]
 
 
 def live_processes() -> "list[dict]":

@@ -966,6 +966,13 @@ class Session:
         # Identity cluster owned by Agent — single source of truth, no fallback
         # construction (#3133 Priority-0 step-2, see docs/reference/runtime/session-construction.md#identity-the-agent-value-object-fp-0043-stage-2).
         self._agent = agent
+        # #5350: this Session's own agent_name is now definitively known —
+        # record it onto the CURRENT process's own process_registry marker
+        # (register_process() already ran at CLI startup, before this name
+        # was resolvable). Best-effort, matching that module's own
+        # posture throughout — never blocks Session construction.
+        from reyn.runtime.process_registry import record_process_identity
+        record_process_identity(agent_name=self._agent.agent_name)
         self._resolver = resolver or ModelResolver({})
         # Per-session runtime model override set by /model <class>; None -> Agent identity default, in-memory only
         self._model_override: str | None = None
