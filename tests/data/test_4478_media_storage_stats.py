@@ -86,7 +86,7 @@ def test_prune_drops_a_manifest_entry_whose_file_was_deleted_out_of_band(tmp_pat
 
     # A fresh construction (= a later process) reloads the manifest.
     reopened = _store(tmp_path)
-    assert not reopened.is_tool_result_spill(block["path"])
+    assert not reopened.is_history_content_spill(block["path"])
 
     # The manifest ON DISK was rewritten to drop the stale line too — a
     # yet-later construction doesn't need to re-discover the same staleness.
@@ -101,7 +101,7 @@ def test_prune_keeps_a_manifest_entry_whose_file_still_exists(tmp_path):
     block = store.save_tool_result("still here", chain_id="c1", tool="exec", seq=1)
 
     reopened = _store(tmp_path)
-    assert reopened.is_tool_result_spill(block["path"])
+    assert reopened.is_history_content_spill(block["path"])
     manifest_paths = {
         json.loads(line)["path"]
         for line in _manifest_path(tmp_path).read_text(encoding="utf-8").splitlines()

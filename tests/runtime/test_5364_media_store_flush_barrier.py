@@ -93,14 +93,14 @@ async def test_flush_orders_the_manifest_append_after_the_content_write(
     early_reader = MediaStore(
         project_root=tmp_path, agent_name="test-agent", session_id="flush-test",
     )
-    early_reader.is_tool_result_spill(block["path"])  # side effect: may self-prune
+    early_reader.is_history_content_spill(block["path"])  # side effect: may self-prune
 
     await store.flush()
 
     late_reader = MediaStore(
         project_root=tmp_path, agent_name="test-agent", session_id="flush-test",
     )
-    assert late_reader.is_tool_result_spill(block["path"]), (
+    assert late_reader.is_history_content_spill(block["path"]), (
         "a reader constructed WHILE the write was still pending "
         "permanently pruned the manifest entry — the manifest line was "
         "on disk before the content file it names, the exact ordering "

@@ -95,8 +95,11 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
 
 ## Spill-manifest self-prune (#4478)
 
-`MediaStore` tracks which tool-result files it has spilled to disk via a manifest at
-`.reyn/memory/tool_result_spills.jsonl` (#4584: moved from `.reyn/cache/` — that
+`MediaStore` tracks which history-content files it has spilled to disk (any turn's
+content, not just a tool result — #5564: the read-side check,
+`MediaStore.is_history_content_spill`, never branched on the spilling turn's
+role) via a manifest at `.reyn/memory/tool_result_spills.jsonl` (#4584: moved
+from `.reyn/cache/` — that
 tier's "derived, rebuilt after restore" promise never held for this manifest; see
 [`.reyn/` directory layout](../runtime/reyn-dir-layout.md)), read in full on every
 `MediaStore` construction. An entry whose target file no longer exists on disk

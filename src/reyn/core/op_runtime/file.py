@@ -652,12 +652,18 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             seg_start = 0
 
         if next_offset is not None:
-            # #4381: this read is about to come back truncated — before doing
-            # that, check whether ``op.path`` is itself a tool-result SPILL
-            # (owner-ratified term, distinct from "offload" — a spill is the
-            # unavoidable "didn't fit, had to go out" write; see
-            # ``MediaStore.is_tool_result_spill``'s own docstring). Re-reading
-            # a spill file's FULL content bare can be too big for THIS cap
+            # #4381 (renamed #5564): this read is about to come back
+            # truncated — before doing that, check whether ``op.path`` is
+            # itself a history-content SPILL (owner-ratified term,
+            # distinct from "offload" — a spill is the unavoidable
+            # "didn't fit, had to go out" write; see
+            # ``MediaStore.is_history_content_spill``'s own docstring —
+            # by ORIGIN, not just tool-result turns: #5514 §7-1 removed
+            # the spill predicate's ``role == "tool"`` restriction
+            # upstream, so a user-pasted turn reactively spilled reaches
+            # this exact same path, and the loop this guards against is
+            # identical either way). Re-reading a spill file's FULL
+            # content bare can be too big for THIS cap
             # again, and since this cap (window/char-derived) is independent
             # of the router's own SEPARATE token-derived spill trigger
             # (``services/tool_result_cap.py``), truncating and returning it
@@ -666,7 +672,7 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             # instead of truncating, with the exact remedy (not "too big" —
             # the caller already knows that; the fix is which parameter to
             # pass next).
-            if ctx.media_store is not None and ctx.media_store.is_tool_result_spill(op.path):
+            if ctx.media_store is not None and ctx.media_store.is_history_content_spill(op.path):
                 ctx.events.emit(
                     "tool_executed", op="read_file", path=op.path,
                     truncated=True, spill_reread_blocked=True,

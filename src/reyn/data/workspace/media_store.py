@@ -157,6 +157,21 @@ logger = logging.getLogger(__name__)
 #: op — a bigger design call, deliberately not made in this fixup (same
 #: "flag, don't silently half-fix" call as this PR's own
 #: ``MAX_CONTROL_IR_RESULT_INLINE_BYTES`` note).
+#:
+#: **#5564: the ON-DISK filename stays ``tool_result_spills.jsonl`` even
+#: though the CONCEPT it tracks was renamed to "history-content spill"
+#: (``is_history_content_spill``, below)** — deliberately, not an
+#: oversight. This is a PERSIST-tier file (see above: never reconstructed,
+#: only ever written once and read back) with a REAL install already
+#: holding one under this exact name; renaming the string here would make
+#: :meth:`_load_spill_manifest` fail to find it on the next process start,
+#: silently losing every already-recorded entry and reopening #4381's own
+#: loop for every path spilled before the rename. The Python-level names
+#: (the method, the in-memory set) changed because they are read by
+#: developers; this filename is read only by this class's own
+#: :meth:`_load_spill_manifest`/:meth:`_persist_spill_manifest`, so
+#: nothing outside this file's own I/O sees or depends on it meaning
+#: "tool-result" specifically.
 _SPILL_MANIFEST_FILENAME = "tool_result_spills.jsonl"
 
 # Conservative mapping from MIME type to file extension; unknown types
@@ -685,11 +700,21 @@ class MediaStore:
         # no ``url`` minted, same-host fast-path only.
         self._base_url = (base_url or "").rstrip("/") or None
         # #4381: every path this store has itself written via
-        # ``save_tool_result`` (= a "tool result spill" — owner-ratified
-        # term, 2026-08-12: "入らないから出す。不可避・設定で止めない",
-        # distinct from "offload" = "入るけれども節約のために出す。最適化・
-        # 既定 false"). ``op_runtime/file.py``'s read handler queries this
-        # via :meth:`is_tool_result_spill` to detect and break the loop a
+        # ``save_tool_result`` (= a "spill" — owner-ratified term,
+        # 2026-08-12: "入らないから出す。不可避・設定で止めない", distinct
+        # from "offload" = "入るけれども節約のために出す。最適化・既定
+        # false"). #5564: renamed from "tool result spill" to
+        # "history-content spill" — #5514 §7-1 removed the OLD
+        # ``role == "tool"`` eligibility restriction from the spill
+        # PREDICATE upstream (``router_loop_driver.py``'s own
+        # ``_spill_candidates``/``_spill_fn``), so ``save_tool_result`` has
+        # written non-tool-origin content (e.g. a user paste) reactively
+        # spilled by ``spill_turn_content`` ever since — the write path
+        # never branched on origin either. The OLD name was never accurate
+        # for what this set actually tracks: every path written via THIS
+        # write seam, regardless of which turn's content it came from.
+        # ``op_runtime/file.py``'s read handler queries this
+        # via :meth:`is_history_content_spill` to detect and break the loop a
         # *bare* re-read of a spilled file can otherwise cause: reading the
         # spill file's own content can be too big for ``file.py``'s
         # window-derived cap AGAIN, and since that cap is INDEPENDENT of
@@ -720,7 +745,7 @@ class MediaStore:
         # module-level docstring for the full correction). It otherwise
         # survives for the project's lifetime, same as :mod:`data.workspace.
         # artifact_ref`'s sibling table.
-        self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
+        self._history_content_spill_paths: "set[Path]" = self._load_spill_manifest()
         # #5387: the write-time cap path's ONE consumer of ``chain_id`` —
         # NOT persisted (lead-coder ruling: GC is writer-triggered, so the
         # chain that fired THIS eviction pass IS "the turn currently in
@@ -812,7 +837,7 @@ class MediaStore:
                     continue  # one malformed line never invalidates the rest
                 # #4478: an entry whose target no longer exists on disk (the
                 # artifact was manually deleted, or GC'd by a future Phase 2
-                # policy) protects nothing — is_tool_result_spill only needs
+                # policy) protects nothing — is_history_content_spill only needs
                 # to answer "is THIS path a spill I wrote", and a re-read of
                 # a now-missing path already fails on its own, normally,
                 # with no re-spill loop to guard against. Dropping it here
@@ -863,16 +888,26 @@ class MediaStore:
         except OSError:
             pass
 
-    def is_tool_result_spill(self, path: "str | Path") -> bool:
-        """#4381: whether *path* is a file THIS store itself wrote via
-        :meth:`save_tool_result` — i.e. a tool-result spill artifact, not
-        an arbitrary file that merely happens to live under
-        ``tool_results_dir`` (a path-naming/location heuristic would also
-        catch an unrelated file an operator happened to place in the same
-        directory — the reason this checks WHAT WAS ACTUALLY WRITTEN,
-        never where a path merely sits). Persisted (see the manifest note
-        in ``__init__``) — recognizes a spill written by an EARLIER
-        process too, not just this one.
+    def is_history_content_spill(self, path: "str | Path") -> bool:
+        """#4381 (renamed #5564): whether *path* is a file THIS store
+        itself wrote via :meth:`save_tool_result` — i.e. a history-content
+        spill artifact, not an arbitrary file that merely happens to live
+        under ``tool_results_dir`` (a path-naming/location heuristic would
+        also catch an unrelated file an operator happened to place in the
+        same directory — the reason this checks WHAT WAS ACTUALLY
+        WRITTEN, never where a path merely sits). Persisted (see the
+        manifest note in ``__init__``) — recognizes a spill written by an
+        EARLIER process too, not just this one.
+
+        #5564: named (and originally named) after ``save_tool_result``'s
+        own write seam, NOT after any turn's role — this method has
+        ALWAYS classified by "did THIS store write it", never by origin,
+        so a path spilled from a non-tool turn (a user paste,
+        reactively spilled once #5514 §7-1 removed the spill predicate's
+        old ``role == "tool"`` restriction) already returned True before
+        this rename; only the METHOD's name lied about that. Renamed
+        ``is_tool_result_spill`` → ``is_history_content_spill`` to match
+        the behaviour it always had, not to change it.
 
         Resolves *path* the same way ``save_tool_result`` resolved the
         path it recorded (against ``project_root`` when relative), so a
@@ -883,7 +918,7 @@ class MediaStore:
             p = (self._project_root / p).resolve()
         else:
             p = p.resolve()
-        return p in self._tool_result_spill_paths
+        return p in self._history_content_spill_paths
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
@@ -1019,7 +1054,7 @@ class MediaStore:
         pre-migration contract — callers are unaffected.
 
         #5364: this is deliberately the ONE write call site
-        (``is_tool_result_spill`` checks WHAT WAS ACTUALLY WRITTEN via the
+        (``is_history_content_spill`` checks WHAT WAS ACTUALLY WRITTEN via the
         in-memory + persisted manifest below, keyed off whatever directory
         THIS method resolves — a second write call site would silently
         stop populating that manifest for its own files). The pre-#5364
@@ -1105,7 +1140,7 @@ class MediaStore:
         # #4381: record so a later ``read_file`` on this exact path — in
         # THIS process or a LATER one (a reference to it can sit in
         # ``history.jsonl`` past a restart) — can detect it's re-reading a
-        # spill artifact (see :meth:`is_tool_result_spill`'s own
+        # spill artifact (see :meth:`is_history_content_spill`'s own
         # docstring for why). The in-memory set update is immediate
         # (in-memory, no I/O, no ordering hazard — protects a re-read
         # within THIS same turn even before the content write is durable).
@@ -1129,7 +1164,7 @@ class MediaStore:
         # perfectly-good, merely-still-queued entry — ordering, not just
         # eventual completion, is what this file's manifest contract needs.
         resolved_path = abs_path.resolve()
-        self._tool_result_spill_paths.add(resolved_path)
+        self._history_content_spill_paths.add(resolved_path)
         # #5387: record this write's chain_id (in-memory, per-process —
         # see the field's own docstring) so a LATER eviction pass this
         # same process runs can tell "this file belongs to the turn that

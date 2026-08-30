@@ -373,6 +373,13 @@ class RouterLoopDriver:
                 continue
             replacement = self._history_buffer.spill_turn_content(
                 turn["content"], chain_id=chain_id, seq=i + 1,
+                # #5564: name this write by the turn's own origin
+                # (``name`` for a real tool call, else its ``role``) —
+                # never the bare ``"tool"`` default, which would record a
+                # false origin for a non-tool turn (#5514 §7-1 made this
+                # candidate list origin-blind; this write must not then
+                # LIE about which origin it came from).
+                tool=turn.get("name") or turn.get("role") or "history",
             )
             if replacement is None or replacement == turn["content"]:
                 # Not spillable at all (no media store, or cap_tokens=1
@@ -676,7 +683,12 @@ class RouterLoopDriver:
                         continue
                     replacement = self._history_buffer.spill_turn_content(
                         turn["content"], chain_id=chain_id,
-                        tool=turn.get("name") or "tool", seq=turn.get("seq", 1),
+                        # #5564: same origin-honesty fix as
+                        # ``_attempt_reactive_spill``'s own identical call
+                        # above — never the bare ``"tool"`` default for a
+                        # non-tool candidate.
+                        tool=turn.get("name") or turn.get("role") or "history",
+                        seq=turn.get("seq", 1),
                     )
                     if replacement is None or replacement == turn["content"]:
                         continue

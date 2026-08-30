@@ -211,7 +211,7 @@ async def test_spill_guard_survives_a_fresh_media_store_instance(tmp_path: Path)
     await writer.flush()
 
     reader = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")  # a FRESH instance — simulates a new process
-    assert reader.is_tool_result_spill(spill_path), (
+    assert reader.is_history_content_spill(spill_path), (
         "a fresh MediaStore instance (same project_root) must recognize a spill "
         "written by an earlier instance — the guard must survive a restart"
     )

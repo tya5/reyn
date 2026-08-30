@@ -65,7 +65,7 @@ Everything else is excluded, by one of four reasons:
 │   │                       an imperfect NAME fit (a ref→path table is neither
 │   │                       knowledge nor a decision) — the doc's own tier
 │   │                       decision rule (below) only points at one place.
-│   └── tool_result_spills.jsonl  persisted provenance of tool-result SPILL
+│   └── tool_result_spills.jsonl  persisted provenance of history-content SPILL
 │                           artifacts under `tool-results/` (#4381/#4432, moved
 │                           from `cache/` by #4584 — same reasoning as
 │                           `artifact_refs.jsonl` above: not literally
