@@ -75,7 +75,11 @@ async def test_compact_nothing_to_compact_no_free_window() -> None:
 
 @pytest.mark.asyncio
 async def test_compact_nothing_to_compact_with_free_window_includes_token_count() -> None:
-    """Tier 2: summarized_turns=0 + free_window_after → token count surfaced in reply."""
+    """Tier 2: #5579 accept ②' (deny side) — summarized_turns=0 with a
+    GENUINELY free window (free_window_after > 0) keeps the 'already fits'
+    claim, unchanged, with the token count surfaced in reply. This is the
+    deny-side counterweight to accept ①: proves the fix does not become
+    "always warn regardless of free_window_after"."""
     async def _nothing():
         return {"summarized_turns": 0, "free_window_after": 45000}
 
@@ -83,6 +87,32 @@ async def test_compact_nothing_to_compact_with_free_window_includes_token_count(
     await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "45000" in text, f"expected free token count in reply; got: {text!r}"
+    assert "already fits" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_compact_nothing_summarized_but_window_still_full_does_not_claim_fits() -> None:
+    """Tier 2: #5579 accept ①' — the owner's own observed contradiction
+    (summarized_turns=0 AND free_window_after=0 in the SAME reply) must not
+    happen. summarized_turns == 0 has three possible causes (no candidates
+    / attempted-but-folded-nothing / watermark-didn't-advance) that
+    _compact_now_for_op cannot currently distinguish (see compact.py's own
+    comment) — the fix does not need to name which one happened; it only
+    must stop asserting 'already fits the window' when free_window_after
+    says otherwise (== 0, no threshold — max(0, effective_trigger - after)
+    is already an exact computed value, not an estimate needing a fudge
+    factor)."""
+    async def _stuck():
+        return {"summarized_turns": 0, "free_window_after": 0}
+
+    session = _FakeSession(compact_now=_stuck)
+    await compact_cmd(_ctx(session), "")
+    text = session.reply_text()
+    assert text, "expected a non-empty reply, not silence"
+    assert "already fits" not in text.lower(), (
+        f"reply must not claim the window already fits when free_window_after=0; got: {text!r}"
+    )
+    assert not session.error_text()
 
 
 @pytest.mark.asyncio
