@@ -101,6 +101,7 @@ inbox_cancel
 index_dropped
 index_update_cost_warning
 index_updated
+ingress_bridge_dropped
 intervention_answer_submitted
 intervention_denied
 intervention_routed
@@ -464,6 +465,20 @@ from `.reyn/events` even when nothing was listening.
 All three are best-effort: a sink fault logs and is swallowed, never blocking
 the job's inbox delivery / the webhook's HTTP response / the watcher's drain
 loop.
+
+`mcp_resource_updated` and `file_changed` share one in-process delivery
+mechanism, `reyn.hooks.ingress._BoundedEventBridge` — a bounded queue that
+drops the newest event on overflow rather than blocking the producer or
+growing unboundedly. Before #5515 that drop was `logger.warning`-only,
+unlike the structurally identical `HookBus` subscriber-queue drop
+(`bus_subscriber_dropped`, #2886). `ingress_bridge_dropped` closes that gap
+for this bridge, on the same first-drop/every-100th cadence: metadata-only
+(`source` — the bridge's adapter name, `McpIngressAdapter` or
+`FsIngressAdapter`; `point` — the bare hook point; `drop_count` — cumulative,
+never reset), never the dropped event's own payload. `cron_fired` and
+`webhook_received` share a separate bridge (`_SessionFireBridge`,
+`reyn.hooks.external_fire`) with the same overflow shape; it is tracked
+separately (#5515 remainder, not yet closed).
 
 ## Credentials and OAuth
 
