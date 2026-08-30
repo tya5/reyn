@@ -363,6 +363,56 @@ def run(args: argparse.Namespace) -> None:
     print("override resolve_base_dir_candidate uses, not a restated declaration):")
     _print_hook_env_snapshot(resolved_root)
 
+    # ── #5603: litellm compat-patch applied state ───────────────────────────
+    print()
+    print("litellm compat patches (#5603) — measured class-attribute state,")
+    print("not a restated declaration that the patch module exists:")
+    _print_litellm_patch_status()
+
+
+def _print_litellm_patch_status() -> None:
+    """#5603 (architect fail-safe ②, D-1): reads the ACTUAL applied-state
+    flag reyn's own patch functions set on the real litellm class objects
+    — never a restatement of "the patch module is present" (which would
+    be true even if the patch silently failed to apply, the exact #5568
+    incident this whole issue exists to prevent recurring). Triggers the
+    real ``ensure_litellm_ready()`` chokepoint (the same one-time ``import
+    litellm`` every real call pays) so the measurement reflects what THIS
+    process's own real usage would actually get — a doctor run that
+    skipped the import could only ever report "not yet imported", which
+    answers nothing about whether the patch itself still applies."""
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+
+    mod = ensure_litellm_ready()
+    if mod is None:
+        print("  ? not checked — litellm itself failed to import (see the")
+        print("    warning above, if any); nothing to measure")
+        return
+
+    try:
+        from litellm.completion_extras.litellm_responses_transformation import (
+            handler as _H,
+        )
+        applied_a = bool(
+            getattr(_H.ResponsesToCompletionBridgeHandler, "_reyn_5603_patched", False),
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never raise (D-2)
+        print(f"  ✗ stream_chunk_recovery (A): could not measure ({type(exc).__name__}: {exc})")
+        applied_a = None
+    if applied_a is not None:
+        state = "✓ applied" if applied_a else "✗ NOT applied — correctness-critical, see #5603"
+        print(f"  {state}: stream_chunk_recovery (A)")
+
+    try:
+        from litellm.llms.chatgpt.responses import transformation as _T
+        applied_b = bool(getattr(_T.ChatGPTResponsesAPIConfig, "_reyn_5603b_patched", False))
+    except Exception as exc:  # noqa: BLE001 — report, never raise (D-2)
+        print(f"  ✗ overflow_diagnosis (B): could not measure ({type(exc).__name__}: {exc})")
+        applied_b = None
+    if applied_b is not None:
+        state = "✓ applied" if applied_b else "⚠ NOT applied — diagnostic-only, see #5603"
+        print(f"  {state}: overflow_diagnosis (B)")
+
 
 def _print_hook_env_snapshot(resolved_root: Path) -> None:
     """#5428: the operator-facing consumer this issue required — ``reyn

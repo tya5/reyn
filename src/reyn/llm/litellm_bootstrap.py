@@ -558,6 +558,21 @@ def ensure_litellm_ready(
                     # attribute access afterward instead of needing its
                     # own submodule import statement outside the seam.
                     import litellm.litellm_core_utils.logging_worker  # noqa: F401
+
+                    # #5603: reyn's own local litellm patches, applied ONCE
+                    # inside this same seam (never a `site-packages`-direct
+                    # `.pth` file — see `_litellm_compat_patches`'s own
+                    # module docstring for the incident that replaces). The
+                    # correctness-critical patch (A) is UNCAUGHT here — its
+                    # own failure falls into the SAME `except Exception:
+                    # result = None` this `import litellm` failure already
+                    # uses, so a no-fallback caller sees "litellm unusable"
+                    # rather than silently running with a known-broken
+                    # bridge; the diagnostic-only patch (B) catches its own
+                    # failures internally and only warns (see
+                    # `_litellm_compat_patches.apply_all`'s own docstring).
+                    from reyn.llm._litellm_compat_patches import apply_all as _apply_litellm_patches
+                    _apply_litellm_patches(events)
                     result = litellm
                 except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
                     result = None
