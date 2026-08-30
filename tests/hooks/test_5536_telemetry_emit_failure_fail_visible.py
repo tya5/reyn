@@ -117,6 +117,11 @@ async def test_hook_shell_executed_emit_failure_is_fail_visible(
     from reyn.hooks.shell_runner import run_shell_hook
 
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    # check_subprocess_reyn_pin.py: this spawn genuinely never touches
+    # `reyn` — `-c "pass"` is the whole program, no import of any kind —
+    # so no `out_of_process_reyn`/`reyn_console_scripts` PYTHONPATH pin
+    # applies here (that fixture is for a subprocess that DOES import
+    # reyn, #5028's own scope). Baselined via --write-baseline.
     with caplog.at_level(logging.WARNING):
         await run_shell_hook(
             [_PY, "-c", "pass"],
@@ -192,3 +197,41 @@ async def test_push_fired_emit_failure_is_fail_visible(caplog):
     assert any("push_fired emit_event failed" in r.message for r in warnings), (
         f"expected the specific WARNING, got: {[r.message for r in warnings]!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_working_emit_event_never_logs_an_emit_failure_warning(caplog):
+    """Tier 2: deny-side positive control (lead-coder BLOCKING, #5571,
+    2026-08-30) — the 4 tests above are all accept-side (a raising
+    emit_event reaches a WARNING); none of them rule out an
+    implementation that warns "emit_event failed" on EVERY dispatch
+    regardless of whether emit_event actually raised. This test drives a
+    real dispatch with a real, NON-raising emit_event and asserts zero
+    "emit_event failed" WARNINGs — the same deny-side-vs-strip-falsify
+    distinction this session's own #5566 review already named ("without
+    this, ①'s assertion could pass under a broken implementation that
+    warns on EVERY dispatch regardless") applied to group A's own 4
+    sites: strip-falsify proves "not doing nothing"; this proves "not
+    always firing" — two different failure modes, caught by two
+    different tests."""
+    hook = HookDef(name="ok", on="turn_end", template_push=PushBlock(message="hi", wake=True))
+    events: "list[tuple[str, dict]]" = []
+    disp = HookDispatcher(
+        HookRegistry([hook]),
+        put_inbox=_Recorder(),
+        stage_next_turn_context=_Recorder(),
+        emit_event=lambda et, **d: events.append((et, d)),  # real, never raises
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await disp.dispatch("turn_end", {})
+
+    assert [et for et, _ in events] == ["hook_push_fired"], (
+        "test setup sanity: the dispatch must actually reach the push_fired "
+        "emit for this deny-side check to mean anything"
+    )
+    failure_warnings = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and "emit_event failed" in r.message
+    ]
+    assert failure_warnings == []
