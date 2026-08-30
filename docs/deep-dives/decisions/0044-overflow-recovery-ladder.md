@@ -266,9 +266,9 @@ or falsified each decision". Checked on `origin/main` after #5547:
 | The defer-to-tail escape is removed | **confirmed** — `tail = raw_middle[:1] + tail` no longer exists |
 | Slice sizing halves on failure, doubles on success, episode-scoped | **confirmed**, including the reset at the episode boundary |
 | `Spillability` declared by the producer | **confirmed** — `FIRST_CHOICE` / `LAST_RESORT` / `NEVER`, `LAST_RESORT` as the safe-side default |
-| Which terminal was reached travels as a structured value | **not implemented** — `UnrecoveredError.__init__` takes `reason: str` and `saw_byte_limit: bool` only; nothing distinguishes (a) from (b), and `saw_byte_limit` answers a different question |
+| Which terminal was reached travels as a structured value | **confirmed** — `UnrecoveredError.__init__(reason, *, terminal: RetryLoopTerminal, saw_byte_limit=False)`; `terminal` is a required keyword and a separate axis from `saw_byte_limit`. Landed in #5553, after this ADR was first written |
 
-Nothing was falsified, but one decision is **accepted and not yet implemented** (the last row). It is recorded as a gap rather than quietly dropped: a caller that cannot tell (a) from (b) is left parsing `reason`, which is the failure mode the decision exists to prevent. One further stale artefact was found and is **not** fixed here
+Nothing was falsified. One stale artefact was found and is **not** fixed here
 because it lives in `src/`: `retry_loop`'s docstring still carries a
 `max_iterations:` parameter block describing a "Safety cap (default 8)", though
 the parameter is no longer in the signature and nothing bounds the loop from
