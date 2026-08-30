@@ -274,6 +274,18 @@ token budgets (derived from `section_weights`):
 `covers_through_seq` is derived deterministically by the compaction postprocessor
 and the result is appended as a `role: "summary"` entry in `history.jsonl`.
 
+`"summary"` is reyn's own internal vocabulary — the discriminator watermark/
+trim/spill logic reads — never a value a provider recognises as a chat role.
+The normal turn path never leaks it to the wire (it attaches the summary via
+a separate, already-`"assistant"`-role synthetic turn instead); the overflow-
+recovery path (`retry_loop`, both the compact()-origin fold and a pre-
+existing persisted summary reached through `decompose_history_for_retry`)
+maps it to `"assistant"` at its own wire-egress point (`_router_main_call`)
+before it ever reaches `loop.run` (#5598 — a provider that validates role
+names rejects an un-mapped `"summary"` outright, with a 400 in ~2 seconds,
+before inference even starts, regardless of payload size: the turn right
+after a compaction succeeds always failed).
+
 Token budgets use `litellm.token_counter` by default for accuracy; a cheaper
 `len(text) // 4` heuristic is available for latency-sensitive deployments
 (`use_chars4_estimate: true`). A third path is automatic, not operator-set:

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import Spillability
 from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+from reyn.services.compaction.engine import wire_role as _wire_role
 
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
@@ -846,8 +847,31 @@ class RouterLoopDriver:
                 # inside `_serialise_turn` (which stays the canonical,
                 # provider-identical quantity #2957 PR-B's own docstring
                 # requires).
+                #
+                # #5598 (owner's real machine): the SAME reasoning applies
+                # to `role` — `decompose_history_for_retry`'s own turns
+                # filter includes a `role == SUMMARY_MESSAGE_ROLE` element
+                # (#5531, unlike `build_history`'s own normal-turn path,
+                # which never reaches this bug — it attaches its summary
+                # via a SEPARATE, already-"assistant"-role synthetic
+                # bridge turn, never `wrap_summary_as_message`), and
+                # retry_loop's own fold-success branch (engine.py) appends
+                # a FRESH `wrap_summary_as_message` result straight into
+                # `head`, bypassing `_serialise_turn` entirely — this is
+                # THE one place both of those converge before becoming
+                # `loop.run`'s payload. `SUMMARY_MESSAGE_ROLE` ("summary")
+                # is reyn's own internal discriminator (watermark/trim/
+                # spill logic reads it), never a value a provider
+                # recognises as a chat role — left un-mapped, a provider
+                # that validates role names against a fixed enum 400s the
+                # request outright in ~2 seconds, before inference even
+                # starts, so no amount of shrinking can recover from it
+                # (see `wire_role`'s own docstring for the full incident).
                 _msgs = [
-                    {k: v for k, v in t.items() if k != "spillability"}
+                    {
+                        **{k: v for k, v in t.items() if k != "spillability"},
+                        "role": _wire_role(t.get("role", "")),
+                    }
                     for t in list(head) + list(tail)
                 ]
                 try:
