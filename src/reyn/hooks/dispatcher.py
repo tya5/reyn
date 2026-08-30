@@ -612,7 +612,10 @@ class HookDispatcher:
                         actual_chars=len(resolved.message),
                     )
                 except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-                    _log.debug(
+                    # #5536 group A — see shell_runner.py's own
+                    # _report_unapplied_agent_policy except branch for the
+                    # full rationale (never audit-event, WARNING not DEBUG).
+                    _log.warning(
                         "hook push_rejected_oversized emit_event failed for %r: %s",
                         hook.name, exc,
                     )
@@ -640,7 +643,10 @@ class HookDispatcher:
                     ),
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-                _log.debug("hook push_fired emit_event failed for %r: %s", hook.name, exc)
+                # #5536 group A — see shell_runner.py's own
+                # _report_unapplied_agent_policy except branch for the full
+                # rationale (never audit-event, WARNING not DEBUG).
+                _log.warning("hook push_fired emit_event failed for %r: %s", hook.name, exc)
         # Attribution name (#1800 slice 6): the hook's operator label when set,
         # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
         # system-role prefix (shared E + C renderer). ``spillability`` rides
