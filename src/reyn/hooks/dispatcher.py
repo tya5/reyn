@@ -176,12 +176,32 @@ class HookDispatcher:
         return self._registry
 
     def _consent_bus_now(self) -> Any:
-        """The consent bus iff a live intervention listener is attached, else None."""
+        """The consent bus iff a live intervention listener is attached, else None.
+
+        #5536 (architect ruling — group B, "挙動が変わり、かつ silent"):
+        ``self._consent_gate()`` raising is not a hypothetical — it is a
+        caller-supplied callable, live-evaluated per-dispatch (see this
+        class's own ``__init__`` docstring for why it is never frozen).
+        Before this fix, a raise here returned ``None`` with NO log —
+        the shell-hook consent path then falls back to its own
+        stdin/fail-closed branch (never fail-OPEN; that path itself is
+        safe), but in an unattended/non-TTY session "ask the operator"
+        silently becomes "refuse", and nothing records WHY. ``_log.
+        warning`` (never an audit-event — auditing a gate-evaluation
+        failure through the SAME consent machinery it is about to bypass
+        would be its own quieter failure mode) so the fallback and its
+        cause are at least visible in the process log, even though the
+        fallback itself was already the safe direction."""
         if self._consent_bus is None or self._consent_gate is None:
             return None
         try:
             return self._consent_bus if self._consent_gate() else None
-        except Exception:  # noqa: BLE001 — a gate error must not break dispatch
+        except Exception as exc:  # noqa: BLE001 — a gate error must not break dispatch
+            _log.warning(
+                "Hook consent gate raised — falling back to the fail-closed "
+                "stdin/non-TTY consent path (never fail-open) for this "
+                "dispatch: %s: %s", type(exc).__name__, exc,
+            )
             return None
 
     def replace_registry(self, registry: HookRegistry) -> None:
