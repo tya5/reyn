@@ -178,7 +178,7 @@ def test_5380_spill_resolves_the_same_cause_cap_non_byte_floor() -> None:
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=[],
+        SP="sp", head=head, raw_middle=[],
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,

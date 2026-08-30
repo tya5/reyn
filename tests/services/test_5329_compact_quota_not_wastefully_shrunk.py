@@ -130,7 +130,7 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
     async def _drive():
         try:
             await retry_loop(
-                SP="sp", head=[], summary=None,
+                SP="sp", head=[],
                 raw_middle=[{"role": "user", "content": "x", "seq": 1}],
                 tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
                 cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
@@ -188,7 +188,7 @@ def test_transient_rate_limit_still_enters_the_shrink_ladder_unaffected() -> Non
 
     async def _drive():
         await retry_loop(
-            SP="sp", head=[], summary=None,
+            SP="sp", head=[],
             raw_middle=[
                 {"role": "user", "content": "x", "seq": i} for i in range(4)
             ],
