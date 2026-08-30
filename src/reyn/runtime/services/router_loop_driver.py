@@ -499,14 +499,21 @@ class RouterLoopDriver:
         raise on the FIRST mid-only spill instead of trying the next one.
 
         force_compact_now double-call check (asked for explicitly, #5364
-        §1.6): ``_run_with_shrink``'s OWN except block conditionally calls
-        ``force_compact_now()``, but ONLY when ``saw_byte_limit`` is True
-        (see that method's own docstring) — a token-cause retry re-enters
-        ``_run_with_shrink`` with ``saw_byte_limit=False`` on that
-        particular failure, so this wrapper making token-cause overflow
-        retryable does NOT make that side-effect fire twice; it simply
-        never gates on a token-cause failure at all, unchanged from
-        before this fix.
+        §1.6; corrected #5578): ``_run_with_shrink``'s OWN except block
+        conditionally calls ``force_compact_now()`` — pre-#5578, ONLY when
+        ``saw_byte_limit`` was True; #5578 dropped that axis gate, so it
+        now fires whenever ``recovery_policy == "next_turn"``, on EITHER
+        axis (see that except block's own comment for why the old
+        byte-only gate's reason — #4885's proactive pre-trigger already
+        handling the token axis — no longer holds; #5528 removed that
+        pre-trigger). A token-cause retry CAN now re-enter
+        ``_run_with_shrink`` and hit that side-effect again on this
+        wrapper's own next iteration — this is NOT a new double-call risk:
+        ``force_compact_now()`` itself already returns immediately once
+        the watermark has caught up to everything durably available (zero
+        candidates), the SAME bound the byte-axis case already relied on
+        before this fix. Each repeat is a cheap no-op, not a repeated
+        summarization LLM call.
         """
         from reyn.services.compaction.engine import UnrecoveredError as _UnrecoveredError
 
@@ -834,54 +841,72 @@ class RouterLoopDriver:
                     # fixtures that still pass it) is its own scoped
                     # follow-up, not folded into this already-large PR.
                 )
-            except _UnrecoveredError as _unrecovered:
-                # #4954 (b), architect-ruled: on a BYTE-limit exhaustion
-                # (an HTTP 413 that recurred all the way to retry_loop's
-                # own terminal condition), trigger a REAL compaction here
-                # — in the driver's except block, not inside retry_loop
-                # itself (retry_loop stays a pure TRANSPORT operation;
-                # compaction is the SEMANTIC operation that actually
-                # retires history entries, Session's own docstring:
-                # "the only operation meant to retire an entry"). Routed
-                # through `force_compact_now` — the SAME durable-watermark
-                # path `ContextBudgetAdvisor`'s pre-frame guard already
-                # uses (`_durable_active_history_after`-backed,
-                # continuous from the last real `covers_through_seq`) —
-                # deliberately NOT `retry_loop`'s own compaction result:
-                # its `covers` can cover only `raw_middle` while skipping
-                # `head` entirely, which is not continuous from the
-                # previous watermark and would silently mark the OLDEST
-                # unsummarized part of history "covered" without ever
-                # summarizing it (exactly owner's own real-machine shape).
+            except _UnrecoveredError:
+                # #4954 (b), architect-ruled, WIDENED #5578: on ANY
+                # UnrecoveredError exhaustion (byte-limit 413 OR a
+                # non-byte, token-axis terminal cause — no longer gated on
+                # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
+                # here — in the driver's except block, not inside
+                # retry_loop itself (retry_loop stays a pure TRANSPORT
+                # operation; compaction is the SEMANTIC operation that
+                # actually retires history entries, Session's own
+                # docstring: "the only operation meant to retire an
+                # entry"). Routed through `force_compact_now` — the SAME
+                # durable-watermark path `ContextBudgetAdvisor`'s
+                # pre-frame guard already uses
+                # (`_durable_active_history_after`-backed, continuous from
+                # the last real `covers_through_seq`) — deliberately NOT
+                # `retry_loop`'s own compaction result: its `covers` can
+                # cover only `raw_middle` while skipping `head` entirely,
+                # which is not continuous from the previous watermark and
+                # would silently mark the OLDEST unsummarized part of
+                # history "covered" without ever summarizing it (exactly
+                # owner's own real-machine shape).
                 #
-                # This turn still fails — re-raised below unchanged. What
-                # this buys is the NEXT turn: a real compaction now
-                # advances the watermark, so a persistent 413 becomes "one
-                # turn fails, not every turn" once paired with #4958 (the
-                # projection that reads the advanced watermark back). No
-                # new infinite-loop guard needed — force_compact_now
-                # already returns immediately on `self._compacting` (a
-                # concurrent pass) or zero candidates (nothing left to
-                # compact = terminal), and this except fires at most once
-                # per turn.
+                # #5578: previously gated on `_unrecovered.saw_byte_limit`
+                # — a token-cause exhaustion never reached this line at
+                # all. That gate's OWN stated reason (this file's own,
+                # now-removed docstring, quoting #4885/architect ruling
+                # ④): "a token overflow reaching this point means #4885's
+                # own pre-trigger estimate was wrong; the adaptive learner
+                # fixes that, not a second compaction trigger here." That
+                # pre-trigger (`ContextBudgetAdvisor.maybe_force_compact`,
+                # estimate-based, proactive) no longer exists — #5528
+                # (owner ruling, same family as #5367's elide removal)
+                # removed it, verbatim: "a local token estimate cannot
+                # know what the actual provider payload will look like, so
+                # acting on it risked compacting a conversation that would
+                # have fit fine" (compaction_controller.py's own module
+                # docstring, which this PR also corrects — see its own
+                # #5578 note). With no pre-trigger left, a token-cause
+                # exhaustion has NO durable recovery path at all — every
+                # turn re-starts from the same un-compacted history and
+                # re-runs the identical (LLM-call-costing) shrink from
+                # scratch (owner's own real-machine report, #5578: reyn-
+                # self history.jsonl files grew to 4.6-5.9MB over 5 days
+                # with no persisted compaction). `recovery_policy`'s own
+                # docstring (config/chat.py) never named an axis — it is
+                # declared as a stop-line on the "irreversible compaction
+                # step" itself, not on byte-specifically — so this widening
+                # corrects the call site to match the config's own already
+                # axis-agnostic contract, not a new design decision.
                 #
-                # #5364 §1.6: this except block can now be reached MORE
-                # THAN ONCE per turn for a non-byte (token-axis) cause too
-                # — `_run_with_shrink_and_byte_reduction` retries on ANY
-                # `UnrecoveredError`, mode-independent, not only a
-                # byte-limited one (the OLD gate here read "a token
-                # overflow reaching this point means #4885's pre-trigger
-                # estimate was wrong" — that assumed a token-cause failure
-                # could only ever reach here ONCE, which is no longer
-                # true: it is the expected shape on retry iterations 2+
-                # after a spill made progress). The `saw_byte_limit` check
-                # immediately below is UNCHANGED by this — a token-cause
-                # retry still skips `force_compact_now()` here every time,
-                # exactly as before this fix.
-                if (
-                    _unrecovered.saw_byte_limit
-                    and self._compaction.recovery_policy == "next_turn"
-                ):
+                # Repeat-bounding (band's own first question — who stops
+                # this if it repeats): unchanged mechanism, now exercised
+                # on both axes. `force_compact_now` already returns
+                # immediately on `self._compacting` (a concurrent pass) or
+                # zero candidates (nothing left to compact = terminal) —
+                # #5364 §1.6's own note (right below, unchanged) already
+                # established this except block CAN be reached more than
+                # once per turn (`_run_with_shrink_and_byte_reduction`
+                # retries on ANY `UnrecoveredError`); each such repeat
+                # calls `force_compact_now()` again, but the SECOND call
+                # onward finds the watermark already caught up to
+                # everything durably available and returns immediately —
+                # no new call this PR adds, no new unbounded-repeat shape,
+                # only a gate this call already had to survive repeating
+                # under (the byte-axis case already exercised this).
+                if self._compaction.recovery_policy == "next_turn":
                     await self._compaction_controller.force_compact_now()
                 raise
             return _shim.usage

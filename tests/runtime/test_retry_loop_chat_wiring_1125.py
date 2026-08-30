@@ -402,15 +402,43 @@ def test_byte_limit_recovery_policy_controls_compaction(
     )
 
 
-def test_non_byte_limit_exhaustion_does_not_trigger_compaction(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize(
+    ("recovery_policy", "compaction_expected"),
+    [("next_turn", True), ("never", False)],
+)
+def test_token_axis_recovery_policy_controls_compaction(
+    tmp_path, monkeypatch, recovery_policy: str, compaction_expected: bool,
 ) -> None:
-    """Tier 1: falsification pair — a NON-byte-limit exhaustion
-    (`saw_byte_limit=False`) must NOT trigger `force_compact_now`.
-    #4885's own token-overflow pre-trigger already handles that axis; a
-    non-byte-limit failure reaching here means the pre-trigger's estimate
-    was wrong, which the adaptive learner fixes, not a second compaction
-    trigger here (architect ruling ④)."""
+    """Tier 1: #5578 — a token-axis (non-byte-limit) exhaustion now controls
+    real compaction identically to the byte axis, mirroring
+    ``test_byte_limit_recovery_policy_controls_compaction`` immediately above.
+
+    Pre-#5578 this test (then named
+    ``test_non_byte_limit_exhaustion_does_not_trigger_compaction``) asserted
+    the OPPOSITE — that a token-axis exhaustion must NEVER trigger
+    ``force_compact_now``, reasoning that "#4885's own token-overflow
+    pre-trigger already handles that axis; a non-byte-limit failure reaching
+    here means the pre-trigger's estimate was wrong" (architect ruling ④).
+    That premise is dead: #5528 (owner ruling, same family as #5367's elide
+    removal) removed the pre-trigger it named
+    (``ContextBudgetAdvisor.maybe_force_compact``) entirely — verbatim,
+    compaction_controller.py's own module docstring: "a local token estimate
+    cannot know what the actual provider payload will look like, so acting
+    on it risked compacting a conversation that would have fit fine." With
+    the pre-trigger gone, a token-axis exhaustion had NO durable recovery
+    path left at all — every turn re-started from the same un-compacted
+    history and re-ran the identical shrink from scratch (owner's own
+    real-machine report, #5578: reyn-self history.jsonl grew to 4.6-5.9MB
+    over 5 days with zero persisted compaction). This is not "fixed the
+    test to pass" — the mechanism the old assertion depended on no longer
+    exists; the correct assertion changed with it.
+
+    ``recovery_policy``'s own docstring (config/chat.py) never named an
+    axis — it is declared as a stop-line on the "irreversible compaction
+    step" itself, not byte-specifically — so widening the call site to
+    match is a correction to the config's own already-declared scope, not
+    a new design decision.
+    """
     from reyn.services.compaction.engine import UnrecoveredError
 
     cfg = CompactionConfig(
@@ -418,6 +446,7 @@ def test_non_byte_limit_exhaustion_does_not_trigger_compaction(
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=3,
+        recovery_policy=recovery_policy,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -449,7 +478,7 @@ def test_non_byte_limit_exhaustion_does_not_trigger_compaction(
 
     assert excinfo.value.saw_byte_limit is False
     checks = [e for e in events if e.type == "compaction_check"]
-    assert not checks, (
-        f"force_compact_now must not fire on a non-byte-limit exhaustion; "
-        f"observed: {[e.data for e in checks]!r}"
+    assert bool(checks) is compaction_expected, (
+        f"recovery_policy={recovery_policy!r} expected compaction="
+        f"{compaction_expected}, observed: {[e.data for e in checks]!r}"
     )
