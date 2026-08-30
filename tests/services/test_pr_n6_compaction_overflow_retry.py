@@ -42,6 +42,7 @@ from reyn.services.compaction.engine import (
     CompactionOverflowError,
     ContextOverflowError,
     HistoryChunkToCompact,
+    RetryLoopTerminal,
     UnrecoveredError,
     _estimate_tokens_list,
     assert_static_bounds,
@@ -706,7 +707,7 @@ def test_compaction_overflow_error_is_exception() -> None:
 
 def test_unrecovered_error_has_reason() -> None:
     """Tier 2: UnrecoveredError carries the reason string."""
-    exc = UnrecoveredError("all paths exhausted")
+    exc = UnrecoveredError("all paths exhausted", terminal=RetryLoopTerminal.MID_FLOOR)
     assert exc.reason == "all paths exhausted"
     assert "all paths exhausted" in str(exc)
     assert isinstance(exc, Exception)
@@ -1236,6 +1237,68 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
         f"content, 1 succeeding on the spilled content) — got "
         f"{engine.compact_calls}"
     )
+
+
+def test_terminal_distinguishes_mid_floor_from_room_floor(tmp_path) -> None:
+    """Tier 2: #5531 §10 / ADR-0044 (owner: "don't make the doc follow a
+    wrong implementation" — the doc's own "travels as a structured value,
+    not as a distinct exception type" claim is the ratified spec this
+    field makes true). A caller must be able to tell terminal (a) (mid
+    floor) apart from terminal (b) (room floor) WITHOUT parsing
+    ``reason`` — accept criterion, verbatim: "呼び手が (a)/(b) を文字列
+    照合なしに区別できる".
+
+    Deny side, in the SAME test (not two separate ones): each of the two
+    fixtures below sets its OWN terminal and leaves the other member
+    entirely unset — this is the accept criterion's own explicit
+    negative half ("片方だけ立てて他方が立たないこと"), not just "the
+    right one is set"."""
+    cfg = _make_cfg()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    # Terminal (a): mid=1 floor — a single raw_middle turn, no spill_fn,
+    # compact() always overflows on it (mirrors test_5367_3_spill_
+    # unavailable_still_raises_with_accurate_message's own fixture).
+    mid_floor_engine = _Always413CompactEngine(head_budget=10, tail_budget=10)
+    raw_middle = [{"role": "tool", "content": "OVERSIZED_TOOL_RESULT", "seq": 1}]
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+
+    async def _always_413_main_call(**kwargs):
+        raise ContextOverflowError("main_call 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as mid_floor_excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=mid_floor_engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413_main_call,
+        ))
+
+    assert mid_floor_excinfo.value.terminal is RetryLoopTerminal.MID_FLOOR
+    assert mid_floor_excinfo.value.terminal is not RetryLoopTerminal.ROOM_FLOOR
+
+    # Terminal (b): room floor — empty raw_middle, tiny head/tail, main_call
+    # always 413s until the T_max binary search bottoms out (mirrors
+    # test_413_recovery_does_not_claim_exceeds_t_max's own fixture).
+    room_floor_engine = _OverflowingEngine(fail_compact=False)
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+
+    with pytest.raises(UnrecoveredError) as room_floor_excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, raw_middle=[],
+            tail=tail, new_msg={"role": "user", "content": "q", "seq": 3},
+            cfg=cfg, model="test-model",
+            engine=room_floor_engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413_main_call,
+        ))
+
+    assert room_floor_excinfo.value.terminal is RetryLoopTerminal.ROOM_FLOOR
+    assert room_floor_excinfo.value.terminal is not RetryLoopTerminal.MID_FLOOR
 
 
 def test_5367_3_spill_unavailable_still_raises_with_accurate_message(tmp_path) -> None:

@@ -1119,6 +1119,37 @@ class CompactionOverflowError(Exception):
     """
 
 
+class RetryLoopTerminal(enum.Enum):
+    """#5531 §10 / ADR-0044 — WHICH of retry_loop's two terminal predicates
+    raised, as a structured value a caller can switch on without parsing
+    ``UnrecoveredError.reason`` (message wording is not a stable API —
+    #4948/#4957's own reason for ``saw_byte_limit`` existing as a real
+    field rather than a string to grep; this is the SAME argument applied
+    to the OTHER axis the doc named still unmet: "which terminal", not
+    "was it byte-limited").
+
+    MID_FLOOR:
+        Terminal (a) — ``raw_middle`` is down to one turn, that turn has
+        already been offered to spill (and either had no spillable
+        content or spilling it did not resolve the overflow), and halving
+        the offered slice further cannot produce a smaller nonzero size.
+    ROOM_FLOOR:
+        Terminal (b) — the T_max-halved candidate can no longer fit
+        ``SP`` + ``new_msg`` + the current summary even with ``head``/
+        ``tail`` at zero; none of the three is ever shrunk by this
+        ladder, so halving again cannot possibly help either.
+
+    Deliberately NOT reused as/with ``saw_byte_limit`` — that field is a
+    different axis (whether a byte limit was OBSERVED during this call's
+    shrink attempts, "last seen not sticky") from this one (WHICH
+    predicate the raise itself satisfies); the two are independent and a
+    single raise carries exactly one value of each.
+    """
+
+    MID_FLOOR = "mid_floor"
+    ROOM_FLOOR = "room_floor"
+
+
 class UnrecoveredError(Exception):
     """retry_loop exhausted all shrink paths; mathematical impossibility.
 
@@ -1131,6 +1162,14 @@ class UnrecoveredError(Exception):
     ----------
     reason:
         Human-readable description of the terminal condition.
+    terminal:
+        #5531 §10 / ADR-0044 (owner: "don't make the doc follow a wrong
+        implementation" — the doc's own claim, chat-compaction.md's
+        "travels as a structured value, not as a distinct exception
+        type", is the ratified spec; this field is what makes it true).
+        Which of :class:`RetryLoopTerminal`'s two members this raise is —
+        set at every raise site, never defaulted or inferred after the
+        fact.
     saw_byte_limit:
         #4954 (b), architect finding: whether an HTTP 413 (a
         request-BODY-BYTE limit) was observed during this call's shrink
@@ -1168,8 +1207,11 @@ class UnrecoveredError(Exception):
         attribute.
     """
 
-    def __init__(self, reason: str, *, saw_byte_limit: bool = False) -> None:
+    def __init__(
+        self, reason: str, *, terminal: RetryLoopTerminal, saw_byte_limit: bool = False,
+    ) -> None:
         self.reason = reason
+        self.terminal = terminal
         self.saw_byte_limit = saw_byte_limit
         super().__init__(reason)
 
@@ -3039,6 +3081,7 @@ async def retry_loop(
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
                         ) if _last_recover_is_byte_limit else ""
                     ),
+                    terminal=RetryLoopTerminal.MID_FLOOR,
                     saw_byte_limit=_last_recover_is_byte_limit,
                 )
             _compact_attempt_len = max(_current_attempt // 2, 1)
@@ -3145,6 +3188,7 @@ async def retry_loop(
                             last_rejected_wire_bytes=_last_rejected_wire_bytes,
                         ) if _last_recover_is_byte_limit else ""
                     ),
+                    terminal=RetryLoopTerminal.ROOM_FLOOR,
                     saw_byte_limit=_last_recover_is_byte_limit,
                 )
             _t_max_override = _candidate
