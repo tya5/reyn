@@ -29,8 +29,9 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
   audit-events (#5103 ④, this issue's own new seam) — REYN_STALL_TRACE
   is set purely to arm this observation pair; the N-second stall
   detection itself is untested by design (see stall_trace.py).
-- Events observed via add_subscriber (public EventLog API), not via
-  private state assertions.
+- Events observed via ``tests/_support/events.py``'s ``collect_events``/
+  ``settle`` (#5467) — the private reach onto ``session._audit_events``
+  narrows to that one file, never repeated here.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ from reyn.core.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,28 +59,14 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     )
 
 
-def _collect_events(session: Session) -> list[dict]:
-    """Subscribe a collector to the session's EventLog and return the list.
-
-    The returned list is mutated in-place as events arrive. #4961 C:
-    dispatch moved off of ``emit()``'s own synchronous caller onto a
-    queue-consumer task — a caller must ``await session._audit_events.drain()``
-    (or otherwise yield enough for the consumer to catch up) before this
-    list can be trusted to reflect everything emitted so far.
-    """
-    collected: list[dict] = []
-
-    def _subscriber(event) -> None:
-        collected.append({"type": event.type, **event.data})
-
-    # add_subscriber is the public API on EventLog; _audit_events is the
-    # session's internal EventLog that all session-level emits target.
-    session._audit_events.add_subscriber(_subscriber)
-    return collected
-
-
-def _events_of_type(collected: list[dict], kind: str) -> list[dict]:
-    return [e for e in collected if e["type"] == kind]
+def _events_of_type(collected: "list", kind: str) -> "list":
+    """#5467: ``collected`` is now the real :class:`Event` list
+    ``collect_events(session)`` returns (was a hand-rolled subscriber that
+    flattened each event to ``{"type": ..., **event.data}`` — a private-reach
+    workaround for the SAME reason #5467 closes elsewhere: there was no
+    public seam to observe the session's own log through). Filters on the
+    real ``.type`` attribute directly."""
+    return [e for e in collected if e.type == kind]
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +118,7 @@ async def test_session_started_and_completed_emit(tmp_path: Path, monkeypatch) -
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    collected = _collect_events(session)
+    collected = collect_events(session)
 
     # Pre-load shutdown sentinel; run_one_iteration()'s _drain_to_wake
     # will read it and return (None, None) → iteration returns False →
@@ -140,11 +128,11 @@ async def test_session_started_and_completed_emit(tmp_path: Path, monkeypatch) -
     # #4961 C: `session_completed` is emitted right at the tail of
     # run()'s own finally block, with no further internal await after
     # it — `await session.run()` returning does not by itself guarantee
-    # the consumer has drained it yet. `drain()` is deterministic
+    # the consumer has drained it yet. `settle()` is deterministic
     # (unlike a bare yield, which only helps if exactly one event is
     # pending); Session.run() itself now awaits this at its own real
     # shutdown path too — see its own comment there.
-    await session._audit_events.drain()
+    await settle(session)
 
     started = _events_of_type(collected, "session_started")
     completed = _events_of_type(collected, "session_completed")
@@ -152,17 +140,17 @@ async def test_session_started_and_completed_emit(tmp_path: Path, monkeypatch) -
     # Unpack-enforcement idiom: unpacking to exactly 1 element raises
     # ValueError if 0 or 2+ events fired — no len(...) == N needed.
     (started_ev,) = started
-    assert started_ev.get("agent_name") == "test-agent", (
+    assert started_ev.data.get("agent_name") == "test-agent", (
         f"session_started.agent_name mismatch: {started_ev!r}"
     )
 
     (completed_ev,) = completed
-    assert completed_ev.get("agent_name") == "test-agent", (
+    assert completed_ev.data.get("agent_name") == "test-agent", (
         f"session_completed.agent_name mismatch: {completed_ev!r}"
     )
 
     # session_started must appear before session_completed in the log
-    all_types = [e["type"] for e in collected]
+    all_types = [e.type for e in collected]
     idx_started = all_types.index("session_started")
     idx_completed = all_types.index("session_completed")
     assert idx_started < idx_completed, (
@@ -194,7 +182,7 @@ async def test_turn_started_emits_with_kind(tmp_path: Path, monkeypatch) -> None
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    collected = _collect_events(session)
+    collected = collect_events(session)
 
     _chain_id = "test-chain-001"
     await session._put_inbox("user", {"text": "hello", "chain_id": _chain_id})
@@ -202,11 +190,20 @@ async def test_turn_started_emits_with_kind(tmp_path: Path, monkeypatch) -> None
 
     assert result is True, "run_one_iteration should return True (not shutdown)"
 
+    # #4961 C: dispatch to `collected` is off-loop (a background consumer
+    # task) — this read must not race it. #5467's own migration exposed
+    # this gap: the ORIGINAL custom subscriber here was a hand-rolled
+    # callback (not a plain `.append`), invisible to
+    # scripts/check_collect_events_settle.py's tracked shapes, so the
+    # missing settle() before this read was never caught. Real,
+    # pre-existing bug — not introduced by this migration, only now
+    # visible (lead-coder, collect-events-settle gate).
+    await settle(session)
     started = _events_of_type(collected, "turn_started")
 
     # Unpack-enforcement idiom: exactly 1 turn_started must fire.
     (started_ev,) = started
-    assert started_ev.get("kind") == "user", (
+    assert started_ev.data.get("kind") == "user", (
         f"turn_started.kind should be 'user', got: {started_ev!r}"
     )
 
@@ -244,7 +241,7 @@ async def test_turn_completed_emits_after_router_turn(tmp_path: Path, monkeypatc
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _make_session(tmp_path)
-    collected = _collect_events(session)
+    collected = collect_events(session)
 
     _chain_id = "test-chain-002"
     await session._put_inbox("user", {"text": "world", "chain_id": _chain_id})
@@ -252,18 +249,23 @@ async def test_turn_completed_emits_after_router_turn(tmp_path: Path, monkeypatc
 
     assert result is True
 
+    # #4961 C: same gap as test_turn_started_emits_with_kind above — the
+    # ORIGINAL custom subscriber here was invisible to the
+    # collect-events-settle gate, so this missing settle() before the
+    # read predates #5467's migration; now caught and fixed.
+    await settle(session)
     completed = _events_of_type(collected, "turn_completed")
 
     # Unpack-enforcement idiom: exactly 1 turn_completed must fire.
     (completed_ev,) = completed
-    assert completed_ev.get("chain_id") == _chain_id, (
+    assert completed_ev.data.get("chain_id") == _chain_id, (
         f"turn_completed.chain_id should be {_chain_id!r}, got: {completed_ev!r}"
     )
 
-    all_types = [e["type"] for e in collected]
+    all_types = [e.type for e in collected]
     idx_armed = all_types.index("stall_trace_armed")
     idx_completed = next(
-        i for i, e in enumerate(collected) if e["type"] == "turn_completed"
+        i for i, e in enumerate(collected) if e.type == "turn_completed"
     )
     idx_disarmed = all_types.index("stall_trace_disarmed")
     # turn_completed must be strictly BETWEEN armed (before run_turn is

@@ -62,6 +62,7 @@ from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from tests._support.agent_session import make_session as _make_hard_cancel_session
+from tests._support.events import settle
 from tests._support.router_loop import FakeRouterHost, text_result
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 from tests._support.session import make_session as _make_session
@@ -107,6 +108,10 @@ def test_cancelled_marker_never_reaches_build_history(tmp_path, monkeypatch):
         compaction=session._compaction,
         compaction_controller=session._compaction_controller,
         model_fn=lambda: session._resolver.resolve(session.model).model,
+        # #5467: RouterHistoryBuffer's own ``events`` constructor param
+        # requires a real EventLog (production wiring, not a test-side
+        # observer) — collect_events()/settle() have no meaning here, there
+        # is nothing to subscribe to or drain. Out of #5467's scope.
         events=session._audit_events,
         media_store=session._media_store,
         router_host=session._router_host,
@@ -274,7 +279,7 @@ async def test_a_non_self_initiated_cancel_does_not_fabricate_a_user_cancel_mark
         _llm_stub.release.set()
 
     # witness ②: the real driver dispatched before the cancel hit it.
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
 
     cancelled_markers = [
@@ -333,7 +338,7 @@ async def test_hard_cancel_via_cancel_inflight_persists_the_marker(
         _llm_stub.release.set()
 
     # witness ②: the real driver dispatched before the cancel hit it.
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
 
     (marker,) = [

@@ -46,6 +46,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage, Spillability
 from reyn.services.compaction.engine import UnrecoveredError
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events, settle
 
 
 class _FakeStatusError(Exception):
@@ -165,8 +166,7 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
     _push(session, "tool", huge, tool_call_id="tc1", name="tool")
     _push(session, "assistant", "ok, done")
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     loop = _ContentDrivenLoop(
         lambda history, user_text: _has_content(history, huge)
@@ -276,17 +276,19 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
         # requires an explicit NEVER, not just the absence of a tool turn.
         _push(session, "user", turn_text, spillability=Spillability.NEVER)
 
-    events: list = []
-    compacted = {"done": False}
+    # #5467: was a custom ``_on_event``/``compacted`` dict subscriber (a
+    # side-effecting callback, not a plain append) reaching
+    # ``session._audit_events`` directly — collect_events(session) gives the
+    # same raw event list; the "has compaction_completed fired yet" check
+    # that used to live in the subscriber is now a plain derivation over
+    # that list, computed wherever it's needed instead of tracked as a
+    # side-effect.
+    events = collect_events(session)
 
-    def _on_event(e) -> None:
-        events.append(e)
-        if e.type == "compaction_completed":
-            compacted["done"] = True
+    def _compacted() -> bool:
+        return any(e.type == "compaction_completed" for e in events)
 
-    session._audit_events.add_subscriber(_on_event)
-
-    loop = _ContentDrivenLoop(lambda history, user_text: not compacted["done"])
+    loop = _ContentDrivenLoop(lambda history, user_text: not _compacted())
 
     result = asyncio.run(
         session._loop_driver._run_with_shrink_and_byte_reduction(
@@ -295,7 +297,7 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     )
     assert result is None  # the fake loop's own successful return
 
-    assert compacted["done"], "expected a real compaction_completed event"
+    assert _compacted(), "expected a real compaction_completed event"
     spill_events = [e for e in events if e.type == "tool_result_offloaded"]
     assert not spill_events, (
         "nothing was spillable (no tool-result turns) — spill must not "
@@ -325,8 +327,7 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
     _push(session, "user", "hi", spillability=Spillability.NEVER)
     _push(session, "assistant", "ok", spillability=Spillability.NEVER)
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     loop = _ContentDrivenLoop(lambda history, user_text: True)  # always 413
 
@@ -382,8 +383,7 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
         # sanity now needs an explicit declaration, not just role != "tool".
         _push(session, "user", "X" * 320, spillability=Spillability.NEVER)
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     loop = _ContentDrivenLoop(lambda history, user_text: True)  # always 413
 
@@ -610,13 +610,12 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     public surface nor a snapshot-style read] exists, that absence is the
     finding" — here a public read DOES exist once driven through a real
     spill pass, so this is that seam, not a documented absence).
-    ``session._audit_events.drain()`` is required before reading the
+    ``settle(session)`` is required before reading the
     subscriber's list — events queue, they are not delivered
     synchronously inside ``emit()`` (measured directly: the subscriber
     list was empty without it, on every run)."""
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     # Head: one small tool turn. Mid: one turn whose content is FAR
     # larger than the head candidate — if global size-sort fired instead
@@ -662,11 +661,11 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     )
 
     progressed_1 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
-    await session._audit_events.drain()
+    await settle(session)
     progressed_2 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
-    await session._audit_events.drain()
+    await settle(session)
     progressed_3 = await session._loop_driver._attempt_reactive_spill(chain_id="c1")
-    await session._audit_events.drain()
+    await settle(session)
     assert (progressed_1, progressed_2, progressed_3) == (True, True, True), (
         "each of the 3 calls must make genuine progress (one candidate "
         f"each) — got {(progressed_1, progressed_2, progressed_3)!r}"
@@ -914,8 +913,7 @@ async def test_spill_turn_content_offload_event_names_trigger_overflow(
     ``router_history_buffer.py`` turns this RED (the event would carry
     ``"cap"`` instead)."""
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     _push(session, "tool", "huge tool result " + "z" * 5_000, tool_call_id="tc-1", name="tool")
     for i in range(20):
@@ -923,7 +921,7 @@ async def test_spill_turn_content_offload_event_names_trigger_overflow(
         _push(session, "assistant", f"filler answer number {i} " * 8)
 
     await session._loop_driver._attempt_reactive_spill(chain_id="c1")
-    await session._audit_events.drain()
+    await settle(session)
 
     offloaded = [e for e in events if e.type == "tool_result_offloaded"]
     assert offloaded, "test setup sanity: at least one candidate must have been spilled"
@@ -1134,21 +1132,26 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     for i in range(3):
         _push(session2, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
         _push(session2, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
-    spilled_so_far = {"n": 0}
-    session2._audit_events.add_subscriber(
-        lambda e: spilled_so_far.__setitem__("n", spilled_so_far["n"] + 1)
-        if e.type == "tool_result_offloaded" else None
-    )
-    loop2 = _ContentDrivenLoop(lambda history, user_text: spilled_so_far["n"] < 3)
+    # #5467: was a custom counting subscriber (a side-effecting callback,
+    # not a plain append) reaching ``session2._audit_events`` directly —
+    # collect_events(session2) gives the same raw event list; the running
+    # spill count that used to live in the subscriber is now a plain
+    # derivation over that list.
+    events2 = collect_events(session2)
+
+    def _spilled_so_far() -> int:
+        return sum(1 for e in events2 if e.type == "tool_result_offloaded")
+
+    loop2 = _ContentDrivenLoop(lambda history, user_text: _spilled_so_far() < 3)
     result = asyncio.run(
         session2._loop_driver._run_with_shrink_and_byte_reduction(
             loop2, "continue please", chain_id="c1",
         )
     )
     assert result is None, "the turn must ultimately succeed once all mid candidates spilled"
-    assert spilled_so_far["n"] == 3, (
+    assert _spilled_so_far() == 3, (
         "the turn must have spilled all 3 mid candidates before succeeding "
-        f"— got {spilled_so_far['n']!r}"
+        f"— got {_spilled_so_far()!r}"
     )
 
 
@@ -1227,8 +1230,7 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
         )
         raw_middle_population = len(raw_middle)
 
-        events: list = []
-        session._audit_events.add_subscriber(lambda e: events.append(e))
+        events = collect_events(session)
 
         with pytest.raises(UnrecoveredError):
             asyncio.run(
@@ -1237,7 +1239,7 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
                     "continue please", chain_id="c1",
                 )
             )
-        asyncio.run(session._audit_events.drain())
+        asyncio.run(settle(session))
     finally:
         stub.restore()
 

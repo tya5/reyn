@@ -107,6 +107,14 @@ async def test_collect_events_accepts_a_session_witness_1(tmp_path, monkeypatch)
     session = make_session(tmp_path, monkeypatch=monkeypatch)
     collected = collect_events(session)
     session._audit_events.emit("tool_executed", op="read_file", path="/tmp/x")
+    # #5467: deliberately ``session._audit_events.drain()``, NOT
+    # ``settle(session)`` — this witness's own claim is "collect_events(session)
+    # alone genuinely resolves and subscribes", so draining through the OTHER
+    # helper here would let a broken settle() silently backstop a broken
+    # collect_events() (or vice versa) and this test would stay green either
+    # way. Witness② (test_settle_accepts_a_session_witness_2, below) is where
+    # settle(session) itself gets exercised — the two stay independent on
+    # purpose. This line is intentionally excluded from #5467's migration.
     await session._audit_events.drain()
     assert [e.type for e in collected] == ["tool_executed"]
 
