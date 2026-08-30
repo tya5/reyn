@@ -14,6 +14,13 @@ into the SAME exhausted quota window before finally giving up with
 ``UnrecoveredError`` — 3 wasted round-trips during an active outage
 (owner's real-machine incident, reyn-self).
 
+#5543 / #5531 §10 (2026-08-30) SUPERSEDES this file's own original
+narrower scope: ``classify_llm_failure`` now groups rate-limit/5xx/
+network/quota into ONE RETRYABLE class, all excluded from the shrink
+ladder identically — not just the quota subtype #5329 originally carved
+out. See ``test_transient_rate_limit_also_terminates_bare_on_first_
+occurrence``'s own docstring for the updated claim.
+
 Real ``retry_loop`` throughout, no mocks — only ``engine.compact()`` is a
 scripted real async callable (matching this module's own established
 harness, e.g. ``test_wire_byte_estimate_4944.py``'s ``_MinimalCompactionEngine``).
@@ -135,7 +142,6 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
                 tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
                 cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
                 learner=_learner(), main_call=_never_called_main_call,
-                max_iterations=8,
             )
         except (CompactionOverflowError, UnrecoveredError):
             raise AssertionError(
@@ -153,17 +159,23 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
     )
 
 
-def test_transient_rate_limit_still_enters_the_shrink_ladder_unaffected() -> None:
-    """Tier 2: non-vacuity — #3783 stage 3's own owner-ratified reasoning
-    (an ordinary per-request 429 CAN genuinely recover via shrinking) must
-    stay completely unaffected by #5329's narrower carve-out. The SAME
-    raw_middle-only harness as the core #5329 proofs above, but
-    ``engine.compact()`` raises ``_TransientRateLimitError`` (no
-    usage_limit_reached body) instead of the quota shape — it must be
-    wrapped as CompactionOverflowError and recover multiple times via the
-    same-cause cap (#3783 stage 2) before ``UnrecoveredError`` finally
-    fires, never terminating on the first occurrence the way #5329's
-    quota carve-out does."""
+def test_transient_rate_limit_also_terminates_bare_on_first_occurrence() -> None:
+    """Tier 2: #5543 / #5531 §10 SUPERSEDES this test's own original claim
+    (#3783 stage 3's narrower rule: only a QUOTA exhaustion is excluded
+    from the shrink ladder, an ordinary per-request 429 still enters it).
+    ``classify_llm_failure`` groups rate-limit/5xx/network/quota into ONE
+    RETRYABLE class — shrinking cannot fix an infra condition or a
+    wait-bound rate limit any better than it fixes a quota window, so
+    both are now excluded identically: ``engine.compact()``'s own
+    exception handler re-raises bare the moment classification is
+    anything but OVERFLOW, before the shrink ladder (and the now-retired
+    same-cause cap, #5531 §10) ever sees it.
+
+    Mirrors ``test_quota_exhausted_compact_terminates_on_first_occurrence_
+    bare`` exactly (same harness, same 2 invariants: exactly 1 compact()
+    call, the bare exception type propagates) — the two causes are no
+    longer distinguishable by this loop's own behaviour, only by which
+    exception type the caller catches."""
     engine = _MinimalCompactionEngine()
     compact_calls = 0
 
@@ -174,40 +186,29 @@ def test_transient_rate_limit_still_enters_the_shrink_ladder_unaffected() -> Non
 
     engine.compact = _compact
 
-    # A single-turn raw_middle hits retry_loop's OWN "cannot split any
-    # further" floor on the FIRST compact() failure regardless of cause
-    # (a different mechanism from the same-cause cap this test means to
-    # exercise) — 4 turns gives the same-cause cap (2, tripping on the
-    # 3rd consecutive recover) room to fire well before any halving could
-    # reach that floor.
     async def _never_called_main_call(**kwargs):
-        raise AssertionError(
-            "main_call must never run — the same-cause cap trips "
-            "UnrecoveredError before raw_middle could ever empty"
-        )
+        raise AssertionError("main_call must never run — compact() never succeeds")
 
     async def _drive():
-        await retry_loop(
-            SP="sp", head=[],
-            raw_middle=[
-                {"role": "user", "content": "x", "seq": i} for i in range(4)
-            ],
-            tail=[], new_msg={"role": "user", "content": "q", "seq": 99},
-            cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
-            learner=_learner(), main_call=_never_called_main_call,
-            max_iterations=8,
-        )
+        try:
+            await retry_loop(
+                SP="sp", head=[],
+                raw_middle=[{"role": "user", "content": "x", "seq": 1}],
+                tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
+                cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
+                learner=_learner(), main_call=_never_called_main_call,
+            )
+        except (CompactionOverflowError, UnrecoveredError):
+            raise AssertionError(
+                "a RETRYABLE (rate-limit) exception must propagate BARE — "
+                "retry_loop's own wrapper types would be caught by "
+                "callers as an ordinary overflow, not a retryable cause"
+            )
 
-    with pytest.raises(UnrecoveredError) as excinfo:
+    with pytest.raises(_TransientRateLimitError):
         asyncio.run(_drive())
 
-    assert "consecutive times" in str(excinfo.value)
-    # #3783 stage 2's own cap (_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS=2) means
-    # the SAME cause recovering 3 times (1 initial + 2 more) is what finally
-    # trips UnrecoveredError — more than 1 compact() attempt, proving this
-    # is still the shrink-ladder path, not #5329's single-occurrence
-    # carve-out (which would have stopped a quota exhaustion after exactly 1).
-    assert compact_calls > 1, (
-        f"a transient (non-quota) rate limit must still enter the shrink "
-        f"ladder — expected multiple compact() attempts, got {compact_calls}"
+    assert compact_calls == 1, (
+        f"expected exactly 1 compact() call (RETRYABLE never enters the "
+        f"shrink ladder — #5543) — got {compact_calls}"
     )

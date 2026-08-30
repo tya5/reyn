@@ -72,6 +72,7 @@ from reyn.runtime.budget.budget import (
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     ChatMessage,
+    Spillability,
     _migrate_legacy_chat_message,
     _now_iso,
 )
@@ -4382,6 +4383,12 @@ class Session:
             content=summary,
             ts=_now_iso(),
             meta=meta,
+            # #5514 §4a: a FACT ("permission/config/MCP/task state changed"),
+            # not a deliverable — spilling it out to a file would falsify
+            # the model's own world-state view (§1.1; session.py:4322's own
+            # docstring on why this signal exists at all — the #352
+            # refusal-trap pattern).
+            spillability=Spillability.NEVER,
         )
         self._append_history(msg)
         # Observability event for measurement / debugging (= sub-task 6
@@ -4448,35 +4455,49 @@ class Session:
             content="Turn interrupted by user.",
             ts=_now_iso(),
             meta={"kind": "turn_cancelled", "chain_id": chain_id},
+            # #5514 §4b: a FACT (small — an id + a state), not a
+            # deliverable. See §4.1's own "fact vs artifact" split.
+            spillability=Spillability.NEVER,
         ))
 
     def _append_history_for_handler(
         self, role: str, text: str, ts: str, meta: dict,
+        spillability: "Spillability" = Spillability.LAST_RESORT,
     ) -> None:
         """Adapter callback injected into InterventionHandler.
 
         InterventionHandler needs to append a user history entry when an
         intervention is answered.  This adapter bridges the handler's
-        ``(role, text, ts, meta)`` signature to Session._append_history
-        (which takes a ChatMessage).
+        ``(role, text, ts, meta, spillability)`` signature to
+        Session._append_history (which takes a ChatMessage).
+
+        #5514 §2/§8: this adapter is deliberately a PASS-THROUGH — it
+        never infers ``spillability`` itself (the caller, which actually
+        produced the content, is the one that can answer "may this be
+        spilled"). The default here is only a safety net for a caller
+        that has not been updated yet to pass its own value explicitly.
         """
         self._append_history(ChatMessage(
             role="assistant" if role == "agent" else role,
-            content=text, ts=ts, meta=meta,
+            content=text, ts=ts, meta=meta, spillability=spillability,
         ))
 
     def _append_history_for_inter_agent_messaging(
         self, role: str, text: str, ts: str, meta: dict,
+        spillability: "Spillability" = Spillability.LAST_RESORT,
     ) -> None:
         """Adapter callback injected into InterAgentMessaging.
 
-        InterAgentMessaging uses the same ``(role, text, ts, meta)`` signature as
-        InterventionHandler.  This adapter bridges to Session._append_history
-        (which takes a ChatMessage).
+        InterAgentMessaging uses the same ``(role, text, ts, meta,
+        spillability)`` signature as InterventionHandler. This adapter
+        bridges to Session._append_history (which takes a ChatMessage).
+
+        #5514 §2/§8: pass-through, same reasoning as
+        ``_append_history_for_handler`` above.
         """
         self._append_history(ChatMessage(
             role="assistant" if role == "agent" else role,
-            content=text, ts=ts, meta=meta,
+            content=text, ts=ts, meta=meta, spillability=spillability,
         ))
 
     # ── A2A transport callbacks (FP-0019 Wave 2 part 2) ─────────────────────────
@@ -7144,6 +7165,13 @@ class Session:
         self._append_history(ChatMessage(
             role="user", content=payload.get("text") or "", ts=_now_iso(),
             meta=payload.get("meta") or {},
+            # #5514 §4 (traced, still undecided): this item came off
+            # ``self._inbox``, a generic multi-producer queue
+            # (``InboxArbiter.peek_mid_turn_injection`` → ``self._inbox.
+            # get_nowait()``) — the producer is not traceable from here
+            # to a single deterministic origin. Default LAST_RESORT per
+            # lead-coder's own instruction for an untraceable site.
+            spillability=Spillability.LAST_RESORT,
         ))
         await self._journal.consume_inbox(msg_id=msg_id)
         self._audit_events.emit(
@@ -7729,6 +7757,14 @@ class Session:
             content=attributed,
             ts=_now_iso(),
             meta={"chain_id": chain_id},
+            # #5514 §4/§8 (owner correction, 2026-08-30): a hook push is
+            # MATERIAL (the whole reason #5514 was opened — a hook push
+            # had no cap and no offload, #5514 §5's own outset). Default
+            # hardcoded here, not read from ``hooks.yaml`` — a per-hook
+            # ``spillability:`` knob is a separate, later PR (scope
+            # narrowed by lead-coder to avoid landing config schema/
+            # loader/validation changes in this already-large PR).
+            spillability=Spillability.FIRST_CHOICE,
         ))
         await self._put_outbox(OutboxMessage(
             kind="system",
@@ -7991,6 +8027,29 @@ class Session:
                         entry_kind, entry_name, entry_text,
                     ),
                     ts=_now_iso(),
+                    # #5514 §4/§7-3: this call had NO ``meta=`` at all —
+                    # nothing survived to classify the entry later, the
+                    # exact gap #5514 names. ``kind`` (persisted here)
+                    # lets a future reader recover what this was.
+                    #
+                    # #5514 §8 (owner correction, 2026-08-30): the
+                    # classifier is ``entry_kind`` (already OS-trusted, see
+                    # the comment above) — a HOOK ride-along reads the
+                    # SAME per-hook ``spillability`` its own wake=true
+                    # sibling (``_handle_hook_message``) reads, both from
+                    # the ONE payload dict ``HookDispatcher._push_resolved``
+                    # builds (dispatcher.py) — the two mouths #5514 §8
+                    # requires a hook's declaration reach cannot drift
+                    # since they read the same field of the same payload.
+                    # Every other staged producer (send_to_session/agent/
+                    # cron/pipeline/peer) has no per-kind ruling yet and
+                    # defaults ``LAST_RESORT``.
+                    meta={"kind": entry_kind},
+                    spillability=(
+                        Spillability(payload_data["spillability"])
+                        if entry_kind == TurnOrigin.HOOK and "spillability" in payload_data
+                        else Spillability.LAST_RESORT
+                    ),
                 ))
             self._inbox_arbiter.next_turn_context.clear()
             await self._journal.record_next_turn_context_cleared()
@@ -8033,6 +8092,13 @@ class Session:
         self._append_history(ChatMessage(
             role="user", content=content, ts=_now_iso(),
             meta={"chain_id": chain_id},
+            # #5514 §4.2: whether the client can tell hand-typed apart
+            # from pasted is unconfirmed at this layer (terminal: has
+            # bracketed paste; web/--print: may have no such concept at
+            # all) — default LAST_RESORT (the asymmetric-harm side: a
+            # hand-typed message spilled slightly too late costs little;
+            # a large paste marked NEVER would dead-end the turn).
+            spillability=Spillability.LAST_RESORT,
         ))
         self._audit_events.emit(
             "user_message_received", text=text, chain_id=chain_id,
@@ -8463,6 +8529,9 @@ class Session:
                 content=_wrapup_text,
                 ts=_now_iso(),
                 meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
+                # #5514 §4: genuine LLM output (the force-close wrap-up
+                # call above, not a canned string) — LAST_RESORT.
+                spillability=Spillability.LAST_RESORT,
             ))
             return
 
@@ -8496,6 +8565,10 @@ class Session:
                 "chain_id": chain_id,
                 "source": "router_cap_exhausted",
             },
+            # #5514 §4: a hardcoded canned string
+            # (_ROUTER_RETRY_EXHAUSTED_MSG), not LLM output — a FRAME,
+            # same class as the state-change/turn-cancelled notices.
+            spillability=Spillability.NEVER,
         ))
 
     def _reset_router_turn_counter(self) -> None:

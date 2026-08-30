@@ -45,6 +45,7 @@ from reyn.hooks.schema import (
     PushBlock,
 )
 from reyn.hooks.schema_registry import HookSchemaError, bare_point, canonical_kind
+from reyn.runtime.chat_message import Spillability
 
 _log = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ _KNOWN_HOOK_ENTRY_KEYS: frozenset[str | bool] = frozenset({
     "on", True, "name", "template_push", "exec", "exec_capture",
     "pipeline_launch", "matcher", "subprocess", "network", "write_paths",
     "fold",  # #5516: per-hook opt-out from launch-folding, see HookDef.fold
+    "spillability", "spillability_max_chars",  # #5514 §5, see HookDef docstring
 })
 
 # The one wrong-scope key architect named as directly actionable (not a
@@ -580,6 +582,89 @@ def _parse_entry(
             )
         fold_raw = value
 
+    # ── spillability: (#5514 §5/§8, owner ruling 2026-08-30 — landed in the
+    # same PR as the call-site declarations) ────────────────────────────────
+    # Same eager-rejection model as fold/subprocess/network/write_paths:
+    # only template_push/exec_capture write history at all (exec's output
+    # is discarded), so a declaration on any other scheme would be
+    # silently ignored — rejected instead.
+    spillability_raw = raw.get("spillability", None)
+    spillability: "Spillability | None" = None
+    spillability_max_chars_raw = raw.get("spillability_max_chars", None)
+    spillability_max_chars: "int | None" = None
+    if spillability_raw is not None:
+        if present[0] not in ("template_push", "exec_capture"):
+            raise HookConfigError(
+                f"hooks[{entry_index}].spillability is only supported on a "
+                f"template_push / exec_capture hook (the two schemes that "
+                f"write history at all — #5514 §5); this hook declares "
+                f"{present[0]!r}."
+            )
+        if not isinstance(spillability_raw, str):
+            raise HookConfigError(
+                f"hooks[{entry_index}].spillability must be a string, got "
+                f"{type(spillability_raw).__name__!r}."
+            )
+        try:
+            spillability = Spillability(spillability_raw)
+        except ValueError:
+            raise HookConfigError(
+                f"hooks[{entry_index}].spillability={spillability_raw!r} is "
+                f"not a recognised value. Allowed: "
+                f"{', '.join(m.value for m in Spillability)}."
+            ) from None
+        # #5356 (same self-grant reasoning as write_paths/subprocess/network
+        # above, applied to a VALUE rather than a key's mere presence —
+        # FIRST_CHOICE/LAST_RESORT declare nothing an agent-writable layer
+        # couldn't already imply by omission, only NEVER removes a lever
+        # the agent itself is bound by): an agent can already write its own
+        # per-agent/per-session hooks.yaml, so a NEVER declared there is a
+        # self-grant, not an operator's expressed will.
+        if spillability is Spillability.NEVER and origin in _AGENT_WRITABLE_ORIGINS:
+            raise HookConfigError(
+                f"hooks[{entry_index}].spillability=never is not permitted "
+                f"at the {origin!r} layer — an agent can write its own "
+                f"{origin} hooks.yaml, so a never declared there is a "
+                f"self-grant, not an operator's expressed will (#5356, same "
+                f"reasoning as subprocess/network/write_paths). Declare it "
+                f"at the startup (reyn.yaml) or runtime "
+                f"(.reyn/config/hooks.yaml) layer instead — neither is "
+                f"agent-writable."
+            )
+        # #5514 §5: "declaring picks one; both is the answer" — spill
+        # bounds every OTHER tier's size, so NEVER (spill forbidden) must
+        # bound size the only remaining way: a declared ceiling.
+        if spillability is Spillability.NEVER:
+            if spillability_max_chars_raw is None:
+                raise HookConfigError(
+                    f"hooks[{entry_index}].spillability=never also requires "
+                    f"spillability_max_chars — declaring never removes the "
+                    f"only other lever bounding this hook's push size "
+                    f"(offload), so a size ceiling must be declared instead."
+                )
+            if (
+                not isinstance(spillability_max_chars_raw, int)
+                or isinstance(spillability_max_chars_raw, bool)
+                or spillability_max_chars_raw <= 0
+            ):
+                raise HookConfigError(
+                    f"hooks[{entry_index}].spillability_max_chars must be a "
+                    f"positive integer, got {spillability_max_chars_raw!r}."
+                )
+            spillability_max_chars = spillability_max_chars_raw
+        elif spillability_max_chars_raw is not None:
+            raise HookConfigError(
+                f"hooks[{entry_index}].spillability_max_chars is only "
+                f"meaningful alongside spillability: never; this hook "
+                f"declares spillability={spillability_raw!r}."
+            )
+    elif spillability_max_chars_raw is not None:
+        raise HookConfigError(
+            f"hooks[{entry_index}].spillability_max_chars is only "
+            f"meaningful alongside spillability: never; this hook does not "
+            f"declare spillability=never."
+        )
+
     # ── pipeline_launch block (#2608 H3) ──────────────────────────────────────
     pipeline_launch: PipelineLaunchBlock | None = None
     if "pipeline_launch" in raw:
@@ -677,6 +762,8 @@ def _parse_entry(
         write_paths=write_paths_raw,
         origin=origin,
         fold=fold_raw,
+        spillability=spillability,
+        spillability_max_chars=spillability_max_chars,
     )
 
 

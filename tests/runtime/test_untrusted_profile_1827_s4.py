@@ -86,7 +86,7 @@ class _Recorder:
     def __init__(self):
         self.history: list[dict] = []
 
-    def append(self, role, text, ts, meta):
+    def append(self, role, text, ts, meta, spillability=None):
         self.history.append({"role": role, "text": text, "meta": meta})
 
 

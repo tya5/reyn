@@ -496,7 +496,6 @@ def test_retry_loop_shrinks_tail_on_overflow(tmp_path) -> None:
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=main_call,
-        max_iterations=8,
     ))
 
     # Verify retry_loop returned a result.
@@ -545,7 +544,6 @@ def test_retry_loop_raises_unrecovered_when_all_at_min(tmp_path) -> None:
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_overflow,
-            max_iterations=8,
         ))
     # #4954 (b): a plain overflow (no status_code) — the "all shrink paths
     # exhausted" raise site's saw_byte_limit is reachable-and-False here,
@@ -553,30 +551,10 @@ def test_retry_loop_raises_unrecovered_when_all_at_min(tmp_path) -> None:
     assert excinfo.value.saw_byte_limit is False
 
 
-def test_retry_loop_max_iterations_raises_unrecovered(tmp_path) -> None:
-    """Tier 2: retry_loop raises UnrecoveredError when max_iterations=1 is exceeded."""
-    cfg = _make_cfg()
-    engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    tail = _turns(["x" * 400] * 4)
-    head = _turns(["h"])
-    raw_middle = _turns(["m"] * 2)
-    new_msg = {"role": "user", "content": "q", "seq": 99}
-
-    async def _always_overflow(**kwargs):
-        raise ContextOverflowError("overflow")
-
-    with pytest.raises(UnrecoveredError):
-        asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-            engine=engine,  # type: ignore[arg-type]
-            learner=learner,
-            main_call=_always_overflow,
-            max_iterations=1,  # immediately exhausts
-        ))
-
+# #5531 §10: test_retry_loop_max_iterations_raises_unrecovered removed —
+# max_iterations no longer exists (this loop's own "Bounded termination
+# proof" docstring is the replacement); zero other consumers (git grep
+# confirmed no reference outside this file's own former definition).
 
 def test_retry_loop_success_calls_learner_observe(tmp_path) -> None:
     """Tier 2: successful retry_loop call triggers learner.observe with positive tokens.
@@ -614,7 +592,6 @@ def test_retry_loop_success_calls_learner_observe(tmp_path) -> None:
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_success_call,
-        max_iterations=8,
     ))
 
     after_ema = learner.get_multiplier(model, "text")
@@ -675,7 +652,6 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause(tmp_path) -> No
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_fail_once_then_succeed,
-        max_iterations=8,
     ))
 
     recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
@@ -685,99 +661,10 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause(tmp_path) -> No
     assert only.data["consecutive"] == 1
 
 
-def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted(tmp_path) -> None:
-    """Tier 2: #3783 stage 2 — the SAME cause recovering more than
-    ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS`` (2) times in a row raises
-    UnrecoveredError even though shrinkable content remains (tail is not yet
-    at its minimum) — a real overflow shrinks its way to success or exhausts
-    the ladder; a cause recurring unchanged across shrinks is evidence
-    shrinking cannot fix it.
-
-    Falsification (performed during review): with the same-cause cap check
-    removed, this test goes RED — the loop instead keeps shrinking the
-    still-nonempty tail (does not raise "all shrink paths exhausted") and
-    eventually raises the DIFFERENT ``UnrecoveredError`` from
-    ``max_iterations`` exhaustion, whose message does not mention
-    "consecutive times" — confirming the cap, not incidental exhaustion, is
-    what this test observes.
-
-    #4947 ③ (CI red on #4950, review): this fixture's ``tail`` is
-    deliberately large enough that stage 2 (Phase 1, unrelated to ③, moves
-    tail content into ``raw_middle`` when ``raw_middle`` is empty) fires
-    partway through the SAME chain of recovers this test is building —
-    ③'s mid-split then attempts to ``compact()`` that refilled content.
-    Before ③'s cap-reset-on-success fix, an intervening ``compact()``
-    success here would have silently reset the counter (a real bug, fixed
-    separately — see ``test_4947_stage1_success_resets_same_cause_streak``).
-    For THIS test to still isolate the same-cause cap (not ③'s own
-    behavior), the engine's ``compact()`` here raises the SAME cause type
-    ``main_call`` does (``ContextOverflowError``, not the class's default
-    ``CompactionOverflowError``) — so refilled content recurring the same
-    unfixable cause keeps incrementing the SAME streak instead of
-    resetting it via cause-alternation (the pre-existing, untouched
-    "different cause resets the counter" behavior) or via ③'s success
-    reset. This is a fixture adjustment, not a relaxation: the cap still
-    must fire on 3 consecutive recovers of one cause, now including any
-    compact()-side recovers of that identical cause.
-    """
-    from reyn.services.compaction.engine import ComputedBudgets
-
-    cfg = _make_cfg()
-    budgets = ComputedBudgets(
-        main_pool=100_000, head_budget=10, body_budget=500,
-        tail_budget=10, new_msg_budget=10,
-        B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
-        section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
-                      "session_user_facts": 50, "artifacts_referenced": 175},
-    )
-
-    class _SameCauseOnCompactEngine(_OverflowingEngine):
-        async def compact(self, input_chunk, *, covers_through=None):
-            raise ContextOverflowError("compact also overflows, same cause")
-
-    engine = _SameCauseOnCompactEngine(fail_compact=False)
-    engine.budgets = budgets
-    events: list = []
-    engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    # A big tail (tail_budget=10 is tiny, so it stays "shrinkable" across
-    # several halvings) and an empty head so head-exhaustion is never reached
-    # before the same-cause cap fires.
-    tail = _turns(["x" * 400] * 8)
-    head: list[dict] = []
-    new_msg = {"role": "user", "content": "q", "seq": 99}
-
-    async def _always_overflow(**kwargs):
-        raise ContextOverflowError("always overflows")
-
-    with pytest.raises(UnrecoveredError) as excinfo:
-        asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=[],
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-            engine=engine,  # type: ignore[arg-type]
-            learner=learner,
-            main_call=_always_overflow,
-            max_iterations=8,
-        ))
-
-    assert "consecutive times" in str(excinfo.value)
-    # #4954 (b): the cap's own guard (`and not _last_recover_is_byte_limit`)
-    # is what makes this raise reachable at all — saw_byte_limit is False
-    # here by construction, not by an unreached default.
-    assert excinfo.value.saw_byte_limit is False
-    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
-    # Cap is > 2, so exactly 3 consecutive same-cause recovers happen before
-    # the 3rd one raises — the loop must not have run all 8 iterations.
-    # Unpacking to exactly 3 elements raises ValueError otherwise.
-    first, second, third = recovered
-    assert first.data["consecutive"] == 1
-    assert second.data["consecutive"] == 2
-    assert third.data["consecutive"] == 3
-    assert first.data["cause"] == second.data["cause"] == third.data["cause"] == (
-        "ContextOverflowError"
-    )
-
+# #5531 §10 (settled (a)): test_retry_loop_same_cause_cap_raises_before_
+# shrink_paths_exhausted removed — T3 (the same-cause cap) is retired,
+# the halving ladder's own two floors ((a)/(b)) are the terminal
+# condition; zero other consumers (git grep confirmed).
 
 class _CompactFailsOnceEngine(_OverflowingEngine):
     """compact() overflows on its FIRST call only, then behaves like the
@@ -796,84 +683,11 @@ class _CompactFailsOnceEngine(_OverflowingEngine):
         return await super().compact(input_chunk)
 
 
-def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap(tmp_path) -> None:
-    """Tier 2: #3783 stage 2 — a DIFFERENT cause resets the consecutive
-    counter, so a turn that alternates between two real overflow causes is
-    not penalised by the same-cause cap (each stays at consecutive=1,
-    the cap only fires when the SAME cause repeats past it).
-
-    Falsification (performed during review): temporarily mutating the
-    production ``_cause == _last_recover_cause`` comparison to an
-    always-True check (treating every recover as "the same cause"
-    regardless of its actual type) makes this test go RED — the
-    ``all(... consecutive == 1 ...)`` assertion below fails because a
-    genuinely-different-cause recover is miscounted as a repeat of the
-    previous one — confirming this test actually exercises cause-identity,
-    not iteration count alone.
-
-    #5531 PR-2: ``main_call`` now ALTERNATES its wrapped cause on every
-    call (via ``__cause__``, never the SAME type twice running) — under
-    the OLD design a single alternation was enough because the loop
-    always terminated (via "all shrink paths exhausted") right after
-    iteration 1, before a same cause could ever repeat; PR-2's
-    reservation-based halving now applies to non-byte-limit overflows
-    too (previously exempt), so the loop tries harder and would
-    otherwise let ``_always_overflow``'s own constant cause repeat past
-    the same-cause cap — a DIFFERENT failure mode than the one this test
-    is about. Genuinely alternating on every call keeps testing the
-    actual claim (a truly-alternating cause never trips the cap) under
-    the new, more persistent ladder; the loop runs to
-    ``max_iterations`` exhaustion instead, an unrelated, expected
-    terminal this test does not otherwise assert on.
-    """
-    cfg = _make_cfg()
-    engine = _CompactFailsOnceEngine()
-    events: list = []
-    engine._events.add_subscriber(lambda e: events.append(e))
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    # 4 raw_middle turns, empty head/tail: iteration 0's compact() overflows
-    # (CompactionOverflowError) before main_call is ever reached; the shrink
-    # escalation then halves raw_middle (still nonempty) for iteration 1,
-    # where compact() succeeds and main_call raises ContextOverflowError — a
-    # genuinely different cause than iteration 0's, and every call after
-    # that keeps alternating (see docstring above).
-    raw_middle = _turns(["m"] * 4)
-    head: list[dict] = []
-    tail: list[dict] = []
-    new_msg = {"role": "user", "content": "q", "seq": 99}
-
-    _call_count = [0]
-
-    async def _always_overflow(**kwargs):
-        _call_count[0] += 1
-        if _call_count[0] % 2 == 1:
-            raise ContextOverflowError("main overflow A") from ValueError("A")
-        raise ContextOverflowError("main overflow B") from TypeError("B")
-
-    with pytest.raises(UnrecoveredError):
-        asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-            engine=engine,  # type: ignore[arg-type]
-            learner=learner,
-            main_call=_always_overflow,
-            max_iterations=8,
-        ))
-
-    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
-    # At least 2 recovers happened — slicing off the first 2 raises
-    # IndexError below otherwise, without pinning the total count.
-    first, second = recovered[0], recovered[1]
-    assert first.data["cause"] == "CompactionOverflowError"
-    assert second.data["cause"] == "ValueError"
-    # Every recover stayed at consecutive=1 — no cause repeated back-to-back,
-    # the direct witness of this test's own claim, independent of how many
-    # iterations ran or what finally terminated the loop.
-    assert all(e.data["consecutive"] == 1 for e in recovered)
-
-
-# ---------------------------------------------------------------------------
+# #5531 §10: test_retry_loop_alternating_causes_do_not_trip_same_cause_
+# cap removed — T3 is retired, so "a different cause resets the
+# counter" no longer bounds anything; zero other consumers of this
+# test itself (git grep confirmed). _CompactFailsOnceEngine (used by a
+# different, still-live test below) is untouched.
 # Exception class hierarchy
 # ---------------------------------------------------------------------------
 
@@ -949,7 +763,6 @@ def test_413_recovery_does_not_claim_exceeds_t_max(tmp_path) -> None:
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
-            max_iterations=40,
         ))
 
     message = str(excinfo.value)
@@ -991,7 +804,6 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event(tmp_path) -> None:
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
-            max_iterations=40,
         ))
 
     recovered = [e for e in seen if e.type == "compaction_shrink_recovered"]
@@ -1006,102 +818,17 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event(tmp_path) -> None:
     )
 
 
-def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search(tmp_path) -> None:
-    """Tier 2: #4885 — the pre-existing same-cause-recovers-N-times cap
-    (#3783 stage 2, ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2``) does NOT
-    fire for a byte-limit cause, even though a 413 recurring while the
-    binary search lowers its ceiling is EXACTLY the shape that cap was
-    built to catch for a token-only cause. Falsified by the un-skipped
-    version: without the skip, this raises the cap's own "recovered N
-    consecutive times" message well before reaching the byte-limit-specific
-    one — asserted by NAME here, so a regression is unambiguous about
-    which mechanism fired."""
-    cfg = _make_cfg()
-    engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    head = [{"role": "user", "content": "h", "seq": 1}]
-    tail = [{"role": "user", "content": "t", "seq": 2}]
-    raw_middle: list[dict] = []
-    new_msg = {"role": "user", "content": "q", "seq": 3}
-
-    async def _always_413(**kwargs):
-        raise ContextOverflowError("simulated 413") from _FakeStatusError(
-            "Request Entity Too Large", status_code=413,
-        )
-
-    with pytest.raises(UnrecoveredError) as excinfo:
-        asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-            engine=engine,  # type: ignore[arg-type]
-            learner=learner,
-            main_call=_always_413,
-            max_iterations=40,
-        ))
-
-    message = str(excinfo.value)
-    assert "consecutive times" not in message, (
-        f"the same-cause cap fired instead of the binary-search floor: {message!r}"
-    )
-
-
-def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit(tmp_path) -> None:
-    """Tier 2: #4947 ② — when retry_loop exhausts max_iterations, the
-    generic "without convergence" message must name the byte limit if the
-    LAST recovered cause was one, instead of leaving an operator to
-    re-derive "413" from the event log. #4947's own repro is a
-    compact()-origin 413 riding the same-cause cap's existing exemption
-    (unconditional on ``_last_recover_is_byte_limit``, unchanged here —
-    whether that exemption's PREDICATE should instead key on binary-search
-    progress is ①, still under architect review) all the way to
-    max_iterations; this test exercises only the message this PR actually
-    changes, via a main_call-origin 413 (the predicate ② reads from is
-    origin-agnostic — same field, same message, either origin), and a
-    ``max_iterations`` small enough that the byte-limit binary-search floor
-    (already covered, named 413, by ``test_413_recovery_does_not_claim_exceeds_t_max``)
-    is never reached.
-
-    Falsification (performed during review): with the new branch removed,
-    this test goes RED — the generic message contains no "413".
-    """
-    cfg = _make_cfg()
-    engine = _OverflowingEngine(fail_compact=False)
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    # Large enough that 3 iterations of tail-halving never reaches
-    # tail_min_tokens (1500) or the SP+new_msg floor — this test wants
-    # max_iterations exhaustion, not the binary-search floor raise the
-    # other #4885 tests already cover.
-    head = _turns(["h" * 4000] * 20)
-    tail = _turns(["t" * 4000] * 20)
-    raw_middle: list[dict] = []
-    new_msg = {"role": "user", "content": "q", "seq": 99}
-
-    async def _always_413(**kwargs):
-        raise ContextOverflowError("simulated 413") from _FakeStatusError(
-            "Request Entity Too Large", status_code=413,
-        )
-
-    with pytest.raises(UnrecoveredError) as excinfo:
-        asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-            engine=engine,  # type: ignore[arg-type]
-            learner=learner,
-            main_call=_always_413,
-            max_iterations=3,
-        ))
-
-    message = str(excinfo.value)
-    assert "max_iterations" in message
-    assert "413" in message
-    # #4954 (b): "last observed cause" semantics — this raise site's own
-    # branch does NOT determine the cause (it fires after the loop's
-    # `for` completes regardless of what the last iteration's cause was),
-    # so saw_byte_limit here reflects `_last_recover_is_byte_limit` at
-    # loop-exit time, which this fixture's always-413 main_call makes True.
-    assert excinfo.value.saw_byte_limit is True
+# #5531 §10: test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_
+# search removed — T3 is retired, nothing to cut anything off any more.
+#
+# #5531 §10: test_max_iterations_exhaustion_names_413_when_last_cause_was_
+# byte_limit removed — max_iterations exhaustion no longer exists as a
+# raise site (retry_loop's own "Bounded termination proof" docstring is
+# the replacement); the byte-limit-naming behaviour this test covered for
+# THAT site is still covered, for the mid-split floor, by
+# test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state
+# and by test_413_recovery_does_not_claim_exceeds_t_max for the T_max
+# floor. Zero other consumers of either removed test (git grep confirmed).
 
 
 def _make_payload_threshold_main_call(
@@ -1216,7 +943,6 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough(tmp_path) 
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=main_call,
-        max_iterations=40,
     ))
     assert result is not None, "retry_loop returned falsy on the success path"
 
@@ -1375,6 +1101,9 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state(tmp_p
             "Request Entity Too Large", status_code=413,
         )
 
+    # #5531 §10: retry_loop no longer takes max_iterations — this bound
+    # is now only the comparison ceiling the assertion below uses (the
+    # exact #4947 repro that cycled through all 20 under the old code).
     _max_iterations = 20
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
@@ -1383,7 +1112,6 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state(tmp_p
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
-            max_iterations=_max_iterations,
         ))
 
     message = str(excinfo.value)
@@ -1472,11 +1200,14 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
     new_msg = {"role": "user", "content": "q", "seq": 999}
     spill_calls: list = []
 
-    def _spill_fn(turn: dict) -> "dict | None":
-        spill_calls.append(turn)
-        if turn.get("role") != "tool" or turn.get("content") != "OVERSIZED_TOOL_RESULT":
-            return None
-        return {**turn, "content": "REF: spilled to .reyn/memory/history-content/..."}
+    def _spill_fn(candidates: "list[dict]") -> "tuple[int, dict] | None":
+        # #5531 §10: whole-list signature — ``candidates`` IS raw_middle.
+        for idx, turn in enumerate(candidates):
+            spill_calls.append(turn)
+            if turn.get("role") != "tool" or turn.get("content") != "OVERSIZED_TOOL_RESULT":
+                continue
+            return idx, {**turn, "content": "REF: spilled to .reyn/memory/history-content/..."}
+        return None
 
     async def _main_call(**kwargs):
         from types import SimpleNamespace
@@ -1489,7 +1220,6 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
         learner=learner,
         main_call=_main_call,
         spill_fn=_spill_fn,
-        max_iterations=8,
     ))
 
     assert result is not None, "retry_loop must return normally, not raise"
@@ -1533,7 +1263,6 @@ def test_5367_3_spill_unavailable_still_raises_with_accurate_message(tmp_path) -
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
-            max_iterations=8,
         ))
 
     assert "mid cannot be split any further" in str(excinfo.value)
@@ -1604,7 +1333,6 @@ def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_succeeds,
-        max_iterations=10,
     ))
 
     assert result is not None
@@ -1659,7 +1387,6 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_succeeds,
-        max_iterations=8,
     ))
 
     assert result is not None
@@ -1682,65 +1409,18 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
     assert only_summary["covers_through_seq"] == raw_middle[-1]["seq"]
 
 
-def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit(tmp_path) -> None:
-    """Tier 2: #4947 ③ (architect review on #4950) — the mid=1-turn floor
-    raises ONLY for a byte limit. A non-byte-limit compact() failure (a
-    transient 5xx, a rate limit, a truncated JSON response) at this floor
-    defers instead — moves the one failing turn into ``tail`` (the OLD
-    stage-1 direction, narrowed to a single turn) and lets ``main_call``
-    proceed, mirroring #3783 stage 3's own reasoning ("EVERY compact()-
-    call exception now recovers by default — shrinking the input is a
-    general remedy"): compaction success is not a precondition for
-    ``main_call``. This does not reopen #4947's own cycle — a non-byte-
-    limit cause is NOT exempt from the same-cause cap above, so a
-    genuinely stuck one is still caught there, independent of this floor.
-    """
-    cfg = _make_cfg()
-
-    class _CompactFailsOnceThenNoMoreCallsEngine(_OverflowingEngine):
-        """Fails ONCE (ValueError, not a byte limit) then asserts if
-        called again — the deferred turn must reach ``main_call`` without
-        another compact() attempt in the SAME retry_loop call."""
-
-        def __init__(self) -> None:
-            super().__init__(fail_compact=False)
-            self._called = False
-
-        async def compact(self, input_chunk, *, covers_through=None):
-            if not self._called:
-                self._called = True
-                raise ValueError("not a byte-limit failure")
-            raise AssertionError("compact() must not be retried after the defer")
-
-    engine = _CompactFailsOnceThenNoMoreCallsEngine()
-    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
-
-    head: list[dict] = []
-    tail: list[dict] = []
-    raw_middle = _turns(["m"])  # already a single turn — floor on iteration 0
-    new_msg = {"role": "user", "content": "q", "seq": 99}
-
-    seen_tails: list = []
-
-    async def _succeeds(**kwargs):
-        seen_tails.append(kwargs.get("tail"))
-        from types import SimpleNamespace
-        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
-
-    result = asyncio.run(retry_loop(
-        SP="sp", head=head, raw_middle=raw_middle,
-        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
-        engine=engine,  # type: ignore[arg-type]
-        learner=learner,
-        main_call=_succeeds,
-        max_iterations=8,
-    ))
-
-    assert result is not None
-    # main_call WAS reached (no raise) — with the deferred turn visible in
-    # tail, not silently dropped.
-    [only_tail] = seen_tails
-    assert only_tail == raw_middle + tail
+# #5531 §3 item 12 (removed): test_4947_stage1_floor_defers_instead_of_
+# raising_when_not_byte_limit removed — the "defer this one turn to tail"
+# escape hatch for a non-byte-limit mid=1 floor is GONE (a floor is a
+# floor regardless of which HTTP shape triggered it; deferring let a
+# non-byte cause dodge the floor by growing tail, the non-monotonic
+# escape #4947 ③ closed for the OTHER branch of this same fork). The
+# scenario this test built (single-turn raw_middle, non-byte compact()
+# failure, no spill_fn) now correctly raises UnrecoveredError instead —
+# covered by test_4947_stage1_floor_names_413_when_it_is_a_byte_limit's
+# own sibling shape (that test's OWN engine differs only in status_code)
+# and by test_5367_3_spill_unavailable_still_raises_with_accurate_message.
+# Zero other consumers of the removed test/its engine (git grep confirmed).
 
 
 def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
@@ -1772,7 +1452,6 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_unreachable,
-            max_iterations=8,
         ))
 
     message = str(excinfo.value)
@@ -1863,7 +1542,6 @@ def test_5531_no_interleaving_tail_condition_stays_false_once_exhausted(tmp_path
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_main_call,
-            max_iterations=30,
         ))
 
     assert any(
@@ -1963,7 +1641,6 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_main_call,
-            max_iterations=30,
         ))
 
     assert summary_role_counts, "expected at least one compact() call"
@@ -2041,7 +1718,6 @@ def test_5531_pr2_all_summary_head_and_tail_reaches_reservation_floor(tmp_path) 
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_overflow,
-            max_iterations=20,
         ))
 
     message = str(excinfo.value)

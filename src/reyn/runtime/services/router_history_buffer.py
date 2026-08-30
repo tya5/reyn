@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Callable
 
+from reyn.runtime.chat_message import Spillability
+
 if TYPE_CHECKING:
     pass
 
@@ -624,6 +626,21 @@ class RouterHistoryBuffer:
             if replacement is not None:
                 content = replacement
         msg: dict = {"role": role, "content": content}
+        # #5514 §7-3 correction (this key must NOT live here): this
+        # method's own docstring is explicit — its return value is the
+        # CANONICAL wire quantity, byte-identical to what actually
+        # reaches the provider (build_history's own direct consumer) and
+        # what token accounting measures. Adding a `spillability` key
+        # here leaked into BOTH — a real LLM-facing payload carrying
+        # internal bookkeeping metadata, and a small but real token-
+        # estimate inflation on every turn. ``decompose_history_for_
+        # retry`` (the ONLY consumer that needs spillability — for
+        # `_spill_candidates`) now annotates its OWN returned wire dicts
+        # with it, AFTER calling this method, not inside it — see that
+        # method's own comment. `_router_main_call`
+        # (router_loop_driver.py) strips the key back off before the
+        # real `loop.run(...)` call, so the ONLY window this key exists
+        # in a "wire-shaped" dict is between decompose and that strip.
         if m.tool_calls is not None:
             msg["tool_calls"] = m.tool_calls
         if m.tool_call_id is not None:
@@ -915,6 +932,24 @@ class RouterHistoryBuffer:
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
         wire_turns = [self._serialise_turn(m) for m in turns]
+        # #5514 §7-3: THIS is the one place `spillability` gets annotated
+        # onto a wire-shaped dict — never inside ``_serialise_turn``
+        # itself (that method's own wire dict must stay canonical/
+        # provider-identical, #5514's own earlier mistake, corrected).
+        # ``_spill_candidates``/the injected ``spill_fn`` (router_loop_
+        # driver.py) are decompose's OWN, sole consumers that need this
+        # key — `build_history()` never calls this method and so never
+        # sees it; `_router_main_call` strips it back off before the
+        # REAL wire send (see that call site's own comment). A summary-
+        # role turn's dict (``wrap_summary_as_message``'s own shape)
+        # does not get this key — reserved/NEVER by construction, #5514
+        # §4's own closing note; ``getattr`` degrades harmlessly for any
+        # dict-shaped ``m`` without a ``.spillability`` attribute anyway.
+        for _turn, _wire in zip(turns, wire_turns, strict=True):
+            if _turn.role != SUMMARY_MESSAGE_ROLE:
+                _wire["spillability"] = getattr(
+                    _turn, "spillability", Spillability.default(),
+                ).value
 
         # #3599: pair each wire dict back to its source ChatMessage's seq —
         # zip is positionally safe (wire_turns[i] was built FROM turns[i]

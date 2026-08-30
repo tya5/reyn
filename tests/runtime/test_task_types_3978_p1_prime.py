@@ -135,7 +135,9 @@ def _build_handler(
     async def _put_outbox(msg: OutboxMessage) -> None:
         state["outbox"].append(msg)
 
-    def _append_history(role: str, text: str, ts: str, meta: dict) -> None:
+    def _append_history(
+        role: str, text: str, ts: str, meta: dict, spillability=None,
+    ) -> None:
         state["history"].append({"role": role, "text": text, "ts": ts, "meta": meta})
 
     async def _handle_chat_limit_checkpoint(**kwargs):  # type: ignore[no-untyped-def]

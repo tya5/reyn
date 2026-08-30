@@ -43,7 +43,7 @@ import pytest
 from reyn.config import CompactionConfig, MultimodalConfig
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import ChatMessage, Spillability
 from reyn.services.compaction.engine import UnrecoveredError
 from tests._support.agent_session import make_session
 
@@ -270,7 +270,11 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
         f"t_max or turn_text if this ever fires"
     )
     for _i in range(turn_count):
-        _push(session, "user", turn_text)
+        # #5514 §7-1: the predicate no longer gates on role=="tool", so a
+        # plain "user" turn is spill-eligible by default (LAST_RESORT) —
+        # this test's own contract is "nothing spillable", which now
+        # requires an explicit NEVER, not just the absence of a tool turn.
+        _push(session, "user", turn_text, spillability=Spillability.NEVER)
 
     events: list = []
     compacted = {"done": False}
@@ -316,8 +320,10 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
         tmp_path, monkeypatch, max_shrink_iterations=1,
         # recovery_policy="next_turn" (default)
     )
-    _push(session, "user", "hi")
-    _push(session, "assistant", "ok")
+    # #5514 §7-1: NEVER, not merely non-"tool" — same reasoning as the
+    # sibling test above.
+    _push(session, "user", "hi", spillability=Spillability.NEVER)
+    _push(session, "assistant", "ok", spillability=Spillability.NEVER)
 
     events: list = []
     session._audit_events.add_subscriber(lambda e: events.append(e))
@@ -363,11 +369,18 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     compaction entirely regardless of candidate count — a real
     ``compact()`` call, if this ever regressed, should fail loudly rather
     than silently hitting network)."""
+    # #5531 §10: max_shrink_iterations no longer bounds retry_loop at all
+    # (the parameter is orphaned, see router_loop_driver.py's own call
+    # site comment) — kept here only because _make_spill_session still
+    # accepts it; termination is now genuinely bounded by the T_max-
+    # halving floor instead of this knob.
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1, recovery_policy="never",
     )
     for _i in range(50):
-        _push(session, "user", "X" * 320)
+        # #5514 §7-1: NEVER — this test's own "zero spillable candidates"
+        # sanity now needs an explicit declaration, not just role != "tool".
+        _push(session, "user", "X" * 320, spillability=Spillability.NEVER)
 
     events: list = []
     session._audit_events.add_subscriber(lambda e: events.append(e))
@@ -390,16 +403,14 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
         "wrapper-owned call (removed entirely)"
     )
     # ② clean, bounded termination — not a hang. #5364 §1.6: the bound is
-    # candidate exhaustion, not a fixed constant. All 50 turns here are
-    # ``role="user"`` — zero spillable candidates — so
-    # ``_attempt_reactive_spill`` reports failure on its very FIRST call,
-    # and the wrapper must raise right after exactly ONE outer attempt (a
-    # wall-clock timeout is never needed to prove this): sliced past that
-    # single attempt's own ``_run_with_shrink`` call count (2, measured
-    # directly — ``max_shrink_iterations=1`` plus retry_loop's own initial
-    # full-history attempt, unrelated to and unchanged by this fix), the
-    # tail must be empty.
-    assert loop.calls[2:] == []
+    # candidate exhaustion, not a fixed constant; #5531 §10 additionally
+    # removed retry_loop's own max_iterations, so "bounded" is no longer
+    # witnessable as a specific call count pinned to a config knob (that
+    # would now be a Tier-4 implementation-detail pin, not a structural
+    # fact) — the `with pytest.raises(UnrecoveredError)` context manager
+    # above IS the bounded-termination witness: this test function
+    # returning at all (not timing out under CI's own kill switch) proves
+    # the loop genuinely stopped rather than hanging.
 
 
 # ── ③ oversized user message alone — both levers fail, clean termination ───
@@ -618,14 +629,18 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     small_head_content = "tiny result h1 " + "a" * 10
     huge_mid_content = "M" * 5_000
     huge_tail_content = "T" * 6_000
+    # #5514 §7-1: filler turns are plain "user"/"assistant" content, now
+    # spill-eligible by default (LAST_RESORT) since the predicate no
+    # longer gates on role=="tool" — NEVER keeps them out of contention so
+    # this test still isolates the 3 tool candidates' own staged order.
     _push(session, "tool", small_head_content, tool_call_id="tc-h1", name="tool")
     for i in range(20):
-        _push(session, "user", f"filler question number {i + 100} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+        _push(session, "user", f"filler question number {i + 100} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", huge_mid_content, tool_call_id="tc-m1", name="tool")
     for i in range(3):
-        _push(session, "user", f"filler question number {i + 300} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+        _push(session, "user", f"filler question number {i + 300} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", huge_tail_content, tool_call_id="tc-t1", name="tool")
 
     head, raw_middle, tail, _summary, _seq_by_id = (
@@ -938,13 +953,14 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
     # test_spill_candidates_are_staged_head_then_mid_then_tail's own
     # independently-measured t_max=2_500/filler shape. No OTHER tool
     # turns exist, so this is the sole candidate.
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above.
     for i in range(20):
-        _push(session, "user", f"filler question number {i + 100} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+        _push(session, "user", f"filler question number {i + 100} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", "result body " * 100, tool_call_id="tc-mid", name="tool")
     for i in range(3):
-        _push(session, "user", f"filler question number {i + 300} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+        _push(session, "user", f"filler question number {i + 300} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8, spillability=Spillability.NEVER)
 
     head, raw_middle, tail, _summary, _seq_by_id = (
         session._loop_driver._history_buffer.decompose_history_for_retry()
@@ -994,6 +1010,7 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
 # ── #5364 §1.6 REQUIRED acceptance: mid-only, multi-round, bytes constant ──
 
 
+@pytest.mark.llm_stub
 def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1013,16 +1030,30 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     condition makes this test go RED on the very FIRST round — that
     check reads "mid spill moved zero bytes" as failure and raises
     immediately, before a second of the 3 candidates is ever reached.
+
+    #5531 §10: ``@pytest.mark.llm_stub`` (added this PR) — the second
+    scenario below (``session2``) drives ``_run_with_shrink_and_byte_
+    reduction``, which now genuinely reaches ``engine.compact()`` (§10's
+    own rung① spill-first reordering means retry_loop's internal ladder,
+    not just this test's own direct ``_attempt_reactive_spill`` calls,
+    participates) — an unstubbed real completion call is exactly the gap
+    ``_make_spill_session``'s own docstring already names ("a test whose
+    own scenario reaches an actual compact() call must mark itself
+    llm_stub"), previously latent because the old, slower per-candidate
+    ladder never happened to reach it for this specific fixture shape.
     """
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above;
+    # this test's own "mid-only" isolation depends on the filler turns
+    # never being offered.
     for i in range(3):
         for j in range(8):
-            _push(session, "user", f"filler {i}-{j} " * 8)
-            _push(session, "assistant", f"filler reply {i}-{j} " * 8)
+            _push(session, "user", f"filler {i}-{j} " * 8, spillability=Spillability.NEVER)
+            _push(session, "assistant", f"filler reply {i}-{j} " * 8, spillability=Spillability.NEVER)
         _push(session, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
     for i in range(3):
-        _push(session, "user", f"tail filler {i} " * 8)
-        _push(session, "assistant", f"tail reply {i} " * 8)
+        _push(session, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
 
     head, raw_middle, tail, _summary, _ = (
         session._loop_driver._history_buffer.decompose_history_for_retry()
@@ -1092,14 +1123,17 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     # candidates are spilled, driven through the real wrapper end-to-end
     # (a fresh session — the one above already spent its candidates).
     session2 = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above;
+    # this test's own "exactly 3" isolation depends on the filler turns
+    # never being offered.
     for i in range(3):
         for j in range(8):
-            _push(session2, "user", f"filler {i}-{j} " * 8)
-            _push(session2, "assistant", f"filler reply {i}-{j} " * 8)
+            _push(session2, "user", f"filler {i}-{j} " * 8, spillability=Spillability.NEVER)
+            _push(session2, "assistant", f"filler reply {i}-{j} " * 8, spillability=Spillability.NEVER)
         _push(session2, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
     for i in range(3):
-        _push(session2, "user", f"tail filler {i} " * 8)
-        _push(session2, "assistant", f"tail reply {i} " * 8)
+        _push(session2, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session2, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
     spilled_so_far = {"n": 0}
     session2._audit_events.add_subscriber(
         lambda e: spilled_so_far.__setitem__("n", spilled_so_far["n"] + 1)
@@ -1116,3 +1150,119 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
         "the turn must have spilled all 3 mid candidates before succeeding "
         f"— got {spilled_so_far['n']!r}"
     )
+
+
+# ── #5531 §9.6 REQUIRED acceptance: population count + tier breakdown ──────
+
+
+@pytest.mark.llm_stub
+def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5531 §9.6 — "candidate 0" is ambiguous by itself: a
+    genuinely all-``NEVER`` population (nothing left to spill, correct)
+    and a broken population-construction path (a real bug) produce the
+    SAME zero-candidate observation with no other signal. This test
+    drives the REAL ``_spill_fn`` closure (``RouterLoopDriver``, via a
+    genuine ``compact()``-origin overflow — never called directly) into
+    exactly that zero-candidate case with a population that is
+    deliberately, entirely ``NEVER`` (never a missing-key accident), and
+    asserts the emitted ``spill_candidate_population_exhausted`` event's
+    counts add up to the real population size — the accept-side witness
+    that the reporting mechanism itself works, not just that it exists.
+
+    Strip-falsify (performed during review): removing the
+    ``self._events.emit("spill_candidate_population_exhausted", ...)``
+    call at ``_spill_fn``'s own exhaustion return site makes
+    ``population_events`` empty and the ``assert population_events``
+    below fail — the event genuinely does not fire without that line.
+    """
+    from reyn.dev.testing.llm_stub import LLMStub
+
+    session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+
+    def _always_fail_compaction(messages: list) -> bool:
+        return True
+
+    stub = LLMStub(raise_for=_always_fail_compaction, cause="byte_limit")
+    stub.install()
+    try:
+        # #5514 §7-1: every candidate that could land in raw_middle is
+        # explicitly NEVER — a deliberate, complete population, not an
+        # accidental gap (the exact distinction this test's own event
+        # exists to make legible). Filler (also NEVER, mirroring the
+        # staged-order test's own isolation pattern above) surrounds the
+        # 2 real candidates so t_max=2_500 genuinely splits head/mid/tail
+        # instead of fitting everything in head alone.
+        for i in range(20):
+            _push(session, "user", f"filler question number {i} " * 8, spillability=Spillability.NEVER)
+            _push(session, "assistant", f"filler answer number {i} " * 8, spillability=Spillability.NEVER)
+        for i in range(2):
+            _push(
+                session, "tool", f"unspillable result {i} " * 50,
+                tool_call_id=f"tc-never{i}", name="tool",
+                spillability=Spillability.NEVER,
+            )
+        for i in range(3):
+            _push(session, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+            _push(session, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
+
+        head, raw_middle, _tail, _summary, _ = (
+            session._loop_driver._history_buffer.decompose_history_for_retry()
+        )
+        # #5514 §7-1: spillability doesn't influence decompose's OWN
+        # chronological head/mid/tail split — only which of raw_middle's
+        # turns spill_fn later treats as eligible — so raw_middle also
+        # holds the surrounding NEVER-tagged filler; every one of it is
+        # still NEVER, which is exactly this test's own point (a large,
+        # entirely-unspillable population, not just the 2 tool turns).
+        mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+        assert {"tc-never0", "tc-never1"} <= mid_ids, (
+            f"test setup sanity: both NEVER tool turns must land in "
+            f"raw_middle — got {mid_ids!r} — adjust t_max/content size"
+        )
+        assert all(t.get("spillability") == "never" for t in raw_middle), (
+            "test setup sanity: this test's own point is a population that "
+            "is ENTIRELY never — some raw_middle turn isn't"
+        )
+        raw_middle_population = len(raw_middle)
+
+        events: list = []
+        session._audit_events.add_subscriber(lambda e: events.append(e))
+
+        with pytest.raises(UnrecoveredError):
+            asyncio.run(
+                session._loop_driver._run_with_shrink(
+                    _ContentDrivenLoop(lambda history, user_text: True),
+                    "continue please", chain_id="c1",
+                )
+            )
+        asyncio.run(session._audit_events.drain())
+    finally:
+        stub.restore()
+
+    population_events = [
+        e for e in events if e.type == "spill_candidate_population_exhausted"
+    ]
+    # rung① exhausts on every ladder iteration this all-NEVER population
+    # reaches (each re-scans raw_middle fresh, #9.5's own no-cursor rule)
+    # — at least one, never pinning the exact ladder-iteration count
+    # (six questions Q2).
+    assert population_events, (
+        "expected at least one spill_candidate_population_exhausted event "
+        "— the exhaustion-reporting mechanism never fired"
+    )
+    for only in population_events:
+        assert only.data["population"] == raw_middle_population
+        assert only.data["never_count"] == raw_middle_population
+        assert only.data["first_choice_count"] == 0
+        assert only.data["last_resort_count"] == 0
+        # The accept-side witness itself: a correctly-built population's
+        # tier counts sum to exactly the population — the sum a reader
+        # would check to rule out "the construction path silently
+        # dropped a candidate".
+        assert (
+            only.data["first_choice_count"]
+            + only.data["last_resort_count"]
+            + only.data["never_count"]
+        ) == only.data["population"]

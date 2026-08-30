@@ -18,6 +18,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
+from reyn.runtime.chat_message import Spillability
+from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
 
@@ -247,12 +250,36 @@ class RouterLoopDriver:
         candidate moved no bytes" as failure for a mid-stage candidate —
         see ``_attempt_reactive_spill``.
 
-        Only ``role == "tool"`` turns with an inline string body are
-        candidates — an already-ref'd/non-string content has nothing left
-        to spill. ``new_msg`` (the turn's own newest user message) is never
-        passed in here at all — contract's own "user自身の最新messageは
-        落とさない" is satisfied structurally, not by a filter that could
-        miss it.
+        #5514 §7-1 (owner ruling, removes the OLD ``role == "tool"``
+        eligibility restriction): ANY turn with an inline string body is
+        a candidate now — eligibility is decided by
+        ``ChatMessage.spillability`` (persisted on ``meta`` — #5514 §2),
+        never by ``role``, which cannot express this axis at all (a
+        cross-agent injection carries no literal role; reyn's own FRAME
+        and MATERIAL notices share the same role — see
+        ``Spillability``'s own module docstring). ``spillability ==
+        NEVER`` turns are EXCLUDED entirely, not merely deprioritised —
+        losing them would falsify the model's own world-state (#5514
+        §1.1). An already-ref'd/non-string content still has nothing
+        left to spill regardless of its declared spillability.
+
+        ``new_msg`` (the turn's own newest user message) is never passed
+        in here at all — contract's own "user自身の最新messageは落とさ
+        ない" is satisfied structurally, not by a filter that could miss
+        it.
+
+        #5514 §3/§7-2: within ``head``/``tail`` — wire content the model
+        can read back directly — ``spillability`` plays NO part; only
+        size orders them (unchanged from before this PR). ``mid``
+        (``raw_middle``) is different: it is ``compact()``'s OWN input,
+        so which turn goes first there decides what the SUMMARY is built
+        from, not what the model reads back — so mid orders by tier
+        FIRST (``FIRST_CHOICE`` before ``LAST_RESORT``, size-descending
+        within each tier), stage second. #5531 §9.5 (owner, no cursor):
+        this ordering is recomputed FRESH from whatever candidates
+        remain each time it is called — never persisted state that could
+        go stale, the exact `_compact_attempt_len`-shaped bug class this
+        arc's own review is watching for.
 
         "Spilled candidates first" was considered and rejected (owner):
         once spilled, a candidate's only remaining state is ``lost`` either
@@ -261,13 +288,39 @@ class RouterLoopDriver:
         GC) serve different purposes (E = minimize round-trips and
         collateral spilling this turn; C = evict low-value data over time).
         """
-        def _spillable(turns: "list[dict]") -> "list[dict]":
-            cands = [
+        def _eligible(turns: "list[dict]") -> "list[dict]":
+            # A summary element (`wrap_summary_as_message`) never carries a
+            # `spillability` key — reserved/NEVER by construction (#5514
+            # §4's SP/new_msg/summary closing note). Its absence must not
+            # read as "eligible by default"; excluded by role explicitly,
+            # matching `_spill_fn`'s own same-PR guard.
+            return [
                 t for t in turns
-                if t.get("role") == "tool" and isinstance(t.get("content"), str)
+                if isinstance(t.get("content"), str)
+                and t.get("role") != SUMMARY_MESSAGE_ROLE
+                and t.get("spillability") != Spillability.NEVER.value
             ]
-            return sorted(cands, key=lambda t: -len(t["content"]))
-        return _spillable(head) + _spillable(raw_middle) + _spillable(tail)
+
+        def _by_size_desc(turns: "list[dict]") -> "list[dict]":
+            return sorted(turns, key=lambda t: -len(t["content"]))
+
+        _mid = _eligible(raw_middle)
+        _mid_ordered = (
+            _by_size_desc([
+                t for t in _mid if t.get("spillability") == Spillability.FIRST_CHOICE.value
+            ])
+            + _by_size_desc([
+                t for t in _mid
+                if t.get("spillability") not in (
+                    Spillability.FIRST_CHOICE.value, Spillability.NEVER.value,
+                )
+            ])
+        )
+        return (
+            _by_size_desc(_eligible(head))
+            + _mid_ordered
+            + _by_size_desc(_eligible(tail))
+        )
 
     async def _attempt_reactive_spill(self, *, chain_id: str) -> bool:
         """#5296 PR-2 ②③ / #5364 §1.6 (停止条件と束縛): spill the FIRST
@@ -571,22 +624,89 @@ class RouterLoopDriver:
             )
             _new_msg = {"role": "user", "content": user_text}
 
-            def _spill_fn(turn: dict) -> "dict | None":
-                # #5367③: injected into retry_loop, not imported by it —
-                # matches ``context_budget_advisor.py``'s own ``save_fn``
-                # injection style for ``cap_tool_result_content``. Only a
-                # tool-result turn with plain-str content is spillable
-                # (mirrors ``_spill_candidates``'s own filter); everything
-                # else reports "nothing to try" rather than raising.
-                if turn.get("role") != "tool" or not isinstance(turn.get("content"), str):
-                    return None
-                replacement = self._history_buffer.spill_turn_content(
-                    turn["content"], chain_id=chain_id,
-                    tool=turn.get("name") or "tool", seq=turn.get("seq", 1),
+            def _spill_fn(candidates: "list[dict]") -> "tuple[int, dict] | None":
+                # #5531 §10 rung① / #9.6: injected into retry_loop, not
+                # imported by it — matches ``context_budget_advisor.py``'s
+                # own ``save_fn``-injection style for ``cap_tool_result_
+                # content``. ``candidates`` IS ``raw_middle`` (retry_loop's
+                # own population for a compact()-overflow, §9.6's own
+                # table — never head/tail, which is a SEPARATE population
+                # this closure never sees: retry_loop only calls this when
+                # raw_middle is non-empty, which by this loop's own
+                # construction coincides exactly with a compact()-origin
+                # overflow — main_call only ever runs once raw_middle is
+                # empty, so a main_call-origin overflow can never reach
+                # this closure with a non-empty raw_middle to mis-spill).
+                #
+                # #5531 §10 (owner ruling, priority order): whole-list
+                # signature — engine.py stays Spillability-agnostic
+                # (never imports it); THIS closure owns the ordering,
+                # same tiers ``_spill_candidates`` uses (FIRST_CHOICE →
+                # LAST_RESORT → largest-first within a tier, NEVER
+                # excluded), scoped to raw_middle alone. #9.5's own
+                # no-cursor rule: re-scans ``candidates`` fresh on every
+                # call — no persisted position.
+                def _eligible(turns: "list[tuple[int, dict]]") -> "list[tuple[int, dict]]":
+                    return [
+                        (i, t) for i, t in turns
+                        if isinstance(t.get("content"), str)
+                        and t.get("role") != SUMMARY_MESSAGE_ROLE
+                        and t.get("spillability") != Spillability.NEVER.value
+                    ]
+
+                def _by_size_desc(
+                    turns: "list[tuple[int, dict]]",
+                ) -> "list[tuple[int, dict]]":
+                    return sorted(turns, key=lambda it: -len(it[1]["content"]))
+
+                _indexed = list(enumerate(candidates))
+                _elig = _eligible(_indexed)
+                _ordered = (
+                    _by_size_desc([
+                        it for it in _elig
+                        if it[1].get("spillability") == Spillability.FIRST_CHOICE.value
+                    ])
+                    + _by_size_desc([
+                        it for it in _elig
+                        if it[1].get("spillability") != Spillability.FIRST_CHOICE.value
+                    ])
                 )
-                if replacement is None or replacement == turn["content"]:
-                    return None
-                return {**turn, "content": replacement}
+                for idx, turn in _ordered:
+                    if self._history_buffer.is_already_spilled(turn["content"]):
+                        continue
+                    replacement = self._history_buffer.spill_turn_content(
+                        turn["content"], chain_id=chain_id,
+                        tool=turn.get("name") or "tool", seq=turn.get("seq", 1),
+                    )
+                    if replacement is None or replacement == turn["content"]:
+                        continue
+                    return idx, {**turn, "content": replacement}
+                # #5531 §9.6 (owner acceptance): "candidate 0" alone cannot
+                # tell "legitimately all-NEVER" apart from "the population
+                # got built wrong" — report the breakdown so a broken
+                # construction path can't silently masquerade as a normal
+                # exhaustion. Counted from `candidates` directly (not
+                # `_elig`/`_ordered`), so a candidate that fits NEITHER
+                # bucket (e.g. missing its `spillability` key, or non-str
+                # content) shows up as a gap between the sum and
+                # `population` — the exact signal this event exists for.
+                self._events.emit(
+                    "spill_candidate_population_exhausted",
+                    population=len(candidates),
+                    first_choice_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.FIRST_CHOICE.value
+                    ),
+                    last_resort_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.LAST_RESORT.value
+                    ),
+                    never_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.NEVER.value
+                    ),
+                )
+                return None
 
             # #5531 PR-2 (lead-coder ruling, issuecomment-5463249759 — the
             # fold-output-placement item deferred from PR-1): no
@@ -599,7 +719,20 @@ class RouterLoopDriver:
             # branch appending a fresh one to `head` (PR-2, engine.py).
             # Nothing here decides whether or where a summary appears.
             async def _router_main_call(*, SP, head, tail, new_msg):
-                _msgs = list(head) + list(tail)
+                # #5514 §7-3: `head`/`tail` came from `decompose_history_
+                # for_retry`, which annotates its OWN returned wire dicts
+                # with `spillability` for `_spill_candidates`'s own read
+                # (router_history_buffer.py's own comment on that
+                # annotation site). That key must never reach the REAL
+                # wire — strip it here, the one place `head`+`tail`
+                # actually become `loop.run`'s payload — rather than
+                # inside `_serialise_turn` (which stays the canonical,
+                # provider-identical quantity #2957 PR-B's own docstring
+                # requires).
+                _msgs = [
+                    {k: v for k, v in t.items() if k != "spillability"}
+                    for t in list(head) + list(tail)
+                ]
                 try:
                     _usage = await loop.run(user_text=user_text, history=_msgs)
                 except Exception as _call_exc:
@@ -638,14 +771,15 @@ class RouterLoopDriver:
                     learner=self._token_learner,
                     main_call=_router_main_call,
                     spill_fn=_spill_fn,
-                    max_iterations=self._compaction.max_shrink_iterations,
-                    # #4957: operator-tunable escape valve (chat.compaction.
-                    # max_shrink_iterations) — was previously always the
-                    # signature default (8) here, with no way to raise it.
-                    # Distinct from this class's own `_router_max_iterations`
-                    # (RouterLoop's tool-call loop bound, unrelated) —
-                    # `self._compaction` is retry_loop's OWN config, not
-                    # this driver's.
+                    # #5531 §10: no `max_iterations=` any more — retry_loop
+                    # abolished its iteration-count bound (see its own
+                    # "Bounded termination proof" docstring). #4957's
+                    # `chat.compaction.max_shrink_iterations` config knob
+                    # is therefore ORPHANED by this change (nothing reads
+                    # it any more) — disclosed, not silently left: removing
+                    # the knob itself (schema/validation/docs/the ~10 test
+                    # fixtures that still pass it) is its own scoped
+                    # follow-up, not folded into this already-large PR.
                 )
             except _UnrecoveredError as _unrecovered:
                 # #4954 (b), architect-ruled: on a BYTE-limit exhaustion

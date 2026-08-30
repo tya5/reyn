@@ -255,7 +255,6 @@ def test_retry_loop_success_emits_compaction_wire_bytes_measured() -> None:
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_success_call,
-        max_iterations=8,
     ))
 
     measured = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
@@ -306,7 +305,6 @@ def test_retry_loop_never_emits_compaction_wire_bytes_measured_for_a_non_byte_ov
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_overflow,
-            max_iterations=8,
         ))
     except UnrecoveredError:
         pass
@@ -349,7 +347,7 @@ def test_retry_loop_success_event_carries_accepted_true() -> None:
         new_msg={"role": "user", "content": "q", "seq": 3},
         cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
-        learner=learner, main_call=_success_call, max_iterations=8,
+        learner=learner, main_call=_success_call,
     ))
 
     measured = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
@@ -408,7 +406,7 @@ def test_retry_loop_that_only_413s_still_emits_wire_bytes_with_accepted_false() 
             SP="sp", head=head, raw_middle=[], tail=tail,
             new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
-            learner=learner, main_call=_always_413, max_iterations=40,
+            learner=learner, main_call=_always_413,
         ))
     except UnrecoveredError:
         pass
@@ -511,7 +509,7 @@ def test_retry_loop_success_event_carries_the_breakdown_fields() -> None:
     asyncio.run(retry_loop(
         SP=SP, head=head, raw_middle=[], tail=tail, new_msg=new_msg,
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
-        learner=learner, main_call=_success_call, max_iterations=8,
+        learner=learner, main_call=_success_call,
     ))
 
     (event,) = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
@@ -621,7 +619,7 @@ def test_retry_loop_that_only_413s_names_the_learned_limit_in_the_terminal_messa
             SP="sp", head=head, raw_middle=[], tail=tail,
             new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
-            learner=learner, main_call=_always_413, max_iterations=40,
+            learner=learner, main_call=_always_413,
         ))
         raise AssertionError("expected UnrecoveredError, none raised")
     except UnrecoveredError as exc:
@@ -674,7 +672,7 @@ def test_compaction_wire_bytes_measured_carries_only_byte_counts_never_content()
         raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
         new_msg={"role": "user", "content": "and this too", "seq": 3},
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
-        learner=learner, main_call=_success_call, max_iterations=8,
+        learner=learner, main_call=_success_call,
     ))
 
     (event,) = [e for e in seen if e.type == "compaction_wire_bytes_measured"]

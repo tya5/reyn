@@ -174,7 +174,6 @@ async def test_unrecognised_exception_recovers_when_shrinking_fixes_it(tmp_path)
         engine=engine,
         learner=_learner(tmp_path),
         main_call=_never_overflowing_main_call(),
-        max_iterations=10,
     )
     assert result is not None  # recovered — did NOT propagate the JSONDecodeError raw
 
@@ -185,19 +184,30 @@ async def test_unrecognised_exception_recovers_when_shrinking_fixes_it(tmp_path)
 @pytest.mark.asyncio
 async def test_input_independent_exception_hits_the_cap_not_an_infinite_loop(tmp_path) -> None:
     """Tier 2: #3783 stage 3 arm (b) — an exception that recurs regardless of
-    how far the input has shrunk (a Fake LLM raising unconditionally) still
-    hits the stage-2 same-cause cap and raises UnrecoveredError — proving the
-    inverted default does NOT trade a loud crash for an infinite shrink loop.
-    Also verifies stage 3's ② fix: the recorded cause is the WRAPPED
-    exception's type (``RuntimeError``), not the wrapper's constant
-    (``CompactionOverflowError``).
+    how far the input has shrunk (a Fake LLM raising unconditionally, and
+    NOT one of classify_llm_failure's FATAL/RETRYABLE members — falling
+    through to OVERFLOW is #5543's own documented default, matching what
+    this ladder already implicitly assumed pre-#5543) still hits a BOUNDED
+    terminal, not an infinite shrink loop — proving the inverted default
+    does not trade a loud crash for one.
+
+    #5531 §10 (2026-08-30) SUPERSEDES the ORIGINAL mechanism this test
+    pinned: T3 (the same-cause cap) is retired — the bound is now the
+    ``_compact_attempt_len`` halving ladder's own mid=1-turn floor
+    (raw_middle starts at 8 turns: 8→4→2→1, 4 compact() calls, each
+    failing identically, then the floor raises). Still verifies stage 3's
+    ② fix: the recorded cause on EVERY recover is the WRAPPED exception's
+    type (``RuntimeError``), not the wrapper's constant
+    (``CompactionOverflowError``) — that telemetry fix is independent of
+    which mechanism the count/floor is now.
 
     Falsification (performed for real): reverting ② (back to
     ``_cause = type(_overflow_exc).__name__``, dropping the ``__cause__``
     unwrap) makes the ``causes`` assertion below fail with
-    ``{"CompactionOverflowError"}`` — the SAME constant for every iteration
-    regardless of what actually failed, confirming the cause-naming fix is
-    load-bearing for the same-cause cap's correctness, not cosmetic.
+    ``{"CompactionOverflowError"}`` — the SAME constant for every
+    iteration regardless of what actually failed, confirming the
+    cause-naming fix is load-bearing for the audit trail's correctness,
+    not cosmetic.
     """
     call_count = [0]
 
@@ -221,25 +231,19 @@ async def test_input_independent_exception_hits_the_cap_not_an_infinite_loop(tmp
             engine=engine,
             learner=_learner(tmp_path),
             main_call=_never_overflowing_main_call(),
-            max_iterations=10,
         )
     await settle(engine._events)
 
-    # It did NOT grind through all 10 max_iterations — the cap fired early
-    # (same cause 3 times: _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS=2, so the
-    # 3rd occurrence emits-then-raises) — bounded, not merely
-    # eventually-terminating.
-    assert call_count[0] == 3
+    # #5531 §10: no max_iterations to grind through any more — the
+    # mid=1-turn floor bounds this instead, deterministically, via the
+    # halving arithmetic on this fixture's own 8-turn raw_middle
+    # (8→4→2→1, 4 compact() calls, no spill_fn injected so the floor
+    # raises on the 4th).
+    assert call_count[0] == 4
 
     recovered = [e for e in seen if e.type == "compaction_shrink_recovered"]
-    # Cap is > 2, so exactly 3 consecutive same-cause recovers are emitted
-    # before the 3rd one also raises — unpacking to exactly 3 elements
-    # raises ValueError otherwise (mirrors the stage-2 precedent in
-    # tests/services/test_pr_n6_compaction_overflow_retry.py).
-    first, second, third = recovered
-    assert first.data["consecutive"] == 1
-    assert second.data["consecutive"] == 2
-    assert third.data["consecutive"] == 3
+    # Unpacking to exactly 4 elements raises ValueError otherwise.
+    first, second, third, fourth = recovered
     causes = {e.data.get("cause") for e in recovered}
     assert causes == {"RuntimeError"}, (
         f"expected the WRAPPED exception's type name, got {causes!r} — "

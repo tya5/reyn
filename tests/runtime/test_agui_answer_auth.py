@@ -92,7 +92,9 @@ def _build_handler(tmp_path: Path, history: list[dict]):
     async def _put_outbox(_msg: OutboxMessage) -> None:
         pass
 
-    def _append_history(role: str, text: str, ts: str, meta: dict) -> None:
+    def _append_history(
+        role: str, text: str, ts: str, meta: dict, spillability=None,
+    ) -> None:
         history.append({"role": role, "text": text, "meta": meta})
 
     ref: list[InterventionHandler] = []

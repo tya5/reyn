@@ -13,7 +13,47 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Literal
+
+
+class Spillability(StrEnum):
+    """#5514 §1 — answers ONE question: "when shrinking, may this content
+    be spilled out (to a file, read back via tool), and in what order?"
+    The ONLY consumer is `mid`'s own spill ordering inside the compaction
+    overflow ladder (`retry_loop`/`_spill_candidates`, #5531 PR-3) — `mid`
+    is not wire, it is `compact()`'s own input, so what gets spilled
+    first is what the SUMMARY is built from; `head`/`tail` never look at
+    this (they stay largest-first, unconditionally — #5514 §3).
+
+    Deliberately NOT `role`-derived: `role` cannot express this axis.
+    Cross-agent injection arrives with no literal role at all (#4477);
+    reyn's own FRAME (`notify_turn_cancelled`) and MATERIAL
+    (`template_push`) share `role=="system"`; a hand-typed and a pasted
+    user message share `role=="user"`. See #5514 §2 for the full
+    argument and §4 for the call-site assignment table.
+
+    ``StrEnum``, not the ``(str, Enum)`` spelling this repo uses
+    elsewhere (see ``turn_origin.TurnOrigin``'s own module docstring for
+    the full argument) — a member persisted to ``history.jsonl`` via
+    ``asdict(msg)`` + ``json.dumps`` must serialise to its own wire
+    string, not ``Enum.__repr__``'s ``"Spillability.FIRST_CHOICE"``; a
+    value read back as a plain ``str`` must still compare equal to the
+    member. ``StrEnum`` gives both for free.
+    """
+
+    FIRST_CHOICE = "first_choice"  #: spill this before anything else
+    LAST_RESORT = "last_resort"    #: spill only once FIRST_CHOICE is exhausted
+    NEVER = "never"                #: never spilled — losing it falsifies the model's own world-state (#5514 §1.1), NOT merely "less detail". Still fully eligible for COMPACT (folded into prose like any other entry, #5531 invariant 5) — this only forbids the spill mechanism (content leaves the conversation to an external file).
+
+    @classmethod
+    def default(cls) -> "Spillability":
+        """#5514 §1: the safe-side default is `LAST_RESORT`, not `NEVER`
+        — an omitted declaration must degrade availability (spill later
+        than it should), never silently fail a turn. Making `NEVER` the
+        default would turn a missed call-site declaration into a turn
+        failure instead."""
+        return cls.LAST_RESORT
 
 # #73: typed (not form-sniffed) tool-outcome classification, stamped on a
 # ``role="tool"`` message's ``meta`` at PERSIST time by the ONE place that
@@ -195,6 +235,14 @@ class ChatMessage:
     # Mirrors the OpenAI tool-message ``name`` field; some providers
     # require it for tool-result attribution.
     name: str | None = None
+    # #5514 §2: the ONLY declaration point — each `_append_history` call
+    # site states what it just produced (a fact vs a deliverable, a
+    # frame vs material, hand-typed vs pasted — see #5514's own call-site
+    # table), never inferred later from `role` (which cannot express
+    # this axis at all — see `Spillability`'s own docstring). Defaults
+    # to `Spillability.default()` (`LAST_RESORT`) — see that method's
+    # own docstring for why the safe-side default is NOT `NEVER`.
+    spillability: Spillability = field(default_factory=Spillability.default)
 
     def __init__(
         self,
@@ -206,6 +254,7 @@ class ChatMessage:
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
+        spillability: "Spillability | None" = None,
     ) -> None:
         # Reject the pre-#383 ``"agent"`` spelling. Migration of on-disk
         # ``history.jsonl`` entries happens at load time via
@@ -226,6 +275,9 @@ class ChatMessage:
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.name = name
+        self.spillability = (
+            spillability if spillability is not None else Spillability.default()
+        )
 
     @property
     def text(self) -> str:

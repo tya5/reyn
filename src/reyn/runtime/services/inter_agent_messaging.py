@@ -32,6 +32,7 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from reyn.runtime.chat_message import Spillability
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session_pure import new_chain_id
 from reyn.runtime.task_types import Requester
@@ -140,7 +141,13 @@ class InterAgentMessaging:
         BCP-47 language code for localised user-facing error messages.  Falls
         back to ``"en"`` when the code is not in the message table.
     append_history:
-        Callable ``(role, text, ts, meta) -> None``.  Appends a history entry.
+        Callable ``(role, text, ts, meta, spillability) -> None``.  Appends
+        a history entry. #5514 §4d: this class decides ``spillability``
+        for all 4 of its own append sites (the audit-record turns on
+        both sides of an A2A hop, and the two injection sites) —
+        ``LAST_RESORT`` throughout (a cross-agent message is neither a
+        reyn-owned frame nor definitively unrecoverable-if-lost; owner
+        confirmed via #5514 §4).
     put_outbox:
         Async callable ``(OutboxMessage) -> None``.  Forwards messages to the
         session outbox.
@@ -177,7 +184,7 @@ class InterAgentMessaging:
         safety_extensions: dict[str, float],
         output_language: str | None = None,
         # Callbacks
-        append_history: "Callable[[str, str, str, dict], None]",
+        append_history: "Callable[[str, str, str, dict, Spillability], None]",
         put_outbox: "Callable[[OutboxMessage], Awaitable[None]]",
         handle_chat_limit_checkpoint: "Callable[..., Awaitable[LimitDecision]]",
         run_router_loop: "Callable[[str, str], Awaitable[None]]",
@@ -317,6 +324,7 @@ class InterAgentMessaging:
                 "source": "agent_request_outgoing",
                 "to_agent": to, "depth": depth, "chain_id": chain_id,
             },
+            Spillability.LAST_RESORT,  # #5514 §4d
         )
         self._events.emit(
             "agent_message_sent",
@@ -419,6 +427,7 @@ class InterAgentMessaging:
                 "from_agent": from_agent, "depth": depth,
                 "chain_id": chain_id,
             },
+            Spillability.LAST_RESORT,  # #5514 §4d
         )
         self._events.emit(
             "agent_request_received",
@@ -632,7 +641,10 @@ class InterAgentMessaging:
             # means nothing is surfaced, not "surfaced anyway, plus
             # settle() also ran a no-op disposition."
             async def _deliver() -> None:
-                self._append_history("user", injected_text, _now_iso(), history_meta)
+                self._append_history(
+                    "user", injected_text, _now_iso(), history_meta,
+                    Spillability.LAST_RESORT,  # #5514 §4d
+                )
                 await self._run_router_loop(injected_text, chain_id)
 
             await self._chains.settle(chain_id, on_settle="deliver", deliver=_deliver)
@@ -660,7 +672,10 @@ class InterAgentMessaging:
                 )
             return
 
-        self._append_history("user", injected_text, _now_iso(), history_meta)
+        self._append_history(
+            "user", injected_text, _now_iso(), history_meta,
+            Spillability.LAST_RESORT,  # #5514 §4d
+        )
         if pending is not None:
             await self._resolve_pending_chain(
                 pending, from_agent=from_agent, last_response=response,

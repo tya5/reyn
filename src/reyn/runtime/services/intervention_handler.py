@@ -24,6 +24,7 @@ from reyn.runtime.chat_message import (
     INTERVENTION_ANSWER_META_KEY,
     INTERVENTION_DETAIL_META_KEY,
     INTERVENTION_PROMPT_META_KEY,
+    Spillability,
 )
 from reyn.runtime.outbox import OutboxMessage
 from reyn.user_intervention import (
@@ -175,11 +176,17 @@ class InterventionHandler:
         Async callable ``(OutboxMessage) -> None`` — forwards intervention
         announcements and status hints to the session outbox.
     append_history:
-        Sync callable ``(role, text, ts, meta) -> None`` — appends a
-        conversational history entry for answered interventions.  The
-        callable receives the same positional kwargs as Session's
-        internal ``_append_history`` helper, except it is simplified to
-        only the fields InterventionHandler needs.
+        Sync callable ``(role, text, ts, meta, spillability) -> None`` —
+        appends a conversational history entry for answered
+        interventions.  The callable receives the same positional
+        kwargs as Session's internal ``_append_history`` helper, except
+        it is simplified to only the fields InterventionHandler needs.
+        #5514 §4c: this class is the one that decides ``spillability``
+        (the adapter it calls through is a pass-through) — an answered
+        intervention is treated the same as ordinary user input (§4.2's
+        own "cannot tell hand-typed from pasted here" reasoning applies
+        equally to an intervention answer, human or external-peer
+        authored) → ``Spillability.LAST_RESORT``.
     threat_scan:
         Optional ``ThreatScanConfig`` (FP-0050 / #1862, EP7).  When an
         answer is delivered from an *external* peer (A2A POST / webhook,
@@ -199,7 +206,7 @@ class InterventionHandler:
         journal: "SnapshotJournal",
         event_log: "EventLog",
         put_outbox: "Callable[[OutboxMessage], Awaitable[None]]",
-        append_history: "Callable[[str, str, str, dict], None]",
+        append_history: "Callable[[str, str, str, dict, Spillability], None]",
         threat_scan: "Any | None" = None,
     ) -> None:
         self._registry = intervention_registry
@@ -322,7 +329,12 @@ class InterventionHandler:
             # fence above. The key is the convention in
             # reyn.security.permissions.capability_profile.UNTRUSTED_META_KEY.
             meta["external_source"] = True
-        self._append_history("user", history_text, _now_iso(), meta)
+        # #5514 §4c: an intervention answer (human or external-peer) —
+        # cannot tell hand-typed apart from pasted here, same reasoning
+        # as ordinary user input (§4.2) → LAST_RESORT.
+        self._append_history(
+            "user", history_text, _now_iso(), meta, Spillability.LAST_RESORT,
+        )
         # ADR-0039 P3: fold in wire attribution (auth_user_id + connection id) so
         # a remote grant is attributable to WHO granted (the identity) and WHICH
         # terminal (the connection). Local UI callers pass None → shape unchanged.

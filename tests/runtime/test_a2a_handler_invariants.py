@@ -108,7 +108,9 @@ def _build_handler(
         if msg.kind == "agent" and _state["agent_replies"] is not None:
             _state["agent_replies"].append(msg.text)
 
-    def _append_history(role: str, text: str, ts: str, meta: dict) -> None:
+    def _append_history(
+        role: str, text: str, ts: str, meta: dict, spillability=None,
+    ) -> None:
         history_items.append({"role": role, "text": text, "ts": ts, "meta": meta})
 
     async def _handle_chat_limit_checkpoint(**kwargs):  # type: ignore[no-untyped-def]
