@@ -177,17 +177,28 @@ def test_marker_content_never_carries_argv_or_a_path_beyond_cwd(
 ) -> None:
     """Tier 2: acceptance ③ — a CONTENT inspection (not a behavioral
     strip-falsify): the marker this process writes about itself carries
-    EXACTLY {pid, ppid, cwd, subcommand, started_at} and nothing else —
-    no full argv, no path beyond cwd. Mirrors ``proctitle.py``'s own
-    explicit stance against leaking more than the minimum."""
+    EXACTLY {pid, ppid, cwd, subcommand, started_at, agent_name,
+    broker_session_id} and nothing else — no full argv, no path beyond
+    cwd. Mirrors ``proctitle.py``'s own explicit stance against leaking
+    more than the minimum. #5350 added the last two fields (both absent
+    — ``None`` — until a later :func:`record_process_identity` call sets
+    one or both); this test's own closed-set assertion is what makes a
+    future THIRD field a deliberate change, not a silent drift."""
     process_registry.register_process("chat")
     try:
         marker_path = _isolated_processes_dir / f"{os.getpid()}.json"
         raw = json.loads(marker_path.read_text(encoding="utf-8"))
 
-        assert set(raw.keys()) == {"pid", "ppid", "cwd", "subcommand", "started_at"}, (
+        assert set(raw.keys()) == {
+            "pid", "ppid", "cwd", "subcommand", "started_at",
+            "agent_name", "broker_session_id",
+        }, (
             f"#5226 REGRESSION: the marker carries an unexpected field — "
             f"got keys {sorted(raw.keys())!r}"
+        )
+        assert raw["agent_name"] is None and raw["broker_session_id"] is None, (
+            "#5350: register_process() must never guess an identity — "
+            "both fields start absent until record_process_identity sets one"
         )
         # `subcommand` must be the bare word passed in — never the full
         # argv this process was actually launched with (pytest's own,
