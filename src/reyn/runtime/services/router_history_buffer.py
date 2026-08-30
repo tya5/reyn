@@ -1025,8 +1025,8 @@ class RouterHistoryBuffer:
     def spill_turn_content(
         self, content: str, *, chain_id: str = "", tool: str = "tool", seq: int = 1,
     ) -> "str | None":
-        """#5296 PR-2: reactively spill one already-serialised tool-result
-        wire string — offload it via the SAME mechanism the existing
+        """#5296 PR-2: reactively spill one already-serialised turn's wire
+        string — offload it via the SAME mechanism the existing
         write-time cap already uses (``tool_result_cap.cap_tool_result_
         content`` + ``MediaStore.save_tool_result``, architect ruling:
         "既存機構を再利用"), record the resulting overlay entry so every
@@ -1035,6 +1035,19 @@ class RouterHistoryBuffer:
         text (``None`` if no ``media_store`` is configured — the same
         no-op degrade the write-time cap already has for that case; the
         caller treats that as "no progress" and escalates).
+
+        #5564: NOT tool-result-only despite the write seam's own name —
+        #5514 §7-1 made the caller's own candidate selection origin-blind
+        (``role == "tool"`` is no longer a spill-eligibility gate), so
+        *content* here can come from any turn with an inline string body,
+        never just a tool result. ``tool`` (below) is purely a filename/
+        manifest-entry label passed through to ``MediaStore.
+        save_tool_result`` — callers should pass the turn's own origin
+        (name or role), not rely on the ``"tool"`` default, when the
+        candidate is not itself a tool result (see both real call sites
+        in ``router_loop_driver.py``). ``MediaStore.is_history_content_
+        spill`` (the read-side classification this write feeds) has
+        never branched on origin either — see its own docstring.
 
         ``cap_tokens=1`` forces the offload branch unconditionally — this
         method is called only once a caller has ALREADY decided (by

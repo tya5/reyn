@@ -146,15 +146,15 @@ def test_falsify_spill_manifest_survives_a_real_wal_truncation_and_reconstruct(
     cycle, then open a BRAND-NEW ``MediaStore`` (mirrors
     ``test_prune_drops_a_manifest_entry_whose_file_was_deleted_out_of_band``'s
     own "a fresh construction = a later process" pattern) and confirm
-    ``is_tool_result_spill`` still recognizes the SAME path."""
+    ``is_history_content_spill`` still recognizes the SAME path."""
     store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     block = store.save_tool_result("big output", chain_id="c1", tool="exec", seq=1)
-    assert store.is_tool_result_spill(block["path"])  # test premise
+    assert store.is_history_content_spill(block["path"])  # test premise
 
     _churn_and_truncate_wal(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
     reopened = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
-    assert reopened.is_tool_result_spill(block["path"]), (
+    assert reopened.is_history_content_spill(block["path"]), (
         "the spill-manifest entry was lost across a WAL truncation it was "
         "never derived from. Same scope as the sibling above: not a witness "
         "for #4584, a guard against deriving this manifest from the WAL"
@@ -210,12 +210,12 @@ def test_falsify_spill_manifest_survives_the_cache_tier_being_deleted(
     process."""
     store = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     block = store.save_tool_result("big output", chain_id="c1", tool="exec", seq=1)
-    assert store.is_tool_result_spill(block["path"])  # test premise
+    assert store.is_history_content_spill(block["path"])  # test premise
 
     _wipe_cache(tmp_path)
 
     reopened = MediaStore(MediaStoreConfig(), project_root=tmp_path, agent_name="test-agent", session_id="test-session")
-    assert reopened.is_tool_result_spill(block["path"]), (
+    assert reopened.is_history_content_spill(block["path"]), (
         "the spill-manifest entry died when the cache tier was deleted — the "
         "manifest is back under the tier the layout doc says is safe to "
         "delete (#4584)"
