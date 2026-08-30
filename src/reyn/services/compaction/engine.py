@@ -1746,6 +1746,19 @@ class CompactionEngine:
             agent=self._recorder_agent,
             response_format=response_format,
             fallback_without_response_format=fallback_without_response_format,
+            # #5582 (owner proposal, 2026-08-30 — "compact はつねに stream
+            # false にする対応"): this call never passed a stream_override
+            # at all before this line, which lands on _streaming_enabled's
+            # own override=None branch — catalog-driven, defaults to
+            # streaming. Streaming buys nothing here: this call produces
+            # ONE summary, never passes on_content_delta, and nobody
+            # observes a delta from it — while compaction is itself one of
+            # retry_loop's two overflow-ladder entry points (#5531 §9.6),
+            # so a stream this call doesn't need can misdiagnose the SAME
+            # ladder that is supposed to recover it (#5581's own shape).
+            # Literal here, not a new purpose-keyed default mechanism —
+            # this is the one call site that needs it.
+            stream_override=False,
         )
 
     async def _resummarize_topic_arc(self, topic_arc: str, body_budget: int) -> str:
