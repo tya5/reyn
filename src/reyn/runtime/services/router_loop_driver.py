@@ -18,8 +18,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.runtime.session_pure import render_summary_for_storage
-
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
 
@@ -564,7 +562,11 @@ class RouterLoopDriver:
             )
             from reyn.services.compaction.engine import retry_loop as _retry_loop
             engine = self._compaction_controller._engine
-            _head, _raw_middle, _tail, _summary_dict, _ = (
+            # #5531 PR-2: decompose's own return signature is unchanged
+            # (kept 5-tuple — see decompose_history_for_retry's own
+            # docstring); the summary value is simply unused here now,
+            # since it already sits inside `_head`/`_tail` themselves.
+            _head, _raw_middle, _tail, _, _ = (
                 self._history_buffer.decompose_history_for_retry()
             )
             _new_msg = {"role": "user", "content": user_text}
@@ -586,24 +588,18 @@ class RouterLoopDriver:
                     return None
                 return {**turn, "content": replacement}
 
-            # #5531 (lead-coder ruling, issuecomment-5463249759): the
-            # fold's OUTPUT placement (whether `main_call` still needs a
-            # separate `summary=` at all) is PR-2 scope — the "no more
-            # position-computing" acceptance for PR-1 is only about the
-            # INPUT side (decompose's own turns filter, and the compact()
-            # -input splice in engine.py, both fixed elsewhere in this
-            # PR). This decoration is unchanged from before this PR.
-            async def _router_main_call(*, SP, head, summary, tail, new_msg):
-                _msgs = list(head)
-                if summary:
-                    _summary_text = render_summary_for_storage(summary)
-                    _msgs.append({
-                        "role": "assistant",
-                        "content": (
-                            "[summary of earlier conversation]\n" + _summary_text
-                        ),
-                    })
-                _msgs.extend(tail)
+            # #5531 PR-2 (lead-coder ruling, issuecomment-5463249759 — the
+            # fold-output-placement item deferred from PR-1): no
+            # `summary=` parameter and no `if summary:` decoration here
+            # any more — a summary element arrives ALREADY decorated
+            # (`wrap_summary_as_message`'s own `content` field, engine.py)
+            # wherever it naturally sits within `head`/`tail`: either
+            # from `decompose_history_for_retry`'s turns filter (PR-1,
+            # unchanged history) or from `retry_loop`'s own fold-success
+            # branch appending a fresh one to `head` (PR-2, engine.py).
+            # Nothing here decides whether or where a summary appears.
+            async def _router_main_call(*, SP, head, tail, new_msg):
+                _msgs = list(head) + list(tail)
                 try:
                     _usage = await loop.run(user_text=user_text, history=_msgs)
                 except Exception as _call_exc:
@@ -633,7 +629,6 @@ class RouterLoopDriver:
                 _shim = await _retry_loop(
                     SP=self._history_buffer.build_system_prompt(),
                     head=_head,
-                    summary=_summary_dict,
                     raw_middle=_raw_middle,
                     tail=_tail,
                     new_msg=_new_msg,

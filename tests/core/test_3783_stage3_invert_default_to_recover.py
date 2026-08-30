@@ -166,7 +166,6 @@ async def test_unrecognised_exception_recovers_when_shrinking_fixes_it(tmp_path)
     result = await retry_loop(
         SP="system prompt",
         head=[],
-        summary=None,
         raw_middle=_turns(8),
         tail=[],
         new_msg={"role": "user", "content": "new"},
@@ -214,7 +213,6 @@ async def test_input_independent_exception_hits_the_cap_not_an_infinite_loop(tmp
         await retry_loop(
             SP="system prompt",
             head=[],
-            summary=None,
             raw_middle=_turns(8),
             tail=[],
             new_msg={"role": "user", "content": "new"},

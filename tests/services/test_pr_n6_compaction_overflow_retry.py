@@ -488,7 +488,6 @@ def test_retry_loop_shrinks_tail_on_overflow(tmp_path) -> None:
     result = asyncio.run(retry_loop(
         SP="system",
         head=head,
-        summary=None,
         raw_middle=raw_middle,
         tail=tail,
         new_msg=new_msg,
@@ -538,7 +537,6 @@ def test_retry_loop_raises_unrecovered_when_all_at_min(tmp_path) -> None:
         asyncio.run(retry_loop(
             SP="sp",
             head=head,
-            summary=None,
             raw_middle=raw_middle,
             tail=tail,
             new_msg=new_msg,
@@ -571,7 +569,7 @@ def test_retry_loop_max_iterations_raises_unrecovered(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -608,7 +606,6 @@ def test_retry_loop_success_calls_learner_observe(tmp_path) -> None:
     asyncio.run(retry_loop(
         SP="system-prompt",
         head=head,
-        summary=None,
         raw_middle=[],
         tail=tail,
         new_msg=new_msg,
@@ -673,7 +670,7 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause(tmp_path) -> No
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=[],
+        SP="sp", head=head, raw_middle=[],
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -756,7 +753,7 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted(tmp_path
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=[],
+            SP="sp", head=head, raw_middle=[],
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -809,10 +806,25 @@ def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap(tmp_path) -> N
     production ``_cause == _last_recover_cause`` comparison to an
     always-True check (treating every recover as "the same cause"
     regardless of its actual type) makes this test go RED — the
-    ``all(... consecutive == 1 ...)`` assertion below fails because the
-    2nd, genuinely-different-cause recover is miscounted as a repeat of the
-    1st — confirming this test actually exercises cause-identity, not
-    iteration count alone.
+    ``all(... consecutive == 1 ...)`` assertion below fails because a
+    genuinely-different-cause recover is miscounted as a repeat of the
+    previous one — confirming this test actually exercises cause-identity,
+    not iteration count alone.
+
+    #5531 PR-2: ``main_call`` now ALTERNATES its wrapped cause on every
+    call (via ``__cause__``, never the SAME type twice running) — under
+    the OLD design a single alternation was enough because the loop
+    always terminated (via "all shrink paths exhausted") right after
+    iteration 1, before a same cause could ever repeat; PR-2's
+    reservation-based halving now applies to non-byte-limit overflows
+    too (previously exempt), so the loop tries harder and would
+    otherwise let ``_always_overflow``'s own constant cause repeat past
+    the same-cause cap — a DIFFERENT failure mode than the one this test
+    is about. Genuinely alternating on every call keeps testing the
+    actual claim (a truly-alternating cause never trips the cap) under
+    the new, more persistent ladder; the loop runs to
+    ``max_iterations`` exhaustion instead, an unrelated, expected
+    terminal this test does not otherwise assert on.
     """
     cfg = _make_cfg()
     engine = _CompactFailsOnceEngine()
@@ -824,18 +836,24 @@ def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap(tmp_path) -> N
     # (CompactionOverflowError) before main_call is ever reached; the shrink
     # escalation then halves raw_middle (still nonempty) for iteration 1,
     # where compact() succeeds and main_call raises ContextOverflowError — a
-    # genuinely different cause than iteration 0's.
+    # genuinely different cause than iteration 0's, and every call after
+    # that keeps alternating (see docstring above).
     raw_middle = _turns(["m"] * 4)
     head: list[dict] = []
     tail: list[dict] = []
     new_msg = {"role": "user", "content": "q", "seq": 99}
 
-    async def _always_overflow(**kwargs):
-        raise ContextOverflowError("main overflow")
+    _call_count = [0]
 
-    with pytest.raises(UnrecoveredError) as excinfo:
+    async def _always_overflow(**kwargs):
+        _call_count[0] += 1
+        if _call_count[0] % 2 == 1:
+            raise ContextOverflowError("main overflow A") from ValueError("A")
+        raise ContextOverflowError("main overflow B") from TypeError("B")
+
+    with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -843,17 +861,15 @@ def test_retry_loop_alternating_causes_do_not_trip_same_cause_cap(tmp_path) -> N
             max_iterations=8,
         ))
 
-    # Ends via ordinary shrink-path exhaustion (head/tail both empty and
-    # below their minimums once raw_middle drains), NOT the same-cause cap —
-    # the cap's message names "consecutive times"; this one does not.
-    assert "consecutive times" not in str(excinfo.value)
     recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
     # At least 2 recovers happened — slicing off the first 2 raises
     # IndexError below otherwise, without pinning the total count.
     first, second = recovered[0], recovered[1]
     assert first.data["cause"] == "CompactionOverflowError"
-    assert second.data["cause"] == "ContextOverflowError"
-    # Every recover stayed at consecutive=1 — no cause repeated back-to-back.
+    assert second.data["cause"] == "ValueError"
+    # Every recover stayed at consecutive=1 — no cause repeated back-to-back,
+    # the direct witness of this test's own claim, independent of how many
+    # iterations ran or what finally terminated the loop.
     assert all(e.data["consecutive"] == 1 for e in recovered)
 
 
@@ -928,7 +944,7 @@ def test_413_recovery_does_not_claim_exceeds_t_max(tmp_path) -> None:
     # silently re-introduce a timing-shaped dependency here.
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -970,7 +986,7 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1016,7 +1032,7 @@ def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search(tmp_path
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1069,7 +1085,7 @@ def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit(tmp_
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1195,7 +1211,7 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough(tmp_path) 
     # The pass-line: retry_loop must return WITHOUT raising — this is the
     # side none of the 3 existing 413 tests ever reach.
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        SP="sp", head=head, raw_middle=raw_middle,
         tail=tail, new_msg=new_msg, cfg=cfg, model=model,
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -1362,7 +1378,7 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state(tmp_p
     _max_iterations = 20
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1467,7 +1483,7 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=[], summary=None, raw_middle=raw_middle,
+        SP="sp", head=[], raw_middle=raw_middle,
         tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -1512,7 +1528,7 @@ def test_5367_3_spill_unavailable_still_raises_with_accurate_message(tmp_path) -
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=[], summary=None, raw_middle=raw_middle,
+            SP="sp", head=[], raw_middle=raw_middle,
             tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1583,7 +1599,7 @@ def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        SP="sp", head=head, raw_middle=raw_middle,
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -1612,7 +1628,15 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
     raw_middle directly, so a remainder left uncompacted would be silently
     dropped from what the LLM sees rather than raising or shrinking
     visibly.
+
+    #5531 PR-2: ``main_call`` no longer receives a separate ``summary=``
+    argument — the fold's output now lands in ``head`` itself (engine.py's
+    own fold-success branch). This test's witness moves accordingly: it
+    reads the summary-role element back out of the ``head`` ``main_call``
+    was actually called with.
     """
+    from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+
     cfg = _make_cfg()
     engine = _CompactFailsOnceEngine()
     learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
@@ -1622,15 +1646,15 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
     raw_middle = _turns(["m"] * 4)
     new_msg = {"role": "user", "content": "q", "seq": 99}
 
-    seen_summaries: list = []
+    seen_heads: list = []
 
     async def _succeeds(**kwargs):
         from types import SimpleNamespace
-        seen_summaries.append(kwargs.get("summary"))
+        seen_heads.append(kwargs.get("head"))
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        SP="sp", head=head, raw_middle=raw_middle,
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -1644,8 +1668,14 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
     # through to main_call with a summary that silently omits content).
     # Unpacking to exactly one element raises otherwise — a real failure
     # mode this test would otherwise need a bare len() check to catch.
-    [only_summary] = seen_summaries
-    assert only_summary is not None
+    [only_head] = seen_heads
+    # Unpacking to exactly one element raises otherwise — the same
+    # structural enforcement as `[only_head] = seen_heads` above, applied
+    # to head's own summary-role content: a duplicated-summary bug (or a
+    # dropped one) fails here at unpack time, not via a bare len() check.
+    [only_summary] = [
+        m for m in only_head if m.get("role") == SUMMARY_MESSAGE_ROLE
+    ]
     # covers_through_seq on the real ChatSummary stub reflects the LAST
     # turn compacted — the final (highest) seq in raw_middle, not the seq
     # at the END of only the first successfully-attempted half.
@@ -1698,7 +1728,7 @@ def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit(tmp_pat
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        SP="sp", head=head, raw_middle=raw_middle,
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -1737,7 +1767,7 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            SP="sp", head=head, raw_middle=raw_middle,
             tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1812,20 +1842,29 @@ def test_5531_no_interleaving_tail_condition_stays_false_once_exhausted(tmp_path
         from types import SimpleNamespace
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
 
-    asyncio.run(retry_loop(
-        SP="system",
-        head=head,
-        summary=None,
-        raw_middle=raw_middle,
-        tail=tail,
-        new_msg=new_msg,
-        cfg=cfg,
-        model="test-model",
-        engine=engine,  # type: ignore[arg-type]
-        learner=learner,
-        main_call=_main_call,
-        max_iterations=30,
-    ))
+    # #5531 PR-2: a fold's output now lands back in `head` (engine.py's own
+    # fold-success branch) — with this fixture's tiny head_budget=10, a
+    # freshly-appended summary element can itself exceed it, so
+    # convergence to a successful main_call is not guaranteed within
+    # max_iterations any more (an accepted consequence of PR-2's own
+    # max_iterations-bounded, not monotonic-decrease-bounded, termination
+    # — see retry_loop's own docstring). Tail's own monotonicity — this
+    # test's actual claim — holds regardless of whether the loop
+    # ultimately converges or exhausts.
+    with pytest.raises(UnrecoveredError):
+        asyncio.run(retry_loop(
+            SP="system",
+            head=head,
+            raw_middle=raw_middle,
+            tail=tail,
+            new_msg=new_msg,
+            cfg=cfg,
+            model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_main_call,
+            max_iterations=30,
+        ))
 
     assert any(
         later < earlier for earlier, later in zip(tail_token_history, tail_token_history[1:])
@@ -1857,6 +1896,7 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
         SUMMARY_MESSAGE_ROLE,
         ChatSummary,
         ComputedBudgets,
+        wrap_summary_as_message,
     )
 
     summary_role_counts: list[int] = []
@@ -1884,10 +1924,13 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
     learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
 
     tail = _turns(["t" * 400] * 6)
-    head = _turns(["h" * 400] * 6)
+    prior_summary = {"topic_arc": "already-compacted earlier span", "covers_through_seq": 1}
+    # #5531 PR-2: no separate `summary=` argument any more — a pre-existing
+    # summary is embedded directly as the OLDEST element of `head` (exactly
+    # where decompose_history_for_retry's own turns filter would place it).
+    head = [wrap_summary_as_message(prior_summary)] + _turns(["h" * 400] * 6)
     raw_middle: list[dict] = []
     new_msg = {"role": "user", "content": "hi", "seq": 99}
-    prior_summary = {"topic_arc": "already-compacted earlier span", "covers_through_seq": 1}
 
     async def _main_call(**kwargs):
         t = kwargs["tail"]
@@ -1899,20 +1942,29 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
         from types import SimpleNamespace
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
 
-    asyncio.run(retry_loop(
-        SP="system",
-        head=head,
-        summary=prior_summary,
-        raw_middle=raw_middle,
-        tail=tail,
-        new_msg=new_msg,
-        cfg=cfg,
-        model="test-model",
-        engine=engine,  # type: ignore[arg-type]
-        learner=learner,
-        main_call=_main_call,
-        max_iterations=30,
-    ))
+    # #5531 PR-2: a fold's output now lands back in `head` (see engine.py's
+    # own fold-success branch) — with this fixture's deliberately tiny
+    # head_budget=10, even one small summary element alone can keep
+    # re-triggering Phase 2 (never converging to a successful main_call
+    # within max_iterations); that is an accepted, avowed consequence of
+    # PR-2's own termination redesign (max_iterations-bounded, not
+    # monotonic-decrease-bounded — see retry_loop's own docstring). This
+    # test's actual claim (at most one summary element per compact() call)
+    # is checked below regardless of how the loop ultimately ends.
+    with pytest.raises(UnrecoveredError):
+        asyncio.run(retry_loop(
+            SP="system",
+            head=head,
+            raw_middle=raw_middle,
+            tail=tail,
+            new_msg=new_msg,
+            cfg=cfg,
+            model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_main_call,
+            max_iterations=30,
+        ))
 
     assert summary_role_counts, "expected at least one compact() call"
     for count in summary_role_counts:
@@ -1921,3 +1973,84 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
             f"{SUMMARY_MESSAGE_ROLE!r}-role element — got {count} in one "
             f"call; full history {summary_role_counts!r}"
         )
+
+
+def test_5531_pr2_all_summary_head_and_tail_reaches_reservation_floor(tmp_path) -> None:
+    """Tier 2: #5531 PR-2 (owner ruling, issuecomment-5465590083) — Phase
+    1/2's own no-progress guard (``_has_non_summary``). When ``head``/
+    ``tail`` hold NOTHING but a reserved summary element, Phase 1/2's
+    token-threshold condition alone stays True forever (a summary is
+    never shrunk by this ladder — reserved) even though NOTHING can
+    actually be moved into ``raw_middle``. Without the guard this test
+    goes RED: Phase 2 "handles" the overflow every iteration by pulling
+    the summary element itself into raw_middle (undoing the reservation
+    entirely) — this test drives a REAL retry_loop to prove that instead,
+    the reservation ladder's own floor-check is reached and
+    ``UnrecoveredError`` is raised naming the summary's own token size,
+    well within a small ``max_iterations`` budget (never hitting
+    exhaustion, which is what a starved/no-progress loop would do).
+
+    Falsification (performed during review, see #5531 PR-2's own commit):
+    removing the ``_has_non_summary`` guard makes this scenario spin
+    through every iteration with head/tail unchanged, exhausting
+    ``max_iterations`` with the GENERIC "without convergence" message —
+    never reaching the reservation floor's own named-summary message
+    this test asserts on.
+    """
+    from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE, wrap_summary_as_message
+
+    cfg = _make_cfg()
+
+    class _NeverCompacts:
+        def __init__(self) -> None:
+            self.budgets = compute_budgets(
+                cfg, "test-model", T_SP=1, T_comp_SP=100,
+            )
+            self._events = EventLog()
+            self._T_comp_SP = 100
+
+    engine = _NeverCompacts()
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    # head/tail hold ONLY a summary element each — nothing non-summary to
+    # ever move into raw_middle. A real overflow (never resolves) forces
+    # the ladder all the way to Phase 1/2, where the no-progress guard is
+    # the only thing standing between "correctly starved, fall through to
+    # the reservation floor" and "spin forever making zero progress".
+    head = [wrap_summary_as_message({"topic_arc": "s" * 200, "covers_through_seq": 1})]
+    tail = [wrap_summary_as_message({"topic_arc": "t" * 200, "covers_through_seq": 2})]
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    class _FakeStatusError(Exception):
+        def __init__(self, message: str, *, status_code: int) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    # A byte-limit cause (413) — exempt from the same-cause cap (#4885),
+    # so the run reaches the reservation ladder's own many halvings
+    # instead of tripping that unrelated cap first.
+    async def _always_overflow(**kwargs):
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, raw_middle=[], tail=tail, new_msg=new_msg,
+            cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_overflow,
+            max_iterations=20,
+        ))
+
+    message = str(excinfo.value)
+    assert "the current summary" in message, (
+        f"expected the reservation floor's own named-summary terminal — "
+        f"a starved, no-progress Phase 1/2 loop would instead exhaust "
+        f"max_iterations with the generic message; got: {message!r}"
+    )
+    # Both summary elements are still exactly where they started — never
+    # pulled into raw_middle, the reservation genuinely held.
+    assert head[0].get("role") == SUMMARY_MESSAGE_ROLE
+    assert tail[0].get("role") == SUMMARY_MESSAGE_ROLE

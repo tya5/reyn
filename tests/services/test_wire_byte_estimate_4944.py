@@ -26,6 +26,7 @@ from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
 from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
 from reyn.services.compaction.engine import (
+    ChatSummary,
     ComputedBudgets,
     _estimate_bytes_list,
     estimate_turn_bytes,
@@ -178,10 +179,26 @@ def test_estimate_wire_bytes_grows_when_a_large_image_data_url_is_in_tail() -> N
 
 
 class _MinimalCompactionEngine:
-    """Smallest real collaborator retry_loop needs on its success path —
-    no compact() call is exercised here (raw_middle stays empty), so this
-    only needs the budgets/_events/_T_comp_SP surface retry_loop actually
-    reads."""
+    """Smallest real collaborator retry_loop needs — the budgets/_events/
+    _T_comp_SP surface every test in this file reads, plus a real (if
+    trivial) ``compact()`` so a byte-limit-exhaustion fixture's own
+    head/tail-floor shrink (#5531 PR-2: both Phase 1 and Phase 2 can now
+    genuinely reach 0 as the reservation ladder halves the ceiling) has
+    something real to fold into, rather than raising ``AttributeError``.
+
+    #5531 PR-2 finding: this class used to have NO ``compact()`` at all
+    (docstring claimed "no compact() call is exercised here, raw_middle
+    stays empty") — false even pre-PR-2: once head/tail's derived
+    minimums reach 0, `raw_middle` DOES receive content, and `compact()`
+    WAS being called, raising AttributeError, silently absorbed by
+    retry_loop's own "every compact()-call exception recovers by
+    default" handling (#3783 stage 3) as a single-turn-floor "defer".
+    That produced a genuinely fragile 2-iteration oscillation (a real
+    413 from main_call, then an AttributeError from the missing
+    compact(), alternating) whose OUTCOME happened to depend on whether
+    ``max_iterations`` landed on an odd or even phase of that cycle — a
+    real ``compact()`` removes the oscillation and the fragility with
+    it, independent of any iteration-count coincidence."""
 
     def __init__(self) -> None:
         self.budgets = ComputedBudgets(
@@ -193,6 +210,9 @@ class _MinimalCompactionEngine:
         )
         self._events = EventLog()
         self._T_comp_SP = 100
+
+    async def compact(self, input_chunk, *, covers_through=None):
+        return ChatSummary(topic_arc="stub", covers_through_seq=0)
 
 
 def test_retry_loop_success_emits_compaction_wire_bytes_measured() -> None:
@@ -230,7 +250,7 @@ def test_retry_loop_success_emits_compaction_wire_bytes_measured() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP=SP, head=head, summary=None, raw_middle=[],
+        SP=SP, head=head, raw_middle=[],
         tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
@@ -279,7 +299,7 @@ def test_retry_loop_never_emits_compaction_wire_bytes_measured_for_a_non_byte_ov
     try:
         asyncio.run(retry_loop(
             SP="sp", head=[{"role": "user", "content": "h", "seq": 1}],
-            summary=None, raw_middle=[],
+            raw_middle=[],
             tail=[{"role": "user", "content": "t", "seq": 2}],
             new_msg={"role": "user", "content": "q", "seq": 3},
             cfg=cfg, model="test-model",
@@ -324,7 +344,7 @@ def test_retry_loop_success_event_carries_accepted_true() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP="sp", head=[{"role": "user", "content": "h", "seq": 1}], summary=None,
+        SP="sp", head=[{"role": "user", "content": "h", "seq": 1}],
         raw_middle=[], tail=[{"role": "user", "content": "t", "seq": 2}],
         new_msg={"role": "user", "content": "q", "seq": 3},
         cfg=cfg, model="test-model",
@@ -385,7 +405,7 @@ def test_retry_loop_that_only_413s_still_emits_wire_bytes_with_accepted_false() 
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=[], tail=tail,
+            SP="sp", head=head, raw_middle=[], tail=tail,
             new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner, main_call=_always_413, max_iterations=40,
@@ -489,7 +509,7 @@ def test_retry_loop_success_event_carries_the_breakdown_fields() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP=SP, head=head, summary=None, raw_middle=[], tail=tail, new_msg=new_msg,
+        SP=SP, head=head, raw_middle=[], tail=tail, new_msg=new_msg,
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
         learner=learner, main_call=_success_call, max_iterations=8,
     ))
@@ -598,7 +618,7 @@ def test_retry_loop_that_only_413s_names_the_learned_limit_in_the_terminal_messa
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=head, summary=None, raw_middle=[], tail=tail,
+            SP="sp", head=head, raw_middle=[], tail=tail,
             new_msg=new_msg, cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner, main_call=_always_413, max_iterations=40,
@@ -651,7 +671,7 @@ def test_compaction_wire_bytes_measured_carries_only_byte_counts_never_content()
 
     asyncio.run(retry_loop(
         SP="system prompt with secrets", head=[{"role": "user", "content": "sensitive", "seq": 1}],
-        summary=None, raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
+        raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
         new_msg={"role": "user", "content": "and this too", "seq": 3},
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
         learner=learner, main_call=_success_call, max_iterations=8,
