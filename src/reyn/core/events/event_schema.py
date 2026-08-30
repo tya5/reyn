@@ -154,6 +154,22 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "hook_push_rejected_oversized": frozenset({
         "hook_name", "declared_max_chars", "actual_chars",
     }),
+    # #5531 §9.6 (owner acceptance, 2026-08-30): "candidate 0" is
+    # AMBIGUOUS by itself — a population that is genuinely all-NEVER
+    # (correct, nothing to spill) and a population-construction path
+    # silently broken (a real bug) produce the SAME zero-candidate
+    # observation with no other signal. Fired whenever `_spill_fn`
+    # (router_loop_driver.py) scans a non-empty `raw_middle` and finds
+    # no usable candidate — `population`/`first_choice_count`/
+    # `last_resort_count`/`never_count` say WHY: if the three counts
+    # sum to `population`, the population was built correctly and is
+    # legitimately exhausted; if they don't, the construction path
+    # itself is the bug (a candidate with no `spillability` key at all,
+    # or a non-string content, falls into neither eligible bucket NOR
+    # `never_count` — this event's own consumer can compute that gap).
+    "spill_candidate_population_exhausted": frozenset({
+        "population", "first_choice_count", "last_resort_count", "never_count",
+    }),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
@@ -391,6 +407,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "hook_push_fired",
     "hook_push_rejected_oversized",
     "hook_shell_executed",
+    "spill_candidate_population_exhausted",
     "hooks_layer_rejected",
     "inbox_cancel",
     "index_dropped",

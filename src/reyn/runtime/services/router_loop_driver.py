@@ -681,6 +681,31 @@ class RouterLoopDriver:
                     if replacement is None or replacement == turn["content"]:
                         continue
                     return idx, {**turn, "content": replacement}
+                # #5531 §9.6 (owner acceptance): "candidate 0" alone cannot
+                # tell "legitimately all-NEVER" apart from "the population
+                # got built wrong" — report the breakdown so a broken
+                # construction path can't silently masquerade as a normal
+                # exhaustion. Counted from `candidates` directly (not
+                # `_elig`/`_ordered`), so a candidate that fits NEITHER
+                # bucket (e.g. missing its `spillability` key, or non-str
+                # content) shows up as a gap between the sum and
+                # `population` — the exact signal this event exists for.
+                self._events.emit(
+                    "spill_candidate_population_exhausted",
+                    population=len(candidates),
+                    first_choice_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.FIRST_CHOICE.value
+                    ),
+                    last_resort_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.LAST_RESORT.value
+                    ),
+                    never_count=sum(
+                        1 for t in candidates
+                        if t.get("spillability") == Spillability.NEVER.value
+                    ),
+                )
                 return None
 
             # #5531 PR-2 (lead-coder ruling, issuecomment-5463249759 — the
