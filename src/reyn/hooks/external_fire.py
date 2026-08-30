@@ -59,6 +59,16 @@ _DEFAULT_MAXSIZE = 32
 # established the cadence value, this one reuses it rather than re-deriving.
 _AUDIT_EVERY_N_DROPS = 100
 
+# #5515 review (lead-coder BLOCKING, 2026-08-30): the string this class
+# identifies itself by at TWO independent call sites -- observe_drain_task_
+# death's own ``label=`` (submit(), below) and ingress_bridge_dropped's own
+# ``source=`` (_audit_drop, below). Before this constant the two were
+# separately-typed literals that happened to read the same; nothing forced
+# them to stay in sync (a rename of one, missed at the other, would desync
+# silently -- neither call site would error, only an operator correlating
+# the two by eye would notice). One constant, both sites read it.
+_SOURCE_LABEL = "_SessionFireBridge"
+
 
 class _SessionFireBridge:
     """Per-Session bounded dispatch bridge (#2620) — the ``_BoundedEventBridge``
@@ -157,7 +167,7 @@ class _SessionFireBridge:
                 functools.partial(
                     observe_drain_task_death,
                     emit_event=(audit_events.emit if audit_events is not None else None),
-                    label="_SessionFireBridge",
+                    label=_SOURCE_LABEL,
                 )
             )
         try:
@@ -183,10 +193,11 @@ class _SessionFireBridge:
         posture :meth:`submit` already uses for its own drain-task-death
         observer a few lines up, not a new idiom. Never raises (best-effort
         telemetry) and never includes the dropped ``template_vars`` —
-        ``source`` (a fixed literal, ``"_SessionFireBridge"`` — matches the
-        label :meth:`submit` already passes ``observe_drain_task_death``,
-        distinguishing this bridge's drops from ``_BoundedEventBridge``'s on
-        the shared kind), ``point``, and the cumulative ``drop_count`` only."""
+        ``source`` (``_SOURCE_LABEL``, module-level — the SAME constant
+        :meth:`submit` already passes ``observe_drain_task_death`` as its
+        own ``label``, distinguishing this bridge's drops from
+        ``_BoundedEventBridge``'s on the shared kind), ``point``, and the
+        cumulative ``drop_count`` only."""
         audit_events = getattr(self._session, "_audit_events", None)
         if audit_events is None:
             return
@@ -195,7 +206,7 @@ class _SessionFireBridge:
         try:
             audit_events.emit(
                 "ingress_bridge_dropped",
-                source="_SessionFireBridge",
+                source=_SOURCE_LABEL,
                 point=point,
                 drop_count=self._drop_count,
             )

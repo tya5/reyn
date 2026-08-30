@@ -20,6 +20,27 @@ below reads ``received`` only after ``await settle(session)`` —
 ``tests/_support/events.settle``, the same wrapper
 ``test_2761_pr2_hotreload_immediate_apply.py`` uses.
 
+**Two different ``source`` assertions live in this file, protecting two
+different things (lead-coder review, 2026-08-30 — read this before adding
+a third)**:
+
+- ``test_queue_full_drop_is_fail_visible`` asserts ``source ==
+  "_SessionFireBridge"`` — LITERAL equality, deliberately. It protects
+  ``docs/reference/runtime/events.md``'s 3-row ``source`` table, which
+  names this literal explicitly; nothing else would flip red if this
+  bridge's ``_SOURCE_LABEL`` were renamed out from under that table, so
+  this assertion is the thing that forces the doc update.
+- ``test_source_distinguishes_this_bridge_from_the_ingress_bridge`` (PR1's
+  own review requirement, carried over) asserts non-collision only
+  (``!=``) — deliberately NEVER equality to a literal, because the
+  property it protects (this bridge and ``_BoundedEventBridge`` cannot
+  report the same ``source`` on the shared kind) does not depend on what
+  either name currently is, and a rename of EITHER one must not flip it
+  red on its own.
+
+Do not "fix" either into matching the other's style — they are answering
+different questions.
+
 Policy (docs/deep-dives/contributing/testing.md): real instances only — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``.
 """
@@ -49,7 +70,12 @@ async def test_queue_full_drop_is_fail_visible(tmp_path: Path):
     metadata-only ``ingress_bridge_dropped`` P6 audit-event on the FIRST
     drop, reaching a subscriber registered via
     ``session.subscribe_audit_events`` — ``source``/``point``/``drop_count``
-    only, never the fired point's own ``template_vars``.
+    only, never the fired point's own ``template_vars``. ``source`` is
+    asserted by LITERAL equality here, deliberately — see this module's
+    own docstring ("Two different source assertions...") for why: it
+    guards ``events.md``'s 3-row table, not collision-freedom (that is
+    ``test_source_distinguishes_this_bridge_from_the_ingress_bridge``'s
+    own, separate job, below).
 
     No ``await`` between :func:`fire_and_forget` calls, so the lazily-
     started drain task never gets a chance to run before the queue
@@ -124,7 +150,10 @@ async def test_source_distinguishes_this_bridge_from_the_ingress_bridge(tmp_path
     non-collision assertion (``!=``, never equality to a literal) PR1's own
     ``test_source_distinguishes_which_adapters_bridge_dropped`` uses, for
     the same reason: a future rename of either source must not flip this
-    red.
+    red. This is the ONLY non-collision-style assertion in this file — its
+    sibling above (``test_queue_full_drop_is_fail_visible``) intentionally
+    uses the opposite policy (literal equality) for a different, disclosed
+    reason; see this module's own docstring.
 
     Strip-falsify (performed during review): with ``_SessionFireBridge.
     submit``'s own ``self._audit_drop(point)`` call removed, this test (and
