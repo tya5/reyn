@@ -65,12 +65,21 @@ def test_end_to_end_list_mcp_servers_matches_conversation_and_llm_text(tmp_path)
 
     outbox = session.outbox
     forwarder = ChatLifecycleForwarder(outbox)
+    # #5467: subscribing a REAL production ``ChatLifecycleForwarder`` — this
+    # test drives the actual production wiring mechanism itself, not a
+    # test-side event collector. ``collect_events()`` returns a plain list
+    # built from ITS OWN subscriber; it has no way to attach an existing,
+    # already-constructed subscriber object like ``forwarder`` in its place.
+    # Out of #5467's scope (the "hand-rolled Sink instance" gap #5465 named,
+    # here on the production side rather than a test double).
     session._audit_events.add_subscriber(forwarder)
 
     loop = RouterLoop(host=session.router_host, chain_id="c1", router_model="gpt-4o")
     catalog = {"list_mcp_servers": {"function": {"name": "list_mcp_servers", "parameters": {}}}}
     ctx = DispatchContext(
         caller_kind="router", caller_id="alice", chain_id="c1",
+        # #5467: DispatchContext's own ``events`` param requires a real
+        # EventLog (production wiring) — out of scope, same reason as above.
         tool_catalog=catalog, events=session._audit_events,
     )
 

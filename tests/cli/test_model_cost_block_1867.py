@@ -70,6 +70,14 @@ class _FakeSession:
         # #4597 slice②: real EventLog, no fake — snapshot() is reconstructed
         # from a subscriber capture (mirrors testing.md's "snapshot-style
         # read", never asserting on the collaborator's own private state).
+        # #5467: this ``_audit_events`` is ``_FakeSession``'s OWN attribute
+        # (this class is a hand-built stand-in, never a real
+        # ``reyn.runtime.session.Session``) — #5467's migration is about a
+        # caller reaching into a real Session's private log from OUTSIDE it;
+        # here the object constructs and subscribes to its own log inside
+        # its own ``__init__``, which ``collect_events(self)``/``settle(self)``
+        # have no meaning for (there is no Session to resolve to). Out of
+        # #5467's scope, not a residual instance of the pattern it closes.
         self._audit_events = EventLog()
         self._audit_snapshot: list[tuple[str, dict]] = []
         self._audit_events.add_subscriber(
