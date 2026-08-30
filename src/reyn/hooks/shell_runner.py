@@ -437,7 +437,20 @@ def _report_unapplied_agent_policy(
                 effective=effective_policy_value(policy, policy_field),
             )
         except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-            _log.debug("shell-hook: emit_event failed for %r: %s", hook_label, exc)
+            # #5536 group A (architect ruling): an emit_event failure loses
+            # OBSERVATION only (the side effect it was reporting already
+            # happened) — so it may stay best-effort, but silence here is
+            # self-concealing: the ONE channel that would normally report
+            # "telemetry broke" is telemetry itself. _log.warning, never a
+            # NEW audit-event (auditing this failure through the same
+            # machinery that just failed would be its own quieter failure
+            # mode) — WARNING, not the DEBUG this used to be, so it survives
+            # a shipped-default log level. This rationale is written once,
+            # here; the other 3 #5536 group-A sites (shell_runner.py's own
+            # hook_shell_executed emit below, dispatcher.py's hook_push_
+            # rejected_oversized and hook_push_fired emits) point back to
+            # it rather than repeating the same prose 4 times.
+            _log.warning("shell-hook: emit_event failed for %r: %s", hook_label, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -819,7 +832,10 @@ async def run_shell_hook(
                     denial_class=denial_class,
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-                _log.debug("shell-hook: emit_event failed for %r: %s", command, exc)
+                # #5536 group A — see _report_unapplied_agent_policy's own
+                # except branch above for the full rationale (never
+                # audit-event, WARNING not DEBUG).
+                _log.warning("shell-hook: emit_event failed for %r: %s", command, exc)
 
         # stderr is ALWAYS logs. stdout is logs for exec; for exec_capture
         # (capture_stdout) it is the JSON push-directive the caller parses — so
