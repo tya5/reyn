@@ -28,7 +28,12 @@ ADR-0044's termination argument was a **well-founded measure** — a proof that 
 - **An empty population sends nothing** — the tier is skipped, never probed with a request that carries no spill.
 - `LAST_RESORT` is reached only when `FIRST_CHOICE` is exhausted, unchanged from 0044.
 
-**The previous behaviour stays available as configuration**, defaulting to the batched form: one setting selects "one spill-out at a time" versus "every candidate of the same `spillability`". It is exactly that choice — not a numeric batch size.
+**The previous behaviour stays available as configuration**, defaulting to the batched form:
+`chat.compaction.spill_per_request` takes `spillability` (default — one request carries a whole
+tier) or `turn` (one spill-out per request). Both values are units, and the setting is exactly that
+choice — deliberately not a numeric batch size, which would add a knob nobody can derive a correct
+value for. `turn` belongs next to a line saying it trades requests for over-spill and is not the
+safe side.
 
 ## Consequences
 
