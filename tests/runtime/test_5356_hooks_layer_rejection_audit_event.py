@@ -16,6 +16,7 @@ from pathlib import Path
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 _AGENT = "wp-agent"
 
@@ -51,8 +52,7 @@ def test_write_paths_self_grant_drops_the_layer_and_emits_one_event(
     )
     session = _make_session(tmp_path)
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
     registry = session._build_hook_registry({})
 
     assert registry.hooks_for("turn_end") == [], (
@@ -78,8 +78,7 @@ def test_a_valid_per_agent_layer_emits_no_rejection_event(
     )
     session = _make_session(tmp_path)
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
     registry = session._build_hook_registry({})
 
     assert len(registry.hooks_for("turn_end")) == 1, "the valid hook must load"

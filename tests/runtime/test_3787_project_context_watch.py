@@ -140,7 +140,7 @@ def test_session_constructs_a_second_watcher_for_the_agent_own_file(tmp_path) ->
         project_context="",
         workspace_state_dir=workspace_state_dir,
     )
-    collected = collect_events(s._audit_events)
+    collected = collect_events(s)
 
     agent_watcher = s._agent_context_watcher
     watcher_path = agent_watcher._path

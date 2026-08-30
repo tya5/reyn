@@ -45,6 +45,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 class _FakeStatusError(Exception):
@@ -146,8 +147,7 @@ def test_summary_reaches_main_call_after_compaction_empties_raw_middle(
     loop = _ContentDrivenLoop(
         lambda history, user_text: _wire_estimate(history) > 2800
     )
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     result = asyncio.run(
         session._loop_driver._run_with_shrink_and_byte_reduction(

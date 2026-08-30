@@ -205,12 +205,12 @@ async def test_put_outbox_emits_agent_response_committed_for_kind_agent(tmp_path
     ``agent_response_committed`` for a ``kind="agent"`` message, carrying
     the message's own text and chain_id."""
     session = _make_session(tmp_path)
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     await session._put_outbox(OutboxMessage(
         kind="agent", text="the final reply", meta={"chain_id": "c1"},
     ))
-    await settle(session._audit_events)
+    await settle(session)
 
     committed = [e for e in collected if e.type == "agent_response_committed"]
     assert committed
@@ -225,9 +225,9 @@ async def test_put_outbox_does_not_emit_for_non_agent_kinds(tmp_path):
     ``agent_response_committed`` — this event is scoped to what the
     model actually said to the user, not every outbox traffic kind."""
     session = _make_session(tmp_path)
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     await session._put_outbox(OutboxMessage(kind="status", text="thinking..."))
-    await settle(session._audit_events)
+    await settle(session)
 
     assert not any(e.type == "agent_response_committed" for e in collected)

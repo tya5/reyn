@@ -61,6 +61,7 @@ from reyn.runtime.router_loop import _EMPTY_RESPONSE_MSG
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionAnswer
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 AGENT = "hard-cancel-agent"
 # #5450: the real stub's canned reply for an empty/no-tool-call completion
@@ -197,7 +198,7 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(
     # is emitted in run_one_iteration BEFORE the turn's own task starts, so
     # its presence for c-hard-cancel is unaffected by that turn's later
     # cancellation.
-    await session._audit_events.drain()
+    await settle(session)
     started_chain_ids = {
         e.data.get("chain_id") for e in events if e.type == "turn_started"
     }
@@ -241,7 +242,7 @@ async def test_hard_cancel_prior_append_survives_wal_truncation(tmp_path, _llm_s
     await turn_task
     await session.journal.flush()
     # witness ②: the real driver dispatched for this turn.
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
 
     # sanity: the consumed marker's source event is durable pre-truncation.
@@ -328,7 +329,7 @@ async def test_external_cancel_of_driver_task_propagates(tmp_path, _llm_stub):
     # sanity: the hung reply never landed (the turn was torn down, not completed).
     assert not any(m.content == _STUB_REPLY for m in session.history)
     # witness ②: the real driver dispatched before the external cancel hit it.
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
     await state_log.aclose()
 
@@ -391,7 +392,7 @@ async def test_self_initiated_flag_does_not_leak_to_next_turn(tmp_path, _llm_stu
     # witness ②: both turns really dispatched (turn2's is emitted before its
     # own external cancel, in run_one_iteration, same ordering as witness ①
     # test above).
-    await session._audit_events.drain()
+    await settle(session)
     started_chain_ids = {
         e.data.get("chain_id") for e in events if e.type == "turn_started"
     }
@@ -443,7 +444,7 @@ async def test_await_quiescent_join_is_load_bearing_on_cancel(tmp_path, _llm_stu
         assert completed is True
 
         # witness ②: the real driver dispatched.
-        await session._audit_events.drain()
+        await settle(session)
         assert any(e.type == "turn_started" for e in events)
 
         # The join happened: the tracked straggler is settled (cancelled+joined)

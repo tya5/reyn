@@ -74,6 +74,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 class _FakeStatusError(Exception):
@@ -163,8 +164,7 @@ def test_reactive_ladder_recovers_an_elide_sized_overflow_via_spill(
         "oversized, or this test proves nothing about overflow recovery"
     )
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     loop = _ContentDrivenLoop(
         lambda history, user_text: _has_content(history, huge)
@@ -258,8 +258,7 @@ def test_reactive_ladder_recovers_many_small_turns_via_compaction(
         "the assertions below"
     )
 
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     loop = _ContentDrivenLoop(
         lambda history, user_text: _wire_estimate(history) > 2800

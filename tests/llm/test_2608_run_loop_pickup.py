@@ -114,7 +114,7 @@ async def test_dispatch_external_event_wakes_idle_run_loop_and_runs_hook_turn(
         },
     ]
     session = _make_session(tmp_path, hooks_config=hooks_config)
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     run_task = asyncio.create_task(session.run())
     try:

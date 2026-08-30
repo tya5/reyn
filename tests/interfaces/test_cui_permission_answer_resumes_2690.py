@@ -170,7 +170,7 @@ async def test_cui_write_approval_answer_resumes_blocked_turn(tmp_path, monkeypa
     session = _make_session(
         proj, wal=tmp_path / "state.wal", snap=tmp_path / "snap.json",
     )
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("write the file")
@@ -227,7 +227,7 @@ async def test_cui_read_approval_answer_resumes_identically(tmp_path, monkeypatc
     session = _make_session(
         proj, wal=tmp_path / "state.wal", snap=tmp_path / "snap.json",
     )
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     run_task = asyncio.create_task(session.run())
     try:
         await session.submit_user_text("read the outside file")

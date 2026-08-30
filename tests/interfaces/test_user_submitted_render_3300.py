@@ -356,7 +356,7 @@ async def test_multi_client_each_subscriber_gets_its_own_echo_no_double_render(
     session.subscribe_audit_events(sink_b)
 
     await session.submit_user_text("one submit, two clients")
-    await settle(session._audit_events)
+    await settle(session)
 
     for sink in (sink_a, sink_b):
         matches = [e for e in sink.events if e.type == "user_submitted"]
