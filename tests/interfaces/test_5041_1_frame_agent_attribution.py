@@ -177,6 +177,12 @@ async def test_audit_event_frame_carries_the_currently_attached_agents_name(
         transport = InProcessTransport(reg, intervention_channel="test-5041")
         transport.start()
         try:
+            # #5557: this emit only DRIVES frame creation on the audit-event
+            # path — the assert below reads `frame.agent` (a PRODUCTION-
+            # computed attribution field, read fresh from
+            # `registry.attached_name` at frame-build time), never this
+            # emit's own type/chain_id. The event.type filter just finds
+            # the right frame; "turn_started" could be any forwarded kind.
             alpha._audit_events.emit("turn_started", chain_id="c-5041")
             frame = None
             while frame is None:

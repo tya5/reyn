@@ -106,6 +106,13 @@ async def test_collect_events_accepts_a_session_witness_1(tmp_path, monkeypatch)
     ``.emit()`` directly; nothing here ASSERTS on private state)."""
     session = make_session(tmp_path, monkeypatch=monkeypatch)
     collected = collect_events(session)
+    # #5557: this ``.emit()`` DRIVES the scenario (produces a real event for
+    # collect_events(session) to genuinely capture) — the assert below reads
+    # `collected`, but the claim under test is "collect_events(session) is
+    # correctly wired", not "production emits `tool_executed` in some
+    # specific business flow". The event type/payload are arbitrary
+    # placeholders; any real event would serve identically. Not the
+    # #5557-named "test fakes what production is supposed to emit" pattern.
     session._audit_events.emit("tool_executed", op="read_file", path="/tmp/x")
     # #5467: deliberately ``session._audit_events.drain()``, NOT
     # ``settle(session)`` — this witness's own claim is "collect_events(session)
@@ -129,6 +136,10 @@ async def test_settle_accepts_a_session_witness_2(tmp_path, monkeypatch) -> None
     right queue."""
     session = make_session(tmp_path, monkeypatch=monkeypatch)
     collected = collect_events(session)
+    # #5557: same reasoning as witness ① above — this ``.emit()`` drives
+    # the scenario (produces a real event for settle(session) to genuinely
+    # drain), the claim is about the settle() plumbing, not a specific
+    # production behavior.
     session._audit_events.emit("tool_executed", op="read_file", path="/tmp/x")
     await settle(session)
     assert [e.type for e in collected] == ["tool_executed"]

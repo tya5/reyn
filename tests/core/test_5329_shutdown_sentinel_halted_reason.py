@@ -150,6 +150,20 @@ async def test_shutdown_sentinel_branch_respects_an_already_set_reason(tmp_path)
     # handler does, immediately, before its while-loop's next condition
     # check) THEN queue the shutdown sentinel — the shape a real cancel
     # racing a real shutdown produces.
+    #
+    # #5557 positive control (observed, not assumed): stripped this manual
+    # emit and drove session.run() through a REAL Task.cancel() instead —
+    # production's own except asyncio.CancelledError handler in
+    # Session.run() genuinely emits session_halted(reason="cancelled")
+    # through this exact code path with no test-side fabrication. Observed
+    # directly: `STRIP-TEST OBSERVED halted_reason: cancelled` /
+    # `STRIP-TEST OBSERVED events: [..., 'session_halted', ...]`. The SAME
+    # real-cancel path is independently pinned end-to-end by
+    # test_3377_run_loop_survives_turn_cancel.py::test_cancelling_the_
+    # session_still_stops_the_loop_and_records_it, so this test's own
+    # manual emit — standing in for that sibling path so THIS test can
+    # focus on its own claim (the shutdown-sentinel branch must not
+    # double-emit) — is legitimate driving, not a fake.
     session._halted_reason = "cancelled"
     session._audit_events.emit("session_halted", reason="cancelled")
     await settle(session._audit_events)

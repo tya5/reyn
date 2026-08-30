@@ -77,6 +77,10 @@ async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, m
 
     assert a.events_dir != main.events_dir, "spawned session must have an isolated events dir"
 
+    # #5557: "budget_warn" is an arbitrary payload driving the #2348 event-
+    # dir isolation + forwarder-survival witnesses below (outbox delivery,
+    # per-session dir routing) — any real event type would serve
+    # identically. Not a claim that production emits budget_warn here.
     a._audit_events.emit("budget_warn", dimension="daily_tokens")
     await settle(a)
 

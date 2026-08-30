@@ -35,6 +35,11 @@ async def test_a_kinds_declaration_through_the_public_seam_is_honoured() -> None
         lambda e: received.append(e.type), kinds={"session_halted"},
     )
 
+    # #5557: both emits below drive the "does the kinds= filter pass/block
+    # by type" mechanism witness — the specific event types are arbitrary
+    # (any two distinct real kinds would serve identically); the claim is
+    # about subscribe_audit_events's filter, not about when production
+    # actually emits session_halted/visibility_changed.
     session._audit_events.emit("session_halted", reason="test")
     session._audit_events.emit("visibility_changed", kind="tool", name="x", on=True, applied=True)
     await settle(session._audit_events)
@@ -56,6 +61,8 @@ async def test_omitting_kinds_still_admits_every_event() -> None:
     received: list[str] = []
     session.subscribe_audit_events(lambda e: received.append(e.type))
 
+    # #5557: same reasoning as the test above — drives the "no kinds= means
+    # every event admitted" mechanism witness, event types are arbitrary.
     session._audit_events.emit("session_halted", reason="test")
     session._audit_events.emit("visibility_changed", kind="tool", name="x", on=True, applied=True)
     await settle(session._audit_events)

@@ -277,6 +277,10 @@ async def test_session_with_discard_backend_still_delivers_to_real_subscribers(
 
     received = []
     session.subscribe_audit_events(received.append)
+    # #5557: "test_event" is a synthetic, non-production event type — this
+    # emit exists only to drive the "does subscribe_audit_events deliver
+    # regardless of the configured backend" plumbing witness above; the
+    # claim is not that production ever emits an event named "test_event".
     emitted = session._audit_events.emit("test_event", foo="bar")
     await settle(session)  # #4961 C: see the file's first test
 
