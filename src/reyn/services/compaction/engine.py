@@ -448,7 +448,61 @@ CoversThrough = Union[int, SeqUnavailable]
 #: — condition⑤'s own discriminator (#5531), matching the SAME convention
 #: the persisted-history layer already uses (a ``ChatMessage.role ==
 #: "summary"`` entry in ``history.jsonl``). One vocabulary, not two.
+#:
+#: #5598: this is reyn's OWN internal vocabulary — a discriminator
+#: `watermark`/`trim`/`spill` logic reads (``router_history_buffer.py``,
+#: ``router_loop_driver.py``, this module's own ``compact()``), never a
+#: value a provider recognises as a chat role. Every genuine wire-egress
+#: point must run it through :func:`wire_role` before it reaches
+#: ``loop.run``/litellm — see that function's own docstring for the
+#: incident this closes.
 SUMMARY_MESSAGE_ROLE = "summary"
+
+
+def wire_role(role: str) -> str:
+    """#5598 (owner's real machine, 2026-08-30) — maps reyn's own internal
+    role vocabulary to the value a provider actually accepts on the wire.
+    Two internal roles have no provider equivalent:
+
+    - ``"agent"`` — a legacy pre-migration straggler
+      (``router_history_buffer.py``'s own pre-existing normalize-on-read).
+    - :data:`SUMMARY_MESSAGE_ROLE` (``"summary"``) — reyn's own
+      discriminator for an already-compacted summary turn, read by
+      watermark/trim/spill logic, never a provider role. Left un-mapped
+      at the wire boundary, a provider that validates role names against
+      a fixed enum (the incident: `gpt-5.6-luna`, "Invalid value:
+      'summary'. Supported values are: 'assistant', 'system', 'developer',
+      and 'user'.") rejects the request outright, with a 400 that fires
+      in ~2 seconds regardless of payload size — the request never
+      reaches inference at all, so no amount of shrinking (compaction,
+      spill, any rung of the overflow ladder) can ever recover from it.
+      This is the SAME turn that just successfully summarised: the very
+      next request that includes that summary is the one that 400s.
+
+    Both collapse to ``"assistant"`` — a summary's own content already
+    self-identifies via its ``"[summary of earlier conversation]\\n"``
+    prefix (:func:`wrap_summary_as_message`'s own decoration), so the
+    role does not need to carry that information a second time.
+
+    Deliberately NOT applied inside :func:`wrap_summary_as_message`
+    itself, nor anywhere :data:`SUMMARY_MESSAGE_ROLE` is used to build
+    :class:`HistoryChunkToCompact` (``compaction_controller.py``'s own
+    call site, ``retry_loop``'s own ``raw_middle`` inclusion) or read
+    back by ``compact()``'s own "does a previous summary already exist"
+    check (this module, ``m.get("role") == SUMMARY_MESSAGE_ROLE``) —
+    those are reyn's OWN internal representation, never wire-serialised
+    as individual role-tagged messages (``compact()``'s own LLM call
+    embeds the whole ``messages`` list as JSON TEXT inside one
+    ``"user"``-role wire message, never as separate wire roles) —
+    normalizing there would break the very discriminator this function's
+    own docstring says stays internal. Apply this ONLY at a genuine
+    wire-egress point, immediately before a dict becomes part of what
+    ``loop.run``/litellm actually receives — see
+    ``RouterHistoryBuffer._serialise_turn`` and
+    ``RouterLoopDriver._router_main_call`` for the two such points."""
+    if role in ("agent", SUMMARY_MESSAGE_ROLE):
+        return "assistant"
+    return role
 
 
 def wrap_summary_as_message(summary: dict) -> dict:
