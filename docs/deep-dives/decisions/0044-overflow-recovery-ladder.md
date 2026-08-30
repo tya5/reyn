@@ -139,9 +139,10 @@ A `main_call` overflow on a conversation whose `mid` is empty:
 
 Failures are classified into `Overflow` / `Retryable` / `Fatal` — the shape #3783 already
 proposed and whose `Retryable` and `Fatal` arms never shipped. Only `Overflow` enters the
-ladder. `Retryable` is retried with backoff (the compaction call does not currently go
-through the router's own retry wrapper — a 5xx reaching the ladder has not been retried even
-once). `Fatal` propagates unchanged.
+ladder. `Retryable` is recognised from the same infra/rate-limit signals `llm.py`'s own
+`_llm_call_with_retry` already retries — classified independently rather than by
+importing that module, so the two stay two callers of one classification. `Fatal`
+propagates unchanged.
 
 This generalises #5329, which carved out exactly one subtype (quota exhaustion) for exactly
 this reason: the window "resets on a clock, not on input size".
@@ -255,7 +256,8 @@ subject bounds it at all.
 ## Verification against the merged implementation
 
 This ADR's own promotion condition was that the implementation "either confirmed
-or falsified each decision". Checked on `origin/main` after #5547:
+or falsified each decision". Checked on `origin/main` at `a22c2b8`'s merge-base — re-checked after #5553 landed
+mid-review, which is why two rows read differently from the first draft of this table:
 
 | decision | outcome |
 |---|---|
@@ -268,11 +270,9 @@ or falsified each decision". Checked on `origin/main` after #5547:
 | `Spillability` declared by the producer | **confirmed** — `FIRST_CHOICE` / `LAST_RESORT` / `NEVER`, `LAST_RESORT` as the safe-side default |
 | Which terminal was reached travels as a structured value | **confirmed** — `UnrecoveredError.__init__(reason, *, terminal: RetryLoopTerminal, saw_byte_limit=False)`; `terminal` is a required keyword and a separate axis from `saw_byte_limit`. Landed in #5553, after this ADR was first written |
 
-Nothing was falsified. One stale artefact was found and is **not** fixed here
-because it lives in `src/`: `retry_loop`'s docstring still carries a
-`max_iterations:` parameter block describing a "Safety cap (default 8)", though
-the parameter is no longer in the signature and nothing bounds the loop from
-outside.
+Nothing was falsified, and nothing recorded here is outstanding: the one gap this
+check first found — `retry_loop`'s docstring still documenting a `max_iterations:`
+parameter the signature no longer had — was closed by #5553 while this PR was open.
 
 ## References
 
