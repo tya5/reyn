@@ -13,10 +13,11 @@ look like, so acting on it risked compacting a conversation that would
 have fit fine (#5296 decided this in principle, #5528 carried it out).
 Auto-compaction is now driven solely by the ``retry_loop`` overflow
 recovery path (:meth:`force_compact_now`, reached reactively on an actual
-measured overflow — see ``router_loop_driver.py``'s own byte-limit
-recovery call), plus on-demand (the ``compact`` op / ``/compact``). With
-no background task, compaction always runs synchronously inside the
-serial router handler.
+measured overflow — see ``router_loop_driver.py``'s own recovery call,
+#5578: axis-agnostic since then, byte- and token-cause exhaustion alike),
+plus on-demand (the ``compact`` op / ``/compact``). With no background
+task, compaction always runs synchronously inside the serial router
+handler.
 
 All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; Session
