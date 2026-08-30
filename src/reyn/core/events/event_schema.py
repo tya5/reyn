@@ -413,6 +413,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "index_dropped",
     "index_update_cost_warning",
     "index_updated",
+    "ingress_bridge_dropped",
     "intervention_answer_submitted",
     "intervention_denied",
     "intervention_routed",

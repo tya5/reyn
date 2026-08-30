@@ -60,6 +60,15 @@ from reyn.hooks.schema_registry import bare_point, build_hook_payload, canonical
 
 logger = logging.getLogger(__name__)
 
+# #5515: fail-visible cadence for a queue-full drop in _BoundedEventBridge.
+# deliver() (below) — matched to src/reyn/hooks/bus.py:83's own
+# ``_AUDIT_EVERY_N_DROPS`` (HookBus._audit_drop's identical first-drop/
+# every-Nth discipline for a subscriber-queue overflow, #2886) rather than
+# picked fresh, so the two independent "bounded queue, drop, audit" call
+# sites in this codebase share one reasoned cadence instead of two
+# unrelated constants that happen to agree today.
+_AUDIT_EVERY_N_DROPS = 100
+
 # #5516: batch-shaped — called as ``hook_trigger(point, payloads,
 # skipped_session_wide=N)``: the folded batch (never empty, never a bare
 # single dict — clean break) plus the session-wide drop count since the
@@ -147,6 +156,11 @@ class _BoundedEventBridge:
         self._queue: "asyncio.Queue[HookEvent] | None" = None
         self._drain_task: "asyncio.Task | None" = None
         self._dropped_since_last_batch = 0
+        # #5515: cumulative, never reset (distinct from
+        # ``_dropped_since_last_batch`` above, which read-and-resets per
+        # dispatched batch) — mirrors ``_SessionFireBridge._drop_count``'s
+        # own identical split of the same two concerns one module over.
+        self._drop_count = 0
 
     def deliver(self, event: HookEvent) -> None:
         """SYNCHRONOUS, non-blocking. Never awaits, never raises."""
@@ -163,10 +177,45 @@ class _BoundedEventBridge:
             # so the next batch's event_context names this loss instead of
             # only a log line (band gate 2: visible with the shipped config).
             self._dropped_since_last_batch += 1
+            self._drop_count += 1
             logger.warning(
                 "%s: hook-event queue full (maxsize=%d) — dropping %r event",
                 self._adapter_name, self._maxsize, event.kind,
             )
+            self._audit_drop(event)
+
+    def dropped_count(self) -> int:
+        """Public, snapshot-style read of the cumulative number of events
+        dropped by this bridge because the queue was full at :meth:`deliver`
+        time (#5515) — mirrors ``_SessionFireBridge.dropped_count()``."""
+        return self._drop_count
+
+    def _audit_drop(self, event: HookEvent) -> None:
+        """Fire a metadata-only ``ingress_bridge_dropped`` P6 audit-event on
+        the FIRST drop and every Nth drop thereafter (#5515 — #2886's own
+        fail-visible discipline, applied so far only to ``HookBus``'s own
+        subscriber-queue drops, ``bus.py``'s ``_audit_drop``, and never to
+        THIS bridge's own equally-silent drop-newest overflow — ``bus.py``'s
+        own module docstring already describes the two bridges as sharing
+        the same non-blocking, drop-newest-and-log shape; only the
+        audit-visibility half was missing here). Never raises (best-effort
+        telemetry, same posture as ``HookBus._audit_drop``) and never
+        includes the dropped event's payload — ``source`` (this bridge's
+        own ``adapter_name``, distinguishing the MCP bridge from the Fs
+        bridge) plus the bare hook point and the cumulative count only."""
+        if self._emit_event is None:
+            return
+        if self._drop_count != 1 and self._drop_count % _AUDIT_EVERY_N_DROPS != 0:
+            return
+        try:
+            self._emit_event(
+                "ingress_bridge_dropped",
+                source=self._adapter_name,
+                point=bare_point(event.kind),
+                drop_count=self._drop_count,
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+            logger.debug("%s: emit_event(ingress_bridge_dropped) failed: %s", self._adapter_name, exc)
 
     def _ensure_drain_task(self) -> None:
         if self._queue is None:
