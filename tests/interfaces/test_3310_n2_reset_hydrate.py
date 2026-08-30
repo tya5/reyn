@@ -73,6 +73,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 # ── real seam: a queue-backed ClientTransport a test drives frame-by-frame ──
 
@@ -863,7 +864,7 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
         await turn_task
 
         # witness ②: the real driver dispatched beta's own turn.
-        await beta._audit_events.drain()
+        await settle(beta)
         assert any(e.type == "turn_started" for e in events)
     finally:
         await reg.shutdown()

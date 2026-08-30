@@ -119,7 +119,7 @@ async def test_real_mcp_push_fires_configured_hook_into_session_inbox(tmp_path):
         },
     ]
     session = _make_session(tmp_path, hooks_config=hooks_config)
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     try:
         client = await session._mcp_connection_service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
         await client.subscribe_resource(_URI)
@@ -152,7 +152,7 @@ async def test_no_configured_hook_leaves_hook_side_a_pure_noop(tmp_path):
     is the byte-identical-to-today behavior the H1 design requires when no such
     hook is configured for the session."""
     session = _make_session(tmp_path, hooks_config=None)
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     try:
         client = await session._mcp_connection_service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
         await client.subscribe_resource(_URI)

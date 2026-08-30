@@ -46,6 +46,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events, settle
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.slash import local_transport
 
@@ -169,14 +170,13 @@ async def test_a_pipeline_nudge_still_runs_one_turn(
     this is RED for exactly the same failure this test always caught."""
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
     session = _session(tmp_path)
-    collected: list = []
-    session.subscribe_audit_events(collected.append)
+    collected = collect_events(session)
 
     chain_id = "c-nudge-turn"
     await session._run_turn_body(
         TurnOrigin.PIPELINE_NUDGE, {"text": "", "chain_id": chain_id},
     )
-    await session._audit_events.drain()
+    await settle(session)
     armed = [e for e in collected if e.type == "stall_trace_armed"]
     assert armed and armed[0].data["chain_id"] == chain_id, (
         "the pipeline-nudge kind ran no turn (stall_trace_armed never fired "
@@ -229,12 +229,11 @@ async def test_a_kind_restored_from_a_snapshot_as_a_plain_string_still_dispatche
     )
 
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
-    collected: list = []
-    session.subscribe_audit_events(collected.append)
+    collected = collect_events(session)
 
     chain_id = "c-restored"
     await session._run_turn_body(restored_kind, {"text": "hi", "chain_id": chain_id})
-    await session._audit_events.drain()
+    await settle(session)
     armed = [e for e in collected if e.type == "stall_trace_armed"]
     assert armed and armed[0].data["chain_id"] == chain_id, (
         "the restored plain-string kind ran no turn (stall_trace_armed never "

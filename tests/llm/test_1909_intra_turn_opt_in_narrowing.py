@@ -142,7 +142,7 @@ async def test_on_engages_mid_turn_and_emits_audit_event(tmp_path, monkeypatch):
         ]),
     )
     await session._handle_inbox_text("look something up then remember it", chain_id="c1")
-    await settle(session._audit_events)
+    await settle(session)
 
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)

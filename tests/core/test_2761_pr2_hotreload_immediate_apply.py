@@ -301,7 +301,7 @@ async def test_session_hot_reloader_reload_reaches_session_audit_subscribers(
     session.subscribe_audit_events(lambda e: received.append(e.type))
 
     await session.hot_reloader.apply_all(exclude=frozenset())
-    await settle(session._audit_events)
+    await settle(session)
 
     assert "config_reloaded" in received, (
         f"a reload through session.hot_reloader must reach a subscriber "
@@ -326,7 +326,7 @@ async def test_strip_falsify_hot_reloader_audit_wiring_is_live(
 
     poisoned = HotReloader(project_root=tmp_path, events=EventLog())
     await poisoned.apply_all(exclude=frozenset())
-    await settle(session._audit_events)
+    await settle(session)
 
     assert "config_reloaded" not in received, (
         "a reload on an INDEPENDENT HotReloader must not reach this "
@@ -398,7 +398,7 @@ async def test_hook_bus_emit_event_reaches_session_audit_events(
             await session.dispatch_external_event("turn_end", {"i": i})
     finally:
         sub.close()
-    await settle(session._audit_events)
+    await settle(session)
 
     assert "bus_subscriber_dropped" in received, (
         f"a hook_bus subscriber-queue overflow must reach a subscriber "
@@ -422,7 +422,7 @@ async def test_strip_falsify_hook_bus_overflow_needs_a_live_subscriber(
 
     for i in range(200):
         await session.dispatch_external_event("turn_end", {"i": i})
-    await settle(session._audit_events)
+    await settle(session)
 
     assert "bus_subscriber_dropped" not in received, (
         "no subscriber was ever attached to hook_bus, so nothing should "

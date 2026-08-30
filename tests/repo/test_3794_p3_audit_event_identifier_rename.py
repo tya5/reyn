@@ -89,7 +89,7 @@ def test_public_emit_seam_and_private_field_write_the_same_event_log(tmp_path) -
         agent_name="p3-witness",
         snapshot_path=tmp_path / "snapshot.json",
     )
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     before = len(collected)
     session.emit_audit_event("p3_witness_kind", marker="p3-rename-witness")
     after = collected
