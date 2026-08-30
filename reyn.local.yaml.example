@@ -450,7 +450,9 @@
 #                                      # pre-#5592 behavior — NOT the safer choice:
 #                                      # request count then scales with candidate
 #                                      # count, and a rejected request is still
-#                                      # billed).
+#                                      # billed). "tier" names a Spillability tier
+#                                      # (FIRST_CHOICE/LAST_RESORT), never a
+#                                      # positional stage (head/mid/tail).
 #     section_token_caps:
 #       topic_arc: 200
 #       decisions: 400

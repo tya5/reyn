@@ -33,8 +33,13 @@ ADR-0044's termination argument was a **well-founded measure** — a proof that 
 `Spillability` tier) or `turn` (one spill-out per request). Both values are units, and the setting
 is exactly that choice — deliberately not a numeric batch size, which would add a knob nobody can
 derive a correct value for. `tier`, not `spillability`, so the value never collides with
-`Spillability` the type. `turn` belongs next to a line saying it trades requests for over-spill and
-is not the safe side.
+`Spillability` the type. `tier` names a `Spillability` tier here — never the `head`/`mid`/`tail`
+positional compartment, which this field does not select (recorded as a disagreement, not settled
+by consensus: architect's own reading is that `tier` risks being misread as the positional stage,
+now that `main_call`'s own head/tail compartments are in scope alongside `compact()`'s; the
+implementer's call was to keep `spill_granularity`/`tier`, already implemented and tested, and add
+this clarifying line rather than rename). `turn` belongs next to a line saying it trades requests
+for over-spill and is not the safe side.
 
 ## Consequences
 
