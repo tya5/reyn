@@ -124,7 +124,7 @@ async def test_cancel_of_already_dispatched_message_is_a_noop(tmp_path, _llm_stu
     await turn_task
 
     # witness ②: the real driver dispatched.
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
 
 
@@ -303,7 +303,7 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path, _llm_
     finished = await asyncio.wait_for(iter_task, timeout=5)
     assert finished is False, "shutdown sentinel drains run_one_iteration"
 
-    await settle(session._audit_events)
+    await settle(session)
     kinds = [ev.type for ev in captured]
     assert "inbox_cancel" in kinds
     assert "turn_started" not in kinds, (
@@ -340,7 +340,7 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path, _llm_
     cancelled = await cancel_task
 
     assert cancelled is False, "dispatch won the race — cancel of an already-dispatched item is a no-op"
-    await settle(session._audit_events)
+    await settle(session)
     kinds = [ev.type for ev in captured]
     assert "turn_started" in kinds
     assert "inbox_cancel" not in kinds, (
@@ -384,7 +384,7 @@ async def test_skip_at_consume_discards_cancelled_item_without_dispatch(tmp_path
     assert finished is True
     assert session.queued_user_messages() == []
 
-    await session._audit_events.drain()
+    await settle(session)
     assert any(e.type == "turn_started" for e in events)
 
 
@@ -426,7 +426,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
-    await settle(session._audit_events)
+    await settle(session)
     submitted = next(e for e in captured if e.type == "user_submitted")
     view.apply_user_submitted(
         msg_id=submitted.data["msg_id"], chain_id=submitted.data["chain_id"],
@@ -435,7 +435,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     assert [i["text"] for i in view.queue()] == ["alpha"]
 
     await session.cancel_queued(submitted.data["msg_id"])
-    await settle(session._audit_events)
+    await settle(session)
     cancel_ev = next(e for e in captured if e.type == "inbox_cancel")
     view.apply_inbox_cancel(msg_id=cancel_ev.data["msg_id"], seq=cancel_ev.data["seq"])
 

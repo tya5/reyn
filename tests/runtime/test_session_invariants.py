@@ -1159,7 +1159,7 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
 
     session = _make_session(tmp_path, agent_name="default_agent")
     sub = _subscribe_outbox(session)  # BEFORE dispatch — see its own docstring
-    audit_collected = collect_events(session._audit_events)
+    audit_collected = collect_events(session)
 
     # Inject a no-reply marker as if a specialist peer sent it.
     marker = _no_reply_marker("specialist", "router completed without producing a text reply")
@@ -1201,7 +1201,7 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
     )
 
     # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
-    await settle(session._audit_events)
+    await settle(session)
     audit_event_types = [e.type for e in audit_collected]
     assert "peer_reply_failed_surfaced" in audit_event_types, (
         f"B2-H2: expected 'peer_reply_failed_surfaced' audit event; got: {audit_event_types!r}"
@@ -1242,7 +1242,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     session = _make_session(
         tmp_path, agent_name="relay_agent", registry=registry
     )
-    audit_collected = collect_events(session._audit_events)
+    audit_collected = collect_events(session)
 
     # Manually register a pending chain: relay_agent is waiting on "specialist"
     # for a request that came from "origin_agent".
@@ -1303,7 +1303,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     )
 
     # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
-    await settle(session._audit_events)
+    await settle(session)
     audit_event_types = [e.type for e in audit_collected]
     assert "peer_reply_failed_surfaced" in audit_event_types, (
         f"B2-H2 relay: expected 'peer_reply_failed_surfaced' audit event; got: {audit_event_types!r}"

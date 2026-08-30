@@ -255,7 +255,7 @@ async def test_cron_fire_emits_cron_fired_audit_event_with_no_hook_configured(tm
     # (before the fire) to subscribe collect_events, then letting the
     # runner's own resolve inside _inbox_pusher return the SAME session.
     session = resolve_cron_session(reg, "news_agent", "morning_news")
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     job = CronJob(name="morning_news", schedule="0 9 * * *", to="news_agent", message="hi")
     await runner(job)
 
@@ -406,7 +406,7 @@ async def test_webhook_receipt_emits_webhook_received_audit_event_with_no_hook_c
     # (before the request) to subscribe collect_events, then letting
     # push_to_agent's own resolve return the SAME session.
     session = WebhookIngressAdapter().resolve_session(reg, "support_agent", "slack:U456")
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     await push_to_agent(
         target_agent="support_agent",

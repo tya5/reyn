@@ -30,6 +30,7 @@ from reyn.config.chat import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 def _make_session(tmp_path: Path, *, cap: int) -> Session:
@@ -128,7 +129,7 @@ async def test_no_hooks_valve_never_engages(tmp_path):
     await session.run_one_iteration()
     await _push_user(session, "u2")
     await session.run_one_iteration()
-    await session._audit_events.drain()
+    await settle(session)
 
     assert _ran_chain_ids(events) == ["u1", "u2"]  # both user turns ran
     assert _checkpoint_kinds(events) == []         # valve never tripped
@@ -147,7 +148,7 @@ async def test_hook_loop_exceeding_cap_is_suppressed(tmp_path):
     for chain_id in ("h1", "h2", "h3"):
         await _push_hook(session, chain_id)
         await session.run_one_iteration()
-    await session._audit_events.drain()
+    await settle(session)
 
     # h1, h2 ran (count 1, 2 ≤ cap); h3 (count 3 > cap) suppressed.
     assert _ran_chain_ids(events) == ["h1", "h2"]
@@ -170,7 +171,7 @@ async def test_counter_resets_on_user_turn(tmp_path):
     await session.run_one_iteration()
     await _push_hook(session, "h2")     # count 1 again (NOT 2) → runs
     await session.run_one_iteration()
-    await session._audit_events.drain()
+    await settle(session)
 
     # without the reset, h2 would be count 2 > 1 → suppressed. Its presence proves
     # the user turn re-armed the budget.
@@ -196,7 +197,7 @@ async def test_c_ride_alongs_do_not_increment(tmp_path):
     await session.run_one_iteration()
     await _push_hook(session, "h2", wake=True)    # count 2 > 1 → suppressed
     await session.run_one_iteration()
-    await session._audit_events.drain()
+    await settle(session)
 
     # h1 ran ⇒ the wake=false C did NOT increment (else count would be 2 → h1
     # suppressed). h2 suppressed by the cap.

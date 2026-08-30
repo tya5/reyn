@@ -418,7 +418,7 @@ async def test_session_owned_watcher_emits_file_changed_audit_event_with_no_hook
         snapshot_path=tmp_path / "snap.json",
         reactivity=ReactivityConfig(hooks_config=None, fs_watch_config=FsWatchConfig(paths=[str(watched_dir)], debounce_seconds=0.05)),
     )
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
     try:
         await session._fs_watcher.start()
         assert session.fs_watcher_is_started()
