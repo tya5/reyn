@@ -75,11 +75,10 @@ def build_router_op_context(
     web_fetch_config: Any = None,  # #4274: reyn.yaml web_fetch.* → the web_fetch op's SSL/SSRF/size gates
     read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* → file.py's/load_skill.py's read op cap
     auth_config: Any = None,  # #5012-A: reyn.yaml auth.* → the describe_session op's auth-status field
-    # #5012-A PR #5038: LIVE {remaining_hook_driven_turns, max_hook_driven_turns}
-    # dict — turn count changes every turn, unlike auth_config/sandbox_config
-    # above, so this arrives already-resolved from the caller's live supplier
-    # rather than being resolved here.
-    hook_driven_turns_budget: Any = None,
+    # (#5012-A PR #5038 added a `hook_driven_turns_budget` param here — the
+    # LIVE {remaining_hook_driven_turns, max_hook_driven_turns} pair.
+    # #5561 (owner ruling) retired the valve those fields reported on, and
+    # this param with it — OpContext no longer carries the field.)
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
@@ -184,7 +183,6 @@ def build_router_op_context(
         web_fetch_config=web_fetch_config,  # #4274
         read_cap_config=read_cap_config,  # #4381 PR-5
         auth_config=auth_config,  # #5012-A
-        hook_driven_turns_budget=hook_driven_turns_budget,  # #5012-A PR #5038
         media_store=media_store,
         compact_now=compact_now,
         sandbox_config=sandbox_config,  # #5012-A
@@ -281,9 +279,6 @@ class RouterOpContextSource:
         web_fetch_config: Any,  # #4274: reyn.yaml web_fetch.* — plain value, same shape as multimodal_config
         read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* — plain value, same shape as web_fetch_config
         auth_config: Any = None,  # #5012-A: reyn.yaml auth.* — plain value, same shape as read_cap_config
-        # #5012-A PR #5038: live — the SAME reason ephemeral_fn/attended_fn
-        # below are `_fn`s, not values: the turn budget changes every turn.
-        hook_driven_turns_budget_fn: Any = None,
         media_store_fn: Any,
         compact_now: Any,
         threat_scan: Any,
@@ -322,7 +317,6 @@ class RouterOpContextSource:
         self._web_fetch_config = web_fetch_config
         self._read_cap_config = read_cap_config
         self._auth_config = auth_config
-        self._hook_driven_turns_budget_fn = hook_driven_turns_budget_fn
         self._media_store_fn = media_store_fn
         self._compact_now = compact_now
         self._threat_scan = threat_scan
@@ -394,7 +388,6 @@ class RouterOpContextSource:
             web_fetch_config=self._web_fetch_config,  # #4274
             read_cap_config=self._read_cap_config,  # #4381 PR-5
             auth_config=self._auth_config,  # #5012-A
-            hook_driven_turns_budget=self._resolve(self._hook_driven_turns_budget_fn),  # #5012-A PR #5038
             media_store=self._resolve(self._media_store_fn),
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,

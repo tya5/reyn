@@ -965,7 +965,6 @@ safety:
     max_router_calls_per_turn: 3 # chat-router calls per user turn
     max_router_iterations: 5   # LLM tool-call iterations per user turn (CLI --max-iterations overrides)
     max_tool_calls_per_turn: 50 # max tool_calls honoured from ONE completion (cost-bound); 0 = unlimited
-    max_hook_driven_turns: 25  # loop valve: cap hook self-continuation; resets on user turn; 0 = unlimited
     max_agent_hops: 3          # maximum delegation depth
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
@@ -997,8 +996,17 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | Maximum LLM tool-call iterations per user turn. CLI `--max-iterations` overrides when provided; `reyn run-once` uses CLI default of 80. |
 | `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
-| `safety.loop.max_hook_driven_turns` | int | `25` | — | Loop valve: caps hook self-continuation. Each hook-originated (`kind="hook"`) turn counts 1; the counter resets on each human user turn. When the count would exceed the cap the next hook turn hits the `safety.on_limit` checkpoint (warn → ask_user → abort) instead of running — a backstop that does not obstruct intentional loop-engineering. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
+
+**`max_hook_driven_turns` (RETIRED, #5561, owner ruling, 2026-08-30).** This
+key previously capped hook self-continuation by raw hook-driven-turn count
+(default `25`, `0` = unlimited). No operator could derive a correct cap
+value for it (owner, verbatim: "hook 起動を回数で制限なんて誰も設定できな
+いでしょ。どんな回数が妥当か誰も判断できない"), so it was removed. Setting
+it in `reyn.yaml` now has no effect — see
+[Concepts: hooks § Loop valve](../../concepts/runtime/hooks.md#loop-valve)
+for the current bounding mechanisms (`CostConfig`, #5516 push folding,
+`spillability_max_chars`).
 
 ### `safety.timeout` fields
 
@@ -1326,7 +1334,7 @@ hooks:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`), an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing), `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)), `cron_fired` (a message-based cron job fires), or `webhook_received` (an inbound webhook resolves to a session) — or a `composed:<name>` composed-event kind (an OPEN namespace, one entry per [`composers:`](#composers-block) config's `emit.kind`; a composed→wake chain is bounded by the same `max_hook_driven_turns` loop-valve as any other hook-driven turn). `cron_fired`/`webhook_received` are non-blocking relative to their ingress — dispatch never delays the cron job's delivery or the webhook's HTTP response. See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
+| `on` | string | _required_ | Lifecycle point (`turn_start`, `turn_end`, `session_start`, `session_end`), an external-event point — `mcp_resource_updated` (a subscribed MCP resource changing), `file_changed` (a watched path changing, requires [`fs_watch`](#fs_watch-block)), `cron_fired` (a message-based cron job fires), or `webhook_received` (an inbound webhook resolves to a session) — or a `composed:<name>` composed-event kind (an OPEN namespace, one entry per [`composers:`](#composers-block) config's `emit.kind`; a composed→wake chain traverses the same inbox path as any other hook-driven turn — see [Concepts: hooks § Loop valve](../../concepts/runtime/hooks.md#loop-valve) for the current bounding mechanisms). `cron_fired`/`webhook_received` are non-blocking relative to their ingress — dispatch never delays the cron job's delivery or the webhook's HTTP response. See [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points). |
 | `name` | string | _the point_ | Optional operator label surfaced as the `[hook:<name>]` attribution prefix on a push. Absent → defaults to the hook-point (e.g. `[hook:turn_end]`). |
 | `matcher` | map[string,string] | _none_ | Optional filter, evaluated against the firing event's template vars before the hook's action runs. Every named field must match: exact string equality, except `uri`/`path` (shell-style glob via `fnmatch`). Absent/empty → the hook always fires (unaffected for lifecycle hooks, which carry no `server`/`uri`/`path`). **Validated at load** for the builtin hook points: a matcher field name outside that point's builtin schema (e.g. a typo, or a lifecycle point's matcher naming `server`/`uri`) is a `HookConfigError` at config-load time, not a silently-dead matcher. A future/custom point with no builtin schema entry keeps the pre-validation behavior — a field the event doesn't carry never matches at runtime. |
 | `template_push` | map | _none_ | Inbox-push hook from a Jinja2 template (one of the four schemes). `message` (Jinja2 → text), `wake` (bool/Jinja2, default `true`: `true` starts a new turn = self-continuation; `false` rides along with the next turn as passive context), `push_when` (Jinja2 → bool, default `true`; `false` skips), `session` (parsed + carried; naming a different session routes the push to that session's inbox — **cross-session push**; omitted or the current session → the local path), `include` (list of hook-event field names, default `[]` — each is appended to `message` VERBATIM, fenced and attributed, never through Jinja2; a name the firing event doesn't carry — a typo, or a field this hook point doesn't have — is written as `(absent)`). `message` may only interpolate `context_safe` fields (today, every builtin field is — `include` is the door for a future non-`context_safe` field to still reach the pushed text as content, without giving it template control flow). |
@@ -1336,7 +1344,7 @@ hooks:
 | `network` | bool | `false` (the floor) | **`exec` / `exec_capture` only** — may this hook's argv reach the network? Same rules as `subprocess` above: declaring it on another scheme or giving it a non-bool value is a `HookConfigError`, and omitting it keeps the `false` floor (only an explicit `true`/`false` is your expressed will). Set `true` for a hook that posts to an API or pulls from a registry. Note that the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) does **not** grant this — see the boundary note under that block. |
 | `write_paths` | list[string] | `[]` (the floor) | **`exec` / `exec_capture` only** — filesystem paths this hook's argv may write (`~` expanded; write implies read). Same rules as `subprocess` above; omitting the key keeps the floor, which grants **no** writes, while an explicit list — including `[]` — is your expressed will. Keep the scope tight: grant the specific directory the hook writes, never `~`. A hook shell's floor carries no sensitive-read deny-list by default (#3901 — `read_deny_paths`'s dataclass default is now empty; the MCP server default is a deliberate opt-in exception, not the hook floor). Not granted by the agent-level [`sandbox.policy`](#sandboxpolicy-sub-keys) — see the boundary note under that block. |
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
-| `fold` | bool | `true` (the floor) | #5516 — **`exec` / `exec_capture` / `template_push` only** (not `pipeline_launch`, which can never fold — see below). When several queued events are already waiting at launch time, this hook's default is to receive them all in ONE launch (`exec`/`exec_capture`: one array on stdin; `template_push`: N renders concatenated into one push) rather than one launch per event. Set `false` to opt OUT — each event still arrives array-wrapped (`[payload]`, single-item — the array shape itself is unconditional), but as its own separate launch. The one real reason to opt out: wanting more wake opportunities — a hook that should "think" once per event, not once per batch. **If you opt out, know the cost**: an opted-out hook consumes `max_hook_driven_turns` (see [`safety.loop`](#safetyloop-fields)) once PER EVENT instead of once per batch — a burst that would cost a folded hook 1 valve unit costs an opted-out one N. Declaring `fold:` on a `pipeline_launch` hook is a `HookConfigError` (its receiver takes one `input: dict` per launch and can never fold; the key would silently do nothing there otherwise). |
+| `fold` | bool | `true` (the floor) | #5516 — **`exec` / `exec_capture` / `template_push` only** (not `pipeline_launch`, which can never fold — see below). When several queued events are already waiting at launch time, this hook's default is to receive them all in ONE launch (`exec`/`exec_capture`: one array on stdin; `template_push`: N renders concatenated into one push) rather than one launch per event. Set `false` to opt OUT — each event still arrives array-wrapped (`[payload]`, single-item — the array shape itself is unconditional), but as its own separate launch. The one real reason to opt out: wanting more wake opportunities — a hook that should "think" once per event, not once per batch. **If you opt out, know the cost**: an opted-out hook spends ONE inbox turn PER EVENT instead of once per batch — a burst that would cost a folded hook 1 turn costs an opted-out one N. Declaring `fold:` on a `pipeline_launch` hook is a `HookConfigError` (its receiver takes one `input: dict` per launch and can never fold; the key would silently do nothing there otherwise). |
 
 **Interpolating a project path — `${REYN_PROJECT_DIR}`, not an absolute
 path.** `reyn.yaml`'s `hooks:` block (this layer only — `exec`/`exec_capture`
@@ -1453,13 +1461,15 @@ recovery-feature gate). Every fire emits `composer_fired`; every drop
 (composer name + correlation key + reason, never the buffered payload
 content).
 
-**The composed→wake loop-valve bound.** A `composed:<name>` hook's
-wake=true push traverses the exact same inbox `kind="hook"` path any other
-hook-driven wake does, so a self-stimulating composed→wake chain (a
-composer whose input is fed by a lifecycle point its own consumer hook's
-next turn re-triggers) is bounded by the session's existing
-`max_hook_driven_turns` cap with zero additional bounding logic — see
-[Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer-event-correlation).
+**The composed→wake path.** A `composed:<name>` hook's wake=true push
+traverses the exact same inbox `kind="hook"` path any other hook-driven
+wake does, so a self-stimulating composed→wake chain (a composer whose
+input is fed by a lifecycle point its own consumer hook's next turn
+re-triggers) adds no new dispatch machinery of its own — see
+[Concepts: hooks § Loop valve](../../concepts/runtime/hooks.md#loop-valve)
+for the current bounding mechanisms, and
+[Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer-event-correlation)
+for the composed→wake wiring itself.
 
 Composers are read from the SAME 4-layer additive combine as `hooks:`
 (`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪

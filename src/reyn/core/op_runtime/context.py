@@ -228,14 +228,11 @@ class OpContext:
     # every provider as declared=False rather than raising.
     auth_config: "AuthConfig | None" = None
 
-    # #5012-A PR #5038 (lead-coder block, issuecomment-5376729625): the
-    # SAME "remaining turns + max_hook_driven_turns" pair issue #5012's own
-    # field ② names — read LIVE (turn count changes every turn, unlike
-    # auth_config/sandbox_config above, which are static per-session
-    # config), so this is a supplied dict, not a config projection. `None`
-    # (direct/test construction, or a non-chat OpContext) → describe_session
-    # cannot report a budget it has no session to read.
-    hook_driven_turns_budget: "dict | None" = None
+    # (#5012-A PR #5038 added a `hook_driven_turns_budget` field here — the
+    # LIVE {remaining, max} pair issue #5012's field ② named. #5561 (owner
+    # ruling) retired the hook-driven-turns loop valve those fields
+    # reported on, and this field with it — describe_session no longer has
+    # a budget to report.)
 
     # FP-0050/#1822 S5 (EP4): content-threat scan config. When enabled, the
     # sandboxed_exec command (argv) is exec-scope scanned before exec — a

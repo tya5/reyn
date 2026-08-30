@@ -1181,7 +1181,6 @@ class Session:
         self._chain_timeout_seconds = _safety.timeout.chain_seconds  # PR18, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
         self._on_limit = _safety.on_limit  # FP-0005, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
         self._safety_extensions: dict[str, float] = {}  # FP-0005, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
-        self._hook_driven_turns: int = 0  # #1800 slice 7, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode
         # Optional MCP server allowlist from agent profile (PR37, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         self._allowed_mcp: list[str] | None = (
             list(allowed_mcp) if allowed_mcp is not None else None
@@ -2902,61 +2901,15 @@ class Session:
         """
         return self._buffered_intervention_answers
 
-    @property
-    def hook_driven_turns(self) -> int:
-        """Read-only accessor for the hook-driven-turns loop-valve counter (#2884).
-
-        Snapshot-backed (``AgentSnapshot.hook_driven_turns`` — see
-        ``restore_state`` / ``SnapshotJournal.record_hook_driven_turns``) so
-        tests and observability can read the crash-durable value without
-        reaching into the private ``_hook_driven_turns`` field.
-        """
-        return self._hook_driven_turns
-
-    def _effective_hook_driven_turns_cap(self) -> "int | None":
-        """The SSoT for the hook-driven-turns loop-valve cap (#2884): config
-        ``max_hook_driven_turns`` plus any session-local extension granted by
-        a prior checkpoint decision, or ``None`` if the valve enforces no cap
-        at all (``max_hook_driven_turns <= 0``).
-
-        `_stamp_execution_context`'s enforcement branch and
-        `remaining_hook_driven_turns` (#5012-A) both call this rather than
-        each computing the formula themselves — lead-coder catch, #5012-A
-        review: two independently-maintained copies of the same formula is
-        exactly the SSoT gap #5015 named ("derive from SSoT, don't duplicate
-        a literal"). If this formula ever changes, there is one place to
-        change it, not two to remember to keep in sync."""
-        base_cap = self._safety.loop.max_hook_driven_turns
-        if base_cap <= 0:
-            return None
-        return base_cap + int(self._safety_extensions.get("hook_driven_turns", 0.0))
-
-    @property
-    def remaining_hook_driven_turns(self) -> "int | None":
-        """How many more hook-driven turns this session may still take before
-        the loop-valve cap (#2884) fires, or ``None`` if uncapped (#5012-A).
-
-        Reads `_effective_hook_driven_turns_cap` (the SAME computation
-        `_stamp_execution_context` enforces against, not a mirrored copy —
-        see that method's own docstring) minus turns already spent."""
-        cap = self._effective_hook_driven_turns_cap()
-        if cap is None:
-            return None
-        return max(0, cap - self._hook_driven_turns)
-
-    @property
-    def max_hook_driven_turns(self) -> "int | None":
-        """The effective hook-driven-turns cap itself (config
-        ``max_hook_driven_turns`` plus any session-local extension), or
-        ``None`` if the valve enforces no cap at all — the SAME value
-        :attr:`remaining_hook_driven_turns` is computed against, exposed as
-        its own public read (#5012-A PR #5038: `describe_session`'s
-        write-out needs BOTH figures, per issue #5012's own literal field ②
-        — "残り turn ＋ max_hook_driven_turns"). Reads
-        `_effective_hook_driven_turns_cap` (the SAME SSoT computation
-        `remaining_hook_driven_turns` and `_stamp_execution_context`'s
-        enforcement branch already share), not a third independent copy."""
-        return self._effective_hook_driven_turns_cap()
+    # (#2884 added `hook_driven_turns`/`_effective_hook_driven_turns_cap`/
+    # `remaining_hook_driven_turns`/`max_hook_driven_turns` here — the
+    # hook-driven-turns loop-valve counter and its cap SSoT. #5561 (owner
+    # ruling, 2026-08-30) retired the valve entirely: "hook 起動を回数で
+    # 制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も判断できない"
+    # — no operator could derive a correct cap value, and the default was
+    # a de-facto answer dressed as a deliberate one. `describe_session`
+    # no longer reports either figure (see LoopConfig's own docstring,
+    # config/chat.py, for the full replacement rationale).)
 
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
@@ -3675,9 +3628,6 @@ class Session:
                                              + self._restore_intervention_tasks
             buffered_intervention_answers  → self._buffered_intervention_answers
             next_turn_context              → self._inbox_arbiter.next_turn_context
-            hook_driven_turns              → self._hook_driven_turns (#2884; restore_state's
-                                               plain assignment is unconditional, so no
-                                               separate clear step is needed here)
 
         The fire-and-forget WAL-append task handles are already settled by
         await_quiescent (via self._background_tasks — #4759's task funnel,
@@ -3700,16 +3650,15 @@ class Session:
         self._buffered_intervention_answers.clear()
         # next_turn_context (#1800-4b)
         self._inbox_arbiter.next_turn_context.clear()
-        # hook_driven_turns (#2884): reset the loop-valve counter mirror. restore_state
-        # re-assigns it wholesale from the reconstructed snapshot, but clearing here keeps
-        # the zero-residue guarantee robust independent of that assignment.
-        self._hook_driven_turns = 0
+        # (#2884 added a hook_driven_turns reset step here — the loop-valve
+        # counter mirror. #5561 retired the valve, and the counter with it.)
         # pending_inbox_item / cancelled_msg_ids / last_sender / last_reply_to
         # (proposal 0067 P1, #3978 InboxArbiter extraction): the same latent
         # gap current_task's own comment below names — NONE of these four
         # were part of AgentSnapshot before this extraction either, and
-        # reset_for_rewind never cleared them (only next_turn_context and
-        # hook_driven_turns were). A genuine process crash was already safe
+        # reset_for_rewind never cleared them (only next_turn_context was —
+        # hook_driven_turns was a second such holder until #5561 retired
+        # it). A genuine process crash was already safe
         # (fresh Session() defaults win, restore_state never sets them), but
         # a REWIND reuses the SAME live Session — without this, a peeked
         # mid-turn item, a stale cancel-skip entry, or a stale sender/
@@ -5690,16 +5639,11 @@ class Session:
             # the RAW SandboxConfig (declared, never resolved) for
             # describe_session's write-scope field, via OpContext.sandbox_config.
             sandbox_config_fn=lambda: self._sandbox_config,
-            # #5012-A PR #5038 (lead-coder block, issuecomment-5376729625):
-            # live — the SAME pair describe_session's field ② needs
-            # (issue #5012's own literal wording), read fresh every build()
-            # call via the public properties (SSoT-shared with the
-            # enforcement site, see _effective_hook_driven_turns_cap's own
-            # docstring) rather than duplicating the formula here.
-            hook_driven_turns_budget_fn=lambda: {
-                "remaining_hook_driven_turns": self.remaining_hook_driven_turns,
-                "max_hook_driven_turns": self.max_hook_driven_turns,
-            },
+            # (#5012-A PR #5038 added a `hook_driven_turns_budget_fn=` kwarg
+            # here — describe_session's field ② pair, live via the public
+            # properties. #5561 (owner ruling) retired the valve those
+            # properties reported on, and this kwarg with it — OpContext no
+            # longer carries a hook_driven_turns_budget at all.)
             # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
             agent_id=self._agent.agent_id,
             # #4574: the live agent's NAME — a DIFFERENT string from agent_id
@@ -7151,10 +7095,12 @@ class Session:
         matches by ``chain_id`` and does not care whether this is the FIRST
         ``turn_started`` for that chain_id or an extra one fired mid-turn
         (architect: "new state does not grow, only the trigger count does").
-        Deliberately does NOT touch ``_hook_driven_turns`` or dispatch
-        ``turn_start`` hooks — a mid-turn injection rides inside the
-        ALREADY-running turn's budget/lifecycle, it does not start a new one
-        (architect's point 4: the loop valve must not reset).
+        Deliberately does NOT dispatch ``turn_start`` hooks — a mid-turn
+        injection rides inside the ALREADY-running turn's lifecycle, it
+        does not start a new one (architect's point 4). (Pre-#5561 this
+        docstring also said "does not touch ``_hook_driven_turns``" — that
+        counter is gone; the point about not starting a new turn stands on
+        its own.)
 
         No-op (raises nothing, commits nothing) if ``msg_id`` does not match
         the currently held ``self._inbox_arbiter.pending_inbox_item`` —
@@ -7258,10 +7204,10 @@ class Session:
         Callable from async context only — restoration schedules asyncio
         tasks."""
         self._journal.install(snapshot)
-        # #2884: restore the loop-valve counter from its snapshot-backed durable
-        # form — otherwise a crash+restart silently resets it to 0, handing a
-        # near-cap hook self-continuation chain a free fresh budget window.
-        self._hook_driven_turns = snapshot.hook_driven_turns
+        # (#2884 added a restore step here for the loop-valve counter's
+        # snapshot-backed durable form. #5561 (owner ruling) retired the
+        # valve, and the counter with it — AgentSnapshot no longer carries
+        # a `hook_driven_turns` field to restore from.)
         for msg in snapshot.inbox:
             self.inbox.put_nowait((msg["kind"], msg["payload"]))
         self._chains.restore(on_fire=self._on_chain_timeout_fire)
@@ -7413,35 +7359,18 @@ class Session:
         kind, payload = trigger
         # proposal 0060 Phase 1 (A7): stamp per-turn provenance — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_current_turn_origin`).
         self._stamp_execution_context(kind, payload)
-        # #1800 slice 7: the loop valve (bound hook self-continuation) — see docs/concepts/runtime/hooks.md#loop-valve.
-        if kind == TurnOrigin.CLIENT_INPUT:
-            self._hook_driven_turns = 0
-            # #2884: snapshot-back the counter so a crash+restart does not hand a
-            # near-cap self-wake loop a free fresh budget window (see restore_state).
-            await self._journal.record_hook_driven_turns(count=0)
-        elif kind == TurnOrigin.HOOK:
-            self._hook_driven_turns += 1
-            await self._journal.record_hook_driven_turns(count=self._hook_driven_turns)
-            _base_cap = self._safety.loop.max_hook_driven_turns
-            _cap = self._effective_hook_driven_turns_cap()
-            if _cap is not None and self._hook_driven_turns > _cap:
-                decision = await self._handle_chat_limit_checkpoint(
-                    kind="hook_driven_turns",
-                    prompt=(
-                        f"Hook self-continuation reached the cap of {_cap} "
-                        f"consecutive hook-driven turns. Allow more?"
-                    ),
-                    detail=f"count={self._hook_driven_turns} cap={_cap}",
-                    extension_amount=float(_base_cap),
-                )
-                if not decision.allow_continue:
-                    # Bound reached + not extended → suppress this hook turn.
-                    # The chain stops here; the session survives (idle).
-                    return True
-                # allow_continue: the checkpoint accumulated the extension into
-                # self._safety_extensions["hook_driven_turns"], raising the
-                # effective cap so this + subsequent turns proceed until the
-                # new bound (no re-prompt every turn).
+        # (#1800 slice 7 added the loop valve here — bound hook
+        # self-continuation by counting consecutive hook-driven turns,
+        # resetting on CLIENT_INPUT, checkpointing past a configured cap.
+        # #5561 (owner ruling, 2026-08-30) retired it entirely: "hook 起動を
+        # 回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も
+        # 判断できない" — no operator could derive a correct cap value.
+        # Replaced by CostConfig (total spend, cause-independent), #5516's
+        # own N-into-one push folding, and per-push size bounds
+        # (spillability_max_chars) — see LoopConfig's own docstring,
+        # config/chat.py, for the full rationale. A self-continuation CYCLE
+        # detector specifically was considered and rejected — none has ever
+        # been observed; revival needs one real occurrence first.)
         # FP-0041 (#489) PR-A: surface a sender change as a state_change
         # entry — removing this call collapses multi-consumer attribution
         # into one undifferentiated feed (authoring-guide.md#sender-attribution-as-state_change-fp-0041-489).

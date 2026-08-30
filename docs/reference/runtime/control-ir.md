@@ -1559,19 +1559,21 @@ chain as `OpContext.hook_dispatcher` (mirrors that field's threading exactly:
 `hook_dispatcher`). Downstream, an emitted event a Composer correlates into
 `composed:*` traverses the EXISTING `composed:*` → `ComposedEventConsumer` →
 `HookDispatcher.dispatch_bus_event` → inbox `kind="hook"` E-path (Phase 5 part
-1, #2881) unchanged — the `max_hook_driven_turns` loop-valve counts an
-emit-origin wake turn with ZERO new bounding logic, the same "every wake path
-traverses `kind="hook`" invariant Phase 5 part 1 already pins.
+1, #2881) unchanged — an emit-origin wake turn adds no new dispatch
+machinery of its own, the same "every wake path traverses `kind="hook`"
+invariant Phase 5 part 1 already pins. (Pre-#5561 this paragraph also noted
+the `max_hook_driven_turns` loop-valve counted such turns with zero new
+bounding logic; that valve is retired — see [Concepts: hooks §
+Loop valve](../../concepts/runtime/hooks.md#loop-valve) for the current
+bounding mechanisms.)
 
-**Out of scope for this phase** (tracked in #2884, a separate recovery-gated
-arc): making `_hook_driven_turns` (the loop-valve counter) WAL/snapshot-backed
-across a crash. It remains in-memory-only (proposal §11 future list item 2);
-`emit_hook_event` increases the NUMBER of hook-driven-turn-generating paths
-but does not change this counter's crash-durability posture. #2884 additionally
-tracks a NEW risk dimension this phase's producer surfaces: a WAL-replay-driven
-re-emit (an `emit_hook_event` op re-executed during crash-recovery WAL replay)
-is a distinct hazard from the counter's own in-memory reset, and is
-out-of-scope here too.
+(Pre-#5561 this section also tracked, out of scope for this phase and
+under #2884, making the hook-driven-turns loop-valve counter WAL/
+snapshot-backed across a crash. #5561 retired the valve — and the counter
+with it — mooting that follow-up. The separate WAL-replay-driven re-emit
+hazard #2884 flagged — an `emit_hook_event` op re-executed during
+crash-recovery WAL replay — is unrelated to the counter and remains its
+own open concern, untouched by #5561.)
 
 ---
 
@@ -1594,18 +1596,16 @@ Field population is closed to 3 fields (architect ruling, `gh issue view
    `{"declared": true, "allow_write_paths": [...], "deny_write_paths":
    [...]}` (the block's own declared values, verbatim).
 2. **`position`** — `{repo_root, branch, head, python_executable, venv_path,
-   capability: {ruff, pytest, mkdocs}, hook_driven_turns_budget:
-   {remaining_hook_driven_turns, max_hook_driven_turns}}`. `branch`/`head`
-   are `null` for a non-git directory or before the first commit; `branch`
-   is `null` (not the literal `"HEAD"`) in a detached-HEAD state.
-   `hook_driven_turns_budget` is `null` (not fabricated as `0`) when no
-   session backs the OpContext (direct/test construction); `max_hook_
-   driven_turns` is `null` when the loop-valve enforces no cap at all
-   (`safety.loop.max_hook_driven_turns <= 0`). This is the pair issue
-   #5012's own field ② wording names ("残り turn ＋ max_hook_driven_turns")
-   — read LIVE via `Session.remaining_hook_driven_turns` /
-   `Session.max_hook_driven_turns`, unlike `write_scope`/`auth_status`
-   above, which are static per-session config.
+   capability: {ruff, pytest, mkdocs}}`. `branch`/`head` are `null` for a
+   non-git directory or before the first commit; `branch` is `null` (not
+   the literal `"HEAD"`) in a detached-HEAD state. (Issue #5012's own field
+   ② wording also named a `hook_driven_turns_budget:
+   {remaining_hook_driven_turns, max_hook_driven_turns}` sub-key
+   ("残り turn ＋ max_hook_driven_turns"), read LIVE via
+   `Session.remaining_hook_driven_turns`/`Session.max_hook_driven_turns`.
+   #5561 (owner ruling) retired that loop valve and both properties
+   entirely, and this sub-key with it — see `LoopConfig`'s own docstring,
+   `config/chat.py`, for the retirement rationale.)
 3. **`auth_status`** — one entry per provider declared in `auth.providers`
    (reyn.yaml), each `{authenticated: bool, reason: str}` — NEVER a token,
    refresh token, client secret, or scope. Scoped PERMANENTLY to reyn's own
@@ -1629,8 +1629,7 @@ Result:
     "repo_root": "/path/to/repo", "branch": "main", "head": "abc1234...",
     "python_executable": "/path/to/.venv/bin/python",
     "venv_path": "/path/to/.venv",
-    "capability": {"ruff": true, "pytest": true, "mkdocs": true},
-    "hook_driven_turns_budget": {"remaining_hook_driven_turns": 25, "max_hook_driven_turns": 25}
+    "capability": {"ruff": true, "pytest": true, "mkdocs": true}
   },
   "auth_status": {}
 }
@@ -1643,10 +1642,9 @@ Implementation: `reyn.runtime.session_write_scope.describe_write_scope`,
 `OpContext.auth_config` are narrow config-derived projections (same shape
 as `OpContext.threat_scan`), threaded through
 `build_router_op_context`/`RouterOpContextSource` from `Session`'s own
-`_sandbox_config`/`_auth_config`. `OpContext.hook_driven_turns_budget` is a
-LIVE dict (not a config projection — resolved fresh on every `build()` call
-via `Session.remaining_hook_driven_turns`/`Session.max_hook_driven_turns`,
-which both read the shared `_effective_hook_driven_turns_cap` SSoT).
+`_sandbox_config`/`_auth_config`. (Pre-#5561 `OpContext.hook_driven_turns_
+budget` was a third, LIVE-resolved field here — #5561 retired it along
+with the loop valve it reported on.)
 
 ---
 

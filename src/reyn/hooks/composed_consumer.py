@@ -16,11 +16,11 @@ valve-metered-allow``" transition (proposal §9 item 3 / §8.4 item 3): a
 wake=true push a consumer hook makes here traverses ``HookDispatcher``'s
 existing E-path (``_push_resolved`` -> the injected ``put_inbox`` callable ->
 the Session's ``TurnOrigin.HOOK``/``kind="hook"`` inbox message) — the SAME
-path every other hook-driven wake takes, so the Session's existing
-``max_hook_driven_turns`` loop-valve counts a composed->wake turn with ZERO
-new bounding logic. A self-stimulating composed->wake->(builtin
-dispatch)->composed loop therefore force-closes at the cap exactly like any
-other hook-driven chain (see the Tier-2 loop-valve pin test for this phase).
+path every other hook-driven wake takes, so a composed->wake turn adds no
+new dispatch machinery of its own. (Pre-#5561 this paragraph also noted the
+Session's ``max_hook_driven_turns`` loop-valve counted such turns with zero
+new bounding logic; that valve is retired — see ``LoopConfig``'s own
+docstring, config/chat.py, for the replacement bounding mechanisms.)
 
 Deliberately NOT part of ``Composer``/``ComposerRegistry``
 (``reyn.hooks.composer``) — that module's invariant #5 must stay true (a
