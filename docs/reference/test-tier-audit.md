@@ -59,6 +59,15 @@ docstring that does not match this pattern, trigger this error.
 **Why:** Without the Tier label, there is no way to know whether a test
 belongs at all (Tier 4 = do not write) or what contract it is asserting.
 
+**`tests/scaffold/`'s own vocabulary (#5606):** a scaffold test — an
+extraction-refactor characterization, or #5603's "does the upstream defect
+this repo works around still exist" shape — genuinely fits none of Tier
+1/2/3 (its subject is a third party's behavior or a past state, not a reyn
+contract). Inside `tests/scaffold/` only, `"""Tier scaffold: ..."""` is
+accepted in place of a numeric Tier. Declaring `"""Tier scaffold: ..."""`
+**outside** `tests/scaffold/` is an ERROR — that vocabulary is not a Tier 4
+escape route reachable from anywhere else.
+
 ### Rule 2 — Format pinning (Tier 4 ERROR)
 
 Expressions of the form `len(...) [<>=] N` pin the exact length of a string,
