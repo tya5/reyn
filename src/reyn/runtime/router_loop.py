@@ -368,13 +368,19 @@ def _materialise_media_part(
         if media_store is None:
             return MediaMaterialiseFailure.NO_STORE
         try:
-            data_bytes, found = media_store.read_media(path)
+            # #5512: memoized by content_hash (the canonical path-ref
+            # field, #383) when the block carries one — a cache hit
+            # skips both the file read and the base64 re-encode this
+            # method used to unconditionally repeat on every call while
+            # the block stays in the LLM-visible window.
+            data_b64, found = media_store.read_media_base64(
+                path, content_hash=block.get("content_hash"),
+            )
         except PermissionError:
             return MediaMaterialiseFailure.PERMISSION_DENIED
         if not found:
             return MediaMaterialiseFailure.NOT_FOUND
-        import base64
-        data_b64 = base64.b64encode(data_bytes).decode("ascii")
+        assert data_b64 is not None  # found=True always pairs with a real value
         return build_wire_media_part(block.get("type") or "image", mime, data_b64)
     data = block.get("data")
     if isinstance(data, str) and data:

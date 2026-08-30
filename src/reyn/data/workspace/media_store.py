@@ -603,6 +603,11 @@ class MediaStore:
     message so the read_tool_result handler can surface a stub error.
     """
 
+    #: #5512: disclosed-as-arbitrary, not measured — see
+    #: ``self._base64_cache``'s own comment (in ``__init__``) for why a
+    #: real bound wasn't derived from data for a priority-not-high issue.
+    _BASE64_CACHE_MAX_ENTRIES = 64
+
     def __init__(
         self,
         config: MediaStoreConfig | None = None,
@@ -725,6 +730,64 @@ class MediaStore:
         # reaches :meth:`save_tool_result`; never read for a path whose
         # entry is absent — see :meth:`is_open_turn_file`.
         self._chain_by_path: "dict[Path, str]" = {}
+        # #5512 (owner: "base64 の memo/cache 化は issue 化しておいて —
+        # 優先度は高くしなくて良い"): a path-ref's file is re-read and
+        # re-base64'd on EVERY wire-materialisation call while it's still
+        # in the LLM-visible window (measured call sites:
+        # router_loop.py's ``_materialise_media_part`` +
+        # router_history_buffer.py's ``_materialise_path_ref_content``,
+        # both unconditional per-call — confirmed against origin/main,
+        # #5512 issue's own step①). This only saves I/O + CPU
+        # (re-encoding), never wire bytes — the data URL's own content is
+        # identical either way (#5512's own explicit non-goal: this is
+        # NOT a cost/budget fix). Process-internal only (lead-coder
+        # ruling — no persistence, so no "who deletes it" band Q1 to
+        # answer). Keyed by the path-ref's own ``content_hash`` (#383's
+        # canonical shape, ``chat_message.py``'s own module docstring —
+        # already present, not a new field this adds) so a changed file
+        # is a different key, never a stale hit (#5364's own
+        # `_offload_content_hash` precedent uses the identical
+        # content-hash-as-key idiom for the same reason). Bounded (band:
+        # cost/budget) — NOT measured against a real workload (this
+        # issue's own priority is explicitly "not high"; a future
+        # session with real numbers should replace this if it turns out
+        # to matter): a modest, disclosed-as-arbitrary entry cap, evicted
+        # FIFO (oldest-inserted first) on overflow — simple over exact
+        # LRU since this is a best-effort memo, not a correctness-
+        # bearing cache.
+        self._base64_cache: "dict[str, str]" = {}
+
+    def read_media_base64(
+        self, path_str: str, *, content_hash: "str | None" = None,
+    ) -> "tuple[str | None, bool]":
+        """Read + base64-encode media at *path_str*, memoized by
+        *content_hash* when given (#5512). Returns ``(b64_or_None,
+        found)`` — ``found=False`` mirrors :meth:`read_media`'s own
+        contract (missing file, never raises for that case).
+
+        A cache HIT skips the file read AND the base64 encode entirely —
+        the two real costs #5512 measured (never the wire byte count,
+        which this does not change at all). ``content_hash=None``
+        (a caller with no hash to key on) always misses — this method
+        degrades to plain ``read_media`` + encode in that case, never
+        raises for lacking one.
+        """
+        if content_hash is not None:
+            cached = self._base64_cache.get(content_hash)
+            if cached is not None:
+                return cached, True
+        data_bytes, found = self.read_media(path_str)
+        if not found:
+            return None, False
+        import base64
+        b64 = base64.b64encode(data_bytes).decode("ascii")
+        if content_hash is not None:
+            if len(self._base64_cache) >= self._BASE64_CACHE_MAX_ENTRIES:
+                # FIFO eviction: dict preserves insertion order (Python
+                # 3.7+) — the oldest-inserted key is the first one.
+                self._base64_cache.pop(next(iter(self._base64_cache)))
+            self._base64_cache[content_hash] = b64
+        return b64, True
 
     def _spill_manifest_path(self) -> Path:
         # #4584: PERSIST tier — `.reyn/memory/`, not `.reyn/cache/` (see
