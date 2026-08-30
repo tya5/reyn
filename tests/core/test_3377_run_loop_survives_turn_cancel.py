@@ -45,7 +45,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
-from tests._support.events import settle
+from tests._support.events import collect_events, settle
 
 AGENT = "cancel-survival-agent"
 
@@ -61,11 +61,10 @@ def _make_session(tmp_path: Path) -> tuple[Session, StateLog]:
 
 
 def _collect(session: Session) -> list:
-    """Subscribe through the public seam (Session.subscribe_audit_events,
-    #5260) — for witness ②: turn_started proves the REAL driver ran (#5450)."""
-    collected: list = []
-    session.subscribe_audit_events(collected.append)
-    return collected
+    """#5467 phase 2: through the shared test-support seam (was a raw
+    ``session.subscribe_audit_events(collected.append)`` subscriber) — for
+    witness ②: turn_started proves the REAL driver ran (#5450)."""
+    return collect_events(session)
 
 
 def _seen_chain_ids(events: list) -> "set[str]":
@@ -228,7 +227,7 @@ async def test_cancelling_the_session_still_stops_the_loop_and_records_it(
 
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
-        await settle(session._audit_events)
+        await settle(session)
 
         assert run_task.done(), "a cancel aimed at the session must stop the loop"
         assert session.halted_reason == "cancelled", (
