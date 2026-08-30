@@ -1,6 +1,6 @@
 # ADR-0044 (#5531) — overflow recovery: one cause-independent ladder, predicate terminals, declared spillability
 
-**Status**: **PROPOSED** (owner design session 2026-08-30). Deliberately not ACCEPTED yet: this design moved several times during the session it records, and an accepted ADR is immutable — see this directory's README. It is raised to ACCEPTED in a follow-up PR once #5531 PR-3 lands and the implementation has either confirmed or falsified each decision below. **Implementation**: #5531 PR-3 (with [#5543](https://github.com/tya5/reyn/issues/5543) and [#5514](https://github.com/tya5/reyn/issues/5514) §8 in the same PR, owner ruling: 「同じ PR でいれて」).
+**Status**: **ACCEPTED** (owner design session 2026-08-30; raised from PROPOSED after [#5547](https://github.com/tya5/reyn/pull/5547) landed and each decision below was checked against the merged code — see *Verification* below). **Implementation**: #5531 PR-3, landed together with [#5543](https://github.com/tya5/reyn/issues/5543) and [#5514](https://github.com/tya5/reyn/issues/5514) in the same PR (owner ruling: 「同じ PR でいれて」).
 **Track**: #4381 (overflow recovery) → #5367 → #5531.
 **Builds on**: [ADR-0042](0042-force-close-layer2-removal.md) — spill replaced force-close layer②. This ADR keeps that decision and describes the ladder spill now sits at the top of. Nothing in 0042 or [ADR-0036](0036-history-compaction-force-close-unification.md) is superseded.
 **Companion docs**: [`chat-compaction.md` → Overflow recovery](../../concepts/data-retrieval/chat-compaction.md#overflow-recovery) describes the resulting mechanism; this ADR records why.
@@ -139,9 +139,10 @@ A `main_call` overflow on a conversation whose `mid` is empty:
 
 Failures are classified into `Overflow` / `Retryable` / `Fatal` — the shape #3783 already
 proposed and whose `Retryable` and `Fatal` arms never shipped. Only `Overflow` enters the
-ladder. `Retryable` is retried with backoff (the compaction call does not currently go
-through the router's own retry wrapper — a 5xx reaching the ladder has not been retried even
-once). `Fatal` propagates unchanged.
+ladder. `Retryable` is recognised from the same infra/rate-limit signals `llm.py`'s own
+`_llm_call_with_retry` already retries — classified independently rather than by
+importing that module, so the two stay two callers of one classification. `Fatal`
+propagates unchanged.
 
 This generalises #5329, which carved out exactly one subtype (quota exhaustion) for exactly
 this reason: the window "resets on a clock, not on input size".
@@ -251,6 +252,27 @@ subject bounds it at all.
   unbounded-growth shape.
 - Naming note (see this directory's README): this ADR **decides** `Spillability` and its
   members, so a later rename is an ADR decision rather than a sweep.
+
+## Verification against the merged implementation
+
+This ADR's own promotion condition was that the implementation "either confirmed
+or falsified each decision". Checked on `origin/main` at `a22c2b8`'s merge-base — re-checked after #5553 landed
+mid-review, which is why two rows read differently from the first draft of this table:
+
+| decision | outcome |
+|---|---|
+| Classification precedes the ladder | **confirmed** — `classify_llm_failure` exists; Fatal/Retryable are kept out of the ladder |
+| One cause-independent ladder | **confirmed** — no rung is gated on the byte-limit flag |
+| Spill first, one candidate, population = all of `mid` | **confirmed** — `spill_fn` now returns `(index, turn)`, so the caller selects across the whole population instead of the head |
+| Terminals are predicates; `max_iterations` removed | **confirmed** — the loop is `while True`; the parameter is gone from the signature and has no remaining code use |
+| The defer-to-tail escape is removed | **confirmed** — `tail = raw_middle[:1] + tail` no longer exists |
+| Slice sizing halves on failure, doubles on success, episode-scoped | **confirmed**, including the reset at the episode boundary |
+| `Spillability` declared by the producer | **confirmed** — `FIRST_CHOICE` / `LAST_RESORT` / `NEVER`, `LAST_RESORT` as the safe-side default |
+| Which terminal was reached travels as a structured value | **confirmed** — `UnrecoveredError.__init__(reason, *, terminal: RetryLoopTerminal, saw_byte_limit=False)`; `terminal` is a required keyword and a separate axis from `saw_byte_limit`. Landed in #5553, after this ADR was first written |
+
+Nothing was falsified, and nothing recorded here is outstanding: the one gap this
+check first found — `retry_loop`'s docstring still documenting a `max_iterations:`
+parameter the signature no longer had — was closed by #5553 while this PR was open.
 
 ## References
 
