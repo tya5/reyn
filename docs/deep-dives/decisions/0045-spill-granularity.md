@@ -1,6 +1,6 @@
 # ADR-0045 (#5592) — spill granularity: one request per (compartment × spillability), not per turn
 
-**Status**: ACCEPTED (owner ruling 2026-08-30, after a live incident on the owner's machine).
+**Status**: **PROPOSED** (owner ruling 2026-08-30, after a live incident on the owner's machine). Not ACCEPTED yet, by this team's own convention: an accepted ADR is immutable, so it is raised once the implementation has confirmed or falsified each decision below — the precedent ADR-0044 followed.
 **Supersedes**: [ADR-0044](0044-overflow-recovery-ladder.md) — **its rung-① granularity only** ("Rung 1 spills **one** candidate and retries rather than spilling a batch"). Every other part of 0044 — the classification, the cause-independent ladder, the predicate terminals, the slice-sizing search, `Spillability` itself — stands unchanged.
 **Track**: #5531 → #5592.
 
