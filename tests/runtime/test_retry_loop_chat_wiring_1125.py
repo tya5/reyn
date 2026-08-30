@@ -289,14 +289,13 @@ def test_session_decomposition_feeds_retry_loop(tmp_path, monkeypatch) -> None:
 
     calls: list[dict] = []
 
-    async def _main_call(*, SP, head, summary, tail, new_msg):
-        calls.append({"head": head, "tail": tail, "summary": summary})
+    async def _main_call(*, SP, head, tail, new_msg):
+        calls.append({"head": head, "tail": tail})
         return _RouterUsageShim(TokenUsage(prompt_tokens=123))
 
     shim = asyncio.run(retry_loop(
         SP=session._history_buffer.build_system_prompt(),
         head=head,
-        summary=summary,
         raw_middle=raw_middle,
         tail=tail,
         new_msg=new_msg,

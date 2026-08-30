@@ -120,6 +120,20 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
         "wire_bytes", "accepted",
         "sp_bytes", "head_bytes", "summary_bytes", "tail_bytes", "new_msg_bytes",
     }),
+    # #5531 PR-2 (owner acceptance: "下限を割ったことが見える" — visible
+    # with the shipped config, not just inferable from a shrunk wire).
+    # retry_loop's own reservation-based halving ladder lowers head/tail
+    # below what `component_weights` configured whenever T_max itself
+    # gets halved (both the byte-limit and, since PR-2, the token-
+    # overflow path reach this) — previously silent (byte-path only,
+    # and even there nothing recorded it). `configured_head_budget`/
+    # `configured_tail_budget` are the UNCHANGED, entry-time values (the
+    # floor this ladder is lowering BELOW); `head_min_tokens`/
+    # `tail_min_tokens` are what this halving pass just derived instead.
+    "compaction_floor_lowered": frozenset({
+        "t_max_override", "head_min_tokens", "tail_min_tokens",
+        "configured_head_budget", "configured_tail_budget", "saw_byte_limit",
+    }),
     # #5367①: two distinct mechanisms (tool_result_cap.TRIGGER_CAP — write-time
     # size gate; TRIGGER_OVERFLOW — reactive same-turn spill, #5296 PR-2) emit
     # this SAME kind through one shared emit site. `trigger` is mandatory so a
@@ -332,6 +346,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "compaction_check",
     "compaction_completed",
     "compaction_failed",
+    "compaction_floor_lowered",
     "compaction_schema_invalid",
     "compaction_shrink_recovered",
     "compaction_started",

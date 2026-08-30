@@ -1968,6 +1968,81 @@ def _estimate_tokens_list(
     )
 
 
+def _summary_tokens_in(
+    *lists: list[dict],
+    model: str,
+    use_chars4: bool = False,
+) -> int:
+    """#5531 PR-2: sum the token estimate of every ``role==SUMMARY_MESSAGE_
+    ROLE`` element found across the given wire-dict lists (``head``/``tail``
+    — never ``raw_middle``, which is not part of what ``main_call`` sends).
+
+    Recomputed FRESH every call, never memoized like SP/new_msg's own
+    floors below — unlike those two fixed parameters, a summary's size
+    genuinely changes mid-call (a successful fold replaces it with a
+    smaller, newer one; owner's own invariant 5: "the reservation is then
+    recomputed"). More than one element can match (history can hold more
+    than one summary turn — see ``HistoryChunkToCompact``'s own
+    docstring) — this sums all of them, never assumes exactly one."""
+    return sum(
+        estimate_tokens_for_turn(t, model, use_chars4=use_chars4)
+        for lst in lists
+        for t in lst
+        if isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE
+    )
+
+
+def _has_non_summary(items: list[dict]) -> bool:
+    """#5531 PR-2: whether ``items`` holds at least one NON-summary
+    element — Phase 1/2's own trigger condition (below) must check this
+    alongside "exceeds budget", not just the token count alone: once a
+    list is ALL summary (reserved, ``_split_off_non_summary`` skips it
+    entirely), the token check alone stays True forever even though
+    NOTHING can actually be moved — that starvation kept the reservation
+    ladder's own floor-check from ever being reached (Phase 1/2 kept
+    "handling" the overflow, making zero progress, every iteration)."""
+    return any(
+        not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+        for t in items
+    )
+
+
+def _split_off_non_summary(
+    items: list[dict], count: int, *, from_end: bool,
+) -> "tuple[list[dict], list[dict]]":
+    """#5531 PR-2 (owner ruling, issuecomment-5465590083): Phase 1/2's own
+    window-shrink must not pull a ``role==SUMMARY_MESSAGE_ROLE`` element
+    into ``raw_middle`` — a summary is RESERVED (owner's own invariant 5),
+    and that reservation must hold structurally in the ONE place actual
+    window-shrinking happens, not just in the candidate/room arithmetic.
+    Without this, a summary sitting at the boundary Phase 2 pulls from
+    (``head``'s own end) or Phase 1 pulls from (``tail``'s own start) gets
+    pulled back into raw_middle immediately after a fold just placed it
+    there, re-folds it, places it back — an observed oscillation
+    (test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough
+    never converged before this fix).
+
+    Returns ``(removed, kept)`` — ``count`` NON-summary elements taken
+    from the end (``from_end=True``, Phase 2/head) or start
+    (``from_end=False``, Phase 1/tail) of ``items``, skipping over (never
+    removing) any summary element; each list preserves the original
+    relative order of what it holds. If fewer than ``count`` non-summary
+    elements exist, takes as many as there are (never raises) — the
+    caller's own ``max(..., 1)`` chunk-sizing already handles "nothing
+    left to take" by making no progress, exhausting toward
+    ``max_iterations`` like any other stuck case under this ladder's own
+    (avowedly non-monotonic) termination.
+    """
+    non_summary_idx = [
+        i for i, t in enumerate(items)
+        if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+    ]
+    take = set(non_summary_idx[-count:] if from_end else non_summary_idx[:count])
+    removed = [t for i, t in enumerate(items) if i in take]
+    kept = [t for i, t in enumerate(items) if i not in take]
+    return removed, kept
+
+
 # #4944 ①: the byte-axis counterpart of estimate_tokens_for_turn/
 # _estimate_tokens_list above. A request-BODY-BYTE limit (an HTTP 413 from a
 # proxy such as nginx, #4885/#4944) says nothing about TOKENS — the token
@@ -2132,7 +2207,6 @@ async def retry_loop(
     *,
     SP: str,
     head: list[dict],
-    summary: dict | None,
     raw_middle: list[dict],
     tail: list[dict],
     new_msg: dict,
@@ -2222,9 +2296,11 @@ async def retry_loop(
     SP:
         Current system prompt text (used only for token estimation).
     head:
-        HEAD turn list (oldest turns).
-    summary:
-        Current compacted summary dict or None.
+        HEAD turn list (oldest turns). May include one or more
+        ``role==SUMMARY_MESSAGE_ROLE`` elements — #5531 PR-2: there is no
+        separate ``summary`` parameter any more (removed; see
+        ``_summary_tokens_in``) — a summary lives wherever it naturally
+        sits in ``head``/``tail``, exactly like any other turn.
     raw_middle:
         Middle turns not yet compacted.
     tail:
@@ -2241,7 +2317,7 @@ async def retry_loop(
         TokenMultiplierLearner for adaptive estimation feedback.
     main_call:
         Async callable that performs the main LLM call.  Receives keyword
-        args: SP, head, summary, tail, new_msg.  Should raise
+        args: SP, head, tail, new_msg.  Should raise
         ``ContextOverflowError`` on context-length error.
     max_iterations:
         Safety cap (default 8).  Finite-by-construction termination means
@@ -2258,46 +2334,70 @@ async def retry_loop(
     _last_recover_cause: str | None = None
     _consecutive_same_cause = 0
 
-    # #4885 (owner proposal, evaluated and approved by lead-coder): an HTTP
-    # 413 is a request-BODY-BYTE limit — a different axis entirely from the
-    # token budgets this whole ladder is built from (see this function's own
-    # "Bounded termination proof" above: every shrink step and floor here is
-    # measured in TOKENS). Lowering the EFFECTIVE T_max this invocation uses
-    # is the only lever that makes the EXISTING token-shrink mechanics
-    # respond to a byte-limit trigger at all — deliberately NOT a second,
-    # byte-built ladder alongside this one (one resource, one gate; two
-    # gates guarding the same resource is a shape this repo keeps re-
-    # learning not to build). Binary search, not a fixed "shrink by half the
-    # ceiling" guess: the byte/token ratio of whatever tripped the 413 is
-    # unknown (a base64 attachment, a verbose non-English message, and a
-    # repeated low-entropy block all have different ratios), so there is no
-    # ratio to aim for — halving the SAME retry_loop-scoped T_max override
-    # on each still-413 recovery converges in O(log T_max) steps regardless
-    # of what the ratio turns out to be, the identical guarantee
-    # ``max_iterations`` already relies on for the token-only case.
+    # #4885/#5531 PR-2 (owner proposal, evaluated by lead-coder, redesigned
+    # by owner — issue #5531 §2/§4): an HTTP 413 is a request-BODY-BYTE
+    # limit — a different axis entirely from the token budgets this whole
+    # ladder is built from (see this function's own "Bounded termination
+    # proof" above: every shrink step and floor here is measured in
+    # TOKENS). Lowering the EFFECTIVE T_max this invocation uses is the
+    # only lever that makes the EXISTING token-shrink mechanics respond
+    # to a byte-limit trigger at all — deliberately NOT a second, byte-
+    # built ladder alongside this one (one resource, one gate). #5531
+    # PR-2 (§3 item 7): this same halving ladder now also fires for a
+    # plain TOKEN overflow once Phase 1/2 are exhausted — previously
+    # gated to the byte-limit cause only, leaving a token overflow with
+    # no halving lever at all past that point. Binary search, not a
+    # fixed "shrink by half the ceiling" guess: the byte/token ratio of
+    # whatever tripped a 413 is unknown (a base64 attachment, a verbose
+    # non-English message, and a repeated low-entropy block all have
+    # different ratios), so there is no ratio to aim for — halving the
+    # SAME retry_loop-scoped T_max override on each still-overflowing
+    # recovery converges in O(log T_max) steps regardless of what the
+    # ratio turns out to be, the identical guarantee ``max_iterations``
+    # already relies on.
     #
-    # Scope (owner condition ③): ``_t_max_override`` is a LOCAL variable —
-    # passed to ``compute_budgets`` only, never to ``get_max_input_tokens``
-    # or anywhere that would change the model's real context window for any
-    # OTHER call. It dies with this ``retry_loop`` invocation; nothing
-    # persists it past a single turn's shrink attempt (owner condition ②'s
-    # "temporary" — this repo's OWN scoping mechanism already bounds the
-    # lifetime to "this call", so there is no separate expiry to track).
+    # Scope (owner condition ③): ``_t_max_override`` is a LOCAL variable,
+    # never passed to ``get_max_input_tokens`` or anywhere that would
+    # change the model's real context window for any OTHER call. It dies
+    # with this ``retry_loop`` invocation; nothing persists it past a
+    # single turn's shrink attempt.
     #
-    # Floor (owner: "どこで諦めるか — そこはあなたが決めて"): ``SP`` and
-    # ``new_msg`` are the two pieces of context this ladder NEVER shrinks
-    # (``new_msg`` per this module's own #43 docstring: "NEVER dropped" —
-    # dropping the user's own newest message would silently answer a
-    # different question than the one asked; ``SP`` is the session's system
-    # prompt, dropping it changes the agent's own instructions mid-turn).
-    # Once a halved candidate T_max can no longer fit BOTH even with
-    # head/tail/summary all at zero, no further halving can possibly
-    # succeed — continuing would just re-hit the SAME terminal case one
-    # halving later, burning ``max_iterations`` for no new information. That
-    # is the floor: stop BEFORE trying a candidate that provably cannot fit
-    # ``SP`` + ``new_msg`` alone, and raise the corrected diagnosis instead
-    # (below) — not one more halved attempt, and not "exceeds T_max" (false
-    # in this specific case: a byte limit was hit, not a token one).
+    # Floor / reservation (owner: "どこで諦めるか — そこはあなたが決めて",
+    # then #5531 §1 invariant 5's own correction below): ``SP``,
+    # ``new_msg``, and the CURRENT summary are the three pieces of
+    # context this ladder NEVER shrinks (``new_msg`` per this module's
+    # own #43 docstring: "NEVER dropped"; ``SP`` is the session's system
+    # prompt; the summary is folded/replaced, not trimmed down in
+    # place). #5531 §1 invariant 5 (owner): these three are RESERVED —
+    # fixed deductions from the halved candidate, never apportioned by
+    # weight alongside head/tail. The OLD design (§3 item 8) halved
+    # T_max WHOLESALE, which also halved the never-shrunk SP+new_msg
+    # share on every pass — a candidate could fall below what SP+new_msg
+    # alone need even while real room remained in head/tail, a SELF-
+    # INFLICTED floor-hit the reservation redesign eliminates
+    # structurally (see the ladder's own comment, below, for the room-
+    # apportionment formula). Once a halved candidate can no longer fit
+    # the three reserved pieces even with head/tail at zero, no further
+    # halving can possibly succeed — continuing would just re-hit the
+    # SAME terminal case one halving later, burning ``max_iterations``
+    # for no new information.
+    #
+    # #5531 §4 (owner, acceptance): the reservation itself never grows,
+    # but ``room`` is not guaranteed to monotonically decrease across
+    # iterations — a successful fold can SHRINK the summary reservation
+    # (desirable: re-summarizing produces a smaller running summary),
+    # which grows room back. Stopping is carried by a lexicographic
+    # measure — (T_max halvings remaining, total turn count, len(head) +
+    # len(tail), …) — not by ``room`` alone decreasing every step.
+    # Completing that measure into a full proof (removing max_iterations
+    # entirely, the new T4 terminal, a proven decrease every step) is
+    # #5531 PR-3's own scope — that measure is NOT built by this PR.
+    # AT THIS POINT (PR-2), ``max_iterations`` is still the real, final
+    # backstop, not yet redundant (lead-coder correction, issuecomment-
+    # 5465786061 — an earlier version of this comment wrongly cited this
+    # not-yet-built measure as what makes the fold-output-placement
+    # change below safe; the real reason is Phase 1/2's own summary-skip,
+    # see that comment for the actual argument).
     _last_recover_is_byte_limit = False
     # #5316: the learned ceiling — read back (not re-measured, per issue
     # #5316's own "新しい測定は要りません") into the terminal message below
@@ -2397,7 +2497,41 @@ async def retry_loop(
                     chat_summary = await engine.compact(
                         input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
                     )
-                    summary = chat_summary.to_dict()
+                    # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
+                    # 5463249759, deferred from PR-1 which reverted the
+                    # same line): the fold's result goes where the folded
+                    # span itself sat — between `head` and `tail` — so it
+                    # lands at the END of `head`. Not a position
+                    # decision: `head` keeps at most one summary element
+                    # per fold (any prior one this call already carried
+                    # is the SAME span's stale representative, replaced
+                    # here — never two summaries accumulating from ONE
+                    # fold). This is also what makes the summary reach
+                    # `main_call`'s wire at all once raw_middle later
+                    # empties — main_call receives `head`/`tail`
+                    # directly, never `raw_middle`.
+                    #
+                    # PR-1 reverted this exact line because it broke
+                    # retry_loop's OLD termination proof (`head` is no
+                    # longer monotonically non-growing once a fold can
+                    # re-add an element to it — Phase 2 below could pull
+                    # the just-appended element right back into
+                    # raw_middle and re-fold it, an observed
+                    # oscillation). What makes this safe to reintroduce
+                    # is THIS PR's own Phase 1/2 change (below): they now
+                    # SKIP any `role=="summary"` element when choosing
+                    # what to pull (`_split_off_non_summary`) — Phase 2
+                    # structurally cannot pull the element this line just
+                    # appended back into raw_middle any more, which is
+                    # what the old oscillation depended on. (Not a
+                    # lexicographic-measure argument — that measure is
+                    # #5531 PR-3's own future scope, not built by this
+                    # PR; `max_iterations` remains PR-2's real, final
+                    # backstop — lead-coder correction, issuecomment-
+                    # 5465786061.)
+                    head = [
+                        t for t in head if t.get("role") != SUMMARY_MESSAGE_ROLE
+                    ] + [wrap_summary_as_message(chat_summary.to_dict())]
                     # Only the ATTEMPTED slice is compacted — a smaller
                     # remainder (if any) stays in raw_middle for a later
                     # iteration. ``_compact_attempt_len`` is deliberately
@@ -2413,16 +2547,6 @@ async def retry_loop(
                     # raw_middle just clips naturally at the slice above;
                     # no explicit clamping needed.
                     raw_middle = raw_middle[_attempt_len:]
-                    # #5531 (lead-coder ruling, issuecomment-5463249759):
-                    # where the fold's OUTPUT lands is PR-2 scope, not
-                    # PR-1 — writing it back into `head` broke this loop's
-                    # termination proof (`head` is no longer monotonically
-                    # non-growing once a fold can re-add an element to it;
-                    # PR-2's own reservation redesign is what's needed
-                    # here). PR-1 leaves the fold's output exactly where
-                    # it always lived: the `summary` local below, handed
-                    # to `main_call` as its own `summary=` argument —
-                    # unchanged by this PR.
                     # #4947 ③ (CI red on #4950, architect-ruled): reset the
                     # same-cause streak here, and ONLY here — not on any
                     # other escalation branch. The cap's own words below
@@ -2431,7 +2555,8 @@ async def retry_loop(
                     # the moment ONE slice compacts: this is the one branch
                     # where work is PERMANENTLY reduced (the compacted
                     # turns are gone from raw_middle for good, absorbed
-                    # into ``summary``) — every OTHER escalation branch
+                    # into the summary element now in ``head``) — every
+                    # OTHER escalation branch
                     # (Phase 1/2, the T_max-override halving) only MOVES
                     # content between head/tail/raw_middle, so the same-
                     # cause streak staying armed there is still correct: a
@@ -2446,10 +2571,10 @@ async def retry_loop(
                     _consecutive_same_cause = 0
                     if raw_middle:
                         # #4947 ③: ``main_call`` never receives ``raw_middle``
-                        # directly (only ``summary``/``head``/``tail``/
-                        # ``new_msg``) — calling it now would silently drop
-                        # this still-uncompacted remainder from what the
-                        # LLM actually sees. Spend the rest of THIS
+                        # directly (only ``head``/``tail``/``new_msg``) —
+                        # calling it now would silently drop this still-
+                        # uncompacted remainder from what the LLM
+                        # actually sees. Spend the rest of THIS
                         # iteration's budget compacting the remainder
                         # instead of calling main_call with an incomplete
                         # summary.
@@ -2499,15 +2624,13 @@ async def retry_loop(
                     # not a per-exception-type allowlist at this site.
                     raise CompactionOverflowError(str(exc)) from exc
 
-            # #5531 (lead-coder ruling, issuecomment-5463249759): the
-            # fold's OUTPUT placement (whether `main_call` still takes a
-            # separate `summary=` at all) is PR-2 scope, not PR-1 — kept
-            # unchanged here.
+            # #5531 PR-2: `main_call` no longer takes a separate `summary=`
+            # — whichever summary element(s) belong on this wire already
+            # sit inside `head`/`tail` themselves.
             _this_iteration_called_main_call = True
             response = await main_call(
                 SP=SP,
                 head=head,
-                summary=summary,
                 tail=tail,
                 new_msg=new_msg,
             )
@@ -2516,13 +2639,13 @@ async def retry_loop(
             content_type = detect_content_type(new_msg.get("content"))
             sp_tokens = estimate_tokens(SP, model, use_chars4=use_chars4)
             head_tokens = _estimate_tokens_list(head, model, use_chars4=use_chars4)
-            summary_tokens = estimate_tokens(
-                json.dumps(summary, ensure_ascii=False) if summary else "",
-                model, use_chars4=use_chars4,
-            )
             tail_tokens = _estimate_tokens_list(tail, model, use_chars4=use_chars4)
             new_msg_tokens = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
-            estimate = sp_tokens + head_tokens + summary_tokens + tail_tokens + new_msg_tokens
+            # #5531 PR-2: no separate summary term here — head_tokens/
+            # tail_tokens already include it (a summary element is just
+            # one more entry in those lists now); adding it again would
+            # double-count.
+            estimate = sp_tokens + head_tokens + tail_tokens + new_msg_tokens
 
             actual: int | None = None
             try:
@@ -2557,8 +2680,11 @@ async def retry_loop(
             # single ``wire_bytes`` total could never answer: WHICH of the
             # 5 components dominated. ``_last_accepted_wire_bytes`` feeds
             # the learned-limit read-back in the terminal message below.
+            # #5531 PR-2: summary=None — head/tail already include any
+            # summary element's own bytes; a separate value here would
+            # double-count it in `.total`.
             _accepted_breakdown = estimate_wire_bytes_breakdown(
-                SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                SP=SP, head=head, summary=None, tail=tail, new_msg=new_msg,
             )
             _last_accepted_wire_bytes = _accepted_breakdown.total
             engine._events.emit(
@@ -2609,16 +2735,19 @@ async def retry_loop(
                 # #4944①: the size that WAS SENT and got REJECTED — the
                 # real limit is < this value (an upper bound), the pair to
                 # the ``accepted=True`` emission above. ``head``/``tail``/
-                # ``summary``/``new_msg`` still hold exactly what this
-                # failed attempt sent — the shrink-escalation ladder below
-                # has not run yet this iteration. Guarded on
+                # ``new_msg`` still hold exactly what this failed attempt
+                # sent — the shrink-escalation ladder below has not run
+                # yet this iteration. Guarded on
                 # ``_this_iteration_called_main_call``: a compact()-origin
                 # 413 raised from a DIFFERENT, unmeasured payload (see the
                 # flag's own comment above the loop).
                 # #5316: same breakdown as the accepted=True site; feeds
-                # the learned-limit read-back in the terminal message below.
+                # the learned-limit read-back in the terminal message
+                # below. #5531 PR-2: summary=None — head/tail already
+                # include any summary element's own bytes; a separate
+                # value here would double-count it in `.total`.
                 _rejected_breakdown = estimate_wire_bytes_breakdown(
-                    SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                    SP=SP, head=head, summary=None, tail=tail, new_msg=new_msg,
                 )
                 _last_rejected_wire_bytes = _rejected_breakdown.total
                 engine._events.emit(
@@ -2774,94 +2903,178 @@ async def retry_loop(
                 _compact_attempt_len = None
             else:
                 _compact_attempt_len = max(_current_attempt // 2, 1)
-        elif _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens:
-            # Phase 1: trim tail half → raw_middle.
-            chunk = max(len(tail) // 2, 1)
-            raw_middle.extend(tail[:chunk])
-            tail = tail[chunk:]
-        elif _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens:
-            # Phase 2: trim head half → raw_middle.
-            chunk = max(len(head) // 2, 1)
-            raw_middle = head[-chunk:] + raw_middle
-            head = head[:-chunk]
-        elif _last_recover_is_byte_limit:
-            # #4885: token-only shrinking is exhausted (head/tail already at
-            # or below their token minimums) but the triggering cause was an
-            # HTTP 413 — a BYTE limit, which those minimums say nothing
-            # about. Halve the retry_loop-scoped T_max override (or start
-            # from the real T_max on the first attempt) and re-derive
-            # head_min/tail_min from it via `compute_budgets` — the SAME
-            # function every other T_max consumer uses, called here with
-            # `t_max_override` so nothing outside this local scope changes.
+        elif (
+            _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens
+            and _has_non_summary(tail)
+        ):
+            # Phase 1: trim tail half → raw_middle. #5531 PR-2 (owner
+            # ruling, issuecomment-5465590083): skip any summary element
+            # (reserved — see _split_off_non_summary's own docstring)
+            # rather than pulling from tail's raw front. The
+            # `_has_non_summary` guard is load-bearing, not decorative:
+            # once tail is ALL summary, the token check alone stays True
+            # forever with zero progress possible — without this guard
+            # Phase 1 "handles" the overflow every iteration while moving
+            # nothing, starving the reservation ladder's own floor-check
+            # (below) of ever being reached.
+            _non_summary_tail_count = sum(
+                1 for t in tail
+                if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+            )
+            chunk = max(_non_summary_tail_count // 2, 1)
+            _removed, tail = _split_off_non_summary(tail, chunk, from_end=False)
+            raw_middle.extend(_removed)
+        elif (
+            _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens
+            and _has_non_summary(head)
+        ):
+            # Phase 2: trim head half → raw_middle. #5531 PR-2: same skip
+            # and same `_has_non_summary` guard as Phase 1's own branch.
+            _non_summary_head_count = sum(
+                1 for t in head
+                if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+            )
+            chunk = max(_non_summary_head_count // 2, 1)
+            _removed, head = _split_off_non_summary(head, chunk, from_end=True)
+            raw_middle = _removed + raw_middle
+        else:
+            # #5531 PR-2 (owner ruling, §2/§3 item 7): token-only
+            # shrinking is exhausted (head/tail already at or below their
+            # token minimums, or hold nothing but a reserved summary) —
+            # applies REGARDLESS of cause now (token overflow or an HTTP
+            # 413 byte limit both reach here; the old `elif _last_recover_
+            # is_byte_limit:` gate only let the byte case through, so a
+            # token overflow that exhausted Phase 1/2 fell straight to an
+            # unconditional raise with no halving ladder at all — that
+            # raise is gone, folded into this branch's own floor).
+            #
+            # Reservation redesign (owner, §1 invariant 5, replacing
+            # "halve T_max whole" — §3 item 8): SP/new_msg/summary are
+            # RESERVED — fixed deductions from the candidate ceiling,
+            # never apportioned by weight. Only the REMAINDER (`room`) is
+            # apportioned, and only between head/tail — body/new_msg play
+            # no part in this ladder's own floor (new_msg is reserved,
+            # not apportioned; body belongs to compact()'s own budget,
+            # not main_call's).
+            _summary_tokens_current = _summary_tokens_in(
+                head, tail, model=model, use_chars4=use_chars4,
+            )
+            _reserved = (
+                _sp_tokens_floor + _new_msg_tokens_floor + _summary_tokens_current
+            )
             _t_max_for_candidate = (
                 _t_max_override if _t_max_override is not None
                 else get_max_input_tokens(model)
             )
             _candidate = _t_max_for_candidate // 2
-            if _candidate <= _sp_tokens_floor + _new_msg_tokens_floor:
-                # Floor: SP + new_msg alone (never shrunk — see the floor
-                # comment above the loop) would not fit even at this
-                # candidate with head/tail/summary at zero. Halving again
-                # cannot possibly succeed either (the candidate only shrinks
-                # further) — stop here, not one more attempt, and name what
-                # actually happened instead of the false "exceeds T_max".
+            if _candidate <= _reserved:
+                # Floor (b): SP + new_msg + the CURRENT summary (never
+                # shrunk by this ladder) would not fit even at this
+                # candidate with head/tail at zero. Halving again cannot
+                # possibly succeed either (the candidate only shrinks
+                # further) — stop here. Under the reservation redesign
+                # this is the ONLY terminal case left (the OLD "we
+                # ourselves halved too aggressively" false floor-hit
+                # cannot happen any more — SP/new_msg/summary are never
+                # included in what gets halved): reaching this line means
+                # room genuinely cannot exist, not that this ladder cut
+                # itself short.
                 raise UnrecoveredError(
-                    "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                    "recurred even after binary-search-halving the "
-                    f"in-turn token ceiling to {_candidate} tokens — SP "
-                    f"({_sp_tokens_floor} tokens) and the newest message "
-                    f"({_new_msg_tokens_floor} tokens) alone no longer fit, "
-                    "and neither is ever shrunk. This is a request-BODY-"
-                    "BYTE limit, not a token-count one — shrinking the "
-                    "token-count representation further cannot resolve it "
-                    "(most likely: the newest message alone exceeds the "
-                    "upstream byte limit)." + _learned_byte_limit_clause(
-                        last_accepted_wire_bytes=_last_accepted_wire_bytes,
-                        last_rejected_wire_bytes=_last_rejected_wire_bytes,
+                    (
+                        "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
+                        if _last_recover_is_byte_limit
+                        else "retry_loop: shrinking "
+                    ) + "recurred even after binary-"
+                    f"search-halving the in-turn token ceiling to "
+                    f"{_candidate} tokens — SP ({_sp_tokens_floor} "
+                    f"tokens), the newest message "
+                    f"({_new_msg_tokens_floor} tokens), and the current "
+                    f"summary ({_summary_tokens_current} tokens) alone no "
+                    "longer fit, and none of the three is ever shrunk "
+                    "here. Even reducing head/tail to zero would not "
+                    "make this fit." + (
+                        _learned_byte_limit_clause(
+                            last_accepted_wire_bytes=_last_accepted_wire_bytes,
+                            last_rejected_wire_bytes=_last_rejected_wire_bytes,
+                        ) if _last_recover_is_byte_limit else ""
                     ),
-                    saw_byte_limit=True,
+                    saw_byte_limit=_last_recover_is_byte_limit,
                 )
             _t_max_override = _candidate
-            bg = compute_budgets(
-                cfg, model,
-                T_SP=_sp_tokens_floor, T_comp_SP=engine._T_comp_SP,
+            _room = _candidate - _reserved
+            # head/tail apportion `room` by their own component_weights
+            # share, renormalised over just the two of them (body/new_msg
+            # excluded — see this branch's own opening comment). A
+            # missing/zero head+tail weight configuration falls back to
+            # an even split rather than raising here — a config validity
+            # question belongs to `assert_static_bounds` at startup, not
+            # a mid-turn recovery path.
+            _cw = cfg.component_weights
+            _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
+            if _head_tail_weight > 0:
+                head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
+                tail_min_tokens = _room - head_min_tokens
+            else:
+                head_min_tokens = _room // 2
+                tail_min_tokens = _room - head_min_tokens
+            # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
+            # the shipped config, not just inferable from a shrunk wire):
+            # this ladder just lowered the floor below what
+            # `component_weights` configured (`bg` here is still the
+            # UNCHANGED, entry-time budget — this branch never reassigns
+            # it) — emit that fact rather than let it pass silently
+            # (previously true only of the byte-limit path; now true of
+            # both).
+            engine._events.emit(
+                "compaction_floor_lowered",
                 t_max_override=_t_max_override,
+                head_min_tokens=head_min_tokens,
+                tail_min_tokens=tail_min_tokens,
+                configured_head_budget=bg.head_budget,
+                configured_tail_budget=bg.tail_budget,
+                saw_byte_limit=_last_recover_is_byte_limit,
             )
-            head_min_tokens = bg.head_budget
-            tail_min_tokens = bg.tail_budget
             # Immediately re-check tail/head against the NEW, smaller
             # minimums and shrink in this SAME iteration if either now
             # exceeds them — without this, halving the ceiling costs one
             # iteration and shrinking content down to it costs a second
-            # (main_call retried with UNCHANGED content just re-confirms the
-            # same 413, wasting a turn of `max_iterations`), roughly halving
-            # how many halvings fit under the safety cap for no reason: the
-            # data needed to shrink (tail/head, already read above) is
-            # already in hand at this exact point.
-            if _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens:
-                chunk = max(len(tail) // 2, 1)
-                raw_middle.extend(tail[:chunk])
-                tail = tail[chunk:]
-            elif _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens:
-                chunk = max(len(head) // 2, 1)
-                raw_middle = head[-chunk:] + raw_middle
-                head = head[:-chunk]
+            # (main_call retried with UNCHANGED content just re-confirms
+            # the same overflow, wasting a turn of `max_iterations`),
+            # roughly halving how many halvings fit under the safety cap
+            # for no reason: the data needed to shrink (tail/head, already
+            # read above) is already in hand at this exact point.
+            if (
+                _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens
+                and _has_non_summary(tail)
+            ):
+                # #5531 PR-2: same summary-skip + no-progress guard as
+                # Phase 1's own branch above.
+                _non_summary_tail_count = sum(
+                    1 for t in tail
+                    if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+                )
+                chunk = max(_non_summary_tail_count // 2, 1)
+                _removed, tail = _split_off_non_summary(tail, chunk, from_end=False)
+                raw_middle.extend(_removed)
+            elif (
+                _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens
+                and _has_non_summary(head)
+            ):
+                # #5531 PR-2: same summary-skip + no-progress guard as
+                # Phase 2's own branch above.
+                _non_summary_head_count = sum(
+                    1 for t in head
+                    if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+                )
+                chunk = max(_non_summary_head_count // 2, 1)
+                _removed, head = _split_off_non_summary(head, chunk, from_end=True)
+                raw_middle = _removed + raw_middle
             # If neither exceeds the new minimums either (head/tail were
             # ALREADY below even the halved ceiling), there is nothing left
             # to trim yet — still falls through without raising; the NEXT
-            # 413 (same content, same call) halves the ceiling again on its
-            # own next pass through this branch, continuing the search.
-        else:
-            # #4954 (b): ``saw_byte_limit`` defaults to False here, and
-            # this ``else`` is REACHABLE — the ``elif _last_recover_is_
-            # byte_limit:`` branch above it already claims the True case,
-            # so False is the only value execution can reach this point
-            # carrying, not an unreachable branch where the default
-            # happens not to matter.
-            raise UnrecoveredError(
-                "retry_loop: all shrink paths exhausted — "
-                "SP + head_min + summary + tail_min + new_msg exceeds T_max"
-            )
+            # overflow (same content, same call) halves the ceiling again
+            # on its own next pass through this branch, continuing the
+            # search.
 
     # #4947 ②: name the byte limit when it was the LAST recovered cause —
     # a compact()-origin 413 is currently exempt from the same-cause cap

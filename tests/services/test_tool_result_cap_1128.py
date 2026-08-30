@@ -242,7 +242,6 @@ def _retry_loop_with(raw_middle_turn: dict):
     return asyncio.run(retry_loop(
         SP="system",
         head=[],
-        summary=None,
         raw_middle=[raw_middle_turn],
         tail=[],
         new_msg={"role": "user", "content": "hi", "seq": 99},

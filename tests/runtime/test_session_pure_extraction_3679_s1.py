@@ -27,6 +27,15 @@ Three things pinned here, matching the stage-1 acceptance conditions
    what makes the lazy-import discipline the two real circular-import call
    sites (`router_host_adapter.py`, `router_loop_driver.py`) used to need
    actually unnecessary now, not just inconvenient).
+
+#5531 PR-2: down to ONE such site today (`router_host_adapter.py`) —
+`router_loop_driver.py` no longer imports `session_pure` at all (its own
+former use, `_router_main_call`'s decoration, was removed once
+`retry_loop` stopped taking a separate `summary=` argument; see
+`test_router_host_adapter_imports_it_at_top_level`'s own docstring for
+the full account). The "two" above is this module's own history at the
+time #3679 stage 1 was written, not a current count — do not read it as
+implying a second site still needs checking.
 """
 from __future__ import annotations
 
@@ -110,27 +119,36 @@ def test_session_pure_importable_without_first_importing_session(out_of_process_
     assert "OK" in proc.stdout
 
 
-def test_router_host_adapter_and_router_loop_driver_import_it_at_top_level():
-    """Tier 2: the two real circular-import call sites (`router_host_adapter
-    .py`, `router_loop_driver.py` — the ONLY two where a reproduced
-    `ImportError` justified the original lazy-import) now import
-    `session_pure` at their OWN module top, not lazily inside a function —
-    the concrete "lazy import no longer needed" proof for the sites that
-    actually needed it (`mcp/server.py`/`a2a.py`'s lazy imports were a local
-    convention, not cycle-avoidance — see `session_pure`'s own module
-    docstring)."""
+def test_router_host_adapter_imports_it_at_top_level():
+    """Tier 2: the real circular-import call site (`router_host_adapter.py`
+    — a reproduced `ImportError` justified the original lazy-import) now
+    imports `session_pure` at its OWN module top, not lazily inside a
+    function — the concrete "lazy import no longer needed" proof for the
+    site that actually needed it (`mcp/server.py`/`a2a.py`'s lazy imports
+    were a local convention, not cycle-avoidance — see `session_pure`'s
+    own module docstring).
+
+    #5531 PR-2: this test used to ALSO check `router_loop_driver.py` —
+    dropped here, not because it went back to a lazy import, but because
+    it no longer imports `session_pure` (any spelling) AT ALL.
+    `_router_main_call`'s own `render_summary_for_storage`-based
+    decoration (the thing that needed it) was removed once `retry_loop`
+    stopped taking a separate `summary=` argument — the decoration now
+    lives in `wrap_summary_as_message`'s own `content` field
+    (`engine.py`), never rendered a second time by this module. Checking
+    "session_pure is imported at module top level" on a file with zero
+    remaining use of it would be pinning an accidental byproduct, not a
+    real requirement (CLAUDE.md's own doc-drift rule: a check describing
+    a mechanism is stale the moment that mechanism's code changes)."""
     import ast
 
-    for rel in (
-        "src/reyn/runtime/services/router_host_adapter.py",
-        "src/reyn/runtime/services/router_loop_driver.py",
-    ):
-        tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
-        top_level_modules = {
-            node.module
-            for node in ast.iter_child_nodes(tree)
-            if isinstance(node, ast.ImportFrom)
-        }
-        assert "reyn.runtime.session_pure" in top_level_modules, (
-            f"{rel} must import session_pure at module top level, not lazily"
-        )
+    rel = "src/reyn/runtime/services/router_host_adapter.py"
+    tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
+    top_level_modules = {
+        node.module
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    assert "reyn.runtime.session_pure" in top_level_modules, (
+        f"{rel} must import session_pure at module top level, not lazily"
+    )
