@@ -25,6 +25,51 @@ if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
 
 
+def _is_shrinkable_overflow(exc: BaseException) -> bool:
+    """#5577/#5593 — is *exc* a cause the shrink ladder should be entered
+    for?
+
+    ``classify_llm_failure``'s own fallthrough is unconditionally
+    ``OVERFLOW`` for anything that is neither FATAL nor RETRYABLE — a
+    default calibrated for ``retry_loop``'s OWN inner except clause,
+    which (per that function's own docstring) "only ever catches
+    CompactionOverflowError/ContextOverflowError today, both already
+    overflow-shaped by construction" — i.e. that default never actually
+    had to defend against a genuinely unrelated exception shape reaching
+    it, because nothing UNRELATED could reach it there.
+
+    Both call sites in THIS module are different: they catch ``Exception``
+    from ``loop.run()`` — ANY exception the router/provider stack can
+    raise, including one neither FATAL, RETRYABLE, nor an overflow at all
+    (#5593's real incident: ``StructuredOutputUnsupportedModelError`` —
+    not in ``FATAL_EXC_TYPES``, not a rate-limit/timeout/5xx/quota shape,
+    so ``classify_llm_failure``'s fallthrough classified it OVERFLOW,
+    wrapped it, and the shrink ladder burned real LLM calls on a cause no
+    amount of shrinking could ever fix, then reported the wrong
+    diagnosis — UnrecoveredError, out of context, for a config error).
+
+    Fix: still exclude FATAL/RETRYABLE via ``classify_llm_failure``
+    (#5577's own gain — a quota/5xx/timeout exception whose message text
+    merely resembles an overflow keyword must not enter here), but for
+    anything classify_llm_failure's OWN 3-way split does not itself
+    prove is FATAL or RETRYABLE, require the STRONGER, narrower
+    ``is_context_overflow_error`` signal too (litellm's typed
+    ``ContextWindowExceededError``, a 413, or an overflow keyword) —
+    restoring the pre-#5577 conservative default (unmatched shape =
+    False, do not enter) for this module's own two call sites, which
+    ``classify_llm_failure``'s bare fallthrough was never designed to
+    answer for."""
+    from reyn.services.compaction.engine import LLMFailureClass, classify_llm_failure
+    from reyn.services.compaction.engine import (
+        is_context_overflow_error as _is_context_overflow_error,
+    )
+
+    failure_class = classify_llm_failure(exc)
+    if failure_class in (LLMFailureClass.FATAL, LLMFailureClass.RETRYABLE):
+        return False
+    return _is_context_overflow_error(exc)
+
+
 def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:
     """Whether ``safety.threat_scan.capability_narrowing`` is at the ``iteration``
     rung (#3501). Delegates to the config object's own predicate rather than
@@ -538,16 +583,12 @@ class RouterLoopDriver:
             ContextOverflowError as _ContextOverflowError,
         )
 
-        # #5577: both call sites in this method (below and in
-        # ``_router_main_call`` further down) now classify through the
-        # SAME ``classify_llm_failure`` — see each call site's own comment
-        # for what changed and why.
-        from reyn.services.compaction.engine import LLMFailureClass as _LLMFailureClass
+        # #5577/#5593: both call sites in this method (below and in
+        # ``_router_main_call`` further down) now classify through
+        # ``_is_shrinkable_overflow`` — see that helper's own docstring
+        # and each call site's own comment for what changed and why.
         from reyn.services.compaction.engine import (
             UnrecoveredError as _UnrecoveredError,
-        )
-        from reyn.services.compaction.engine import (
-            classify_llm_failure as _classify_llm_failure,
         )
         # #4954 (b): `UnrecoveredError` IS caught here now, but only to
         # read `.saw_byte_limit` and trigger a real compaction as a side
@@ -582,24 +623,16 @@ class RouterLoopDriver:
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
-            # #5577: unified onto classify_llm_failure — previously this
-            # site hand-excluded ONLY quota (is_quota_exhausted_error)
-            # before falling to is_context_overflow_error's own keyword
-            # fallback, so a FATAL exception (a plain AttributeError/
-            # TypeError/KeyError in reyn's own glue code) or a RETRYABLE
-            # one (5xx/timeout/connection failure) whose str() happened to
-            # contain "context"/"token"/"length"/"limit"/"too long"/"too
-            # large" was NOT excluded and got misdiagnosed as overflow —
-            # the exact #3783/#5543 defect class, just left open on THIS
-            # one arm (#5577's own falsification, not assumed: verified
-            # is_quota_exhausted_error is called identically inside
-            # classify_llm_failure's own RETRYABLE branch, so removing the
-            # manual pre-check here changes nothing for quota — it is now
-            # additionally excluded for FATAL/other-RETRYABLE too, closing
-            # the gap #5543 was created to close but never reached this
-            # site).
+            # #5577/#5593: unified onto ``_is_shrinkable_overflow`` (this
+            # module's own helper — see its docstring for the full
+            # history: #5577 first unified onto classify_llm_failure
+            # alone, which fixed quota/FATAL/RETRYABLE misdiagnosis but
+            # introduced a real regression #5593 caught — an unrelated
+            # exception, neither FATAL/RETRYABLE nor a real overflow,
+            # fell through classify_llm_failure's own unconditional
+            # OVERFLOW default and entered the shrink ladder anyway).
             #
-            # Re-raising when NOT OVERFLOW (never wrapped in
+            # Re-raising when NOT a shrinkable overflow (never wrapped in
             # ContextOverflowError/UnrecoveredError) means it propagates to
             # run_turn's own except, then to Session._handle_inbox_text's
             # generic catch-all — which already does the right thing for
@@ -608,7 +641,7 @@ class RouterLoopDriver:
             # session alive (owner ruling, #5256: quota exhaustion must
             # never end the session — unaffected by this change, see
             # test_5256_quota_not_context_overflow.py).
-            if _classify_llm_failure(_exc) is not _LLMFailureClass.OVERFLOW:
+            if not _is_shrinkable_overflow(_exc):
                 raise
             self._events.emit(
                 "router_context_overflow_detected", error=repr(_exc)
@@ -741,23 +774,24 @@ class RouterLoopDriver:
                 try:
                     _usage = await loop.run(user_text=user_text, history=_msgs)
                 except Exception as _call_exc:
-                    # #5577: unified onto classify_llm_failure (closes over
-                    # the outer method's own import) — was
-                    # is_context_overflow_error alone, with NO exclusion
-                    # for a FATAL exception (AttributeError/TypeError/
-                    # KeyError) or a RETRYABLE one (5xx/timeout/quota)
-                    # whose message text happened to contain an overflow
-                    # keyword; both used to get wrapped as
-                    # ContextOverflowError and enter the shrink ladder —
-                    # burning real LLM calls chasing a cause no amount of
-                    # shrinking can fix, then reporting the wrong
-                    # diagnosis (#3783's own owner ruling, unreached here
-                    # until now). A genuine overflow (litellm's typed
-                    # ContextWindowExceededError, a 413, or an unrecognized
-                    # exception shape — classify_llm_failure's own
-                    # exhaustive-by-elimination default) is unaffected —
-                    # still wrapped and still shrinks.
-                    if _classify_llm_failure(_call_exc) is _LLMFailureClass.OVERFLOW:
+                    # #5577/#5593: unified onto ``_is_shrinkable_overflow``
+                    # — was is_context_overflow_error alone (#5577's own
+                    # pre-fix), with NO exclusion for a FATAL exception
+                    # (AttributeError/TypeError/KeyError) or a RETRYABLE
+                    # one (5xx/timeout/quota) whose message text happened
+                    # to contain an overflow keyword; both used to get
+                    # wrapped as ContextOverflowError and enter the shrink
+                    # ladder — burning real LLM calls chasing a cause no
+                    # amount of shrinking can fix, then reporting the
+                    # wrong diagnosis (#3783's own owner ruling, unreached
+                    # here until #5577). A genuine overflow (litellm's
+                    # typed ContextWindowExceededError, a 413, or an
+                    # overflow-keyword match — see the helper's own
+                    # docstring for #5593's own correction: an UNRECOGNIZED
+                    # exception shape now correctly does NOT enter, unlike
+                    # classify_llm_failure's own bare fallthrough) is
+                    # unaffected — still wrapped and still shrinks.
+                    if _is_shrinkable_overflow(_call_exc):
                         raise _ContextOverflowError(str(_call_exc)) from _call_exc
                     raise
                 return _RouterUsageShim(_usage)

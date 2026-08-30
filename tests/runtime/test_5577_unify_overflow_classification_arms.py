@@ -40,6 +40,25 @@ Real ``Session``/``RouterLoop`` throughout (``call_llm_tools`` patched at
 that raises — never a mock, per testing.md) — same idiom
 ``tests/runtime/test_5256_quota_not_context_overflow.py`` already
 establishes for this exact call-site family.
+
+#5593 (lead-coder's own catch, CI-red on this file's own PR): the first
+version of this fix classified through ``classify_llm_failure`` ALONE —
+its own fallthrough is unconditionally OVERFLOW for anything that is
+NEITHER FATAL nor RETRYABLE, a default calibrated for ``retry_loop``'s
+inner except clause (which only ever catches its own two overflow-shaped
+exception types, per that function's own docstring), not for this
+module's two arms, which catch ANY exception from ``loop.run()``. A
+genuinely unrelated exception — ``StructuredOutputUnsupportedModelError``
+(not in FATAL_EXC_TYPES, not a rate-limit/timeout/5xx/quota shape) — fell
+through to OVERFLOW, entered the shrink ladder, burned real LLM calls,
+and surfaced as a misleading ``UnrecoveredError``. Fixed via
+``_is_shrinkable_overflow`` (this module's own helper): still excludes
+FATAL/RETRYABLE through ``classify_llm_failure``, but additionally
+requires ``is_context_overflow_error``'s own narrower, positive signal
+for anything classify_llm_failure's 3-way split does not itself prove —
+restoring the pre-#5577 conservative default (unmatched shape = do not
+enter) for exactly the unrecognized case classify_llm_failure was never
+designed to answer.
 """
 from __future__ import annotations
 
@@ -163,3 +182,62 @@ def test_arm2_fatal_exception_on_a_retry_stops_the_ladder(monkeypatch) -> None:
         "ContextOverflowError/UnrecoveredError, which would misreport the "
         "cause as an overflow that never happened"
     )
+
+
+class _UnclassifiableModelConfigError(Exception):
+    """A stand-in for #5593's own real incident
+    (``StructuredOutputUnsupportedModelError``): neither in
+    ``FATAL_EXC_TYPES``, nor a rate-limit/timeout/5xx/quota shape, nor
+    carrying an overflow keyword in its message — genuinely unclassifiable
+    by ``classify_llm_failure``'s own 3-way split, which is exactly why
+    its bare fallthrough misdiagnosed the production incident as OVERFLOW.
+    A plain, locally-defined ``Exception`` subclass rather than the real
+    ``StructuredOutputUnsupportedModelError`` — that type is itself an
+    ``AgentStepError`` subclass with its OWN unrelated special-casing
+    further up ``Session``'s own call chain (structured-output pipeline
+    semantics this test's ephemeral, schema-free session never triggers);
+    using it here would test that unrelated interaction, not
+    ``_is_shrinkable_overflow``'s own classification."""
+
+
+def test_unclassifiable_exception_does_not_enter_the_ladder(monkeypatch) -> None:
+    """Tier 2: #5593's own real incident, pinned directly — an exception
+    that is neither FATAL, RETRYABLE, nor a real overflow must NOT enter
+    the shrink ladder — arm① must not wrap it as
+    ``ContextOverflowError``/``UnrecoveredError``, which would misreport
+    an unrelated error as a context overflow.
+
+    ``classify_llm_failure`` ALONE would misclassify this as OVERFLOW
+    (its own unconditional fallthrough) — this is exactly the gap
+    ``_is_shrinkable_overflow`` closes on top of it."""
+    session = make_session(agent_name="arm1_unclassifiable_test")
+    collected = collect_events(session)
+
+    call_count = 0
+
+    async def _fake_call_llm_tools(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise _UnclassifiableModelConfigError("model-x does not support this call shape")
+
+    monkeypatch.setattr(
+        "reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools,
+    )
+
+    async def _drive() -> None:
+        await session._handle_inbox_text("hi", chain_id="chain-arm1-unclassifiable")
+        await settle(session)
+
+    asyncio.run(_drive())
+
+    assert call_count == 1, (
+        f"expected exactly 1 LLM call (no shrink retry entered), got {call_count}"
+    )
+    kinds = [e.type for e in collected]
+    assert "router_context_overflow_detected" not in kinds, (
+        "an unclassifiable exception (neither FATAL, RETRYABLE, nor a "
+        "real overflow) must never be classified as context overflow"
+    )
+    terminated = [e for e in collected if e.type == "router_loop_terminated_by_exception"]
+    assert terminated, "the exception must reach the generic catch-all's own P6 instrument"
+    assert terminated[0].data["error_type"] == "_UnclassifiableModelConfigError"
