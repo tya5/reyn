@@ -39,6 +39,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from textual.reactive import reactive
+from textual.widgets import Static
+
 if TYPE_CHECKING:
     from reyn.services.compaction.engine import RetryLoopTerminal
 
@@ -178,3 +181,38 @@ def compaction_failure_text(terminal: "RetryLoopTerminal") -> str:
         _T.MID_FLOOR: "1つのやり取りが単独で大きすぎます",
         _T.ROOM_FLOOR: "最新のメッセージだけで窓に入りません",
     }[terminal]
+
+
+class CompactionProgressRow(Static):
+    """The chrome widget half of #5588 — a plain top-level sibling of
+    ``MenuBar`` in the app's compose order (same placement family as
+    :class:`~.chrome.ConfigWarningLine`), rendering whatever
+    :func:`compaction_progress_lines` returns.
+
+    #5131 "down" discipline: the App writes :attr:`lines` (a ``reactive``
+    attribute) from its own periodic snapshot read — this widget never
+    queries ``Session``/the registry itself (Gate A: this module does not,
+    and must not, import ``reyn.interfaces.transport``/``reyn.runtime.
+    registry``). :meth:`watch_lines` is the ONE place that reacts, matching
+    ``ActivityRow``'s own established shape for a conditionally-visible
+    chrome row: absent (``display = False``) whenever there is nothing to
+    show, never an empty visible row occupying the layout slot."""
+
+    DEFAULT_CSS = """
+    CompactionProgressRow {
+        height: auto;
+        padding: 0 1;
+    }
+    """
+
+    can_focus = False
+
+    lines: "reactive[list[str]]" = reactive(list, always_update=True)
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__("", **kwargs)
+        self.display = False
+
+    def watch_lines(self, new_lines: "list[str]") -> None:
+        self.display = bool(new_lines)
+        self.update("\n".join(new_lines))
