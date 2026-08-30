@@ -2388,14 +2388,16 @@ async def retry_loop(
     # (desirable: re-summarizing produces a smaller running summary),
     # which grows room back. Stopping is carried by a lexicographic
     # measure — (T_max halvings remaining, total turn count, len(head) +
-    # len(tail), …) — not by ``room`` alone decreasing every step (see
-    # the fold-output-placement comment below for why reintroducing
-    # writing a fold's result back into ``head`` is safe: it is bounded
-    # by that SAME measure, not by head/tail alone staying monotonic).
+    # len(tail), …) — not by ``room`` alone decreasing every step.
     # Completing that measure into a full proof (removing max_iterations
     # entirely, the new T4 terminal, a proven decrease every step) is
-    # #5531 PR-3's own scope — AT THIS POINT (PR-2), ``max_iterations``
-    # is still the real, final backstop, not yet redundant.
+    # #5531 PR-3's own scope — that measure is NOT built by this PR.
+    # AT THIS POINT (PR-2), ``max_iterations`` is still the real, final
+    # backstop, not yet redundant (lead-coder correction, issuecomment-
+    # 5465786061 — an earlier version of this comment wrongly cited this
+    # not-yet-built measure as what makes the fold-output-placement
+    # change below safe; the real reason is Phase 1/2's own summary-skip,
+    # see that comment for the actual argument).
     _last_recover_is_byte_limit = False
     # #5316: the learned ceiling — read back (not re-measured, per issue
     # #5316's own "新しい測定は要りません") into the terminal message below
@@ -2515,16 +2517,18 @@ async def retry_loop(
                     # re-add an element to it — Phase 2 below could pull
                     # the just-appended element right back into
                     # raw_middle and re-fold it, an observed
-                    # oscillation). PR-2's reservation redesign (below)
-                    # is what makes this safe to reintroduce: stopping is
-                    # carried by a lexicographic measure (T_max halvings
-                    # remaining, total turn count, len(head)+len(tail),
-                    # …), not by head/tail alone staying monotonic (owner,
-                    # #5531 §4: room is not guaranteed to monotonically
-                    # decrease either). Completing that measure into a
-                    # full proof is #5531 PR-3's own scope; at this point
-                    # (PR-2), `max_iterations` is still the real, final
-                    # backstop, not yet redundant.
+                    # oscillation). What makes this safe to reintroduce
+                    # is THIS PR's own Phase 1/2 change (below): they now
+                    # SKIP any `role=="summary"` element when choosing
+                    # what to pull (`_split_off_non_summary`) — Phase 2
+                    # structurally cannot pull the element this line just
+                    # appended back into raw_middle any more, which is
+                    # what the old oscillation depended on. (Not a
+                    # lexicographic-measure argument — that measure is
+                    # #5531 PR-3's own future scope, not built by this
+                    # PR; `max_iterations` remains PR-2's real, final
+                    # backstop — lead-coder correction, issuecomment-
+                    # 5465786061.)
                     head = [
                         t for t in head if t.get("role") != SUMMARY_MESSAGE_ROLE
                     ] + [wrap_summary_as_message(chat_summary.to_dict())]
