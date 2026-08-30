@@ -11,13 +11,18 @@ identical gap for ``HookBus``'s own subscriber-queue overflow; this bridge
 was the sibling the module docstrings already describe as sharing that
 overflow shape, and it never got the audit half).
 
-This file drives ``_BoundedEventBridge`` directly (a module-private class,
-but its OWN public constructor/``deliver``/``dropped_count`` surface — not
-another object's private state) with a real, tiny-``maxsize`` queue and a
-``hook_trigger`` that never drains, so overflow is forced deterministically
-within one coroutine (no ``await`` between ``deliver()`` calls, so the
-lazily-started drain task never gets a chance to run and empty the queue —
-same non-interleaving argument the existing bus.py suite relies on).
+Most of this file drives ``_BoundedEventBridge`` directly (a module-private
+class, but its OWN public constructor/``deliver``/``dropped_count`` surface
+— not another object's private state) with a real, tiny-``maxsize`` queue
+and a ``hook_trigger`` that never drains, so overflow is forced
+deterministically within one coroutine (no ``await`` between ``deliver()``
+calls, so the lazily-started drain task never gets a chance to run and
+empty the queue — same non-interleaving argument the existing bus.py suite
+relies on). ``test_source_distinguishes_which_adapters_bridge_dropped``
+instead drives the two real PUBLIC adapters (``McpIngressAdapter``/
+``FsIngressAdapter``) — see its own docstring for why a directly-constructed
+``_BoundedEventBridge`` with two self-chosen names cannot prove the claim
+that test makes.
 
 Policy (docs/deep-dives/contributing/testing.md): real instances only — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``.
@@ -27,7 +32,12 @@ from __future__ import annotations
 import pytest
 
 from reyn.hooks.event import HookEvent
-from reyn.hooks.ingress import _AUDIT_EVERY_N_DROPS, _BoundedEventBridge
+from reyn.hooks.ingress import (
+    _AUDIT_EVERY_N_DROPS,
+    FsIngressAdapter,
+    McpIngressAdapter,
+    _BoundedEventBridge,
+)
 
 
 def _recorder():
@@ -123,34 +133,48 @@ async def test_source_distinguishes_which_adapters_bridge_dropped():
     ``ingress_bridge_dropped`` is a SHARED kind (deliberately not split
     per-adapter, matching ``composer_dropped``'s own shared-kind precedent),
     the ``source`` field alone must let a reader tell which bridge dropped.
-    Both real adapter names (``McpIngressAdapter``/``FsIngressAdapter`` —
-    the literal strings ``ingress.py``'s two adapter classes pass as their
-    own ``adapter_name``) are proven NOT to collide here, independent of
-    ``test_queue_full_drop_is_fail_visible``'s own single-bridge check
-    above."""
+
+    Drives the REAL ``McpIngressAdapter``/``FsIngressAdapter`` (not
+    ``_BoundedEventBridge`` constructed with a self-chosen literal
+    ``adapter_name``, which would only prove two hardcoded distinct strings
+    are distinct — a tautology that stays green even if both real classes
+    were renamed to pass the SAME ``adapter_name`` into their own bridge,
+    exactly the collision decision ② was meant to close). Only a NON-
+    COLLISION assertion (``!=``), never a literal-name assertion — the thing
+    protected is that they cannot collide, not what either name currently
+    is; a future rename of either adapter must not flip this red.
+
+    Strip-falsify (performed during review, lead-coder BLOCKING finding
+    2026-08-30): with ``FsIngressAdapter``'s own ``_BoundedEventBridge``
+    construction temporarily changed to pass ``adapter_name=
+    "McpIngressAdapter"`` (the same value ``McpIngressAdapter`` passes),
+    this test goes RED — ``AssertionError: ... both reported
+    'McpIngressAdapter'``. The FIRST version of this test (constructing
+    ``_BoundedEventBridge`` directly with two self-chosen literal names)
+    stayed GREEN through the identical strip, because it never drove
+    either real adapter class at all."""
     mcp_emit, mcp_calls = _recorder()
     fs_emit, fs_calls = _recorder()
-    mcp_bridge = _BoundedEventBridge(
-        hook_trigger=_never_drains, maxsize=1, adapter_name="McpIngressAdapter",
-        emit_event=mcp_emit,
-    )
-    fs_bridge = _BoundedEventBridge(
-        hook_trigger=_never_drains, maxsize=1, adapter_name="FsIngressAdapter",
-        emit_event=fs_emit,
-    )
+    mcp_adapter = McpIngressAdapter(hook_trigger=_never_drains, maxsize=1, emit_event=mcp_emit)
+    fs_adapter = FsIngressAdapter(hook_trigger=_never_drains, maxsize=1, emit_event=fs_emit)
 
-    for bridge in (mcp_bridge, fs_bridge):
-        bridge.deliver(HookEvent(kind="builtin:external:mcp_resource_updated", payload={}))
-        bridge.deliver(HookEvent(kind="builtin:external:mcp_resource_updated", payload={}))
+    for adapter, event in (
+        (mcp_adapter, HookEvent(kind="builtin:external:mcp_resource_updated", payload={})),
+        (fs_adapter, HookEvent(kind="builtin:external:file_changed", payload={})),
+    ):
+        adapter.deliver(event)
+        adapter.deliver(event)  # 2nd overflows the maxsize=1 queue
 
     (mcp_call,) = [c for c in mcp_calls if c[0] and c[0][0] == "ingress_bridge_dropped"]
     (fs_call,) = [c for c in fs_calls if c[0] and c[0][0] == "ingress_bridge_dropped"]
-    assert mcp_call[1]["source"] == "McpIngressAdapter"
-    assert fs_call[1]["source"] == "FsIngressAdapter"
-    assert mcp_call[1]["source"] != fs_call[1]["source"]
+    assert mcp_call[1]["source"] != fs_call[1]["source"], (
+        f"McpIngressAdapter and FsIngressAdapter must report distinguishable "
+        f"sources on the shared ingress_bridge_dropped kind -- both reported "
+        f"{mcp_call[1]['source']!r}"
+    )
 
-    await mcp_bridge.aclose()
-    await fs_bridge.aclose()
+    await mcp_adapter.aclose()
+    await fs_adapter.aclose()
 
 
 @pytest.mark.asyncio
