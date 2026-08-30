@@ -473,12 +473,17 @@ growing unboundedly. Before #5515 that drop was `logger.warning`-only,
 unlike the structurally identical `HookBus` subscriber-queue drop
 (`bus_subscriber_dropped`, #2886). `ingress_bridge_dropped` closes that gap
 for this bridge, on the same first-drop/every-100th cadence: metadata-only
-(`source` — the bridge's adapter name, `McpIngressAdapter` or
-`FsIngressAdapter`; `point` — the bare hook point; `drop_count` — cumulative,
-never reset), never the dropped event's own payload. `cron_fired` and
-`webhook_received` share a separate bridge (`_SessionFireBridge`,
-`reyn.hooks.external_fire`) with the same overflow shape; it is tracked
-separately (#5515 remainder, not yet closed).
+(`source` — the bridge's adapter name; `point` — the bare hook point;
+`drop_count` — cumulative, never reset), never the dropped event's own
+payload. `cron_fired` and `webhook_received` share a separate bridge
+(`_SessionFireBridge`, `reyn.hooks.external_fire`) with the same overflow
+shape and now fires the SAME kind on its own drop, keyed apart by `source`:
+
+| `source` | Bridge |
+|----------|--------|
+| `McpIngressAdapter` | `reyn.hooks.ingress._BoundedEventBridge` instance backing `mcp_resource_updated` |
+| `FsIngressAdapter` | `reyn.hooks.ingress._BoundedEventBridge` instance backing `file_changed` |
+| `_SessionFireBridge` | `reyn.hooks.external_fire._SessionFireBridge` — shared by `cron_fired`/`webhook_received` |
 
 ## Credentials and OAuth
 

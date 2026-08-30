@@ -50,6 +50,15 @@ logger = logging.getLogger(__name__)
 # the bound its in-process siblings already use for the same class of risk.
 _DEFAULT_MAXSIZE = 32
 
+# #5515: fail-visible cadence for a queue-full drop in _SessionFireBridge.
+# submit() (below) — same constant, same reasoning, as
+# reyn.hooks.ingress._AUDIT_EVERY_N_DROPS (matched to src/reyn/hooks/bus.py:83's
+# own ``_AUDIT_EVERY_N_DROPS``, #2886's first-drop/every-Nth discipline) —
+# this bridge is the SECOND of the two sites #5515 closes the audit gap
+# for; the PR that landed the first (``_BoundedEventBridge``) already
+# established the cadence value, this one reuses it rather than re-deriving.
+_AUDIT_EVERY_N_DROPS = 100
+
 
 class _SessionFireBridge:
     """Per-Session bounded dispatch bridge (#2620) — the ``_BoundedEventBridge``
@@ -162,6 +171,36 @@ class _SessionFireBridge:
                 "for this session)",
                 self._maxsize, point,
             )
+            self._audit_drop(point)
+
+    def _audit_drop(self, point: str) -> None:
+        """Fire a metadata-only ``ingress_bridge_dropped`` P6 audit-event on
+        the FIRST drop and every Nth drop thereafter (#5515 — the second of
+        the two sites this closes the gap for; see
+        ``reyn.hooks.ingress._BoundedEventBridge._audit_drop``'s own
+        docstring for the first). ``self._session`` is typed ``Any`` (a test
+        double may not carry ``_audit_events``) — same getattr-guarded
+        posture :meth:`submit` already uses for its own drain-task-death
+        observer a few lines up, not a new idiom. Never raises (best-effort
+        telemetry) and never includes the dropped ``template_vars`` —
+        ``source`` (a fixed literal, ``"_SessionFireBridge"`` — matches the
+        label :meth:`submit` already passes ``observe_drain_task_death``,
+        distinguishing this bridge's drops from ``_BoundedEventBridge``'s on
+        the shared kind), ``point``, and the cumulative ``drop_count`` only."""
+        audit_events = getattr(self._session, "_audit_events", None)
+        if audit_events is None:
+            return
+        if self._drop_count != 1 and self._drop_count % _AUDIT_EVERY_N_DROPS != 0:
+            return
+        try:
+            audit_events.emit(
+                "ingress_bridge_dropped",
+                source="_SessionFireBridge",
+                point=point,
+                drop_count=self._drop_count,
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+            logger.debug("_SessionFireBridge: emit_event(ingress_bridge_dropped) failed: %s", exc)
 
     def pending_count(self) -> int:
         """Public, snapshot-style read of the number of ``(point,
