@@ -26,6 +26,22 @@ if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
 
 
+#: #5599 follow-up — the exhaustive set of keys a real chat-completions
+#: wire message may carry, enumerated directly from `_serialise_turn`'s
+#: own construction (router_history_buffer.py — `role`/`content` always,
+#: `tool_calls`/`tool_call_id`/`name` when the ChatMessage carries them)
+#: plus the 3 reasoning-continuity fields `_REASONING_BUNDLE_FIELDS`
+#: (reasoning_continuity.py) attaches. An ALLOW-list, not a deny-list —
+#: see `_router_main_call`'s own comment for why (a deny-list already
+#: missed one real internal key, `wrap_summary_as_message`'s own
+#: `**summary` spread, alongside the `spillability` key it did know
+#: about).
+_WIRE_MESSAGE_KEYS = (
+    "role", "content", "tool_calls", "tool_call_id", "name",
+    "reasoning_content", "thinking_blocks", "provider_specific_fields",
+)
+
+
 def _is_shrinkable_overflow(exc: BaseException) -> bool:
     """#5577/#5593 — is *exc* a cause the shrink ladder should be entered
     for?
@@ -867,9 +883,29 @@ class RouterLoopDriver:
                 # request outright in ~2 seconds, before inference even
                 # starts, so no amount of shrinking can recover from it
                 # (see `wire_role`'s own docstring for the full incident).
+                #
+                # #5599 follow-up (lead-coder's own catch, same PR's own
+                # site re-read after #5598 landed): a DENY-list here
+                # (originally just `!= "spillability"`) misses every OTHER
+                # internal key, and one already existed —
+                # `wrap_summary_as_message` (engine.py) spreads `**summary`
+                # into the dict it returns, so retry_loop's fresh fold-
+                # success `head` entry carries `topic_arc`/`decisions`/
+                # `pending`/`session_user_facts`/`artifacts_referenced`/
+                # `covers_through_seq` — none of them a real chat-
+                # completions message field — straight onto the wire
+                # alongside the role fix. `_WIRE_MESSAGE_KEYS` (module
+                # level, this file) is the structural fix (CLAUDE.md:
+                # close the CLASS of hole, not the one instance) — an
+                # ALLOW-list cannot miss a FUTURE internal key the same
+                # way `spillability` alone already missed this one; a new
+                # internal annotation now has to be added there
+                # deliberately to reach the wire, not omitted from a
+                # strip-list to leak by default. See that constant's own
+                # docstring for where each key comes from.
                 _msgs = [
                     {
-                        **{k: v for k, v in t.items() if k != "spillability"},
+                        **{k: v for k, v in t.items() if k in _WIRE_MESSAGE_KEYS},
                         "role": _wire_role(t.get("role", "")),
                     }
                     for t in list(head) + list(tail)

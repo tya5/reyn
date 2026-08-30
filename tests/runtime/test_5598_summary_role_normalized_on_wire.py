@@ -119,17 +119,14 @@ class _RecordingLoop:
         return None
 
 
-def test_summary_reaches_wire_with_an_accepted_role_not_summary(
+def _drive_overflow_recovery_through_a_real_fold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: #5598 accept — after retry_loop's own compact() succeeds
-    on real, non-empty ``raw_middle`` content and folds it into a fresh
-    summary appended to ``head``, the VERY NEXT ``main_call`` (still
-    inside the SAME recovery episode — the owner's own incident shape)
-    must never include a wire dict whose ``role`` is
-    ``SUMMARY_MESSAGE_ROLE`` ("summary")."""
-    from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
-
+) -> "list[list[dict]]":
+    """Shared setup for both #5598 (role) and #5599-follow-up (key
+    allow-list) — a real overflow on ``raw_middle`` content, a real
+    ``compact()`` success (fake litellm response, real fold), then the
+    retried ``main_call`` — returns every ``loop.run()`` call's own
+    ``history`` payload for the caller to inspect."""
     monkeypatch.chdir(tmp_path)
     import reyn.llm.model_budget as _mb
     monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: 2_500)
@@ -191,9 +188,24 @@ def test_summary_reaches_wire_with_an_accepted_role_not_summary(
     loop = _RecordingLoop(fail_marker="mid result payload")
     asyncio.run(session._loop_driver._run_with_shrink(loop, "continue please", chain_id="c1"))
     asyncio.run(settle(session))
+    return loop.calls
 
-    assert loop.calls, "loop.run must have been called at least once"
-    for i, history in enumerate(loop.calls):
+
+def test_summary_reaches_wire_with_an_accepted_role_not_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5598 accept — after retry_loop's own compact() succeeds
+    on real, non-empty ``raw_middle`` content and folds it into a fresh
+    summary appended to ``head``, the VERY NEXT ``main_call`` (still
+    inside the SAME recovery episode — the owner's own incident shape)
+    must never include a wire dict whose ``role`` is
+    ``SUMMARY_MESSAGE_ROLE`` ("summary")."""
+    from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+
+    calls = _drive_overflow_recovery_through_a_real_fold(tmp_path, monkeypatch)
+
+    assert calls, "loop.run must have been called at least once"
+    for i, history in enumerate(calls):
         offending = [t for t in history if t.get("role") == SUMMARY_MESSAGE_ROLE]
         assert not offending, (
             f"call {i}: history sent to loop.run() carries a wire dict "
@@ -203,10 +215,64 @@ def test_summary_reaches_wire_with_an_accepted_role_not_summary(
         )
     summary_present = any(
         "[summary of earlier conversation]" in str(t.get("content", ""))
-        for history in loop.calls for t in history
+        for history in calls for t in history
     )
     assert summary_present, (
         "test setup sanity: the fresh summary must actually be present "
         "in what was sent (as an accepted role) — otherwise this test "
         "isn't exercising the bug's own trigger at all"
     )
+
+
+def test_wire_message_carries_no_internal_summary_structure_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5599 follow-up — lead-coder's own catch, same wire-egress
+    site re-read after #5598 landed. ``wrap_summary_as_message`` spreads
+    ``**summary`` into the dict it returns (engine.py), so retry_loop's
+    fresh fold-success ``head`` entry carries ``topic_arc``/``decisions``/
+    ``pending``/``session_user_facts``/``artifacts_referenced``/
+    ``covers_through_seq`` — none of them a real chat-completions message
+    field. The ORIGINAL #5598 fix only stripped ``spillability`` (a
+    deny-list) and left these six untouched.
+
+    Accept: none of the 6 internal ``ChatSummary`` keys ever appear on a
+    wire dict sent to ``loop.run()``.
+    Deny: ``tool_calls``/``tool_call_id``/``name`` (the fields a REAL
+    tool-result turn carries) survive the same allow-list — proves the
+    fix is a genuine allow-list, not an accidental "strip everything"
+    that would also break tool-result turns (a real regression the
+    allow-list's own falsify point ② already caught once: dropping
+    ``name`` broke a real tool message, "A function call output without
+    a call_id requires a name")."""
+    _INTERNAL_SUMMARY_STRUCTURE_KEYS = (
+        "topic_arc", "decisions", "pending",
+        "session_user_facts", "artifacts_referenced", "covers_through_seq",
+    )
+    calls = _drive_overflow_recovery_through_a_real_fold(tmp_path, monkeypatch)
+
+    assert calls, "loop.run must have been called at least once"
+    for i, history in enumerate(calls):
+        for t in history:
+            leaked = [k for k in _INTERNAL_SUMMARY_STRUCTURE_KEYS if k in t]
+            assert not leaked, (
+                f"call {i}: a wire dict carries internal ChatSummary "
+                f"structure key(s) {leaked!r} — no real chat-completions "
+                f"message field has these: {t!r}"
+            )
+
+    tool_turns = [
+        t for history in calls for t in history if t.get("role") == "tool"
+    ]
+    assert tool_turns, (
+        "test setup sanity: the real tool-result turn must survive "
+        "somewhere in what was sent — otherwise the deny side below "
+        "isn't exercised at all"
+    )
+    for t in tool_turns:
+        assert t.get("tool_call_id") and t.get("name"), (
+            f"a real tool-result turn must keep its tool_call_id/name — "
+            f"an allow-list that drops them breaks the turn (real "
+            f"incident: \"A function call output without a call_id "
+            f"requires a name\"): {t!r}"
+        )
