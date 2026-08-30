@@ -42,7 +42,8 @@ whether you considered it is answered "yes" every time.
 
 ## Hard rules
 
-- **A doc describing a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix it in the SAME PR.** Re-read the whole section, not just the line whose keyword you had in mind. **The reviewer owns this too**: a search that missed something cannot report that it missed, so the reviewer's value is a *different* query. Ask "what does this change make false?" before approving.
+- **A doc *describing* a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix it in the SAME PR.** Re-read the whole section, not just the line whose keyword you had in mind. **The reviewer owns this too**: a search that missed something cannot report that it missed, so the reviewer's value is a *different* query. Ask "what does this change make false?" before approving.
+- **A doc that STATES A DECISION is not falsified by an implementation that has not caught up.** Before "fixing" a doc that disagrees with the code, decide which of the two is the design. A *describing* doc follows the code (rule above). A *deciding* doc — an ADR, a spec section, a ratified issue body — does not: what moves is the code, and the doc's claim is **unmet**, not false. Rewriting the decision to match what shipped, or marking it "not true yet", weakens the design into a transcript of the present. Re-design needs a stated reason the DECISION is wrong; the doc changes after that, never to match an implementation.
 - **Recovery-feature PRs need a truncate-falsify test**: set X → truncate the WAL past X's events → reconstruct → assert X survives. Same PR.
 
 ### TUI colour policy
