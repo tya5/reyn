@@ -26,6 +26,21 @@ Pins:
 Tier 2 because the contract is the foundation for the rest of the
 #398 v4 emitter family — config_watcher / sp_loader / etc. follow the
 same dispatch table pattern.
+
+#5557 classification (all 15 ``._audit_events.emit(...)`` sites in this
+file, applying the issue's own discriminator — "does the assert read
+the event THIS emit produced?"): (a) DRIVING, uniformly. Every emit here
+DRIVES the ``_on_audit_event_for_state_change`` subscriber under test;
+every assert in this file reads ``_state_changes(session)`` — a
+DERIVED history entry the subscriber mints — never the raw emitted
+event's own type/data. The event names/payloads (``mcp_server_
+installed``, ``mcp_server_removed``, ``index_dropped``, and the
+deliberately-non-mapped ``router_iteration_started``/``llm_called``/
+``act_executed`` used as negative controls) are the INPUT the dispatch
+table under test is keyed on, not a claim that this file witnesses
+whether production actually fires them in some specific business
+scenario — that's covered elsewhere (the real op_runtime handlers that
+emit these events on a genuine install/remove/index-drop).
 """
 from __future__ import annotations
 
