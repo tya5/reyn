@@ -31,13 +31,17 @@ stage_next_turn_context) are recording real async callables, mirroring
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
 from reyn.runtime.chat_message import Spillability
+from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
 
 
@@ -81,6 +85,59 @@ async def test_declared_spillability_reaches_the_wake_true_payload():
     args, _kwargs = call
     payload = args[1]  # _put_inbox(TurnOrigin.HOOK, {**payload, "wake": True})
     assert payload["spillability"] == "last_resort"
+
+
+@pytest.mark.asyncio
+async def test_declared_spillability_reaches_construction_on_wake_true(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5514 §8 — lead-coder BLOCKING finding, 2026-08-30. The
+    payload-only assertion above (``test_declared_spillability_reaches_
+    the_wake_true_payload``) proved the declaration is TRANSPORTED —
+    it did not prove ``Session._handle_hook_message`` (the wake=true
+    consumer) actually READS it: an earlier version of that method
+    hardcoded ``Spillability.FIRST_CHOICE`` regardless of what the
+    payload carried, and this exact test shape (payload-only) stayed
+    green through that regression, because "sent" and "sent to the
+    right place and used there" are different claims. This test drives
+    the REAL ``Session._handle_hook_message`` (not a re-implementation)
+    with a ``spillability: never``-shaped payload and reads the
+    CONSTRUCTED ``ChatMessage`` back off ``session.history`` — the
+    actual site #5514 §8 requires the declaration reach.
+
+    ``_run_router_loop`` is method-assigned to a real no-op async
+    function (not a mock) so this test isolates ``_handle_hook_message``'s
+    own history-append behaviour from a full router turn — mirrors
+    ``test_hook_message_is_fanned_out_to_live_outbox``
+    (test_hook_loop_valve_1800_7.py)'s own established pattern for the
+    SAME method.
+
+    Strip-falsify (performed during review): reverting
+    ``_handle_hook_message`` to hardcode ``spillability=Spillability.
+    FIRST_CHOICE`` makes the assertion below fail (``FIRST_CHOICE`` !=
+    ``NEVER``), confirming this test — unlike the payload-only one — DOES
+    catch the regression lead-coder found.
+    """
+    session = make_session(
+        agent_name="spillability-construction-agent",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+    )
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    session._run_router_loop = _noop  # type: ignore[method-assign]
+
+    await session._handle_hook_message({
+        "name": "policy-hook",
+        "text": "a standing policy, never to be spilled",
+        "wake": True,
+        "spillability": Spillability.NEVER.value,
+    })
+
+    (only,) = [m for m in session.history if m.role == "system"]
+    assert only.spillability is Spillability.NEVER
 
 
 @pytest.mark.asyncio

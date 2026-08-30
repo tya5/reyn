@@ -7764,14 +7764,30 @@ class Session:
             content=attributed,
             ts=_now_iso(),
             meta={"chain_id": chain_id},
-            # #5514 §4/§8 (owner correction, 2026-08-30): a hook push is
-            # MATERIAL (the whole reason #5514 was opened — a hook push
-            # had no cap and no offload, #5514 §5's own outset). Default
-            # hardcoded here, not read from ``hooks.yaml`` — a per-hook
-            # ``spillability:`` knob is a separate, later PR (scope
-            # narrowed by lead-coder to avoid landing config schema/
-            # loader/validation changes in this already-large PR).
-            spillability=Spillability.FIRST_CHOICE,
+            # #5514 §8 (lead-coder BLOCKING finding, 2026-08-30): reads
+            # the SAME per-hook ``spillability`` its own wake=false
+            # sibling (the ``next_turn_context`` ride-along, below) reads
+            # — both from the ONE payload dict
+            # ``HookDispatcher._push_resolved`` builds (dispatcher.py).
+            # An earlier version of this site hardcoded
+            # ``Spillability.FIRST_CHOICE`` instead of reading the
+            # payload — the exact "declaration reaches one mouth and
+            # silently misses the other" hazard #5514 §8 itself named,
+            # just manifesting at THIS mouth instead of the one §8's own
+            # text anticipated. Undeclared (no ``spillability`` key, a
+            # payload not built through ``_push_resolved`` at all) still
+            # falls back to ``FIRST_CHOICE`` — ``HookDef.spillability``'s
+            # own docstring is the reason: `None` (undeclared) resolves
+            # to FIRST_CHOICE, not ``Spillability.default()``'s general
+            # LAST_RESORT, because #5514's own opening motivation was
+            # "template_push has no cap and no offload" — defaulting its
+            # own knob to the least eager-to-spill tier would protect
+            # the exact path the issue exists to fix last.
+            spillability=(
+                Spillability(payload["spillability"])
+                if "spillability" in payload
+                else Spillability.FIRST_CHOICE
+            ),
         ))
         await self._put_outbox(OutboxMessage(
             kind="system",
@@ -8039,18 +8055,15 @@ class Session:
                     # exact gap #5514 names. ``kind`` (persisted here)
                     # lets a future reader recover what this was.
                     #
-                    # #5514 §8 (owner correction, 2026-08-30): the
-                    # classifier is ``entry_kind`` (already OS-trusted, see
-                    # the comment above) — a HOOK ride-along reads the
-                    # SAME per-hook ``spillability`` its own wake=true
-                    # sibling (``_handle_hook_message``) reads, both from
-                    # the ONE payload dict ``HookDispatcher._push_resolved``
-                    # builds (dispatcher.py) — the two mouths #5514 §8
-                    # requires a hook's declaration reach cannot drift
-                    # since they read the same field of the same payload.
-                    # Every other staged producer (send_to_session/agent/
-                    # cron/pipeline/peer) has no per-kind ruling yet and
-                    # defaults ``LAST_RESORT``.
+                    # #5514 §8: the classifier is ``entry_kind`` (already
+                    # OS-trusted, see the comment above) — a HOOK
+                    # ride-along reads the SAME per-hook ``spillability``
+                    # its own wake=true sibling (``_handle_hook_message``)
+                    # reads, both from the ONE payload dict
+                    # ``HookDispatcher._push_resolved`` builds
+                    # (dispatcher.py). Every other staged producer
+                    # (send_to_session/agent/cron/pipeline/peer) has no
+                    # per-kind ruling yet and defaults ``LAST_RESORT``.
                     meta={"kind": entry_kind},
                     spillability=(
                         Spillability(payload_data["spillability"])
