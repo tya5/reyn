@@ -58,6 +58,29 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     n = result.get("summarized_turns", 0)
     if n <= 0:
         free_after = result.get("free_window_after")
+        # #5579 (owner's real machine, 2026-08-30): ``summarized_turns == 0``
+        # has THREE possible causes — genuinely nothing to fold, an attempt
+        # that folded nothing, or a watermark that failed to advance — and
+        # this function has no way to tell them apart (``force_compact_now``
+        # returns nothing; see session.py's own ``_compact_now_for_op``).
+        # The PREVIOUS wording asserted "already fits the window"
+        # unconditionally on ``n <= 0`` — true only for the first cause. The
+        # owner's own machine showed the contradiction directly: "already
+        # fits the window. Free window: ~0 tokens." in the SAME line.
+        # ``free_window_after`` (``max(0, effective_trigger - after)``,
+        # already computed, no new threshold needed) is the one number that
+        # actually says whether the window fits: `> 0` means room remains,
+        # `== 0` means it does not — regardless of why ``n`` came back 0.
+        if free_after is not None and free_after <= 0:
+            await reply(
+                ctx,
+                "Nothing was compacted this pass, and the window is still "
+                "full (~0 tokens free) — /compact did not free any room. "
+                "This may mean there was nothing eligible to fold, or an "
+                "attempt folded nothing; either way, running /compact "
+                "again right now is unlikely to help further.",
+            )
+            return
         tail = f" Free window: ~{free_after} tokens." if free_after is not None else ""
         await reply(
             ctx,
