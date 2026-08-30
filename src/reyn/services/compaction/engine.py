@@ -981,6 +981,134 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     return any(kw in str(exc).lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
 
 
+class LLMFailureClass(enum.Enum):
+    """#5543 / #5531 §10 — the ONE three-way classification the shrink
+    ladder is allowed to branch on. Every ``retry_loop`` overflow-recovery
+    site must classify through this before deciding what to do with an
+    exception; the three members are jointly exhaustive and mutually
+    exclusive over ``classify_llm_failure``'s own domain.
+
+    FATAL:
+        A bug in reyn's OWN code (``TypeError``/``AttributeError``/
+        ``KeyError``) or a misconfigured credential (auth error). Never
+        shrunk — re-raised immediately. Owner (#3783, verbatim): "An
+        ``AttributeError`` in our own code must not become 'quietly
+        shrink, then ``UnrecoveredError``'" — shrinking a Fatal exception
+        burns real LLM calls chasing a cause no amount of shrinking can
+        fix, then reports the WRONG diagnosis (context-overflow) for a
+        code defect.
+    RETRYABLE:
+        An infrastructure condition (5xx / timeout / connection failure),
+        a per-request rate limit, or a usage-quota exhaustion — never
+        shrunk either; the fix is waiting, not sending less. Routed
+        through the SAME backoff machinery the router already uses
+        (``llm.py``'s ``_llm_call_with_retry``) rather than the shrink
+        ladder.
+    OVERFLOW:
+        A genuine context/body-size overflow (token-count or byte-limit).
+        The ONLY class that enters the shrink ladder — shrinking the
+        input is the correct remedy precisely because the input's SIZE
+        is the cause.
+
+    Precedence, in the order ``classify_llm_failure`` checks them: FATAL
+    first (a code bug's own class name is a stronger, narrower signal
+    than any provider-shaped heuristic below it — an ``AttributeError``
+    from provider glue code must not fall through to a keyword match),
+    then RETRYABLE (an infra/rate-limit/quota condition is a definitive
+    provider signal, checked before the broader OVERFLOW keyword
+    fallback), then OVERFLOW last (the widest, string-fallback-backed
+    check — see ``is_context_overflow_error``'s own docstring on why its
+    keyword fallback must never be the ONLY signal consulted, and why it
+    therefore runs after the narrower checks above it, not before).
+    """
+
+    FATAL = "fatal"
+    RETRYABLE = "retryable"
+    OVERFLOW = "overflow"
+
+
+#: #5543 (owner ruling, #3783 §2's own "AttributeError must not become
+#: quiet-shrink-then-UnrecoveredError" requirement): the closed allowlist
+#: of reyn's-own-code-bug exception types. Deliberately NOT "any exception
+#: type we don't recognise" (that would make FATAL the default for a
+#: genuinely novel provider exception shape, the opposite of this
+#: classification's own safe-side posture — an unrecognised shape should
+#: fall through to OVERFLOW's keyword fallback, not be treated as
+#: unshrinkable-and-fatal) — only the THREE types a bug in reyn's own
+#: code plausibly raises through this call path.
+_FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
+
+
+def _is_fatal_auth_error(exc: BaseException) -> bool:
+    """True for a credential/permission failure — the auth bucket
+    ``reyn.runtime.error_format._bucket_for`` already names (kept as a
+    separate, narrower check here rather than importing that function
+    directly: this module intentionally does not depend on the
+    user-facing formatter, only on the SAME underlying signal it reads
+    — class name substring or a 401/403 status code)."""
+    name = type(exc).__name__
+    code = getattr(exc, "status_code", None)
+    return "Authentication" in name or "PermissionDenied" in name or code in (401, 403)
+
+
+def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
+    """#5543 / #5531 §10 — classify an exception raised from an LLM call
+    (main_call or ``compact()``) into exactly one of :class:`LLMFailureClass`'s
+    three members, so the shrink ladder can branch on ONE unified
+    classification instead of ad-hoc, per-site predicate calls (the shape
+    #5531 §10 names as the reason ``max_iterations`` alone is not a safe
+    substitute for a real classification: removing the iteration cap
+    WITHOUT this function first would let a FATAL bug — a plain
+    ``AttributeError`` in reyn's own code — get quietly shrunk through the
+    entire ``T_max``-halving floor, burning real LLM calls, before finally
+    failing with the wrong diagnosis).
+
+    Checked in this order, each narrower/more-definitive-first (see
+    :class:`LLMFailureClass`'s own docstring for why this order is not
+    arbitrary):
+
+    1. FATAL — an exact ``isinstance`` match on reyn's own closed bug-type
+       allowlist, or an auth-error shape (class name / status code).
+    2. RETRYABLE — ``is_quota_exhausted_error`` (a provider usage-window
+       exhaustion, #5256), or the SAME infra/rate-limit signal
+       ``llm.py``'s own ``_llm_call_with_retry`` already retries
+       (5xx / timeout / connection failure / rate-limit-429), checked
+       WITHOUT importing that module (this function must not create a
+       ``compaction`` → ``llm`` import cycle — the two modules' retry
+       machinery stays two callers of the SAME classification, not one
+       importing the other's private helper).
+    3. OVERFLOW — ``is_context_overflow_error`` (this module's own,
+       already-shared predicate — 413 / token-length signals, with a
+       keyword-string fallback for a flattened provider exception).
+
+    An exception matching none of the three falls through to OVERFLOW —
+    the pre-#5543 default this ladder already had (``retry_loop``'s own
+    except clause only ever catches ``CompactionOverflowError``/
+    ``ContextOverflowError`` today, both already overflow-shaped by
+    construction) — this function does not widen what reaches it, only
+    names what was already implicitly assumed.
+    """
+    if isinstance(exc, _FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
+        return LLMFailureClass.FATAL
+    if is_quota_exhausted_error(exc):
+        return LLMFailureClass.RETRYABLE
+    name = type(exc).__name__
+    code = getattr(exc, "status_code", None)
+    if "RateLimit" in name or code == 429:
+        return LLMFailureClass.RETRYABLE
+    if (
+        "Timeout" in name
+        or "Connection" in name
+        or "ConnectError" in name
+        or "ServiceUnavailable" in name
+        or "BadGateway" in name
+        or "InternalServerError" in name
+        or (isinstance(code, int) and 500 <= code < 600)
+    ):
+        return LLMFailureClass.RETRYABLE
+    return LLMFailureClass.OVERFLOW
+
+
 class CompactionOverflowError(Exception):
     """The compaction LLM call itself exceeded its B_M budget.
 
