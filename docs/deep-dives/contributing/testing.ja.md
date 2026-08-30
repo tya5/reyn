@@ -337,6 +337,10 @@ def test_ledger_jsonl_format_during_migration():
 
 スキャフォールディングテストは `tests/scaffold/` に配置します。このディレクトリ配下のファイルは、PR レビュー時にトリガーが古くなっていないか（トリガーイベントがすでに発生済みでないか）スキャンされます。
 
+### docstring: 数値 Tier ではなく `Tier scaffold:`
+
+Rule 1（tier-docstring、`scripts/test_tier_audit.py`）は全テスト関数に Tier の宣言を強制しますが、「スキャフォールディングは Tier ではありません」（上記）ため、真にスキャフォールディングなテストは Tier 1/2/3 のどれも名乗れません。代わりに `"""Tier scaffold: ..."""` を宣言してください — 受理されるのは `tests/scaffold/` の中だけです。`tests/scaffold/` の外で同じ宣言をすると Tier-docstring の ERROR になります（#5606 — さもなくば「Tier scaffold:」がどのファイルからでも使える Tier 4 の逃げ道になってしまいます）。
+
 ### スナップショットテストの例外
 
 スナップショットテストは**レガシーリファクタのスキャフォールディング**（Coulman の「キャラクタリゼーションテスト」のユースケース）としてのみ許可されます。条件:
@@ -550,7 +554,7 @@ LLM 依存の OS パスを新たに追加する場合:
 
 検出ルール (6):
 
-- Missing Tier docstring (= Tier 宣言の欠如)
+- Missing Tier docstring (= Tier 宣言の欠如; `tests/scaffold/` の中だけ `Tier scaffold:` も受理、#5606)
 - Format pinning (= 行数 / 文字数等の Tier 4 違反)
 - Private state assertion (= プライベート状態への assertion)
 - MagicMock / AsyncMock / patch の使用
