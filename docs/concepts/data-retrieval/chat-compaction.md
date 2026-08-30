@@ -78,25 +78,25 @@ content — it does not promise the request ultimately fits.
 
 ## Overflow recovery
 
-> **Target state.** #5531 lands this; **#5531 tracks what is not yet true**.
-> Statements marked **Today:** describe `origin/main` and are the diff — delete
-> each one, and this note, in the PR that lands the behaviour above it.
-
 When a request overflows, reyn does not fail the turn: it shrinks and retries.
 This is a **structured-failure** guarantee, not a success guarantee — recovery
 either fits the request or stops with a named impossibility, and never loops
 forever or silently drops content.
 
-### Two entry points
+### Two failure sites, one way in
 
-A failure raised by the router's own call and a failure raised by the
-compaction call shrink **different payloads**, so they draw from different
+Recovery is entered from exactly one place: `retry_loop` is called only after
+the *router's own* call raised something `_is_context_overflow_error` accepts. A
+`compact()` overflow is therefore never a way in — it is a failure **nested
+inside** a recovery already under way.
+
+The two sites still shrink **different payloads**, so they draw from different
 candidates. Conflating them touches a compartment that was not even sent.
 
 | | payload that was rejected | what may be shrunk |
 |---|---|---|
-| `main_call` overflow | `SP` · `head` · `summary` · `tail` · `new_msg` | `head`, `tail` |
-| `compact()` overflow | the leading slice of `raw_middle` | `raw_middle` |
+| `main_call` overflow (the way in) | `SP` · `head` · `summary` · `tail` · `new_msg` | `head`, `tail` |
+| `compact()` overflow (nested inside it) | the leading slice of `raw_middle` | `raw_middle` |
 
 `raw_middle` is never on the wire — `main_call` does not receive it. A turn left
 in mid is therefore neither sent nor rescued by relocation: it is compacted, or
@@ -123,13 +123,6 @@ ladder, not inside it:
 | **Retryable** | 5xx, timeout, rate limit, connection error | retried with backoff; never shrinks |
 | **Fatal** | `TypeError` / `AttributeError` / `KeyError`, authentication, model-not-found | propagates unchanged; never shrinks |
 
-**Today:** the `compact()` arm wraps *every* exception except quota exhaustion
-as an overflow, so a `Retryable` or `Fatal` cause reaches the ladder and is
-answered with shrinking; the `main_call` arm already classifies and lets
-everything else through. The two arms are asymmetric, and the compaction call
-does not go through the router's own backoff-retry wrapper, so a 5xx reaching
-the ladder has not been retried even once.
-
 ### Byte limits and token limits take the same path
 
 An HTTP 413 is a request-**body-byte** limit; a context-window error is a
@@ -143,10 +136,6 @@ Inside the ladder they are **the same cause**. Every rung applies to both: the
 same spill, the same slice sizing, the same room halving, the same terminals. A
 rung guarded on the cause shape is a rung whose guard states *why it is needed*
 for one cause — never why it is *forbidden* for the other.
-
-**Today:** two rungs are gated on the byte-limit flag — the room halving, and
-the same-cause cap's exemption. A token-shaped cause therefore never reaches the
-room halving: the same-cause cap raises first.
 
 ### The ladder
 
@@ -178,11 +167,6 @@ The consequence is that a spill may leave *this* attempt unchanged. Progress is
 therefore defined as **"a candidate was consumed"**, never as "the wire got
 smaller": reading bytes here would mistake "this lever alone did not visibly
 help" for "no lever is left".
-
-**Today:** the spill lever sits at the *end* of the ladder instead of the start,
-considers only the first mid turn, and requires `role == "tool"` — so it is
-inert whenever mid's first turn is a user or assistant turn, which is the
-common case. Lifting the role predicate is #5514.
 
 ### Slice sizing is a two-way search
 
@@ -233,14 +217,6 @@ cannot borrow their monotonicity. Two obligations follow:
 - "already tried" must record only candidates a spill actually consumed, never
   ones skipped as ineligible — an ineligible candidate becomes eligible the
   moment the eligibility predicate changes.
-
-**Today:** an iteration cap (`chat.compaction.max_shrink_iterations`) and a
-same-cause consecutive cap bound the loop, and are what actually stop several of
-the paths above. Both are budgets, not predicates: "we tried enough times" and
-"this cause recurred" are not the claim "nothing is left to try". They are
-removed **together with** the classification above — never before it, or a
-`Fatal` cause in our own code would shrink the whole history away before
-surfacing.
 
 ### Invariants
 
