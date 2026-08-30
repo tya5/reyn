@@ -77,7 +77,7 @@ def _reset_litellm_ready_after_reload():
 
 
 def test_defect_a_stream_chunks_discarded_when_completed_output_empty() -> None:
-    """Tier 2: #5603(A) — GREEN means STILL BROKEN (see this file's own module
+    """Tier scaffold: #5603(A) — GREEN means STILL BROKEN (see this file's own module
     docstring for why red/green is inverted here).
 
     litellm's unpatched ``ResponsesToCompletionBridgeHandler.
@@ -156,7 +156,7 @@ def test_defect_a_stream_chunks_discarded_when_completed_output_empty() -> None:
 
 
 def test_defect_b_truncated_overflow_stream_yields_no_error_message() -> None:
-    """Tier 2: #5603(B) — GREEN means STILL BROKEN (see this file's own module
+    """Tier scaffold: #5603(B) — GREEN means STILL BROKEN (see this file's own module
     docstring for why red/green is inverted here).
 
     A provider ending a Responses-API SSE stream after only

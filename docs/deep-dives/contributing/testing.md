@@ -853,6 +853,16 @@ The PR that fires the trigger event **must also remove the scaffolding tests in 
 
 Scaffolding tests live in `tests/scaffold/`. Files under that directory are scanned during PR review for stale triggers (whose triggering event has already happened).
 
+### Docstring: `Tier scaffold:`, not a numeric Tier
+
+Rule 1 (tier-docstring, `scripts/test_tier_audit.py`) forces every test
+function to declare a Tier — but "Scaffolding is not a Tier" (above), so a
+genuine scaffold test has none of Tier 1/2/3 to name. Declare
+`"""Tier scaffold: ..."""` instead — accepted **only** inside
+`tests/scaffold/`; the same declaration outside `tests/scaffold/` is a
+Tier-docstring ERROR (#5606 — otherwise it would be a Tier 4 escape route
+usable from anywhere).
+
 ### Snapshot test exception
 
 A snapshot test is permitted **only** as scaffolding for legacy refactor (Coulman's "characterization test" use case). It must:
@@ -1382,7 +1392,7 @@ Use it as a pre-commit check when adding new tests, for a Tier 4 violation sweep
 
 Detection rules (6):
 
-- Missing or malformed Tier docstring (regex: `^Tier [123][abc]?:` — colon must follow directly)
+- Missing or malformed Tier docstring (regex: `^Tier [123][abc]?:` — colon must follow directly; inside `tests/scaffold/` only, `^Tier scaffold:` is also accepted, #5606)
 - Format pinning (line count / char count / exact length = Tier 4 violation)
 - Private state assertion
 - MagicMock / AsyncMock / patch usage

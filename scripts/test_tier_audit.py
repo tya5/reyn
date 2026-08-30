@@ -36,6 +36,17 @@ from typing import Literal
 
 TIER_DOCSTRING_RE = re.compile(r"^Tier [123][abc]?:", re.IGNORECASE)
 
+# #5606 — tests/scaffold/'s own vocabulary. A scaffold test (extraction-
+# refactor characterization, or #5603's "does the upstream defect this repo
+# works around still exist" shape) genuinely fits none of Tier 1/2/3 — its
+# own subject is a third party's behavior or a past state, not a reyn
+# contract — so Rule 1 forced it to misdeclare (CLAUDE.md six questions ⑥:
+# "the declared Tier is not the one question 1 named"). Accepted ONLY inside
+# tests/scaffold/ (`in_scaffold` below) — accepting it everywhere would open
+# a Tier 4 escape route the deny-side branch below exists specifically to
+# close.
+SCAFFOLD_DOCSTRING_RE = re.compile(r"^Tier scaffold:", re.IGNORECASE)
+
 # #3670: the SAME line-terminator pattern ast._splitlines_no_ff uses
 # internally, inlined here (not imported — that name is private CPython
 # internals we don't want a hard dependency on) so `_cached_source_segment`
@@ -356,16 +367,40 @@ class TestAuditor:
                 )
             elif not TIER_DOCSTRING_RE.match(docstring.strip()):
                 first_line = docstring.strip().splitlines()[0]
-                result.findings.append(
-                    Finding(
-                        rule="tier-docstring",
-                        level="ERROR",
-                        line=node.lineno,
-                        message=f'docstring does not start with "Tier N:": {first_line!r}',
-                        suggestion='Change first docstring line to """Tier 1/2/3a/3b: ..."""',
-                        policy_ref="testing.ja.md: 各テストの docstring 一行目に Tier の明記",
+                is_scaffold_declaration = bool(SCAFFOLD_DOCSTRING_RE.match(docstring.strip()))
+                if is_scaffold_declaration and in_scaffold:
+                    pass  # #5606: tests/scaffold/'s own vocabulary — valid here
+                elif is_scaffold_declaration and not in_scaffold:
+                    # #5606 deny side: "Tier scaffold:" is tests/scaffold/'s
+                    # own vocabulary, not a Tier 4 escape route usable from
+                    # anywhere else — without this branch, accepting the
+                    # scaffold form above would open exactly that hole.
+                    result.findings.append(
+                        Finding(
+                            rule="tier-docstring",
+                            level="ERROR",
+                            line=node.lineno,
+                            message=f'"Tier scaffold:" declared outside tests/scaffold/: {first_line!r}',
+                            suggestion=(
+                                "tests/scaffold/'s own vocabulary is not valid "
+                                "outside tests/scaffold/ — declare a real "
+                                'Tier 1/2/3a/3b, or move this test into '
+                                "tests/scaffold/ with triggered_by/removed_by metadata"
+                            ),
+                            policy_ref="testing.ja.md: 各テストの docstring 一行目に Tier の明記 (#5606)",
+                        )
                     )
-                )
+                else:
+                    result.findings.append(
+                        Finding(
+                            rule="tier-docstring",
+                            level="ERROR",
+                            line=node.lineno,
+                            message=f'docstring does not start with "Tier N:": {first_line!r}',
+                            suggestion='Change first docstring line to """Tier 1/2/3a/3b: ..."""',
+                            policy_ref="testing.ja.md: 各テストの docstring 一行目に Tier の明記",
+                        )
+                    )
 
         # --- Rule 2: Format pinning ---
         if self._rule_active("format-pinning"):
