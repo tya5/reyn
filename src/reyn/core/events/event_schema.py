@@ -140,6 +140,20 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # reader distinguishing the two never has to infer which one fired from
     # context (chain_id presence, call ordering, ...).
     "tool_result_offloaded": frozenset({"trigger"}),
+    # #5514 §5/§8 (architect ruling, 2026-08-30): a spillability=never hook
+    # push that exceeds its own declared spillability_max_chars is REJECTED
+    # outright — never truncated (a partial frame is worse than no frame;
+    # NEVER's own definition is "losing it changes the remaining meaning",
+    # and truncation loses it silently in part) and never offloaded (NEVER
+    # forbids spill by definition, so there is no ref to keep it lossless
+    # with — tool_result_offloaded's own lossless+ref shape does not apply
+    # here). History is left byte-unchanged; this event plus a WARNING log
+    # line are the only trace. `hook_name`/`declared_max_chars`/
+    # `actual_chars` are mandatory so an operator can act without reading
+    # source: which hook, what it promised, what it actually produced.
+    "hook_push_rejected_oversized": frozenset({
+        "hook_name", "declared_max_chars", "actual_chars",
+    }),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
@@ -375,6 +389,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "hook_drain_task_died",
     "hook_event_emitted",
     "hook_push_fired",
+    "hook_push_rejected_oversized",
     "hook_shell_executed",
     "hooks_layer_rejected",
     "inbox_cancel",

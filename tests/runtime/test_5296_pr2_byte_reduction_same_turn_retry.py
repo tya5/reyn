@@ -43,7 +43,7 @@ import pytest
 from reyn.config import CompactionConfig, MultimodalConfig
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import ChatMessage, Spillability
 from reyn.services.compaction.engine import UnrecoveredError
 from tests._support.agent_session import make_session
 
@@ -270,7 +270,11 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
         f"t_max or turn_text if this ever fires"
     )
     for _i in range(turn_count):
-        _push(session, "user", turn_text)
+        # #5514 §7-1: the predicate no longer gates on role=="tool", so a
+        # plain "user" turn is spill-eligible by default (LAST_RESORT) —
+        # this test's own contract is "nothing spillable", which now
+        # requires an explicit NEVER, not just the absence of a tool turn.
+        _push(session, "user", turn_text, spillability=Spillability.NEVER)
 
     events: list = []
     compacted = {"done": False}
@@ -316,8 +320,10 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
         tmp_path, monkeypatch, max_shrink_iterations=1,
         # recovery_policy="next_turn" (default)
     )
-    _push(session, "user", "hi")
-    _push(session, "assistant", "ok")
+    # #5514 §7-1: NEVER, not merely non-"tool" — same reasoning as the
+    # sibling test above.
+    _push(session, "user", "hi", spillability=Spillability.NEVER)
+    _push(session, "assistant", "ok", spillability=Spillability.NEVER)
 
     events: list = []
     session._audit_events.add_subscriber(lambda e: events.append(e))
@@ -367,7 +373,9 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
         tmp_path, monkeypatch, max_shrink_iterations=1, recovery_policy="never",
     )
     for _i in range(50):
-        _push(session, "user", "X" * 320)
+        # #5514 §7-1: NEVER — this test's own "zero spillable candidates"
+        # sanity now needs an explicit declaration, not just role != "tool".
+        _push(session, "user", "X" * 320, spillability=Spillability.NEVER)
 
     events: list = []
     session._audit_events.add_subscriber(lambda e: events.append(e))
@@ -618,14 +626,18 @@ async def test_spill_candidates_are_staged_head_then_mid_then_tail(
     small_head_content = "tiny result h1 " + "a" * 10
     huge_mid_content = "M" * 5_000
     huge_tail_content = "T" * 6_000
+    # #5514 §7-1: filler turns are plain "user"/"assistant" content, now
+    # spill-eligible by default (LAST_RESORT) since the predicate no
+    # longer gates on role=="tool" — NEVER keeps them out of contention so
+    # this test still isolates the 3 tool candidates' own staged order.
     _push(session, "tool", small_head_content, tool_call_id="tc-h1", name="tool")
     for i in range(20):
-        _push(session, "user", f"filler question number {i + 100} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+        _push(session, "user", f"filler question number {i + 100} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", huge_mid_content, tool_call_id="tc-m1", name="tool")
     for i in range(3):
-        _push(session, "user", f"filler question number {i + 300} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+        _push(session, "user", f"filler question number {i + 300} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", huge_tail_content, tool_call_id="tc-t1", name="tool")
 
     head, raw_middle, tail, _summary, _seq_by_id = (
@@ -938,13 +950,14 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
     # test_spill_candidates_are_staged_head_then_mid_then_tail's own
     # independently-measured t_max=2_500/filler shape. No OTHER tool
     # turns exist, so this is the sole candidate.
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above.
     for i in range(20):
-        _push(session, "user", f"filler question number {i + 100} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 100} " * 8)
+        _push(session, "user", f"filler question number {i + 100} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 100} " * 8, spillability=Spillability.NEVER)
     _push(session, "tool", "result body " * 100, tool_call_id="tc-mid", name="tool")
     for i in range(3):
-        _push(session, "user", f"filler question number {i + 300} " * 8)
-        _push(session, "assistant", f"filler answer number {i + 300} " * 8)
+        _push(session, "user", f"filler question number {i + 300} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"filler answer number {i + 300} " * 8, spillability=Spillability.NEVER)
 
     head, raw_middle, tail, _summary, _seq_by_id = (
         session._loop_driver._history_buffer.decompose_history_for_retry()
@@ -1015,14 +1028,17 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     immediately, before a second of the 3 candidates is ever reached.
     """
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
+    # #5514 §7-1: NEVER — see the staged-order test's own comment above;
+    # this test's own "mid-only" isolation depends on the filler turns
+    # never being offered.
     for i in range(3):
         for j in range(8):
-            _push(session, "user", f"filler {i}-{j} " * 8)
-            _push(session, "assistant", f"filler reply {i}-{j} " * 8)
+            _push(session, "user", f"filler {i}-{j} " * 8, spillability=Spillability.NEVER)
+            _push(session, "assistant", f"filler reply {i}-{j} " * 8, spillability=Spillability.NEVER)
         _push(session, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
     for i in range(3):
-        _push(session, "user", f"tail filler {i} " * 8)
-        _push(session, "assistant", f"tail reply {i} " * 8)
+        _push(session, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
 
     head, raw_middle, tail, _summary, _ = (
         session._loop_driver._history_buffer.decompose_history_for_retry()

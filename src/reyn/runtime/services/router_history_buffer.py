@@ -27,6 +27,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Callable
 
+from reyn.runtime.chat_message import Spillability
+
 if TYPE_CHECKING:
     pass
 
@@ -624,6 +626,16 @@ class RouterHistoryBuffer:
             if replacement is not None:
                 content = replacement
         msg: dict = {"role": role, "content": content}
+        # #5514 §7-3: the ONE wire-shape carrier of the classification
+        # made at persist time (#5514 §2) — ``_spill_candidates``
+        # (router_loop_driver.py) reads this key, never `role`, to
+        # decide spill eligibility/order. A summary-role turn returns
+        # earlier above (via ``wrap_summary_as_message``, which does not
+        # carry this key at all — SP/new_msg/summary are reserved,
+        # #5514 §4's own table, never candidates for spill regardless).
+        msg["spillability"] = getattr(
+            m, "spillability", Spillability.default(),
+        ).value
         if m.tool_calls is not None:
             msg["tool_calls"] = m.tool_calls
         if m.tool_call_id is not None:

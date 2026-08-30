@@ -83,6 +83,7 @@ from dataclasses import dataclass, field
 from typing import Union
 
 from reyn.hooks.schema_registry import BARE_TO_KIND
+from reyn.runtime.chat_message import Spillability
 
 # ---------------------------------------------------------------------------
 # Allowed hook-points (starter set — #1800 CONVERGED DESIGN)
@@ -386,6 +387,35 @@ class HookDef:
         flag's value — folding vs. not-folding only decides what
         happens to events that MADE IT into the queue; an event lost to
         bridge queue overflow before that point is lost either way.
+    spillability:
+        #5514 §5/§8 (owner ruling, 2026-08-30 — landed in the same PR
+        as the ``_append_history`` call-site declarations, not a later
+        PR as first scoped): only meaningful on ``template_push`` /
+        ``exec_capture`` — the two schemes that write history at all
+        (``exec``'s own output is discarded, never appended). ``None``
+        (undeclared) resolves to ``Spillability.FIRST_CHOICE`` at the
+        ONE push-construction site (``HookDispatcher._push_resolved``)
+        that feeds BOTH consumers — the wake=true trigger
+        (``Session._handle_hook_message``) and the wake=false
+        ride-along (``_handle_inbox_text``'s ``next_turn_context``
+        staging) — so a declaration made here is never silently
+        invisible to one of the two mouths (#5514 §8's own named
+        hazard). ``FIRST_CHOICE`` is the default, not ``LAST_RESORT``
+        (``Spillability.default()``'s own general-purpose choice):
+        #5514's own opening motivation was "``template_push`` has no
+        cap and no offload" — defaulting its own knob to the LEAST
+        eager-to-spill tier would protect the exact path the issue
+        exists to fix last.
+    spillability_max_chars:
+        Required precisely when ``spillability`` is
+        ``Spillability.NEVER`` — offload (spill) is the only other
+        lever bounding a hook push's size, and ``NEVER`` removes it,
+        so the size ceiling becomes the operator's only remaining
+        bound (#5514 §5: "declaring picks one; both is the answer").
+        ``None`` otherwise (spill already bounds it; a stray value
+        here would be silently ignored — rejected instead, same
+        eager-rejection posture as every other per-hook knob in this
+        class).
     """
 
     on: str
@@ -400,6 +430,8 @@ class HookDef:
     write_paths: "tuple[str, ...] | None" = field(default=None)
     origin: str = field(default="unknown")
     fold: bool | None = field(default=None)
+    spillability: "Spillability | None" = field(default=None)
+    spillability_max_chars: "int | None" = field(default=None)
 
 
 #: #5213: the 4 config layers ``hooks:`` composes across, in ORDER FROM LEAST

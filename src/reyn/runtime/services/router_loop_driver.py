@@ -18,6 +18,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
+from reyn.runtime.chat_message import Spillability
+from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
 
@@ -247,12 +250,36 @@ class RouterLoopDriver:
         candidate moved no bytes" as failure for a mid-stage candidate —
         see ``_attempt_reactive_spill``.
 
-        Only ``role == "tool"`` turns with an inline string body are
-        candidates — an already-ref'd/non-string content has nothing left
-        to spill. ``new_msg`` (the turn's own newest user message) is never
-        passed in here at all — contract's own "user自身の最新messageは
-        落とさない" is satisfied structurally, not by a filter that could
-        miss it.
+        #5514 §7-1 (owner ruling, removes the OLD ``role == "tool"``
+        eligibility restriction): ANY turn with an inline string body is
+        a candidate now — eligibility is decided by
+        ``ChatMessage.spillability`` (persisted on ``meta`` — #5514 §2),
+        never by ``role``, which cannot express this axis at all (a
+        cross-agent injection carries no literal role; reyn's own FRAME
+        and MATERIAL notices share the same role — see
+        ``Spillability``'s own module docstring). ``spillability ==
+        NEVER`` turns are EXCLUDED entirely, not merely deprioritised —
+        losing them would falsify the model's own world-state (#5514
+        §1.1). An already-ref'd/non-string content still has nothing
+        left to spill regardless of its declared spillability.
+
+        ``new_msg`` (the turn's own newest user message) is never passed
+        in here at all — contract's own "user自身の最新messageは落とさ
+        ない" is satisfied structurally, not by a filter that could miss
+        it.
+
+        #5514 §3/§7-2: within ``head``/``tail`` — wire content the model
+        can read back directly — ``spillability`` plays NO part; only
+        size orders them (unchanged from before this PR). ``mid``
+        (``raw_middle``) is different: it is ``compact()``'s OWN input,
+        so which turn goes first there decides what the SUMMARY is built
+        from, not what the model reads back — so mid orders by tier
+        FIRST (``FIRST_CHOICE`` before ``LAST_RESORT``, size-descending
+        within each tier), stage second. #5531 §9.5 (owner, no cursor):
+        this ordering is recomputed FRESH from whatever candidates
+        remain each time it is called — never persisted state that could
+        go stale, the exact `_compact_attempt_len`-shaped bug class this
+        arc's own review is watching for.
 
         "Spilled candidates first" was considered and rejected (owner):
         once spilled, a candidate's only remaining state is ``lost`` either
@@ -261,13 +288,39 @@ class RouterLoopDriver:
         GC) serve different purposes (E = minimize round-trips and
         collateral spilling this turn; C = evict low-value data over time).
         """
-        def _spillable(turns: "list[dict]") -> "list[dict]":
-            cands = [
+        def _eligible(turns: "list[dict]") -> "list[dict]":
+            # A summary element (`wrap_summary_as_message`) never carries a
+            # `spillability` key — reserved/NEVER by construction (#5514
+            # §4's SP/new_msg/summary closing note). Its absence must not
+            # read as "eligible by default"; excluded by role explicitly,
+            # matching `_spill_fn`'s own same-PR guard.
+            return [
                 t for t in turns
-                if t.get("role") == "tool" and isinstance(t.get("content"), str)
+                if isinstance(t.get("content"), str)
+                and t.get("role") != SUMMARY_MESSAGE_ROLE
+                and t.get("spillability") != Spillability.NEVER.value
             ]
-            return sorted(cands, key=lambda t: -len(t["content"]))
-        return _spillable(head) + _spillable(raw_middle) + _spillable(tail)
+
+        def _by_size_desc(turns: "list[dict]") -> "list[dict]":
+            return sorted(turns, key=lambda t: -len(t["content"]))
+
+        _mid = _eligible(raw_middle)
+        _mid_ordered = (
+            _by_size_desc([
+                t for t in _mid if t.get("spillability") == Spillability.FIRST_CHOICE.value
+            ])
+            + _by_size_desc([
+                t for t in _mid
+                if t.get("spillability") not in (
+                    Spillability.FIRST_CHOICE.value, Spillability.NEVER.value,
+                )
+            ])
+        )
+        return (
+            _by_size_desc(_eligible(head))
+            + _mid_ordered
+            + _by_size_desc(_eligible(tail))
+        )
 
     async def _attempt_reactive_spill(self, *, chain_id: str) -> bool:
         """#5296 PR-2 ②③ / #5364 §1.6 (停止条件と束縛): spill the FIRST
@@ -574,11 +627,21 @@ class RouterLoopDriver:
             def _spill_fn(turn: dict) -> "dict | None":
                 # #5367③: injected into retry_loop, not imported by it —
                 # matches ``context_budget_advisor.py``'s own ``save_fn``
-                # injection style for ``cap_tool_result_content``. Only a
-                # tool-result turn with plain-str content is spillable
-                # (mirrors ``_spill_candidates``'s own filter); everything
-                # else reports "nothing to try" rather than raising.
-                if turn.get("role") != "tool" or not isinstance(turn.get("content"), str):
+                # injection style for ``cap_tool_result_content``.
+                # #5514 §7-1 (owner ruling): eligibility is no longer
+                # gated on ``role == "tool"`` — any plain-str turn not
+                # declared ``Spillability.NEVER`` is spillable (mirrors
+                # ``_spill_candidates``'s own filter, same PR). A summary
+                # element (``wrap_summary_as_message``) never carries a
+                # ``spillability`` key at all — it is reserved/NEVER by
+                # construction (SP/new_msg/summary, #5514 §4's own closing
+                # note), so its absence here must not read as "eligible by
+                # default"; excluded explicitly by role, not by key lookup.
+                if (
+                    not isinstance(turn.get("content"), str)
+                    or turn.get("role") == SUMMARY_MESSAGE_ROLE
+                    or turn.get("spillability") == Spillability.NEVER.value
+                ):
                     return None
                 replacement = self._history_buffer.spill_turn_content(
                     turn["content"], chain_id=chain_id,

@@ -49,6 +49,7 @@ from reyn.hooks.render import ResolvedPush, render_pipeline_input, render_push
 from reyn.hooks.schema import HookDef
 from reyn.hooks.schema_registry import canonical_kind
 from reyn.hooks.shell_runner import run_shell_hook  # runs exec/exec_capture argv (#3226 P4)
+from reyn.runtime.chat_message import Spillability
 from reyn.runtime.turn_origin import TurnOrigin
 
 _log = logging.getLogger(__name__)
@@ -556,6 +557,46 @@ class HookDispatcher:
         the only difference between the two is where ``resolved`` comes from."""
         if not resolved.push_when:
             return  # conditional push guard (or a render/parse failure — fail-safe)
+        # #5514 §5/§8 (architect ruling, 2026-08-30): a spillability=never
+        # hook's push exceeding its own declared spillability_max_chars is
+        # REJECTED outright — never truncated. NEVER's own definition is
+        # "losing it changes the remaining meaning"; a truncated frame
+        # reads to the model as COMPLETE (a lie), which is worse than no
+        # frame at all — and NEVER forbids offload by definition, so there
+        # is no MediaStore ref to keep a truncated remainder lossless with
+        # (`tool_result_offloaded`'s own lossless+ref shape does not apply
+        # here). Scope: only this ONE push is dropped — the hook is not
+        # disabled and the turn does not fail (a separate policy, not
+        # this fix's scope). `first_choice`/`last_resort` hooks never
+        # carry `spillability_max_chars` (loader.py's own load-time
+        # requirement), so this branch is unreachable for them.
+        if (
+            hook.spillability is Spillability.NEVER
+            and hook.spillability_max_chars is not None
+            and len(resolved.message) > hook.spillability_max_chars
+        ):
+            _log.warning(
+                "hook %r (spillability=never) push REJECTED — %d chars "
+                "exceeds its declared spillability_max_chars=%d. The push "
+                "is dropped, not truncated (a partial frame would read as "
+                "complete to the model). History is unchanged.",
+                hook.name or point, len(resolved.message),
+                hook.spillability_max_chars,
+            )
+            if self._emit_event is not None:
+                try:
+                    self._emit_event(
+                        "hook_push_rejected_oversized",
+                        hook_name=hook.name,
+                        declared_max_chars=hook.spillability_max_chars,
+                        actual_chars=len(resolved.message),
+                    )
+                except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
+                    _log.debug(
+                        "hook push_rejected_oversized emit_event failed for %r: %s",
+                        hook.name, exc,
+                    )
+            return
         # #2608 observability: every push FIRE (template_push's Jinja2 render or
         # exec_capture's stdout JSON, both funnel through here) is surfaced as a P6
         # event — previously ONLY exec/exec_capture emitted `hook_shell_executed`
@@ -582,8 +623,19 @@ class HookDispatcher:
                 _log.debug("hook push_fired emit_event failed for %r: %s", hook.name, exc)
         # Attribution name (#1800 slice 6): the hook's operator label when set,
         # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
-        # system-role prefix (shared E + C renderer).
-        payload = {"name": hook.name or point, "text": resolved.message}
+        # system-role prefix (shared E + C renderer). ``spillability`` rides
+        # in the SAME payload dict both the wake=true (``_handle_hook_
+        # message``) and wake=false (``_handle_inbox_text``'s ride-along)
+        # consumers read from — the ONE construction site #5514 §8 requires
+        # so the declaration cannot reach one mouth and silently miss the
+        # other. ``None`` (undeclared) resolves to FIRST_CHOICE here, not
+        # deferred to a consumer default — see ``HookDef.spillability``'s
+        # own docstring for why FIRST_CHOICE, not ``Spillability.default()``.
+        payload = {
+            "name": hook.name or point,
+            "text": resolved.message,
+            "spillability": (hook.spillability or Spillability.FIRST_CHOICE).value,
+        }
         # #2072: cross-session push. A ``resolved.session`` naming a DIFFERENT session routes
         # to THAT session's inbox (the canonical wake-triple); ``wake`` rides in the payload
         # so the target processes it the same way the current session would (wake → triggers a

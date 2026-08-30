@@ -8030,19 +8030,24 @@ class Session:
                     # #5514 §4/§7-3: this call had NO ``meta=`` at all —
                     # nothing survived to classify the entry later, the
                     # exact gap #5514 names. ``kind`` (persisted here)
-                    # lets a future reader recover what this was; the
-                    # decision itself is made NOW, from ``entry_kind``
-                    # (already OS-trusted at this point, see the comment
-                    # above): a staged HOOK ride-along is the SAME
-                    # MATERIAL class ``_handle_hook_message``'s own
-                    # wake=true path already classifies FIRST_CHOICE,
-                    # just delivered via wake=false instead — every
-                    # other staged producer (agent/cron/pipeline/peer)
-                    # defaults LAST_RESORT (no per-kind ruling yet).
+                    # lets a future reader recover what this was.
+                    #
+                    # #5514 §8 (owner correction, 2026-08-30): the
+                    # classifier is ``entry_kind`` (already OS-trusted, see
+                    # the comment above) — a HOOK ride-along reads the
+                    # SAME per-hook ``spillability`` its own wake=true
+                    # sibling (``_handle_hook_message``) reads, both from
+                    # the ONE payload dict ``HookDispatcher._push_resolved``
+                    # builds (dispatcher.py) — the two mouths #5514 §8
+                    # requires a hook's declaration reach cannot drift
+                    # since they read the same field of the same payload.
+                    # Every other staged producer (send_to_session/agent/
+                    # cron/pipeline/peer) has no per-kind ruling yet and
+                    # defaults ``LAST_RESORT``.
                     meta={"kind": entry_kind},
                     spillability=(
-                        Spillability.FIRST_CHOICE
-                        if entry_kind == TurnOrigin.HOOK
+                        Spillability(payload_data["spillability"])
+                        if entry_kind == TurnOrigin.HOOK and "spillability" in payload_data
                         else Spillability.LAST_RESORT
                     ),
                 ))
