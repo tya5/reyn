@@ -15,10 +15,14 @@ Real, separate OS subprocesses throughout (never a synthetic marker
 faked in-process for a PID that isn't actually running that code) —
 mirrors ``test_5226_process_registry.py``'s own convention, including
 its no-sleep/no-duration release-by-closing-stdin idiom (CLAUDE.md's own
-Ceiling/Floor rule).
+Ceiling/Floor rule) and its own ``out_of_process_reyn`` (#5028) pin —
+each subprocess imports ``reyn``, so its ``PYTHONPATH`` is pinned to the
+SAME checkout this test itself imports, never left to the ambient
+venv/worktree to resolve on its own.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -39,13 +43,20 @@ def _isolated_processes_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     return processes_dir
 
 
-def _spawn_identified_subprocess(*, cwd: Path, agent_name: "str | None") -> subprocess.Popen:
+def _spawn_identified_subprocess(
+    *, cwd: Path, agent_name: "str | None", pythonpath: str,
+) -> subprocess.Popen:
     """A REAL, separate OS subprocess that registers its own real PID,
     then (if *agent_name* is given) records its own identity — mirrors
     ``test_5226_process_registry.py``'s own ``_spawn_registering_
     subprocess``, extended to also exercise :func:`record_process_
     identity`. Blocks on a real stdin read (never a sleep) until the
-    test releases it by closing stdin."""
+    test releases it by closing stdin.
+
+    *pythonpath* is the ``out_of_process_reyn`` fixture's own value
+    (#5028) — pinned as this subprocess's ``PYTHONPATH`` so it imports
+    the SAME ``reyn`` this test itself imported, rather than trusting
+    the ambient venv/worktree to agree."""
     record_line = (
         f"process_registry.record_process_identity(agent_name={agent_name!r})\n"
         if agent_name is not None else ""
@@ -58,10 +69,11 @@ def _spawn_identified_subprocess(*, cwd: Path, agent_name: "str | None") -> subp
         f"{record_line}"
         "sys.stdin.readline()\n"  # blocks for real — released by closing stdin
     )
+    env = {**os.environ, "PYTHONPATH": pythonpath}
     return subprocess.Popen(
         [sys.executable, "-c", script, str(process_registry.PROCESSES_DIR)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, cwd=str(cwd),
+        text=True, cwd=str(cwd), env=env,
     )
 
 
@@ -73,7 +85,7 @@ def _wait_until(condition) -> None:
 
 
 def test_process_for_agent_ignores_a_same_cwd_process_recorded_under_a_different_name(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2: #5350 accept — two REAL processes share the exact same
     ``cwd`` (the incident's own shape: multiple processes in one
@@ -90,8 +102,12 @@ def test_process_for_agent_ignores_a_same_cwd_process_recorded_under_a_different
     not to leave this deny-only) are in this one test."""
     shared_cwd = tmp_path / "shared-workdir"
     shared_cwd.mkdir()
-    target = _spawn_identified_subprocess(cwd=shared_cwd, agent_name="target-agent")
-    other = _spawn_identified_subprocess(cwd=shared_cwd, agent_name="other-agent")
+    target = _spawn_identified_subprocess(
+        cwd=shared_cwd, agent_name="target-agent", pythonpath=out_of_process_reyn,
+    )
+    other = _spawn_identified_subprocess(
+        cwd=shared_cwd, agent_name="other-agent", pythonpath=out_of_process_reyn,
+    )
     try:
         _wait_until(lambda: len(process_registry.live_processes()) == 2)
         markers = process_registry.live_processes()
@@ -127,13 +143,15 @@ def test_process_for_agent_ignores_a_same_cwd_process_recorded_under_a_different
 
 
 def test_a_process_that_never_recorded_an_identity_is_never_matched(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2: #5350 — a registered reyn process that never called
     ``record_process_identity`` (``agent_name`` stays the ``None``
     ``register_process`` itself writes) is never returned by ANY
     ``process_for_agent`` query — ``None`` is not a wildcard."""
-    proc = _spawn_identified_subprocess(cwd=tmp_path, agent_name=None)
+    proc = _spawn_identified_subprocess(
+        cwd=tmp_path, agent_name=None, pythonpath=out_of_process_reyn,
+    )
     try:
         _wait_until(lambda: len(process_registry.live_processes()) == 1)
         assert process_registry.process_for_agent("target-agent") == [], (
