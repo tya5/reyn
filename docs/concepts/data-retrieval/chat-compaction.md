@@ -86,9 +86,13 @@ forever or silently drops content.
 ### Two failure sites, one way in
 
 Recovery is entered from exactly one place: `retry_loop` is called only after
-the *router's own* call raised something `_is_context_overflow_error` accepts. A
-`compact()` overflow is therefore never a way in — it is a failure **nested
-inside** a recovery already under way.
+the *router's own* call raised something `classify_llm_failure` classifies as
+`OVERFLOW` (#5577 — both this entry gate and the retry-arm inside
+`_router_main_call` classify through the same function, not
+`is_context_overflow_error`'s own keyword fallback alone, so a FATAL or
+RETRYABLE cause whose message text merely resembles an overflow no longer
+enters here). A `compact()` overflow is therefore never a way in — it is a
+failure **nested inside** a recovery already under way.
 
 The two sites still shrink **different payloads**, so they draw from different
 candidates. Conflating them touches a compartment that was not even sent.
