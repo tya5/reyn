@@ -34,6 +34,7 @@ from reyn.core.events.backend import DiscardEventBackend, LocalEventBackend
 from reyn.core.events.events import EventLog
 from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 class _RaisingBackend:
@@ -277,7 +278,7 @@ async def test_session_with_discard_backend_still_delivers_to_real_subscribers(
     received = []
     session.subscribe_audit_events(received.append)
     emitted = session._audit_events.emit("test_event", foo="bar")
-    await session._audit_events.drain()  # #4961 C: see the file's first test
+    await settle(session)  # #4961 C: see the file's first test
 
     assert received == [emitted]
     assert emitted.data.get("foo") == "bar"

@@ -50,7 +50,7 @@ async def test_router_failure_reaches_boundary_operations() -> None:
     would make the private replacement here permanent rather than
     provisional."""
     session = make_session(agent_name="turn-finally-failure")
-    events = collect_events(session._audit_events)
+    events = collect_events(session)
     calls: list[str] = []
 
     async def fail_run_turn(text: str, chain_id: str) -> None:
@@ -72,7 +72,7 @@ async def test_router_failure_reaches_boundary_operations() -> None:
 
     with pytest.raises(RuntimeError, match="router failure"):
         await session._run_router_loop("hello", "failure-chain")
-    await settle(session._audit_events)
+    await settle(session)
 
     assert calls == ["hook", "reload", "cut"]
     assert not [event for event in events if event.type == "turn_completed"]

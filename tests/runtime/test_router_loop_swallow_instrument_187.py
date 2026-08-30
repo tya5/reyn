@@ -46,7 +46,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
     event log even when the outbox only carries a classified summary.
     """
     s = make_session(agent_name="t")
-    collected = collect_events(s._audit_events)
+    collected = collect_events(s)
 
     async def _raise_mid_work(text: str, chain_id: str) -> None:
         # Stand-in for the real mid-work crash (final call_llm raising after
@@ -57,7 +57,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
 
     # Must not propagate — the handler swallows-but-surfaces.
     await s._handle_inbox_text("hello", chain_id="c-test")
-    await settle(s._audit_events)
+    await settle(s)
 
     terminated = [
         e for e in collected

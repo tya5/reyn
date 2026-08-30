@@ -68,7 +68,7 @@ def test_quota_exhaustion_never_enters_shrink_and_never_ends_the_session(
        the issue names) and never propagates out of ``_handle_inbox_
        text`` at all (the session survives to handle a next turn)."""
     session = make_session(agent_name="quota_test")
-    collected = collect_events(session._audit_events)
+    collected = collect_events(session)
 
     call_count = 0
 
@@ -84,7 +84,7 @@ def test_quota_exhaustion_never_enters_shrink_and_never_ends_the_session(
     async def _drive() -> None:
         # Must not raise — the generic catch-all keeps the session alive.
         await session._handle_inbox_text("hi", chain_id="chain-quota-1")
-        await settle(session._audit_events)
+        await settle(session)
 
     # architect review (#5292): a separate asyncio.run() per await runs each
     # on its OWN event loop — today's dispatch consumers happen to drain
