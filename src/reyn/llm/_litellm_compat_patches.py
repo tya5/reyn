@@ -303,6 +303,57 @@ def apply_overflow_diagnosis(events: "EventLog | None" = None) -> bool:
     return True
 
 
+def report_applied_state() -> "dict[str, bool | str]":
+    """#5603 (lead-coder's own #4421 seam-gate review) — the ONE place
+    that reads the real applied-state class-attribute flags back off the
+    actual litellm classes, so ``reyn doctor`` (or any other future
+    caller) never needs its own ``import litellm``. The gate
+    (``tests/security/test_4421_litellm_import_seam.py``) enforces this
+    module as the sole place ``src/reyn`` code may touch litellm outside
+    ``litellm_bootstrap.py`` itself — a caller reaching for litellm
+    directly to answer "is the patch applied" would defeat that, exactly
+    the class of drift the gate exists to catch.
+
+    Caller's own responsibility: call ``ensure_litellm_ready()`` FIRST
+    (this function does not — it only reads state, never triggers
+    import/apply itself, matching this module's own "no side effect
+    beyond what ``apply_all`` already did" contract). If litellm was
+    never successfully imported in this process, both patch classes are
+    unreachable and this function reports that explicitly rather than
+    raising.
+
+    Returns a dict with 2 keys, ``stream_chunk_recovery`` and
+    ``overflow_diagnosis``, each mapped to ``True`` (applied), ``False``
+    (not applied — a genuine gap, see ``apply_all``'s own docstring for
+    which of the two is correctness-critical), or a short string
+    describing why the state could not be measured at all (e.g. the
+    litellm submodule that class normally lives in was itself
+    restructured — the SAME shape the scaffold test's own "GOOD NEWS, not
+    a regression" framing already treats as "upstream changed, go check
+    the workaround," not a reyn-side bug)."""
+    state: "dict[str, bool | str]" = {}
+
+    try:
+        from litellm.completion_extras.litellm_responses_transformation import (
+            handler as _H,
+        )
+        state["stream_chunk_recovery"] = bool(
+            getattr(_H.ResponsesToCompletionBridgeHandler, "_reyn_5603_patched", False),
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never raise
+        state["stream_chunk_recovery"] = f"could not measure ({type(exc).__name__}: {exc})"
+
+    try:
+        from litellm.llms.chatgpt.responses import transformation as _T
+        state["overflow_diagnosis"] = bool(
+            getattr(_T.ChatGPTResponsesAPIConfig, "_reyn_5603b_patched", False),
+        )
+    except Exception as exc:  # noqa: BLE001 — report, never raise
+        state["overflow_diagnosis"] = f"could not measure ({type(exc).__name__}: {exc})"
+
+    return state
+
+
 def apply_all(events: "EventLog | None" = None) -> None:
     """#5603 — the ONE call site :func:`reyn.llm.litellm_bootstrap.
     ensure_litellm_ready` makes. Applies both patches with their own,

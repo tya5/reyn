@@ -380,7 +380,18 @@ def _print_litellm_patch_status() -> None:
     litellm`` every real call pays) so the measurement reflects what THIS
     process's own real usage would actually get — a doctor run that
     skipped the import could only ever report "not yet imported", which
-    answers nothing about whether the patch itself still applies."""
+    answers nothing about whether the patch itself still applies.
+
+    #4421 seam-gate review (lead-coder): this function itself never
+    imports ``litellm`` — the applied-state READ lives in
+    ``_litellm_compat_patches.report_applied_state()`` (the seam's own
+    module, already exempted from the gate with its own documented
+    reason), so this file's own litellm touch is exactly the ONE call to
+    ``ensure_litellm_ready()`` every other doctor check already routes
+    through. Folding the read into this file too would have meant a
+    SECOND file the gate has to trust "already warmed" without a
+    structural guarantee — the exact drift #4421 exists to prevent."""
+    from reyn.llm._litellm_compat_patches import report_applied_state
     from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 
     mod = ensure_litellm_ready()
@@ -389,29 +400,21 @@ def _print_litellm_patch_status() -> None:
         print("    warning above, if any); nothing to measure")
         return
 
-    try:
-        from litellm.completion_extras.litellm_responses_transformation import (
-            handler as _H,
-        )
-        applied_a = bool(
-            getattr(_H.ResponsesToCompletionBridgeHandler, "_reyn_5603_patched", False),
-        )
-    except Exception as exc:  # noqa: BLE001 — report, never raise (D-2)
-        print(f"  ✗ stream_chunk_recovery (A): could not measure ({type(exc).__name__}: {exc})")
-        applied_a = None
-    if applied_a is not None:
-        state = "✓ applied" if applied_a else "✗ NOT applied — correctness-critical, see #5603"
-        print(f"  {state}: stream_chunk_recovery (A)")
+    state = report_applied_state()
 
-    try:
-        from litellm.llms.chatgpt.responses import transformation as _T
-        applied_b = bool(getattr(_T.ChatGPTResponsesAPIConfig, "_reyn_5603b_patched", False))
-    except Exception as exc:  # noqa: BLE001 — report, never raise (D-2)
-        print(f"  ✗ overflow_diagnosis (B): could not measure ({type(exc).__name__}: {exc})")
-        applied_b = None
-    if applied_b is not None:
-        state = "✓ applied" if applied_b else "⚠ NOT applied — diagnostic-only, see #5603"
-        print(f"  {state}: overflow_diagnosis (B)")
+    applied_a = state["stream_chunk_recovery"]
+    if isinstance(applied_a, bool):
+        label = "✓ applied" if applied_a else "✗ NOT applied — correctness-critical, see #5603"
+        print(f"  {label}: stream_chunk_recovery (A)")
+    else:
+        print(f"  ✗ stream_chunk_recovery (A): {applied_a}")
+
+    applied_b = state["overflow_diagnosis"]
+    if isinstance(applied_b, bool):
+        label = "✓ applied" if applied_b else "⚠ NOT applied — diagnostic-only, see #5603"
+        print(f"  {label}: overflow_diagnosis (B)")
+    else:
+        print(f"  ✗ overflow_diagnosis (B): {applied_b}")
 
 
 def _print_hook_env_snapshot(resolved_root: Path) -> None:
