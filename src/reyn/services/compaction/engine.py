@@ -1140,19 +1140,21 @@ class UnrecoveredError(Exception):
         for a HUMAN operator, not for a caller to parse).
 
         Deliberately named ``saw_byte_limit``, not ``is_byte_limit`` (or
-        anything implying "this raise's own root cause"): at some raise
-        sites (the same-cause cap, the generic "all shrink paths
-        exhausted", max_iterations exhaustion) the branch taken does
-        NOT itself determine the cause — the value here is the LAST
-        recovered cause observed before this raise, which is correct
-        for those sites but is a genuinely different claim from "this
-        specific raise IS a byte-limit raise" (true only at the 3 sites
-        where the branch itself is byte-limit-gated: the mid-split
-        floor's byte-limit arm, the T_max binary-search floor, and the
-        max_iterations byte-limit branch). A name like ``is_byte_limit``
-        invites a future reader to assume the stronger claim at every
-        site — the exact "same spelling, different meaning" trap this
-        session hit repeatedly elsewhere tonight.
+        anything implying "this raise's own root cause"): #5531 §10
+        retired both the same-cause cap and ``max_iterations``
+        exhaustion (the two raise sites this comment used to name as
+        NOT determining the cause themselves) — the only two raise
+        sites left are the mid=1-turn floor and the T_max binary-search
+        floor, and BOTH are byte-limit-gated in their own message/
+        ``saw_byte_limit`` value (mode-independent since #5531 §3 item
+        12 — the value here is genuinely "was the LAST recovered cause
+        this call a byte limit", true of the raise itself at either
+        site, not merely a residual observation from an earlier,
+        unrelated branch). A name like ``is_byte_limit`` still invites
+        a future reader to assume something even stronger (that EVERY
+        recover this call ever saw was byte-limited, not just the
+        last) — the "last observed, not sticky" distinction below is
+        the reason the field stays named this way.
 
         "Last observed", not "sticky" (was a byte limit EVER seen this
         call, even if a later non-byte cause is what actually
@@ -2157,9 +2159,11 @@ def _split_off_non_summary(
     relative order of what it holds. If fewer than ``count`` non-summary
     elements exist, takes as many as there are (never raises) — the
     caller's own ``max(..., 1)`` chunk-sizing already handles "nothing
-    left to take" by making no progress, exhausting toward
-    ``max_iterations`` like any other stuck case under this ladder's own
-    (avowedly non-monotonic) termination.
+    left to take" by making no progress — #5531 §10 (see ``retry_loop``'s
+    own "Bounded termination proof" docstring): a Phase that makes no
+    progress here falls through to the OTHER branches (spill, or the
+    T_max-halving floor), which do still strictly decrease the measure,
+    so this alone stalling never stalls the whole ladder.
     """
     non_summary_idx = [
         i for i, t in enumerate(items)
@@ -2481,9 +2485,6 @@ async def retry_loop(
         Async callable that performs the main LLM call.  Receives keyword
         args: SP, head, tail, new_msg.  Should raise
         ``ContextOverflowError`` on context-length error.
-    max_iterations:
-        Safety cap (default 8).  Finite-by-construction termination means
-        this cap is rarely reached.
     """
     from reyn.llm.model_budget import get_max_input_tokens
     from reyn.runtime.services.token_multiplier_learner import detect_content_type
