@@ -24,6 +24,7 @@ from reyn.services.compaction.engine import wire_role as _wire_role
 
 if TYPE_CHECKING:
     from reyn.config.chat import SafetyConfig
+    from reyn.services.compaction.engine import ChatSummary
 
 
 #: #5599 follow-up — the exhaustive set of keys a real chat-completions
@@ -773,10 +774,54 @@ class RouterLoopDriver:
             # (kept 5-tuple — see decompose_history_for_retry's own
             # docstring); the summary value is simply unused here now,
             # since it already sits inside `_head`/`_tail` themselves.
-            _head, _raw_middle, _tail, _, _ = (
+            # #5578: the 5th element (`seq_by_id`, id(wire_dict) -> real
+            # seq for every turn in head+raw_middle+tail) is now READ —
+            # see `_on_recovery_summary_used` below for why: it is the
+            # ONLY way to derive a real `covers_through_seq` for whatever
+            # retry_loop's own internal fold produces (that ChatSummary's
+            # own field is structurally 0 on this path — wire dicts carry
+            # no `seq`, #5498).
+            _head, _raw_middle, _tail, _, _seq_by_id = (
                 self._history_buffer.decompose_history_for_retry()
             )
             _new_msg = {"role": "user", "content": user_text}
+
+            async def _on_recovery_summary_used(
+                chat_summary: "ChatSummary", folded_turns: "list[dict]",
+            ) -> None:
+                # #5578 (architect ruling) — a successful recovery's own
+                # fold is persisted here, NOT via force_compact_now (see
+                # CompactionController.persist_recovery_summary's own
+                # docstring for the full rationale: the fold already
+                # happened, this only records it — no new compaction LLM
+                # call, no new irreversible step).
+                #
+                # Gated the SAME way the pre-existing terminal-failure
+                # compaction trigger below is (`recovery_policy ==
+                # "next_turn"`) — #5578's own owner-facing UX-visible
+                # point (users see history replaced by a summary earlier
+                # than before) is scoped to that same opt-in axis, not a
+                # new unconditional default. `recovery_policy == "never"`
+                # (the pre-existing #5498 self-test's own configuration)
+                # therefore takes NO new persistence action here either —
+                # unaffected by this change.
+                if self._compaction.recovery_policy != "next_turn":
+                    return
+                # #5578: derive the REAL covers_through_seq from the
+                # decomposition's own seq_by_id — never trust
+                # chat_summary.covers_through_seq off this path (always 0,
+                # #5498). Only non-summary turns carry a "new" seq worth
+                # counting; a role=="summary" element folded alongside
+                # them (it can ride inside raw_middle, #5531) has no seq
+                # of its own to contribute here.
+                _real_seqs = [
+                    _seq_by_id[id(t)] for t in folded_turns
+                    if id(t) in _seq_by_id and t.get("role") != SUMMARY_MESSAGE_ROLE
+                ]
+                _covers_through_seq = max(_real_seqs, default=0)
+                await self._compaction_controller.persist_recovery_summary(
+                    chat_summary, covers_through_seq=_covers_through_seq,
+                )
 
             def _spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
                 # #5531 §10 rung① / #9.6: injected into retry_loop, not
@@ -977,6 +1022,7 @@ class RouterLoopDriver:
                         learner=self._token_learner,
                         main_call=_router_main_call,
                         spill_fn=_spill_fn,
+                        on_summary_used=_on_recovery_summary_used,
                         # #5531 §10: no `max_iterations=` any more —
                         # retry_loop abolished its iteration-count bound
                         # (see its own "Bounded termination proof"

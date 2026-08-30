@@ -56,6 +56,7 @@ _SUMMARY_PREAMBLE = (
 
 if TYPE_CHECKING:
     from reyn.runtime.chat_message import ChatMessage
+    from reyn.services.compaction.engine import ChatSummary
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +374,74 @@ class CompactionController:
             self._events.emit("compaction_failed", error=str(exc))
         finally:
             self._compacting = False
+
+    async def persist_recovery_summary(
+        self, chat_summary: "ChatSummary", *, covers_through_seq: int,
+    ) -> None:
+        """#5578 (architect ruling, issuecomment on #5578) — persist a
+        ``ChatSummary`` that a SUCCESSFUL overflow-recovery already
+        produced and used, without triggering a new compaction LLM call.
+
+        Why not ``force_compact_now``: the fold already happened inside
+        ``retry_loop`` (``engine.py``) — the model already answered
+        against that folded history. Calling ``force_compact_now`` here
+        would spend a SECOND compaction LLM call (real money) re-folding
+        content that is already folded, and (#5296's own line) trigger a
+        NEW irreversible compaction step — this method triggers none:
+        ``self._engine.compact()`` is deliberately never called here, only
+        the existing summary/append/event machinery ``_run_compaction``
+        already uses for its own tail half.
+
+        ``covers_through_seq`` is the CALLER's own responsibility, never
+        read off ``chat_summary.covers_through_seq`` — that field is
+        structurally ``0`` for a ``ChatSummary`` retry_loop produced (its
+        own fold runs on wire dicts with no real ``seq`` — see
+        ``SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ``'s docstring, #5498).
+        #5498's own comment names exactly this scenario ("a future change
+        that... starts persisting retry_loop's own summary") as the
+        thing that needs the real value re-derived before persisting —
+        the caller (``router_loop_driver.py``) derives it from
+        ``decompose_history_for_retry``'s own ``seq_by_id`` id()-keyed
+        map, never from this object's own field.
+
+        Idempotent (architect's own deliverable ①): if the durable
+        watermark already covers ``covers_through_seq``, this is a
+        no-op — a stale or duplicate call must never regress or
+        re-persist an already-durable watermark.
+        """
+        if covers_through_seq <= 0:
+            # #5498's own guard, re-applied here: a bogus/unavailable
+            # covers_through_seq (the caller failed to derive a real one,
+            # or nothing was actually folded) must never reach
+            # history.jsonl.
+            self._events.emit(
+                "recovery_summary_persisted", outcome="no_covers_through_seq",
+                covers_through_seq=covers_through_seq,
+            )
+            return
+
+        latest = self._latest_summary()
+        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+        if covers_through_seq <= prev_cover:
+            self._events.emit(
+                "recovery_summary_persisted", outcome="already_covered",
+                covers_through_seq=covers_through_seq, prev_cover=prev_cover,
+            )
+            return
+
+        structured = {**chat_summary.to_dict(), "covers_through_seq": covers_through_seq}
+        rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
+        summary_msg = self._make_summary_message(rendered, structured, covers_through_seq)
+        self._append_history(summary_msg)
+        self._events.emit(
+            "recovery_summary_persisted", outcome="persisted",
+            covers_through_seq=covers_through_seq,
+            section_lengths={
+                k: len(v) if isinstance(v, list) else len(str(v))
+                for k, v in structured.items()
+                if k != "covers_through_seq"
+            },
+        )
 
     async def _run_compaction(
         self,
