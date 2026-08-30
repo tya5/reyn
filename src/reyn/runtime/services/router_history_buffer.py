@@ -113,11 +113,32 @@ def _materialise_path_ref_content(
             continue
         path = part["path"]
         mime = part.get("mime_type") or part.get("mimeType") or "image/png"
-        data_bytes = _read_pathref_image(path, media_store)
-        if data_bytes is None:
-            continue
-        import base64
-        data_b64 = base64.b64encode(data_bytes).decode("ascii")
+        content_hash = part.get("content_hash")
+        data_b64: "str | None" = None
+        # #5512: memoized by content_hash via MediaStore's own cache when
+        # both a store AND a hash are available (the common case — a
+        # Reyn-owned tool-result media block, #383's canonical shape).
+        # ``PermissionError``/not-found here is NOT treated as a final
+        # answer — a path outside media_dir (a user-attached file, still
+        # carrying a hash) falls through to the SAME direct-disk-read
+        # fallback ``_read_pathref_image`` always had, preserving that
+        # pre-#5512 behavior exactly (only the found-in-store case is
+        # newly cached).
+        if media_store is not None and content_hash is not None:
+            try:
+                data_b64, found = media_store.read_media_base64(
+                    path, content_hash=content_hash,
+                )
+            except PermissionError:
+                data_b64, found = None, False
+            if not found:
+                data_b64 = None
+        if data_b64 is None:
+            data_bytes = _read_pathref_image(path, media_store)
+            if data_bytes is None:
+                continue
+            import base64
+            data_b64 = base64.b64encode(data_bytes).decode("ascii")
         materialised.append({
             "type": "image_url",
             "image_url": {"url": f"data:{mime};base64,{data_b64}"},
