@@ -203,6 +203,16 @@ class CompactionController:
         self._compacting: bool = False
 
     @property
+    def is_compacting(self) -> bool:
+        """#5588: is a compaction pass currently in flight — the ONE real,
+        zero-fabrication signal this PR's TUI progress display is built on.
+        A thin public read of the existing ``_compacting`` guard (already
+        set/cleared around :meth:`force_compact_now`'s own
+        ``_run_compaction`` call, above) — no new state, just a public
+        accessor for state that already existed private-only until now."""
+        return self._compacting
+
+    @property
     def _engine(self) -> CompactionEngine:
         """The compaction engine, built via the factory on first reference
         and cached (single owner, computed at most once — #3671 follow-up).

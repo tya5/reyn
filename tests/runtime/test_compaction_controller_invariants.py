@@ -235,3 +235,58 @@ def test_force_compact_engine_failure_emits_failed():
     assert [e for e in collected if e.type == "compaction_failed"], (
         "engine failure during force_compact_now must emit compaction_failed"
     )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 4: is_compacting (#5588) — True only while a pass is in flight
+# ---------------------------------------------------------------------------
+
+
+class _ObservingEngine(CompactionEngine):
+    """#5588: like ``_SucceedingEngine``, but captures ``ctrl.is_compacting``
+    from INSIDE its own ``compact()`` call — the only way to observe the
+    flag's value DURING a pass from a test that otherwise only sees before/
+    after force_compact_now's single await chain."""
+
+    def __init__(self, events: EventLog, ctrl_holder: dict) -> None:
+        self._model = ""
+        self._events = events
+        self._budgets = _STUB_BUDGETS
+        self._ctrl_holder = ctrl_holder
+        self.observed_during_compact: "bool | None" = None
+
+    async def compact(
+        self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
+    ) -> ChatSummary:
+        _emit_compaction_started(self._events, input_chunk, covers_through)
+        self.observed_during_compact = self._ctrl_holder["ctrl"].is_compacting
+        seqs = [int(t.get("seq", 0)) for t in input_chunk.messages if isinstance(t, dict)]
+        return ChatSummary(topic_arc="stub", covers_through_seq=max(seqs) if seqs else 0)
+
+
+def test_is_compacting_true_only_during_a_pass():
+    """Tier 2: #5588 — CompactionController.is_compacting reads False before
+    force_compact_now runs, True from inside the engine's own compact() call
+    (observed via a real, not simulated, mid-call read), and False again
+    once force_compact_now has returned — the exact signal the shrink-flow
+    progress chrome row gates its own visibility on."""
+    ctrl_holder: dict = {}
+    engine_box: list = []
+
+    def _factory(events: EventLog) -> CompactionEngine:
+        engine = _ObservingEngine(events, ctrl_holder)
+        engine_box.append(engine)
+        return engine
+
+    ctrl, _collected, _hist, events = _make_controller(history=_history(7), engine_factory=_factory)
+    ctrl_holder["ctrl"] = ctrl
+
+    assert ctrl.is_compacting is False, "must read False before any pass starts"
+
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
+
+    (engine,) = engine_box
+    assert engine.observed_during_compact is True, (
+        "is_compacting must read True from inside the engine's own compact() call"
+    )
+    assert ctrl.is_compacting is False, "must read False again once the pass has returned"

@@ -10153,6 +10153,13 @@ class Session:
         ``context_window_status`` above."""
         return self._budget_advisor.raw_context_window()
 
+    @property
+    def is_compacting(self) -> bool:
+        """#5588: forwarding → CompactionController.is_compacting — the ONE
+        real, zero-fabrication signal the shrink-flow progress chrome row
+        gates on. Cheap (a bool read), safe every render frame."""
+        return self._compaction_controller.is_compacting
+
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
 
