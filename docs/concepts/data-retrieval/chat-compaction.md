@@ -71,88 +71,194 @@ minimum) and is compacted separately, split into smaller slices on repeated
 failure down to a one-turn floor. `head`/`tail` never grow, so this measure
 terminates: once both are at or below their minimum budgets and the raw middle
 cannot be split any smaller, `retry_loop` raises a structured `UnrecoveredError`
-rather than continuing over-budget or silently dropping content. A safety cap
-also bounds the iteration count independently of this. This is a
+rather than continuing over-budget or silently dropping content. This is a
 structured-failure guarantee, not a success guarantee: `retry_loop` always
 stops with a well-defined error instead of looping forever or silently losing
 content — it does not promise the request ultimately fits.
 
 ## Overflow recovery
 
-> **Target state.** PR-1/2/3 of #5531 land this; **#5531 §3 tracks what is not
-> yet true**. Do not read this section as a description of today's code until
-> that line is gone.
+> **Target state.** #5531 lands this; **#5531 tracks what is not yet true**.
+> Statements marked **Today:** describe `origin/main` and are the diff — delete
+> each one, and this note, in the PR that lands the behaviour above it.
 
-When a request overflows — an HTTP 413 (a **byte** limit) or a token-window
-rejection — reyn does not fail the turn. It shrinks and retries. Two orderings
-govern the shrink, and they are independent of each other:
+When a request overflows, reyn does not fail the turn: it shrinks and retries.
+This is a **structured-failure** guarantee, not a success guarantee — recovery
+either fits the request or stops with a named impossibility, and never loops
+forever or silently drops content.
 
-| axis | order | why |
+### Two entry points
+
+A failure raised by the router's own call and a failure raised by the
+compaction call shrink **different payloads**, so they draw from different
+candidates. Conflating them touches a compartment that was not even sent.
+
+| | payload that was rejected | what may be shrunk |
 |---|---|---|
-| **position** | `mid > head > tail > open-turn` | "least needed to continue *now*" |
-| **mechanism** | `compact > spill` | what the model can still see: a spilled turn leaves only a path (the model must call a tool to read it), a compacted span stays visible as prose |
+| `main_call` overflow | `SP` · `head` · `summary` · `tail` · `new_msg` | `head`, `tail` |
+| `compact()` overflow | the leading slice of `raw_middle` | `raw_middle` |
+
+`raw_middle` is never on the wire — `main_call` does not receive it. A turn left
+in mid is therefore neither sent nor rescued by relocation: it is compacted, or
+the call fails. This is why the mid floor has no "defer to tail" escape.
+
+`SP`, `new_msg` and the running `summary` are **reserved**: this call may not
+shrink them. The reservation is structural, not a filter — `new_msg` is never
+passed to the candidate builder at all, so no later edit can accidentally offer
+it. Reserved does **not** mean "excluded from folding": a summary inside the
+span being folded is folded like any other entry and replaced by a newer one,
+and the reservation is then recomputed.
+
+### Which failures enter the ladder at all
+
+Shrinking is a remedy for **size**. Spending it on a failure that has nothing to
+do with size burns LLM calls on a dead cause — and because a successful
+`compact()` folds turns into a summary irreversibly, it degrades the history to
+treat a problem the history did not cause. Failures are classified before the
+ladder, not inside it:
+
+| class | examples | what happens |
+|---|---|---|
+| **Overflow** | context-window error, HTTP 413, a response cut off by an output cap (`JSONDecodeError`) | enters the ladder |
+| **Retryable** | 5xx, timeout, rate limit, connection error | retried with backoff; never shrinks |
+| **Fatal** | `TypeError` / `AttributeError` / `KeyError`, authentication, model-not-found | propagates unchanged; never shrinks |
+
+**Today:** the `compact()` arm wraps *every* exception except quota exhaustion
+as an overflow, so a `Retryable` or `Fatal` cause reaches the ladder and is
+answered with shrinking; the `main_call` arm already classifies and lets
+everything else through. The two arms are asymmetric, and the compaction call
+does not go through the router's own backoff-retry wrapper, so a 5xx reaching
+the ladder has not been retried even once.
+
+### Byte limits and token limits take the same path
+
+An HTTP 413 is a request-**body-byte** limit; a context-window error is a
+**token** limit. They are observed differently (`status_code == 413` is a real
+attribute, never a substring match) and **reported** differently — an operator
+facing a byte limit has a different remedy, so `UnrecoveredError.saw_byte_limit`
+and the human-readable message keep the distinction, and a caller may branch on
+that field after the terminal.
+
+Inside the ladder they are **the same cause**. Every rung applies to both: the
+same spill, the same slice sizing, the same room halving, the same terminals. A
+rung guarded on the cause shape is a rung whose guard states *why it is needed*
+for one cause — never why it is *forbidden* for the other.
+
+**Today:** two rungs are gated on the byte-limit flag — the room halving, and
+the same-cause cap's exemption. A token-shaped cause therefore never reaches the
+room halving: the same-cause cap raises first.
+
+### The ladder
+
+Position order for spill candidates is `head` → `mid` → `tail`, largest-first
+within each stage; the open turn is never a candidate. Mechanism order is
+`compact > spill`: a compacted span stays visible as prose, while a spilled turn
+leaves only a path the model must read back through a tool.
+
+```text
+overflow (byte or token — same path)
+ 1. spill      ONE candidate, largest first → retry the SAME call
+               repeat until the overflow clears; fall through only when no
+               un-spilled candidate is left
+ 2. slice      halve the count of mid turns offered to compact()
+               floor = one turn
+ 3. refill     tail → mid, or head → mid, whichever is still above its minimum
+ 4. room       halve it and re-derive the floors, so 3 can fire again
+               room = candidate - SP - new_msg - summary
+ 5. terminal   (a) or (b)
+```
+
+Rung 1 spills **one** candidate and retries rather than spilling a batch: the
+next call is the cheapest way to learn whether enough has gone. Its candidates
+are the whole of `raw_middle`, not only the slice currently offered — a spill is
+persistent, so spilling a turn outside the current slice still shrinks a later
+fold's input and is already done when that turn later slides into head or tail.
+
+The consequence is that a spill may leave *this* attempt unchanged. Progress is
+therefore defined as **"a candidate was consumed"**, never as "the wire got
+smaller": reading bytes here would mistake "this lever alone did not visibly
+help" for "no lever is left".
+
+**Today:** the spill lever sits at the *end* of the ladder instead of the start,
+considers only the first mid turn, and requires `role == "tool"` — so it is
+inert whenever mid's first turn is a user or assistant turn, which is the
+common case. Lifting the role predicate is #5514.
+
+### Slice sizing is a two-way search
+
+The number of leading mid turns offered to `compact()` **halves on failure and
+doubles on success**, capped at what mid still holds.
+
+Both directions are needed, for opposite input shapes. A uniformly
+hard-to-compact input must not re-discover its working slice size from full
+after every success — so a success does not reset to full. A single dominant
+turn is the other case: halving down to one succeeded *because* that turn
+dominated, and once it is folded the remainder may well compact in one call — so
+a success must be able to grow the slice again, or the rest of mid is folded one
+turn per LLM call.
+
+The value is **episode-scoped**. Returning to `main_call` means a `compact()`
+succeeded, which means the whole is strictly smaller than when the episode
+began — the size that failed then describes a history that no longer exists. The
+next overflow starts the search again from the full remainder, and pays for it.
+
+### Terminals
+
+Recovery stops on a **predicate** — "no lever is left" — never on a budget.
+
+| | meaning |
+|---|---|
+| **(a)** | mid is one turn, already spilled, and still will not fit alongside the summary |
+| **(b)** | room is exhausted: `SP` and the newest message alone no longer fit, and neither is ever shrunk |
+
+**Which terminal was reached travels as a structured value, not as a distinct
+exception type** — this repo merged four diagnoses into one type once and
+renamed a correct diagnosis into a wrong one; a field survives that merge, a
+type does not.
+
+Termination without an iteration cap rests on two nested measures:
+
+- **within an episode** — un-spilled candidates strictly decrease (rung 1),
+  `len(head) + len(tail)` strictly decreases (rung 3), room halving is bounded
+  below by its own floor (rung 4).
+- **across episodes** — total turn count strictly decreases: reaching
+  `main_call` requires a successful `compact()`, and that absorbs at least one
+  turn into the summary permanently.
+
+Rung 1 is the one rung that does not move content between compartments, so it
+cannot borrow their monotonicity. Two obligations follow:
+
+- content that is already a spill preview must never be offered to spill again —
+  re-offloading a preview produces a *different* preview, forever;
+- "already tried" must record only candidates a spill actually consumed, never
+  ones skipped as ineligible — an ineligible candidate becomes eligible the
+  moment the eligibility predicate changes.
+
+**Today:** an iteration cap (`chat.compaction.max_shrink_iterations`) and a
+same-cause consecutive cap bound the loop, and are what actually stop several of
+the paths above. Both are budgets, not predicates: "we tried enough times" and
+"this cause recurred" are not the claim "nothing is left to try". They are
+removed **together with** the classification above — never before it, or a
+`Fatal` cause in our own code would shrink the whole history away before
+surfacing.
 
 ### Invariants
 
 1. A summary **represents one contiguous span** and sits **where that span was**.
-2. A summary is **not a fourth region.** History is **one ordered list**; some
+2. A summary is **not a fourth region.** History is one ordered list; some
    entries have `role == "summary"`. `head`/`mid`/`tail` are **windows over that
-   list** — change `T_max` and the windows move, so a summary can fall in `head`
-   or in `tail`.
+   list** — change the room and the windows move, so a summary can fall in
+   `head` or in `tail`.
 3. A span **grows only from its neighbours** (head's end, tail's start).
-4. The **open turn is never handed to the shrinker** — by construction, not by a
-   filter.
-5. **Reserved (not subject to the windows' share): `SP`, `new_msg`, `summary`.**
-   Only the remainder is apportioned. Reserved does **not** mean "excluded from
-   folding": a summary inside the span being folded is folded like any other
-   entry and replaced by a newer summary — the reservation is then recomputed.
-
-### The flow
-
-```
-send
- └ ok → done
- └ overflow (byte | token)
-     ├ 1. compact — fold mid            (entered only if ≥1 non-summary entry)
-     │    └ compact itself overflows → halve the count … floor = summary + 1
-     │       └ spill that one entry (tried on BOTH byte and non-byte paths)
-     │          └ still no → terminal (a)
-     ├ 2. compact — grow the span from its neighbours → 1
-     ├ 3. spill — mid → head → tail
-     └ 4. halve the room (byte AND token)
-          room      = candidate − SP − new_msg − summary
-          candidate = SP + new_msg + summary + room // 2
-          → re-derive the floors, move head/tail into mid in the same
-            iteration → 1
-          └ room exhausted → terminal (b)
-```
-
-### Terminals
-
-There are **two**, and both mean *impossible*, not *gave up*:
-
-| | meaning |
-|---|---|
-| **(a)** | one turn, already spilled, still will not fit into compaction together with the summary |
-| **(b)** | `room` is exhausted — everything else is already zero |
-
-Everything else that stops the loop is a **budget**, not an impossibility, and is
-reported as its own signal:
-
-- `max_iterations` — the cost brake. It is what answers "who stops this if it
-  repeats", so it stays.
-- the same-cause consecutive cap — a judgement that shrinking is not resolving
-  this cause.
-
-**Which path reached a terminal travels as a structured value, not as a
-distinct exception type** — this repo merged four diagnoses into one type once
-and renamed a correct diagnosis into a wrong one (`_UnrecoveredError` →
-"context window too small"); the field survives that merge, the type does not.
+4. The **open turn is never handed to the shrinker** — by construction.
+5. `SP`, `new_msg` and `summary` are **reserved** from the windows' share; only
+   the remainder is apportioned.
 
 ### See also
 
 - **#5531** — the canonical expected behaviour and the remaining diff.
 - **#5514** — which content may be dropped, and in what order.
+- **#3783** — the failure classification this section's first table describes.
 
 ## What the compaction produces
 
