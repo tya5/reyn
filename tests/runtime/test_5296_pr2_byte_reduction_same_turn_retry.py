@@ -93,7 +93,7 @@ def _push(session, role: str, text: str, **kw) -> None:
 def _make_spill_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     max_shrink_iterations: int = 1, t_max: "int | None" = None,
-    recovery_policy: str = "next_turn",
+    recovery_policy: str = "next_turn", spill_granularity: str = "turn",
 ):
     """A real Session with a real MediaStore (default ``make_session`` gives
     ``media_store=None`` — the spill mechanism needs a real one to have any
@@ -120,7 +120,16 @@ def _make_spill_session(
     still passed the "compaction recovers it" scenario — the pre-existing
     mechanism alone was doing the work, and the test never noticed).
     ``"never"`` disables that side-effect, so any compaction observed can
-    only be THIS PR's own."""
+    only be THIS PR's own.
+
+    ``spill_granularity`` (#5592) defaults to ``"turn"`` here — the
+    pre-#5592 one-candidate-per-call behavior this whole test file's own
+    round-by-round assertions were written against. #5592's own new
+    default (``"tier"``, whole-tier-per-call batching) is exercised by
+    its own dedicated tests, not by defaulting it on here — changing this
+    helper's default would silently re-target every existing test in this
+    file at a different mechanism than the one each was written to
+    isolate."""
     monkeypatch.chdir(tmp_path)
     if t_max is not None:
         import reyn.llm.model_budget as _mb
@@ -131,6 +140,7 @@ def _make_spill_session(
         section_caps_spec_tokens=0,
         max_shrink_iterations=max_shrink_iterations,
         recovery_policy=recovery_policy,
+        spill_granularity=spill_granularity,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -1155,6 +1165,124 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     )
 
 
+# ── #5592 REQUIRED acceptance: whole-tier batching, head/tail never merged ──
+
+
+def test_tier_granularity_spills_whole_mid_tier_in_one_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5592 accept — with ``spill_granularity="tier"`` (the new
+    default), a SINGLE ``_attempt_reactive_spill`` call spills ALL
+    candidates sharing the same face + tier, not one — contrasting
+    directly with ``test_mid_only_spill_bounds_by_candidate_exhaustion_
+    wire_bytes_never_move`` above, which pins the OLD ``"turn"``
+    (one-at-a-time) behavior for the SAME 3-mid-candidate shape and needs
+    3 rounds. Here, round 1 alone must consume all 3.
+
+    Strip-falsify: setting ``spill_granularity="turn"`` on this exact
+    setup reproduces the OLD 3-rounds-for-3-candidates shape (proven by
+    the sibling ``turn``-granularity test above, same fixture) — the
+    only variable between the two is this one config field."""
+    session = _make_spill_session(
+        tmp_path, monkeypatch, t_max=2_500, spill_granularity="tier",
+    )
+    for i in range(3):
+        for j in range(8):
+            _push(session, "user", f"filler {i}-{j} " * 8, spillability=Spillability.NEVER)
+            _push(session, "assistant", f"filler reply {i}-{j} " * 8, spillability=Spillability.NEVER)
+        _push(session, "tool", f"mid result {i} " * 100, tool_call_id=f"tc-mid{i}", name="tool")
+    for i in range(3):
+        _push(session, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
+
+    head, raw_middle, tail, _summary, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    mid_ids = {t.get("tool_call_id") for t in raw_middle if t.get("role") == "tool"}
+    assert mid_ids == {"tc-mid0", "tc-mid1", "tc-mid2"}, (
+        f"test setup sanity: all 3 candidates must land in raw_middle "
+        f"alone, got {mid_ids!r} — adjust t_max/filler counts"
+    )
+
+    progressed = asyncio.run(session._loop_driver._attempt_reactive_spill(chain_id="c1"))
+    assert progressed is True
+
+    _, raw_middle_after, _, _, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    still_original = {
+        t.get("tool_call_id") for t in raw_middle_after
+        if t.get("role") == "tool" and "read_file(path=" not in t.get("content", "")
+    }
+    assert still_original == set(), (
+        f"expected ALL 3 mid candidates spilled in the ONE call (tier "
+        f"granularity) — {still_original!r} still unspilled"
+    )
+
+
+def test_head_and_tail_batches_never_merge_into_one_spill_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5592 deny (owner ruling, "head と tail をまとめない") — with
+    ONE candidate in head and ONE in tail, a single
+    ``_attempt_reactive_spill`` call (``spill_granularity="tier"``) must
+    spill ONLY the head candidate (staged priority: head before tail,
+    unchanged since #5364) while leaving the tail candidate entirely
+    untouched — if a batch ever crossed the head/tail boundary, BOTH
+    would spill in this one call instead.
+
+    Real ``Session``/``RouterLoopDriver``/``RouterHistoryBuffer``/
+    ``MediaStore`` throughout (same idiom every other test in this file
+    uses) — no fake collaborator standing in for a cheaply-constructible
+    real one."""
+    session = _make_spill_session(
+        tmp_path, monkeypatch, t_max=2_500, spill_granularity="tier",
+    )
+    _push(session, "tool", "tiny head result " + "a" * 10, tool_call_id="tc-head-a", name="tool")
+    for i in range(20):
+        _push(session, "user", f"mid filler {i} " * 8, spillability=Spillability.NEVER)
+        _push(session, "assistant", f"mid reply {i} " * 8, spillability=Spillability.NEVER)
+    _push(session, "tool", "tail result " * 60, tool_call_id="tc-tail-a", name="tool")
+
+    head, raw_middle, tail, _summary, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    head_tool_ids = {t.get("tool_call_id") for t in head if t.get("role") == "tool"}
+    tail_tool_ids = {t.get("tool_call_id") for t in tail if t.get("role") == "tool"}
+    assert head_tool_ids == {"tc-head-a"}, (
+        f"test setup sanity: the head candidate must land in head alone "
+        f"— got {head_tool_ids!r}"
+    )
+    assert tail_tool_ids == {"tc-tail-a"}, (
+        f"test setup sanity: the tail candidate must land in tail alone "
+        f"— got {tail_tool_ids!r}"
+    )
+
+    progressed = asyncio.run(session._loop_driver._attempt_reactive_spill(chain_id="c1"))
+    assert progressed is True
+
+    head_n, _raw_middle_n, tail_n, _summary_n, _ = (
+        session._loop_driver._history_buffer.decompose_history_for_retry()
+    )
+    head_still_original = {
+        t.get("tool_call_id") for t in head_n
+        if t.get("role") == "tool" and "read_file(path=" not in t.get("content", "")
+    }
+    tail_still_original = {
+        t.get("tool_call_id") for t in tail_n
+        if t.get("role") == "tool" and "read_file(path=" not in t.get("content", "")
+    }
+    assert head_still_original == set(), (
+        f"expected the head candidate spilled in the ONE call — "
+        f"{head_still_original!r} still unspilled"
+    )
+    assert tail_still_original == {"tc-tail-a"}, (
+        f"the tail candidate must be UNTOUCHED — the batch that consumed "
+        f"head must never reach across to tail — got "
+        f"{tail_still_original!r}"
+    )
+
+
 # ── #5531 §9.6 REQUIRED acceptance: population count + tier breakdown ──────
 
 
@@ -1255,9 +1383,20 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
         "— the exhaustion-reporting mechanism never fired"
     )
     for only in population_events:
-        assert only.data["population"] == raw_middle_population
-        assert only.data["never_count"] == raw_middle_population
+        # #5592 (owner ruling, correcting #9.6): the population this
+        # closure is offered is now the SLICE retry_loop is actually
+        # sending this attempt (``raw_middle[:_attempt_len]``), not
+        # ``raw_middle`` in its entirety once rung② has halved at least
+        # once — so this can be STRICTLY LESS than
+        # ``raw_middle_population`` (never pinning the exact
+        # ``_attempt_len`` value itself, an algorithm-level detail this
+        # test does not own). Every member of it is still NEVER either
+        # way (the whole history here is NEVER), so the tier breakdown
+        # invariant below still fully accounts for it.
+        assert 0 < only.data["population"] <= raw_middle_population
+        assert only.data["never_count"] == only.data["population"]
         assert only.data["first_choice_count"] == 0
+        assert only.data["last_resort_count"] == 0
         assert only.data["last_resort_count"] == 0
         # The accept-side witness itself: a correctly-built population's
         # tier counts sum to exactly the population — the sum a reader

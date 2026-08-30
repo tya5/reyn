@@ -8,7 +8,7 @@
 
 ADR-0044 ruled that rung ① spills **one** candidate and retries, on the reasoning that "the next call is the cheapest way to learn whether enough has gone". That reasoning holds only while the candidate count is small.
 
-On the owner's machine (2026-08-30), one incoming message produced **43 compaction LLM calls in 4m19s**, returned no reply, and ended when the owner killed the client. No terminal event was emitted, because none was reached: the loop was not stuck, it was **bounded by the candidate count** — 2469 on that history, i.e. roughly four hours of continuous upstream calls.
+On the owner's machine (2026-08-30), one incoming message produced **43 compaction LLM calls in 4m19s**, returned no reply, and ended when the owner killed the client. No terminal event was emitted, because none was reached: the loop was not stuck, it was **bounded by the candidate count** — large enough on that history to project to roughly four hours of continuous upstream calls at the observed rate. (The exact candidate count itself was never measured that night — the audit trail carried `compaction_started.new_turn_count`, the turn count offered to `compact()`, not a spillable-candidate count; this PR's own observability fields close that specific gap going forward.)
 
 Three facts make that shape unaffordable rather than merely slow:
 
@@ -29,11 +29,17 @@ ADR-0044's termination argument was a **well-founded measure** — a proof that 
 - `LAST_RESORT` is reached only when `FIRST_CHOICE` is exhausted, unchanged from 0044.
 
 **The previous behaviour stays available as configuration**, defaulting to the batched form:
-`chat.compaction.spill_per_request` takes `spillability` (default — one request carries a whole
-tier) or `turn` (one spill-out per request). Both values are units, and the setting is exactly that
-choice — deliberately not a numeric batch size, which would add a knob nobody can derive a correct
-value for. `turn` belongs next to a line saying it trades requests for over-spill and is not the
-safe side.
+`chat.compaction.spill_granularity` takes `tier` (default — one request carries a whole
+`Spillability` tier) or `turn` (one spill-out per request). Both values are units, and the setting
+is exactly that choice — deliberately not a numeric batch size, which would add a knob nobody can
+derive a correct value for. `tier`, not `spillability`, so the value never collides with
+`Spillability` the type. `tier` names a `Spillability` tier here — never the `head`/`mid`/`tail`
+positional compartment, which this field does not select (recorded as a disagreement, not settled
+by consensus: architect's own reading is that `tier` risks being misread as the positional stage,
+now that `main_call`'s own head/tail compartments are in scope alongside `compact()`'s; the
+implementer's call was to keep `spill_granularity`/`tier`, already implemented and tested, and add
+this clarifying line rather than rename). `turn` belongs next to a line saying it trades requests
+for over-spill and is not the safe side.
 
 ## Consequences
 

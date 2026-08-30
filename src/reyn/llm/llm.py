@@ -918,6 +918,68 @@ def set_llm_call_limit_context(
         bus, on_limit, run_id, non_interactive, llm_call_timeout, llm_max_retries))
 
 
+class _UpstreamRecoveryCallCounter:
+    """#5592 — exact count of upstream LLM calls made so far during ONE
+    context-overflow recovery episode (``retry_loop``'s own scope, engine.py).
+    Mutable holder behind a ContextVar (same shape as ``LLMCallLimitContext``
+    above) so ``retry_loop`` can increment it in place across its own
+    ``await`` boundaries without threading a counter through every
+    intervening call signature (``engine.compact()``, ``main_call``,
+    ``recorded_acompletion`` — none of them need to know this exists).
+
+    Owner ruling (#5592, "事後で測れる情報を残して"): a real count, never
+    an estimate — this is the ONE thing reyn can measure exactly about a
+    request that reaches litellm (see ``recorded_acompletion``'s own
+    ``upstream_recovery_call_count`` emission below); token/dollar figures
+    on the SAME event are estimates and must not be read as this field's
+    equal."""
+
+    __slots__ = ("count",)
+
+    def __init__(self) -> None:
+        self.count = 0
+
+
+_upstream_recovery_call_var: "contextvars.ContextVar[_UpstreamRecoveryCallCounter | None]" = (
+    contextvars.ContextVar("reyn_upstream_recovery_call_counter", default=None)
+)
+
+
+def start_upstream_recovery_call_counter() -> "contextvars.Token":
+    """#5592: called once at ``retry_loop``'s own entry (engine.py) —
+    starts a fresh counter for a NEW recovery episode. Returns the token
+    for ``reset_upstream_recovery_call_counter`` (mirrors
+    ``set_llm_call_limit_context``'s own contract)."""
+    return _upstream_recovery_call_var.set(_UpstreamRecoveryCallCounter())
+
+
+def reset_upstream_recovery_call_counter(token: "contextvars.Token") -> None:
+    """#5592: pairs with ``start_upstream_recovery_call_counter`` — always
+    call from a ``finally`` at the episode's own exit, so a nested/
+    re-entered episode never inherits a stale counter."""
+    _upstream_recovery_call_var.reset(token)
+
+
+def note_upstream_recovery_call_attempt() -> None:
+    """#5592: called once by ``retry_loop`` (engine.py) immediately before
+    EACH upstream call it makes (``engine.compact()`` or ``main_call``) —
+    the single producer for this count. A no-op outside an active episode
+    (``_upstream_recovery_call_var`` unset — an ordinary chat completion
+    is not part of a recovery episode and must not gain this field)."""
+    counter = _upstream_recovery_call_var.get()
+    if counter is not None:
+        counter.count += 1
+
+
+def _current_upstream_recovery_call_count() -> "int | None":
+    """#5592: read-only — the count as of the LAST
+    ``note_upstream_recovery_call_attempt()`` call, or ``None`` outside an
+    episode. Read by ``recorded_acompletion``/``_emit_llm_request_error``
+    at emission time; never incremented here."""
+    counter = _upstream_recovery_call_var.get()
+    return counter.count if counter is not None else None
+
+
 async def _budget_exceed_allows_continue(check: object, budget_agent: object) -> bool:
     """#1868: route a ``check_pre_llm`` refusal through the limit framework's 3-mode
     policy (``handle_limit_exceeded``). Returns True if the over-budget call may
@@ -1811,7 +1873,7 @@ def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) 
 
 
 def _emit_llm_request_error(
-    model: str, purpose: str, exc: BaseException, base_kwargs: dict,
+    model: str, purpose: str, exc: BaseException, base_kwargs: dict, messages: list,
 ) -> None:
     """#1676: emit a P6 ``llm_request_error`` with the FULL provider error detail
     (status_code + whole message/body, NOT truncated — the owner's 405 root-cause
@@ -1841,11 +1903,27 @@ def _emit_llm_request_error(
         if resp is not None:
             text = getattr(resp, "text", None)
             detail["provider_response"] = text if isinstance(text, str) else str(resp)
+        # #5592: same lazy, cheap catalog read llm_request's own emission
+        # uses below — see that call site's comment for why this is safe
+        # to call fresh per emission.
+        from reyn.llm.model_budget import get_max_input_tokens as _get_max_input_tokens
         log.emit(
             "llm_request_error",
             model=model,
             purpose=purpose,
             params=_redact_llm_request_params(base_kwargs, None),
+            # #5592: same field/definition as llm_request's own
+            # input_chars — a failed call's input size, comparable to a
+            # succeeded call's, not an estimate.
+            input_chars=len(json.dumps(messages, ensure_ascii=False)),
+            # #5592: the window ceiling THIS call was measured against —
+            # same field/definition as llm_request's own (see that site).
+            max_input_tokens_applied=_get_max_input_tokens(model),
+            # #5592: exact upstream-call sequence number within the
+            # current recovery episode, or None outside one — see
+            # note_upstream_recovery_call_attempt's own docstring (the
+            # single producer for this count).
+            upstream_recovery_call_count=_current_upstream_recovery_call_count(),
             **detail,
         )
     except Exception:  # noqa: BLE001 — audit emit must never mask the real error
@@ -2437,6 +2515,7 @@ async def recorded_acompletion(
     # secret-like fields redacted. Never let an audit emit break the LLM call.
     try:
         from reyn.core.events.events import get_llm_request_event_log
+        from reyn.llm.model_budget import get_max_input_tokens
         _llm_event_log = get_llm_request_event_log()
         if _llm_event_log is not None:
             _llm_event_log.emit(
@@ -2445,6 +2524,32 @@ async def recorded_acompletion(
                 purpose=purpose,
                 tools_count=len(base_kwargs.get("tools") or []),
                 params=_redact_llm_request_params(base_kwargs, response_format),
+                # #5592 (owner ruling, "事後で測れる情報を残して"):
+                # exact char count of the actual `messages` payload — not
+                # a token estimate (never build logic on an unverified
+                # estimate, owner's own standing instruction). Content
+                # itself is never logged (see the comment above on why
+                # `messages` is excluded from `params`); this is a size
+                # only. Same field name/definition as the matching field
+                # on `llm_request_error` below, so a failed call's input
+                # size is comparable to a succeeded one's.
+                input_chars=len(json.dumps(messages, ensure_ascii=False)),
+                # #5592: the window ceiling THIS call was measured
+                # against. ``get_max_input_tokens`` is a cheap catalog
+                # lookup (litellm's own model table, falling back to a
+                # disclosed constant with its own ``model_budget_
+                # fallback`` telemetry — safe to call fresh per request,
+                # not threaded through from wherever the caller computed
+                # it, so this field can never drift from what was
+                # actually applied).
+                max_input_tokens_applied=get_max_input_tokens(effective_model),
+                # #5592: exact upstream-call sequence number within the
+                # current recovery episode (retry_loop's own scope,
+                # engine.py), or None outside one — see
+                # note_upstream_recovery_call_attempt's own docstring
+                # (the single producer for this count; never re-derived
+                # here).
+                upstream_recovery_call_count=_current_upstream_recovery_call_count(),
             )
     except Exception:  # noqa: BLE001
         pass
@@ -2871,7 +2976,7 @@ async def recorded_acompletion(
         # api_key to litellm since #4348, so there was nothing of reyn's
         # left for this boundary to scrub — litellm's own error text is
         # already provider-scrubbed (#4343).
-        _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
+        _emit_llm_request_error(effective_model, purpose, exc, base_kwargs, messages)
         # #1678, delegated to litellm at #3288-follow-up: this call shape
         # (reasoning_effort + tools, resolved to the openai/azure provider —
         # see the comment above ``_needs_responses_endpoint`` and

@@ -1836,12 +1836,27 @@ class CompactionEngine:
         covers_through_unavailable_reason = (
             None if isinstance(covers_through, int) else covers_through.value
         )
+        # #5592 (owner ruling, "事後で測れる情報を残して" — post-hoc-
+        # measurable, verbatim): the ACTUAL size of what this call is
+        # about to send, not an estimate. `new_turn_count` above answers
+        # "how many turns" — it does NOT answer "how much text", and
+        # #5592's own incident (lead-coder misread `new_turn_count` as a
+        # shrink signal, for lack of a real size field, and had to fall
+        # back to `ls -l history.jsonl` to answer the question this field
+        # exists to answer directly) is exactly the gap this closes.
+        # Char count of the exact JSON this call sends — not a token
+        # estimate (owner's own standing instruction: never build logic
+        # on an unverified estimate; a real character count needs no
+        # tokenizer and is exact by construction, unlike litellm.
+        # token_counter's own approximation).
+        input_chars = len(json.dumps(input_chunk.messages, ensure_ascii=False))
         self._events.emit(
             "compaction_started",
             new_turn_count=new_turn_count,
             covers_through_seq=covers_through_seq,
             covers_through_unavailable_reason=covers_through_unavailable_reason,
             had_previous=bool(summary_messages),
+            input_chars=input_chars,
         )
 
         # No `_token_cache.clear()` here (removed, #2937): text is immutable and
@@ -2400,7 +2415,7 @@ async def retry_loop(
     engine: "CompactionEngine",
     learner: "TokenMultiplierLearner",
     main_call: Callable[..., Awaitable[Any]],
-    spill_fn: "Callable[[list[dict]], tuple[int, dict] | None] | None" = None,
+    spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
 
@@ -2447,15 +2462,23 @@ async def retry_loop(
       raw_middle content across the WHOLE call is therefore
       non-increasing except for the bounded moves Phase 1/2 contribute.
     - ``unspilled candidate count`` — #5531 §10's own rung①: on a
-      ``compact()``-overflow, the spill population is ``raw_middle``
-      ENTIRELY (never a slice, #9.6), tried one candidate at a time by
-      the caller's own priority order, looping (``continue`` → re-run
-      ``compact()``) until either the overflow resolves or candidates
-      are exhausted — each attempt strictly reduces this count by one
-      (a candidate is never offered twice, #9.5's own no-cursor rule:
-      the SET shrinks even though there is no persisted position in
-      it). Only once this is exhausted does rung② (halving
-      ``_compact_attempt_len``) fire.
+      ``compact()``-overflow, the spill population is
+      ``raw_middle[:_attempt_len]`` — the slice THIS attempt is actually
+      sending, which coincides with ``raw_middle`` entirely on the first
+      attempt (``_compact_attempt_len is None``) and is the offered slice
+      only once rung② has halved at least once (#5592, owner ruling,
+      superseding #9.6's own "never a slice" claim — a request's own
+      population is what it actually sends, not the untried remainder
+      past it). ``spill_fn`` hands back a WHOLE BATCH per call now (#5592
+      — every eligible candidate sharing the highest-priority non-empty
+      ``Spillability`` tier, or one at a time under
+      ``chat.compaction.spill_granularity: "turn"``), looping
+      (``continue`` → re-run ``compact()``) until either the overflow
+      resolves or the offered slice's candidates are exhausted — each
+      attempt strictly reduces this count by at least one (a candidate is
+      never offered twice, #9.5's own no-cursor rule: the SET shrinks
+      even though there is no persisted position in it). Only once this
+      is exhausted does rung② (halving ``_compact_attempt_len``) fire.
     - ``_compact_attempt_len`` itself is "fail → halve, succeed →
       double (capped at ``len(raw_middle)``)" — a genuine binary
       search, not a one-way ratchet (architect/owner correction,
@@ -2547,6 +2570,7 @@ async def retry_loop(
         args: SP, head, tail, new_msg.  Should raise
         ``ContextOverflowError`` on context-length error.
     """
+    from reyn.llm.llm import note_upstream_recovery_call_attempt
     from reyn.llm.model_budget import get_max_input_tokens
     from reyn.runtime.services.token_multiplier_learner import detect_content_type
 
@@ -2641,45 +2665,60 @@ async def retry_loop(
     # comment below for why re-slicing the SAME ``raw_middle`` on every
     # iteration without persisting this would just recreate the old cycle.
     _compact_attempt_len: int | None = None
+    # #5592 (owner ruling): the ORIGINAL raw_middle length this call
+    # started with — captured once, never re-derived, so
+    # ``compaction_shrink_recovered``'s own remaining-count field below is
+    # always "N left out of the SAME original total" rather than a moving
+    # denominator. This is the single producer for this count — #5588's
+    # own ``levers_left`` (a separate, TUI-facing surface for the same
+    # question) should read the SAME ``len(raw_middle)`` expression this
+    # function already computes, not recompute it independently (lead-
+    # coder/architect: "producer が1か所で数える、2か所で数えるとズレる").
+    _raw_middle_total = len(raw_middle)
     # SP/new_msg never shrink (see the floor comment above) and never
     # change across iterations (both are fixed parameters) — computed once,
     # not on every floor check.
     _sp_tokens_floor = estimate_tokens(SP, model, use_chars4=use_chars4)
     _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
-    def _try_spill_one_from_raw_middle() -> bool:
-        """#5531 §10 rung① — the spill population is ``raw_middle``
-        ENTIRELY (never a slice, #9.6's own population/payload split),
-        one candidate at a time by the CALLER's own priority order
-        (``spill_fn`` owns that ordering — this function stays
-        Spillability-agnostic, matching ``tool_result_cap.cap_tool_
-        result_content``'s own ``save_fn``-injection style: this module
-        never imports the caller).
 
-        #9.5's own "no cursor" rule: every call re-scans the CURRENT
-        ``raw_middle`` fresh via ``spill_fn(raw_middle)`` — no persisted
-        position, no ``_spill_attempted_ids`` set (#5531 §10's own
-        acceptance: "a candidate not tried must never be recorded as
-        tried" is now structural, not a bookkeeping rule — a candidate
-        ``spill_fn`` already skipped last time is either already
-        reflected as skippable in the caller's own state (e.g.
-        ``is_already_spilled``, #5531 §10's own accept item 1) or was a
-        genuine attempt that changed ``raw_middle[idx]`` in place, so
-        the SAME unmodified object is never re-offered without this
-        function's own state at all).
+    def _spill_batch_from_offered(offered: "list[dict]") -> int:
+        """#5592 (owner ruling, superseding the withdrawn #5531 §10 "one
+        candidate at a time" AND this PR's own withdrawn doubling-batch
+        draft) — rung①: spill as many candidates from *offered* as
+        ``spill_fn`` decides to hand back in ONE call, apply them all,
+        return the count applied.
 
-        Returns whether real progress happened (a candidate was
-        consumed) — never reads wire bytes to decide (#5364 §1.6: a
+        ``offered`` — #5592 (owner ruling, correcting #9.6's own "never a
+        slice" claim): the population is "the range THIS request is about
+        to send" — ``raw_middle[:_attempt_len]`` at the call site below,
+        which coincides with ``raw_middle`` entirely on the first attempt
+        (``_compact_attempt_len is None``) and is the OFFERED SLICE only
+        once rung② has halved at least once. #9.6's docstring text is
+        stale as of this change; see the call site's own comment.
+
+        ``spill_fn`` now returns ``list[tuple[int, dict]]`` (was
+        ``tuple[int, dict] | None``) — a whole BATCH to apply this call,
+        not one candidate. This function stays Spillability-agnostic
+        either way (``spill_fn`` owns all tier/order/granularity
+        decisions — this module never imports ``Spillability``, matching
+        ``tool_result_cap.cap_tool_result_content``'s own ``save_fn``-
+        injection style).
+
+        #9.5's own "no cursor" rule still holds: every call re-scans the
+        CURRENT ``offered`` fresh via ``spill_fn(offered)`` — no persisted
+        position on this side either.
+
+        Never reads wire bytes to decide progress (#5364 §1.6: a
         ``raw_middle`` spill cannot move wire bytes by construction,
         elided out of ``estimate_wire_bytes``; reading bytes here would
-        discard every mid spill outright)."""
-        if spill_fn is None or not raw_middle:
-            return False
-        result = spill_fn(raw_middle)
-        if result is None:
-            return False
-        idx, replacement = result
-        raw_middle[idx] = replacement
-        return True
+        discard every mid spill outright) — progress is "how many edits
+        did ``spill_fn`` return," full stop."""
+        if spill_fn is None or not offered:
+            return 0
+        edits = spill_fn(offered)
+        for idx, replacement in edits:
+            raw_middle[idx] = replacement
+        return len(edits)
 
     # 0-indexed, matching the pre-#5531-§10 ``for _iteration in
     # range(max_iterations)`` numbering exactly (existing telemetry
@@ -2733,6 +2772,13 @@ async def retry_loop(
                     section_token_caps=section_caps,
                 )
                 try:
+                    # #5592: mark this attempt as the NEXT upstream call
+                    # within the current recovery episode, exact and
+                    # single-producer (see note_upstream_recovery_call_
+                    # attempt's own docstring) — a no-op when no episode
+                    # is active (e.g. this function's own test-only direct
+                    # callers).
+                    note_upstream_recovery_call_attempt()
                     # #5475: raw_middle's turns are wire dicts (no `seq` —
                     # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
                     # docstring) — a real seq is not available to this caller.
@@ -2885,6 +2931,9 @@ async def retry_loop(
             # — whichever summary element(s) belong on this wire already
             # sit inside `head`/`tail` themselves.
             _this_iteration_called_main_call = True
+            # #5592: same single-producer mark as the compact() call site
+            # above — main_call is retry_loop's OTHER upstream call.
+            note_upstream_recovery_call_attempt()
             response = await main_call(
                 SP=SP,
                 head=head,
@@ -3023,6 +3072,14 @@ async def retry_loop(
                 iteration=_iteration,
                 consecutive=_consecutive_same_cause,
                 t_max_override=_t_max_override,
+                # #5592 (owner ruling): the absolute remaining/original
+                # candidate count ("5/2469" form, never a bar/percentage —
+                # a percentage hides the magnitude that was exactly the
+                # thing #5592's own incident could not see). Real, exact
+                # counts (len() on the live list and its captured original
+                # length) — not an estimate.
+                raw_middle_remaining=len(raw_middle),
+                raw_middle_total=_raw_middle_total,
             )
             # #4885: this cap is skipped for a byte-limit cause. It exists to
             # catch a TOKEN-shrink that keeps recovering the SAME cause
@@ -3047,17 +3104,44 @@ async def retry_loop(
 
         # Shrink escalation: reduce context size monotonically.
         if raw_middle:
-            # #5531 §10 rung① (owner ruling, "spill is the ladder's
-            # first rung"): try spilling ONE candidate from raw_middle
-            # ENTIRELY (never a slice — #9.6) before touching
-            # ``_compact_attempt_len`` at all. Looping via ``continue``
-            # re-runs ``compact()`` on the SAME ``_attempt_len`` slice
-            # (unchanged by a spill — only the CONTENT of one candidate
-            # inside it shrank) — #9.5's own no-cursor rule: each call
-            # re-scans the current raw_middle fresh, so this naturally
+            # #5531 §10 rung① (owner ruling, "spill is the ladder's first
+            # rung"): try spilling before touching ``_compact_attempt_len``
+            # at all. Looping via ``continue`` re-runs ``compact()`` on
+            # the SAME ``_attempt_len`` slice (unchanged by a spill — only
+            # the CONTENT of the spilled candidates shrank) — #9.5's own
+            # no-cursor rule: each call re-scans fresh, so this naturally
             # keeps consuming candidates until either the overflow
             # resolves or the population is exhausted.
-            if _try_spill_one_from_raw_middle():
+            #
+            # #5592 (owner ruling, real-machine incident: 2469 raw_middle
+            # candidates -> 2469 compact() calls at ~6s each, ~4.1 hours;
+            # SUPERSEDES this PR's own withdrawn doubling-batch draft,
+            # 1,2,4,8... — architect's own words: "owner's whole-tier
+            # batch is better than my doubling: what's expensive is the
+            # CALL COUNT, not the over-spilled bytes"): ``spill_fn`` now
+            # decides, in ONE call, how many candidates to hand back —
+            # this rung just applies whatever it returns and retries.
+            # ``chat.compaction.spill_granularity`` (the caller's own
+            # config, this function stays agnostic to it) controls
+            # ``spill_fn``'s own batch size: ``tier`` (default) returns
+            # every eligible candidate sharing the SAME ``Spillability``
+            # tier in one shot (O(1) calls per overflow regardless of N —
+            # #5592's own simulation: candidates 1483, upper bound 2 calls
+            # for this face); ``turn`` reproduces the pre-#5592 one-
+            # candidate-at-a-time behavior exactly (O(N) calls) — a
+            # config escape hatch, explicitly documented as NOT the safe
+            # default (``docs/reference/config/reyn-yaml.md``).
+            #
+            # #5592 (owner ruling, correcting #9.6): the population for
+            # THIS spill attempt is ``raw_middle[:_attempt_len]`` — the
+            # SAME slice this iteration's own ``compact()`` call just
+            # sent and had rejected, not ``raw_middle`` in its entirety.
+            # These coincide on the very first attempt (``_attempt_len ==
+            # len(raw_middle)`` when ``_compact_attempt_len`` is still
+            # ``None``); they diverge only after rung② has halved at
+            # least once, and it is the SENT slice that must be offered
+            # to spill, not the untried remainder sitting past it.
+            if _spill_batch_from_offered(raw_middle[:_attempt_len]) > 0:
                 continue
             # rung① exhausted (or no spill_fn at all) — only now fall to
             # rung②: ``_compact_attempt_len``. #5531 §10 (architect/owner
