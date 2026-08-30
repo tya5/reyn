@@ -245,17 +245,14 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
         measured_by=(),
     ),
-    ("reyn/runtime/session.py", "Session.run_one_iteration"): _SiteDeclaration(
-        role="reads",
-        reason=(
-            "The #1800 slice-7 loop valve resets the hook-driven-turn counter on this "
-            "member. The intent is 'an operator intervened, so the self-continuation "
-            "chain is no longer self-continuing' — which is a statement about a human "
-            "being present, i.e. exactly what the member claims, and would be wrong "
-            "for any producer that merely happens to run a turn."
-        ),
-        measured_by=(),
-    ),
+    # (#5561, owner ruling, retired the #1800 slice-7 loop valve entirely —
+    # this dict previously declared ("reyn/runtime/session.py",
+    # "Session.run_one_iteration") here: the valve's reset-on-CLIENT_INPUT
+    # step, which is what made this site claim the member. The site is
+    # genuinely gone (run_one_iteration's body no longer references
+    # TurnOrigin.CLIENT_INPUT at all, verified directly) — this is the
+    # correct disposition, a site vanishing because its own reason for
+    # existing was removed, not the walk losing sight of a live one.)
     ("reyn/runtime/inbox_arbiter.py", "InboxArbiter.peek_mid_turn_injection"): _SiteDeclaration(
         role="reads",
         reason=(

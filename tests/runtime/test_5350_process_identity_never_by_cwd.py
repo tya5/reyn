@@ -109,7 +109,22 @@ def test_process_for_agent_ignores_a_same_cwd_process_recorded_under_a_different
         cwd=shared_cwd, agent_name="other-agent", pythonpath=out_of_process_reyn,
     )
     try:
-        _wait_until(lambda: len(process_registry.live_processes()) == 2)
+        # #5569 (lead-coder BLOCKING, 2026-08-30 CI red): the marker is
+        # written in TWO stages — process_registry.py:170-173's own
+        # comment ("agent_name/broker_session_id are usually not yet
+        # known" / "agent_name": None) registers the marker FIRST, then
+        # record_process_identity fills agent_name in later. Waiting on
+        # "2 markers exist" (the len()==2 form this line used to have)
+        # waits on stage 1 only — the assertions below depend on stage 2
+        # (agent_name populated), a LATER point in time. Landing between
+        # the two stages made process_for_agent('target-agent') return
+        # set() (CI's own observed failure). The wait condition must be
+        # the exact condition the assertions below depend on, not a
+        # weaker proxy for it ("count reached" is not "content arrived").
+        _wait_until(
+            lambda: process_registry.process_for_agent("target-agent")
+            and process_registry.process_for_agent("other-agent")
+        )
         markers = process_registry.live_processes()
         assert {m["cwd"] for m in markers} == {str(shared_cwd)}, (
             "test setup sanity: both processes must share the exact same "

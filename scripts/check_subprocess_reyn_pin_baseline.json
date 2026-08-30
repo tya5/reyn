@@ -16,6 +16,7 @@
   "tests/hooks/test_2095_shell_hook_consent_bus.py",
   "tests/hooks/test_2608_h1_mcp_resource_updated_hook.py",
   "tests/hooks/test_5210_exec_capture_output_cap.py",
+  "tests/hooks/test_5536_telemetry_emit_failure_fail_visible.py",
   "tests/mcp/test_2421_gateway_real_substrate.py",
   "tests/mcp/test_2597_capability_version_gate.py",
   "tests/mcp/test_2597_f1_heal_transport_classifier.py",

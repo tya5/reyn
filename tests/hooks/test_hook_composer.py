@@ -623,7 +623,7 @@ async def test_composed_event_never_triggers_sync_hooks_for():
     Sync hook registered on the composed kind (a hypothetical `composed:*`
     hooks: entry) never fires from Composer activity alone. This is the OS
     invariant behind the "composition graph never re-enters Sync dispatch"
-    rule — bounded reactivity via max_hook_driven_turns stays intact."""
+    rule — an unbounded reactivity amplification path stays closed off."""
     bus = HookBus()
     # A Sync hook registered on the COMPOSED kind — if the Composer ever
     # looped composed events back into Sync dispatch, this would fire.

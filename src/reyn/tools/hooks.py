@@ -24,8 +24,10 @@ existing hook safeguards:
   validation here (a bad hook → an op error, not a silent bad write).
 - **Permission** is the TOOL axis: the calling agent must list ``hooks_add`` in
   ``permissions.tool`` (``require_tool``) and the #2074 capability profile
-  (``tool_deny``) can deny self-reload. The damage is bounded — F is sandboxed, E is
-  loop-valved (``safety.loop.max_hook_driven_turns``), C is benign.
+  (``tool_deny``) can deny self-reload. The damage is bounded — F is sandboxed,
+  C is benign. (Pre-#5561 E was also bounded by the ``max_hook_driven_turns``
+  loop valve; that valve is retired — see ``CostConfig``/#5516 folding/
+  ``spillability_max_chars`` for the current bounding mechanisms.)
 - **Precedence**: the per-session layer is ADDITIVE with every other layer
   (startup, global runtime, per-agent), never an override —
   ``Session._build_hook_registry`` combines startup ∪ runtime(global) ∪

@@ -7,6 +7,15 @@
 
 > Design contract: every "reyn already has X" claim in §2 is verified against `origin/main` at the cited path. Claims about *current behaviour* are deliberately anchored to locations rather than restated, because a restated mechanism goes stale and then misleads — this proposal exists partly because a stale `Status:` header in ADR-0039 caused its own author to design around a subsystem that was already built.
 
+> **#5561 addendum (owner ruling, 2026-08-30):** this proposal's `Bounded`/
+> `Runaway bounding` rows below cite `safety.loop.max_hook_driven_turns`,
+> the raw hook-driven-turn-count loop valve — **retired**. No operator
+> could derive a correct cap value for it (owner, verbatim: "hook 起動を
+> 回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も判断でき
+> ない"). Current bounding: `CostConfig`, #5516 push folding,
+> `spillability_max_chars` — see
+> [Concepts: hooks § Loop valve](../../concepts/runtime/hooks.md#loop-valve).
+
 ## 1. Context — what we are actually building
 
 #2839 replaces reyn's internal task system with **MCP-external orchestration**. That decision moves the orchestrator *out* of reyn, which makes a question load-bearing that was previously cosmetic: **what does reyn core owe an external orchestrator so that it can be a plugin?**

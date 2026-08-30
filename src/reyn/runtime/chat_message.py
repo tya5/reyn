@@ -55,6 +55,47 @@ class Spillability(StrEnum):
         failure instead."""
         return cls.LAST_RESORT
 
+
+def _normalize_spillability(value: object) -> Spillability:
+    """#5580: ``ChatMessage.__init__``'s ONE normalization point for
+    ``spillability`` — every construction path funnels through here,
+    including ``ChatMessage(**raw)`` from a read-back ``history.jsonl``
+    line (``Session._parse_history_line``).
+
+    #5514 closed the WRITE side (persisting ``.value``, a plain ``str``,
+    via ``asdict`` + ``json.dumps``) but not the READ side: a value that
+    survived a restart round-trip arrived here as that same plain ``str``,
+    which every consumer of ``msg.spillability`` (starting with
+    ``router_history_buffer.py``'s own ``.value`` access) assumed was
+    already a ``Spillability`` member — AttributeError the first time an
+    overflow ladder ran against a restarted session's history (#5580).
+
+    - ``None`` (omitted at a call site) → ``Spillability.default()``,
+      same as before this fix.
+    - Already a ``Spillability`` member → passed through unchanged (the
+      overwhelmingly common in-process construction path; StrEnum's own
+      ``isinstance`` check here is why the ORDER of the checks below
+      matters — a ``Spillability`` member is ALSO a ``str``).
+    - A plain ``str`` that names a real member (the read-back case) →
+      converted to that member.
+    - Anything else — an unrecognized string (a future value this
+      version's enum doesn't have yet, or a corrupted history line) —
+      degrades to ``Spillability.default()`` rather than raising. #5514
+      §1's own safe-side argument applies here identically: an unreadable
+      declaration must degrade availability, never fail the turn.
+    """
+    if value is None:
+        return Spillability.default()
+    if isinstance(value, Spillability):
+        return value
+    if isinstance(value, str):
+        try:
+            return Spillability(value)
+        except ValueError:
+            return Spillability.default()
+    return Spillability.default()
+
+
 # #73: typed (not form-sniffed) tool-outcome classification, stamped on a
 # ``role="tool"`` message's ``meta`` at PERSIST time by the ONE place that
 # already knows the classification (``router_loop.py``'s tool-result
@@ -254,7 +295,12 @@ class ChatMessage:
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
-        spillability: "Spillability | None" = None,
+        # #5580: widened to accept a raw ``str`` too — ``ChatMessage(**raw)``
+        # from a read-back history.jsonl line passes exactly that shape
+        # (spillability was persisted as its ``.value``, #5514). See
+        # ``_normalize_spillability``'s own docstring for the full
+        # normalization this parameter goes through below.
+        spillability: "Spillability | str | None" = None,
     ) -> None:
         # Reject the pre-#383 ``"agent"`` spelling. Migration of on-disk
         # ``history.jsonl`` entries happens at load time via
@@ -275,9 +321,7 @@ class ChatMessage:
         self.tool_calls = tool_calls
         self.tool_call_id = tool_call_id
         self.name = name
-        self.spillability = (
-            spillability if spillability is not None else Spillability.default()
-        )
+        self.spillability = _normalize_spillability(spillability)
 
     @property
     def text(self) -> str:

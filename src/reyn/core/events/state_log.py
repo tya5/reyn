@@ -122,12 +122,13 @@ WAL_EVENT_KINDS = (
     # AND a route_key so recovery can dispatch it, not just a re-added tuple entry.)
     # (#2248 PR-A added `config_changed` here; #2259 PR-1 removed it — config recovery is now
     # a truncation-surviving GENERATION, not a truncatable WAL event. See config_generations.py.)
-    # NEW (#2884) — the hook-driven-turns loop-valve counter's FULL current value (not a
-    # delta), recorded at every reset (kind="user") and increment (kind="hook") edge. This
-    # kind is a truncatable, between-snapshot replay-maintenance record ONLY — the
-    # reconstruction SOURCE-of-truth is the snapshot field (AgentSnapshot.hook_driven_turns),
-    # since consumed WAL entries are pruned by truncate_below (the #2259 config-loss class).
-    "hook_driven_turns_set",
+    # (#2884 added `hook_driven_turns_set` here for the hook-driven-turns
+    # loop-valve counter's between-snapshot replay maintenance; #5561 (owner
+    # ruling) retired the valve itself, and this kind's own declaration
+    # with it — an old WAL still carrying it is tolerated by AgentSnapshot.
+    # _apply_one's own "unknown kinds: no-op" fallback, the same reader-
+    # tolerance #3436 already established for `task_subscribed`/
+    # `task_rebound`'s own retirement, two entries above.)
 )
 
 

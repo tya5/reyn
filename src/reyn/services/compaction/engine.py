@@ -1036,7 +1036,14 @@ class LLMFailureClass(enum.Enum):
 #: fall through to OVERFLOW's keyword fallback, not be treated as
 #: unshrinkable-and-fatal) — only the THREE types a bug in reyn's own
 #: code plausibly raises through this call path.
-_FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
+#:
+#: #5536 group C: made PUBLIC (was ``_FATAL_EXC_TYPES``) so
+#: ``reyn.hooks.shell_runner``'s own outer catch-all can reuse the SAME
+#: allowlist to exclude reyn's-own bugs from its best-effort "the hook
+#: run failed" catch, rather than inventing a second, divergent set (the
+#: exact "5 independent copies" failure class ``is_context_overflow_
+#: error``'s own docstring already names once for a sibling predicate).
+FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
 
 
 def _is_fatal_auth_error(exc: BaseException) -> bool:
@@ -1088,7 +1095,7 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     construction) — this function does not widen what reaches it, only
     names what was already implicitly assumed.
     """
-    if isinstance(exc, _FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
+    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
         return LLMFailureClass.FATAL
     if is_quota_exhausted_error(exc):
         return LLMFailureClass.RETRYABLE
@@ -1739,6 +1746,19 @@ class CompactionEngine:
             agent=self._recorder_agent,
             response_format=response_format,
             fallback_without_response_format=fallback_without_response_format,
+            # #5582 (owner proposal, 2026-08-30 — "compact はつねに stream
+            # false にする対応"): this call never passed a stream_override
+            # at all before this line, which lands on _streaming_enabled's
+            # own override=None branch — catalog-driven, defaults to
+            # streaming. Streaming buys nothing here: this call produces
+            # ONE summary, never passes on_content_delta, and nobody
+            # observes a delta from it — while compaction is itself one of
+            # retry_loop's two overflow-ladder entry points (#5531 §9.6),
+            # so a stream this call doesn't need can misdiagnose the SAME
+            # ladder that is supposed to recover it (#5581's own shape).
+            # Literal here, not a new purpose-keyed default mechanism —
+            # this is the one call site that needs it.
+            stream_override=False,
         )
 
     async def _resummarize_topic_arc(self, topic_arc: str, body_budget: int) -> str:

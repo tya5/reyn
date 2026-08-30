@@ -108,8 +108,9 @@ The five §5 invariants (architect-ratified review gate for this phase)
    calls ``HookBus.publish`` — it never touches ``HookDispatcher`` or
    ``HookRegistry.hooks_for``. A composed event is Bus-only observable in
    this phase; it is NOT looped back into Sync dispatch (that would let
-   composed -> Sync -> re-dispatch bypass ``max_hook_driven_turns``, an
-   unbounded reactivity amplification path). Wiring a ``composed:*`` kind as
+   composed -> Sync -> re-dispatch become an unbounded reactivity
+   amplification path, bypassing every other hook-driven turn's bounding).
+   Wiring a ``composed:*`` kind as
    a Sync ``hooks:`` entry (proposal §9's illustrative config) is
    deliberately OUT OF SCOPE for this phase — the composition graph's
    leaves do not re-enter Sync dispatch. #4 and #5 are ONE Reliability

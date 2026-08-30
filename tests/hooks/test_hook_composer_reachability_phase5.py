@@ -20,27 +20,26 @@ Tier 2 (OS invariant, end-to-end reachability): a composer fed an
   use) emits ``composed:<name>``, which drives a Sync ``on: composed:<name>``
   wake hook — OBSERVED to fire (the pushed text lands as a real router
   turn), not a mechanism-only unit test of the Composer or the loader alone.
-Tier 2 (OS invariant, STRENGTHENED loop-valve pin — the flip-witness): a
-  self-stimulating composed->wake chain (a composer counting
+(Pre-#5561 a "STRENGTHENED loop-valve pin — the flip-witness" test lived
+  here: a self-stimulating composed->wake chain — a composer counting
   ``builtin:lifecycle:turn_end`` events, feeding a wake hook whose own next
-  turn re-triggers ``turn_end``) is bounded by the EXISTING
-  ``max_hook_driven_turns`` cap with ZERO new bounding logic — every
-  composed->wake push traverses the same inbox ``kind="hook"`` E-path any
-  other hook-driven wake does. Falsified by hand (see the test's docstring):
-  raising the cap from 2 to 1000 stops the checkpoint from firing within the
-  same bounded window (363 uncapped ticks observed vs. a cap of 1000 — i.e.
-  the checkpoint assertion is NOT vacuously true; a real chain that would
-  otherwise force-close early keeps running once the cap no longer binds).
+  turn re-triggers ``turn_end`` — bounded by the ``max_hook_driven_turns``
+  cap, hand-falsified by raising the cap from 2 to 1000 and observing 363
+  uncapped ticks with zero checkpoints. #5561 (owner ruling) retired that
+  loop valve entirely; the test and its dedicated helpers were deleted with
+  it — the self-stimulating CHAIN this test constructed is unaffected by
+  the retirement and would still run today, it simply no longer force-
+  closes at any built-in cap; see ``LoopConfig``'s own docstring,
+  config/chat.py, for the replacement bounding mechanisms.)
 
 Policy (docs/deep-dives/contributing/testing.md): real ``Session`` / real
 ``HookDispatcher`` / real ``Composer`` / real ``HookBus`` — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. Only the LLM
 boundary (``session._loop_driver.run_turn``) is replaced with a plain async
 recorder — the SAME substitution ``tests/core/test_hook_loop_valve_1800_7.py``
-(the pre-existing, merged loop-valve Tier-2 suite) already establishes as
-compliant for this exact class of test: the valve/composer/consumer wiring
-under test never touches the LLM boundary, so a recorder proves what ran
-without needing a real model call.
+already establishes as compliant for this exact class of test: the
+composer/consumer wiring under test never touches the LLM boundary, so a
+recorder proves what ran without needing a real model call.
 """
 from __future__ import annotations
 
@@ -49,7 +48,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.config.chat import LoopConfig, OnLimitConfig, SafetyConfig
+from reyn.config.chat import SafetyConfig
 from reyn.core.events.state_log import StateLog
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import build_hook_payload
@@ -74,16 +73,12 @@ async def _wait_until(predicate, *, delay: float = _POLL_INTERVAL) -> None:
 
 
 def _make_session(
-    tmp_path: Path, *, hooks_config: list, composers_config: list, cap: "int | None" = None,
+    tmp_path: Path, *, hooks_config: list, composers_config: list,
 ) -> Session:
-    safety = (
-        SafetyConfig(
-            loop=LoopConfig(max_hook_driven_turns=cap),
-            on_limit=OnLimitConfig(mode="unattended"),  # deny deterministically, no bus
-        )
-        if cap is not None
-        else SafetyConfig()
-    )
+    # (#5561 removed this helper's `cap` param — it built a
+    # `SafetyConfig(loop=LoopConfig(max_hook_driven_turns=cap))` branch used
+    # only by the now-deleted flip-witness test.)
+    safety = SafetyConfig()
     return make_session(
         agent_name="composer-reachability-agent",
         state_log=StateLog(tmp_path / "state.wal"),
@@ -106,18 +101,8 @@ def _fake_run_turn(session: Session) -> list[str]:
     return ran
 
 
-def _collect_events(session: Session) -> list[dict]:
-    collected: list[dict] = []
-
-    def _sub(event) -> None:  # Event → flat dict (the house-style accessor)
-        collected.append({"type": event.type, **event.data})
-
-    session._audit_events.add_subscriber(_sub)
-    return collected
-
-
-def _checkpoint_kinds(events: list[dict]) -> list:
-    return [e.get("kind") for e in events if e["type"] == "safety_limit_checkpoint"]
+# (#5561 removed `_collect_events`/`_checkpoint_kinds` — both existed only
+# to observe the now-deleted flip-witness test's safety_limit_checkpoint.)
 
 
 # ---------------------------------------------------------------------------
@@ -229,74 +214,9 @@ async def test_no_composers_configured_is_a_noop(tmp_path):
     assert ran == []
 
 
-# ---------------------------------------------------------------------------
-# Tier 2: STRENGTHENED loop-valve pin — the flip-witness
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_composed_to_wake_self_stimulating_chain_force_closes_at_cap(tmp_path):
-    """Tier 2: the STRENGTHENED loop-valve pin (CRITICAL, architect-ratified
-    §224 valve-metered-allow) — a composer that counts every
-    ``builtin:lifecycle:turn_end`` HookEvent (threshold=1 -> fires every turn)
-    feeds a wake=true consumer hook — a genuinely SELF-STIMULATING loop
-    (composed -> wake -> a new turn -> that turn's own turn_end -> composed
-    again -> ...), driven ENTIRELY by the Composer+consumer-open+producer-wire
-    wiring, with NO LLM-emit involved (out of scope for this phase). Its
-    natural turn count is UNBOUNDED (it never terminates on its own) — i.e.
-    strictly greater than any finite cap — so the force-close assertion below
-    is a genuine flip-witness, not a `cap - 1` happy path that never
-    exercises the valve.
-
-    With ``max_hook_driven_turns=2``: exactly 2 hook-driven ("tick!") turns
-    run (count 1, 2 <= cap) before the 3rd is suppressed by the existing
-    ``_hook_driven_turns`` cap check (session.py ~4395-4419) and a
-    ``hook_driven_turns`` safety_limit_checkpoint fires — proving every wake
-    path, composed->wake included, traverses inbox ``kind="hook"`` and is
-    counted, with ZERO new bounding logic added for this phase.
-
-    FALSIFICATION (performed by hand against this exact fixture, not
-    committed as a second test to avoid a wall-clock race in CI): raising
-    ``max_hook_driven_turns`` from 2 to 1000 and re-running with the SAME
-    bounded wait window flips the checkpoint assertion — the chain keeps
-    running (363 uncapped composed->wake ticks were observed in that window,
-    zero checkpoints) instead of stopping at turn 3. Restoring the cap to 2
-    reproduces the RED->GREEN flip verified here. This proves the assertion
-    below is load-bearing on the cap actually binding, not a tautology."""
-    hooks_config = [
-        {"on": "composed:tick", "template_push": {"message": "tick!", "wake": True}},
-    ]
-    composers_config = [
-        {
-            "name": "tick",
-            "op": "count",
-            "count": 1,
-            "inputs": [{"kind": "builtin:lifecycle:turn_end"}],
-            "emit": {"kind": "composed:tick"},
-        }
-    ]
-    cap = 2
-    session = _make_session(
-        tmp_path, hooks_config=hooks_config, composers_config=composers_config, cap=cap,
-    )
-    ran = _fake_run_turn(session)
-    events = _collect_events(session)
-
-    run_task = asyncio.ensure_future(session.run())
-    try:
-        await _wait_until(lambda: session._hook_bus.subscriber_count >= 2)
-        await session._put_inbox("user", {"text": "go", "wake": True, "chain_id": "c"})
-        await _wait_until(lambda: "hook_driven_turns" in _checkpoint_kinds(events))
-    finally:
-        await session.shutdown()
-        try:
-            await asyncio.wait_for(run_task, timeout=_POLL_TIMEOUT)
-        except asyncio.TimeoutError:
-            run_task.cancel()
-
-    # Exactly `cap` hook-driven ("tick!") turns ran after the initial user
-    # turn — the chain is FINITE by construction of the valve, not because
-    # the composer/consumer wiring itself ever stops feeding it (it doesn't:
-    # the composer re-fires on every successful turn's own turn_end).
-    assert ran == ["go"] + ["tick!"] * cap
-    assert "hook_driven_turns" in _checkpoint_kinds(events)
+# (#5561 retired the STRENGTHENED loop-valve pin — the flip-witness — that
+# lived here: test_composed_to_wake_self_stimulating_chain_force_closes_at_
+# cap, hand-falsified by raising the cap 2->1000 and observing 363 uncapped
+# ticks with zero checkpoints. The mechanism it pinned is gone; deleted
+# with it. See git history for the fixture if this self-stimulating-chain
+# concern needs a replacement bound in the future.)

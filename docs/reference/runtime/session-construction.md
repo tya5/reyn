@@ -933,13 +933,19 @@ trust decision on a specific skill, discovered later if at all.
   not tell the agent to "ask ONE clarifying question" (nobody answers → dead stop,
   `#13398`). Threaded to `build_system_prompt`. Default `False` = interactive
   byte-identical.
-- `_hook_driven_turns` (#1800 slice 7) — the loop-valve counter: hook-driven (`kind="hook"`)
-  turns since the last human user turn; resets on each user turn (re-arm). Bounds hook
-  self-continuation. **Snapshot-backed since #2884** (`AgentSnapshot.hook_driven_turns`;
-  `restore_state` rehydrates it, `SnapshotJournal.record_hook_driven_turns` persists it) —
-  a pure in-memory counter reset to 0 on crash+restart, handing a near-cap self-wake chain
-  a fresh budget window. (This entry previously read "in-memory only (NOT
-  snapshot-persisted)", which #2884 falsified without updating the doc.)
+- **RETIRED (#5561, owner ruling, 2026-08-30)**: `_hook_driven_turns` (#1800
+  slice 7) — the hook-driven-turns loop-valve counter that bounded hook
+  self-continuation, snapshot-backed since #2884. No operator could derive
+  a correct cap value for it (owner, verbatim: "hook 起動を回数で制限なんて
+  誰も設定できないでしょ。どんな回数が妥当か誰も判断できない"), so the
+  field, its WAL kind (`hook_driven_turns_set`), the `AgentSnapshot` field,
+  and the enforcement site were all removed together. Replaced by
+  `CostConfig`, #5516's N-into-one push folding, and per-push size bounds —
+  see `LoopConfig`'s own docstring, `config/chat.py`, for the full
+  rationale. An old on-disk snapshot/WAL still carrying either the field or
+  the kind is tolerated by `AgentSnapshot._apply_one`'s existing "unknown
+  kinds: no-op" fallback (the same reader-tolerance #3436 established for
+  `task_subscribed`/`task_rebound`'s own retirement).
 - `next_turn_context` (#1800 slice 4b; moved off `Session` onto `InboxArbiter` in `#3978` P1, née `_next_turn_context`) — in-memory staging buffer for `wake=false`
   ride-along (C) messages drained by `InboxArbiter.drain_to_wake`. Entries are applied to the next
   trigger's turn as attributed system-role history entries. Persisted durably in the

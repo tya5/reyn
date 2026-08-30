@@ -123,6 +123,15 @@ ladder, not inside it:
 | **Retryable** | 5xx, timeout, rate limit, connection error | retried with backoff; never shrinks |
 | **Fatal** | `TypeError` / `AttributeError` / `KeyError`, authentication, model-not-found | propagates unchanged; never shrinks |
 
+Both arms classify through the same `classify_llm_failure` (#5543/#5531 §10) —
+the `compact()` arm used to wrap *every* exception except quota exhaustion as
+an overflow regardless of what it actually was; it now raises `Retryable`/
+`Fatal` causes bare, same as `main_call`. One asymmetry remains, disclosed
+rather than fixed: `compact()`'s own LLM call is not yet wired into the
+router's backoff-retry wrapper, so a `Retryable` cause reaching it is
+correctly re-raised bare (never shrunk) but has not been retried even once —
+a separate gap from misclassification, not a consequence of it.
+
 ### Byte limits and token limits take the same path
 
 An HTTP 413 is a request-**body-byte** limit; a context-window error is a

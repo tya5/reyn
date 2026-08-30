@@ -176,12 +176,32 @@ class HookDispatcher:
         return self._registry
 
     def _consent_bus_now(self) -> Any:
-        """The consent bus iff a live intervention listener is attached, else None."""
+        """The consent bus iff a live intervention listener is attached, else None.
+
+        #5536 (architect ruling — group B, "挙動が変わり、かつ silent"):
+        ``self._consent_gate()`` raising is not a hypothetical — it is a
+        caller-supplied callable, live-evaluated per-dispatch (see this
+        class's own ``__init__`` docstring for why it is never frozen).
+        Before this fix, a raise here returned ``None`` with NO log —
+        the shell-hook consent path then falls back to its own
+        stdin/fail-closed branch (never fail-OPEN; that path itself is
+        safe), but in an unattended/non-TTY session "ask the operator"
+        silently becomes "refuse", and nothing records WHY. ``_log.
+        warning`` (never an audit-event — auditing a gate-evaluation
+        failure through the SAME consent machinery it is about to bypass
+        would be its own quieter failure mode) so the fallback and its
+        cause are at least visible in the process log, even though the
+        fallback itself was already the safe direction."""
         if self._consent_bus is None or self._consent_gate is None:
             return None
         try:
             return self._consent_bus if self._consent_gate() else None
-        except Exception:  # noqa: BLE001 — a gate error must not break dispatch
+        except Exception as exc:  # noqa: BLE001 — a gate error must not break dispatch
+            _log.warning(
+                "Hook consent gate raised — falling back to the fail-closed "
+                "stdin/non-TTY consent path (never fail-open) for this "
+                "dispatch: %s: %s", type(exc).__name__, exc,
+            )
             return None
 
     def replace_registry(self, registry: HookRegistry) -> None:
@@ -306,11 +326,11 @@ class HookDispatcher:
 
         A ``template_push`` hook's wake=true action lands in the inbox via
         the SAME ``_push_resolved`` E-path (``TurnOrigin.HOOK``/kind="hook")
-        every other hook-driven wake uses, so a composed->wake turn is
-        counted by the Session's existing ``max_hook_driven_turns`` loop-valve
-        — folding N composed events into ONE launch is exactly what
-        IMPROVES that accounting (owner ruling #5516 §1/③: N pushes would
-        consume N valve units; folded + concatenated consumes 1)."""
+        every other hook-driven wake uses, so folding N composed events into
+        ONE launch reduces N inbox turns to 1 directly (owner ruling #5516
+        §1/③) — this is now the primary way to bound a hook-driven turn
+        burst, #5561 having retired the ``max_hook_driven_turns`` valve
+        this comment used to cite here."""
         if not events:
             return
         point = events[0].kind
@@ -406,9 +426,9 @@ class HookDispatcher:
           hook — see ``_dispatch_batch_for_point``'s docstring).
         - ``template_push``: renders once PER event, then concatenates
           the N resolved messages into ONE push (owner ruling #5516 §1
-          item ③ — improves ``max_hook_driven_turns`` valve accounting:
-          N pushes would consume N valve units, one concatenated push
-          consumes 1).
+          item ③ — reduces N inbox turns to 1 directly, now the primary
+          way to bound a hook-driven turn burst since #5561 retired the
+          count-capping loop valve this comment used to cite here).
         - ``pipeline_launch``: does **NOT fold** — architect ruling
           (#5516 broker thread, 2026-08-29): the discriminator for
           whether an action CAN fold is not "does it render" but "can the
@@ -592,7 +612,10 @@ class HookDispatcher:
                         actual_chars=len(resolved.message),
                     )
                 except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-                    _log.debug(
+                    # #5536 group A — see shell_runner.py's own
+                    # _report_unapplied_agent_policy except branch for the
+                    # full rationale (never audit-event, WARNING not DEBUG).
+                    _log.warning(
                         "hook push_rejected_oversized emit_event failed for %r: %s",
                         hook.name, exc,
                     )
@@ -620,7 +643,10 @@ class HookDispatcher:
                     ),
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
-                _log.debug("hook push_fired emit_event failed for %r: %s", hook.name, exc)
+                # #5536 group A — see shell_runner.py's own
+                # _report_unapplied_agent_policy except branch for the full
+                # rationale (never audit-event, WARNING not DEBUG).
+                _log.warning("hook push_fired emit_event failed for %r: %s", hook.name, exc)
         # Attribution name (#1800 slice 6): the hook's operator label when set,
         # else the lifecycle point (slice-5b default) — the ``[hook:<name>]``
         # system-role prefix (shared E + C renderer). ``spillability`` rides

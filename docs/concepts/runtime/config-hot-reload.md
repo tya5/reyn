@@ -151,7 +151,7 @@ operator-facing global and per-agent layers are unchanged and still read;
 |-----------|----------|-------------|
 | `on` | yes | Lifecycle point: `turn_start`, `turn_end`, `session_start`, `session_end` |
 | `message` | yes | Push message (Jinja2 template allowed) |
-| `wake` | no | `true` → starts a new turn (self-continuation, bounded by `safety.loop.max_hook_driven_turns`); `false` → rides along as context with the next turn. Default `true`. |
+| `wake` | no | `true` → starts a new turn (self-continuation); `false` → rides along as context with the next turn. Default `true`. |
 | `push_when` | no | Jinja2 → bool guard; the push is skipped when this renders false. |
 | `name` | no | Label surfaced as `[hook:name]` attribution prefix in history. |
 
@@ -192,8 +192,10 @@ Hot-reload is safe-by-construction through five layers:
    no half-apply, live config unchanged.
 3. **Boot resilience.** Per-layer independent try-add for untrusted layers: a bad
    layer drops + warns without crashing boot or dropping sibling layers.
-4. **Sandbox + loop valve.** Hook `wake:true` loops are bounded by
-   `safety.loop.max_hook_driven_turns`. The sandbox guards shell hook execution.
+4. **Sandbox.** The sandbox guards shell hook execution. (Pre-#5561 this
+   layer also cited a `wake:true`-loop cap, `safety.loop.max_hook_driven_turns`
+   — that valve is retired; see [Concepts: hooks § loop valve](hooks.md#loop-valve)
+   for the current bounding mechanisms.)
 5. **Capability-profile deny.** `tool_deny: [hooks_add]` in a capability profile
    prevents the agent from adding hooks — the feature can be disabled per-agent via
    the ∩ model. See [Capability profile](capability-profile.md).
