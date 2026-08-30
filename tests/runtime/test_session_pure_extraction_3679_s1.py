@@ -27,6 +27,15 @@ Three things pinned here, matching the stage-1 acceptance conditions
    what makes the lazy-import discipline the two real circular-import call
    sites (`router_host_adapter.py`, `router_loop_driver.py`) used to need
    actually unnecessary now, not just inconvenient).
+
+#5531 PR-2: down to ONE such site today (`router_host_adapter.py`) —
+`router_loop_driver.py` no longer imports `session_pure` at all (its own
+former use, `_router_main_call`'s decoration, was removed once
+`retry_loop` stopped taking a separate `summary=` argument; see
+`test_router_host_adapter_imports_it_at_top_level`'s own docstring for
+the full account). The "two" above is this module's own history at the
+time #3679 stage 1 was written, not a current count — do not read it as
+implying a second site still needs checking.
 """
 from __future__ import annotations
 
