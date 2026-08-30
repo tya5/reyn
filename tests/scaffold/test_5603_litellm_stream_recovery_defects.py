@@ -46,6 +46,35 @@ from __future__ import annotations
 import asyncio
 import importlib
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_litellm_ready_after_reload():
+    """Lead-coder's own #4421-follow-up catch: every test in this file
+    calls ``importlib.reload`` on a litellm submodule to get an
+    unpatched class — ``reload`` re-runs the module's own ``class``
+    statement, so the OLD (possibly already-patched, by an earlier test
+    in this same process) class object is replaced by a genuinely fresh
+    one. ``litellm_bootstrap.py``'s own ``ensure_litellm_ready()`` has a
+    fast path (``if _litellm_ready: return ...`` — never re-applies) —
+    left untouched, a LATER test/caller in the SAME process that expects
+    the patch to still be applied would get the stale, now-unpatched
+    class, with the result depending on test EXECUTION ORDER (six
+    questions Q5 — a shared mutable object no test here bounds).
+
+    Invariant this restores after every test: **if
+    ``litellm_bootstrap._litellm_ready`` is ``True``, the patch is
+    applied** — resetting it to ``False`` here means the very next
+    ``ensure_litellm_ready()`` call (this file's own, or any other
+    file's, in the same process) genuinely rebuilds `sys.modules` state
+    and re-applies both patches fresh, rather than trusting a belief
+    that could already be stale."""
+    yield
+    import reyn.llm.litellm_bootstrap as litellm_bootstrap
+    litellm_bootstrap._litellm_ready = False
+    litellm_bootstrap._ready_registry.clear()
+
 
 def test_defect_a_stream_chunks_discarded_when_completed_output_empty() -> None:
     """Tier 2: #5603(A) — GREEN means STILL BROKEN (see this file's own module

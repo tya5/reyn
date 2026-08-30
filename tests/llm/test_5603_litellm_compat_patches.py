@@ -23,6 +23,26 @@ from reyn.llm._litellm_compat_patches import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_litellm_ready_after_reload():
+    """Same reset ``tests/scaffold/test_5603_litellm_stream_recovery_
+    defects.py`` establishes, for the same reason — every test in this
+    file calls ``importlib.reload`` on a litellm submodule (via
+    ``_fresh_bridge_handler_class``/``_fresh_responses_config_class``
+    below), which replaces the class object a PRIOR test's own
+    ``apply_*`` call already patched. Left unreset,
+    ``litellm_bootstrap._litellm_ready`` staying ``True`` would make a
+    LATER test/caller in the same process trust a stale "already
+    applied" belief against the now-unpatched, freshly-reloaded class
+    (six questions Q5 — a shared mutable object no test here bounds
+    without this). See the scaffold file's own twin fixture for the
+    full trace (lead-coder's own #4421-follow-up catch)."""
+    yield
+    import reyn.llm.litellm_bootstrap as litellm_bootstrap
+    litellm_bootstrap._litellm_ready = False
+    litellm_bootstrap._ready_registry.clear()
+
+
 def _fresh_bridge_handler_class():
     from litellm.completion_extras.litellm_responses_transformation import handler as H
     importlib.reload(H)
