@@ -159,9 +159,10 @@ leaves only a path the model must read back through a tool.
 
 ```text
 overflow (byte or token — same path)
- 1. spill      ONE candidate, largest first → retry the SAME call
-               repeat until the overflow clears; fall through only when no
-               un-spilled candidate is left
+ 1. spill      the WHOLE highest-priority Spillability tier → retry the SAME call
+               (FIRST_CHOICE first; LAST_RESORT only once FIRST_CHOICE is
+               exhausted) — fall through only when no un-spilled candidate
+               is left in either tier
  2. slice      halve the count of mid turns offered to compact()
                floor = one turn
  3. refill     tail → mid, or head → mid, whichever is still above its minimum
@@ -170,16 +171,24 @@ overflow (byte or token — same path)
  5. terminal   (a) or (b)
 ```
 
-Rung 1 spills **one** candidate and retries rather than spilling a batch: the
-next call is the cheapest way to learn whether enough has gone. Its candidates
-are the whole of `raw_middle`, not only the slice currently offered — a spill is
-persistent, so spilling a turn outside the current slice still shrinks a later
-fold's input and is already done when that turn later slides into head or tail.
+Rung 1 spills a **whole tier** per retry, not one candidate (#5592 — a real
+machine with 2469 spillable candidates cost ~2469 `compact()` calls under the
+old one-at-a-time shape; the whole-tier batch costs at most 2, one per tier).
+`chat.compaction.spill_granularity: turn` reverts to the pre-#5592
+one-candidate-per-call shape as an escape hatch — **not the safer choice**: the
+upstream call count then scales with candidate count, and a rejected request
+is still billed. Its population is the slice `compact()` is actually about to
+send this attempt (`raw_middle[:_attempt_len]`) — coincides with the whole of
+`raw_middle` on the first attempt, and is the offered slice only once rung 2
+has halved at least once (#5592, correcting an earlier claim that the
+population was always `raw_middle` entirely) — a spill is persistent, so
+spilling a turn already shrinks a later fold's input regardless of which
+attempt offered it.
 
 The consequence is that a spill may leave *this* attempt unchanged. Progress is
-therefore defined as **"a candidate was consumed"**, never as "the wire got
-smaller": reading bytes here would mistake "this lever alone did not visibly
-help" for "no lever is left".
+therefore defined as **"at least one candidate was consumed"**, never as "the
+wire got smaller": reading bytes here would mistake "this lever alone did not
+visibly help" for "no lever is left".
 
 ### Slice sizing is a two-way search
 

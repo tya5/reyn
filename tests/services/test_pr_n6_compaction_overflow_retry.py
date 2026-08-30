@@ -1201,14 +1201,18 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
     new_msg = {"role": "user", "content": "q", "seq": 999}
     spill_calls: list = []
 
-    def _spill_fn(candidates: "list[dict]") -> "tuple[int, dict] | None":
-        # #5531 §10: whole-list signature — ``candidates`` IS raw_middle.
+    def _spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
+        # #5531 §10 / #5592: whole-list signature — ``candidates`` is the
+        # slice retry_loop is about to offer. Returns a BATCH now (#5592)
+        # — this fixture only ever has one spillable candidate, so its
+        # own batch is always at most one entry; the contract change is
+        # the return TYPE, not this fixture's own single-candidate shape.
         for idx, turn in enumerate(candidates):
             spill_calls.append(turn)
             if turn.get("role") != "tool" or turn.get("content") != "OVERSIZED_TOOL_RESULT":
                 continue
-            return idx, {**turn, "content": "REF: spilled to .reyn/memory/history-content/..."}
-        return None
+            return [(idx, {**turn, "content": "REF: spilled to .reyn/memory/history-content/..."})]
+        return []
 
     async def _main_call(**kwargs):
         from types import SimpleNamespace

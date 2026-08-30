@@ -813,6 +813,19 @@ class CompactionConfig:
     # reductions; `next_turn` (the default) preserves compaction for the
     # following turn.
     recovery_policy: Literal["never", "next_turn"] = "next_turn"
+    # #5592 (owner ruling, real-machine incident: 2469 spillable
+    # raw_middle candidates -> 2469 compact() calls at ~6s each, ~4.1
+    # hours, same shape independently possible on the main_call/head-tail
+    # face): how many candidates rung① hands to ONE spill request.
+    # `tier` (default) — every eligible candidate sharing the SAME
+    # Spillability tier (FIRST_CHOICE, then LAST_RESORT if still not
+    # enough) goes out together, one request per tier — O(1) requests per
+    # overflow regardless of candidate count. `turn` — one candidate per
+    # request (the pre-#5592 behavior) — O(N) requests, kept only as an
+    # escape hatch: it is NOT the safer choice (a rejected request is
+    # still billed and its own size is not observable from inside reyn —
+    # see docs/reference/config/reyn-yaml.md's own entry for this field).
+    spill_granularity: Literal["tier", "turn"] = "tier"
     # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
     # retry_loop's own `max_iterations` safety cap, previously a signature
     # default only (8) with no operator-facing knob: router_loop_driver.py
@@ -834,6 +847,11 @@ class CompactionConfig:
             raise ValueError(
                 "chat.compaction.recovery_policy must be 'never' or 'next_turn'; "
                 f"got {self.recovery_policy!r}"
+            )
+        if self.spill_granularity not in {"tier", "turn"}:
+            raise ValueError(
+                "chat.compaction.spill_granularity must be 'tier' or 'turn'; "
+                f"got {self.spill_granularity!r}"
             )
         if self.max_shrink_iterations < 1:
             raise ValueError(
@@ -1200,6 +1218,9 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
         max_shrink_iterations=int(
             compaction_raw.get("max_shrink_iterations", defaults.max_shrink_iterations)
+        ),
+        spill_granularity=str(
+            compaction_raw.get("spill_granularity", defaults.spill_granularity)
         ),
         section_token_caps=section,
     )

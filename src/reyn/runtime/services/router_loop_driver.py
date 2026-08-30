@@ -367,19 +367,123 @@ class RouterLoopDriver:
             + _by_size_desc(_eligible(tail))
         )
 
-    async def _attempt_reactive_spill(self, *, chain_id: str) -> bool:
-        """#5296 PR-2 ②③ / #5364 §1.6 (停止条件と束縛): spill the FIRST
-        candidate (head → mid → tail, staged — see ``_spill_candidates``)
-        that yields a genuinely NEW offload, then stop — #5364's own "1つ
-        ずつ spill → acompletion" contract (the caller retries the actual
-        LLM call after every single spill, rather than this method trying
-        to decide on its own whether enough has been spilled).
+    def _spill_batch_within_face(
+        self, turns: "list[dict]", *, chain_id: str, granularity: str,
+        seq_fn: "Callable[[int, dict], int]",
+    ) -> "list[tuple[int, dict]]":
+        """#5592 (owner ruling, "1 request = 面 × 同一 Spillability";
+        "head と tail を混ぜない") — within ONE face (a raw_middle slice,
+        ``head``, or ``tail`` — the caller never mixes faces into one
+        call), try the highest-priority non-empty ``Spillability`` tier's
+        eligible candidates (FIRST_CHOICE, else LAST_RESORT; ``NEVER``
+        excluded — same ``_eligible``/``_by_size_desc`` shape
+        ``_spill_candidates`` already established), largest-first,
+        actually spilling (persists via ``spill_turn_content``) up to K
+        of them.
 
-        Returns ``True`` (progress — the un-spilled candidate count just
-        went down by exactly one) if a candidate was newly spilled this
-        call; ``False`` (failure — every remaining candidate already
-        contributed nothing new, i.e. every one either isn't spillable or
-        was already fully spilled at its own floor) if none was.
+        K is the ONE thing ``spill_granularity`` controls — unlimited
+        (the whole tier) for ``"tier"`` (the default: #5592's own accept
+        — an N-candidate tier costs 1 request, not N), or ``1`` for
+        ``"turn"`` (the pre-#5592 behavior, reproduced byte-for-byte).
+        One algorithm, one step size — not two code paths (architect's
+        own "if で2経路を作らないでください": two paths get tested and
+        maintained separately, and only one of them stays exercised in
+        practice).
+
+        If a tier's own candidates all turn out to be no-ops (already
+        spilled, or ``spill_turn_content`` itself returns the input
+        unchanged), falls through to the NEXT tier — matching the pre-
+        #5592 single-candidate search's own behavior of skipping a
+        non-progressing candidate rather than stopping there. A tier with
+        zero eligible candidates is skipped without ever calling
+        ``spill_turn_content`` — #5592 owner ruling: "母数が0なら request
+        投げる意味あると思ってるの？" (never spend a request on an empty
+        population; the mid-face caller's own retry_loop only re-invokes
+        ``compact()`` when this returns a non-empty batch, so an empty
+        tier here costs nothing).
+
+        Returns (index-into-``turns``, replacement-turn) pairs actually
+        applied — never mutates ``turns`` itself. ``seq_fn`` lets each
+        caller keep its own pre-#5592 ``seq=`` convention for
+        ``spill_turn_content`` (mid: the turn's own ``seq`` field, falling
+        back to 1; head/tail: the candidate's own position) rather than
+        this shared method inventing a third one."""
+        def _eligible(
+            indexed: "list[tuple[int, dict]]",
+        ) -> "list[tuple[int, dict]]":
+            return [
+                (i, t) for i, t in indexed
+                if isinstance(t.get("content"), str)
+                and t.get("role") != SUMMARY_MESSAGE_ROLE
+                and t.get("spillability") != Spillability.NEVER.value
+            ]
+
+        def _by_size_desc(
+            indexed: "list[tuple[int, dict]]",
+        ) -> "list[tuple[int, dict]]":
+            return sorted(indexed, key=lambda it: -len(it[1]["content"]))
+
+        _elig = _eligible(list(enumerate(turns)))
+        _tiers = (
+            _by_size_desc([
+                it for it in _elig
+                if it[1].get("spillability") == Spillability.FIRST_CHOICE.value
+            ]),
+            _by_size_desc([
+                it for it in _elig
+                if it[1].get("spillability") != Spillability.FIRST_CHOICE.value
+            ]),
+        )
+        _k = None if granularity == "tier" else 1
+        for _tier_members in _tiers:
+            if not _tier_members:
+                continue
+            _edits: "list[tuple[int, dict]]" = []
+            for idx, turn in _tier_members:
+                if self._history_buffer.is_already_spilled(turn["content"]):
+                    continue
+                replacement = self._history_buffer.spill_turn_content(
+                    turn["content"], chain_id=chain_id,
+                    # #5564: name this write by the turn's own origin —
+                    # never the bare "tool" default for a non-tool
+                    # candidate.
+                    tool=turn.get("name") or turn.get("role") or "history",
+                    seq=seq_fn(idx, turn),
+                )
+                if replacement is None or replacement == turn["content"]:
+                    continue
+                _edits.append((idx, {**turn, "content": replacement}))
+                if _k is not None and len(_edits) >= _k:
+                    break
+            if _edits:
+                return _edits
+        return []
+
+    async def _attempt_reactive_spill(self, *, chain_id: str) -> bool:
+        """#5296 PR-2 ②③ / #5364 §1.6 (停止条件と束縛), #5592 (batching):
+        spill a BATCH from the first face (head → mid → tail, staged,
+        NEVER mixed into one call — owner ruling "head と tail を
+        まとめない") that yields genuinely NEW offloads, then stop — the
+        caller retries the actual LLM call once after this returns
+        ``True``, rather than this method trying to decide on its own
+        whether enough has been spilled.
+
+        #5592 (owner ruling, "1 request = 面 × 同一 Spillability", "main_call
+        も含むに決まってる"): each face is tried via
+        ``_spill_batch_within_face`` — the whole highest-priority
+        eligible ``Spillability`` tier within that ONE face, in a single
+        batch (``chat.compaction.spill_granularity`` controls the batch
+        size; see that method's own docstring), rather than #5364's
+        original one-candidate-at-a-time search across all three faces
+        merged. Real-machine motivation (#5592): a persistent overflow
+        recovering one candidate per ``main_call`` retry is O(candidate
+        count) LLM calls; per-face-per-tier batching is O(face count ×
+        tier count) = a small constant, independent of history length.
+
+        Returns ``True`` (progress — at least one candidate in the tried
+        face's own highest-priority non-empty tier was newly spilled)
+        if a batch was applied this call; ``False`` (failure — every
+        face's every tier contributed nothing new) if none was.
 
         #5364 §1.6 (owner/architect ruling, replacing the OLD "undo if it
         didn't help" behavior): a genuine new spill is ALWAYS kept, never
@@ -394,11 +498,11 @@ class RouterLoopDriver:
         replacement, and that is still real, durable progress: ``spilled``
         is persistent (D), and a mid-turn spill still shrinks a LATER
         compaction fold's own input even when it moves zero bytes today).
-        The stop condition is "did progress happen" (a candidate got
-        consumed), never "did bytes move" — reading wire bytes at all
-        would reintroduce exactly the confusion #5367③ already named for
-        ``retry_loop``'s own analogous floor (mistaking "this lever alone
-        didn't visibly help" for "no lever is left").
+        The stop condition is "did progress happen" (at least one
+        candidate got consumed), never "did bytes move" — reading wire
+        bytes at all would reintroduce exactly the confusion #5367③
+        already named for ``retry_loop``'s own analogous floor (mistaking
+        "this lever alone didn't visibly help" for "no lever is left").
 
         No longer takes ``user_text`` (#5296 PR-2's original signature
         did — used only to estimate wire bytes, which this method no
@@ -407,32 +511,25 @@ class RouterLoopDriver:
         head, raw_middle, tail, _summary, _ = (
             self._history_buffer.decompose_history_for_retry()
         )
-        for i, turn in enumerate(self._spill_candidates(head, raw_middle, tail)):
-            if self._history_buffer.is_already_spilled(turn["content"]):
-                # This candidate's CURRENT content is already a prior
-                # spill's own preview — offering it to spill_turn_content
-                # again would produce a NEW, different preview forever
-                # (that call is not idempotent on its own output), never
-                # reaching the failure predicate. Not this candidate's
-                # turn; try the next one.
-                continue
-            replacement = self._history_buffer.spill_turn_content(
-                turn["content"], chain_id=chain_id, seq=i + 1,
-                # #5564: name this write by the turn's own origin
-                # (``name`` for a real tool call, else its ``role``) —
-                # never the bare ``"tool"`` default, which would record a
-                # false origin for a non-tool turn (#5514 §7-1 made this
-                # candidate list origin-blind; this write must not then
-                # LIE about which origin it came from).
-                tool=turn.get("name") or turn.get("role") or "history",
+        _granularity = self._compaction.spill_granularity
+        # #5364 §1.3 (staged order, unchanged): head entirely before mid
+        # entirely before tail entirely — never interleaved, never mixed
+        # into one ``_spill_batch_within_face`` call (that is what "head
+        # と tail をまとめない" means at THIS granularity: a batch is
+        # scoped to one face's one tier, never spanning two faces).
+        for _face in (head, raw_middle, tail):
+            _edits = self._spill_batch_within_face(
+                _face, chain_id=chain_id, granularity=_granularity,
+                # Pre-#5592 head/tail/mid-via-this-path convention: the
+                # candidate's own position within its face (unchanged —
+                # the old merged-list ``i + 1`` degenerates to this
+                # exact value for a single-face, single-candidate call,
+                # since a batch here never spans more than one face).
+                seq_fn=lambda idx, _turn: idx + 1,
             )
-            if replacement is None or replacement == turn["content"]:
-                # Not spillable at all (no media store, or cap_tokens=1
-                # somehow still returned the input unchanged) — this
-                # candidate cannot make progress; try the next one.
-                continue
-            return True
-        # Every remaining candidate contributed nothing new — candidates
+            if _edits:
+                return True
+        # Every face's every tier contributed nothing new — candidates
         # are exhausted (#5364 §1.6's failure predicate).
         return False
 
@@ -664,77 +761,52 @@ class RouterLoopDriver:
             )
             _new_msg = {"role": "user", "content": user_text}
 
-            def _spill_fn(candidates: "list[dict]") -> "tuple[int, dict] | None":
+            def _spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
                 # #5531 §10 rung① / #9.6: injected into retry_loop, not
                 # imported by it — matches ``context_budget_advisor.py``'s
                 # own ``save_fn``-injection style for ``cap_tool_result_
-                # content``. ``candidates`` IS ``raw_middle`` (retry_loop's
-                # own population for a compact()-overflow, §9.6's own
-                # table — never head/tail, which is a SEPARATE population
-                # this closure never sees: retry_loop only calls this when
-                # raw_middle is non-empty, which by this loop's own
-                # construction coincides exactly with a compact()-origin
-                # overflow — main_call only ever runs once raw_middle is
-                # empty, so a main_call-origin overflow can never reach
-                # this closure with a non-empty raw_middle to mis-spill).
+                # content``. ``candidates`` is the SLICE retry_loop is
+                # about to (re-)offer to ``compact()`` this attempt (#5592,
+                # correcting #9.6's own "never a slice" claim — see
+                # ``_spill_batch_from_offered``'s own docstring, engine.py)
+                # — never head/tail, a SEPARATE population this closure
+                # never sees (see ``_attempt_reactive_spill`` for that
+                # face; retry_loop only calls this when raw_middle is
+                # non-empty, which coincides exactly with a compact()-
+                # origin overflow).
                 #
-                # #5531 §10 (owner ruling, priority order): whole-list
-                # signature — engine.py stays Spillability-agnostic
-                # (never imports it); THIS closure owns the ordering,
-                # same tiers ``_spill_candidates`` uses (FIRST_CHOICE →
-                # LAST_RESORT → largest-first within a tier, NEVER
-                # excluded), scoped to raw_middle alone. #9.5's own
-                # no-cursor rule: re-scans ``candidates`` fresh on every
-                # call — no persisted position.
-                def _eligible(turns: "list[tuple[int, dict]]") -> "list[tuple[int, dict]]":
-                    return [
-                        (i, t) for i, t in turns
-                        if isinstance(t.get("content"), str)
-                        and t.get("role") != SUMMARY_MESSAGE_ROLE
-                        and t.get("spillability") != Spillability.NEVER.value
-                    ]
-
-                def _by_size_desc(
-                    turns: "list[tuple[int, dict]]",
-                ) -> "list[tuple[int, dict]]":
-                    return sorted(turns, key=lambda it: -len(it[1]["content"]))
-
-                _indexed = list(enumerate(candidates))
-                _elig = _eligible(_indexed)
-                _ordered = (
-                    _by_size_desc([
-                        it for it in _elig
-                        if it[1].get("spillability") == Spillability.FIRST_CHOICE.value
-                    ])
-                    + _by_size_desc([
-                        it for it in _elig
-                        if it[1].get("spillability") != Spillability.FIRST_CHOICE.value
-                    ])
+                # #5592 (owner ruling, "1 request = 面 × 同一
+                # Spillability"): returns a WHOLE BATCH now, not one
+                # candidate — every eligible member of the highest-
+                # priority non-empty tier (FIRST_CHOICE, else LAST_RESORT)
+                # that genuinely progresses, for ``spill_granularity ==
+                # "tier"`` (the default); exactly one, for ``== "turn"``
+                # (the pre-#5592 behavior, unchanged byte-for-byte — see
+                # ``_spill_batch_within_face``'s own docstring for why
+                # this is ONE algorithm with a step size, not two
+                # branches). engine.py stays Spillability-agnostic either
+                # way (never imports it) — this closure owns all
+                # ordering. #9.5's own no-cursor rule: re-scans
+                # ``candidates`` fresh on every call — no persisted
+                # position.
+                _edits = self._spill_batch_within_face(
+                    candidates, chain_id=chain_id,
+                    granularity=self._compaction.spill_granularity,
+                    # Pre-#5592 mid convention: the turn's own ``seq``
+                    # field, falling back to 1 — unchanged.
+                    seq_fn=lambda _idx, turn: turn.get("seq", 1),
                 )
-                for idx, turn in _ordered:
-                    if self._history_buffer.is_already_spilled(turn["content"]):
-                        continue
-                    replacement = self._history_buffer.spill_turn_content(
-                        turn["content"], chain_id=chain_id,
-                        # #5564: same origin-honesty fix as
-                        # ``_attempt_reactive_spill``'s own identical call
-                        # above — never the bare ``"tool"`` default for a
-                        # non-tool candidate.
-                        tool=turn.get("name") or turn.get("role") or "history",
-                        seq=turn.get("seq", 1),
-                    )
-                    if replacement is None or replacement == turn["content"]:
-                        continue
-                    return idx, {**turn, "content": replacement}
+                if _edits:
+                    return _edits
                 # #5531 §9.6 (owner acceptance): "candidate 0" alone cannot
                 # tell "legitimately all-NEVER" apart from "the population
                 # got built wrong" — report the breakdown so a broken
                 # construction path can't silently masquerade as a normal
-                # exhaustion. Counted from `candidates` directly (not
-                # `_elig`/`_ordered`), so a candidate that fits NEITHER
-                # bucket (e.g. missing its `spillability` key, or non-str
-                # content) shows up as a gap between the sum and
-                # `population` — the exact signal this event exists for.
+                # exhaustion. Counted from `candidates` directly, so a
+                # candidate that fits NEITHER bucket (e.g. missing its
+                # `spillability` key, or non-str content) shows up as a
+                # gap between the sum and `population` — the exact signal
+                # this event exists for.
                 self._events.emit(
                     "spill_candidate_population_exhausted",
                     population=len(candidates),
@@ -751,7 +823,7 @@ class RouterLoopDriver:
                         if t.get("spillability") == Spillability.NEVER.value
                     ),
                 )
-                return None
+                return []
 
             # #5531 PR-2 (lead-coder ruling, issuecomment-5463249759 — the
             # fold-output-placement item deferred from PR-1): no
@@ -818,29 +890,47 @@ class RouterLoopDriver:
             # widened to catch both (same audit event, same `repr(exc)`
             # field — which now correctly names `UnrecoveredError` instead
             # of always `ContextOverflowError`, no new event kind needed).
+            # #5592: retry_loop is the ONE production call site for the
+            # exact upstream-call counter (llm.py's own
+            # start_upstream_recovery_call_counter) — started here, reset
+            # in `finally` regardless of how retry_loop exits (return or
+            # raise), so a stale counter never leaks into a LATER, unrelated
+            # LLM call made after this turn's own recovery episode ends.
+            from reyn.llm.llm import (
+                reset_upstream_recovery_call_counter as _reset_upstream_recovery_call_counter,
+            )
+            from reyn.llm.llm import (
+                start_upstream_recovery_call_counter as _start_upstream_recovery_call_counter,
+            )
+            _upstream_counter_token = _start_upstream_recovery_call_counter()
             try:
-                _shim = await _retry_loop(
-                    SP=self._history_buffer.build_system_prompt(),
-                    head=_head,
-                    raw_middle=_raw_middle,
-                    tail=_tail,
-                    new_msg=_new_msg,
-                    cfg=self._compaction,
-                    model=self._effective_router_model_class(),
-                    engine=engine,
-                    learner=self._token_learner,
-                    main_call=_router_main_call,
-                    spill_fn=_spill_fn,
-                    # #5531 §10: no `max_iterations=` any more — retry_loop
-                    # abolished its iteration-count bound (see its own
-                    # "Bounded termination proof" docstring). #4957's
-                    # `chat.compaction.max_shrink_iterations` config knob
-                    # is therefore ORPHANED by this change (nothing reads
-                    # it any more) — disclosed, not silently left: removing
-                    # the knob itself (schema/validation/docs/the ~10 test
-                    # fixtures that still pass it) is its own scoped
-                    # follow-up, not folded into this already-large PR.
-                )
+                try:
+                    _shim = await _retry_loop(
+                        SP=self._history_buffer.build_system_prompt(),
+                        head=_head,
+                        raw_middle=_raw_middle,
+                        tail=_tail,
+                        new_msg=_new_msg,
+                        cfg=self._compaction,
+                        model=self._effective_router_model_class(),
+                        engine=engine,
+                        learner=self._token_learner,
+                        main_call=_router_main_call,
+                        spill_fn=_spill_fn,
+                        # #5531 §10: no `max_iterations=` any more —
+                        # retry_loop abolished its iteration-count bound
+                        # (see its own "Bounded termination proof"
+                        # docstring). #4957's `chat.compaction.
+                        # max_shrink_iterations` config knob is therefore
+                        # ORPHANED by this change (nothing reads it any
+                        # more) — disclosed, not silently left: removing
+                        # the knob itself (schema/validation/docs/the ~10
+                        # test fixtures that still pass it) is its own
+                        # scoped follow-up, not folded into this already-
+                        # large PR.
+                    )
+                finally:
+                    _reset_upstream_recovery_call_counter(_upstream_counter_token)
             except _UnrecoveredError:
                 # #4954 (b), architect-ruled, WIDENED #5578: on ANY
                 # UnrecoveredError exhaustion (byte-limit 413 OR a

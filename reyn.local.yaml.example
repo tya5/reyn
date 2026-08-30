@@ -443,6 +443,14 @@
 #                                      # exhaustion if the underlying cause (a
 #                                      # persistent 413/5xx/rate-limit) never
 #                                      # resolves; it does not fix that cause.
+#     spill_granularity: tier          # #5592: how many candidates rung① (spill)
+#                                      # sends per upstream request — the whole
+#                                      # Spillability tier at once (default), or
+#                                      # "turn" for one candidate per request (the
+#                                      # pre-#5592 behavior — NOT the safer choice:
+#                                      # request count then scales with candidate
+#                                      # count, and a rejected request is still
+#                                      # billed).
 #     section_token_caps:
 #       topic_arc: 200
 #       decisions: 400
