@@ -118,10 +118,12 @@ async def test_hook_shell_executed_emit_failure_is_fail_visible(
 
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     # check_subprocess_reyn_pin.py: this spawn genuinely never touches
-    # `reyn` — `-c "pass"` is the whole program, no import of any kind —
-    # so no `out_of_process_reyn`/`reyn_console_scripts` PYTHONPATH pin
-    # applies here (that fixture is for a subprocess that DOES import
-    # reyn, #5028's own scope). Baselined via --write-baseline.
+    # the reyn package — "-c pass" is the whole program, no import of
+    # any kind — so the #5028 PYTHONPATH-pin fixture (for a spawn that
+    # DOES import reyn) does not apply here. Declared via the gate's own
+    # --write-baseline, not by naming that fixture in this comment (which
+    # would satisfy the gate's regex by accident, not by genuine
+    # baseline registration).
     with caplog.at_level(logging.WARNING):
         await run_shell_hook(
             [_PY, "-c", "pass"],
