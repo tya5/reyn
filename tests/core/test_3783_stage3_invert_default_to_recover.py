@@ -67,7 +67,7 @@ from reyn.services.compaction.engine import (
     UnrecoveredError,
     retry_loop,
 )
-from tests._support.events import settle
+from tests._support.events import collect_events, settle
 from tests._support.session import make_session as _make_session
 from tests._support.session import push as _push
 
@@ -317,8 +317,7 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
         raise RuntimeError("boom: compaction LLM always fails, any input size")
     monkeypatch.setattr(engine, "_acompletion", _always_fail)
 
-    seen: list = []
-    session._audit_events.add_subscriber(lambda e: seen.append(e.type))
+    events = collect_events(session)
 
     # #4885: UnrecoveredError, not ContextOverflowError — see the module
     # docstring's arm (c) note. This arm's RuntimeError is not a real
@@ -327,6 +326,7 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
     # below) via `run_turn`'s own widened except, not a type-merging rewrap.
     with pytest.raises(UnrecoveredError):
         await session._run_router_loop("trigger a turn", "chain-3783-stage3-c")
-    await settle(session._audit_events)
+    await settle(session)
 
+    seen = [e.type for e in events]
     assert "router_context_overflow_unrecovered" in seen

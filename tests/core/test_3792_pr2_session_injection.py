@@ -34,7 +34,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
-from tests._support.events import settle
+from tests._support.events import collect_events, settle
 
 AGENT = "pr2-injection-agent"
 
@@ -215,8 +215,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     one of the others.
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
-    events: list = []
-    session._audit_events.add_subscriber(lambda e: events.append(e))
+    events = collect_events(session)
 
     msg_id = await session.submit_user_text("inject me", attribution=None)
     peeked = await session._inbox_arbiter.peek_mid_turn_injection()
@@ -227,7 +226,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     assert any(m["id"] == msg_id for m in session.journal.snapshot.inbox)
 
     await session._commit_mid_turn_injection(msg_id)
-    await settle(session._audit_events)
+    await settle(session)
 
     # (1) history
     assert len(session.history) == before_history_len + 1

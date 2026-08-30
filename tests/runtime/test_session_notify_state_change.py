@@ -31,7 +31,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
-from tests._support.events import settle
+from tests._support.events import collect_events, settle
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
@@ -198,12 +198,11 @@ async def test_notify_state_change_emits_observability_event(tmp_path):
     the call so the consumer actually runs before asserting delivery.
     """
     session = _make_session(tmp_path)
-    captured: list = []
-    await settle(session._audit_events)
-    session._audit_events.add_subscriber(captured.append)
+    await settle(session)
+    captured = collect_events(session)
 
     session.notify_state_change("perm granted", source="permission_manager")
-    await session._audit_events.drain()
+    await settle(session)
 
     state_events = [ev for ev in captured if ev.type == "state_change_notified"]
     assert state_events, "expected at least one state_change_notified event"
