@@ -1130,13 +1130,19 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     1. FATAL — an exact ``isinstance`` match on reyn's own closed bug-type
        allowlist, or an auth-error shape (class name / status code).
     2. RETRYABLE — ``is_quota_exhausted_error`` (a provider usage-window
-       exhaustion, #5256), or the SAME infra/rate-limit signal
+       exhaustion, #5256), the SAME infra/rate-limit signal
        ``llm.py``'s own ``_llm_call_with_retry`` already retries
        (5xx / timeout / connection failure / rate-limit-429), checked
        WITHOUT importing that module (this function must not create a
        ``compaction`` → ``llm`` import cycle — the two modules' retry
        machinery stays two callers of the SAME classification, not one
-       importing the other's private helper).
+       importing the other's private helper) — OR (#5568, below) an HTTP
+       200 whose body is not parseable as JSON, checked BEFORE
+       ``is_context_overflow_error``'s own keyword-string fallback ever
+       runs (that fallback lives one level up, in
+       ``router_loop_driver._is_shrinkable_overflow`` — it is only ever
+       reached for a cause this function itself classified OVERFLOW, so
+       returning RETRYABLE here is what keeps this cause out of it).
     3. OVERFLOW — ``is_context_overflow_error`` (this module's own,
        already-shared predicate — 413 / token-length signals, with a
        keyword-string fallback for a flattened provider exception).
@@ -1147,6 +1153,34 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     ``ContextOverflowError`` today, both already overflow-shaped by
     construction) — this function does not widen what reaches it, only
     names what was already implicitly assumed.
+
+    #5568 (owner's real-machine incident, reyn-self ``coder-brown``):
+    litellm's ``OpenAIResponsesAPIConfig.transform_response_api_response``
+    (the class reyn's own ``provider=openai`` config resolves to when
+    talking to a local proxy — NOT the ``ChatGPTResponsesAPIConfig``
+    #5603(B) patches, confirmed unreached in production via a reach-marker
+    with 0 matching lines) does ``raw_response.json()`` inside a bare
+    ``try/except Exception`` and, on failure, raises ``OpenAIError(message=
+    raw_response.text, status_code=raw_response.status_code)`` — an HTTP
+    200 (the request DID succeed at the transport layer) wrapping the
+    ENTIRE raw response body (in the observed incident, a raw SSE stream
+    the upstream proxy returned despite ``stream: false``) as the
+    exception's own message. Because that body can coincidentally contain
+    an overflow-shaped keyword (an ``error`` frame's own text), the
+    pre-#5568 fallthrough to OVERFLOW let this reach
+    ``is_context_overflow_error``'s keyword fallback and enter the shrink
+    ladder — repeatedly halving and re-sending a 9M-character history
+    against a cause no amount of shrinking can fix (a transport/protocol
+    failure, not an input-size one; ADR-0044 I2: "do not apply an
+    irreversible remedy to a reversible cause" — waiting/retrying is
+    reversible, shrinking permanently discards conversation content).
+    architect's own ruling (issue #5568): the root cause is the upstream
+    proxy's contract violation (owner's own hand, a separate fix, layered
+    ABOVE the provider per the owner's standing "reyn fights above the
+    provider layer" principle) — reyn's own correction is classification
+    only, never teaching litellm/reyn to accept the malformed response
+    (that would make the proxy's own defect permanently invisible, the
+    exact Q3 "does the repair destroy the evidence" band violation).
     """
     if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
         return LLMFailureClass.FATAL
@@ -1166,6 +1200,19 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
         or (isinstance(code, int) and 500 <= code < 600)
     ):
         return LLMFailureClass.RETRYABLE
+    # #5568: HTTP 200 (the request genuinely succeeded at the transport
+    # layer) whose body is not parseable as JSON is a protocol/transport
+    # failure, unconditionally — never an input-size question, so it must
+    # never reach the OVERFLOW keyword fallback below regardless of what
+    # words the broken body happens to contain. `str(exc)` is the SAME
+    # value `is_context_overflow_error`'s own keyword fallback reads
+    # (this module's own established convention for "the message text a
+    # flattened provider exception carries").
+    if code == 200:
+        try:
+            json.loads(str(exc))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return LLMFailureClass.RETRYABLE
     return LLMFailureClass.OVERFLOW
 
 
