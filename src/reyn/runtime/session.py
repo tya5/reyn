@@ -1447,10 +1447,24 @@ class Session:
         # a second counting site (architect, #5350's own family: "2か所で
         # 数えるとズレます") — this only CACHES what those events already
         # computed and emitted, it derives nothing itself.
+        #
+        # #5578/#5610 added a fourth: recovery_summary_persisted's own
+        # covers_through_seq (the watermark a SUCCESSFUL recovery's fold
+        # advanced to, persisted with no new LLM call). Cached here for the
+        # SAME reason as the three above and one more: the Ctx pane's
+        # existing compaction row reads it today only by calling
+        # ``context_window_status()`` — a json.dumps + token-estimate of the
+        # whole router-view history, which ``_snapshot()`` deliberately
+        # stores UNCALLED so it never runs per frame (see app.py's own
+        # ``_refresh_live_chrome`` docstring: that bound is "load-bearing,
+        # not an optimization"). Reading the number the event ALREADY
+        # carries costs nothing, so the watermark can move on the frame the
+        # fold lands rather than on the next redraw of an open drawer.
         self._compaction_progress_state: "dict[str, int | None]" = {
             "raw_middle_remaining": None,
             "raw_middle_total": None,
             "upstream_recovery_call_count": None,
+            "persisted_covers_through_seq": None,
         }
         self._audit_events.add_subscriber(self._on_compaction_progress_event)
         # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
@@ -10196,6 +10210,18 @@ class Session:
             count = event.data.get("upstream_recovery_call_count")
             if count is not None:
                 self._compaction_progress_state["upstream_recovery_call_count"] = count
+        elif event.type == "recovery_summary_persisted":
+            # #5578/#5610: three outcomes, and only ONE of them moved the
+            # watermark. ``already_covered`` (idempotent no-op) and
+            # ``no_covers_through_seq`` (the caller could not derive a real
+            # seq) both carry a covers_through_seq that did NOT become the
+            # durable cover — caching either would show an advance that
+            # never happened. Gate on the event's own ``outcome`` rather
+            # than on the seq's presence.
+            if event.data.get("outcome") == "persisted":
+                self._compaction_progress_state["persisted_covers_through_seq"] = (
+                    event.data.get("covers_through_seq")
+                )
 
     def compaction_progress_raw(self) -> dict:
         """#5588: ``is_compacting`` plus the latest #5592 observability

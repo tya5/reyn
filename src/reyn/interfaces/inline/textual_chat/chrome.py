@@ -1584,7 +1584,40 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
             if snap.get("ctx_compaction_reported", False)
             else "compaction   not reported on this connection"
         ),
+        _folded_line(snap.get("compaction_progress_raw")),
     ]
+
+
+def _folded_line(progress_raw: "dict | None") -> str:
+    """#5588/#5578: the durable watermark a SUCCESSFUL overflow recovery's own
+    fold advanced to — read from ``Session.compaction_progress_raw()``'s cache
+    of the ``recovery_summary_persisted`` event, NEVER from
+    ``context_window_status()``. That distinction is the point of this row:
+    the ``compaction`` line above pays a json.dumps + token-estimate of the
+    whole router-view history every time this pane is built, which is why the
+    pane may only be built for the ONE open tab on frame arrival (app.py's
+    ``_refresh_live_chrome``). This row costs a dict lookup, so it tracks the
+    fold at the frame rate the rest of the chrome already runs at.
+
+    Three states, kept distinct because two of them are ``None`` at the call
+    site and would otherwise collapse into the same lying ``None`` this pane's
+    own #5009 pass exists to prevent:
+
+    - ``progress_raw`` absent (REMOTE/AG-UI — see #5605, which tracks closing
+      this) -> "not reported on this connection", the same words the
+      ``compaction`` row above uses for its own version of this state.
+    - present, ``persisted_covers_through_seq`` still ``None`` -> no recovery
+      fold has been persisted in this session. The ordinary case: a session
+      that never overflowed never enters ``retry_loop`` at all. Says so
+      instead of printing a zero that reads like a real seq.
+    - present with a seq -> the real watermark, as the event carried it.
+    """
+    if progress_raw is None:
+        return "folded       not reported on this connection"
+    seq = progress_raw.get("persisted_covers_through_seq")
+    if seq is None:
+        return "folded       no recovery fold persisted yet"
+    return f"folded       through seq {seq:,}  (recovery, no extra LLM call)"
 
 
 def help_pane_lines(

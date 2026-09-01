@@ -159,11 +159,19 @@ def test_ctx_pane_shows_not_reported_instead_of_a_fabricated_zero_percent():
 
 
 def test_ctx_pane_still_shows_a_real_percentage_when_reported():
-    """Tier 2: accept-side for the Ctx pane. `ctx_compaction_reported` is
-    also set True here — this test is only about the cache line, so the
-    (independently-declared, #5009 closing pass) compaction line must
-    not fall back to its own "not reported" and get caught by the
-    blanket assertion below."""
+    """Tier 2: accept-side for the Ctx pane — a genuinely reported cache
+    figure renders its real percentage and does NOT degrade to this row's
+    own "not reported".
+
+    #5588: the assertion is scoped to the CACHE line. It used to be a
+    blanket ``"not reported" not in blob`` over the whole pane, which made
+    every OTHER independently-reported row this pane grows a silent
+    tripwire for a test that is not about them — this test's own previous
+    docstring already had to warn that the compaction row "must not fall
+    back to its own 'not reported' and get caught by the blanket
+    assertion below", and the ``folded`` row (#5578's persisted watermark)
+    was the second to hit it. Scoping keeps the claim identical and stops
+    it from failing for a reason it never meant to test."""
     snap = {
         "ctx_window": 200000,
         "ctx_used": 48120,
@@ -173,7 +181,8 @@ def test_ctx_pane_still_shows_a_real_percentage_when_reported():
     }
     blob = "\n".join(ctx_pane_lines(snap))
     assert "31% hit" in blob, blob
-    assert "not reported" not in blob, blob
+    (cache_line,) = [ln for ln in ctx_pane_lines(snap) if ln.startswith("cache")]
+    assert "not reported" not in cache_line, cache_line
 
 
 def test_a_pre_attach_snapshot_defaults_to_not_reported_not_a_crash():
