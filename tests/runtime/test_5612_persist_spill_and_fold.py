@@ -211,31 +211,12 @@ def test_recovery_policy_never_still_persists_spill_but_not_fold(
     )
 
 
-def test_removing_the_history_appender_call_makes_the_spill_record_never_persist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: #5612/#5617 strip — with ``spill_turn_content``'s own
-    durable-append call genuinely disabled (monkeypatched to a no-op),
-    a spill that still succeeds in-memory produces ZERO durable
-    ``spill_record`` entries — proving the accept side above
-    (``test_recovery_policy_never_still_persists_spill_but_not_fold``)
-    is actually driven by this call, not a coincidence of test setup."""
-    session = _make_spill_session(tmp_path, monkeypatch, recovery_policy="never")
-    huge = "V" * 50_000
-    _push(session, "user", "look something up")
-    _push(session, "tool", huge, tool_call_id="tc1", name="tool")
-
-    hb = session._loop_driver._history_buffer
-    monkeypatch.setattr(hb, "_history_appender", None)
-    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
-    assert replacement is not None and replacement != huge, (
-        "sanity: the in-memory substitution must still happen even with "
-        "the durable-append call disabled"
-    )
-    assert not _spill_records(session), (
-        "with the durable-append call stripped, zero spill_record "
-        "entries must exist — the strip half of the accept/strip pair"
-    )
+# #5617 (architect co-vet, in-PR-required ③): a strip test monkeypatching
+# ``_history_appender`` (private state — testing policy: "a test must not
+# depend on private state") was removed here. The strip witness for the
+# accept case above is instead driven by lead-coder through the REAL
+# production call path and recorded on the PR, not as a repo test that
+# reaches into a private attribute.
 
 
 # ── deny: an ordinary spill-free session never appends a spill_record ──────
