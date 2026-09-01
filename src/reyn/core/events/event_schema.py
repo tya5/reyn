@@ -512,6 +512,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "presented",
     "process_marker_reaped",
     "project_context_changed",
+    "recovery_summary_persisted",
     "repo_ingest_files_skipped",
     "resource_cap_exceeds_budget_trigger",
     "router_context_overflow_detected",
