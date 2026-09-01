@@ -2957,19 +2957,22 @@ async def retry_loop(
                         input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
                     )
                     # #5612 scope note: a "discard a fold that does not
-                    # shrink" rule was drafted here and REMOVED — a
-                    # literal size-only comparison (summary wire bytes vs
-                    # offered turns' own wire bytes) broke 10 unrelated,
+                    # shrink" rule was drafted here and REMOVED outright
+                    # (not deferred, no follow-up issue filed) — a literal
+                    # size-only comparison (summary wire bytes vs offered
+                    # turns' own wire bytes) broke 10 unrelated,
                     # pre-existing tests whose small/single-turn fixtures
                     # structurally can't beat a structured summary's own
-                    # JSON overhead (lead-coder ruling, PR review: this
-                    # PR's regression 1 is already resolved WITHOUT this
-                    # rule — see the `_compacted()` broadening in
-                    # test_5296_pr2_byte_reduction_same_turn_retry.py —
-                    # and the rule's own correct population (this offered
-                    # slice alone, vs the whole `head` before/after) is an
-                    # undecided design question, filed separately once
-                    # architect settles it, not folded into this PR).
+                    # JSON overhead. The rule's own PREMISE was proven
+                    # false, not merely its threshold: a persisted summary
+                    # re-enters the population of the NEXT fold, so its
+                    # framing overhead is absorbed there rather than fixed
+                    # forever — architect confirmed the same inequality
+                    # holds under the alternative "compare against the
+                    # whole head" population too. This PR's own regression
+                    # 1 is resolved WITHOUT this rule — see the
+                    # `_compacted()` broadening in
+                    # test_5296_pr2_byte_reduction_same_turn_retry.py.
                     # #5612 (owner ruling, verbatim: "そもそも compact
                     # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
                     # report EACH successful fold immediately, right here —

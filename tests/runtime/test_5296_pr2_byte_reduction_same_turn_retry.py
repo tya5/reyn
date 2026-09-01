@@ -270,17 +270,24 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     for_retry``'s own ``total`` (now: the durable summary's own wire
     size + whatever remains) can legitimately exceed
     ``effective_trigger`` where the pre-fold raw content did not,
-    populating ``raw_middle`` again. Verified NOT a bug (architect's own
-    size-only rule, ``retry_loop``'s own "a fold that does not shrink is
-    discarded" check, engine.py) — each of these folds genuinely DOES
-    shrink (12 turns to one compact summary, repeatedly), so they are
-    legitimately adopted and persisted, and this test's own recovery now
-    genuinely happens via retry_loop's own internal folding at least as
-    often as via ``force_compact_now``'s except-block side effect this
-    test's own name still refers to — ``_compacted()`` below now
-    recognizes either as "compaction happened", matching the SAME
-    underlying fact (a real fold occurred, the watermark advanced) two
-    different call sites can now report through two different events."""
+    populating ``raw_middle`` again. Verified NOT a bug directly (real
+    event trace, this file's own instrumented run): each of these
+    intermediate folds genuinely DOES shrink the population it replaces
+    (12 raw turns collapse to one compact summary, repeatedly measured),
+    so a durable summary re-persisting mid-episode is expected, correct
+    behaviour, not a defect this test needs to guard against. (A drafted
+    "discard a fold that does not shrink" rule was considered as a
+    SEPARATE mechanism during #5612's own review — it would have been
+    irrelevant here even had it landed, since these folds do shrink — and
+    was independently WITHDRAWN outright, its own premise proven false;
+    it is not part of this repo and this paragraph does not rely on it.)
+    This test's own recovery now genuinely happens via retry_loop's own
+    internal folding at least as often as via ``force_compact_now``'s
+    except-block side effect this test's own name still refers to —
+    ``_compacted()`` below now recognizes either as "compaction
+    happened", matching the SAME underlying fact (a real fold occurred,
+    the watermark advanced) two different call sites can now report
+    through two different events."""
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1, t_max=7_000,
         # recovery_policy="next_turn" (default)
