@@ -170,6 +170,74 @@ def test_removing_the_supersede_lookup_makes_the_spill_re_offer_full_text(
     )
 
 
+def test_recovery_policy_never_still_persists_spill_but_not_fold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5612/#5617 — architect's own FINAL ruling (PR review,
+    superseding an earlier #5612 design-doc sentence that said
+    otherwise, verbatim): "spill record は recovery_policy に依らず常に
+    永続化する。knob が gate するのは fold だけ". Reasons on the record:
+    (1) the SAME artifact this reuses — the write-time cap's own
+    ``SPILLED_META_KEY`` entry — already persists unconditionally, with
+    no ``recovery_policy`` reader anywhere; making durability depend on
+    WHEN the identical operation happened would split one artifact into
+    two durability classes. (2) spill is reversible for the agent (body
+    lives in ``MediaStore``, the preview names the read-back path) —
+    ``recovery_policy`` exists specifically to gate the IRREVERSIBLE
+    fold step, a rationale that never reaches spill.
+
+    Accept: ``recovery_policy="never"`` still durably appends exactly
+    ONE ``spill_record`` (lead-coder's own drive measurement, now a
+    test). Deny sibling (the discriminator for THIS ruling): the SAME
+    ``never`` session's fold path stays gated — see
+    ``test_5578_persist_recovery_summary.py::
+    test_recovery_policy_never_disables_the_persist_path_too`` (existing
+    #5578 gate witness, unchanged, referenced not duplicated) — spill
+    persists, fold does not, under the identical knob value."""
+    session = _make_spill_session(tmp_path, monkeypatch, recovery_policy="never")
+    huge = "W" * 50_000
+    _push(session, "user", "look something up")
+    _push(session, "tool", huge, tool_call_id="tc1", name="tool")
+
+    hb = session._loop_driver._history_buffer
+    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    assert replacement is not None and replacement != huge, (
+        "sanity: the in-memory substitution must still happen"
+    )
+    assert len(_spill_records(session)) == 1, (
+        "recovery_policy='never' must still durably append exactly ONE "
+        "spill_record — architect's own final gate ruling: the knob "
+        "gates fold only, never spill"
+    )
+
+
+def test_removing_the_history_appender_call_makes_the_spill_record_never_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5612/#5617 strip — with ``spill_turn_content``'s own
+    durable-append call genuinely disabled (monkeypatched to a no-op),
+    a spill that still succeeds in-memory produces ZERO durable
+    ``spill_record`` entries — proving the accept side above
+    (``test_recovery_policy_never_still_persists_spill_but_not_fold``)
+    is actually driven by this call, not a coincidence of test setup."""
+    session = _make_spill_session(tmp_path, monkeypatch, recovery_policy="never")
+    huge = "V" * 50_000
+    _push(session, "user", "look something up")
+    _push(session, "tool", huge, tool_call_id="tc1", name="tool")
+
+    hb = session._loop_driver._history_buffer
+    monkeypatch.setattr(hb, "_history_appender", None)
+    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
+    assert replacement is not None and replacement != huge, (
+        "sanity: the in-memory substitution must still happen even with "
+        "the durable-append call disabled"
+    )
+    assert not _spill_records(session), (
+        "with the durable-append call stripped, zero spill_record "
+        "entries must exist — the strip half of the accept/strip pair"
+    )
+
+
 # ── deny: an ordinary spill-free session never appends a spill_record ──────
 
 

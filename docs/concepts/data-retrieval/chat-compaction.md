@@ -263,7 +263,12 @@ cannot borrow their monotonicity. Two obligations follow:
    axis depends on WHEN it happens inside the ladder; both simply record
    what already happened, the same "the fold already occurred, discarding
    it only guarantees paying again" argument #5578/#5610 first established
-   for the single-fold-per-episode case, now applied per fold.
+   for the single-fold-per-episode case, now applied per fold. **Spill's
+   durability is independent of `recovery_policy`; the knob gates fold
+   only** (architect ruling, #5617 PR review: the same artifact spill
+   reuses — the write-time cap's own offload record — already persists
+   unconditionally, and spill is reversible for the agent in a way the
+   irreversible fold step this knob exists to gate is not).
 7. **`decompose_history_for_retry` and `build_history` read the SAME
    population** (#5612) — both apply the identical watermark filter
    (`m.seq == 0 or m.seq > watermark`); a turn a durable summary already

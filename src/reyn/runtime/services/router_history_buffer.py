@@ -783,15 +783,34 @@ class RouterHistoryBuffer:
         # already uses (session.py:3074, same
         # ``self._compaction_watermark()`` value) — sharing the VALUE
         # without sharing how it's READ is exactly how this drifted.
-        # ⚪ This predicate now exists in 2 places (session.py:3074, and
-        # this method — #4977 collapsed the 2 copies THIS FILE used to
-        # carry down to 1); if a 3rd appears anywhere, that is the point
-        # to factor it into one shared function (architect, non-blocking)
-        # rather than copying a 3rd time.
+        # #5612 (lead-coder finding, PR review): a 3rd copy appeared in
+        # :meth:`decompose_history_for_retry` — the trigger condition
+        # this comment itself named. Factored into
+        # :meth:`_apply_watermark_filter` below; both callers now share
+        # the ONE predicate expression instead of two comment-synced
+        # copies (the role allow-list stays separate per caller — it
+        # genuinely differs, ``decompose_history_for_retry`` also keeps
+        # ``summary``-role turns — only the watermark predicate itself
+        # needs one source).
         watermark = self._compaction_watermark(history)
-        if watermark > 0:
-            turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
+        turns = self._apply_watermark_filter(turns, watermark)
         return turns, watermark
+
+    @staticmethod
+    def _apply_watermark_filter(turns: list, watermark: int) -> list:
+        """The ONE #5612/#4954(2) watermark predicate, shared by
+        :meth:`_elide_candidate_turns` (``build_history``'s own caller)
+        and :meth:`decompose_history_for_retry`. ``m.seq == 0`` is the
+        #3704 "no coordinate assigned" sentinel (pre-#3704 legacy
+        history, or the summary bridge before its own seq exists) — see
+        :meth:`_elide_candidate_turns`'s own docstring for why treating
+        it as "oldest" would silently, permanently drop legacy turns.
+        A no-op when ``watermark <= 0`` (every real turn already has
+        ``seq > 0``, so the predicate keeps everything either way — the
+        early-return is a micro-optimisation, not a behaviour change)."""
+        if watermark <= 0:
+            return turns
+        return [m for m in turns if m.seq == 0 or m.seq > watermark]
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -931,9 +950,12 @@ class RouterHistoryBuffer:
         landed in (below), never re-derived by a second, independent
         lookup that could disagree with where the window actually put it.
 
-        #5612: ALSO watermark-filtered now (``m.seq == 0 or m.seq >
-        watermark`` — the SAME predicate :meth:`_elide_candidate_turns`
-        already applies for ``build_history``), which it was not before.
+        #5612: ALSO watermark-filtered now, via the SAME
+        :meth:`_apply_watermark_filter` predicate
+        :meth:`_elide_candidate_turns` already applies for
+        ``build_history`` (factored into one shared function, lead-coder
+        finding, PR review — was 2 comment-synced copies), which it was
+        not applied here before.
         Pre-#5612 this omission was harmless — retry_loop's own internal
         fold was transport-only (never persisted), so no watermark
         change could happen BETWEEN two calls to this method within the
@@ -988,14 +1010,14 @@ class RouterHistoryBuffer:
         history = self._history_fn()
         # #5612: watermark-filtered — see this method's own docstring for
         # why this is now required (was harmless to omit pre-#5612, is
-        # not any more). Same predicate as `_elide_candidate_turns`'s own
-        # `build_history`-side filter.
+        # not any more). Shared predicate — see
+        # :meth:`_apply_watermark_filter`'s own docstring.
         watermark = self._compaction_watermark(history)
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent", SUMMARY_MESSAGE_ROLE)
-            and (m.seq == 0 or m.seq > watermark)
         ]
+        turns = self._apply_watermark_filter(turns, watermark)
 
         # Resolve token budgets from the compaction engine (same as build_history).
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
@@ -1198,6 +1220,20 @@ class RouterHistoryBuffer:
         # legacy/test double with no durable store) degrades to
         # session-lived-only, matching every other optional-dependency
         # degrade in this class (``media_store``/``project_dir_fn``).
+        #
+        # NEVER gated by ``recovery_policy`` (architect's own #5617 PR-
+        # review ruling, superseding an earlier #5612 design-doc sentence
+        # that said otherwise): (1) the SAME artifact this method reuses
+        # — the write-time cap's own ``SPILLED_META_KEY`` entry
+        # (router_loop.py) — already persists unconditionally, with no
+        # ``recovery_policy`` reader at all; a reactive spill doing the
+        # identical operation later must not make durability depend on
+        # WHEN it happened. (2) spill is reversible for the agent — the
+        # body lives in ``MediaStore``, the preview names the read-back
+        # path (``tool_result_cap.py``'s own docstring) — while
+        # ``recovery_policy`` exists specifically to gate the
+        # IRREVERSIBLE fold (summary) step; that rationale never reaches
+        # spill. The knob gates fold ONLY.
         if self._history_appender is not None and _offloaded_ref is not None:
             already = content_hash in self._spill_supersede_map()
             if not already:
