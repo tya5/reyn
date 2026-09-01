@@ -27,8 +27,11 @@ def _make_session(tmp_path: Path):
 
 
 def test_raw_starts_with_every_field_none(tmp_path):
-    """Tier 2: before any compaction_shrink_recovered/llm_request(_error)
-    has fired, every cached field reads None — never a fabricated 0."""
+    """Tier 2: before any compaction_shrink_recovered/llm_request(_error)/
+    recovery_summary_persisted has fired, every cached field reads None —
+    never a fabricated 0. The closed-set comparison is what makes a future
+    FIFTH field a deliberate change rather than a silent drift (it already
+    caught #5578's own ``persisted_covers_through_seq`` being added)."""
     session = _make_session(tmp_path)
     raw = session.compaction_progress_raw()
     assert raw == {
@@ -36,6 +39,7 @@ def test_raw_starts_with_every_field_none(tmp_path):
         "raw_middle_remaining": None,
         "raw_middle_total": None,
         "upstream_recovery_call_count": None,
+        "persisted_covers_through_seq": None,
     }
 
 
@@ -95,3 +99,51 @@ def test_is_compacting_reads_live_not_cached(tmp_path):
     on every read, matching #5588's earlier is_compacting property tests."""
     session = _make_session(tmp_path)
     assert session.compaction_progress_raw()["is_compacting"] is False
+
+
+# ── #5578/#5610: the persisted recovery watermark ──────────────────────
+
+
+def test_persisted_outcome_caches_the_watermark(tmp_path):
+    """Tier 2: a real recovery_summary_persisted event with
+    ``outcome="persisted"`` — the ONE outcome that actually advanced the
+    durable cover — lands its covers_through_seq in the cache, verbatim.
+    Field names verified against compaction_controller.py's own emit and
+    events.md's own catalog row, not assumed."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "recovery_summary_persisted",
+        outcome="persisted", covers_through_seq=412,
+        section_lengths={"topic_arc": 40},
+    )
+    assert session.compaction_progress_raw()["persisted_covers_through_seq"] == 412
+
+
+def test_already_covered_outcome_does_not_move_the_watermark(tmp_path):
+    """Tier 2: deny side — ``already_covered`` is the idempotent no-op
+    (#5578: a repeat call within the same turn). It carries a
+    covers_through_seq that did NOT become the durable cover, so caching
+    it would display an advance that never happened. The cache must keep
+    the last genuinely-persisted value."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "recovery_summary_persisted", outcome="persisted", covers_through_seq=412,
+    )
+    session._audit_events.emit(
+        "recovery_summary_persisted",
+        outcome="already_covered", covers_through_seq=999, prev_cover=412,
+    )
+    assert session.compaction_progress_raw()["persisted_covers_through_seq"] == 412
+
+
+def test_no_covers_through_seq_outcome_does_not_move_the_watermark(tmp_path):
+    """Tier 2: deny side — ``no_covers_through_seq`` is #5498's own guard
+    (retry_loop's structurally-0 covers_through_seq must never reach
+    history). Nothing was persisted, so nothing may be displayed as
+    persisted."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "recovery_summary_persisted", outcome="no_covers_through_seq",
+        covers_through_seq=0,
+    )
+    assert session.compaction_progress_raw()["persisted_covers_through_seq"] is None

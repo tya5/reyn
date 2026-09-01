@@ -199,7 +199,12 @@ def test_ctx_pane_still_shows_the_real_compaction_estimate_when_reported():
     blob = "\n".join(ctx_pane_lines(snap))
     assert "60,000 / 100,000 tokens est." in blob, blob
     assert "60% to trigger" in blob, blob
-    assert "not reported" not in blob, blob
+    # #5588: scoped to the COMPACTION line — a blanket check over the whole
+    # pane makes every other independently-reported row (the cache line,
+    # and now #5578's ``folded`` watermark) a tripwire for a test that is
+    # not about them. Same claim, narrowed to its own subject.
+    (comp_line,) = [ln for ln in ctx_pane_lines(snap) if ln.startswith("compaction")]
+    assert "not reported" not in comp_line, comp_line
 
 
 # ── pre-attach None/{} — the settled safe direction, all 3 keys ────────

@@ -8,6 +8,7 @@ those exact members.
 """
 from __future__ import annotations
 
+from reyn.interfaces.inline.textual_chat.chrome import ctx_pane_lines
 from reyn.interfaces.inline.textual_chat.compaction_progress import (
     CompactionProgressSnapshot,
     compaction_failure_text,
@@ -152,4 +153,114 @@ def test_failure_text_mid_floor_and_room_floor_are_distinct():
     members must render as 2 different strings, not collapsed to one."""
     assert compaction_failure_text(RetryLoopTerminal.MID_FLOOR) != (
         compaction_failure_text(RetryLoopTerminal.ROOM_FLOOR)
+    )
+
+
+# ── the Ctx pane's ``folded`` row (#5578's persisted watermark) ─────────
+#
+# Three states that must stay distinct: two of them arrive as ``None`` at
+# the call site and would otherwise collapse into the same lying ``None``
+# this pane's own #5009 pass exists to prevent.
+
+
+def _folded(snap: dict) -> str:
+    (line,) = [ln for ln in ctx_pane_lines(snap) if ln.startswith("folded")]
+    return line
+
+
+def test_folded_row_says_not_reported_when_the_key_is_absent():
+    """Tier 1: REMOTE/AG-UI does not project compaction_progress_raw at all
+    (#5605 tracks closing that), so the key is ABSENT — which must read as
+    "not reported", the same words the compaction row above uses for its
+    own version of this state, never as "no fold yet"."""
+    assert "not reported" in _folded({"ctx_window": 1000, "ctx_used": 100})
+
+
+def test_folded_row_distinguishes_no_fold_yet_from_not_reported():
+    """Tier 1: the load-bearing distinction. LOCAL genuinely reports the
+    dict; a session that never overflowed simply has no persisted fold, and
+    that is a MEASURED "none", not an unreported one. A pane that printed
+    the same words for both would tell an operator on a working local
+    session that their own client cannot see the figure."""
+    snap = {
+        "ctx_window": 1000, "ctx_used": 100,
+        "compaction_progress_raw": {"persisted_covers_through_seq": None},
+    }
+    line = _folded(snap)
+    assert "no recovery fold persisted yet" in line, line
+    assert "not reported" not in line, line
+
+
+def test_folded_row_shows_the_real_seq_when_one_was_persisted():
+    """Tier 1: accept side — a real watermark renders as the seq the event
+    carried, thousands-separated like every other figure in this pane."""
+    snap = {
+        "ctx_window": 1000, "ctx_used": 100,
+        "compaction_progress_raw": {"persisted_covers_through_seq": 2469},
+    }
+    line = _folded(snap)
+    assert "through seq 2,469" in line, line
+    assert "not reported" not in line, line
+
+
+def test_folded_row_does_not_depend_on_is_compacting():
+    """Tier 2: #5618 independence. The shrink-progress ROW (a different
+    surface, `compaction_progress_lines`) gates on ``is_compacting``, and
+    owner's real machine found that gate never rises during retry-ladder
+    recovery — ``CompactionController._compacting`` is set only inside
+    ``force_compact_now``, while the ladder calls the engine directly
+    (#5618, architect designing the real signal).
+
+    This row must not share that fate, and does not by construction: it
+    reads the persisted watermark, which the ladder's OWN success path
+    emits (``on_summary_used`` -> ``persist_recovery_summary`` ->
+    ``recovery_summary_persisted``). Pinned rather than assumed — with
+    ``is_compacting`` False (the exact state #5618 reports), the real seq
+    still renders. This test does NOT claim to fix #5618: that is the
+    in-flight progress row, a different question (result vs progress)."""
+    snap = {
+        "ctx_window": 1000, "ctx_used": 100,
+        "compaction_progress_raw": {
+            "is_compacting": False,
+            "persisted_covers_through_seq": 2469,
+        },
+    }
+    assert "through seq 2,469" in _folded(snap)
+
+
+def test_folded_row_never_calls_the_expensive_compaction_status_fn():
+    """Tier 2: the whole point of this row — it reads the cached figure,
+    never ``Session.context_window_status()``. That function is a
+    json.dumps + token-estimate of the full router-view history, which is
+    why ``_snapshot()`` stores it UNCALLED and app.py builds only the ONE
+    open pane on frame arrival ("load-bearing, not an optimization", its
+    own docstring). A future refactor that reached for the status_fn to
+    fill this row would reinstate exactly that cost; this test fails if it
+    does, by handing over a status_fn that records being called.
+
+    Scoped to what this row needs: the pane's OWN pre-existing
+    ``compaction`` row legitimately calls status_fn once, so the assertion
+    is that removing this row's inputs changes nothing about that count —
+    i.e. the folded row adds ZERO calls, not that the pane makes none."""
+    calls: list[int] = []
+
+    def _status_fn():
+        calls.append(1)
+        return {"effective_trigger": 100, "free_window": 40}
+
+    base = {
+        "ctx_window": 1000, "ctx_used": 100,
+        "ctx_compaction_status_fn": _status_fn,
+        "ctx_compaction_reported": True,
+    }
+    ctx_pane_lines(dict(base))
+    without_folded_input = len(calls)
+
+    calls.clear()
+    ctx_pane_lines({**base, "compaction_progress_raw": {
+        "persisted_covers_through_seq": 2469,
+    }})
+    assert len(calls) == without_folded_input, (
+        f"the folded row must add no status_fn calls; base made "
+        f"{without_folded_input}, with the row it made {len(calls)}"
     )
