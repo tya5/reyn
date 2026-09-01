@@ -1195,9 +1195,21 @@ class RouterLoopDriver:
         # the SAME schema — `repr(_overflow_exc)` now correctly names
         # whichever one actually happened instead of always the latter.
         except (_ContextOverflowError, _UnrecoveredError) as _overflow_exc:
+            # #5588: `terminal` is the RetryLoopTerminal member (MID_FLOOR/
+            # ROOM_FLOOR) when this is an UnrecoveredError -- omitted
+            # (never fabricated as a string) for a plain ContextOverflowError,
+            # which carries no ladder-terminal distinction. Lets a consumer
+            # (the shrink-flow progress display) name which impossibility
+            # fired WITHOUT parsing `error`'s repr() text (architect ruling,
+            # #5588: "reason 文字列を解析しないこと").
+            _terminal = getattr(_overflow_exc, "terminal", None)
             self._events.emit(
                 "router_context_overflow_unrecovered",
                 error=repr(_overflow_exc),
+                # .value (a plain str), not the raw Enum member -- this dict
+                # gets json.dumps'd verbatim by EventStore, and RetryLoopTerminal
+                # is a bare enum.Enum (not IntEnum/StrEnum), not JSON-safe as-is.
+                terminal=_terminal.value if _terminal is not None else None,
             )
             raise
 

@@ -64,6 +64,7 @@ from reyn.services.compaction.engine import (
     ComputedBudgets,
     ContextOverflowError,
     HistoryChunkToCompact,
+    RetryLoopTerminal,
     UnrecoveredError,
     retry_loop,
 )
@@ -330,3 +331,14 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
 
     seen = [e.type for e in events]
     assert "router_context_overflow_unrecovered" in seen
+
+    # #5588: the event's own `terminal` field must name WHICH ladder
+    # impossibility fired (MID_FLOOR here — this arm's own scenario is the
+    # mid-slice binary search bottoming out at attempt-length 1, never the
+    # budget-halving floor) — never left to a consumer's own parse of
+    # `error`'s repr() text.
+    (overflow_event,) = [e for e in events if e.type == "router_context_overflow_unrecovered"]
+    assert overflow_event.data.get("terminal") == RetryLoopTerminal.MID_FLOOR.value, (
+        f"expected terminal={RetryLoopTerminal.MID_FLOOR.value!r}, "
+        f"got {overflow_event.data.get('terminal')!r}"
+    )

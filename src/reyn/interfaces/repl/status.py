@@ -673,6 +673,14 @@ def _snapshot_for_session(registry, s, config=None):
         # method is real ``Session.context_window_status``) — gated by
         # ``ctx_compaction_reported`` above.
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
+        # #5588: LOCAL genuinely measures this below (Session.
+        # compaction_progress_raw — a cheap dict build from already-cached
+        # values, safe every frame). NOT yet declared through the
+        # ChatReadModelCapabilities "reported" machinery (#5009's own
+        # pattern) — REMOTE/AG-UI simply lacks this key today, and the
+        # chrome consumer treats a missing key the same as "nothing to
+        # show" (is_compacting defaults False). A follow-up, not done here.
+        "compaction_progress_raw": s.compaction_progress_raw(),
         # LOCAL genuinely measures cron config below (via
         # ``_extract_cron_jobs``) whenever a ``config`` is given — gated
         # by ``cron_jobs_reported`` above, declared True unconditionally:

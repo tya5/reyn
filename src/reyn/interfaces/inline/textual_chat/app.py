@@ -93,6 +93,11 @@ from .chrome import (
     status_line_text,
 )
 from .compact import compact_caps
+from .compaction_progress import (
+    CompactionProgressRow,
+    CompactionProgressSnapshot,
+    compaction_progress_lines,
+)
 from .completion import CompletionPopup, CompletionState, compute_completion
 from .gutter import (
     _RUNNING_FRAME_PERIOD,
@@ -1948,6 +1953,12 @@ class TextualChatApp(App):
             )
             if config_warning is not None:
                 yield ConfigWarningLine(config_warning, id="config-warning")
+            # #5588: always composed (matching ActivityRow's own "created
+            # hidden, shown/hidden live via a reactive attribute" shape) —
+            # never conditionally yielded like ConfigWarningLine above,
+            # since whether compaction is running can change many times
+            # within one session, unlike a config-key count fixed at boot.
+            yield CompactionProgressRow(id="compaction-progress")
             # Bottom chrome: a focusable menu row that also carries the slim
             # status-values segment (#3326: MenuBar owns placing StatusLine on
             # whichever row has room, collapsing the two previously-separate rows
@@ -6744,6 +6755,7 @@ class TextualChatApp(App):
         # snapshot per rendered row.
         self._turn_usage_fn = (snap or {}).get("turn_usage_fn")
         self._refresh_status(snap)
+        self._refresh_compaction_progress(snap)
         try:
             drawer = self.query_one("#drawer", ContentSwitcher)
         except Exception:
@@ -6761,6 +6773,34 @@ class TextualChatApp(App):
         except Exception:
             return  # not yet mounted
         menubar.update_status(self._status_text(snap))
+
+    def _refresh_compaction_progress(self, snap: "dict | None | object" = _UNSET) -> None:
+        """#5588: re-render the shrink-flow progress chrome row from a fresh
+        snapshot (or the already-read ``snap``) — the "down" trigger for
+        :class:`CompactionProgressRow`'s own ``reactive`` ``lines``
+        attribute, matching :meth:`_refresh_status`'s own shape exactly.
+        Absent snapshot key (a REMOTE connection, which does not report
+        this yet — see ``status.py``'s own #5588 comment) degrades to
+        ``is_compacting=False``, never a fabricated value."""
+        try:
+            row = self.query_one(CompactionProgressRow)
+        except Exception:
+            return  # not yet mounted
+        snapshot = self._snapshot() if snap is _UNSET else snap
+        raw = (snapshot or {}).get("compaction_progress_raw") or {}
+        row.lines = compaction_progress_lines(
+            CompactionProgressSnapshot(
+                is_compacting=raw.get("is_compacting", False),
+                spill_done=(
+                    raw["raw_middle_total"] - raw["raw_middle_remaining"]
+                    if raw.get("raw_middle_total") is not None
+                    and raw.get("raw_middle_remaining") is not None
+                    else None
+                ),
+                spill_total=raw.get("raw_middle_total"),
+                call_count=raw.get("upstream_recovery_call_count"),
+            )
+        )
 
     def watch__destination(self, old_value: "_Destination", new_value: "_Destination") -> None:
         """#5131: the App is now showing a DIFFERENT agent (init or a real

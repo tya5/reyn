@@ -1439,6 +1439,20 @@ class Session:
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._audit_events)
+        # #5588: cache the #5592 observability fields (raw_middle_remaining/
+        # _total on compaction_shrink_recovered, upstream_recovery_call_count
+        # on llm_request/llm_request_error) as they arrive on THIS session's
+        # own audit log, for the shrink-flow progress chrome row to read
+        # cheaply once per frame via compaction_progress_raw() below. Never
+        # a second counting site (architect, #5350's own family: "2か所で
+        # 数えるとズレます") — this only CACHES what those events already
+        # computed and emitted, it derives nothing itself.
+        self._compaction_progress_state: "dict[str, int | None]" = {
+            "raw_middle_remaining": None,
+            "raw_middle_total": None,
+            "upstream_recovery_call_count": None,
+        }
+        self._audit_events.add_subscriber(self._on_compaction_progress_event)
         # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         if router_config is not None:
             from reyn.llm.llm import set_router_config
@@ -10152,6 +10166,42 @@ class Session:
         and cheap (a dict lookup) — safe to call every render frame, unlike
         ``context_window_status`` above."""
         return self._budget_advisor.raw_context_window()
+
+    @property
+    def is_compacting(self) -> bool:
+        """#5588: forwarding → CompactionController.is_compacting — the ONE
+        real, zero-fabrication signal the shrink-flow progress chrome row
+        gates on. Cheap (a bool read), safe every render frame."""
+        return self._compaction_controller.is_compacting
+
+    def _on_compaction_progress_event(self, event) -> None:
+        """#5588: see :attr:`_compaction_progress_state`'s own comment at
+        construction — caches, never derives."""
+        if event.type == "compaction_shrink_recovered":
+            self._compaction_progress_state["raw_middle_remaining"] = (
+                event.data.get("raw_middle_remaining")
+            )
+            self._compaction_progress_state["raw_middle_total"] = (
+                event.data.get("raw_middle_total")
+            )
+        elif event.type in ("llm_request", "llm_request_error"):
+            # #5592: this field is None outside a recovery episode — only
+            # overwrite the cache with a REAL count, never clear a
+            # currently-displayed count back to unknown on an ordinary
+            # (non-recovery) call that happens to interleave.
+            count = event.data.get("upstream_recovery_call_count")
+            if count is not None:
+                self._compaction_progress_state["upstream_recovery_call_count"] = count
+
+    def compaction_progress_raw(self) -> dict:
+        """#5588: ``is_compacting`` plus the latest #5592 observability
+        fields cached from this session's own audit log (see
+        :meth:`_on_compaction_progress_event`) — cheap (a dict build from
+        already-cached values), safe every render frame. The TUI layer
+        builds its own ``CompactionProgressSnapshot`` from this plain dict
+        (this module stays free of any ``interfaces/`` import — Session is
+        reused by every surface, not only the Textual TUI)."""
+        return {"is_compacting": self.is_compacting, **self._compaction_progress_state}
 
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
