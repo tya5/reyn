@@ -798,13 +798,19 @@ class RouterLoopDriver:
                 #
                 # Gated the SAME way the pre-existing terminal-failure
                 # compaction trigger below is (`recovery_policy ==
-                # "next_turn"`) — #5578's own owner-facing UX-visible
+                # "next_turn"`) — lead-coder's own catch (PR #5610 review):
+                # `next_turn` is `config/chat.py`'s own DEFAULT
+                # (`recovery_policy: Literal["never", "next_turn"] =
+                # "next_turn"`), so this is opt-OUT, not opt-in — only a
+                # deployment that explicitly writes `recovery_policy:
+                # never` is exempt. #5578's own owner-facing UX-visible
                 # point (users see history replaced by a summary earlier
-                # than before) is scoped to that same opt-in axis, not a
-                # new unconditional default. `recovery_policy == "never"`
-                # (the pre-existing #5498 self-test's own configuration)
-                # therefore takes NO new persistence action here either —
-                # unaffected by this change.
+                # than before) is therefore live on the SHIPPED default,
+                # for everyone, not only for someone who opted into a
+                # non-default setting. `recovery_policy == "never"` (the
+                # pre-existing #5498 self-test's own configuration) is the
+                # one deployment shape that takes NO new persistence
+                # action here — unaffected by this change.
                 if self._compaction.recovery_policy != "next_turn":
                     return
                 # #5578: derive the REAL covers_through_seq from the
