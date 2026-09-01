@@ -2224,10 +2224,22 @@ class CompactionEngine:
         # 0)`` above falls to its default, so ``covers`` is structurally
         # 0 on that path. Confirmed harmless by TWO independent facts, not
         # one:
-        #   (1) retry_loop never persists this ChatSummary to
-        #       ``history.jsonl`` at all (it stays a pure TRANSPORT
-        #       operation — see its own module comment) — a bogus 0 that
-        #       is never written can never be read back wrong.
+        #   (1) #5612 (architect co-vet, PR #5617): retry_loop's own
+        #       summary IS persisted now, per successful fold
+        #       (``on_summary_used`` -> ``CompactionController.
+        #       persist_recovery_summary``, router_loop_driver.py) — the
+        #       "never persists" claim this comment used to make here is
+        #       no longer true. The 0 computed at THIS call site is still
+        #       harmless, but for a DIFFERENT, still-live reason: the
+        #       persist-time caller never reads this value at all — it
+        #       re-derives its own real ``covers_through_seq`` from
+        #       ``decompose_history_for_retry``'s own ``seq_by_id`` map
+        #       (the actual folded turns' real seqs,
+        #       ``max(..., default=0)`` — router_loop_driver.py's own
+        #       ``_on_recovery_summary_used``) — and even a bogus 0 that
+        #       DID somehow reach ``persist_recovery_summary`` is rejected
+        #       outright there (``if covers_through_seq <= 0: ... return``,
+        #       never appended — ``compaction_controller.py``).
         #   (2) for the OTHER caller (CompactionController), a real 0
         #       here would ALSO be masked — ``compaction_controller.py``'s
         #       own ``covers = chat_summary.covers_through_seq or
@@ -2713,28 +2725,33 @@ async def retry_loop(
         args: SP, head, tail, new_msg.  Should raise
         ``ContextOverflowError`` on context-length error.
     on_summary_used:
-        #5578 — optional async callable invoked exactly once, right
-        before a SUCCESSFUL return, with the LATEST ``ChatSummary`` this
-        call's own internal ``compact()`` produced (the one actually
-        embedded in ``head`` when ``main_call`` succeeded with it) and
-        the exact wire-dict turns that summary folded (``_offered`` at
-        that compact() call's own site — never a cumulative union across
-        more than one fold this call). ``None`` (the default) preserves
-        this function's own pre-#5578 contract exactly: retry_loop stays
-        a pure TRANSPORT operation with no persistence side effect of
-        its own (#5498's own comment, this module) — persistence is the
-        CALLER's decision, injected here the same way ``spill_fn`` is,
-        never performed by this function's own body. NOT invoked when no
-        fold happened this call (recovered via spill/trim alone) — there
-        is then no ``ChatSummary`` to report. This function does NOT
-        compute a real ``covers_through_seq`` for the reported turns —
-        every wire dict here carries no ``seq`` (see
-        ``SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ``'s own docstring); the
-        caller is the one holding ``decompose_history_for_retry``'s own
-        ``seq_by_id`` id()-keyed map and must derive the real value from
-        it before persisting anything — trusting ``ChatSummary.
-        covers_through_seq`` off this path would silently persist 0
-        (#5498's own load-bearing warning, re-confirmed by this change).
+        #5578/#5612 — optional async callable invoked once PER
+        SUCCESSFUL ``compact()`` call this function makes (#5612: not
+        deferred to this call's own eventual return — owner ruling, "a
+        fold that already happened is durability-worthy the moment it
+        happens", independent of whether the episode's own main_call
+        later succeeds, fails, or this same call folds again), with that
+        ``ChatSummary`` and the exact wire-dict turns it folded
+        (``_offered`` at that specific compact() call's own site — never
+        a cumulative union across more than one fold). ``None`` (the
+        default) preserves this function's own pre-#5578 contract
+        exactly: retry_loop stays a pure TRANSPORT operation with no
+        persistence side effect of its own (#5498's own comment, this
+        module) — persistence is the CALLER's decision, injected here
+        the same way ``spill_fn`` is, never performed by this function's
+        own body. NOT invoked for a call that never folds at all
+        (recovered via spill/trim alone) — there is then no
+        ``ChatSummary`` to report; MAY be invoked more than once for a
+        single ``retry_loop`` call whose own raw_middle needed more than
+        one fold pass. This function does NOT compute a real
+        ``covers_through_seq`` for the reported turns — every wire dict
+        here carries no ``seq`` (see ``SeqUnavailable.WIRE_DICTS_CARRY_
+        NO_SEQ``'s own docstring); the caller is the one holding
+        ``decompose_history_for_retry``'s own ``seq_by_id`` id()-keyed
+        map and must derive the real value from it before persisting
+        anything — trusting ``ChatSummary.covers_through_seq`` off this
+        path would silently persist 0 (#5498's own load-bearing warning,
+        re-confirmed by this change).
     """
     from reyn.llm.llm import note_upstream_recovery_call_attempt
     from reyn.llm.model_budget import get_max_input_tokens
@@ -2743,14 +2760,6 @@ async def retry_loop(
     bg = engine.budgets
     head_min_tokens = bg.head_budget
     tail_min_tokens = bg.tail_budget
-    # #5578: the LATEST successful (chat_summary, folded wire dicts) pair
-    # this call produced — see on_summary_used's own docstring above.
-    # Overwritten (not accumulated) on every successful compact() this
-    # call makes, matching head's own dedup ("at most one summary element
-    # per fold" — the same replacement this function already does a few
-    # lines below when it rebuilds `head`).
-    _last_chat_summary: "ChatSummary | None" = None
-    _last_folded_turns: "list[dict] | None" = None
     use_chars4 = cfg.use_chars4_estimate
 
     _last_recover_cause: str | None = None
@@ -2959,20 +2968,41 @@ async def retry_loop(
                     chat_summary = await engine.compact(
                         input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
                     )
-                    # #5578: record this fold as the LATEST one — see
-                    # on_summary_used's own docstring above for why this
-                    # overwrites (not accumulates) and why `_offered`
-                    # (not `_messages`, which also carries any summary
-                    # element riding along inside raw_middle) is what the
-                    # caller needs: the caller's own seq_by_id lookup
-                    # only needs the NON-summary turns anyway (a summary
-                    # element has no "new" seq of its own to contribute),
-                    # and `_offered is _messages` here (#5531 PR-2 removed
-                    # the separate summary= parameter) so this is exactly
-                    # the same list either name — kept as `_offered` to
-                    # match this fold's own local naming above.
-                    _last_chat_summary = chat_summary
-                    _last_folded_turns = _offered
+                    # #5612 scope note: a "discard a fold that does not
+                    # shrink" rule was drafted here and REMOVED outright
+                    # (not deferred, no follow-up issue filed) — a literal
+                    # size-only comparison (summary wire bytes vs offered
+                    # turns' own wire bytes) broke 10 unrelated,
+                    # pre-existing tests whose small/single-turn fixtures
+                    # structurally can't beat a structured summary's own
+                    # JSON overhead. The rule's own PREMISE was proven
+                    # false, not merely its threshold: a persisted summary
+                    # re-enters the population of the NEXT fold, so its
+                    # framing overhead is absorbed there rather than fixed
+                    # forever — architect confirmed the same inequality
+                    # holds under the alternative "compare against the
+                    # whole head" population too. This PR's own regression
+                    # 1 is resolved WITHOUT this rule — see the
+                    # `_compacted()` broadening in
+                    # test_5296_pr2_byte_reduction_same_turn_retry.py.
+                    # #5612 (owner ruling, verbatim: "そもそも compact
+                    # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
+                    # report EACH successful fold immediately, right here —
+                    # not deferred until this whole retry_loop call's own
+                    # eventual success/failure. A fold that already
+                    # happened is durable-worthy on its own; whether the
+                    # LATER main_call this episode is working toward
+                    # succeeds, fails, or this episode folds AGAIN after
+                    # this (raw_middle still non-empty, `continue` below)
+                    # is a separate question this fold's own durability
+                    # does not depend on — #5578's own irreversibility
+                    # argument ("discarding a fold does not restore
+                    # reversibility, it only guarantees paying again")
+                    # applies identically whether or not main_call
+                    # eventually succeeds. See on_summary_used's own
+                    # docstring for the full contract.
+                    if on_summary_used is not None:
+                        await on_summary_used(chat_summary, _offered)
                     # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
                     # 5463249759, deferred from PR-1 which reverted the
                     # same line): the fold's result goes where the folded
@@ -3192,15 +3222,11 @@ async def retry_loop(
                 new_msg_bytes=_accepted_breakdown.new_msg_bytes,
             )
 
-            # #5578: report the fold this SUCCESSFUL response actually
-            # used, if any — never invoked when no fold happened this
-            # call (spill/trim-only recovery, or a normal non-overflow
-            # turn where raw_middle was empty throughout). See
-            # on_summary_used's own docstring above for the full
-            # contract; this function performs no persistence itself.
-            if on_summary_used is not None and _last_chat_summary is not None:
-                await on_summary_used(_last_chat_summary, _last_folded_turns or [])
-
+            # #5612: on_summary_used is no longer called HERE — #5578's own
+            # deferred-to-return call is superseded by the immediate,
+            # per-fold call above (owner ruling: each successful fold is
+            # durability-worthy the moment it happens, not only once the
+            # whole episode's own main_call succeeds).
             return response
 
         except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:

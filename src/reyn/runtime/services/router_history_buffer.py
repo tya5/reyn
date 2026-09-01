@@ -27,10 +27,24 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.runtime.chat_message import Spillability
+from reyn.runtime.chat_message import (
+    CONTENT_REF_META_KEY,
+    SPILL_TARGET_CONTENT_HASH_META_KEY,
+    SPILL_TARGET_SEQ_META_KEY,
+    SPILLED_META_KEY,
+    Spillability,
+)
 
 if TYPE_CHECKING:
     pass
+
+# #5612: the reactive overflow-recovery spill's own durable supersede
+# record role — see chat_message.py's own role-vocabulary entry and
+# SPILL_TARGET_CONTENT_HASH_META_KEY's own comment for the full contract.
+# Defined here (not chat_message.py) because this file is the ONE place
+# that constructs/reads this role — mirrors SUMMARY_MESSAGE_ROLE's own
+# home in engine.py (the one place THAT role's own machinery lives).
+SPILL_RECORD_MESSAGE_ROLE = "spill_record"
 
 
 # #2287 follow-up: the tool_call ↔ tool_result pairing repair moved OUT of this per-segment builder
@@ -467,6 +481,7 @@ class RouterHistoryBuffer:
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
         read_cap: Any = None,             # #4381 PR-5: ReadCapConfig — the resource bound to check budgets against
+        history_appender: "Callable[[Any], None] | None" = None,  # #5612: Session._append_history — durable spill records
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -490,26 +505,22 @@ class RouterHistoryBuffer:
         # ``None`` (a legacy/test double with no workspace access) degrades to
         # "never refresh location tokens" — _serialise_turn's own None-check.
         self._project_dir_fn = project_dir_fn
-        # #5296 PR-2: session-lived, non-durable reactive-spill overlay —
-        # maps a tool-result turn's content hash (``"sha256:<hex>"``, same
-        # form/derivation as MediaStore's own ``content_hash``, #5296's own
-        # architect ruling: "既存spillの _offload_content_hash と語彙を揃
-        # える") to the offloaded preview text that replaces it in every
-        # FUTURE ``_serialise_turn`` call for a turn whose content hashes to
-        # that key. Applied at the SAME projection stage as the watermark
-        # filter (architect ruling, issuecomment-5439234430) — never
-        # written to ``history.jsonl``, never mutates a ``ChatMessage`` in
-        # place (that would silently change what an already-attached
-        # operator sees, a UX change #5296 explicitly does not authorize),
-        # never advances the compaction watermark, and does not survive a
-        # restart (reversible/idempotent by construction: re-deriving it is
-        # just re-spilling the same oversized turn again, not a correctness
-        # loss). Keyed by CONTENT, not by index/seq: a compaction pass
-        # trimming ``head`` shifts every downstream index, so a positional
-        # key would silently point at the wrong turn after the very
-        # recovery step (#4954-style durable compaction) this overlay's own
-        # caller may trigger next.
-        self._spill_overlay: "dict[str, str]" = {}
+        # #5612 (owner ruling — durability means an append to
+        # history.jsonl, full stop): the pre-#5612 ``_spill_overlay``
+        # in-memory dict is GONE — a reactive spill's own durable record
+        # (``role="spill_record"``, chat_message.py) is what the
+        # projection now reads back, via a scan of ``history`` computed
+        # fresh each ``build_history``/``decompose_history_for_retry``
+        # call (:meth:`_spill_supersede_map`) — the SAME "derive from
+        # history, never a separately-maintained cache" shape
+        # ``_latest_summary`` already uses for compaction's own
+        # watermark. ``history_appender`` is ``Session._append_history``
+        # — the ONE durable-write chokepoint (never a second one) —
+        # ``None`` only for a legacy/test double with no durable store,
+        # which degrades :meth:`spill_turn_content` to session-lived-only
+        # (same no-op-if-absent convention ``media_store``/
+        # ``project_dir_fn`` above already use).
+        self._history_appender = history_appender
 
     @property
     def _model(self) -> str:
@@ -554,7 +565,37 @@ class RouterHistoryBuffer:
         latest = self._latest_summary(history)
         return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
 
-    def _serialise_turn(self, m: Any) -> dict:
+    def _spill_supersede_map(self, history: "list | None" = None) -> "dict[str, str]":
+        """#5612: content_hash -> offloaded preview text, derived FRESH
+        from a scan of ``history`` — the durable replacement for the
+        pre-#5612 ``_spill_overlay`` in-memory dict. Same shape
+        :meth:`_latest_summary` already uses for the compaction
+        watermark: never a separately-maintained cache, always re-derived
+        from the ONE durable source (owner ruling: history.jsonl is the
+        only state).
+
+        Every ``role="spill_record"`` entry supersedes the ORIGINAL turn
+        whose content hashed to ``SPILL_TARGET_CONTENT_HASH_META_KEY`` —
+        idempotent by construction (:meth:`spill_turn_content` never
+        appends a second record for the same content_hash), so "keep the
+        last one seen" here is defensive, not load-bearing.
+
+        ``history`` — same #2939 caller-must-pass-if-already-fetched
+        convention as ``_latest_summary``/``_compaction_watermark``
+        above (avoid a second, redundant ``self._history_fn()`` call on
+        the turn's hot path).
+        """
+        out: "dict[str, str]" = {}
+        for m in self._history_fn() if history is None else history:
+            if m.role != SPILL_RECORD_MESSAGE_ROLE:
+                continue
+            target_hash = (m.meta or {}).get(SPILL_TARGET_CONTENT_HASH_META_KEY)
+            if not target_hash or not isinstance(m.content, str):
+                continue
+            out[target_hash] = m.content
+        return out
+
+    def _serialise_turn(self, m: Any, spill_map: "dict[str, str] | None" = None) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
 
         #2957 PR-B: this method's output is the CANONICAL quantity for token
@@ -612,17 +653,20 @@ class RouterHistoryBuffer:
         content = _resolve_spilled_content(
             content, getattr(m, "meta", None), self._project_dir_fn,
         )
-        # #5296 PR-2: apply the reactive-spill overlay, same stage as the
-        # watermark filter above — a hit replaces this turn's content with
-        # its offloaded preview for every projection from here on (until a
-        # future overlay entry supersedes it or the process restarts). The
-        # `self._spill_overlay` guard keeps this a no-op fast path (no
-        # hashing at all) on every call before the first spill ever fires —
+        # #5612 (was #5296 PR-2's in-memory overlay — now durable): apply
+        # the reactive-spill supersede map, same stage as the watermark
+        # filter above — a hit replaces this turn's content with its
+        # offloaded preview. `spill_map` is computed ONCE per caller
+        # (:meth:`build_history`/:meth:`decompose_history_for_retry`), a
+        # fresh scan of `history` each time (:meth:`_spill_supersede_map`)
+        # — never a separately-maintained, restart-losing cache. The
+        # `spill_map` truthiness guard keeps this a no-op fast path (no
+        # hashing at all) before the first durable spill record exists —
         # the overwhelming common case.
-        if self._spill_overlay and isinstance(content, str):
+        if spill_map and isinstance(content, str):
             import hashlib
             content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
-            replacement = self._spill_overlay.get(content_hash)
+            replacement = spill_map.get(content_hash)
             if replacement is not None:
                 content = replacement
         msg: dict = {"role": role, "content": content}
@@ -739,15 +783,34 @@ class RouterHistoryBuffer:
         # already uses (session.py:3074, same
         # ``self._compaction_watermark()`` value) — sharing the VALUE
         # without sharing how it's READ is exactly how this drifted.
-        # ⚪ This predicate now exists in 2 places (session.py:3074, and
-        # this method — #4977 collapsed the 2 copies THIS FILE used to
-        # carry down to 1); if a 3rd appears anywhere, that is the point
-        # to factor it into one shared function (architect, non-blocking)
-        # rather than copying a 3rd time.
+        # #5612 (lead-coder finding, PR review): a 3rd copy appeared in
+        # :meth:`decompose_history_for_retry` — the trigger condition
+        # this comment itself named. Factored into
+        # :meth:`_apply_watermark_filter` below; both callers now share
+        # the ONE predicate expression instead of two comment-synced
+        # copies (the role allow-list stays separate per caller — it
+        # genuinely differs, ``decompose_history_for_retry`` also keeps
+        # ``summary``-role turns — only the watermark predicate itself
+        # needs one source).
         watermark = self._compaction_watermark(history)
-        if watermark > 0:
-            turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
+        turns = self._apply_watermark_filter(turns, watermark)
         return turns, watermark
+
+    @staticmethod
+    def _apply_watermark_filter(turns: list, watermark: int) -> list:
+        """The ONE #5612/#4954(2) watermark predicate, shared by
+        :meth:`_elide_candidate_turns` (``build_history``'s own caller)
+        and :meth:`decompose_history_for_retry`. ``m.seq == 0`` is the
+        #3704 "no coordinate assigned" sentinel (pre-#3704 legacy
+        history, or the summary bridge before its own seq exists) — see
+        :meth:`_elide_candidate_turns`'s own docstring for why treating
+        it as "oldest" would silently, permanently drop legacy turns.
+        A no-op when ``watermark <= 0`` (every real turn already has
+        ``seq > 0``, so the predicate keeps everything either way — the
+        early-return is a micro-optimisation, not a behaviour change)."""
+        if watermark <= 0:
+            return turns
+        return [m for m in turns if m.seq == 0 or m.seq > watermark]
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -819,6 +882,9 @@ class RouterHistoryBuffer:
         # this projection, whatever the rest of this method does with the
         # remainder.
         turns, watermark = self._elide_candidate_turns(history)
+        # #5612: ONE scan of `history` for the whole call — see
+        # :meth:`_spill_supersede_map`'s own docstring.
+        spill_map = self._spill_supersede_map(history)
 
         # #2957 PR-B: serialise ALL candidate turns to their wire-dict shape
         # (see ``_serialise_turn``'s docstring for why this is the
@@ -833,7 +899,7 @@ class RouterHistoryBuffer:
         # 2969 turns, materially nonzero only for inline images, and every
         # such call precedes or accompanies a provider round-trip orders of
         # magnitude slower.
-        selected = [self._serialise_turn(m) for m in turns]
+        selected = [self._serialise_turn(m, spill_map) for m in turns]
 
         # #4954(2): the summary bridge is now attached HERE, unconditionally
         # once `watermark > 0` — not only on the elide branch above. Before
@@ -875,18 +941,40 @@ class RouterHistoryBuffer:
 
         #5531 (owner design dialogue, invariant: a summary represents ONE
         continuous span, placed exactly where that span sat in time) —
-        the ``turns`` filter below now INCLUDES ``role == "summary"``
-        (previously excluded, without also watermark-filtering — the bug
-        lead-coder's own re-check found: a summary's own covered turns
-        stayed in ``turns`` too, so "just prepend the summary" was never
-        correct). Including it lets the SAME head/raw_middle/tail
-        windowing below (``trim_head``/``trim_tail``, already correct for
-        every other turn) place the summary at its own natural
-        chronological position — no separate line computes WHERE it goes.
-        The returned ``summary`` value is then read back out of whichever
-        region it landed in (below), never re-derived by a second,
-        independent lookup that could disagree with where the window
-        actually put it.
+        the ``turns`` filter below now INCLUDES ``role == "summary"``.
+        Including it lets the SAME head/raw_middle/tail windowing below
+        (``trim_head``/``trim_tail``, already correct for every other
+        turn) place the summary at its own natural chronological
+        position — no separate line computes WHERE it goes. The returned
+        ``summary`` value is then read back out of whichever region it
+        landed in (below), never re-derived by a second, independent
+        lookup that could disagree with where the window actually put it.
+
+        #5612: ALSO watermark-filtered now, via the SAME
+        :meth:`_apply_watermark_filter` predicate
+        :meth:`_elide_candidate_turns` already applies for
+        ``build_history`` (factored into one shared function, lead-coder
+        finding, PR review — was 2 comment-synced copies), which it was
+        not applied here before.
+        Pre-#5612 this omission was harmless — retry_loop's own internal
+        fold was transport-only (never persisted), so no watermark
+        change could happen BETWEEN two calls to this method within the
+        same recovery episode. #5612 changed that: retry_loop's own
+        fold is now persisted immediately, so a LATER call to this
+        method (the SAME episode's own next outer retry attempt, or a
+        later turn) can see a watermark THIS method's own earlier call
+        just advanced. Without this filter, the raw turns a durable
+        summary already covers would keep reappearing in ``turns``
+        alongside that summary — duplicated content, not the "history
+        never grows back" invariant #5612 exists to establish (regression
+        caught directly: ``test_history_dominant_overflow_recovers_via_
+        pre_existing_compaction`` started raising ``UnrecoveredError`` —
+        SP + new_msg + a NOW-non-empty summary term no longer fit —
+        without this filter once retry_loop's own fold began persisting).
+        The current latest summary's own turn is never excluded by this:
+        its own ``seq`` is assigned when IT is appended, strictly after
+        (numerically greater than) every seq it covers, so
+        ``m.seq > watermark`` keeps it.
 
         #5531 PR-1/PR-2 boundary (lead-coder ruling, 2026-08-29): PR-1
         only fixes WHERE the summary sits (this filter) — it does NOT
@@ -920,18 +1008,27 @@ class RouterHistoryBuffer:
         )
 
         history = self._history_fn()
+        # #5612: watermark-filtered — see this method's own docstring for
+        # why this is now required (was harmless to omit pre-#5612, is
+        # not any more). Shared predicate — see
+        # :meth:`_apply_watermark_filter`'s own docstring.
+        watermark = self._compaction_watermark(history)
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent", SUMMARY_MESSAGE_ROLE)
         ]
+        turns = self._apply_watermark_filter(turns, watermark)
 
         # Resolve token budgets from the compaction engine (same as build_history).
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
 
+        # #5612: ONE scan of `history` for the whole call — see
+        # :meth:`_spill_supersede_map`'s own docstring.
+        spill_map = self._spill_supersede_map(history)
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
-        wire_turns = [self._serialise_turn(m) for m in turns]
+        wire_turns = [self._serialise_turn(m, spill_map) for m in turns]
         # #5514 §7-3: THIS is the one place `spillability` gets annotated
         # onto a wire-shaped dict — never inside ``_serialise_turn``
         # itself (that method's own wire dict must stay canonical/
@@ -1019,8 +1116,11 @@ class RouterHistoryBuffer:
         #5364 §1.6's failure predicate (candidates exhausted). Checked by
         VALUE (this method takes no turn identity — the same content
         string could arrive from a different candidate object across
-        calls, e.g. after a `decompose_history_for_retry` re-scan)."""
-        return content in self._spill_overlay.values()
+        calls, e.g. after a `decompose_history_for_retry` re-scan).
+
+        #5612: reads the durable supersede map (a fresh scan of
+        ``history`` — no in-memory overlay any more)."""
+        return content in self._spill_supersede_map().values()
 
     def spill_turn_content(
         self, content: str, *, chain_id: str = "", tool: str = "tool", seq: int = 1,
@@ -1086,6 +1186,17 @@ class RouterHistoryBuffer:
                 c, tool=tool, seq=seq, **kw
             )
 
+        # #5612: capture the offload ref the SAME typed channel the
+        # write-time cap already uses (router_loop.py's own
+        # ``_on_offload`` — ``on_offload`` is ``cap_tool_result_content``'s
+        # own public parameter for exactly this) — never re-derived by
+        # parsing the returned preview text.
+        _offloaded_ref: "str | None" = None
+
+        def _on_offload(ref: str) -> None:
+            nonlocal _offloaded_ref
+            _offloaded_ref = ref
+
         replacement = cap_tool_result_content(
             content,
             cap_tokens=1,
@@ -1095,14 +1206,51 @@ class RouterHistoryBuffer:
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
             events=self._events,
             chain_id=chain_id,
+            on_offload=_on_offload,
         )
         if replacement == content:
             # cap_tool_result_content's own no-op paths (cap<=0, or the
             # store write itself somehow returned the input unchanged) —
-            # nothing was actually offloaded, so no overlay entry to add.
+            # nothing was actually offloaded, so no durable record to add.
             return None
         content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
-        self._spill_overlay[content_hash] = replacement
+        # #5612 (owner ruling — durability means an append to
+        # history.jsonl): record this spill DURABLY, once, idempotently —
+        # never only in-memory. ``self._history_appender is None`` (a
+        # legacy/test double with no durable store) degrades to
+        # session-lived-only, matching every other optional-dependency
+        # degrade in this class (``media_store``/``project_dir_fn``).
+        #
+        # NEVER gated by ``recovery_policy`` (architect's own #5617 PR-
+        # review ruling, superseding an earlier #5612 design-doc sentence
+        # that said otherwise): (1) the SAME artifact this method reuses
+        # — the write-time cap's own ``SPILLED_META_KEY`` entry
+        # (router_loop.py) — already persists unconditionally, with no
+        # ``recovery_policy`` reader at all; a reactive spill doing the
+        # identical operation later must not make durability depend on
+        # WHEN it happened. (2) spill is reversible for the agent — the
+        # body lives in ``MediaStore``, the preview names the read-back
+        # path (``tool_result_cap.py``'s own docstring) — while
+        # ``recovery_policy`` exists specifically to gate the
+        # IRREVERSIBLE fold (summary) step; that rationale never reaches
+        # spill. The knob gates fold ONLY.
+        if self._history_appender is not None and _offloaded_ref is not None:
+            already = content_hash in self._spill_supersede_map()
+            if not already:
+                from reyn.runtime.chat_message import ChatMessage, _now_iso
+                record = ChatMessage(
+                    role=SPILL_RECORD_MESSAGE_ROLE,
+                    content=replacement,
+                    ts=_now_iso(),
+                    meta={
+                        SPILLED_META_KEY: True,
+                        CONTENT_REF_META_KEY: _offloaded_ref,
+                        SPILL_TARGET_CONTENT_HASH_META_KEY: content_hash,
+                        SPILL_TARGET_SEQ_META_KEY: seq,
+                    },
+                    spillability=Spillability.NEVER,
+                )
+                self._history_appender(record)
         return replacement
 
     def build_system_prompt(self) -> str:

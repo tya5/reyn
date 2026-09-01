@@ -251,6 +251,43 @@ cannot borrow their monotonicity. Two obligations follow:
 4. The **open turn is never handed to the shrinker** — by construction.
 5. `SP`, `new_msg` and `summary` are **reserved** from the windows' share; only
    the remainder is apportioned.
+6. **A fold that succeeds is durable the moment it happens, when
+   `recovery_policy: next_turn`** (the default) (#5612, owner ruling
+   verbatim: "そもそも compact 成功してるのに 次回 元に戻るは あり得
+   ないでしょ？"、"永続化というのは llm に見える ヒストリが 元に戻らない
+   ということ。history.jsonl に 追記する ということ") — `retry_loop`'s own
+   internal `compact()` call is no longer transport-only: each SUCCESSFUL
+   fold is appended to `history.jsonl` and advances the watermark
+   immediately, not deferred until the whole recovery episode's own
+   success or failure. Neither statement holds under `recovery_policy:
+   never` for FOLD — the pre-existing gate (`_on_recovery_summary_used`,
+   router_loop_driver.py) skips the persist call entirely, matching the
+   compact axis's own pre-#5612 terminal-failure gate; a fold this
+   episode produces under `never` stays in-memory-only, re-paid next
+   turn, exactly as it did before #5612.
+
+   **A reactive spill (rung 1) is durable the same way, but ALWAYS —
+   never gated by `recovery_policy`** (architect ruling, #5617 PR
+   review, superseding an earlier #5612 design-doc sentence that said
+   the knob gates both axes together): a spill record is appended once
+   per successfully-spilled turn regardless of `recovery_policy`'s
+   value. The knob gates fold only — spill reuses the SAME artifact the
+   write-time cap already persists unconditionally (no `recovery_policy`
+   reader on that path at all), and spill is reversible for the agent
+   (the body lives in `MediaStore`, the preview names the read-back
+   path) in a way the irreversible fold step this knob exists to gate is
+   not. Both axes still record "what already happened, discarding it
+   only guarantees paying again" (#5578/#5610's own argument, now
+   applied per fold, and to spill) — they differ only in whether
+   `recovery_policy` gates the record at all, not in the "already
+   happened, don't discard it" argument itself.
+7. **`decompose_history_for_retry` and `build_history` read the SAME
+   population** (#5612) — both apply the identical watermark filter
+   (`m.seq == 0 or m.seq > watermark`); a turn a durable summary already
+   covers is invisible to BOTH the wire projection and retry_loop's own
+   working set, never a spill candidate, never pulled into `raw_middle`
+   by Phase 1/2 refill. One projection rule, not two that could disagree
+   on which turns the LLM is allowed to see.
 
 ### See also
 

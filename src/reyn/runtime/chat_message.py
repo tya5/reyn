@@ -4,7 +4,9 @@ One ``ChatMessage`` is a single entry in the LLM-facing conversation history,
 shaped to mirror the OpenAI/Anthropic message-list wire format so the history
 serialises straight to the LLM (``user`` / ``assistant`` / ``tool`` / ``system``
 / ``summary`` roles; ``str`` or list-of-parts ``content``;
-OpenAI tool-turn fields). Also provides the read-time migration that rewrites
+OpenAI tool-turn fields) — plus one Reyn-internal, never-wire role
+(``spill_record``, #5612) that never becomes an LLM-facing turn at all.
+Also provides the read-time migration that rewrites
 pre-#383 on-disk history entries into this shape (``_migrate_legacy_chat_message``)
 and the ``_now_iso`` timestamp helper. Pure value object — no dependency on
 ``Session``.
@@ -148,6 +150,30 @@ LOST_REASON_META_KEY = "lost_reason"
 LOST_REASON_GC = "gc"
 LOST_REASON_NEVER_PERSISTED = "never_persisted"
 
+# #5612 (owner ruling — "永続化というのは llm に見える履歴が元に戻らない
+# ということ、history.jsonl に追記するということ"): the reactive
+# overflow-recovery spill's own durable record — a ``role="spill_record"``
+# ChatMessage (see that role's own vocabulary entry below), appended
+# ONCE per successfully-spilled turn, that SUPERSEDES the ORIGINAL turn's
+# projection (build_history / decompose_history_for_retry both read the
+# latest spill_record whose ``SPILL_TARGET_CONTENT_HASH_META_KEY`` matches
+# a candidate turn's own content hash — no separate "overlay" object;
+# history.jsonl is the ONLY state, matching #5578's own compact()-side
+# design: a summary supersedes an earlier span the same way this record
+# supersedes one earlier turn). Reuses ``SPILLED_META_KEY``/
+# ``CONTENT_REF_META_KEY`` (this is the SAME "spilled, here's the ref"
+# vocabulary the write-time cap already stamps on a brand-new entry,
+# #5364 §1.2 "D" above — #5612 reuses that shape for a REACTIVE spill of
+# an EXISTING turn instead of inventing a second one) — this key is the
+# ONLY new one: which turn does this record supersede.
+SPILL_TARGET_CONTENT_HASH_META_KEY = "spill_target_content_hash"
+# Diagnostic-only (audit/debugging — "which seq did this replace"); never
+# read by the projection substitution itself, which matches by content
+# hash alone (the same key `is_already_spilled`/the pre-#5612 in-memory
+# overlay already keyed by, #5296 PR-2's own architect ruling: "既存spill
+# の _offload_content_hash と語彙を揃える").
+SPILL_TARGET_SEQ_META_KEY = "spill_target_seq"
+
 # #3299 P4: the intervention PROMPT + resolved ANSWER, stamped on the
 # ``role="user"`` history entry ``InterventionHandler.deliver_answer_to``
 # already appends (mirroring ``intervention_id`` / ``intervention_kind``
@@ -242,9 +268,18 @@ class ChatMessage:
         decompose_history_for_retry``'s projection (#5531) includes it
         directly, positioned by ordinary chronological order like any
         other turn, not filtered)
+      - ``spill_record`` — reactive overflow-recovery spill's own durable
+        supersede record (Reyn-internal, #5612; NEVER reaches the wire —
+        excluded from every turns filter in ``router_history_buffer.py``
+        the same way ``summary`` is excluded from ``build_history``'s own
+        projection, never included anywhere the way ``summary`` is in
+        ``decompose_history_for_retry``: this role has no wire shape of
+        its own at all, unlike ``summary``'s synthetic bridge turn). See
+        ``SPILL_TARGET_CONTENT_HASH_META_KEY``'s own comment above for
+        the full contract.
     """
     role: Literal[
-        "user", "assistant", "tool", "system", "summary",
+        "user", "assistant", "tool", "system", "summary", "spill_record",
     ]
     # ``content`` is either:
     #   - a ``str`` (= text-only turn), or

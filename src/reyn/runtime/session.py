@@ -5970,6 +5970,10 @@ class Session:
             # buffer's history entries came from).
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
             read_cap=self._read_cap_config,  # #4381 PR-5
+            # #5612: the ONE durable-write chokepoint — reactive spill's
+            # own durable supersede record goes through this, never a
+            # second append path.
+            history_appender=self._append_history,
         )
         # #5367: `current_turn_owner_fn`/`expected_owner` (#4995/#5267)
         # used to be threaded here — a concurrency guard for
