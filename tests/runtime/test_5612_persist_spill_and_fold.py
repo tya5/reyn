@@ -17,11 +17,15 @@ populations.
 
 Real ``MediaStore``/``Session``/``RouterHistoryBuffer`` throughout — no
 mock. ``spill_turn_content`` (router_history_buffer.py) is driven
-directly for the truncate/strip/deny scenarios (the same public surface
+directly for the truncate/accept/deny scenarios (the same public surface
 ``_attempt_reactive_spill`` itself calls), matching this file's own
 narrow scope: the DURABILITY of a spill record, not the overflow ladder
 that decides to spill in the first place (already covered by
-``test_5296_pr2_byte_reduction_same_turn_retry.py``).
+``test_5296_pr2_byte_reduction_same_turn_retry.py``). Two strip
+scenarios that would otherwise reach a private attribute
+(``_spill_supersede_map``, ``_history_appender``) were removed per
+architect co-vet (#5617) and are instead driven by lead-coder through
+the real production call path, recorded on the PR.
 """
 from __future__ import annotations
 
@@ -118,56 +122,14 @@ def test_persisted_spill_survives_wal_truncation_past_its_own_event(
     )
 
 
-# ── strip (proves the load-time projection lookup is load-bearing) ─────────
-
-
-def test_removing_the_supersede_lookup_makes_the_spill_re_offer_full_text(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: #5612 strip — with the durable spill record's own
-    projection lookup genuinely disabled (monkeypatched to a no-op,
-    simulating "this mechanism does not exist"), a FRESH reconstruction
-    shows the ORIGINAL full text again (the exact pre-#5612 regression:
-    a real restart re-offers content that was already spilled). Restoring
-    the real lookup returns the projection to the offloaded preview —
-    the genuine, executed strip/restore cycle, not a reasoned-through
-    claim."""
-    session = _make_spill_session(tmp_path, monkeypatch)
-    huge = "Z" * 50_000
-    _push(session, "user", "look something up")
-    _push(session, "tool", huge, tool_call_id="tc1", name="tool")
-
-    hb = session._loop_driver._history_buffer
-    replacement = hb.spill_turn_content(huge, chain_id="c1", tool="tool", seq=1)
-    assert replacement is not None
-
-    fresh_session = _make_spill_session(tmp_path, monkeypatch)
-    fresh_session.load_history()
-    fresh_hb = fresh_session._loop_driver._history_buffer
-
-    # Strip: disable the ONE lookup the projection depends on.
-    monkeypatch.setattr(
-        fresh_hb, "_spill_supersede_map", lambda history=None: {},
-    )
-    built_stripped = fresh_hb.build_history()
-    tool_turn_stripped = next(t for t in built_stripped if t.get("tool_call_id") == "tc1")
-    assert tool_turn_stripped["content"] == huge, (
-        "with the supersede lookup disabled, the projection must revert "
-        "to the ORIGINAL full text — this is the genuine regression #5612 "
-        "closes; if this assertion fails, the strip did not actually "
-        "remove anything load-bearing"
-    )
-
-    # Restore: a second, unpatched fresh reconstruction returns to the
-    # offloaded preview.
-    fresh_session2 = _make_spill_session(tmp_path, monkeypatch)
-    fresh_session2.load_history()
-    built_restored = fresh_session2._loop_driver._history_buffer.build_history()
-    tool_turn_restored = next(t for t in built_restored if t.get("tool_call_id") == "tc1")
-    assert tool_turn_restored["content"] == replacement, (
-        "restoring the real lookup (a fresh, unpatched reconstruction) "
-        "must return the projection to the offloaded preview"
-    )
+# #5617 (architect co-vet, in-PR-required ②): a strip test monkeypatching
+# ``_spill_supersede_map`` (private state — testing policy: "a test must
+# not depend on private state") was removed here. Its strip witness (the
+# exact pre-#5612 regression this whole PR closes) is instead driven by
+# lead-coder through the REAL production call path — removing
+# ``history_appender``'s own wiring so a fresh reconstruction re-offers
+# the original full text — and recorded on the PR, not as a repo test
+# that reaches into a private attribute.
 
 
 def test_recovery_policy_never_still_persists_spill_but_not_fold(

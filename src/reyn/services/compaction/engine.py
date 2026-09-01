@@ -2224,10 +2224,22 @@ class CompactionEngine:
         # 0)`` above falls to its default, so ``covers`` is structurally
         # 0 on that path. Confirmed harmless by TWO independent facts, not
         # one:
-        #   (1) retry_loop never persists this ChatSummary to
-        #       ``history.jsonl`` at all (it stays a pure TRANSPORT
-        #       operation — see its own module comment) — a bogus 0 that
-        #       is never written can never be read back wrong.
+        #   (1) #5612 (architect co-vet, PR #5617): retry_loop's own
+        #       summary IS persisted now, per successful fold
+        #       (``on_summary_used`` -> ``CompactionController.
+        #       persist_recovery_summary``, router_loop_driver.py) — the
+        #       "never persists" claim this comment used to make here is
+        #       no longer true. The 0 computed at THIS call site is still
+        #       harmless, but for a DIFFERENT, still-live reason: the
+        #       persist-time caller never reads this value at all — it
+        #       re-derives its own real ``covers_through_seq`` from
+        #       ``decompose_history_for_retry``'s own ``seq_by_id`` map
+        #       (the actual folded turns' real seqs,
+        #       ``max(..., default=0)`` — router_loop_driver.py's own
+        #       ``_on_recovery_summary_used``) — and even a bogus 0 that
+        #       DID somehow reach ``persist_recovery_summary`` is rejected
+        #       outright there (``if covers_through_seq <= 0: ... return``,
+        #       never appended — ``compaction_controller.py``).
         #   (2) for the OTHER caller (CompactionController), a real 0
         #       here would ALSO be masked — ``compaction_controller.py``'s
         #       own ``covers = chat_summary.covers_through_seq or
