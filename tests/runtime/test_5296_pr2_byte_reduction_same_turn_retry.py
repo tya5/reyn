@@ -257,9 +257,30 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     values (never re-hardcoded) — the relationship this test actually
     needs (turns exceed ``head_budget + tail_budget`` so real compaction
     candidates exist, while staying under ``effective_trigger`` so
-    ``decompose_history_for_retry`` keeps ``raw_middle`` EMPTY, isolating
-    the pre-existing except-block side-effect as the only compaction path
-    exercised), not the exact numbers a stand-in used to declare."""
+    ``decompose_history_for_retry`` keeps ``raw_middle`` EMPTY on the
+    FIRST outer attempt) — not the exact numbers a stand-in used to
+    declare.
+
+    #5612 round-2 (architect ruling, PR review): ``raw_middle`` no longer
+    stays empty ACROSS every outer attempt the way the paragraph above
+    still correctly describes for the first one. retry_loop's own
+    ladder (Phase 1/2) can pull content INTO an initially-empty
+    ``raw_middle`` mid-episode and fold it there — that fold is now
+    persisted (#5612), so on a LATER outer attempt ``decompose_history_
+    for_retry``'s own ``total`` (now: the durable summary's own wire
+    size + whatever remains) can legitimately exceed
+    ``effective_trigger`` where the pre-fold raw content did not,
+    populating ``raw_middle`` again. Verified NOT a bug (architect's own
+    size-only rule, ``retry_loop``'s own "a fold that does not shrink is
+    discarded" check, engine.py) — each of these folds genuinely DOES
+    shrink (12 turns to one compact summary, repeatedly), so they are
+    legitimately adopted and persisted, and this test's own recovery now
+    genuinely happens via retry_loop's own internal folding at least as
+    often as via ``force_compact_now``'s except-block side effect this
+    test's own name still refers to — ``_compacted()`` below now
+    recognizes either as "compaction happened", matching the SAME
+    underlying fact (a real fold occurred, the watermark advanced) two
+    different call sites can now report through two different events."""
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1, t_max=7_000,
         # recovery_policy="next_turn" (default)
@@ -296,7 +317,19 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     events = collect_events(session)
 
     def _compacted() -> bool:
-        return any(e.type == "compaction_completed" for e in events)
+        # #5612 round-2: a real fold that advanced the watermark now
+        # reaches this via EITHER `compaction_completed`
+        # (`force_compact_now`'s own `_run_compaction`, this test's own
+        # original target mechanism) OR `recovery_summary_persisted`
+        # with `outcome="persisted"` (retry_loop's own internal fold,
+        # #5612 — a DIFFERENT call site reporting the SAME underlying
+        # fact: a fold happened, durably). See this test's own docstring
+        # for why both are now live paths to the same recovery.
+        return any(
+            e.type == "compaction_completed"
+            or (e.type == "recovery_summary_persisted" and e.data.get("outcome") == "persisted")
+            for e in events
+        )
 
     loop = _ContentDrivenLoop(lambda history, user_text: not _compacted())
 
@@ -307,7 +340,10 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     )
     assert result is None  # the fake loop's own successful return
 
-    assert _compacted(), "expected a real compaction_completed event"
+    assert _compacted(), (
+        "expected a real compaction_completed OR "
+        "recovery_summary_persisted(outcome=persisted) event"
+    )
     spill_events = [e for e in events if e.type == "tool_result_offloaded"]
     assert not spill_events, (
         "nothing was spillable (no tool-result turns) — spill must not "
@@ -1018,7 +1054,6 @@ async def test_a_mid_spill_is_kept_even_though_it_moves_zero_bytes(
 # ── #5364 §1.6 REQUIRED acceptance: mid-only, multi-round, bytes constant ──
 
 
-@pytest.mark.llm_stub
 def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1039,17 +1074,46 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     check reads "mid spill moved zero bytes" as failure and raises
     immediately, before a second of the 3 candidates is ever reached.
 
-    #5531 §10: ``@pytest.mark.llm_stub`` (added this PR) — the second
-    scenario below (``session2``) drives ``_run_with_shrink_and_byte_
-    reduction``, which now genuinely reaches ``engine.compact()`` (§10's
-    own rung① spill-first reordering means retry_loop's internal ladder,
-    not just this test's own direct ``_attempt_reactive_spill`` calls,
-    participates) — an unstubbed real completion call is exactly the gap
-    ``_make_spill_session``'s own docstring already names ("a test whose
-    own scenario reaches an actual compact() call must mark itself
-    llm_stub"), previously latent because the old, slower per-candidate
-    ladder never happened to reach it for this specific fixture shape.
+    #5531 §10: the second scenario below (``session2``) drives
+    ``_run_with_shrink_and_byte_reduction``, which now genuinely reaches
+    ``engine.compact()`` (§10's own rung① spill-first reordering means
+    retry_loop's internal ladder, not just this test's own direct
+    ``_attempt_reactive_spill`` calls, participates) — an unstubbed real
+    completion call is exactly the gap ``_make_spill_session``'s own
+    docstring already names ("a test whose own scenario reaches an
+    actual compact() call must mark itself llm_stub").
+
+    #5612 round-2 (architect ruling, PR review): a BARE
+    ``@pytest.mark.llm_stub`` (unconditional success, no real limit) used
+    to make retry_loop's own FIRST ``compact()`` attempt trivially fold
+    ALL of ``raw_middle`` — including the 3 mid candidates — in one shot,
+    since rung① (``_spill_batch_from_offered``, engine.py) only fires
+    when ``compact()`` itself OVERFLOWS, which a limitless stub never
+    does. Pre-#5612 this was harmless: that fold was transport-only and
+    discarded, so the NEXT outer ``_run_with_shrink`` attempt's own
+    ``decompose_history_for_retry()`` call re-derived a fresh,
+    un-folded view and the driver-level ``_attempt_reactive_spill``
+    (called only AFTER an ``UnrecoveredError``, router_loop_driver.py)
+    could still find and spill the mid candidates one at a time — this
+    test was GREEN, but only because the fold it depended on being
+    UNDONE was a bug #5612 fixes (owner ruling: a durable fold must
+    never revert on the next turn). Once #5612 makes that fold durable,
+    the SAME candidates are durably covered — invisible to EVERY
+    later decompose call, including ``_attempt_reactive_spill``'s own —
+    the exact "history never grows back" invariant #5612 exists to
+    establish. ``session2`` below now uses ``LLMStub(raise_for=...,
+    cause="byte_limit")`` scoped to its own drive (``session``'s own
+    direct ``_attempt_reactive_spill`` calls above never reach
+    ``compact()`` at all, so the bare stub stays correct there) so
+    ``compact()`` genuinely OVERFLOWS while any of the 3 mid
+    candidates' own un-replaced content is still present — forcing
+    rung① to fire through its own real, production-shaped path, exactly
+    as a real, size-limited provider would, instead of a stub that lets
+    compact() silently absorb everything no real provider could accept
+    in one call.
     """
+    from reyn.dev.testing.llm_stub import LLMStub
+
     session = _make_spill_session(tmp_path, monkeypatch, t_max=2_500)
     # #5514 §7-1: NEVER — see the staged-order test's own comment above;
     # this test's own "mid-only" isolation depends on the filler turns
@@ -1152,12 +1216,34 @@ def test_mid_only_spill_bounds_by_candidate_exhaustion_wire_bytes_never_move(
     def _spilled_so_far() -> int:
         return sum(1 for e in events2 if e.type == "tool_result_offloaded")
 
-    loop2 = _ContentDrivenLoop(lambda history, user_text: _spilled_so_far() < 3)
-    result = asyncio.run(
-        session2._loop_driver._run_with_shrink_and_byte_reduction(
-            loop2, "continue please", chain_id="c1",
-        )
+    # #5612 round-2: force compact() to genuinely OVERFLOW (a real
+    # provider's own reaction to this much content) while ANY of the 3
+    # mid candidates' own un-replaced "mid result N " text is still
+    # present — content-based (#5382 architect ruling), never a call
+    # count. This is what makes rung① (retry_loop's own internal spill,
+    # engine.py) fire through its real, production-shaped path instead
+    # of retry_loop's first compact() call silently absorbing all 3
+    # candidates in one always-succeeding stub call — see this test's
+    # own docstring above for the full trace.
+    _mid_markers = tuple(f"mid result {i} " for i in range(3))
+
+    def _raise_while_any_mid_candidate_unspilled(messages: list) -> bool:
+        content = messages[-1].get("content", "") if messages else ""
+        return any(marker in content for marker in _mid_markers)
+
+    stub2 = LLMStub(
+        raise_for=_raise_while_any_mid_candidate_unspilled, cause="byte_limit",
     )
+    stub2.install()
+    try:
+        loop2 = _ContentDrivenLoop(lambda history, user_text: _spilled_so_far() < 3)
+        result = asyncio.run(
+            session2._loop_driver._run_with_shrink_and_byte_reduction(
+                loop2, "continue please", chain_id="c1",
+            )
+        )
+    finally:
+        stub2.restore()
     assert result is None, "the turn must ultimately succeed once all mid candidates spilled"
     assert _spilled_so_far() == 3, (
         "the turn must have spilled all 3 mid candidates before succeeding "

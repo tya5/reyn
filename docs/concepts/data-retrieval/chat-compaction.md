@@ -251,6 +251,26 @@ cannot borrow their monotonicity. Two obligations follow:
 4. The **open turn is never handed to the shrinker** — by construction.
 5. `SP`, `new_msg` and `summary` are **reserved** from the windows' share; only
    the remainder is apportioned.
+6. **A fold that succeeds is durable the moment it happens** (#5612, owner
+   ruling verbatim: "そもそも compact 成功してるのに 次回 元に戻るは あり得
+   ないでしょ？"、"永続化というのは llm に見える ヒストリが 元に戻らない
+   ということ。history.jsonl に 追記する ということ") — `retry_loop`'s own
+   internal `compact()` call is no longer transport-only: each SUCCESSFUL
+   fold is appended to `history.jsonl` and advances the watermark
+   immediately, not deferred until the whole recovery episode's own
+   success or failure. A reactive spill (rung 1) is durable the same way —
+   a spill record is appended once per successfully-spilled turn. Neither
+   axis depends on WHEN it happens inside the ladder; both simply record
+   what already happened, the same "the fold already occurred, discarding
+   it only guarantees paying again" argument #5578/#5610 first established
+   for the single-fold-per-episode case, now applied per fold.
+7. **`decompose_history_for_retry` and `build_history` read the SAME
+   population** (#5612) — both apply the identical watermark filter
+   (`m.seq == 0 or m.seq > watermark`); a turn a durable summary already
+   covers is invisible to BOTH the wire projection and retry_loop's own
+   working set, never a spill candidate, never pulled into `raw_middle`
+   by Phase 1/2 refill. One projection rule, not two that could disagree
+   on which turns the LLM is allowed to see.
 
 ### See also
 
