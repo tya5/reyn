@@ -1,6 +1,6 @@
 # ADR-0045 (#5592) — spill granularity: one request per (compartment × spillability), not per turn
 
-**Status**: **PROPOSED** (owner ruling 2026-08-30, after a live incident on the owner's machine). Not ACCEPTED yet, by this team's own convention: an accepted ADR is immutable, so it is raised once the implementation has confirmed or falsified each decision below — the precedent ADR-0044 followed.
+**Status**: **ACCEPTED** (owner ruling 2026-08-30; raised from PROPOSED on 2026-09-02 after [#5596](https://github.com/tya5/reyn/pull/5596) landed and each decision below was checked against `origin/main` at `5a9cb2aad` — see *Verification*).
 **Supersedes**: [ADR-0044](0044-overflow-recovery-ladder.md) — **its rung-① granularity only** ("Rung 1 spills **one** candidate and retries rather than spilling a batch"). Every other part of 0044 — the classification, the cause-independent ladder, the predicate terminals, the slice-sizing search, `Spillability` itself — stands unchanged.
 **Track**: #5531 → #5592.
 
@@ -48,6 +48,24 @@ for over-spill and is not the safe side.
 - Batching a tier of very small turns can enlarge the payload rather than shrink it, since a preview carries fixed overhead. This is **left unaddressed by design** (owner ruling): the `T_max` halving already keeps the number of such rounds small.
 - Selecting `one spill-out at a time` re-enables the incident's shape. That is a legitimate choice — it minimises over-spill — but it is **not the safe side**, and the configuration's documentation says so.
 - Nothing else moves: the population's definition, the `FIRST_CHOICE` → `LAST_RESORT` order, `NEVER`'s exclusion, what a single spill does to one turn, the ladder's rung order, the terminals, the episode scoping, and the definition of progress ("a candidate was consumed" — consuming many at once does not change the definition).
+
+## Verification against the merged implementation
+
+Checked on `origin/main` at `5a9cb2aad` (the check is stamped with the tree it ran
+against, so a reader can tell when it was overtaken). Each decision is paired with the
+test in #5596 that goes red without it — the witness, not the PR body's account.
+
+| decision | witness on `main` |
+|---|---|
+| One request per (compartment × `Spillability`) | `test_tier_granularity_spills_whole_mid_tier_in_one_call`, `test_tier_batch_consumes_15_candidates_in_2_compact_calls` |
+| `head` and `tail` are never merged into one request | `test_head_and_tail_batches_never_merge_into_one_spill_call` |
+| An empty population sends nothing | `test_spill_fn_returning_empty_list_falls_through_to_halving` (`router_loop_driver.py`: a tier with zero eligible candidates is skipped without a call) |
+| The per-turn form stays available, not as default | `chat.py`: `spill_granularity: Literal["tier", "turn"] = "tier"`; `test_spill_granularity_turn_reproduces_one_candidate_per_call` |
+| The request count is the one exact cost quantity | `test_upstream_recovery_call_count_increments_once_per_real_call` — the count this ADR's context said nobody was recording is now a field |
+
+Nothing was falsified. The incident-size figure the first draft carried was replaced
+before merge by the implementer's own measured count, so no unverified number
+remains in this record.
 
 ## References
 
