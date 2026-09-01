@@ -43,11 +43,25 @@ def test_raw_starts_with_every_field_none(tmp_path):
     }
 
 
-def test_compaction_shrink_recovered_populates_raw_middle_fields(tmp_path):
-    """Tier 2: a real compaction_shrink_recovered event's own
-    raw_middle_remaining/raw_middle_total land in compaction_progress_raw()
-    verbatim — the exact field names #5592 actually emits (verified against
-    engine.py:3081-3082's own emit call), not a renamed/derived copy."""
+def test_compaction_shrink_recovered_figures_read_unknown_outside_an_episode(tmp_path):
+    """Tier 2: #5618 rewrote what these 3 tests can claim. The subscriber
+    still caches a real compaction_shrink_recovered event's own
+    raw_middle_remaining/raw_middle_total verbatim (the exact field names
+    #5592 emits, verified against engine.py:3081-3082's own emit call) —
+    but ``compaction_progress_raw()`` now JOINS the cache against the
+    driver's current recovery-episode number before returning it, and this
+    session has no episode running, so the honest answer is unknown.
+
+    Emitting these events with no episode in flight is not a state
+    production can reach at all: the engine emits
+    compaction_shrink_recovered from inside retry_loop, which only runs
+    inside an episode. The accept side — the same fields cached and
+    RETURNED during a real recovery — is therefore witnessed where it
+    actually happens, by the ladder-driven tests in
+    test_5618_recovery_episode_gate.py, not by a hand-emitted event here.
+    What this test still pins is the deny direction of the join, which is
+    the whole point of #5618's freshness rule: a figure that belongs to no
+    current episode is never reported as if it belonged to this one."""
     session = _make_session(tmp_path)
     session._audit_events.emit(
         "compaction_shrink_recovered",
@@ -55,42 +69,37 @@ def test_compaction_shrink_recovered_populates_raw_middle_fields(tmp_path):
         t_max_override=None, raw_middle_remaining=5, raw_middle_total=2469,
     )
     raw = session.compaction_progress_raw()
-    assert raw["raw_middle_remaining"] == 5
-    assert raw["raw_middle_total"] == 2469
+    assert raw["raw_middle_remaining"] is None, raw
+    assert raw["raw_middle_total"] is None, raw
 
 
-def test_llm_request_populates_call_count_only_when_not_none(tmp_path):
-    """Tier 2: upstream_recovery_call_count is None outside a recovery
-    episode (#5592's own documented contract) — an ordinary llm_request
-    with count=None must NOT clear an already-cached real count back to
-    unknown (an interleaved ordinary call must not blank the display)."""
+def test_a_call_count_from_no_episode_is_never_reported_as_this_ones(tmp_path):
+    """Tier 2: the same #5618 join, on the OTHER producer — the
+    upstream_recovery_call_count carried by llm_request / llm_request_error
+    (#5592's failure-path sibling: a rejected request is still billed and
+    still counts). Both event types are exercised because they are two
+    separate branches into the same cache, and a join applied to only one
+    of them would leave the other reporting a stale count.
+
+    #5592's own "an interleaved ordinary call (count=None) must not blank a
+    real count" contract still holds in the subscriber, but it is no longer
+    observable from outside without an episode to join against — it is
+    witnessed on the production path instead, by the ladder-driven accept
+    test in test_5618_recovery_episode_gate.py, where the count is seen to
+    PROGRESS across a real recovery (a blanking write would show up there
+    as the count dropping back to unknown mid-episode)."""
     session = _make_session(tmp_path)
     session._audit_events.emit(
         "llm_request", model="x", input_chars=100,
         max_input_tokens_applied=8000, upstream_recovery_call_count=3,
     )
-    assert session.compaction_progress_raw()["upstream_recovery_call_count"] == 3
+    assert session.compaction_progress_raw()["upstream_recovery_call_count"] is None
 
-    # An ordinary (non-recovery) call interleaves — count is None on THIS
-    # event, but the cache must keep the last REAL count.
-    session._audit_events.emit(
-        "llm_request", model="x", input_chars=50,
-        max_input_tokens_applied=8000, upstream_recovery_call_count=None,
-    )
-    assert session.compaction_progress_raw()["upstream_recovery_call_count"] == 3
-
-
-def test_llm_request_error_also_populates_call_count(tmp_path):
-    """Tier 2: llm_request_error (the failure-path sibling) carries the
-    same field and must also update the cache — a rejected request still
-    counts toward the call sequence (#5592's own motivating incident: a
-    rejected request is still billed and must not vanish from the count)."""
-    session = _make_session(tmp_path)
     session._audit_events.emit(
         "llm_request_error", model="x", error="boom",
         upstream_recovery_call_count=7,
     )
-    assert session.compaction_progress_raw()["upstream_recovery_call_count"] == 7
+    assert session.compaction_progress_raw()["upstream_recovery_call_count"] is None
 
 
 def test_is_compacting_reads_live_not_cached(tmp_path):

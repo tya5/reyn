@@ -839,6 +839,20 @@ class HookToggleResult:
     origin: "str | None"
 
 
+#: #5618: the ``_compaction_progress_state`` keys that describe progress
+#: WITHIN a recovery episode, and are therefore meaningless once that episode
+#: has ended — ``compaction_progress_raw()`` reports these as unknown unless
+#: the episode they were measured in is still the one running. The other keys
+#: in that dict are durable facts (#5578's ``persisted_covers_through_seq``:
+#: a fold that happened and stays true), so they are NOT joined; blanking
+#: those between episodes would hide a correct answer.
+_IN_FLIGHT_PROGRESS_KEYS = (
+    "raw_middle_remaining",
+    "raw_middle_total",
+    "upstream_recovery_call_count",
+)
+
+
 class Session:
     def __init__(
         self,
@@ -1466,6 +1480,13 @@ class Session:
             "upstream_recovery_call_count": None,
             "persisted_covers_through_seq": None,
         }
+        # #5618: which recovery episode the IN-FLIGHT figures above were
+        # measured in.
+        # None = nothing cached yet. compaction_progress_raw() joins this
+        # against the driver's CURRENT episode number and reports the figures
+        # as unknown when they disagree, so a finished episode's numbers never
+        # get shown as the next one's progress.
+        self._compaction_progress_episode: "int | None" = None
         self._audit_events.add_subscriber(self._on_compaction_progress_event)
         # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         if router_config is not None:
@@ -10187,14 +10208,58 @@ class Session:
 
     @property
     def is_compacting(self) -> bool:
-        """#5588: forwarding → CompactionController.is_compacting — the ONE
-        real, zero-fabrication signal the shrink-flow progress chrome row
-        gates on. Cheap (a bool read), safe every render frame."""
-        return self._compaction_controller.is_compacting
+        """#5588/#5618: the OR of TWO states, each owning its own try/finally
+        — the shrink-flow progress chrome row's gate.
+
+        - ``CompactionController.is_compacting`` — a compaction driven THROUGH
+          the controller (the threshold pass, ``force_compact_now``).
+        - ``RouterLoopDriver.recovery_episode`` — an overflow recovery running
+          the retry ladder, which calls the engine DIRECTLY and so never
+          touches the controller's flag. #5588 forwarded only to the
+          controller, which is why the row structurally never appeared during
+          a real recovery (#5618, owner real machine) — the one path where a
+          user most needs it.
+
+        Neither is inferred from event arrival: both are states with an
+        explicit exit, so a consumer reading at an arbitrary later moment gets
+        a real answer rather than "an event went past a while ago".
+
+        Cheap (two attribute reads), safe every render frame.
+        """
+        return (
+            self._compaction_controller.is_compacting
+            or self._recovery_episode() is not None
+        )
+
+    def _recovery_episode(self) -> "int | None":
+        """#5618: this session's loop driver's current recovery-episode number,
+        or None when it is not recovering.
+
+        ``getattr`` because ``_loop_driver`` is an injectable seam
+        (``ExecutionDriver``) — ``PipelineExecutorDriver`` and the pipeline
+        test drivers run no retry ladder at all, so "no episode" is their true
+        answer, not a forgotten field. The two drivers that CAN recover both
+        declare it, and the seam test pins that they do."""
+        return getattr(self._loop_driver, "recovery_episode", None)
 
     def _on_compaction_progress_event(self, event) -> None:
         """#5588: see :attr:`_compaction_progress_state`'s own comment at
-        construction — caches, never derives."""
+        construction — caches, never derives.
+
+        #5618: every write also records WHICH recovery episode it belongs to,
+        so :meth:`compaction_progress_raw` can tell a figure from this episode
+        apart from one left over by the previous. Recorded on write rather
+        than cleared on episode end deliberately: a clear needs a place to run,
+        and any such place opens a window between "cleared" and "next value
+        written" where the row would show nothing for no real reason. Stamping
+        the number has no window — the figure and its episode are written
+        together or not at all.
+
+        The stamp is taken ONLY on a branch that actually writes a figure. An
+        unconditional stamp at the top would let an ordinary interleaved
+        ``llm_request`` (one carrying no count) re-date the PREVIOUS episode's
+        figures as belonging to the current one — resurrecting exactly the
+        stale numbers the join exists to hide."""
         if event.type == "compaction_shrink_recovered":
             self._compaction_progress_state["raw_middle_remaining"] = (
                 event.data.get("raw_middle_remaining")
@@ -10202,6 +10267,7 @@ class Session:
             self._compaction_progress_state["raw_middle_total"] = (
                 event.data.get("raw_middle_total")
             )
+            self._compaction_progress_episode = self._recovery_episode()
         elif event.type in ("llm_request", "llm_request_error"):
             # #5592: this field is None outside a recovery episode — only
             # overwrite the cache with a REAL count, never clear a
@@ -10210,6 +10276,7 @@ class Session:
             count = event.data.get("upstream_recovery_call_count")
             if count is not None:
                 self._compaction_progress_state["upstream_recovery_call_count"] = count
+                self._compaction_progress_episode = self._recovery_episode()
         elif event.type == "recovery_summary_persisted":
             # #5578/#5610: three outcomes, and only ONE of them moved the
             # watermark. ``already_covered`` (idempotent no-op) and
@@ -10222,6 +10289,12 @@ class Session:
                 self._compaction_progress_state["persisted_covers_through_seq"] = (
                     event.data.get("covers_through_seq")
                 )
+                # #5618, deliberately NOT stamped with an episode: this one is
+                # a DURABLE watermark, not in-flight progress. The fold it
+                # records stays true after the recovery that produced it has
+                # ended, which is exactly when the Ctx pane's "folded" row
+                # (#5619) shows it. Episode-joining it would blank a fact that
+                # is still correct — the opposite of what the join is for.
 
     def compaction_progress_raw(self) -> dict:
         """#5588: ``is_compacting`` plus the latest #5592 observability
@@ -10230,8 +10303,30 @@ class Session:
         already-cached values), safe every render frame. The TUI layer
         builds its own ``CompactionProgressSnapshot`` from this plain dict
         (this module stays free of any ``interfaces/`` import — Session is
-        reused by every surface, not only the Textual TUI)."""
-        return {"is_compacting": self.is_compacting, **self._compaction_progress_state}
+        reused by every surface, not only the Textual TUI).
+
+        #5618: the IN-FLIGHT figures (see ``_IN_FLIGHT_PROGRESS_KEYS``) are
+        returned only when the episode they were stamped with IS the episode
+        running now. Otherwise they read ``None`` —
+        unknown, which is what they honestly are: the previous episode's
+        remaining/total says nothing about this one's progress, and the row
+        renders its "waiting" state rather than a stale fraction that looks
+        like it is still moving. Nothing is ever cleared (see
+        :meth:`_on_compaction_progress_event`); staleness is decided at READ
+        time, so there is no instant at which a real figure has been erased and
+        its replacement has not yet arrived.
+
+        ``persisted_covers_through_seq`` is deliberately NOT joined: #5578's
+        watermark is a durable fact about a fold that happened, still true —
+        and still displayed by the Ctx pane's "folded" row (#5619) — long after
+        the episode that produced it ended. Blanking it between episodes would
+        hide a correct answer, which is the opposite of the join's purpose."""
+        figures = dict(self._compaction_progress_state)
+        episode = self._recovery_episode()
+        if episode is None or episode != self._compaction_progress_episode:
+            for key in _IN_FLIGHT_PROGRESS_KEYS:
+                figures[key] = None
+        return {"is_compacting": self.is_compacting, **figures}
 
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).

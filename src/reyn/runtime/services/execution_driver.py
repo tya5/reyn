@@ -61,3 +61,16 @@ class ExecutionDriver(Protocol):
     def cancel_event(self) -> "asyncio.Event | None":
         """Per-turn asyncio.Event set by request_cancel(), or None (#2813)."""
         ...
+
+    @property
+    def recovery_episode(self) -> "int | None":
+        """#5618: current overflow-recovery episode number, or None when not
+        recovering. ``Session.is_compacting`` ORs this with the compaction
+        controller's own flag to gate the TUI's shrink-progress row.
+
+        A driver that runs no retry ladder returns None permanently — that is
+        a true answer, not a stub. ``Session`` reads this defensively, so an
+        implementation predating #5618 degrades to "never recovering" rather
+        than raising; keeping it declared HERE is what stops that degradation
+        from being silent for a driver that should have implemented it."""
+        ...

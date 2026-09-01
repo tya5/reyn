@@ -340,6 +340,15 @@ class PipelineExecutorDriver:
         Ctrl-C, same as every pre-#2813 caller with no cancel_event to pass."""
         return None
 
+    @property
+    def recovery_episode(self) -> None:
+        """#5618: always None — this driver executes a pipeline's steps and
+        never enters the router's bounded-shrink retry ladder, so there is no
+        recovery episode to be inside of. Declared rather than left to
+        ``Session``'s ``getattr`` default so the answer is this driver's own
+        stated one, not an absence that happens to read the same."""
+        return None
+
     # ── internals ──────────────────────────────────────────────────────────────
 
     def _pipeline_registry(self) -> Any:
