@@ -1,6 +1,7 @@
-"""Tier 2: #5568 — ``classify_llm_failure`` classifies an HTTP 200 whose
-body is not parseable as JSON as ``RETRYABLE``, structurally, BEFORE
-``is_context_overflow_error``'s own keyword-string fallback ever runs.
+"""Tier 2: #5568 — ``classify_llm_failure`` classifies a real litellm
+exception carrying ``status_code == 200`` as ``RETRYABLE``, structurally,
+BEFORE ``is_context_overflow_error``'s own keyword-string fallback ever
+runs.
 
 Owner's real-machine incident (reyn-self ``coder-brown``, 2026-08-30):
 litellm's ``OpenAIResponsesAPIConfig.transform_response_api_response``
@@ -23,11 +24,25 @@ would make the proxy's own contract violation permanently invisible, the
 Q3 "does the repair destroy the evidence" band violation). The upstream
 proxy fix (owner's own hand) is out of scope for this PR.
 
-Reachability witness (architect's own explicit requirement, closing the
-exact hole #5603 exposed — a patched function production never actually
-reaches still shows green): this file's own accept test does NOT call
-``classify_llm_failure`` directly. It drives a REAL ``Session`` +
-``RouterLoop`` turn end to end and fakes the TRANSPORT boundary
+The honest predicate (round 2, lead-coder's own catch + architect's own
+follow-up ruling, PR #5614 review): ``status_code == 200`` ALONE — an
+earlier version of this fix also checked whether the message parses as
+JSON, but litellm's own exception ``__str__``/``.message`` always carries
+a class-name prefix (``"litellm.APIError: <body>"``), so that check
+ALWAYS failed for a real litellm exception regardless of the underlying
+body — measuring nothing beyond what ``code == 200`` already measures.
+This file's own tests now construct a REAL ``litellm.APIError`` (not a
+hand-built stand-in whose ``str()`` has no such prefix) — the earlier
+version's own hand-built exception was the reason this gap went
+unnoticed: its message had no prefix, so the (redundant, now-removed)
+JSON check happened to still work for it, while silently doing nothing
+for any REAL litellm exception.
+
+Reachability witness (architect's own explicit requirement, addressing
+the exact hole #5603 exposed — a patched function production never
+actually reaches still shows green): this file's own accept test does
+NOT call ``classify_llm_failure`` directly. It drives a REAL ``Session``
++ ``RouterLoop`` turn end to end and fakes the TRANSPORT boundary
 (``litellm.acompletion``, monkeypatched — same idiom
 ``test_5582_compaction_forced_non_streaming.py`` already establishes for
 inspecting/controlling what litellm receives/returns) so
@@ -51,19 +66,6 @@ import pytest
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
 
-
-class _FakeOpenAI200NonJsonError(Exception):
-    """Real, scripted stand-in for the exact exception shape
-    ``OpenAIResponsesAPIConfig.transform_response_api_response`` raises
-    when a ``stream: false`` request receives an SSE body instead of
-    JSON — an HTTP 200 status carrying the ENTIRE raw stream text as its
-    own message (architect's own #5568 trace, quoted above)."""
-
-    def __init__(self, sse_body: str) -> None:
-        super().__init__(sse_body)
-        self.status_code = 200
-
-
 # A real-shaped SSE body carrying an ``error`` frame whose own text
 # happens to contain an overflow-suggestive keyword ("context window") —
 # deliberately NOT an overflow-keyword-free body: this is what makes the
@@ -74,7 +76,7 @@ class _FakeOpenAI200NonJsonError(Exception):
 # keyword-free SSE body would pass this test's own assertions even
 # WITHOUT the fix (confirmed directly: reverting the fix and rerunning
 # with a keyword-free body stayed green — the exact false-negative this
-# body avoids). Genuinely non-JSON (fails json.loads) either way.
+# body avoids).
 _SSE_BODY = (
     'data: {"type": "response.created", '
     '"response": {"status": "in_progress", "output": []}}\n\n'
@@ -112,7 +114,14 @@ def test_production_path_200_non_json_classifies_retryable_not_overflow(
     async def _fake_acompletion(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        raise _FakeOpenAI200NonJsonError(_SSE_BODY)
+        # A REAL litellm.APIError — not a hand-built stand-in (lead-
+        # coder's own catch: a hand-built exception's str() carries no
+        # class-name prefix, unlike a real one, so it can mask a fix that
+        # doesn't actually work against production's own exception shape).
+        raise litellm.APIError(
+            status_code=200, message=_SSE_BODY,
+            llm_provider="openai", model="gpt-5.6-luna",
+        )
 
     monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
 
@@ -146,7 +155,7 @@ def test_production_path_200_non_json_classifies_retryable_not_overflow(
     # instrument, typed correctly — not swallowed, not misreported.
     terminated = [e for e in collected if e.type == "router_loop_terminated_by_exception"]
     assert terminated, "the exception must reach the generic catch-all's own P6 instrument"
-    assert terminated[0].data["error_type"] == "_FakeOpenAI200NonJsonError"
+    assert terminated[0].data["error_type"] == "APIError"
 
     msgs = _drain_outbox(session)
     error_msgs = [m for m in msgs if m.kind == "error"]
@@ -183,35 +192,4 @@ def test_production_path_genuine_overflow_still_classifies_overflow(
         "a genuine context-overflow-shaped exception must still enter "
         "the shrink ladder — #5568's own fix must not have become "
         "'never classify as overflow'"
-    )
-
-
-# ── deny: a 200 whose body IS valid JSON is untouched (byte-identical) ──
-
-
-def test_classify_llm_failure_200_with_valid_json_message_stays_overflow(
-) -> None:
-    """Tier 2: #5568 deny — the new branch is scoped EXACTLY to "200 +
-    body fails json.loads"; a 200-status exception whose message DOES
-    parse as JSON must classify exactly as it did before this fix
-    (falls through to OVERFLOW, unchanged) — proving this is not a
-    blanket "any 200 is retryable" widening.
-
-    Unit-level on the classifier itself (not the reachability-witness
-    concern above): this deny case tests the FUNCTION's own scoping, not
-    whether production reaches it — a 200-status exception with a
-    well-formed JSON body is not itself a real incident this PR
-    addresses; #5568's own defect is specifically the non-JSON case."""
-    from reyn.services.compaction.engine import LLMFailureClass, classify_llm_failure
-
-    class _Fake200JsonError(Exception):
-        def __init__(self, msg: str) -> None:
-            super().__init__(msg)
-            self.status_code = 200
-
-    exc = _Fake200JsonError('{"error": {"message": "context length exceeded"}}')
-    assert classify_llm_failure(exc) is LLMFailureClass.OVERFLOW, (
-        "a 200-status exception whose message DOES parse as JSON must "
-        "stay on its pre-#5568 classification path — this fix's own "
-        "branch must never fire for it"
     )
