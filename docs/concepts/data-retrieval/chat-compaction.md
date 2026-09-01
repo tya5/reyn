@@ -124,7 +124,7 @@ ladder, not inside it:
 | class | examples | what happens |
 |---|---|---|
 | **Overflow** | context-window error, HTTP 413, a response cut off by an output cap (`JSONDecodeError`) | enters the ladder |
-| **Retryable** | 5xx, timeout, rate limit, connection error | retried with backoff; never shrinks |
+| **Retryable** | 5xx, timeout, rate limit, connection error, HTTP 200 on an exception (#5568 — litellm raises `status_code == 200` only when transport succeeded but response-object conversion failed; a transport/protocol failure, unconditionally, regardless of what keywords the broken body happens to contain) | retried with backoff; never shrinks |
 | **Fatal** | `TypeError` / `AttributeError` / `KeyError`, authentication, model-not-found | propagates unchanged; never shrinks |
 
 Both arms classify through the same `classify_llm_failure` (#5543/#5531 §10) —

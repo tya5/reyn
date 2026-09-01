@@ -1130,13 +1130,19 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     1. FATAL — an exact ``isinstance`` match on reyn's own closed bug-type
        allowlist, or an auth-error shape (class name / status code).
     2. RETRYABLE — ``is_quota_exhausted_error`` (a provider usage-window
-       exhaustion, #5256), or the SAME infra/rate-limit signal
+       exhaustion, #5256), the SAME infra/rate-limit signal
        ``llm.py``'s own ``_llm_call_with_retry`` already retries
        (5xx / timeout / connection failure / rate-limit-429), checked
        WITHOUT importing that module (this function must not create a
        ``compaction`` → ``llm`` import cycle — the two modules' retry
        machinery stays two callers of the SAME classification, not one
-       importing the other's private helper).
+       importing the other's private helper) — OR (#5568, below)
+       ``status_code == 200``, checked BEFORE ``is_context_overflow_
+       error``'s own keyword-string fallback ever runs (that fallback
+       lives one level up, in ``router_loop_driver._is_shrinkable_
+       overflow`` — it is only ever reached for a cause this function
+       itself classified OVERFLOW, so returning RETRYABLE here is what
+       keeps this cause out of it).
     3. OVERFLOW — ``is_context_overflow_error`` (this module's own,
        already-shared predicate — 413 / token-length signals, with a
        keyword-string fallback for a flattened provider exception).
@@ -1147,6 +1153,68 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     ``ContextOverflowError`` today, both already overflow-shaped by
     construction) — this function does not widen what reaches it, only
     names what was already implicitly assumed.
+
+    #5568 (owner's real-machine incident, reyn-self ``coder-brown``):
+    litellm's ``OpenAIResponsesAPIConfig.transform_response_api_response``
+    (the class reyn's own ``provider=openai`` config resolves to when
+    talking to a local proxy — NOT the ``ChatGPTResponsesAPIConfig``
+    #5603(B) patches, confirmed unreached in production via a reach-marker
+    with 0 matching lines) does ``raw_response.json()`` inside a bare
+    ``try/except Exception`` and, on failure, raises ``OpenAIError(message=
+    raw_response.text, status_code=raw_response.status_code)`` — an HTTP
+    200 (the request DID succeed at the transport layer) wrapping the
+    ENTIRE raw response body (in the observed incident, a raw SSE stream
+    the upstream proxy returned despite ``stream: false``) as the
+    exception's own message. Because that body can coincidentally contain
+    an overflow-shaped keyword (an ``error`` frame's own text), the
+    pre-#5568 fallthrough to OVERFLOW let this reach
+    ``is_context_overflow_error``'s keyword fallback and enter the shrink
+    ladder — repeatedly halving and re-sending a 9M-character history
+    against a cause no amount of shrinking can fix (a transport/protocol
+    failure, not an input-size one; ADR-0044 I2: "do not apply an
+    irreversible remedy to a reversible cause" — waiting/retrying is
+    reversible, shrinking permanently discards conversation content).
+
+    The honest predicate is ``status_code == 200`` alone — NOT also
+    checking whether the message parses as JSON. litellm's own exception
+    ``__str__``/``.message`` always carries a class-name prefix (e.g.
+    ``"litellm.APIError: <body>"``, confirmed directly against a real
+    ``litellm.APIError`` instance), so a check like ``json.loads(str(exc))``
+    would ALWAYS fail regardless of whether the underlying body was JSON
+    or not — measuring nothing beyond what ``code == 200`` already
+    measures, while giving the false impression of a narrower, message-
+    content-aware check. ``code == 200`` alone is also sufficient by
+    construction: ``transform_response_api_response`` raises status 200
+    ONLY on this exact "transport succeeded, response-object conversion
+    failed" shape (architect's own trace) — no separate message-content
+    check is needed to confirm that, and checking the private prefix
+    string instead (architect's own rejected option (ii)) would repeat
+    #5603's own mistake of depending on a private, version-fragile
+    litellm implementation detail.
+
+    Disclosed tradeoff (architect's own ruling, kept here deliberately):
+    in a still-broken-proxy world, a REAL overflow signal (an SSE
+    ``error`` frame reading "exceeds the context window") can be buried
+    inside a 200-status exception's own body — this predicate classifies
+    that RETRYABLE too, not OVERFLOW. This is correct, not a gap:
+    shrinking is not a repair for "the proxy returned SSE for a
+    stream: false request" (the real incident kept producing the same
+    200+SSE shape even after shrinking a 9M-character history down to
+    18K), and once the proxy is fixed (#5568's own separate "A"), a
+    genuine overflow reaches this function as a real 4xx
+    ``ContextWindowExceededError`` and classifies OVERFLOW exactly as
+    before. The way back to that world is fixing the proxy, never
+    compensating for it in classification — compensating would make the
+    proxy's own contract violation permanently invisible (Q3: does the
+    repair destroy the evidence).
+
+    architect's own ruling (issue #5568): the root cause is the upstream
+    proxy's contract violation (owner's own hand, a separate fix, layered
+    ABOVE the provider per the owner's standing "reyn fights above the
+    provider layer" principle) — reyn's own correction is classification
+    only, never teaching litellm/reyn to accept the malformed response
+    (that would make the proxy's own defect permanently invisible, the
+    exact Q3 "does the repair destroy the evidence" band violation).
     """
     if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
         return LLMFailureClass.FATAL
@@ -1165,6 +1233,26 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
         or "InternalServerError" in name
         or (isinstance(code, int) and 500 <= code < 600)
     ):
+        return LLMFailureClass.RETRYABLE
+    # #5568 (architect's own honest predicate, PR #5614 review): an HTTP
+    # 200 (the request genuinely succeeded at the transport layer) on an
+    # EXCEPTION is a protocol/transport failure, unconditionally — never
+    # an input-size question — so it must never reach the OVERFLOW
+    # keyword fallback below. `status_code == 200` alone, deliberately
+    # NOT also checking whether the message parses as JSON: litellm's own
+    # exception `__str__`/`.message` always carries a class-name prefix
+    # (e.g. `"litellm.APIError: <body>"`), so a `json.loads(str(exc))`
+    # check would ALWAYS fail regardless of the underlying body — an
+    # earlier version of this branch had exactly that check, which
+    # measured nothing beyond `code == 200` already does (lead-coder's
+    # own catch, PR #5614 review, confirmed directly against a real
+    # `litellm.APIError`). See this function's own docstring for the
+    # disclosed tradeoff (a genuine overflow signal buried in a 200
+    # exception's body also classifies RETRYABLE here — correct, not a
+    # gap) and why the private prefix string is deliberately NOT checked
+    # either (#5603's own "depended on a private, version-fragile litellm
+    # detail" mistake, not repeated here).
+    if code == 200:
         return LLMFailureClass.RETRYABLE
     return LLMFailureClass.OVERFLOW
 
