@@ -2936,69 +2936,69 @@ class RecoveryLadder:
         self._consecutive_same_cause = 0
 
         # #4885/#5531 PR-2 (owner proposal, evaluated by lead-coder, redesigned
-    # by owner — issue #5531 §2/§4): an HTTP 413 is a request-BODY-BYTE
-    # limit — a different axis entirely from the token budgets this whole
-    # ladder is built from (see this function's own "Bounded termination
-    # proof" above: every shrink step and floor here is measured in
-    # TOKENS). Lowering the EFFECTIVE T_max this invocation uses is the
-    # only lever that makes the EXISTING token-shrink mechanics respond
-    # to a byte-limit trigger at all — deliberately NOT a second, byte-
-    # built ladder alongside this one (one resource, one gate). #5531
-    # PR-2 (§3 item 7): this same halving ladder now also fires for a
-    # plain TOKEN overflow once Phase 1/2 are exhausted — previously
-    # gated to the byte-limit cause only, leaving a token overflow with
-    # no halving lever at all past that point. Binary search, not a
-    # fixed "shrink by half the ceiling" guess: the byte/token ratio of
-    # whatever tripped a 413 is unknown (a base64 attachment, a verbose
-    # non-English message, and a repeated low-entropy block all have
-    # different ratios), so there is no ratio to aim for — halving the
-    # SAME retry_loop-scoped T_max override on each still-overflowing
-    # recovery converges in O(log T_max) steps regardless of what the
-    # ratio turns out to be, the identical guarantee ``max_iterations``
-    # already relies on.
-    #
-    # Scope (owner condition ③): ``_t_max_override`` is a LOCAL variable,
-    # never passed to ``get_max_input_tokens`` or anywhere that would
-    # change the model's real context window for any OTHER call. It dies
-    # with this ``retry_loop`` invocation; nothing persists it past a
-    # single turn's shrink attempt.
-    #
-    # Floor / reservation (owner: "どこで諦めるか — そこはあなたが決めて",
-    # then #5531 §1 invariant 5's own correction below): ``SP``,
-    # ``new_msg``, and the CURRENT summary are the three pieces of
-    # context this ladder NEVER shrinks (``new_msg`` per this module's
-    # own #43 docstring: "NEVER dropped"; ``SP`` is the session's system
-    # prompt; the summary is folded/replaced, not trimmed down in
-    # place). #5531 §1 invariant 5 (owner): these three are RESERVED —
-    # fixed deductions from the halved candidate, never apportioned by
-    # weight alongside head/tail. The OLD design (§3 item 8) halved
-    # T_max WHOLESALE, which also halved the never-shrunk SP+new_msg
-    # share on every pass — a candidate could fall below what SP+new_msg
-    # alone need even while real room remained in head/tail, a SELF-
-    # INFLICTED floor-hit the reservation redesign eliminates
-    # structurally (see the ladder's own comment, below, for the room-
-    # apportionment formula). Once a halved candidate can no longer fit
-    # the three reserved pieces even with head/tail at zero, no further
-    # halving can possibly succeed — continuing would just re-hit the
-    # SAME terminal case one halving later, burning ``max_iterations``
-    # for no new information.
-    #
-    # #5531 §4 (owner, acceptance): the reservation itself never grows,
-    # but ``room`` is not guaranteed to monotonically decrease across
-    # iterations — a successful fold can SHRINK the summary reservation
-    # (desirable: re-summarizing produces a smaller running summary),
-    # which grows room back. Stopping is carried by a lexicographic
-    # measure — (T_max halvings remaining, total turn count, len(head) +
-    # len(tail), …) — not by ``room`` alone decreasing every step.
-    # Completing that measure into a full proof (removing max_iterations
-    # entirely, the new T4 terminal, a proven decrease every step) is
-    # #5531 PR-3's own scope — that measure is NOT built by this PR.
-    # AT THIS POINT (PR-2), ``max_iterations`` is still the real, final
-    # backstop, not yet redundant (lead-coder correction, issuecomment-
-    # 5465786061 — an earlier version of this comment wrongly cited this
-    # not-yet-built measure as what makes the fold-output-placement
-    # change below safe; the real reason is Phase 1/2's own summary-skip,
-    # see that comment for the actual argument).
+        # by owner — issue #5531 §2/§4): an HTTP 413 is a request-BODY-BYTE
+        # limit — a different axis entirely from the token budgets this whole
+        # ladder is built from (see this function's own "Bounded termination
+        # proof" above: every shrink step and floor here is measured in
+        # TOKENS). Lowering the EFFECTIVE T_max this invocation uses is the
+        # only lever that makes the EXISTING token-shrink mechanics respond
+        # to a byte-limit trigger at all — deliberately NOT a second, byte-
+        # built ladder alongside this one (one resource, one gate). #5531
+        # PR-2 (§3 item 7): this same halving ladder now also fires for a
+        # plain TOKEN overflow once Phase 1/2 are exhausted — previously
+        # gated to the byte-limit cause only, leaving a token overflow with
+        # no halving lever at all past that point. Binary search, not a
+        # fixed "shrink by half the ceiling" guess: the byte/token ratio of
+        # whatever tripped a 413 is unknown (a base64 attachment, a verbose
+        # non-English message, and a repeated low-entropy block all have
+        # different ratios), so there is no ratio to aim for — halving the
+        # SAME retry_loop-scoped T_max override on each still-overflowing
+        # recovery converges in O(log T_max) steps regardless of what the
+        # ratio turns out to be, the identical guarantee ``max_iterations``
+        # already relies on.
+        #
+        # Scope (owner condition ③): ``_t_max_override`` is a LOCAL variable,
+        # never passed to ``get_max_input_tokens`` or anywhere that would
+        # change the model's real context window for any OTHER call. It dies
+        # with this ``retry_loop`` invocation; nothing persists it past a
+        # single turn's shrink attempt.
+        #
+        # Floor / reservation (owner: "どこで諦めるか — そこはあなたが決めて",
+        # then #5531 §1 invariant 5's own correction below): ``SP``,
+        # ``new_msg``, and the CURRENT summary are the three pieces of
+        # context this ladder NEVER shrinks (``new_msg`` per this module's
+        # own #43 docstring: "NEVER dropped"; ``SP`` is the session's system
+        # prompt; the summary is folded/replaced, not trimmed down in
+        # place). #5531 §1 invariant 5 (owner): these three are RESERVED —
+        # fixed deductions from the halved candidate, never apportioned by
+        # weight alongside head/tail. The OLD design (§3 item 8) halved
+        # T_max WHOLESALE, which also halved the never-shrunk SP+new_msg
+        # share on every pass — a candidate could fall below what SP+new_msg
+        # alone need even while real room remained in head/tail, a SELF-
+        # INFLICTED floor-hit the reservation redesign eliminates
+        # structurally (see the ladder's own comment, below, for the room-
+        # apportionment formula). Once a halved candidate can no longer fit
+        # the three reserved pieces even with head/tail at zero, no further
+        # halving can possibly succeed — continuing would just re-hit the
+        # SAME terminal case one halving later, burning ``max_iterations``
+        # for no new information.
+        #
+        # #5531 §4 (owner, acceptance): the reservation itself never grows,
+        # but ``room`` is not guaranteed to monotonically decrease across
+        # iterations — a successful fold can SHRINK the summary reservation
+        # (desirable: re-summarizing produces a smaller running summary),
+        # which grows room back. Stopping is carried by a lexicographic
+        # measure — (T_max halvings remaining, total turn count, len(head) +
+        # len(tail), …) — not by ``room`` alone decreasing every step.
+        # Completing that measure into a full proof (removing max_iterations
+        # entirely, the new T4 terminal, a proven decrease every step) is
+        # #5531 PR-3's own scope — that measure is NOT built by this PR.
+        # AT THIS POINT (PR-2), ``max_iterations`` is still the real, final
+        # backstop, not yet redundant (lead-coder correction, issuecomment-
+        # 5465786061 — an earlier version of this comment wrongly cited this
+        # not-yet-built measure as what makes the fold-output-placement
+        # change below safe; the real reason is Phase 1/2's own summary-skip,
+        # see that comment for the actual argument).
         self._last_recover_is_byte_limit = False
         # #5316: the learned ceiling — read back (not re-measured, per issue
         # #5316's own "新しい測定は要りません") into the terminal message below
