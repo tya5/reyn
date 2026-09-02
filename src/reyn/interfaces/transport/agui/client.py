@@ -147,6 +147,17 @@ class AgUiTransport(ClientTransport):
         # does, without waiting on the next SSE event to unblock it.
         self._display_queue: "asyncio.Queue[Frame | BacklogBatch | object]" = asyncio.Queue()
         self._sse_pump_task: "asyncio.Task[None] | None" = None
+        # #5694: set once :meth:`frames` re-raises a genuine ``_SSEPumpError``
+        # (the pump died — a real read failure, never a clean end or an
+        # intentional :meth:`close`). This is the ONE fact ``has_session``/
+        # ``attach_failed`` read below to make the loss of this connection's
+        # OWN receive channel visible — see those methods' own docstrings
+        # for why a dead pump must degrade the SAME tri-state the header and
+        # the composer submit-gate (#3671 P3) already share, rather than
+        # leaving this transport looking "still attached" while the
+        # server's own per-connection binding (``_CONNECTION_RETARGET_HUB``,
+        # #5116) has already forgotten it.
+        self._pump_died = False
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -404,6 +415,23 @@ class AgUiTransport(ClientTransport):
                 # own context, instead of letting `_SSE_DONE` (queued right
                 # after this by the SAME `finally`) make it look like an
                 # ordinary end-of-stream.
+                #
+                # #5694: also flip the tri-state ``has_session``/
+                # ``attach_failed`` read — a caller that only catches this
+                # exception around its OWN read loop (``_pump_frames``'s
+                # #5329 design: log it, keep the app open, do not exit) would
+                # otherwise have no way to learn the connection died, and
+                # would keep drawing this transport's last-known display AND
+                # keep letting the composer POST through the now-orphaned
+                # ``send`` closure — the exact silent-misroute shape #5694
+                # reports (server-side unsubscribes this connection from
+                # ``_CONNECTION_RETARGET_HUB`` when the stream ends, so a
+                # later submit falls back to the connect-time URL agent,
+                # 200 OK, wrong destination). Setting this here — the one
+                # place that already knows the pump is genuinely gone, not
+                # merely idle — makes both surfaces degrade from ONE fact.
+                self._connected = False
+                self._pump_died = True
                 raise frame.exc
             if frame is _SSE_DONE:
                 return
@@ -428,15 +456,29 @@ class AgUiTransport(ClientTransport):
 
     def attach_failed(self) -> bool:
         # #5096 review finding (lead-coder): EXPLICITLY implemented, not
-        # inherited from ClientTransportStub, even though the VALUE
-        # matches its own default. A remote attach either already
-        # succeeded by the time --connect returns or the connection
-        # attempt itself raised, so there is no separate "connecting in
-        # the background" phase to fail remotely — see
-        # ClientTransport.attach_failed's own docstring for the full
-        # rationale (only InProcessTransport's background-attach path has
-        # anything meaningful to report here).
-        return False
+        # inherited from ClientTransportStub. A remote attach either
+        # already succeeded by the time --connect returns or the
+        # connection attempt itself raised, so there was originally no
+        # separate "connecting in the background" phase to fail remotely
+        # here (see ClientTransport.attach_failed's own docstring for the
+        # full rationale — only InProcessTransport's background-attach
+        # path had anything meaningful to report).
+        #
+        # #5694: that is no longer the whole story — an ALREADY-attached
+        # connection's own SSE pump can still die mid-session (a genuine
+        # read failure, ``_pump_died`` above). ``has_session()`` alone
+        # cannot distinguish that from "still connecting" (both read
+        # false), and the tri-state this pair feeds
+        # (``TextualChatApp._attach_state``: "connecting" | "failed" |
+        # None) must not call a DEAD connection "connecting" — this app
+        # never auto-reconnects, so telling the operator to keep waiting
+        # would be the "still loading" paper-over that tri-state's own
+        # owner ruling forbids. Reusing ``attach_failed`` (rather than a
+        # third, parallel flag) means the header AND the composer's
+        # submit-gate (#3671 P3, ``on_composer_submitted``) — which
+        # already both read this exact pair — degrade together, with no
+        # new call site to keep in sync.
+        return self._pump_died
 
     def pending_intervention_head(self) -> "object | None":
         # P3: the id of the intervention awaiting an answer, tracked off the

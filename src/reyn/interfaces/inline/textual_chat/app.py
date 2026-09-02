@@ -6735,6 +6735,24 @@ class TextualChatApp(App):
                 ".frames()) raised (reason=supply_failed) — the app stays "
                 "open; only an explicit /quit exits."
             )
+            # #5694: force ONE render here — `_refresh_live_chrome` is
+            # otherwise only ever called "as frames land" (its own
+            # docstring), but the frame supply just died, so no frame is
+            # EVER landing again to trigger it. Without this call the
+            # header/pane keep showing this connection's last-known
+            # agent name until the operator happens to touch something
+            # that re-renders — the exact "displays a name nobody
+            # confirmed any more" gap #5694 reports. `self._transport.
+            # has_session()`/`attach_failed()` already flip the instant
+            # the pump dies (see `AgUiTransport.frames`'s own #5694
+            # comment); this just makes that fact visible NOW instead of
+            # on the next frame that will never arrive.
+            try:
+                self._refresh_live_chrome()
+            except Exception:
+                logger.exception(
+                    "textual chat: post-supply-failure chrome refresh failed"
+                )
             raise
         else:
             # #5329 A: the supply ended normally — either the `__end__`
@@ -6938,7 +6956,17 @@ class TextualChatApp(App):
         paper over — but it IS a real position change, named here so a
         future ordering-bug hunt doesn't rule this call site out."""
         if self._transport.attach_failed():
-            text = "attach failed (see log) — your message was kept; retry once resolved"
+            # #5694: the ONE new producer of `attach_failed()` on a REMOTE
+            # transport is its own SSE pump dying mid-session (not a fresh
+            # connect that never succeeded) — the operator was already
+            # talking to an agent, and needs to know the fix is a fresh
+            # `/attach`, not "wait" or a bare "send failed" (lead-coder
+            # review: the wording must name the next action, not just the
+            # fact of failure).
+            text = (
+                "attach failed — connection lost; your message was kept — "
+                "/attach <agent> to reconnect and resend"
+            )
         else:
             text = "still connecting — your message will send once ready"
         from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
