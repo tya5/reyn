@@ -1261,29 +1261,30 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
 
 def is_shrinkable_overflow(exc: BaseException) -> bool:
     """#5577/#5593/#5622 — is *exc* a cause the shrink ladder should be
-    entered for? The ONE predicate every call site that decides "wrap
-    and offer to the shrink ladder" must share — #5622's own finding:
-    a 3rd call site (this module's own retry_loop, below) had drifted
-    onto ``classify_llm_failure`` ALONE, missing the narrower
-    ``is_context_overflow_error`` requirement the other 2 call sites
-    (``router_loop_driver.py``) already carry — the exact "2
-    discriminators for one question" shape #5577 already closed once,
-    recurring at a 3rd site.
+    entered for? The predicate ``router_loop_driver.py``'s own 2 call
+    sites share (imported from here, never duplicated — the relocation
+    #5622 (issue) actually landed).
 
     ``classify_llm_failure``'s own fallthrough is unconditionally
     ``OVERFLOW`` for anything that is neither FATAL nor RETRYABLE — a
-    default calibrated for retry_loop's OWN inner except clause, which
-    (per that call site's own comment, below) "only ever catches
-    CompactionOverflowError/ContextOverflowError today, both already
-    overflow-shaped by construction" for the ORIGINAL caller
-    (``compact()``'s own exception, always genuinely overflow-shaped —
-    the one call site where ``classify_llm_failure`` alone was actually
-    safe). This function's own callers (2 in ``router_loop_driver.py``,
-    plus the 3rd this PR fixes, this module's own retry_loop) catch a
-    WIDER exception surface — ANY exception the router/provider stack
-    (or, at the compact()-call site, the compaction LLM call itself)
-    can raise, including one neither FATAL, RETRYABLE, nor an overflow
-    at all (#5593's real incident:
+    default calibrated for THIS module's own ``retry_loop`` inner
+    except clause, which (per that call site's own comment, below)
+    "only ever catches CompactionOverflowError/ContextOverflowError
+    today, both already overflow-shaped by construction" for the
+    ORIGINAL caller (``compact()``'s own exception, always genuinely
+    overflow-shaped — the one call site where ``classify_llm_failure``
+    alone is actually safe, and where it deliberately stays, per
+    #3783's own owner-ratified default: "only exceptions that make
+    compaction impossible to continue should propagate; the default
+    should be recover" — see that call site's own comment for the
+    full trace of why #5622 (issue)'s "1 unified discriminator across
+    all 3 sites" prescription was NOT adopted there).
+
+    This function's own 2 callers (``router_loop_driver.py``, NOT
+    ``retry_loop`` here) catch a WIDER exception surface — ANY
+    exception the router/provider stack can raise from
+    ``loop.run()`` — including one neither FATAL, RETRYABLE, nor an
+    overflow at all (#5593's real incident:
     ``StructuredOutputUnsupportedModelError`` — not in
     ``FATAL_EXC_TYPES``, not a rate-limit/timeout/5xx/quota shape, so
     ``classify_llm_failure``'s fallthrough classified it OVERFLOW,
@@ -1300,9 +1301,9 @@ def is_shrinkable_overflow(exc: BaseException) -> bool:
     ``is_context_overflow_error`` signal too (litellm's typed
     ``ContextWindowExceededError``, a 413, or an overflow keyword) —
     restoring the pre-#5577 conservative default (unmatched shape =
-    False, do not enter) for every call site, which
-    ``classify_llm_failure``'s bare fallthrough was never designed to
-    answer for on its own."""
+    False, do not enter) for ``router_loop_driver.py``'s own 2 call
+    sites — the surface ``classify_llm_failure``'s bare fallthrough
+    was never designed to answer for on its own."""
     failure_class = classify_llm_failure(exc)
     if failure_class in (LLMFailureClass.FATAL, LLMFailureClass.RETRYABLE):
         return False

@@ -171,21 +171,27 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
     the ONLY large thing in history. Spill alone must fix it (watermark
     unchanged — no `compaction_check`/`compaction_completed` event).
 
-    #5622 (PR review, real-execution finding): #5622's own fix made
-    retry_loop's internal compact()-call except clause correctly
-    classify a genuinely-unrelated exception (this test's own unpinned
-    real-network reach, absent a stub) as NOT shrinkable, propagating it
-    bare instead of silently absorbing it as a fake OVERFLOW and
-    continuing the ladder anyway (the pre-#5622 misclassification bug
-    this test was accidentally relying on to survive an otherwise-fatal
-    unpinned network reach). ``LLMStub(raise_for=..., cause="byte_limit")``
-    forces retry_loop's own compact() to keep failing (a real, byte-
-    limited shape) while ANY candidate remains un-spilled — matching
-    #5615's own established pattern for isolating "spill resolves it,
-    not compact()", never letting compact() opportunistically fold the
-    huge result into a summary (a bare, unconditionally-succeeding stub
-    does exactly that instead — measured directly, breaking this test's
-    own "spill, not compaction" claim)."""
+    #5622 (PR review, real-execution finding): without a stub, this
+    test's own genuinely-unpinned real-network reach (`compact()`
+    reaching real, live `litellm`) would fail with SOME exception —
+    and `retry_loop`'s own internal compact()-call except clause
+    classifies anything neither FATAL nor RETRYABLE as OVERFLOW by
+    design (#3783's own owner-ratified default for THIS call site,
+    unconditional on the exception's own real cause — see that call
+    site's own comment for the full trace). Without a stub, that
+    silent absorption is exactly what let this test pass even while
+    genuinely reaching the network — the real defect the review
+    caught: the test's own "spill resolves it, not compact()" claim
+    was riding on an unpinned, undisclosed side channel, never on the
+    scenario it names. ``LLMStub(raise_for=..., cause="byte_limit")``
+    closes that gap directly: it forces retry_loop's own compact() to
+    keep failing with a real, DETERMINISTIC byte-limited shape while
+    ANY candidate remains un-spilled — matching #5615's own
+    established pattern for isolating "spill resolves it, not
+    compact()", never letting compact() opportunistically fold the
+    huge result into a summary (a bare, unconditionally-succeeding
+    stub does exactly that instead — measured directly, breaking this
+    test's own "spill, not compaction" claim)."""
     from reyn.dev.testing.llm_stub import LLMStub
 
     session = _make_spill_session(tmp_path, monkeypatch)
@@ -550,14 +556,19 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     must go through retry_loop's own internal compact() call at least
     once (a real 413 enters `_run_with_shrink`'s ladder, which invokes
     retry_loop regardless of `recovery_policy`) — with no stub, that
-    call reaches real, unpinned litellm and fails the whole turn (the
-    pre-#5622 classification bug used to silently absorb that failure
-    as a fake OVERFLOW instead of surfacing it). `LLMStub(raise_for=...,
-    cause="byte_limit")`, scoped to turn 1's own drive, forces a real,
+    call reaches real, unpinned litellm; `retry_loop`'s own except
+    clause classifies anything neither FATAL nor RETRYABLE as OVERFLOW
+    by design (#3783's own owner-ratified default for this call site),
+    so an unpinned network failure there is silently absorbed as a
+    fake OVERFLOW instead of surfacing — exactly the undisclosed side
+    channel this test's own "spill recovers turn 1" claim was
+    accidentally riding on. `LLMStub(raise_for=..., cause="byte_limit")`,
+    scoped to turn 1's own drive, forces a real, DETERMINISTIC
     byte-limited compact() failure instead — matching #5615's own
     established pattern — so spill (not an opportunistic compact()
-    success) is genuinely what recovers turn 1, unchanged from what
-    this test already asserts."""
+    success, nor an unpinned network reach absorbed as OVERFLOW) is
+    genuinely what recovers turn 1, unchanged from what this test
+    already asserts."""
     from reyn.dev.testing.llm_stub import LLMStub
 
     session = _make_spill_session(tmp_path, monkeypatch)
