@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
 from functools import partial as _partial
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import Spillability
 from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+from reyn.services.compaction.engine import RetryPayload as _RetryPayload
 from reyn.services.compaction.engine import is_shrinkable_overflow as _is_shrinkable_overflow
 from reyn.services.compaction.engine import wire_role as _wire_role
 
@@ -68,30 +68,6 @@ def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:
     falsified. A caller genuinely passing a wrong type now gets a loud
     ``AttributeError`` instead of a silent ``False``."""
     return bool(safety.threat_scan.narrowing_per_iteration())
-
-
-@dataclass(frozen=True)
-class _RetryPayload:
-    """#5631: the single output of ``decompose_history_for_retry``, carried as
-    one value.
-
-    Not a bag assembled to shorten a signature — these five fields are produced
-    together by one call and consumed together by one ladder, and ``seq_by_id``
-    is only meaningful alongside the very turns it indexes (it maps
-    ``id(wire_dict)`` to a real seq for exactly the dicts in ``head`` +
-    ``raw_middle`` + ``tail``, #5498/#5578). Passing them flat costs 8
-    parameters at the one call site, past the point #5631 sets for reaching
-    for an object.
-
-    Frozen because the ladder re-offers slices of these across attempts and
-    must never be the thing that mutates them.
-    """
-
-    head: "list[dict]"
-    raw_middle: "list[dict]"
-    tail: "list[dict]"
-    new_msg: dict
-    seq_by_id: "dict[int, int]"
 
 
 class RouterLoopDriver:

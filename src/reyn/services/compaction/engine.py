@@ -2610,6 +2610,37 @@ def _learned_byte_limit_clause(
     )
 
 
+@dataclass(frozen=True)
+class RetryPayload:
+    """#5631: the single output of ``decompose_history_for_retry``, carried as
+    one value.
+
+    Not a bag assembled to shorten a signature — these five fields are produced
+    together by one call and consumed together by one ladder, and ``seq_by_id``
+    is only meaningful alongside the very turns it indexes (it maps
+    ``id(wire_dict)`` to a real seq for exactly the dicts in ``head`` +
+    ``raw_middle`` + ``tail``, #5498/#5578). Passing them flat costs 8
+    parameters at the one call site, past the point #5631 sets for reaching
+    for an object.
+
+    Frozen because the ladder re-offers slices of these across attempts and
+    must never be the thing that mutates them.
+
+    Move Class (#5631 candidate 1, architect ruling — tui-coder's own
+    finding on candidate 2): landed here, not a second, parallel Parameter
+    Object in ``retry_loop``'s own signature — the two would represent
+    the SAME data clump twice. Public name (was ``_RetryPayload`` in
+    ``router_loop_driver.py``); that module now imports it from here,
+    keeping the dependency direction runtime → services.
+    """
+
+    head: "list[dict]"
+    raw_middle: "list[dict]"
+    tail: "list[dict]"
+    new_msg: dict
+    seq_by_id: "dict[int, int]"
+
+
 async def retry_loop(
     *,
     SP: str,
