@@ -51,6 +51,7 @@ def test_every_mid_turn_injectable_member_has_a_rendering():
     _sample_payloads = {
         TurnOrigin.CLIENT_INPUT: {"text": "hello"},
         TurnOrigin.AGENT_REQUEST: {"from_agent": "peer", "request": "do X"},
+        TurnOrigin.EXTERNAL_MESSAGE: {"text": "urgent update", "sender": "slack:U456"},
     }
     assert set(_sample_payloads) == set(MID_TURN_INJECTABLE), (
         "this test's own sample payloads must cover exactly "
@@ -113,6 +114,46 @@ def test_agent_request_injection_renders_role_system_not_user():
     assert rendered["role"] != "user"
     assert rendered["role"] == "system"
     assert rendered["content"] == "[agent_request:peer-agent] please redo step 1"
+
+
+# ---------------------------------------------------------------------------
+# EXTERNAL_MESSAGE — role="system", attributed by sender (owner ruling)
+# ---------------------------------------------------------------------------
+
+
+def test_external_message_injection_renders_role_system_not_user():
+    """Tier 2: accept side of the owner's ruling (2026-09-02, verbatim:
+    "入れる") to add EXTERNAL_MESSAGE to MID_TURN_INJECTABLE, overriding
+    architect/lead-coder's own recommendation to exclude it — an injected
+    EXTERNAL_MESSAGE must NOT render as role="user" on the wire (would be
+    indistinguishable from the operator's own text, reopening #3595's own
+    closed class one layer down). Renders role="system", attributed by
+    ``sender`` (the individual peer — "slack:U456" — per TurnOrigin.
+    EXTERNAL_MESSAGE's own docstring: sender is a strictly better source
+    than the bare kind for a consumer that needs to name the transport).
+
+    Reviewer strip (recorded here, to be executed manually before
+    landing): removing the ``TurnOrigin.EXTERNAL_MESSAGE`` branch from
+    ``_render_mid_turn_injection`` makes this assertion go red."""
+    rendered = _render_mid_turn_injection(
+        TurnOrigin.EXTERNAL_MESSAGE,
+        {"text": "urgent update", "sender": "slack:U456"},
+    )
+    assert rendered["role"] != "user"
+    assert rendered["role"] == "system"
+    assert rendered["content"] == "[external_message:slack:U456] urgent update"
+
+
+def test_external_message_injection_without_sender_falls_back_to_kind():
+    """Tier 2: a payload with no ``sender`` is a REAL case (``mcp.server.
+    send_to_agent_impl``'s own envelope carries none), not hypothetical —
+    falls back to the bare ``kind`` rather than raising, per lead-coder's
+    own recommendation."""
+    rendered = _render_mid_turn_injection(
+        TurnOrigin.EXTERNAL_MESSAGE, {"text": "hi from mcp peer"},
+    )
+    assert rendered["role"] == "system"
+    assert rendered["content"] == "[external_message:external_message] hi from mcp peer"
 
 
 # ---------------------------------------------------------------------------

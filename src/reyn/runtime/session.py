@@ -455,26 +455,44 @@ def _render_mid_turn_injection(kind: str, payload: dict) -> "dict[str, str]":
     ``test_every_mid_turn_injectable_member_has_a_rendering`` for the
     static coverage pin that catches this before runtime, too).
 
-    #5677/#5678 disclosure — "byte-identical" (below, and in
+    #5677/#5678 — "byte-identical" (below, and in
     ``_commit_mid_turn_injection``'s own comment) means the wire dict
     THIS TURN and the history entry ``_commit_mid_turn_injection``
-    appends are the same shape, for the SAME item. It does NOT mean the
-    history entry stays visible in a LATER turn's projection.
-    ``role="system"`` is outside ``router_history_buffer.py``'s
-    ``build_history``/``decompose_history_for_retry`` role allowlists
-    (``router_history_buffer.py:895`` and ``:1154`` — neither includes
-    ``"system"``), so an ``AGENT_REQUEST`` injection's history entry
-    renders on turn N's wire but is silently excluded from every turn
-    N+1 and later projection. Closing this gap (so the injected text
-    stays visible across turns, not just the turn it arrived in) is
-    #5678's scope, not this function's — see #5678 for the tracked
-    defect.
+    appends are the same shape, for the SAME item. #5678 landed the
+    ``Disclosure`` axis (``chat_message.py``) that makes a ``role=
+    "system"`` entry ALSO stay visible in LATER turns' projections —
+    ``_commit_mid_turn_injection`` declares every injected entry
+    ``disclosure=Disclosure.MODEL`` regardless of kind (harmless for
+    ``CLIENT_INPUT``'s own ``role="user"`` — the axis does not apply
+    outside ``role="system"``), so this is no longer a gap: an
+    injected ``AGENT_REQUEST``/``EXTERNAL_MESSAGE`` entry now persists
+    across turn boundaries the same way the wire splice delivers it
+    for THIS turn.
     """
     if kind == TurnOrigin.CLIENT_INPUT:
         return {"role": "user", "content": payload.get("text") or ""}
     if kind == TurnOrigin.AGENT_REQUEST:
         name = payload.get("from_agent") or kind
         text = payload.get("request") or ""
+        return {"role": "system", "content": _format_ride_along_attribution(kind, name, text)}
+    if kind == TurnOrigin.EXTERNAL_MESSAGE:
+        # #5677 (owner ruling, overriding architect/lead-coder's own
+        # recommendation to exclude it): ``sender`` (e.g. ``"slack:
+        # U456"``) names the INDIVIDUAL peer, not just the transport —
+        # ``TurnOrigin.EXTERNAL_MESSAGE``'s own docstring names it as
+        # the strictly better source for exactly this ("a consumer
+        # that needs the transport ITSELF already has sender..."). A
+        # payload with no ``sender`` is a REAL case, not hypothetical
+        # (``mcp.server.send_to_agent_impl``'s own envelope carries
+        # none — confirmed directly, no ``sender`` key anywhere in
+        # that module) — falls back to the bare ``kind`` (lead-coder's
+        # own recommendation), giving `[external_message:...]` rather
+        # than raising: an attribution missing the PEER is still a
+        # true, non-operator attribution, and a hard-raise here would
+        # make an ordinary, expected payload shape a router turn
+        # failure.
+        name = payload.get("sender") or kind
+        text = payload.get("text") or ""
         return {"role": "system", "content": _format_ride_along_attribution(kind, name, text)}
     raise AssertionError(
         f"#5677: MID_TURN_INJECTABLE contains {kind!r} but "
