@@ -521,6 +521,18 @@ class RouterHistoryBuffer:
         # (same no-op-if-absent convention ``media_store``/
         # ``project_dir_fn`` above already use).
         self._history_appender = history_appender
+        # #5628 (owner: "技術負債を後回しにしないで利子着く前に解消して") —
+        # ``_spill_supersede_map`` used to re-scan the WHOLE history on
+        # EVERY ``build_history``/``decompose_history_for_retry`` call
+        # (O(n) per call, history append-only and monotonically growing —
+        # owner's own real machine: 9M chars, thousands of turns). Built
+        # lazily (once) on first access, then updated incrementally, O(1)
+        # per new spill record, at the ONE place a spill record is ever
+        # created (:meth:`spill_turn_content`) — never re-derived from a
+        # full scan again after that. See :meth:`_spill_supersede_map`'s
+        # own docstring for why this does NOT reintroduce the pre-#5612
+        # ``_spill_overlay`` cache-drift hazard it replaced.
+        self._spill_supersede_cache: "dict[str, str] | None" = None
 
     @property
     def _model(self) -> str:
@@ -566,34 +578,59 @@ class RouterHistoryBuffer:
         return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
 
     def _spill_supersede_map(self, history: "list | None" = None) -> "dict[str, str]":
-        """#5612: content_hash -> offloaded preview text, derived FRESH
-        from a scan of ``history`` — the durable replacement for the
-        pre-#5612 ``_spill_overlay`` in-memory dict. Same shape
-        :meth:`_latest_summary` already uses for the compaction
-        watermark: never a separately-maintained cache, always re-derived
-        from the ONE durable source (owner ruling: history.jsonl is the
-        only state).
+        """#5612/#5628: content_hash -> offloaded preview text.
+
+        #5628 (owner: "技術負債を後回しにしないで利子着く前に解消して",
+        measured cost: a full O(n) scan of ``history`` on EVERY call —
+        2000 turns cost 0.008s/0.035s per ``build_history``/
+        ``decompose_history_for_retry`` call, #5617's own drive; history
+        is append-only and monotonically growing, owner's own real
+        machine measured in the thousands of turns): built ONCE, lazily,
+        on first access (this method's own first call — a fresh scan,
+        identical to the pre-#5628 logic, using ``history`` if the
+        caller already fetched it, the SAME #2939 avoid-a-redundant-
+        ``self._history_fn()``-call convention as ``_latest_summary``/
+        ``_compaction_watermark`` above); every call AFTER that returns
+        the SAME cached dict — the actual per-append update happens in
+        :meth:`spill_turn_content`, the ONE place a ``role="spill_
+        record"`` entry is ever created, at O(1) per new record (never a
+        rescan).
+
+        NOT invalidated on rewind/branch-switch (``history_fn`` — in
+        production ``Session._active_branch_history`` — can return a
+        narrower or different-branch view across calls). Disclosed,
+        deliberate: a cache entry for a spill record no longer on the
+        active branch is harmless — it is only ever CONSULTED by
+        ``_serialise_turn``'s own ``content_hash`` lookup against a turn
+        actually present in the CURRENT ``history``/``build_history()``
+        population; a turn no longer visible after a rewind is never
+        looked up at all. The only theoretical staleness is 2 DIFFERENT
+        branches happening to carry a turn with byte-identical content
+        (an astronomically unlikely sha256 collision-by-coincidence, not
+        a data-loss or security concern) — unlike ``_latest_summary``'s
+        own watermark (a SINGLE authoritative value that must reflect
+        the CURRENT branch exactly, where staleness would silently hide
+        or re-expose whole spans), this is a many-independent-entries
+        map where a stale entry can only ever fail to fire for content
+        that no longer exists to match it.
 
         Every ``role="spill_record"`` entry supersedes the ORIGINAL turn
         whose content hashed to ``SPILL_TARGET_CONTENT_HASH_META_KEY`` —
         idempotent by construction (:meth:`spill_turn_content` never
         appends a second record for the same content_hash), so "keep the
         last one seen" here is defensive, not load-bearing.
-
-        ``history`` — same #2939 caller-must-pass-if-already-fetched
-        convention as ``_latest_summary``/``_compaction_watermark``
-        above (avoid a second, redundant ``self._history_fn()`` call on
-        the turn's hot path).
         """
-        out: "dict[str, str]" = {}
-        for m in self._history_fn() if history is None else history:
-            if m.role != SPILL_RECORD_MESSAGE_ROLE:
-                continue
-            target_hash = (m.meta or {}).get(SPILL_TARGET_CONTENT_HASH_META_KEY)
-            if not target_hash or not isinstance(m.content, str):
-                continue
-            out[target_hash] = m.content
-        return out
+        if self._spill_supersede_cache is None:
+            out: "dict[str, str]" = {}
+            for m in self._history_fn() if history is None else history:
+                if m.role != SPILL_RECORD_MESSAGE_ROLE:
+                    continue
+                target_hash = (m.meta or {}).get(SPILL_TARGET_CONTENT_HASH_META_KEY)
+                if not target_hash or not isinstance(m.content, str):
+                    continue
+                out[target_hash] = m.content
+            self._spill_supersede_cache = out
+        return self._spill_supersede_cache
 
     def _serialise_turn(self, m: Any, spill_map: "dict[str, str] | None" = None) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
@@ -1251,6 +1288,17 @@ class RouterHistoryBuffer:
                     spillability=Spillability.NEVER,
                 )
                 self._history_appender(record)
+                # #5628: the ONE place a spill record is ever created —
+                # update the incremental cache directly, O(1), instead of
+                # leaving it to go stale until something re-derives it
+                # from a full scan (nothing ever does, post-#5628 — see
+                # _spill_supersede_map's own docstring). The `already`
+                # check above already warmed the cache (calling
+                # _spill_supersede_map() builds it if it was still
+                # None) — never reached when `already` is True, so this
+                # never overwrites an existing entry either.
+                assert self._spill_supersede_cache is not None  # warmed just above
+                self._spill_supersede_cache[content_hash] = replacement
         return replacement
 
     def build_system_prompt(self) -> str:
