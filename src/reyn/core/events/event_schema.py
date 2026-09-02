@@ -275,6 +275,14 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   CLOSED reyn.runtime.turn_origin.TurnOrigin vocabulary, which is where
     #   the members and their reasons live. Lets subscribers distinguish human
     #   triggers from automated ones without parsing the payload.
+    # skipped_over (#5647, MID-TURN injections only — absent on the ordinary
+    #   turn-boundary emit): what the injection looked PAST in the inbox to
+    #   reach the operator's message, as [{"kind", "msg_id"}] in arrival
+    #   order; empty list when it looked past nothing. #3792 originally
+    #   stopped a mid-turn peek at the first ineligible head because skipping
+    #   "would leave no trace anywhere" — this field IS that trace, which is
+    #   what let #5647 lift the stop. Enumerated, not counted: a reader has to
+    #   be able to tell WHICH work was overtaken, not just how much.
     "turn_started": frozenset({"kind"}),
     # turn_completed: emitted in Session._run_router_loop() immediately after
     #   RouterLoopDriver.run_turn() returns — the router loop has reached a
