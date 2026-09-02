@@ -7713,6 +7713,39 @@ class Session:
             "user_directed" if kind == TurnOrigin.CLIENT_INPUT else "auto_improvement"
         )
 
+    def _last_confirmed_human_prompt(self) -> str:
+        """#5648 (owner-hit, issue #5648 point 5): the most recent role="user"
+        history entry whose own ``meta["origin"]`` reads ``"user_directed"``
+        (stamped by ``_handle_inbox_text``, see that call site's own
+        comment) — i.e. a message this session can actually attribute to a
+        human, as opposed to a hook/cron/external-message/peer-session turn
+        that also lands as a bare ``role="user"`` entry with no other
+        marker of its own.
+
+        Used as the rewind-anchor SOURCE for a non-``"user_directed"`` turn
+        (``_run_router_loop``'s own ``cut_generation`` call site) — a real
+        incident: the pre-#5648 anchor used THIS turn's own triggering text
+        unconditionally, so a hook self-continuation's own declaration text
+        ("このターンで★宣言した作業は…") was captured as the checkpoint's
+        preview, defeating the whole point of the anchor (owner: "当時の
+        プロンプトの先頭行" — the prompt, not whatever text happened to
+        trigger this turn).
+
+        Scans ``self.history`` (the resident, in-memory population — same
+        scope every other in-turn read of history already uses; this is a
+        live-turn convenience read, not a rewind-time reconstruction) from
+        the end backward. Forward-only fix: entries written before this PR
+        carry no ``origin`` key and are skipped, same as a genuinely
+        non-human one — the existing 242 pre-#5648 anchors on reyn-self are
+        NOT regenerated (lead-coder's own scope note); the next checkpoint
+        self-heals. ``""`` when nothing qualifies (a session with only
+        hook/peer turns so far) — the SAME "no anchor" degrade
+        ``cut_generation`` already has for an empty ``anchor``."""
+        for m in reversed(self.history):
+            if m.role == "user" and isinstance(m.meta, dict) and m.meta.get("origin") == "user_directed":
+                return m.text
+        return ""
+
     async def _handle_pipeline_result(self, payload: dict) -> None:
         """IS-2: surface an async pipeline's terminal result (``pipeline_result``)
         to the LLM as one router turn — the driver already formatted the
@@ -8093,7 +8126,20 @@ class Session:
 
         self._append_history(ChatMessage(
             role="user", content=content, ts=_now_iso(),
-            meta={"chain_id": chain_id},
+            # #5648: ``origin`` records THIS turn's own already-computed
+            # provenance (``self._current_turn_origin``, stamped by
+            # ``_stamp_execution_context`` before every dispatch, including
+            # this shared body's own 4 non-CLIENT_INPUT callers —
+            # external_message/cron/pipeline_nudge/peer_session all route
+            # here too, #3595 S5). A role="user" entry alone cannot tell a
+            # genuine human prompt apart from one of those — the rewind
+            # anchor (below, ``cut_generation``'s own call site) needs
+            # exactly that distinction, and this is the one place the
+            # answer is known and durable. Forward-only: existing entries
+            # written before this field existed have no ``origin`` key,
+            # which the anchor-search treats as "not a confirmed human
+            # prompt" (never backfilled, next checkpoint self-heals).
+            meta={"chain_id": chain_id, "origin": self._current_turn_origin},
             # #5514 §4.2: whether the client can tell hand-typed apart
             # from pasted is unconfirmed at this layer (terminal: has
             # bracketed paste; web/--print: may have no such concept at
@@ -10560,8 +10606,22 @@ class Session:
                             if not _external_cancelled:
                                 # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint.
                                 # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
+                                # #5648 point 5: ``user_text`` is only a genuine human
+                                # prompt when THIS turn's own origin is
+                                # "user_directed" — a hook/cron/external-message/
+                                # peer-session turn's own triggering text is not one
+                                # (see _last_confirmed_human_prompt's own docstring
+                                # for the real incident this closes). Everything else
+                                # about cut_generation is unchanged: an empty result
+                                # still degrades to "no anchor", same as always.
+                                _anchor_source = (
+                                    user_text
+                                    if self._current_turn_origin == "user_directed"
+                                    else self._last_confirmed_human_prompt()
+                                )
                                 await self._journal.cut_generation(
-                                    anchor=_truncate_anchor(user_text), full_message=user_text,
+                                    anchor=_truncate_anchor(_anchor_source),
+                                    full_message=_anchor_source,
                                 )
                         finally:
                             if _stall_seconds is not None:
