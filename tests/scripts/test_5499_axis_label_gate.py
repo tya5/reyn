@@ -1,88 +1,106 @@
-"""Tier 1: #5499 — the pure decision logic behind the axis-label gate.
+"""Tier 1: #5499/#5519 — the pure decision logic behind the axis-label gate.
 
-See `scripts/axis_label_gate.py`'s own module docstring for why the
-vocabulary is a small hand-written pattern (not derived from label
-description or color — both were measured and rejected) and why both
-directions of live-reconciliation must be checked, not just one.
+See `scripts/axis_label_gate.py`'s own module docstring for the full design
+history: #5499's first landing carried a hand-written name/prefix
+vocabulary (description-text and label-color derivation were both measured
+and rejected at the time); #5519 replaced it with a description MARKER
+every axis label now carries on GitHub, so the vocabulary lives entirely in
+live label descriptions and this script no longer hand-enumerates any
+label name.
+
+Only the pure marker-check (:func:`label_declares_axis`) and the pure
+decision functions built on top of it are tested here — lead-coder's own
+caution (#5519): a test that hits the live `gh api` label list would be
+network-dependent and CI-flaky. The live reconciliation
+(:func:`resolve_axis_vocabulary` against a real label list) is exercised
+by the gate script itself at run time, not by this file.
 """
 from __future__ import annotations
 
 from scripts.axis_label_gate import (
-    AXIS_LABEL_VOCABULARY,
+    AXIS_DESCRIPTION_MARKER,
     NEEDS_AXIS_LABEL,
     compute_label_action,
     format_needs_axis_comment,
+    label_declares_axis,
     resolve_axis_vocabulary,
 )
 
 
-def test_the_vocabulary_constant_itself_is_not_empty() -> None:
-    """Tier 1: accept-side / noise guard, lead-coder's #5499 condition ②
-    — independent of any live reconciliation, the constant this whole
-    gate is built on must be non-empty, or every downstream test below
-    would pass vacuously."""
-    assert AXIS_LABEL_VOCABULARY.prefixes
-    assert AXIS_LABEL_VOCABULARY.exact
+def test_the_marker_constant_itself_is_not_empty() -> None:
+    """Tier 1: accept-side / noise guard — independent of any live
+    reconciliation, the marker this whole gate is built on must be a real,
+    non-empty string, or every downstream test below would pass vacuously
+    (a blank marker would make ``str.endswith("")`` always True)."""
+    assert AXIS_DESCRIPTION_MARKER
 
 
-def test_resolve_matches_a_prefixed_live_label_not_individually_named() -> None:
-    """Tier 1: a live label matching a PREFIX family (not itself in the
-    hand-written exact set) must be picked up — this is the whole point
-    of using prefixes instead of enumerating every roi:/thin:/priority:
-    value."""
-    live = ["roi:high", "bug", "documentation", *AXIS_LABEL_VOCABULARY.exact]
+def test_label_declares_axis_when_description_ends_with_the_marker() -> None:
+    """Tier 1: the accept side — a description ending with the marker,
+    whatever text precedes it (mirrors the real repo labels: some already
+    mention "軸" in prose, some don't — the marker is what counts, not the
+    prose around it)."""
+    assert label_declares_axis(f"憲章の cross-cutting band に掛かる {AXIS_DESCRIPTION_MARKER}")
+    assert label_declares_axis(f"plain english description {AXIS_DESCRIPTION_MARKER}")
+    # Trailing whitespace after the marker must not silently un-mark it.
+    assert label_declares_axis(f"trailing space after marker {AXIS_DESCRIPTION_MARKER}  ")
+
+
+def test_label_declares_axis_is_false_without_the_marker() -> None:
+    """Tier 1: deny-side pin — the property #5519's own acceptance
+    criterion names explicitly: adding a brand-new label whose
+    description does NOT carry the marker must never be picked up as an
+    axis label, however plausible its own prose sounds (including prose
+    that mentions "軸"/"axis" without the structured marker) — a "treats
+    everything as axis" implementation would pass every OTHER test in
+    this file but fail this one."""
+    assert not label_declares_axis("Something isn't working")
+    assert not label_declares_axis("")
+    assert not label_declares_axis(None)
+    # Mentions the concept in prose but never carries the marker itself —
+    # this is the exact #5499-era gap #5519 exists to close: prose-text
+    # scanning cannot be trusted, only the structured marker can.
+    assert not label_declares_axis("この issue は優先順位の軸に関わる")
+    # The marker appears, but not at the END — must not match either
+    # (avoids treating "[axis] this label's real subject" as declared,
+    # which would let an unrelated axis-shaped label slip through unmarked).
+    assert not label_declares_axis(f"{AXIS_DESCRIPTION_MARKER} not trailing")
+
+
+def test_resolve_matches_only_labels_whose_description_carries_the_marker() -> None:
+    """Tier 1: :func:`resolve_axis_vocabulary` end to end — a marked label
+    is matched, an unmarked one (however label-like its NAME looks) is
+    not, and there is no hand-written name list involved anywhere in this
+    path."""
+    live = [
+        {"name": "band", "description": f"cross-cutting band {AXIS_DESCRIPTION_MARKER}"},
+        {"name": "priority:next", "description": f"次に取るべき {AXIS_DESCRIPTION_MARKER}"},
+        {"name": "bug", "description": "Something isn't working"},
+        {"name": "roi:high", "description": None},  # marker-less: not matched
+    ]
     vocab = resolve_axis_vocabulary(live)
-    assert "roi:high" in vocab.matched
+    assert vocab.matched == frozenset({"band", "priority:next"})
+    assert "bug" not in vocab.matched
+    assert "roi:high" not in vocab.matched, (
+        "a plausibly-named label with no marker in its description must "
+        "never be treated as an axis label — this is the deny-side pin "
+        "#5519's acceptance criteria name explicitly"
+    )
     assert vocab.ok
 
 
-def test_resolve_matches_an_exact_named_live_label() -> None:
-    """Tier 1: a live label in the hand-written exact set is matched."""
-    live = ["bug", *AXIS_LABEL_VOCABULARY.exact]
-    vocab = resolve_axis_vocabulary(live)
-    assert "band" in vocab.matched
-    assert vocab.ok
-
-
-def test_resolve_does_not_match_an_unrelated_live_label() -> None:
-    """Tier 1: deny-side sibling — a live label matching neither a prefix
-    nor the exact set (the ordinary case: bug/documentation/enhancement/
-    ...) must never be treated as an axis label."""
-    vocab = resolve_axis_vocabulary(["bug", "documentation", "enhancement"])
-    assert vocab.matched == frozenset()
-
-
-def test_resolve_flags_red_when_every_named_axis_label_vanished() -> None:
+def test_resolve_flags_red_when_no_live_label_carries_the_marker() -> None:
     """Tier 1: #5482's "a scanned population must never legitimately
-    reach 0" shape — if the live label list contains NONE of the
-    vocabulary's names at all, ``ok`` must be False, never silently
-    treated as "nothing to check"."""
-    vocab = resolve_axis_vocabulary(["bug", "documentation"])
+    reach 0" shape — covers BOTH "every marked label was deleted" and
+    "the marker was stripped from every description" identically, since
+    there is no separate hand-list side to distinguish them anymore."""
+    live = [
+        {"name": "bug", "description": "Something isn't working"},
+        {"name": "documentation", "description": "Docs"},
+    ]
+    vocab = resolve_axis_vocabulary(live)
     assert not vocab.matched
     assert not vocab.ok
-
-
-def test_resolve_flags_red_when_an_exact_name_vanished_even_if_others_match() -> None:
-    """Tier 1: lead-coder's #5499 correction — a vanished EXACT name must
-    fail (``ok`` False) even when OTHER vocabulary members still match
-    live labels. A pre-fix version of this gate only checked the
-    intersection-empty case and silently narrowed coverage otherwise
-    (the same shape #5517 was blocked for) — this pins the fix."""
-    live = ["roi:high", "thin:retrieval"]  # "band" et al. never appear
-    vocab = resolve_axis_vocabulary(live)
-    assert vocab.matched  # some real match exists...
-    assert vocab.vanished_exact_names  # ...but an exact name is missing
-    assert not vocab.ok  # ...so this must still be red
-
-
-def test_resolve_reports_no_vanished_names_when_all_exact_names_are_live() -> None:
-    """Tier 1: accept-side sibling to the previous test — when every
-    exact name in the vocabulary is present live, nothing is reported as
-    vanished."""
-    live = set(AXIS_LABEL_VOCABULARY.exact) | {"bug"}
-    vocab = resolve_axis_vocabulary(sorted(live))
-    assert vocab.vanished_exact_names == ()
-    assert vocab.ok
 
 
 def test_action_is_add_when_issue_has_no_axis_label() -> None:
@@ -115,8 +133,8 @@ def test_action_is_noop_when_needs_axis_already_correctly_present() -> None:
 def test_comment_names_the_vocabulary_actually_checked() -> None:
     """Tier 1: architect's #5499 condition ② — the needs-axis comment
     must enumerate the vocabulary used THIS run, so a false positive from
-    a not-yet-pattern-matched new axis label is self-explaining rather
-    than silent."""
+    an unmarked label is self-explaining rather than silent."""
     comment = format_needs_axis_comment(frozenset({"band", "roi:high"}))
     assert "band" in comment
     assert "roi:high" in comment
+    assert AXIS_DESCRIPTION_MARKER in comment

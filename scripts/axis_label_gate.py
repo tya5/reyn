@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#5499 — flag an issue with `needs-axis` the moment it carries no
+"""#5499/#5519 — flag an issue with `needs-axis` the moment it carries no
 priority-axis label, and un-flag it the moment it gains one.
 
 ## Why this exists (owner + lead-coder measurement, #5497/#5499)
@@ -15,69 +15,55 @@ failure mode is forgetting the rule exists at all. This closes the gap the
 way CLAUDE.md's own hard rule prescribes: "If CI can catch the violation,
 write the gate, not a rule here."
 
-## What counts as an "axis" label — measured, not assumed
+## What counts as an "axis" label — a description marker, not a hand list
 
-The obvious design ("derive the vocabulary from each label's own
-`description`, no hand list at all") was tried first and REJECTED by
-direct measurement: of the 8 axis labels
-`docs/deep-dives/contributing/issue-management.md` §4/§5 names (`band`,
-`owner-hit`, `silent`, `blocks-others`, `ours-only`, `thin:retrieval`,
-`thin:evaluation`, `priority:next`) plus the `no-axis` opt-out, only 3
-(`no-axis`, `ours-only`, `priority:next`) even contain the word "軸"
-anywhere in their description — `band`/`owner-hit`/`silent`/
-`blocks-others`/`thin:retrieval`/`thin:evaluation` do not, so no
-description-text scan can recover the set. Filed as #5519: a common
-description marker (e.g. a leading `axis:`) would close this gap for
-real, but editing repo labels is owner/lead territory, out of scope here.
+#5499's own first landing tried deriving the vocabulary straight from each
+label's `description` and rejected it by direct measurement: of the 9 axis
+labels (`band`, `owner-hit`, `silent`, `blocks-others`, `ours-only`,
+`thin:retrieval`, `thin:evaluation`, `priority:next`, `no-axis`), only 3
+even contained the word "軸" anywhere in their description — no scan of the
+EXISTING text could recover the set, so #5499 fell back to a small
+hand-written pattern in this script instead (prefix families plus a
+hand-enumerated exact-name set), which #5519 itself named as the disclosed
+limitation: "a new, unprefixed axis is created" still requires editing this
+file, and a renamed/deleted exact-name label silently narrows the gate's
+coverage until someone notices the RED.
 
-The fallback (architect ruling, #5499, 2026-08-29): a small PATTERN lives
-in this script, in ONE named constant (:data:`AXIS_LABEL_VOCABULARY` —
-lead-coder's own follow-up correction: "語彙は script 内に散らさず1つの
-名前付き定数に", the same landing shape #5517's own
-``QUERIED_CAPABILITY_FIELDS_BY_MODALITY`` took) — not a hand-enumerated
-list of every current axis label value, but the handful of PREFIX
-FAMILIES (`priority:`, `roi:`, `thin:`) plus standalone names that
-#5497's own investigation already measured (`git grep "priority:next|
-roi:|owner-hit|ours-only|no-axis|thin:retrieval"`). A new `roi:*` /
-`thin:*` / `priority:*` value is picked up automatically; the exact-name
-set only grows when a genuinely new, unprefixed axis is created (rare,
-and each such PR already touches this file's own docstring by
-construction). Label COLOR was also tried and rejected (lead-coder's own
-measurement): `thin:retrieval` and `thin:evaluation` share the identical
-color `5319E7`, so color carries no more structure than description does.
+#5519 (architect ruling via lead-coder, 2026-08-30) closes that gap for
+real: every axis label's `description` on GitHub now ENDS with the literal
+marker :data:`AXIS_DESCRIPTION_MARKER` (`"[axis]"`) — a small, one-time
+repo-label edit (owner/lead territory, done alongside this PR). The label
+DECLARES its own axis-hood; this script only has to recognise the marker
+(:func:`label_declares_axis`, a pure string check with no vocabulary of
+label names at all), then intersect that against the live repo label list
+(:func:`resolve_axis_vocabulary`) exactly the way #5499 always did. A new
+axis label picked up automatically the moment its own description carries
+the marker — no script edit, ever, for any future axis (prefixed or not).
+`no-axis` (the explicit "judged, none applies" opt-out) carries the same
+marker: an issue carrying it has been triaged and must NOT be flagged,
+the same as any other axis label.
 
-**The vocabulary actually used every run is the INTERSECTION of this
-pattern against the LIVE repo label list** (:func:`resolve_axis_vocabulary`)
-— never trusted blind. BOTH directions of that intersection are checked
-(lead-coder's #5499 correction to an earlier one-directional draft — "誰
-かがラベルを1つ消した日に gate が黙って狭まり…緑のままになります", the
-same "silently narrows, stays green" shape #5517 was just fixed for):
-
-  1. live label matched a prefix → included in ``matched`` by
-     construction (every live label is scanned against the pattern, so
-     there is no live-side gap to separately detect).
-  2. pattern-declared exact name → must still exist live. If ANY exact
-     name has vanished (a rename/delete), :attr:`AxisVocabulary.ok` is
-     False and the workflow fails RED — not a silent note, since a
-     silent note is exactly the hole this correction closes.
-
-If the LIVE-matched intersection is additionally EMPTY (every named axis
-label vanished from the repo — #5482's own "a scanned population must
-never legitimately reach 0" shape), that is also RED. A separate test
-(`test_5499_axis_label_gate.py`) asserts :data:`AXIS_LABEL_VOCABULARY`
-itself is non-empty independent of any live reconciliation — lead-coder's
-#5499 condition ②, PR-body vacuity disclosure "merge 後 誰にも届きません".
+If the LIVE-matched set is EMPTY (every marked axis label vanished from the
+repo, or the marker itself was stripped from every description — #5482's
+own "a scanned population must never legitimately reach 0" shape), that is
+RED, not silently "nothing to check". A separate test
+(`test_5499_axis_label_gate.py`) pins :func:`label_declares_axis` itself
+against marked/unmarked description strings, purely (no network) — the
+live reconciliation (:func:`resolve_axis_vocabulary` against a REAL `gh
+api` label list) is exercised only by this script at gate-run time, per
+lead-coder's own caution that a label-description-dependent test would be
+network-flaky in CI if it tried to hit GitHub directly.
 
 ## Both directions, by design (accept criterion, architect + lead-coder)
 
 A gate that only ever ADDS `needs-axis` and never removes it is the same
-shape as tonight's #5517 incident (a predicate nobody could falsify in
-the direction that matters) — "always flag, never unflag" passes every
-smoke test while doing nothing useful once an issue IS triaged. This
-module's :func:`compute_label_action` is symmetric: MISSING → add,
-PRESENT → remove, and a `needs-axis`-carrying issue that already has no
-other axis label is a no-op (idempotent — the workflow may fire on
-`opened`, `labeled`, AND `unlabeled`, and must not toggle-loop).
+shape as #5517's own incident (a predicate nobody could falsify in the
+direction that matters) — "always flag, never unflag" passes every smoke
+test while doing nothing useful once an issue IS triaged. This module's
+:func:`compute_label_action` is symmetric: MISSING → add, PRESENT →
+remove, and a `needs-axis`-carrying issue that already has no other axis
+label is a no-op (idempotent — the workflow may fire on `opened`,
+`labeled`, AND `unlabeled`, and must not toggle-loop).
 
 ## Scope: never closes, never blocks
 
@@ -95,78 +81,56 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class _AxisLabelPattern:
-    """Single named constant carrying the whole vocabulary definition
-    (lead-coder ruling, #5499, 2026-08-29: "語彙は script 内に散らさず1つ
-    の名前付き定数に" — the same landing shape #5517's
-    ``QUERIED_CAPABILITY_FIELDS_BY_MODALITY`` took). Neither field is a
-    structural derivation — both description text (only 3/9 axis labels
-    even contain "軸") and label color (``thin:retrieval`` and
-    ``thin:evaluation`` share the identical color ``5319E7``, measured by
-    lead-coder) were tried and rejected. The hand-written ``exact`` set is
-    a disclosed limitation, not a design choice — filed as #5519."""
-
-    # Prefix families: any live label starting with one of these counts
-    # as an axis label, whatever value follows the colon (`roi:high`,
-    # `thin:retrieval`, a future `priority:blocked`, ...) — no hand-
-    # enumeration of every value in a family.
-    prefixes: "tuple[str, ...]"
-    # Exact, unprefixed axis-label names — #5497's own measured set
-    # (`git grep "priority:next|roi:|owner-hit|ours-only|no-axis|thin:
-    # retrieval"`), minus the ones already covered by a prefix above.
-    # `no-axis` is included: it is the explicit "judged, none applies"
-    # marker — an issue carrying it has been triaged and must NOT be
-    # flagged.
-    exact: "frozenset[str]"
-
-    def matches(self, label_name: str) -> bool:
-        if label_name in self.exact:
-            return True
-        return any(label_name.startswith(prefix) for prefix in self.prefixes)
-
-
-AXIS_LABEL_VOCABULARY = _AxisLabelPattern(
-    prefixes=("priority:", "roi:", "thin:"),
-    exact=frozenset(
-        {"band", "owner-hit", "silent", "blocks-others", "ours-only", "no-axis"}
-    ),
-)
+# #5519: the ONE marker every axis label's description ends with — see
+# module docstring. Kept as a single named constant, same landing shape
+# #5499's own AXIS_LABEL_VOCABULARY took (lead-coder: "語彙は script 内に
+# 散らさず1つの名前付き定数に"), even though this constant is now a
+# single string, not a name list — the label descriptions on GitHub are
+# the vocabulary now, not this file.
+AXIS_DESCRIPTION_MARKER = "[axis]"
 
 NEEDS_AXIS_LABEL = "needs-axis"
 
 
+def label_declares_axis(description: "str | None") -> bool:
+    """Pure — no I/O. True iff *description* ends with
+    :data:`AXIS_DESCRIPTION_MARKER` (trailing whitespace ignored, so a
+    stray trailing space on GitHub's own side does not silently un-mark a
+    label). A label whose description is missing/blank, or that mentions
+    "軸"/"axis" in prose without the structured marker, does NOT count —
+    this is the one thing that makes the vocabulary machine-checkable
+    instead of prose-checkable (#5519's own reason for existing)."""
+    return (description or "").rstrip().endswith(AXIS_DESCRIPTION_MARKER)
+
+
 @dataclass(frozen=True)
 class AxisVocabulary:
-    """The live-reconciled result of matching :data:`AXIS_LABEL_VOCABULARY`
-    against the repo's actual label list — see module docstring. ``ok`` is
-    false whenever EITHER direction of the reconciliation found a gap —
-    lead-coder's #5499 correction: reporting a vanished exact name without
-    failing the job is the exact "gate silently narrows, stays green"
-    shape #5517 was just fixed for. Both directions are checked:
-    live-label-matched-a-prefix → always included in ``matched`` (by
-    construction — every live label is scanned against the pattern, so
-    there is no live-side gap to separately detect); pattern-exact-name
-    → must still exist live (``vanished_exact_names``, checked here)."""
+    """The live-reconciled result of scanning the repo's actual labels for
+    :func:`label_declares_axis` — see module docstring. ``ok`` is false
+    when the matched set is empty: #5482's own "a scanned population must
+    never legitimately reach 0" shape, now covering both "every marked
+    label was deleted" and "the marker was stripped from every
+    description" in one check, since both look identical from here (a
+    label declares axis-hood or it does not; there is no separate
+    hand-list side to go stale)."""
 
-    matched: "frozenset[str]"  # live labels that satisfy the pattern
-    vanished_exact_names: "tuple[str, ...]"  # exact names with no live match
+    matched: "frozenset[str]"  # live label names whose description is marked
 
     @property
     def ok(self) -> bool:
-        return bool(self.matched) and not self.vanished_exact_names
+        return bool(self.matched)
 
 
-def resolve_axis_vocabulary(live_label_names: "list[str]") -> AxisVocabulary:
-    """Pure — no I/O. Intersects :data:`AXIS_LABEL_VOCABULARY` against a
-    live label name list."""
-    live = set(live_label_names)
-    matched = frozenset(name for name in live if AXIS_LABEL_VOCABULARY.matches(name))
-    vanished = tuple(
-        sorted(name for name in AXIS_LABEL_VOCABULARY.exact if name not in live)
+def resolve_axis_vocabulary(live_labels: "list[dict]") -> AxisVocabulary:
+    """Pure — no I/O. *live_labels* is the repo's label list, each entry
+    carrying at least ``name`` and ``description`` (the shape ``gh api
+    repos/<repo>/labels`` returns). No hand-written name list is
+    consulted at all — every live label is scanned on its own
+    description."""
+    matched = frozenset(
+        entry["name"] for entry in live_labels if label_declares_axis(entry.get("description"))
     )
-    return AxisVocabulary(matched=matched, vanished_exact_names=vanished)
+    return AxisVocabulary(matched=matched)
 
 
 def compute_label_action(
@@ -184,8 +148,8 @@ def compute_label_action(
 
 def format_needs_axis_comment(vocabulary: "frozenset[str]") -> str:
     """The vocabulary actually consulted THIS run, named in the comment
-    (architect condition ②) — so a false positive from a not-yet-
-    pattern-matched new axis label reads as self-explaining, not silent
+    (architect condition ②) — so a false positive from a label whose
+    description is not (yet) marked reads as self-explaining, not silent
     ("貼られた人がその場で一覧の古さに気づける")."""
     listed = ", ".join(f"`{name}`" for name in sorted(vocabulary))
     return (
@@ -194,8 +158,9 @@ def format_needs_axis_comment(vocabulary: "frozenset[str]") -> str:
         f"`docs/deep-dives/contributing/issue-management.md` §5), and "
         f"this `{NEEDS_AXIS_LABEL}` label will be removed automatically.\n\n"
         f"Vocabulary checked this run: {listed}\n\n"
-        f"(If your label isn't in that list, the vocabulary may be "
-        f"stale — see #5519.)"
+        f"(A label counts as an axis label when its own GitHub description "
+        f"ends with `{AXIS_DESCRIPTION_MARKER}` — if yours should be here "
+        f"and isn't, its description is missing that marker; see #5519.)"
     )
 
 
@@ -204,12 +169,12 @@ def format_needs_axis_comment(vocabulary: "frozenset[str]") -> str:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_repo_label_names(repo: str) -> "list[str]":
+def _fetch_repo_labels(repo: str) -> "list[dict]":
     result = subprocess.run(
         ["gh", "api", f"repos/{repo}/labels", "--paginate"],
         capture_output=True, text=True, check=True,
     )
-    return [entry["name"] for entry in json.loads(result.stdout)]
+    return json.loads(result.stdout)
 
 
 def _fetch_issue_label_names(repo: str, issue_number: str) -> "list[str]":
@@ -232,25 +197,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
-    live_labels = _fetch_repo_label_names(args.repo)
+    live_labels = _fetch_repo_labels(args.repo)
     vocabulary = resolve_axis_vocabulary(live_labels)
-    if vocabulary.vanished_exact_names:
-        print(
-            "RED: axis-label names in this script's own vocabulary no "
-            f"longer exist in the repo's live label list: "
-            f"{', '.join(vocabulary.vanished_exact_names)} — the gate's "
-            "coverage silently narrowed. Update AXIS_LABEL_VOCABULARY in "
-            "scripts/axis_label_gate.py (see #5519).",
-            file=sys.stderr,
-        )
-    if not vocabulary.matched:
-        print(
-            "RED: the axis-label vocabulary matched ZERO live repo "
-            "labels — every named axis label has vanished. Refusing to "
-            "silently treat every issue as axis-labeled.",
-            file=sys.stderr,
-        )
     if not vocabulary.ok:
+        print(
+            "RED: no live repo label's description carries the "
+            f"{AXIS_DESCRIPTION_MARKER!r} marker — every axis label has "
+            "either been deleted or had its marker stripped. Refusing to "
+            "silently treat every issue as axis-labeled. See #5519.",
+            file=sys.stderr,
+        )
         return 1
 
     issue_labels = _fetch_issue_label_names(args.repo, args.issue)
