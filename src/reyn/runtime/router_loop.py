@@ -313,6 +313,56 @@ _KNOWN_MEDIA_BLOCK_TYPES: "frozenset[str]" = frozenset(
 )
 
 
+#: #5509/#5526: the litellm-facing block "type" family for a mime prefix —
+#: a DIFFERENT, BROADER question than :data:`_MEDIA_MIME_PREFIX_MODALITY`
+#: above (which only names modalities with an ESTABLISHED per-item token
+#: bound, today just "image"). This table exists to give EVERY mime a
+#: well-defined wire-shape FAMILY (which of :func:`build_wire_media_part`'s
+#: 5 branches applies), independent of whether that modality can reach
+#: materialisation yet — a document/file/video/audio block still needs a
+#: correct wire shape the day it DOES reach materialisation (once a real
+#: per-item bound lands and joins ``_MEDIA_MIME_PREFIX_MODALITY``), and
+#: needs a correct ``type`` for the ref/manifest/tail-preview stages
+#: TODAY (:func:`_as_path_ref` — those never gate on token bounds).
+#: ``"file"`` is the deliberate catch-all (litellm's own generic
+#: content-part) — every mime resolves to SOME entry, never ``None``.
+_MEDIA_MIME_PREFIX_BLOCK_TYPE: "tuple[tuple[str, str], ...]" = (
+    ("image/", "image"),
+    ("video/", "video_url"),
+    ("audio/", "audio"),
+    ("application/pdf", "document"),
+)
+
+
+def classify_media_block_type(mime: str) -> str:
+    """Pure. The reyn media block ``"type"`` for *mime* — the ONE place
+    that decision is made, so ``block["type"]`` is a DERIVED field, never
+    an independently-chosen one a producer or a stale on-disk record could
+    disagree with the block's own ``mime_type`` about.
+
+    #5526 (found reviewing #5525): ``build_wire_media_part`` branches on
+    ``block_type`` while capability/token-bound decisions branch on
+    ``mime`` — two independent fields on the same dict. A producer that
+    ever set them inconsistently (``type="document"`` + ``mime="image/
+    png"``) would pass the vision capability check (mime says image) but
+    build a ``document``-shaped wire part (type says document) — a real
+    mismatch, structurally possible, invisible to every gate that only
+    checks ONE of the two fields. Closed by making *mime* the single
+    source of truth: every real producer calls this function to fill
+    ``type`` (never hand-picks it), and :func:`_materialise_media_part`/
+    :func:`_as_path_ref` — the two sites that actually build a wire/ref
+    shape from a block — call it fresh from the block's OWN ``mime_type``
+    rather than trusting a stored ``type`` field, so even a
+    pre-existing/hand-edited record with a stale or wrong ``type`` self-
+    corrects at the point that matters, instead of only the NEW producer
+    being disciplined about it (CLAUDE.md: close the class, not one
+    entry point)."""
+    for prefix, block_type in _MEDIA_MIME_PREFIX_BLOCK_TYPE:
+        if mime.startswith(prefix):
+            return block_type
+    return "file"
+
+
 def _resolve_media_modality(mime: str) -> "str | None":
     """Pure. The modality name for *mime* under
     :data:`_MEDIA_MIME_PREFIX_MODALITY`, or ``None`` if no modality with
@@ -381,10 +431,10 @@ def _materialise_media_part(
         if not found:
             return MediaMaterialiseFailure.NOT_FOUND
         assert data_b64 is not None  # found=True always pairs with a real value
-        return build_wire_media_part(block.get("type") or "image", mime, data_b64)
+        return build_wire_media_part(classify_media_block_type(mime), mime, data_b64)
     data = block.get("data")
     if isinstance(data, str) and data:
-        return build_wire_media_part(block.get("type") or "image", mime, data)
+        return build_wire_media_part(classify_media_block_type(mime), mime, data)
     return MediaMaterialiseFailure.NO_DATA
 
 
@@ -450,16 +500,28 @@ def _as_path_ref(
     pre-check refuses the write via ``MediaStoreWriteUnavailable``) — the
     caller then degrades consciously (both current callers already treat
     ``None`` as "skip this item, still surface the overall count").
+
+    #5526: ``type`` in the returned dict is DERIVED from ``mime`` via
+    :func:`classify_media_block_type` — never read from the block's own
+    ``type`` field — for the same single-source-of-truth reason
+    :func:`_materialise_media_part` does the same (see that function's
+    own #5526 note, and :func:`classify_media_block_type`'s docstring).
+    A block that declares no mime at all has no signal to derive FROM;
+    that one case falls back to the block's own declared ``type`` (or
+    ``"image"``, every real producer's own default) purely to pick a
+    generic mime via :func:`_default_mime_for_block_type` — a
+    legacy/incomplete-record path, not the normal one, since every real
+    producer today always sets ``mime_type``.
     """
-    block_type = block.get("type") or "image"
-    default_mime = _default_mime_for_block_type(block_type)
+    mime = block.get("mime_type") or block.get("mimeType")
+    if mime:
+        block_type = classify_media_block_type(mime)
+    else:
+        block_type = block.get("type") or "image"
+        mime = _default_mime_for_block_type(block_type)
     path = block.get("path")
     if isinstance(path, str) and path:
-        return {
-            "path": path,
-            "mime_type": block.get("mime_type") or block.get("mimeType") or default_mime,
-            "type": block_type,
-        }
+        return {"path": path, "mime_type": mime, "type": block_type}
     data = block.get("data")
     if isinstance(data, str) and data and media_store is not None:
         import base64
@@ -468,7 +530,6 @@ def _as_path_ref(
         except (ValueError, TypeError):
             return None
         from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
-        mime = block.get("mime_type") or block.get("mimeType") or default_mime
         try:
             saved = media_store.save_media(raw, mime_type=mime, tool=tool_name, seq=seq)
         except MediaStoreWriteUnavailable:
@@ -476,7 +537,12 @@ def _as_path_ref(
             # refused this write — same "no path obtainable" shape as
             # undecodable base64 just above, degrades the same way.
             return None
-        return {"path": saved["path"], "mime_type": saved.get("mime_type", mime), "type": block_type}
+        saved_mime = saved.get("mime_type", mime)
+        return {
+            "path": saved["path"],
+            "mime_type": saved_mime,
+            "type": classify_media_block_type(saved_mime) if saved_mime else block_type,
+        }
     return None
 
 
