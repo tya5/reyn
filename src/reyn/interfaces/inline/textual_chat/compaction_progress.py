@@ -33,6 +33,18 @@ Only ``is_compacting`` (via ``Session.is_compacting`` / #5588) and
 ``terminal`` (via the ``router_context_overflow_unrecovered`` event's own
 new field, also #5588) are wired to something real as of this module's
 introduction — both landed in THIS PR, no producer dependency.
+
+#5618 corrected what ``is_compacting`` actually reports. It was the
+compaction CONTROLLER's flag alone, which rises only inside
+``force_compact_now`` — so a real overflow recovery, which runs the retry
+ladder against the engine directly and never touches that flag, left this
+whole display structurally invisible on the one path a user most needs it
+(owner, real machine, mid-recovery: "tui では進捗わからない"). It is now
+the OR of that flag and the loop driver's own recovery-episode state, each
+with its own try/finally. The numbers below are additionally joined
+against the episode they were measured in, so a finished episode's figures
+degrade to ``None`` (line 2's "waiting" state) rather than rendering as
+this episode's progress.
 """
 from __future__ import annotations
 

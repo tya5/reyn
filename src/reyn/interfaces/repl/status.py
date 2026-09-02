@@ -680,6 +680,11 @@ def _snapshot_for_session(registry, s, config=None):
         # pattern) — REMOTE/AG-UI simply lacks this key today, and the
         # chrome consumer treats a missing key the same as "nothing to
         # show" (is_compacting defaults False). A follow-up, not done here.
+        # #5618: is_compacting inside this dict is now the OR of the
+        # compaction controller's flag and the loop driver's recovery
+        # episode, so this REPL surface picks up recovery progress on the
+        # retry-ladder path too — it reads the same gate as the TUI, and
+        # the fix landed in Session, below both of them.
         "compaction_progress_raw": s.compaction_progress_raw(),
         # LOCAL genuinely measures cron config below (via
         # ``_extract_cron_jobs``) whenever a ``config`` is given — gated

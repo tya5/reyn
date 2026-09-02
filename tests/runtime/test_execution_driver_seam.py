@@ -45,6 +45,17 @@ class FakeDriver:
         """#2813: no interactive-turn cancel_event concept for this fake."""
         return None
 
+    @property
+    def recovery_episode(self) -> None:
+        """#5618/#5630: this fake runs no retry ladder, so None is its real
+        answer. Present because ``Session.is_compacting`` reads the attribute
+        DIRECTLY rather than through a ``getattr`` default — a default would
+        let "never implemented" masquerade as "not recovering" and silently
+        reinstate the bug #5618 fixed. Keeping it here is this seam test's
+        stated job: the file's own docstring requires every ExecutionDriver
+        signature to stay in sync with RouterLoopDriver."""
+        return None
+
     def request_cancel(self) -> None:
         self._cancel_requested = True
 

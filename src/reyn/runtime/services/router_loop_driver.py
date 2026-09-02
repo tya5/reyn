@@ -16,6 +16,7 @@ RouterHostAdapter.turn_cancel_fn callback wired in Session.__init__.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import Spillability
@@ -175,6 +176,24 @@ class RouterLoopDriver:
         # deep-cancel propagation into running subprocess ops (#1470).
         self._turn_cancel_requested: bool = False
         self._turn_cancel_event: asyncio.Event = asyncio.Event()
+        # #5618: the recovery-episode state the TUI's shrink-progress row
+        # gates on. NOT the controller's `_compacting` flag — that one rises
+        # only inside `force_compact_now`, and the retry ladder below calls
+        # the engine directly (`_run_with_shrink`), so a real overflow
+        # recovery never lifted it and the row structurally never appeared
+        # (owner, real machine, mid-recovery: "tui では進捗わからない").
+        # Depth, not a bool, because the ladder re-enters: the inner segment
+        # and the outer `except _UnrecoveredError` (reactive spill →
+        # force_compact_now → resend) BOTH scope an episode, and a bool
+        # would end the episode at the inner exit while recovery is still
+        # running — the row would blink off mid-way. The number is what
+        # `Session.compaction_progress_raw` joins the cached figures against
+        # for freshness, so it must advance only on a genuinely NEW recovery,
+        # never on another segment of the current one — see
+        # `_recovery_episode_scope`'s `continues_previous` for the case where
+        # the two segments do not nest and the rule needs saying out loud.
+        self._recovery_depth: int = 0
+        self._recovery_episode_number: int = 0
         # 0062: per-session structured-output override, set post-construction by
         # ``configure_structured_output`` (mirrors the existing ``_loop_observer``
         # Tier-2 test-seam pattern — a public post-construction configure call, NOT
@@ -189,6 +208,48 @@ class RouterLoopDriver:
         _set_fn = getattr(router_host, "_set_cancel_event", None)
         if callable(_set_fn):
             _set_fn(self._turn_cancel_event)
+
+    # ── Recovery episode (#5618) ─────────────────────────────────────────────
+
+    @property
+    def recovery_episode(self) -> "int | None":
+        """#5618: the current overflow-recovery episode number, or None when
+        this driver is not recovering. A STATE the consumer reads (the TUI
+        polls a snapshot on its own heartbeat), never an edge it has to be
+        present to catch — an event-arrival inference cannot answer "is it
+        still going?" at an arbitrary later read, which is the only question
+        the progress row actually asks.
+
+        Cheap (two int reads), safe every render frame.
+        """
+        return self._recovery_episode_number if self._recovery_depth > 0 else None
+
+    @contextlib.contextmanager
+    def _recovery_episode_scope(self, *, continues_previous: bool = False):
+        """#5618: enter/exit one recovery-episode segment, re-entrantly.
+
+        The `finally` is the load-bearing part: an exception, or a cancel,
+        must still leave the depth at 0 — this regulates RESIDUE, not
+        ordering, so no call site needs to know about any other.
+
+        ``continues_previous`` exists because the two scopes do NOT nest. The
+        outer one is opened from an `except` clause, i.e. AFTER the inner one
+        has already unwound, so a plain 0→1 transition there would allocate a
+        SECOND number for what the user experiences as one uninterrupted
+        recovery — and the figures stamped during the first half would then be
+        judged stale and blank out mid-recovery, which is the flicker this
+        design exists to avoid. Passing it says "this is the same recovery,
+        keep its number". The caller only passes it when the number it is
+        adopting was allocated during its OWN call, so a stale number from an
+        earlier recovery can never be resumed.
+        """
+        self._recovery_depth += 1
+        if self._recovery_depth == 1 and not continues_previous:
+            self._recovery_episode_number += 1
+        try:
+            yield
+        finally:
+            self._recovery_depth -= 1
 
     # ── Cancel lifecycle (#1468 / #1470) ─────────────────────────────────────
 
@@ -633,26 +694,56 @@ class RouterLoopDriver:
         from reyn.services.compaction.engine import UnrecoveredError as _UnrecoveredError
 
         attempt = 0
-        while True:
-            watermark_before = self._history_buffer.compaction_watermark()
-            try:
-                return await self._run_with_shrink(loop, user_text, chain_id=chain_id)
-            except _UnrecoveredError:
-                # Compact axis: measured FIRST — `_run_with_shrink`'s own
-                # except block (its PRE-EXISTING #4954(b) side-effect) may
-                # already have advanced the watermark during the call
-                # above, before this exception ever reached here.
-                compact_progressed = (
-                    self._history_buffer.compaction_watermark() > watermark_before
-                )
-                # Spill axis: always attempted too, even if compact already
-                # progressed — a genuinely spillable candidate should still
-                # be spilled (§1.6's own "1つずつ spill" contract), not
-                # skipped just because the OTHER axis happened to move.
-                spill_progressed = await self._attempt_reactive_spill(chain_id=chain_id)
-                if not compact_progressed and not spill_progressed:
-                    raise
-                attempt += 1
+        # #5618: the OUTER episode scope. It must outlive the `except` block
+        # that opens it — the recovery continues through the reactive spill,
+        # the force_compact, AND the resend on the next lap, and the user is
+        # waiting on all of it as one wait. A plain `with` inside the except
+        # would close at `continue` and blink the progress row off between
+        # laps, so the scope is parked on an ExitStack that unwinds when this
+        # wrapper leaves, however it leaves (return, re-raise, or cancel).
+        # Entered at most ONCE (the stack is only non-empty after the first
+        # failure): the resend's own inner scope then nests at depth 2 and
+        # does not bump the episode number, so one recovery keeps one number
+        # and the figures cached under it stay fresh across every lap.
+        episode_entered = False
+        # #5618: the number the ladder below allocated for THIS call, if it
+        # got that far. `_run_with_shrink` opens its own episode on the
+        # overflow path, so by the time an UnrecoveredError reaches us the
+        # number has usually already moved — and the outer scope should then
+        # adopt it rather than allocate a fresh one (see
+        # `_recovery_episode_scope`). Comparing against the value captured
+        # HERE is what keeps that adoption honest: if the ladder never opened
+        # an episode this call, the number is some earlier recovery's and must
+        # not be resumed.
+        episode_at_entry = self._recovery_episode_number
+        with contextlib.ExitStack() as episode_stack:
+            while True:
+                watermark_before = self._history_buffer.compaction_watermark()
+                try:
+                    return await self._run_with_shrink(loop, user_text, chain_id=chain_id)
+                except _UnrecoveredError:
+                    if not episode_entered:
+                        episode_stack.enter_context(self._recovery_episode_scope(
+                            continues_previous=(
+                                self._recovery_episode_number != episode_at_entry
+                            ),
+                        ))
+                        episode_entered = True
+                    # Compact axis: measured FIRST — `_run_with_shrink`'s own
+                    # except block (its PRE-EXISTING #4954(b) side-effect) may
+                    # already have advanced the watermark during the call
+                    # above, before this exception ever reached here.
+                    compact_progressed = (
+                        self._history_buffer.compaction_watermark() > watermark_before
+                    )
+                    # Spill axis: always attempted too, even if compact already
+                    # progressed — a genuinely spillable candidate should still
+                    # be spilled (§1.6's own "1つずつ spill" contract), not
+                    # skipped just because the OTHER axis happened to move.
+                    spill_progressed = await self._attempt_reactive_spill(chain_id=chain_id)
+                    if not compact_progressed and not spill_progressed:
+                        raise
+                    attempt += 1
                 # #5296 PR-2 ⑥: chain_id is the SAME value this call already
                 # closes over — no new chain_id, no re-emitted
                 # user_submitted/turn_started/WAL append (those all live
@@ -1013,104 +1104,113 @@ class RouterLoopDriver:
             from reyn.llm.llm import (
                 start_upstream_recovery_call_counter as _start_upstream_recovery_call_counter,
             )
-            _upstream_counter_token = _start_upstream_recovery_call_counter()
-            try:
+            # #5618: this segment IS the ladder (rungs ①〜④) — entering the
+            # episode here is what finally lifts the progress row's gate on
+            # the path that actually runs during a real overflow recovery.
+            # Deliberately the same region the #5592 upstream-call counter
+            # already scopes: the numbers the row displays come from that
+            # counter, so the episode the row is gated on and the episode
+            # those numbers belong to are the same span by construction,
+            # not by two independently-maintained boundaries agreeing.
+            with self._recovery_episode_scope():
+                _upstream_counter_token = _start_upstream_recovery_call_counter()
                 try:
-                    _shim = await _retry_loop(
-                        SP=self._history_buffer.build_system_prompt(),
-                        head=_head,
-                        raw_middle=_raw_middle,
-                        tail=_tail,
-                        new_msg=_new_msg,
-                        cfg=self._compaction,
-                        model=self._effective_router_model_class(),
-                        engine=engine,
-                        learner=self._token_learner,
-                        main_call=_router_main_call,
-                        spill_fn=_spill_fn,
-                        on_summary_used=_on_recovery_summary_used,
-                        # #5531 §10: no `max_iterations=` any more —
-                        # retry_loop abolished its iteration-count bound
-                        # (see its own "Bounded termination proof"
-                        # docstring). #4957's `chat.compaction.
-                        # max_shrink_iterations` config knob is therefore
-                        # ORPHANED by this change (nothing reads it any
-                        # more) — disclosed, not silently left: removing
-                        # the knob itself (schema/validation/docs/the ~10
-                        # test fixtures that still pass it) is its own
-                        # scoped follow-up, not folded into this already-
-                        # large PR.
-                    )
-                finally:
-                    _reset_upstream_recovery_call_counter(_upstream_counter_token)
-            except _UnrecoveredError:
-                # #4954 (b), architect-ruled, WIDENED #5578: on ANY
-                # UnrecoveredError exhaustion (byte-limit 413 OR a
-                # non-byte, token-axis terminal cause — no longer gated on
-                # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
-                # here — in the driver's except block, not inside
-                # retry_loop itself (retry_loop stays a pure TRANSPORT
-                # operation; compaction is the SEMANTIC operation that
-                # actually retires history entries, Session's own
-                # docstring: "the only operation meant to retire an
-                # entry"). Routed through `force_compact_now` — the SAME
-                # durable-watermark path `ContextBudgetAdvisor`'s
-                # pre-frame guard already uses
-                # (`_durable_active_history_after`-backed, continuous from
-                # the last real `covers_through_seq`) — deliberately NOT
-                # `retry_loop`'s own compaction result: its `covers` can
-                # cover only `raw_middle` while skipping `head` entirely,
-                # which is not continuous from the previous watermark and
-                # would silently mark the OLDEST unsummarized part of
-                # history "covered" without ever summarizing it (exactly
-                # owner's own real-machine shape).
-                #
-                # #5578: previously gated on `_unrecovered.saw_byte_limit`
-                # — a token-cause exhaustion never reached this line at
-                # all. That gate's OWN stated reason (this file's own,
-                # now-removed docstring, quoting #4885/architect ruling
-                # ④): "a token overflow reaching this point means #4885's
-                # own pre-trigger estimate was wrong; the adaptive learner
-                # fixes that, not a second compaction trigger here." That
-                # pre-trigger (`ContextBudgetAdvisor.maybe_force_compact`,
-                # estimate-based, proactive) no longer exists — #5528
-                # (owner ruling, same family as #5367's elide removal)
-                # removed it, verbatim: "a local token estimate cannot
-                # know what the actual provider payload will look like, so
-                # acting on it risked compacting a conversation that would
-                # have fit fine" (compaction_controller.py's own module
-                # docstring, which this PR also corrects — see its own
-                # #5578 note). With no pre-trigger left, a token-cause
-                # exhaustion has NO durable recovery path at all — every
-                # turn re-starts from the same un-compacted history and
-                # re-runs the identical (LLM-call-costing) shrink from
-                # scratch (owner's own real-machine report, #5578: reyn-
-                # self history.jsonl files grew to 4.6-5.9MB over 5 days
-                # with no persisted compaction). `recovery_policy`'s own
-                # docstring (config/chat.py) never named an axis — it is
-                # declared as a stop-line on the "irreversible compaction
-                # step" itself, not on byte-specifically — so this widening
-                # corrects the call site to match the config's own already
-                # axis-agnostic contract, not a new design decision.
-                #
-                # Repeat-bounding (band's own first question — who stops
-                # this if it repeats): unchanged mechanism, now exercised
-                # on both axes. `force_compact_now` already returns
-                # immediately on `self._compacting` (a concurrent pass) or
-                # zero candidates (nothing left to compact = terminal) —
-                # #5364 §1.6's own note (right below, unchanged) already
-                # established this except block CAN be reached more than
-                # once per turn (`_run_with_shrink_and_byte_reduction`
-                # retries on ANY `UnrecoveredError`); each such repeat
-                # calls `force_compact_now()` again, but the SECOND call
-                # onward finds the watermark already caught up to
-                # everything durably available and returns immediately —
-                # no new call this PR adds, no new unbounded-repeat shape,
-                # only a gate this call already had to survive repeating
-                # under (the byte-axis case already exercised this).
-                if self._compaction.recovery_policy == "next_turn":
-                    await self._compaction_controller.force_compact_now()
-                raise
+                    try:
+                        _shim = await _retry_loop(
+                            SP=self._history_buffer.build_system_prompt(),
+                            head=_head,
+                            raw_middle=_raw_middle,
+                            tail=_tail,
+                            new_msg=_new_msg,
+                            cfg=self._compaction,
+                            model=self._effective_router_model_class(),
+                            engine=engine,
+                            learner=self._token_learner,
+                            main_call=_router_main_call,
+                            spill_fn=_spill_fn,
+                            on_summary_used=_on_recovery_summary_used,
+                            # #5531 §10: no `max_iterations=` any more —
+                            # retry_loop abolished its iteration-count bound
+                            # (see its own "Bounded termination proof"
+                            # docstring). #4957's `chat.compaction.
+                            # max_shrink_iterations` config knob is therefore
+                            # ORPHANED by this change (nothing reads it any
+                            # more) — disclosed, not silently left: removing
+                            # the knob itself (schema/validation/docs/the ~10
+                            # test fixtures that still pass it) is its own
+                            # scoped follow-up, not folded into this already-
+                            # large PR.
+                        )
+                    finally:
+                        _reset_upstream_recovery_call_counter(_upstream_counter_token)
+                except _UnrecoveredError:
+                    # #4954 (b), architect-ruled, WIDENED #5578: on ANY
+                    # UnrecoveredError exhaustion (byte-limit 413 OR a
+                    # non-byte, token-axis terminal cause — no longer gated on
+                    # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
+                    # here — in the driver's except block, not inside
+                    # retry_loop itself (retry_loop stays a pure TRANSPORT
+                    # operation; compaction is the SEMANTIC operation that
+                    # actually retires history entries, Session's own
+                    # docstring: "the only operation meant to retire an
+                    # entry"). Routed through `force_compact_now` — the SAME
+                    # durable-watermark path `ContextBudgetAdvisor`'s
+                    # pre-frame guard already uses
+                    # (`_durable_active_history_after`-backed, continuous from
+                    # the last real `covers_through_seq`) — deliberately NOT
+                    # `retry_loop`'s own compaction result: its `covers` can
+                    # cover only `raw_middle` while skipping `head` entirely,
+                    # which is not continuous from the previous watermark and
+                    # would silently mark the OLDEST unsummarized part of
+                    # history "covered" without ever summarizing it (exactly
+                    # owner's own real-machine shape).
+                    #
+                    # #5578: previously gated on `_unrecovered.saw_byte_limit`
+                    # — a token-cause exhaustion never reached this line at
+                    # all. That gate's OWN stated reason (this file's own,
+                    # now-removed docstring, quoting #4885/architect ruling
+                    # ④): "a token overflow reaching this point means #4885's
+                    # own pre-trigger estimate was wrong; the adaptive learner
+                    # fixes that, not a second compaction trigger here." That
+                    # pre-trigger (`ContextBudgetAdvisor.maybe_force_compact`,
+                    # estimate-based, proactive) no longer exists — #5528
+                    # (owner ruling, same family as #5367's elide removal)
+                    # removed it, verbatim: "a local token estimate cannot
+                    # know what the actual provider payload will look like, so
+                    # acting on it risked compacting a conversation that would
+                    # have fit fine" (compaction_controller.py's own module
+                    # docstring, which this PR also corrects — see its own
+                    # #5578 note). With no pre-trigger left, a token-cause
+                    # exhaustion has NO durable recovery path at all — every
+                    # turn re-starts from the same un-compacted history and
+                    # re-runs the identical (LLM-call-costing) shrink from
+                    # scratch (owner's own real-machine report, #5578: reyn-
+                    # self history.jsonl files grew to 4.6-5.9MB over 5 days
+                    # with no persisted compaction). `recovery_policy`'s own
+                    # docstring (config/chat.py) never named an axis — it is
+                    # declared as a stop-line on the "irreversible compaction
+                    # step" itself, not on byte-specifically — so this widening
+                    # corrects the call site to match the config's own already
+                    # axis-agnostic contract, not a new design decision.
+                    #
+                    # Repeat-bounding (band's own first question — who stops
+                    # this if it repeats): unchanged mechanism, now exercised
+                    # on both axes. `force_compact_now` already returns
+                    # immediately on `self._compacting` (a concurrent pass) or
+                    # zero candidates (nothing left to compact = terminal) —
+                    # #5364 §1.6's own note (right below, unchanged) already
+                    # established this except block CAN be reached more than
+                    # once per turn (`_run_with_shrink_and_byte_reduction`
+                    # retries on ANY `UnrecoveredError`); each such repeat
+                    # calls `force_compact_now()` again, but the SECOND call
+                    # onward finds the watermark already caught up to
+                    # everything durably available and returns immediately —
+                    # no new call this PR adds, no new unbounded-repeat shape,
+                    # only a gate this call already had to survive repeating
+                    # under (the byte-axis case already exercised this).
+                    if self._compaction.recovery_policy == "next_turn":
+                        await self._compaction_controller.force_compact_now()
+                    raise
             return _shim.usage
 
     # ── Main turn entry point ─────────────────────────────────────────────────

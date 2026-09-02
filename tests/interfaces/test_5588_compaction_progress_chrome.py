@@ -151,12 +151,30 @@ async def test_row_absent_while_not_compacting(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_row_shows_real_events_driven_snapshot(tmp_path: Path) -> None:
-    """Tier 2: accept — with is_compacting=True and real
-    compaction_shrink_recovered/llm_request events on the session's own
-    audit log, the mounted row renders the exact text
-    compaction_progress_lines() produces from that real data — an
-    end-to-end proof from Session through the App's own refresh cycle to
-    the rendered widget, not just the pure render layer in isolation."""
+    """Tier 2: accept — a CONTROLLER-driven compaction (the threshold pass /
+    force_compact_now) mounts the row and renders line 1, end-to-end from
+    Session through the App's own refresh cycle to the rendered widget rather
+    than the pure render layer in isolation.
+
+    #5618 narrowed what this can claim. The rung figures
+    (raw_middle_remaining, upstream_recovery_call_count) are measured by the
+    retry LADDER and are now joined against the recovery episode they were
+    measured in — a controller compaction is a different operation and runs
+    in no episode, so those figures correctly read unknown here and line 3
+    does not render. The arrangement below (controller flag up, ladder events
+    on the log, no episode) is one production cannot produce at all: the
+    engine emits those events from inside retry_loop, which only runs inside
+    an episode.
+
+    So this asserts the controller path's real contract — the row appears and
+    says the honest thing — and, as the deny half, that it does NOT print rung
+    numbers it never measured.
+
+    Accept sibling (architect, #5630): the figures ARE rendered on the path
+    that measures them — ``test_the_measured_figures_are_reported_while_their_
+    episode_runs`` in tests/runtime/test_5618_recovery_episode_gate.py, which
+    drives the real ladder end-to-end. Without that sibling, this test's deny
+    half would be satisfied by a pane that never shows the figures at all."""
     app, session, reg = await _make_app_with_real_session(tmp_path)
     session._compaction_controller._compacting = True  # arrange: no public setter
     session._audit_events.emit(
@@ -182,4 +200,10 @@ async def test_row_shows_real_events_driven_snapshot(tmp_path: Path) -> None:
         row = app.query_one(CompactionProgressRow)
         assert row.display is True
         assert row.lines[0] == "⟳ 文脈を縮めています（自動で終わります）"
-        assert "① 退避 5/2469  呼び出し 43" in row.lines[-1]
+        blob = "\n".join(row.lines)
+        assert "① 退避" not in blob, (
+            f"the row printed ladder rung figures during a controller-driven "
+            f"compaction, which measures none of them — those numbers would "
+            f"be another operation's, shown as this one's progress:\n{blob}"
+        )
+        assert "呼び出し" not in blob, blob
