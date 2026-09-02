@@ -1229,6 +1229,65 @@ def load_per_agent_hooks(
     return hooks if isinstance(hooks, list) else []
 
 
+def trusted_per_agent_hooks_path(project_root: Path, agent_name: str) -> Path:
+    """#5505: the ONE fact — ``.reyn/config/agents/<name>/hooks.yaml`` —
+    both real readers of this layer must agree on: this module's own
+    :func:`load_trusted_per_agent_hooks` (drop-and-report contract:
+    ``reyn config validate``/``reyn doctor``) and
+    :meth:`~reyn.runtime.session.Session._trusted_per_agent_hooks_path`
+    (fail-loud contract: the live boot path). Two DIFFERENT readers for
+    two genuinely different contracts is the right design (lead-coder
+    review, #5669) — what must NOT differ is the path itself, since a
+    drift here is invisible: either reader landing on the wrong location
+    degrades to ``[]`` (a normal, silent no-op layer), never a red. Kept
+    as its own tiny function rather than inlined at either call site —
+    the same reasoning this module's own :data:`HOOK_SANDBOX_SCOPE`-
+    derived key list and :data:`~reyn.hooks.schema.HOOK_ORIGIN_ORDER`
+    already apply one level down: a fact with two real consumers gets
+    ONE declaration, not a second hand-typed copy (this PR's own
+    ``schema.py`` comment, verbatim: "a second hand-typed copy would be
+    the exact 'same fact in 2 places' risk")."""
+    return project_root / ".reyn" / "config" / "agents" / agent_name / "hooks.yaml"
+
+
+def load_trusted_per_agent_hooks(
+    project_root: "Path | None", agent_name: str
+) -> list:
+    """#5505: load the TRUSTED per-agent hooks layer — ONLY
+    ``.reyn/config/agents/<name>/hooks.yaml`` (NOT
+    ``.reyn/agents/<name>/hooks.yaml``, :func:`load_per_agent_hooks`'s own
+    path — same directory NAME, different parent, a real trust boundary:
+    ``.reyn/config/`` is under ``_RECOVERY_CORE_WRITE_PREFIXES``, so an
+    agent cannot write here via the ordinary file-write op, unlike the
+    untrusted per-agent layer). Path itself comes from
+    :func:`trusted_per_agent_hooks_path` — see that function's own
+    docstring for why it is not inlined here.
+
+    Carries ONLY the permission-bearing keys (``write_paths``/
+    ``subprocess``/``network`` — :data:`~reyn.hooks.sandbox_scope.
+    HOOK_SANDBOX_SCOPE`'s own right column) that #5356 made impossible to
+    grant per-agent at all; positional hook values still belong at the
+    existing (untrusted) per-agent layer.
+
+    Same read shape as :func:`load_per_agent_hooks` (this function's own
+    sibling): ``[]`` when the file or key is absent — a no-op layer, never
+    a special case a caller has to handle. Callers that need this layer's
+    OWN boot-only/fail-loud contract (a genuine parse failure must refuse
+    to proceed, not silently degrade to ``[]`` — architect ruling,
+    #5505/#5351: this layer is permission-bearing, so a bad file silently
+    dropping mid-session is worse than refusing to boot) get that from
+    :func:`read_and_expand_hooks_yaml` itself, which this function does
+    NOT swallow: a genuine YAML syntax error still raises
+    ``HookYamlReadError`` here, uncaught — the same shape
+    :func:`load_per_agent_hooks` already has for its own layer, kept
+    consistent rather than special-cased per caller."""
+    root = (project_root or Path.cwd()).resolve()
+    path = trusted_per_agent_hooks_path(root, agent_name)
+    data = read_and_expand_hooks_yaml(path, agent_name=agent_name, project_root=root)
+    hooks = (data or {}).get("hooks")
+    return hooks if isinstance(hooks, list) else []
+
+
 def _build_external_transports_config(raw: object):
     """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
 

@@ -318,8 +318,9 @@ class HookDef:
         three axes are expressible at every per-site sandbox surface.
     origin:
         #5213: which config LAYER declared this hook — one of
-        ``HOOK_ORIGIN_ORDER`` (``"startup"``/``"runtime"``/``"per-agent"``/
-        ``"per-session"``), threaded through by
+        ``HOOK_ORIGIN_ORDER`` (``"startup"``/``"runtime"``/
+        ``"trusted-per-agent"``/``"per-agent"``/``"per-session"``),
+        threaded through by
         :func:`~reyn.hooks.loader.load_hooks`'s ``origin=`` parameter, or
         ``"unknown"`` (the default) for a ``HookDef`` constructed directly
         without threading one through (test fixtures, most existing
@@ -432,21 +433,26 @@ class HookDef:
     spillability_max_chars: "int | None" = field(default=None)
 
 
-#: #5213: the 4 config layers ``hooks:`` composes across, in ORDER FROM LEAST
+#: #5213: the config layers ``hooks:`` composes across, in ORDER FROM LEAST
 #: TO MOST specific (trust runs the same direction, most-to-least) —
 #: ``Session._build_hook_registry``'s own combine loop's real layer order:
 #: ``startup`` (reyn.yaml, the operator's, trusted) → ``runtime``
-#: (``.reyn/config/hooks.yaml``) → ``per-agent`` (``.reyn/agents/<name>/hooks.yaml``)
-#: → ``per-session`` (session-defined, read from the SAME per-session state
-#: file ``disabled:`` itself is persisted to). Deliberately NOT re-derived
-#: from that loop's own string literals (a second hand-typed copy would be
-#: the exact "same fact in 2 places" risk this session's own #5202/#5206
-#: work flagged repeatedly) — this IS the one declared vocabulary; the
-#: combine loop's own labels must match these 4 strings exactly, or a hook
-#: silently gets treated as more-specific-than-it-is by
-#: :func:`hook_origin_is_at_least_as_specific_as` (fail-open, per that
-#: function's own "unrecognized origin" branch).
-HOOK_ORIGIN_ORDER = ("startup", "runtime", "per-agent", "per-session")
+#: (``.reyn/config/hooks.yaml``) → ``trusted-per-agent`` (#5505:
+#: ``.reyn/config/agents/<name>/hooks.yaml`` — protected for free by the
+#: SAME ``.reyn/config/`` write-gate prefix ``runtime`` sits under; carries
+#: ONLY the permission-bearing keys ``HOOK_SANDBOX_SCOPE`` names, boot-only
+#: and fail-loud, see :meth:`~reyn.runtime.session.Session._build_hook_
+#: registry`'s own docstring) → ``per-agent``
+#: (``.reyn/agents/<name>/hooks.yaml``) → ``per-session`` (session-defined,
+#: read from the SAME per-session state file ``disabled:`` itself is
+#: persisted to). Deliberately NOT re-derived from that loop's own string
+#: literals (a second hand-typed copy would be the exact "same fact in 2
+#: places" risk this session's own #5202/#5206 work flagged repeatedly) —
+#: this IS the one declared vocabulary; the combine loop's own labels must
+#: match these strings exactly, or a hook silently gets treated as
+#: more-specific-than-it-is by :func:`hook_origin_is_at_least_as_specific_as`
+#: (fail-open, per that function's own "unrecognized origin" branch).
+HOOK_ORIGIN_ORDER = ("startup", "runtime", "trusted-per-agent", "per-agent", "per-session")
 
 
 def hook_origin_is_at_least_as_specific_as(origin: str, layer: str) -> bool:
@@ -471,8 +477,13 @@ def hook_origin_is_at_least_as_specific_as(origin: str, layer: str) -> bool:
     (reyn.yaml/reyn.local.yaml, read once at boot, never re-read from a
     writable path) is restart-only. Both genuinely differ from per-agent/
     per-session, so ``"per-agent"`` is the correct threshold — everything
-    less specific than per-agent (``startup``, ``runtime``) stays
-    protected. An earlier version of this threshold used ``"runtime"``,
+    less specific than per-agent (``startup``, ``runtime``,
+    ``trusted-per-agent``) stays protected. #5505's own ``trusted-per-agent``
+    layer (``.reyn/config/agents/<name>/hooks.yaml``) is protected for the
+    SAME ``_RECOVERY_CORE_WRITE_PREFIXES`` reason as ``runtime`` — both sit
+    under ``.reyn/config/`` — so this threshold needed no change when that
+    layer was added; it falls out of the existing rule for free (architect
+    ruling, #5505). An earlier version of this threshold used ``"runtime"``,
     treating ``.reyn/config/hooks.yaml`` as agent-writable on the strength
     of a stale pre-#2073-file-split filename (``.reyn/hooks.yaml``) — caught
     in #5218 review before merge; #5220 swept the remaining bare mentions

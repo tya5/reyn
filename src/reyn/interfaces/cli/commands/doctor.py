@@ -569,10 +569,11 @@ def _print_hook_env_snapshot(resolved_root: Path) -> None:
 
 def _configured_exec_hooks(config: object, project_root: Path) -> "list[HookDef]":
     """Every configured ``exec``/``exec_capture`` ``HookDef``, across ALL
-    layers (startup/runtime/per-agent — #5351 (B-2), was startup-only
-    before: this used to build its own single-layer ``load_hooks(config.
-    hooks)`` registry, silently never probing a runtime or per-agent
-    hook's argv at all) — the caller reads ``.name``/``.on``/``.exec``/
+    layers (startup/runtime/trusted-per-agent (#5505)/per-agent — #5351
+    (B-2), was startup-only before: this used to build its own
+    single-layer ``load_hooks(config.hooks)`` registry, silently never
+    probing a runtime or per-agent hook's argv at all) — the caller reads
+    ``.name``/``.on``/``.exec``/
     ``.exec_capture``/``.subprocess``/``.network``/``.write_paths``/
     ``.origin`` directly off it, so the per-hook sandbox knobs AND the
     layer that declared it travel with the argv rather than being
@@ -789,13 +790,31 @@ def _mcp_initialized_evidence(events_dir: Path) -> "tuple[dict[str, dict], int]"
 
 
 def _merged_hook_registry(config: object, project_root: Path) -> object:
-    """The 3-layer ADDITIVE combine (#4555's own registry read as the
+    """The 4-layer ADDITIVE combine (#4555's own registry read as the
     reference — ``Session._build_hook_registry``'s SAME shape, minus the
-    4th, session-scoped per-session layer doctor's standalone-process
+    5th, session-scoped per-session layer doctor's standalone-process
     read has no way to reach): reyn.yaml's top-level ``hooks:`` (startup,
     trusted — must load, fail loud) -> ``.reyn/config/hooks.yaml`` (runtime
-    IN-set) -> every ``.reyn/agents/<name>/hooks.yaml`` (per-agent). Each
-    untrusted layer is try-added independently — a malformed one is
+    IN-set) -> every ``.reyn/config/agents/<name>/hooks.yaml`` (#5505:
+    trusted per-agent) -> every ``.reyn/agents/<name>/hooks.yaml``
+    (per-agent).
+
+    #5505 deliberate divergence from the live Session: a live Session
+    treats a malformed trusted-per-agent file as FAIL-LOUD (refuses to
+    boot — that layer is permission-bearing). This standalone doctor
+    process never crashes on ANY finding (D-2: report-only, never mutate
+    — "Exits 0 regardless of findings", this module's own standing rule)
+    — so here it is try-added like every other untrusted layer below,
+    same as the trusted STARTUP layer already isn't (see that one's own
+    unguarded ``load_hooks`` call, unchanged). A bad trusted-per-agent
+    file surfaces here as a dropped layer (same visible shape as any
+    other malformed layer), not as a doctor crash — the caller reading
+    ``hooks_layer_rejected``-shaped output (or a future doctor line, not
+    added by this PR) is who would need to know a LIVE boot with this
+    same file would actually refuse to start; that stronger contract is
+    Session's own, not reproduced here.
+
+    Each untrusted layer is try-added independently — a malformed one is
     dropped, its siblings kept (same per-layer resilience as the real
     Session combine), so one bad file cannot hide a real zero-responder
     gap in the layers that DID load.
@@ -827,7 +846,11 @@ def _merged_hook_registry(config: object, project_root: Path) -> object:
     silently reads the WRONG project when the process cwd differs from
     *project_root*, e.g. ``reyn doctor --project-root <other-dir>`` or
     any test driving ``run()`` directly with a ``tmp_path``)."""
-    from reyn.config.loader import load_hot_reload_config, load_per_agent_hooks
+    from reyn.config.loader import (
+        load_hot_reload_config,
+        load_per_agent_hooks,
+        load_trusted_per_agent_hooks,
+    )
     from reyn.hooks.loader import HookConfigError, load_hooks
     from reyn.hooks.registry import HookRegistry
 
@@ -839,6 +862,18 @@ def _merged_hook_registry(config: object, project_root: Path) -> object:
     in_set_merged = load_hot_reload_config(project_root)
     in_set_hooks = in_set_merged.get("hooks") or []
     layers = [("runtime", in_set_hooks if isinstance(in_set_hooks, list) else [])]
+
+    # #5505: trusted per-agent layer — see this function's own docstring
+    # for why it is try-added HERE (unlike the live Session's fail-loud
+    # contract for the same file).
+    trusted_agents_dir = project_root / ".reyn" / "config" / "agents"
+    if trusted_agents_dir.is_dir():
+        for agent_dir in sorted(trusted_agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            trusted_hooks = load_trusted_per_agent_hooks(project_root, agent_dir.name)
+            if trusted_hooks:
+                layers.append(("trusted-per-agent", trusted_hooks))
 
     agents_dir = project_root / ".reyn" / "agents"
     if agents_dir.is_dir():

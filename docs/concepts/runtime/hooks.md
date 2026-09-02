@@ -688,6 +688,52 @@ value, including the floor — is your decision on that axis, and a decision is
 never reported. The invariant: an operator's expressed will is applied or
 refused, never silently dropped.
 
+### Which layer may grant the three sandbox axes
+
+`subprocess`/`network`/`write_paths` are per-hook GRANTS, not mere config —
+declaring one is expressing trust in that hook's own argv. Not every hooks.yaml
+layer may do that:
+
+- **Rejected outright** at `.reyn/agents/<name>/hooks.yaml` (per-agent) and
+  the per-session `hooks.yaml` (#5356) — an agent can already write either
+  file via the ordinary file-write op, so a grant declared there is a
+  confused-deputy self-grant (the same agent writes the rule AND is bound
+  by it), not an operator's expressed will. A hook entry declaring any of
+  the three at either layer fails to load with a `HookConfigError` naming
+  where to move it instead.
+- **Honored** at `reyn.yaml` (startup), `.reyn/config/hooks.yaml` (runtime),
+  and `.reyn/config/agents/<name>/hooks.yaml` (**trusted per-agent**, below)
+  — none of these three is agent-writable.
+
+**The trusted per-agent layer** (`.reyn/config/agents/<name>/hooks.yaml`,
+introduced by #5505) exists so an operator can still grant `write_paths`/
+`subprocess`/`network` to ONE specific agent's hooks without handing every
+agent the SAME grant at the shared `.reyn/config/hooks.yaml` runtime layer
+— the gap #5356 otherwise left with zero mechanism. It sits in the COMBINE
+between `runtime` and `per-agent` (see [Concepts: Config
+hot-reload](config-hot-reload.md) for the full layer order) and carries
+**only** the three permission-bearing keys above; a positional hook value
+(e.g. where `hooks_add` writes `.turn_done`-style state) still belongs at
+the ordinary per-agent layer, which needs no trust.
+
+Two senses of "trusted" are both in play for this layer, and they answer
+different questions — naming both here so neither reads as the other:
+
+- **Write-zone boundary** (which this section is about): the file lives
+  under `.reyn/config/`, the SAME write-gate prefix `.reyn/config/hooks.yaml`
+  already sits under — an agent's ordinary file-write op cannot reach it, so
+  no new trust mechanism was built for this layer; it is protected for free
+  by an existing boundary.
+- **Re-read cadence** (a SEPARATE axis — architect's own correction,
+  #5505/#5351): this layer is **boot-only**, not hot-reloadable. A bad file
+  here refuses Session construction outright (fail-loud), the same posture
+  `reyn.yaml` itself has — deliberately NOT the drop-and-warn posture every
+  OTHER post-startup layer (`runtime`/`per-agent`/`per-session`) gets on a
+  malformed file. The reasoning: this layer carries permission-bearing
+  values, and a permission silently disappearing mid-session (the
+  drop-and-warn shape) is worse than a boot that refuses to start. A config
+  change here takes effect on the next restart only.
+
 ### Consent and allowlist
 
 `exec`/`exec_capture` argv require operator consent before they run. The consent flow depends on whether a live intervention listener is attached:
@@ -854,9 +900,13 @@ composers:
     emit: { kind: composed:deploy_approved }
 ```
 
-A Session reads `composers:` from the SAME 4-layer additive combine as
-`hooks:` (`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪
-per-agent ∪ per-session) and starts every configured Composer automatically
+A Session reads `composers:` from its own 4-layer additive combine
+(`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪
+per-session) — the SAME 4 layers `hooks:` had before #5505 added a 5th,
+`hooks:`-only layer (the [trusted per-agent
+layer](#which-layer-may-grant-the-three-sandbox-axes) above); `composers:`
+was out of that issue's scope and still combines across exactly these 4 —
+and starts every configured Composer automatically
 (`start_composers`, called from `run()` alongside the filesystem watcher's
 own start) — no manual wiring required. Composers are **startup-only**: a
 config change takes effect on the next session start, not via the hooks

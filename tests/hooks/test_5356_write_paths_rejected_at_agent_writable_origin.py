@@ -73,7 +73,10 @@ def test_agent_writable_key_rejected_at_agent_writable_origins_accepted_elsewher
 
     # Positive side — the SAME entry, at a non-agent-writable origin,
     # loads clean and the declaration survives onto the HookDef.
-    for safe_origin in ("startup", "runtime"):
+    # #5505: "trusted-per-agent" (.reyn/config/agents/<name>/hooks.yaml)
+    # joined this list — the new mechanism this issue exists to give
+    # operators back after #5356 closed the per-agent hole.
+    for safe_origin in ("startup", "runtime", "trusted-per-agent"):
         registry = load_hooks([entry], origin=safe_origin)
         (hook,) = registry.all_defs()
         expected = tuple(entry[key]) if key == "write_paths" else entry[key]
@@ -86,7 +89,7 @@ def test_entry_with_no_agent_writable_keys_is_unaffected_at_any_origin() -> None
     per-agent/per-session. The rejection is scoped to the KEYS' presence,
     not the origin generally."""
     entry = {"on": "turn_end", "exec": ["/usr/bin/true"]}
-    for origin in ("startup", "runtime", "per-agent", "per-session", "unknown"):
+    for origin in ("startup", "runtime", "trusted-per-agent", "per-agent", "per-session", "unknown"):
         registry = load_hooks([entry], origin=origin)
         (hook,) = registry.all_defs()
         assert hook.write_paths is None

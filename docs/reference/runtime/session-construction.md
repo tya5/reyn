@@ -272,18 +272,23 @@ lambdas.
 
 The config-derivation this builder takes as inputs is resolved inline, BEFORE the builder
 call:
-- Hooks are LAYERED (#2073 S2b): the `reyn.yaml` startup layer (OUT-set, captured once as
-  `_startup_hooks_raw`, never re-read on reload) ∪ the `.reyn/config/hooks.yaml` runtime layer
-  (IN-set, hot-reloadable; the LLM-op writes it in S3). `_build_hook_registry` combines
-  them; the boot registry includes the runtime layer too (active from session start,
-  mirroring `.reyn/mcp.yaml`), and the hooks-reapply seam re-reads only the runtime layer +
-  re-combines.
-- Composers mirror the same layering (Hook-Event Redesign Phase 4b/5, #2880/#2881):
-  `_startup_composers_raw` captures the `composers:` startup (OUT-set) layer once;
-  `_build_composer_defs` combines it with the runtime/per-agent/per-session layers (same
-  4-layer additive shape as `_build_hook_registry`). Composers are v1-startup-only — no
-  hot-reload/reapply seam, unlike hooks (restarting a live Composer's `PendingStore`
-  mid-session is a separate, not-yet-designed concern).
+- Hooks are LAYERED (#2073 S2b, #5505): the `reyn.yaml` startup layer (OUT-set, captured
+  once as `_startup_hooks_raw`, never re-read on reload) ∪ the `.reyn/config/hooks.yaml`
+  runtime layer (IN-set, hot-reloadable; the LLM-op writes it in S3) ∪ the trusted
+  per-agent layer (#5505: `.reyn/config/agents/<name>/hooks.yaml`, captured once as
+  `_trusted_per_agent_hooks_raw` — boot-only like startup, fail-loud like startup, NOT in
+  the IN-set) ∪ per-agent ∪ per-session. `_build_hook_registry` combines all five, in
+  `HOOK_ORIGIN_ORDER`'s own order; the boot registry includes the runtime layer too (active
+  from session start, mirroring `.reyn/mcp.yaml`), and the hooks-reapply seam re-reads only
+  the runtime/per-agent/per-session layers + re-combines (trusted-per-agent, like startup,
+  never re-reads).
+- Composers mirror the PRE-#5505 hooks layering (Hook-Event Redesign Phase 4b/5,
+  #2880/#2881) — `hooks:`-only, #5505's trusted-per-agent layer was out of that issue's
+  scope: `_startup_composers_raw` captures the `composers:` startup (OUT-set) layer once;
+  `_build_composer_defs` combines it with the runtime/per-agent/per-session layers (its own
+  4-layer additive shape — `_build_hook_registry` gained a 5th layer, composers did not).
+  Composers are v1-startup-only — no hot-reload/reapply seam, unlike hooks (restarting a
+  live Composer's `PendingStore` mid-session is a separate, not-yet-designed concern).
 - `_build_composer_pending_store` (#3180) runs inside the Family 3 builder and returns the
   `DurablePendingStore` shared by every `durable` composer (`op: deadline` by default), or
   `None` when no definition asks for durability — so a durability-free session writes no

@@ -1,6 +1,7 @@
 """Tier 2: #5351 (B-2) — ``reyn doctor``'s hook launch probe (#4364 PR-2 /
-C-1) now covers ALL hook layers (startup/runtime/per-agent) and names
-which layer declared each hook, not just the startup one.
+C-1) now covers ALL hook layers (startup/runtime/trusted-per-agent (#5505)/
+per-agent) and names which layer declared each hook, not just the startup
+one.
 
 Before this fix, ``_configured_exec_hooks`` built its own single-layer
 ``load_hooks(config.hooks)`` registry — a ``per-agent``-only
@@ -64,6 +65,37 @@ def test_a_per_agent_only_hook_is_now_probed_and_labeled_per_agent(
     assert "per-agent-exec-hook (per-agent)" in out, (
         f"a per-agent-only exec hook must now be probed AND labeled with "
         f"its real origin -- full output:\n{out}"
+    )
+    assert "is runnable under this hook's sandbox" in out
+
+
+def test_a_trusted_per_agent_only_hook_is_now_probed_and_labeled(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #5505 — the doctor probe's own 4th layer. A hook declared
+    ONLY under ``.reyn/config/agents/<name>/hooks.yaml`` (trusted per-agent)
+    must appear in the probe section, labeled ``(trusted-per-agent)`` —
+    the same "declared, accepted, effect not visible" shape this file's
+    own module docstring names, one layer later."""
+    if not _this_hosts_default_backend_can_probe():
+        pytest.skip("this host's default sandbox backend cannot probe (see helper docstring)")
+    if not Path("/usr/bin/true").is_file():
+        pytest.skip("this host has no /usr/bin/true — the probe's own control binary is absent")
+    _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        tmp_path / ".reyn" / "config" / "agents" / "myagent" / "hooks.yaml",
+        "hooks:\n"
+        '  - "on": session_start\n'
+        "    name: trusted-per-agent-exec-hook\n"
+        '    exec: ["/usr/bin/true"]\n',
+    )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "trusted-per-agent-exec-hook (trusted-per-agent)" in out, (
+        f"a trusted-per-agent exec hook must now be probed AND labeled "
+        f"with its real origin -- full output:\n{out}"
     )
     assert "is runnable under this hook's sandbox" in out
 

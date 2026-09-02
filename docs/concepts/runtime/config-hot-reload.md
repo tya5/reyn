@@ -80,31 +80,60 @@ run on every reload:
 | `mcp` | Re-probes MCP servers via the existing turn-boundary refresh chain. Reports whether the in-memory tool cache changed. |
 | `per_agent_capability` | Re-reads `.reyn/agents/<name>/profile.yaml` and updates `allowed_mcp` on the three holders the Session owns (session / skill_runner / router_host). |
 | `new_agent` | Confirming no-op: agent discovery is filesystem-live (the `AgentRegistry` walks `.reyn/agents/` per call), so a newly added agent is already visible without a reload step. Kept as an explicit seam for accounting. |
-| `hooks` | Re-reads global `.reyn/config/hooks.yaml` + per-agent `.reyn/agents/<name>/hooks.yaml`, re-combines with the fixed startup layer, and swaps the hook dispatcher's registry. |
+| `hooks` | Re-reads global `.reyn/config/hooks.yaml` + per-agent `.reyn/agents/<name>/hooks.yaml`, re-combines with the fixed startup and trusted-per-agent layers, and swaps the hook dispatcher's registry. |
 
-## Hooks three-layer COMBINE
+## Hooks 5-layer COMBINE
 
-The hook registry is built additively from three layers, in order:
+The hook registry is built additively from five layers, in
+[`HOOK_ORIGIN_ORDER`](../../reference/config/reyn-yaml.md#hooks-block)'s
+own order:
 
 | Layer | File | Set | On reload |
 |-------|------|-----|-----------|
 | **startup** | `reyn.yaml` | OUT-set | Captured once at boot; never re-read |
 | **runtime** | `.reyn/config/hooks.yaml` | IN-set | Re-read on every reload |
+| **trusted-per-agent** (#5505) | `.reyn/config/agents/<name>/hooks.yaml` | neither — boot-only, not in the IN-set | Captured once at boot; never re-read |
 | **per-agent** | `.reyn/agents/<name>/hooks.yaml` | IN-set | Re-read on every reload |
+| **per-session** (#2285) | `<session_state_dir>/hooks.yaml` | session-local, session-lifetime | Re-read on every reload |
 
-The COMBINE is additive: `startup ∪ runtime ∪ per-agent`. A removed hook is
-absent from the rebuilt registry — removal is handled by reconstruction (no
-explicit remove step).
+The COMBINE is additive: `startup ∪ runtime ∪ trusted-per-agent ∪ per-agent ∪
+per-session`. A removed hook is absent from the rebuilt registry — removal is
+handled by reconstruction (no explicit remove step) — except
+**trusted-per-agent**, which is deliberately NOT reconstructed from the file on
+a reload (see below); removing that file only takes effect on restart.
 
-**Per-layer boot resilience.** The trusted startup layer (`reyn.yaml`, operator-
-controlled) must load — a failure is fail-loud. Each untrusted layer (runtime,
-per-agent) is try-added independently:
+**trusted-per-agent** (`.reyn/config/agents/<name>/hooks.yaml`) carries
+**only** the permission-bearing per-hook keys (`write_paths`/`subprocess`/
+`network`) — the grant mechanism #5356 (below) otherwise leaves with no
+per-agent path at all. See [Concepts: Hooks §
+Sandbox](hooks.md#which-layer-may-grant-the-three-sandbox-axes) for the full
+rationale, including the two separate senses of "trusted" this layer
+carries.
 
-- A bad runtime layer keeps `startup ∪ per-agent`; the bad layer is dropped + warned.
-- A bad per-agent layer keeps `startup ∪ runtime`; the bad layer is dropped + warned.
+**Per-layer boot resilience.** The trusted startup layer (`reyn.yaml`,
+operator-controlled) must load — a failure is fail-loud. The
+**trusted-per-agent** layer gets the SAME fail-loud posture, at boot only
+(architect ruling: a permission-bearing layer silently dropping mid-session
+is worse than a refused boot) — unlike every OTHER post-startup layer below,
+which is try-added independently:
+
+- A bad runtime layer keeps every other good layer; the bad layer is dropped + warned.
+- A bad per-agent layer keeps every other good layer; the bad layer is dropped + warned.
+- A bad per-session layer keeps every other good layer; the bad layer is dropped + warned.
 
 On the reload path, validate-before-apply also rejects a bad runtime layer up
-front (defense-in-depth).
+front (defense-in-depth). **trusted-per-agent** is never part of validate-
+before-apply — it is outside the IN-set entirely.
+
+## The per-agent self-grant restriction (#5356)
+
+`write_paths`/`subprocess`/`network` are REJECTED outright — a load-time
+`HookConfigError`, not a silent drop — when declared at **per-agent** or
+**per-session**: an agent can already write either file via the ordinary
+file-write op, so a grant declared there is a confused-deputy self-grant,
+not an operator's expressed will. The same three keys are honored at
+**startup**, **runtime**, and **trusted-per-agent** — none of those three is
+agent-writable.
 
 ## Triggers
 

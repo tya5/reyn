@@ -217,6 +217,94 @@ def test_a_well_formed_per_agent_hooks_file_produces_no_finding(project, capsys)
     assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
 
 
+# ── #5505: .reyn/config/agents/<name>/hooks.yaml (the trusted per-agent layer) ──
+
+
+def test_a_malformed_entry_in_a_trusted_per_agent_hooks_file_is_now_caught(project, capsys):
+    """Tier 2: #5505 — the 4th real input path, added the moment the
+    layer exists (CLAUDE.md: a mechanism-describing check is stale the
+    moment the mechanism changes). Otherwise a malformed file here would
+    only surface at the NEXT actual boot, refusing it (fail-loud, #5505)
+    with zero earlier warning this report-only command could have given."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "config" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" in out
+    assert ".reyn/config/agents/planner/hooks.yaml" in out
+    assert "allow_write_paths" in out
+    assert "write_paths" in out
+
+
+def test_a_well_formed_trusted_per_agent_hooks_file_produces_no_finding(project, capsys):
+    """Tier 2: accept-side for the trusted-per-agent source."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "config" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" not in out
+    assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
+
+
+def test_a_trusted_per_agent_dir_with_no_hooks_file_is_silently_skipped(project, capsys):
+    """Tier 2: accept-side — an agent directory that exists under
+    .reyn/config/agents/ but has no hooks.yaml must not be treated as a
+    malformed source; load_trusted_per_agent_hooks's own [] default
+    covers this."""
+    (project / ".reyn" / "config" / "agents" / "planner").mkdir(parents=True)
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" not in out
+
+
+def test_the_untrusted_and_trusted_per_agent_source_labels_never_collide(project, capsys):
+    """Tier 2: falsification pair — a malformed entry at the OLD
+    (untrusted) per-agent path and a DIFFERENT malformed entry at the NEW
+    trusted path, for the SAME agent name, must each surface under their
+    own distinct, correctly-prefixed label — proving the two 4-source
+    scans do not conflate the two directories."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    nam: typo_untrusted\n",
+    )
+    _write_yaml(
+        project / ".reyn" / "config" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    nam: typo_trusted\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert ".reyn/agents/planner/hooks.yaml" in out
+    assert ".reyn/config/agents/planner/hooks.yaml" in out
+
+
 def test_an_agent_dir_with_no_hooks_file_is_silently_skipped(project, capsys):
     """Tier 2: accept-side — an agent directory that exists (e.g. it has
     state/ from a prior run) but no hooks.yaml at all must not be treated
