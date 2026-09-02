@@ -14,6 +14,18 @@ Pins:
   3. Missing ``new_turn_count`` falls back to a generic marker (=
      forward-compat with event-shape variation).
   4. Unrelated event types are dropped (= no spurious outbox writes).
+  5. #5633: ``compaction_started`` gets the same treatment (marker,
+     pluralisation, fallback) — before this, ``completed``/``failed`` both
+     had a marker and ``started`` had none. This supersedes a prior pin
+     here (``test_compaction_started_is_not_surfaced``, deleted in the
+     same change) that argued a started-but-never-closed marker would
+     mislead a reader after a mid-run abort. That risk does not hold:
+     every abort after ``compaction_started`` fires is already followed
+     by ``compaction_failed`` (``compaction_controller.py``'s caller
+     wraps the engine's ``compact()`` in try/except and always emits
+     ``compaction_failed`` on raise — see ``engine.py``'s own comment on
+     ``compact()``'s raise path) — the started marker is never left
+     dangling.
 """
 from __future__ import annotations
 
@@ -29,6 +41,54 @@ def _drain(q: asyncio.Queue) -> list[Any]:
     while not q.empty():
         items.append(q.get_nowait())
     return items
+
+
+def test_compaction_started_emits_system_marker() -> None:
+    """Tier 2: #5633 — compaction_started with new_turn_count writes
+    [⟳ compacting N turns]. Before this handler, the event existed
+    (engine.py's own compact() emits it, verified) but nothing in
+    src/reyn/interfaces/ ever consumed it — completed/failed both had a
+    marker, started had none."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_started",
+        data={"new_turn_count": 8, "covers_through_seq": 42, "had_previous": False},
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert only.text == "[⟳ compacting 8 turns]"
+
+
+def test_compaction_started_singular_turn_uses_singular_label() -> None:
+    """Tier 2: pluralisation — 1 turn is singular, mirrors completed's own."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_started", data={"new_turn_count": 1}))
+    msgs = _drain(q)
+    assert msgs[0].text == "[⟳ compacting 1 turn]"
+
+
+def test_compaction_started_missing_count_uses_generic_marker() -> None:
+    """Tier 2: forward-compat fallback when new_turn_count is absent —
+    mirrors compaction_completed's own established shape."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_started", data={}))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.text == "[⟳ compacting history]"
+
+
+def test_compaction_started_zero_count_uses_generic_marker() -> None:
+    """Tier 2: a 0-count event is treated as missing — never a spurious
+    "[⟳ compacting 0 turns]"."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_started", data={"new_turn_count": 0}))
+    msgs = _drain(q)
+    assert msgs[0].text == "[⟳ compacting history]"
 
 
 def test_compaction_completed_emits_system_marker() -> None:
@@ -156,19 +216,6 @@ def test_unrelated_event_is_dropped() -> None:
     fwd(Event(type="phase_started", data={"phase": "resolve"}))
     fwd(Event(type="llm_called", data={"model": "gemini-2.5-flash-lite"}))
     fwd(Event(type="user_message_received", data={"text": "hi"}))
-    assert _drain(q) == []
-
-
-def test_compaction_started_is_not_surfaced() -> None:
-    """Tier 2: compaction_started doesn't emit a marker (= only completed does).
-
-    A compaction may abort mid-run; surfacing the marker on completion
-    only guarantees the user signal corresponds to a real summary
-    landing in history.
-    """
-    q: asyncio.Queue = asyncio.Queue()
-    fwd = ChatLifecycleForwarder(q)
-    fwd(Event(type="compaction_started", data={"new_turn_count": 8}))
     assert _drain(q) == []
 
 
