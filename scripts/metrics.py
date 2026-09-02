@@ -21,12 +21,53 @@ methods):
   - comment % of the named function's own body (comment lines / total
     non-blank lines in its line span, restricted to full-line ``#``
     comments to match this repo's own comment-policy definition)
+  - whole-file line-count breakdown: blank / ``#`` comment / docstring /
+    code, so a "the file grew" claim can be attributed to a specific
+    category rather than asserted from the total alone. A docstring line
+    is any line inside a module/class/function's own first-statement
+    string-literal span (found via ``ast``); blank/comment are checked
+    on every other line; everything left over is code.
 
 Purely reads structure; makes no behavioural claim about the code.
 """
 import argparse
 import ast
 import sys
+
+
+def classify_lines(lines: "list[str]", tree: "ast.Module") -> "dict[str, int]":
+    docstring_lines: "set[int]" = set()
+
+    def mark_docstring(node) -> None:
+        body = getattr(node, "body", None)
+        if not body:
+            return
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            for ln in range(first.lineno, (first.end_lineno or first.lineno) + 1):
+                docstring_lines.add(ln)
+
+    mark_docstring(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            mark_docstring(node)
+
+    counts = {"blank": 0, "comment": 0, "docstring": 0, "code": 0}
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if i in docstring_lines:
+            counts["docstring"] += 1
+        elif stripped == "":
+            counts["blank"] += 1
+        elif stripped.startswith("#"):
+            counts["comment"] += 1
+        else:
+            counts["code"] += 1
+    return counts
 
 
 def function_line_count(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> int:
@@ -102,8 +143,13 @@ def main() -> int:
     longest_qual, longest_node = max(funcs, key=lambda qn: function_line_count(qn[1]))
     longest_len = function_line_count(longest_node)
 
+    breakdown = classify_lines(lines, tree)
     print(f"file: {args.path}")
     print(f"whole-file line count: {len(lines)}")
+    print(
+        f"  breakdown: comment={breakdown['comment']} docstring={breakdown['docstring']} "
+        f"blank={breakdown['blank']} code={breakdown['code']}"
+    )
     print(f"class definitions in file: {len(classes)} ({', '.join(classes) if classes else '-'})")
     print()
     print(f"longest method/function in family {sorted(family) or '(all)'}:")

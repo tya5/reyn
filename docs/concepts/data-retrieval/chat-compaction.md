@@ -251,8 +251,9 @@ time, an accepted cost, not a defect.
 once the halving ladder's own two terminals ARE the exhaustion condition,
 a cap layered on top of them could only fire earlier, cutting the search
 off with headroom still remaining. The `compaction_shrink_recovered`
-audit-event still names the cause per iteration — pure telemetry now, no
-branch reads it to decide anything.
+audit-event still names the cause per iteration — no branch reads the
+CAUSE to decide anything any more (the event itself is read by a
+progress line, #5588).
 
 Rung 1 is the one rung that does not move content between compartments, so it
 cannot borrow their monotonicity. Two obligations follow:
