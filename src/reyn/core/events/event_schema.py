@@ -140,6 +140,20 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # reader distinguishing the two never has to infer which one fired from
     # context (chain_id presence, call ordering, ...).
     "tool_result_offloaded": frozenset({"trigger"}),
+    # #5438 (architect ruling — "compute, don't store"): a spilled entry's
+    # own backing file is confirmed missing on read-back
+    # (history_content_resolve.resolve's own "lost" kind, checked FRESH
+    # every serialise — never a persisted "lost" ledger). `reason` is
+    # derived at THIS read, not stored: `never_persisted` when the entry's
+    # own LOST_REASON_META_KEY already says so (the write-time cap refused
+    # the offload outright), else `gc` (eviction is reyn's only deleter of
+    # an already-persisted ref — a file missing for any other reason still
+    # reads as `gc`, disclosed in the reader's own docstring, never a
+    # claim this event can tell the two apart). `content_hash` is a
+    # stable, ref-derived identifier (never a hash of the LOST content
+    # itself, which by definition isn't available to hash) so an operator
+    # can correlate repeated reads of the SAME missing file.
+    "offloaded_content_unavailable": frozenset({"ref", "reason", "content_hash"}),
     # #5514 §5/§8 (architect ruling, 2026-08-30): a spillability=never hook
     # push that exceeds its own declared spillability_max_chars is REJECTED
     # outright — never truncated (a partial frame is worse than no frame;
@@ -478,6 +492,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "new_msg_exceeds_budget",
     "oauth_login_completed",
     "oauth_login_started",
+    "offloaded_content_unavailable",
     "payload_reduced",
     "peer_reply_failed_surfaced",
     "pending_intervention_claimed",

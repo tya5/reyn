@@ -206,6 +206,7 @@ def _refresh_skill_location_tokens(
 
 def _resolve_spilled_content(
     content: "str | list[dict]", meta: Any, project_dir_fn: "Callable[[], Any] | None",
+    events: Any = None, seen_lost_refs: "set[str] | None" = None,
 ) -> "str | list[dict]":
     """#5364 §1.2: replace a spilled entry's stale ref-preview with an
     explicit "lost" notice once its backing file is actually gone —
@@ -224,10 +225,37 @@ def _resolve_spilled_content(
     persisted keeps showing the model a ``read_file(path=...)`` preview
     naming a file that no longer exists — a silent dangling reference the
     model can only discover by actually trying the read and getting an
-    error, rather than being told up front."""
+    error, rather than being told up front.
+
+    #5438 (architect ruling — "compute, don't store"): once ``resolve()``
+    confirms ``"lost"``, WHY is derived HERE, fresh, never persisted (no
+    new field, no ledger — history.jsonl stays the only durable record).
+    ``meta[LOST_REASON_META_KEY]`` already reads ``LostReason.
+    NEVER_PERSISTED`` when the write-time cap refused the offload
+    outright (a real, recorded fact); its ABSENCE means a ref WAS once
+    minted and is now missing, and eviction
+    (``media_store._evict_history_content_over_cap``) is reyn's ONLY
+    deleter of an already-persisted ref — so absence derives
+    ``LostReason.GC`` (see ``LostReason``'s own docstring for the
+    disclosed, not-exhaustive caveat). Surfaced on 2 operator-facing
+    faces, per architect's own text — never a THIRD hidden one: (1) the
+    reason named inline in the placeholder text every reader (model +
+    transcript) already sees, (2) one ``offloaded_content_unavailable``
+    audit-event per distinct ``ref`` per caller-scoped read
+    (``seen_lost_refs`` — passed down fresh from ``build_history``/
+    ``decompose_history_for_retry``, never a process-global cache, so a
+    still-missing file is reported again on the NEXT read, not silenced
+    forever). ``events is None`` (legacy/test double) degrades to
+    "no event, placeholder reason still shown" — same optional-
+    dependency idiom every other collaborator here already has."""
     if not isinstance(content, str) or not isinstance(meta, dict) or project_dir_fn is None:
         return content
-    from reyn.runtime.chat_message import CONTENT_REF_META_KEY, SPILLED_META_KEY
+    from reyn.runtime.chat_message import (
+        CONTENT_REF_META_KEY,
+        LOST_REASON_META_KEY,
+        SPILLED_META_KEY,
+        LostReason,
+    )
     if not meta.get(SPILLED_META_KEY):
         return content
     ref = meta.get(CONTENT_REF_META_KEY)
@@ -249,9 +277,25 @@ def _resolve_spilled_content(
         file_exists=_file_exists,
     )
     if resolved.kind == "lost":
+        recorded_reason = meta.get(LOST_REASON_META_KEY)
+        reason = (
+            LostReason.NEVER_PERSISTED
+            if recorded_reason == LostReason.NEVER_PERSISTED
+            else LostReason.GC
+        )
+        if events is not None and (seen_lost_refs is None or ref not in seen_lost_refs):
+            if seen_lost_refs is not None:
+                seen_lost_refs.add(ref)
+            import hashlib
+            content_hash = "sha256:" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
+            events.emit(
+                "offloaded_content_unavailable",
+                ref=ref, reason=str(reason), content_hash=content_hash,
+            )
         return (
             f"[content lost: the offloaded body at {ref!r} no longer exists "
-            "on disk — it may have been deleted or garbage-collected]"
+            f"on disk — it may have been deleted or garbage-collected "
+            f"(reason: {reason})]"
         )
     return content
 
@@ -673,7 +717,10 @@ class RouterHistoryBuffer:
         self._spill_scan_boundary_seq = current[-1].seq if current else None
         return self._spill_supersede_cache
 
-    def _serialise_turn(self, m: Any, spill_map: "dict[str, str] | None" = None) -> dict:
+    def _serialise_turn(
+        self, m: Any, spill_map: "dict[str, str] | None" = None,
+        seen_lost_refs: "set[str] | None" = None,
+    ) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
 
         #2957 PR-B: this method's output is the CANONICAL quantity for token
@@ -696,6 +743,13 @@ class RouterHistoryBuffer:
         :meth:`build_history` and :meth:`decompose_history_for_retry` so both
         produce identical wire shapes (the retry_loop decomposition must
         rebuild the same prompt the normal path would have sent).
+
+        ``seen_lost_refs`` (#5438): a set the CALLER owns, built fresh per
+        top-level call — passed straight through to
+        :func:`_resolve_spilled_content` so its own ``offloaded_content_
+        unavailable`` event fires at most once per distinct ref for
+        THIS read, never once per process lifetime (see that function's
+        own docstring).
         """
         # #5531: a summary-role ChatMessage's ``.content`` is a STRUCTURED
         # dict (topic_arc/decisions/...), never plain text — it cannot go
@@ -730,6 +784,7 @@ class RouterHistoryBuffer:
         # docstring for why this is not a one-time check at write time).
         content = _resolve_spilled_content(
             content, getattr(m, "meta", None), self._project_dir_fn,
+            self._events, seen_lost_refs,
         )
         # #5612 (was #5296 PR-2's in-memory overlay — now durable): apply
         # the reactive-spill supersede map, same stage as the watermark
@@ -977,7 +1032,10 @@ class RouterHistoryBuffer:
         # 2969 turns, materially nonzero only for inline images, and every
         # such call precedes or accompanies a provider round-trip orders of
         # magnitude slower.
-        selected = [self._serialise_turn(m, spill_map) for m in turns]
+        # #5438: fresh per call — see _resolve_spilled_content's own
+        # docstring for why this is not a process-global dedup set.
+        seen_lost_refs: set[str] = set()
+        selected = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]
 
         # #4954(2): the summary bridge is now attached HERE, unconditionally
         # once `watermark > 0` — not only on the elide branch above. Before
@@ -1106,7 +1164,10 @@ class RouterHistoryBuffer:
         spill_map = self._spill_supersede_map(history)
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
-        wire_turns = [self._serialise_turn(m, spill_map) for m in turns]
+        # #5438: fresh per call — see _resolve_spilled_content's own
+        # docstring for why this is not a process-global dedup set.
+        seen_lost_refs: set[str] = set()
+        wire_turns = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]
         # #5514 §7-3: THIS is the one place `spillability` gets annotated
         # onto a wire-shaped dict — never inside ``_serialise_turn``
         # itself (that method's own wire dict must stay canonical/

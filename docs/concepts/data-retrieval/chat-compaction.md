@@ -276,7 +276,10 @@ cannot borrow their monotonicity. Two obligations follow:
    reader on that path at all), and spill is reversible for the agent
    (the body lives in `MediaStore`, the preview names the read-back
    path) in a way the irreversible fold step this knob exists to gate is
-   not. Both axes still record "what already happened, discarding it
+   not. If that backing file later goes missing, WHY (`gc` vs
+   `never_persisted`) is derived fresh at read time (#5438), never
+   stored — a `lost` entry is not a new persisted state, it is a
+   re-derived one. Both axes still record "what already happened, discarding it
    only guarantees paying again" (#5578/#5610's own argument, now
    applied per fold, and to spill) — they differ only in whether
    `fold_persist_policy` gates the record at all, not in the "already

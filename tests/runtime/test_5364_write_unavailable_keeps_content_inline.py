@@ -6,7 +6,7 @@ typed signal: ``save_tool_result`` raises it once
 already exhausted §4 retries) rather than minting a ref for a write that
 will never land. ``cap_tool_result_content`` catches it and keeps
 ``content_str`` unchanged; ``RouterLoop.feedback`` stamps
-``LOST_REASON_META_KEY=LOST_REASON_NEVER_PERSISTED`` on the entry so an
+``LOST_REASON_META_KEY=LostReason.NEVER_PERSISTED`` on the entry so an
 operator sees WHY, without any ref ever having been claimed.
 
 Three tests, three collaborators, narrowest-to-widest:
@@ -35,8 +35,8 @@ from reyn.data.workspace.media_store import MediaStore, MediaStoreWriteUnavailab
 from reyn.runtime.chat_message import (
     CONTENT_REF_META_KEY,
     LOST_REASON_META_KEY,
-    LOST_REASON_NEVER_PERSISTED,
     SPILLED_META_KEY,
+    LostReason,
 )
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
@@ -173,8 +173,8 @@ def test_the_real_production_chain_marks_the_entry_never_persisted(
         "no ref was ever minted — SPILLED_META_KEY must stay absent"
     )
     assert CONTENT_REF_META_KEY not in tool_msg.meta
-    assert tool_msg.meta.get(LOST_REASON_META_KEY) == LOST_REASON_NEVER_PERSISTED, (
-        f"expected LOST_REASON_NEVER_PERSISTED, got meta={tool_msg.meta!r}"
+    assert tool_msg.meta.get(LOST_REASON_META_KEY) == LostReason.NEVER_PERSISTED, (
+        f"expected LostReason.NEVER_PERSISTED, got meta={tool_msg.meta!r}"
     )
     assert _BIG in tool_msg.content, (
         "the ORIGINAL content must still be present in the rendered turn "
