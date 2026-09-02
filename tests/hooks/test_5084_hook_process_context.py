@@ -151,7 +151,9 @@ async def test_project_origin_uses_project_cwd_while_agent_origin_uses_agent_cwd
 
 
 @pytest.mark.asyncio
-async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(tmp_path, monkeypatch):
+async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
+    tmp_path, monkeypatch, out_of_process_reyn,
+):
     """Tier 2: real sessions execute project and per-agent hooks in their declared trees.
 
     The child only runs a cwd probe and does not import Reyn; its script path
