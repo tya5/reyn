@@ -3753,9 +3753,17 @@ class RecoveryLadder:
         # shapes). Any slice that turns out too large for the
         # new, smaller raw_middle just clips naturally at the
         # slice below; no explicit clamping needed there.
+        # #5631 candidate 1: self._attempt_len is Optional in its own
+        # __init__ declaration (unset until the first _stage_fold call
+        # this iteration), but this method is only ever reached FROM
+        # _apply_compact_call, itself only reachable once _stage_fold's
+        # own setup has assigned it -- never None here in practice.
+        assert self._attempt_len is not None
         self.raw_middle = self.raw_middle[self._attempt_len:]
         if self.raw_middle:
-            self._compact_attempt_len = min(self._attempt_len * 2, len(self.raw_middle))
+            self._compact_attempt_len = min(
+                self._attempt_len * 2, len(self.raw_middle),
+            )
         # #4947 ③ (CI red on #4950, architect-ruled): reset the
         # same-cause streak here, and ONLY here — not on any
         # other escalation branch. The cap's own words below
@@ -3788,6 +3796,7 @@ class RecoveryLadder:
             # instead of calling main_call with an incomplete
             # summary.
             return _LADDER_CONTINUE
+        return None
 
     async def _apply_compact_call(self, input_chunk: "HistoryChunkToCompact", _offered: "list[dict]") -> "object | None":
         """The actual ``compact()`` call and its success-path
