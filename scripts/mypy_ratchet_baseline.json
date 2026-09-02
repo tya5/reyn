@@ -388,6 +388,10 @@
     "code": "attr-defined"
   },
   {
+    "file": "src/reyn/interfaces/slash/attachment.py",
+    "code": "assignment"
+  },
+  {
     "file": "src/reyn/interfaces/slash/dispatch.py",
     "code": "valid-type"
   },

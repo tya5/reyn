@@ -916,10 +916,18 @@ trust decision on a specific skill, discovered later if at all.
   is the one construction input added, not a general override seam (an `overrides=...`
   catch-all was considered and rejected on #5382: no boundary, and it would undo #3133's
   45→36 param-surface cut with one opaque param).
-- `_pending_user_attachments` (#366) — queue of image blocks the user attached via `/image PATH`
-  or `--image PATH`, drained on the next user-message turn (attached to that
-  `ChatMessage`'s `media` field). litellm-style content parts:
-  `{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}`.
+- `_pending_user_attachments` (#366, widened to any file type by #5509) — queue of media
+  blocks the user attached via `/image PATH` (images only) or `/attachment PATH` (any file
+  — mime resolved via stdlib `mimetypes`, never a reyn-specific table), drained on the next
+  user-message turn (attached to that `ChatMessage`'s `media` field). Each block's own
+  `"type"` (`image`/`document`/`file`/`video_url`/`audio`) is DERIVED from its `mime_type`
+  via `router_loop.classify_media_block_type` — never independently chosen by a producer
+  (#5526 — closes the risk of a block's `type` and `mime_type` disagreeing). Path-ref
+  shape (#383 PR-C — the file itself is the source of truth, never duplicated into
+  `history.jsonl`): `{"type": ..., "path": ..., "mime_type": ..., "content_hash": "sha256:..."}`.
+  Materialised at wire-build time into the matching litellm content part (`image_url` /
+  `document` / `file` / `video_url` / `input_audio`) — see `router_loop.
+  build_wire_media_part`.
 - `_web_fetch_config` (#4274) — `reyn.yaml` `web_fetch.*` (SSL verify / private-IP
   opt-in / download-byte cap), plumbed straight into the router `OpContext.web_fetch_config`
   the `web_fetch` op reads. Same shape as `_multimodal_config` above (a plain value, not a

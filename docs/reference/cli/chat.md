@@ -78,6 +78,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/agents` | List loaded agents and which one is currently attached |
 | `/answer <id-prefix> <text>` | Answer a pending `ask_user` / permission prompt (id-prefix: any unique prefix of the intervention id) |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
+| `/attachment <path>` | Attach ANY file to the next user message (multimodal input; any extension — mime resolved via stdlib `mimetypes`, never a reyn-specific table). `/image` remains the narrower, image-only convenience command; both queue onto the SAME shared attachment set |
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
 | `/cancel` | Cancel the in-flight turn (same as Esc / Ctrl+C) — reports what was actually cancelled, or that nothing was running |
 | `/clear-history` (alias `/clear`) | Wipe chat history (**destructive**; clears in-memory + persistent history and the action-usage table; events/run-state/profile preserved) |
@@ -88,7 +89,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
 | `/hook on\|off <name>` | Enable/disable a hook for this session (live at the next dispatch; session-scoped — the hook still fires in the agent's other sessions; persists across restart). `off` only takes effect for a per-agent- or per-session-origin hook; a startup- or runtime-origin hook (config-file layers the agent cannot write) is protected — it keeps firing regardless (#5213/#5218). `/hook off` on a protected hook is refused and names the actual origin instead of claiming success — it does not persist the request either, so a later `/hook` inspection never shows a stale, inert `disabled:` entry (#5230). The status bar's Hook tab uses the SAME predicate the dispatcher enforces (#5222) |
-| `/image <path>` (alias `/img`) | Attach an image to the next user message (multimodal input; png/jpg/jpeg/gif/webp/svg) |
+| `/image <path>` (alias `/img`) | Attach an image to the next user message (multimodal input; png/jpg/jpeg/gif/webp/svg). See `/attachment` for any other file type |
 | `/list` | List pending interventions |
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
@@ -103,7 +104,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/tasks [cancel <task_id> [confirm]]` | List this session's currently-running tasks (`prompt`/`pipeline` async launches), or request cancellation of one — the same `list_tasks`/`cancel_task` ops the LLM itself calls. Cancel is destructive (a `prompt` task's cancel reaches across to the target AGENT's live turn — the target's session id is not tracked, so a bare arg warns and asks for `confirm`, same two-step pattern as `/reset`) (see [Multi-agent concepts](../../concepts/multi-agent/multi-agent.md#operator-visibility-tasks-5654)) |
 | `/visibility on\|off <tool\|mcp\|category> <name>` | Toggle this session's LLM visibility of a capability (hidden next turn / restored up to the agent's authorized envelope — an envelope-denied capability stays hidden) |
 
-`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives; a spawned/delegated peer's progress is monitored via `/agents`. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input; `/open` launches a generated artifact with the OS's own default app (local sessions only — see the Artifacts tab).
+`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives; a spawned/delegated peer's progress is monitored via `/agents` (note: `/attach` switches the REPL's attached agent — unrelated to `/attachment`, which queues a file). `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image`/`/attachment` enable multimodal input; `/open` launches a generated artifact with the OS's own default app (local sessions only — see the Artifacts tab).
 
 ## Multi-agent behavior
 
