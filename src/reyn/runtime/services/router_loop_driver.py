@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import Spillability
 from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE
+from reyn.services.compaction.engine import is_shrinkable_overflow as _is_shrinkable_overflow
 from reyn.services.compaction.engine import wire_role as _wire_role
 
 if TYPE_CHECKING:
@@ -42,51 +43,6 @@ _WIRE_MESSAGE_KEYS = (
     "role", "content", "tool_calls", "tool_call_id", "name",
     "reasoning_content", "thinking_blocks", "provider_specific_fields",
 )
-
-
-def _is_shrinkable_overflow(exc: BaseException) -> bool:
-    """#5577/#5593 — is *exc* a cause the shrink ladder should be entered
-    for?
-
-    ``classify_llm_failure``'s own fallthrough is unconditionally
-    ``OVERFLOW`` for anything that is neither FATAL nor RETRYABLE — a
-    default calibrated for ``retry_loop``'s OWN inner except clause,
-    which (per that function's own docstring) "only ever catches
-    CompactionOverflowError/ContextOverflowError today, both already
-    overflow-shaped by construction" — i.e. that default never actually
-    had to defend against a genuinely unrelated exception shape reaching
-    it, because nothing UNRELATED could reach it there.
-
-    Both call sites in THIS module are different: they catch ``Exception``
-    from ``loop.run()`` — ANY exception the router/provider stack can
-    raise, including one neither FATAL, RETRYABLE, nor an overflow at all
-    (#5593's real incident: ``StructuredOutputUnsupportedModelError`` —
-    not in ``FATAL_EXC_TYPES``, not a rate-limit/timeout/5xx/quota shape,
-    so ``classify_llm_failure``'s fallthrough classified it OVERFLOW,
-    wrapped it, and the shrink ladder burned real LLM calls on a cause no
-    amount of shrinking could ever fix, then reported the wrong
-    diagnosis — UnrecoveredError, out of context, for a config error).
-
-    Fix: still exclude FATAL/RETRYABLE via ``classify_llm_failure``
-    (#5577's own gain — a quota/5xx/timeout exception whose message text
-    merely resembles an overflow keyword must not enter here), but for
-    anything classify_llm_failure's OWN 3-way split does not itself
-    prove is FATAL or RETRYABLE, require the STRONGER, narrower
-    ``is_context_overflow_error`` signal too (litellm's typed
-    ``ContextWindowExceededError``, a 413, or an overflow keyword) —
-    restoring the pre-#5577 conservative default (unmatched shape =
-    False, do not enter) for this module's own two call sites, which
-    ``classify_llm_failure``'s bare fallthrough was never designed to
-    answer for."""
-    from reyn.services.compaction.engine import LLMFailureClass, classify_llm_failure
-    from reyn.services.compaction.engine import (
-        is_context_overflow_error as _is_context_overflow_error,
-    )
-
-    failure_class = classify_llm_failure(exc)
-    if failure_class in (LLMFailureClass.FATAL, LLMFailureClass.RETRYABLE):
-        return False
-    return _is_context_overflow_error(exc)
 
 
 def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:

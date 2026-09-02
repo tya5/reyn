@@ -1259,6 +1259,56 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     return LLMFailureClass.OVERFLOW
 
 
+def is_shrinkable_overflow(exc: BaseException) -> bool:
+    """#5577/#5593/#5622 — is *exc* a cause the shrink ladder should be
+    entered for? The ONE predicate every call site that decides "wrap
+    and offer to the shrink ladder" must share — #5622's own finding:
+    a 3rd call site (this module's own retry_loop, below) had drifted
+    onto ``classify_llm_failure`` ALONE, missing the narrower
+    ``is_context_overflow_error`` requirement the other 2 call sites
+    (``router_loop_driver.py``) already carry — the exact "2
+    discriminators for one question" shape #5577 already closed once,
+    recurring at a 3rd site.
+
+    ``classify_llm_failure``'s own fallthrough is unconditionally
+    ``OVERFLOW`` for anything that is neither FATAL nor RETRYABLE — a
+    default calibrated for retry_loop's OWN inner except clause, which
+    (per that call site's own comment, below) "only ever catches
+    CompactionOverflowError/ContextOverflowError today, both already
+    overflow-shaped by construction" for the ORIGINAL caller
+    (``compact()``'s own exception, always genuinely overflow-shaped —
+    the one call site where ``classify_llm_failure`` alone was actually
+    safe). This function's own callers (2 in ``router_loop_driver.py``,
+    plus the 3rd this PR fixes, this module's own retry_loop) catch a
+    WIDER exception surface — ANY exception the router/provider stack
+    (or, at the compact()-call site, the compaction LLM call itself)
+    can raise, including one neither FATAL, RETRYABLE, nor an overflow
+    at all (#5593's real incident:
+    ``StructuredOutputUnsupportedModelError`` — not in
+    ``FATAL_EXC_TYPES``, not a rate-limit/timeout/5xx/quota shape, so
+    ``classify_llm_failure``'s fallthrough classified it OVERFLOW,
+    wrapped it, and the shrink ladder burned real LLM calls on a cause
+    no amount of shrinking could ever fix, then reported the wrong
+    diagnosis — ``UnrecoveredError``, out of context, for a config
+    error).
+
+    Fix: still exclude FATAL/RETRYABLE via ``classify_llm_failure``
+    (#5577's own gain — a quota/5xx/timeout exception whose message text
+    merely resembles an overflow keyword must not enter here), but for
+    anything ``classify_llm_failure``'s OWN 3-way split does not itself
+    prove is FATAL or RETRYABLE, require the STRONGER, narrower
+    ``is_context_overflow_error`` signal too (litellm's typed
+    ``ContextWindowExceededError``, a 413, or an overflow keyword) —
+    restoring the pre-#5577 conservative default (unmatched shape =
+    False, do not enter) for every call site, which
+    ``classify_llm_failure``'s bare fallthrough was never designed to
+    answer for on its own."""
+    failure_class = classify_llm_failure(exc)
+    if failure_class in (LLMFailureClass.FATAL, LLMFailureClass.RETRYABLE):
+        return False
+    return is_context_overflow_error(exc)
+
+
 class CompactionOverflowError(Exception):
     """The compaction LLM call itself exceeded its B_M budget.
 
@@ -3143,7 +3193,21 @@ async def retry_loop(
                     # OVERFLOW: unchanged from #3783 stage 3's own
                     # ratified default — wrapped and offered to the
                     # shrink ladder below.
-                    if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
+                    #
+                    # #5622: this call site used to check
+                    # ``classify_llm_failure(exc) is not LLMFailureClass.
+                    # OVERFLOW`` alone — the ONE call site (of 3 across
+                    # the codebase) that had drifted off the shared
+                    # ``is_shrinkable_overflow`` predicate the other 2
+                    # (``router_loop_driver.py``) already use, #5577's
+                    # own "2 discriminators for one question" shape
+                    # recurring. `classify_llm_failure`'s bare fallthrough
+                    # is OVERFLOW for the keyword-only case too — a
+                    # non-context-shaped exception whose message merely
+                    # RESEMBLES one (no typed `ContextWindowExceededError`,
+                    # no 413, no real overflow keyword) used to still
+                    # enter the shrink ladder here; now it does not.
+                    if not is_shrinkable_overflow(exc):
                         raise
                     raise CompactionOverflowError(str(exc)) from exc
 
