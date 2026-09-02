@@ -195,12 +195,17 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
     rather than an unstated shortcut: measured directly (reverting this to
     let ``get_default_backend()`` resolve normally, on a real macOS host
     where ``sandbox-exec`` is available and enforcing) that a per-agent
-    (untrusted) hook's ``write_paths`` is UNCONDITIONALLY rejected as a
-    self-grant (#5356, ``hooks/loader.py``), and NO OTHER mechanism in
-    either real backend (``backends/seatbelt.py``, ``backends/
-    landlock.py`` — both grant writes ONLY via ``policy.write_paths``, no
-    exception for ``$TMPDIR``/``agent_state_dir``/the agent's own
-    ``base_dir``) grants a per-agent hook write access to ANY path. This
+    (untrusted, ``.reyn/agents/<name>/hooks.yaml``) hook's ``write_paths``
+    is UNCONDITIONALLY rejected as a self-grant (#5356, ``hooks/
+    loader.py`` — ``_AGENT_WRITABLE_ORIGINS`` does not include the
+    ``trusted-per-agent`` origin #5505/#5669 later added, so the untrusted
+    layer alone still has no path to a grant). Both real backends
+    (``backends/seatbelt.py``, ``backends/landlock.py``) grant writes
+    ONLY via ``policy.write_paths`` — no exception for ``$TMPDIR``/
+    ``agent_state_dir``/the agent's own ``base_dir`` — so an OPERATOR can
+    grant a per-agent hook write access via the TRUSTED per-agent layer
+    (``.reyn/config/agents/<name>/hooks.yaml``, #5505/#5669), but this
+    UNTRUSTED (agent-writable) layer genuinely cannot self-grant one. This
     is a PRE-EXISTING fact (reproduced identically against this test's own
     prior revision, before this fix), not introduced by this PR, and out
     of #5637's own scope (cwd resolution, not sandbox write grants) —
