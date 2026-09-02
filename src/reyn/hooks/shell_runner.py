@@ -476,6 +476,7 @@ async def run_shell_hook(
     capture_stdout: bool = False,
     consent_bus: "RequestBus | None" = None,
     hook_name: str | None = None,
+    hook_origin: str | None = None,
     emit_event: "Callable[..., Any] | None" = None,
     output_token_cap: "tuple[int, str] | None" = None,
 ) -> str | None:
@@ -830,6 +831,8 @@ async def run_shell_hook(
                     mode=("exec_capture" if capture_stdout else "exec"),
                     returncode=result.returncode,
                     denial_class=denial_class,
+                    cwd=cwd,
+                    origin=hook_origin,
                 )
             except Exception as exc:  # noqa: BLE001 — telemetry is best-effort
                 # #5536 group A — see _report_unapplied_agent_policy's own

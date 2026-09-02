@@ -127,6 +127,47 @@ async def test_dispatcher_threads_a_different_agent_name_per_agent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_project_origin_uses_project_cwd_while_agent_origin_uses_agent_cwd(monkeypatch):
+    """Tier 2: project-layer hooks use the project tree; agent-layer hooks use the agent tree."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    backend = _RecordingBackend()
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["echo", "project"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=backend,
+        hook_cwd=lambda: "/workspace/agents/coder1",
+        hook_cwd_for_origin=lambda origin: (
+            "/workspace" if origin == "runtime" else "/workspace/agents/coder1"
+        ),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    [(_argv, cwd, _ctx)] = backend.calls
+    assert cwd == "/workspace"
+
+
+@pytest.mark.asyncio
+async def test_shell_audit_event_records_origin_and_cwd(tmp_path, monkeypatch):
+    """Tier 2: shell-hook audit events identify the declaring layer and cwd."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    events: list[tuple[str, dict]] = []
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["true"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=NoopBackend(),
+        hook_cwd_for_origin=lambda origin: "/workspace" if origin == "runtime" else "/agent",
+        hook_temp_dir=lambda: str(tmp_path),
+        emit_event=lambda event_type, **data: events.append((event_type, data)),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    shell_events = [data for event_type, data in events if event_type == "hook_shell_executed"]
+    assert shell_events
+    assert shell_events[-1]["cwd"] == "/workspace"
+    assert shell_events[-1]["origin"] == "runtime"
+
+
+@pytest.mark.asyncio
 async def test_no_injected_callables_means_no_env_addition(monkeypatch):
     """Tier 2: regression guard — a dispatcher built WITHOUT hook_cwd/
     hook_process_context (every pre-#5084 construction site, including every

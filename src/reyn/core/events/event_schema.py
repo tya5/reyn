@@ -269,6 +269,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # agent_name: the session's agent identity (same field as chat_started).
     "session_started": frozenset({"agent_name"}),
     "session_completed": frozenset({"agent_name"}),
+    "hook_shell_executed": frozenset({"command", "mode", "returncode", "denial_class", "cwd", "origin"}),
     # turn_started: emitted in Session.run_one_iteration() after the trigger
     #   is consumed from the inbox and before dispatch to _handle_*.
     # kind: the inbox message kind that triggered this turn — a value of the
