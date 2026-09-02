@@ -2721,10 +2721,12 @@ class RecoveryLadder:
     lexicographic measure that strictly decreases on every path that
     does not return or raise: ``(T_max halvings remaining, total turn
     count, unspilled candidate count)`` — full proof (each component,
-    both terminals, the episode-boundary reset, T3's retirement, scope):
-    ``docs/deep-dives/decisions/0044-overflow-recovery-ladder.md#bounded-termination-proof-5531-10-max-iterations-abolished``
-    (#5631 candidate 1: moved from here, Class A per the comment policy
-    — history/measurement, not a decision this class itself makes).
+    both terminals, the episode-boundary reset): #5531/#4885,
+    ``docs/concepts/data-retrieval/chat-compaction.md#overflow-recovery``
+    (#5631 candidate 1: this class-docstring section trimmed to a
+    pointer + the conclusion, Class A per the comment policy — ADR-0044
+    is immutable once ACCEPTED, so the history moved to its own already-
+    named companion doc instead of the ADR itself).
 
     Failure-mode separation
     -----------------------
@@ -2843,10 +2845,12 @@ class RecoveryLadder:
         out of :meth:`__init__` (#5631 candidate 1, 150-line gate)
         purely structurally. Decision+reason (Class B) and relational
         (Class C) comments below stay inline, VERBATIM; the byte-limit
-        reservation-redesign HISTORY (Class A) moved to
-        ``docs/deep-dives/decisions/0044-overflow-recovery-ladder.md#byte-limit-reservation-redesign-4885-5531-pr-2``
+        reservation-redesign HISTORY (Class A) reads at #5531/#4885,
+        ``docs/concepts/data-retrieval/chat-compaction.md#overflow-recovery``
         (#5631 candidate 1's own comment-policy pass, architect-
-        authorized as part of this same PR rather than deferred)."""
+        authorized as part of this same PR rather than deferred; ADR-0044
+        is immutable once ACCEPTED, so this points at its own already-
+        named companion doc, not the ADR itself)."""
         # #4885/#5531 PR-2: an HTTP 413 is a request-BODY-BYTE limit, a
         # different axis from the token budgets this ladder is built
         # from -- lowering the EFFECTIVE T_max is the only lever that
