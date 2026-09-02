@@ -188,7 +188,20 @@ def test_media_bytes_count_toward_the_same_project_wide_cap(tmp_path):
 def test_pinned_agents_media_survives_a_combined_cap_eviction(tmp_path):
     """Tier 2: accept sibling — witness 2, driven through the real
     combined-cap eviction path (not just the candidate-listing unit
-    check above)."""
+    check above).
+
+    #4478 review (lead-coder's own real strip finding): a SINGLE
+    tool-result write's own pre-check sees the disk state BEFORE that
+    write lands (:meth:`MediaStore._evict_cross_session_over_cap`'s own
+    docstring) — one write alone never actually triggers eviction, so
+    a prior version of this test asserting only "the pinned file
+    survives" passed vacuously (nothing was ever at risk of being
+    evicted). This version drives a SECOND write (matching #5366's own
+    established `test_a_later_write_evicts_an_older_other_agents_file_
+    once_over_cap` pattern) so eviction genuinely fires, and asserts
+    BOTH directions: the pinned agent's media survives AND the
+    unpinned agent's media is actually gone — either alone cannot tell
+    "protected" apart from "nothing happened"."""
     storage = StorageConfig(max_bytes=600, pin=["alice"])
     alice = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="alice", session_id="main",
@@ -197,15 +210,38 @@ def test_pinned_agents_media_survives_a_combined_cap_eviction(tmp_path):
     alice_media_block = alice.save_media(b"a" * 500, mime_type="image/png")
     _bump_mtime_forward(tmp_path)
 
+    carol = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="carol", session_id="main",
+        storage=storage,
+    )
+    carol_media_block = carol.save_media(b"c" * 500, mime_type="image/png")
+    _bump_mtime_forward(tmp_path)
+
+    # Pre-check sees alice(500) + carol(500) = 1000, still under cap
+    # relative to itself (this write's own pre-check runs BEFORE it
+    # lands) -> allowed through. The project is now genuinely over cap
+    # (1000 > 600) on disk, but nothing re-checks until the NEXT write.
     bob = MediaStore(
         MediaStoreConfig(), project_root=tmp_path, agent_name="bob", session_id="main",
         storage=storage,
     )
-    bob.save_tool_result("b" * 500, mime_type="text/plain", seq=1)
+    bob.save_tool_result("b" * 10, mime_type="text/plain", seq=1)
+    _bump_mtime_forward(tmp_path)
+
+    # This SECOND write's own pre-check now sees the project over cap
+    # and evicts the oldest non-pinned candidate — carol's media —
+    # while alice's pinned media must survive.
+    bob.save_tool_result("b" * 10, mime_type="text/plain", seq=2)
 
     alice_media_path = (tmp_path / alice_media_block["path"]).resolve()
+    carol_media_path = (tmp_path / carol_media_block["path"]).resolve()
     assert alice_media_path.exists(), (
         "a pinned agent's media must survive combined-cap eviction"
+    )
+    assert not carol_media_path.exists(), (
+        "sanity: an unpinned agent's older media must have actually "
+        "been evicted — otherwise 'alice survives' could mean nothing "
+        "happened at all"
     )
 
 
