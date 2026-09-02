@@ -1,8 +1,10 @@
 """Per-checkpoint anchor-text store for the rewind timeline (ADR-0038 #1547).
 
 The TUI ``/rewind`` timeline (1f) shows each checkpoint as ``seq · rel-time ·
-kind``. This store adds the *content* anchor — the truncated last user message
-at that checkpoint — captured at ``cut_generation`` time (the ``history_buffer``
+kind``. This store adds the *content* anchor — the truncated last human
+prompt (CLIENT_INPUT-origin; for a non-human turn, the most recent one
+before it — #5648) as of that checkpoint — captured at ``cut_generation``
+time (the ``history_buffer``
 holds it in-memory, so it is cheap, robust, and survives independent of audit-log
 rotation). It is the **correct source** (vs mining the audit EventStore, which has
 no WAL seq and would need a cross-log join — see #1547 rationale).
@@ -32,7 +34,9 @@ def truncate_anchor(text: str, *, limit: int = _DEFAULT_LIMIT) -> str:
 
 
 class AnchorStore:
-    """Maps a WAL checkpoint seq → its anchor text (truncated last user message).
+    """Maps a WAL checkpoint seq → its anchor text (the truncated last
+    human prompt — CLIENT_INPUT-origin; for a non-human turn, the most
+    recent one before it, #5648).
 
     JSON-backed; each entry is ``{"anchor": <truncated display>, "full": <full
     original user message>}``. The truncated ``anchor`` drives the rewind-timeline

@@ -57,8 +57,10 @@ class SnapshotJournal:
         # non-chat), generation cuts are no-ops and the single snapshot.json
         # path is unchanged (no behavior change).
         self._generation_store = generation_store
-        # #1547: per-checkpoint anchor text (truncated last user message). Set
-        # post-construction by the registry. None → no anchor capture.
+        # #1547: per-checkpoint anchor text (the truncated last human
+        # prompt — CLIENT_INPUT-origin; for a non-human turn, the most
+        # recent one before it, #5648). Set post-construction by the
+        # registry. None → no anchor capture.
         self._anchor_store = None
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name, session_id)
 
@@ -129,12 +131,14 @@ class SnapshotJournal:
         a WAL seq). Additive to the per-mutation ``save()``. No-op when no
         generation store / WAL is configured.
 
-        ``anchor`` (#1547): the truncated last user message for the rewind-timeline
-        preview, captured against the same boundary seq. Empty / no anchor store →
-        skipped (turn boundaries pass it; plan-step / phase cuts leave it empty).
-        ``full_message`` (#1533 2c): the full original user message for the
-        edit-prefill, persisted alongside the truncated anchor (turn boundaries
-        only — same as ``anchor``).
+        ``anchor`` (#1547): the truncated last human prompt (CLIENT_INPUT-
+        origin; for a non-human turn, the most recent one before it — #5648)
+        for the rewind-timeline preview, captured against the same boundary
+        seq. Empty / no anchor store → skipped (turn boundaries pass it;
+        plan-step / phase cuts leave it empty).
+        ``full_message`` (#1533 2c): the full original message this same
+        source resolved to, for the edit-prefill, persisted alongside the
+        truncated anchor (turn boundaries only — same as ``anchor``).
         """
         if self._generation_store is None or self._state_log is None:
             return
