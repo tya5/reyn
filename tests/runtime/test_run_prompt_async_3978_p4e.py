@@ -253,8 +253,88 @@ async def test_legacy_kind_none_chain_still_uses_the_relay_continuation_path(
     )
 
 
+def _wal_diagnostic_dump(
+    *, task_id: str, all_events: "list[dict]", caller, request: "pytest.FixtureRequest",
+) -> str:
+    """part of #4986: assertion-failure diagnostics ONLY — never changes
+    control flow, never sleeps, never retries (CLAUDE.md: a duration must
+    never be reached for by a test, in either direction). Assembled lazily
+    (an ``assert cond, msg`` message expression is only evaluated once
+    ``cond`` is already falsy — zero cost on the green path).
+
+    Surfaces exactly what lead-coder's own #4986 next-step named, so the
+    NEXT real CI red (7/7 today, 0/45 locally reproduced per this
+    session's own finding on that issue) answers its own reproduction
+    question directly, without a throwaway diagnostic branch/PR:
+
+    1. The WAL's own real ``(kind, chain_id)`` population at the moment
+       of failure — what IS there, not just that the expected entry
+       wasn't found.
+    2. Whether ``task_id`` exists under a DIFFERENT ``kind`` (a shape
+       mismatch) or not at all (genuinely absent) — these are different
+       failure classes and the plain assertion message could not tell
+       them apart.
+    3. ``DurabilityWorker``'s own drain state right after ``flush()``
+       returned — ``queue.qsize()`` / whether the drainer task itself
+       reports ``done()`` — the SAME internals :meth:`SnapshotJournal.
+       flush`'s own barrier depends on (see that method's docstring).
+    4. The xdist worker id and (to the extent ``request.node.session.
+       items`` exposes it — the list IS ordered per-worker, so the
+       immediately-PRECEDING entry is a real read, not a guess) the test
+       that ran immediately before this one in the SAME worker process —
+       the #4986 issue's own real-CI reports name a shared worker (gw2)
+       across unrelated failures as one live hypothesis."""
+    import os
+
+    kind_chain_pairs = [(e.get("kind"), e.get("chain_id")) for e in all_events]
+    same_chain_id_events = [e for e in all_events if e.get("chain_id") == task_id]
+    if same_chain_id_events:
+        shape_note = (
+            f"{len(same_chain_id_events)} WAL event(s) DO carry "
+            f"chain_id={task_id!r}, under kind(s)="
+            f"{sorted({str(e.get('kind')) for e in same_chain_id_events})!r} "
+            f"— not simply missing, a SHAPE mismatch"
+        )
+    else:
+        shape_note = (
+            f"NO WAL event anywhere carries chain_id={task_id!r} — "
+            f"genuinely absent, not a shape mismatch"
+        )
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "(not under xdist)")
+    prev_test = "(unknown — request.node not found in session.items)"
+    try:
+        items = request.node.session.items
+        idx = items.index(request.node)
+        prev_test = (
+            items[idx - 1].nodeid if idx > 0
+            else "(first test collected for this worker's own run)"
+        )
+    except Exception:  # noqa: BLE001 — diagnostic-only, must never mask the real assertion
+        pass
+
+    drain_state = "(no DurabilityWorker reached — StateLog has no worker)"
+    try:
+        dworker = caller._state_log._worker  # noqa: SLF001
+        qsize = dworker._queue.qsize() if dworker._queue is not None else "(queue never created)"  # noqa: SLF001
+        drainer_done = dworker._drainer.done() if dworker._drainer is not None else "(drainer never created)"  # noqa: SLF001
+        drain_state = f"queue.qsize()={qsize}, drainer.done()={drainer_done}"
+    except Exception:  # noqa: BLE001 — diagnostic-only, must never mask the real assertion
+        pass
+
+    return (
+        "\n  -- #4986 diagnostics (assertion-failure only; no retry, no sleep) --\n"
+        f"  WAL (kind, chain_id) pairs, replay order: {kind_chain_pairs}\n"
+        f"  {shape_note}\n"
+        f"  drain state right after flush(): {drain_state}\n"
+        f"  xdist worker: {worker!r}, previous test in this worker: {prev_test!r}\n"
+    )
+
+
 @pytest.mark.asyncio
-async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(tmp_path):
+async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(
+    tmp_path, request,
+):
     """Tier 2c: NOT a truncate-falsify test — this replays every WAL event
     from applied_seq=0 (nothing is truncated below any floor). The actual
     truncation-survives-WAL-truncation coverage for kind/waiting_on/
@@ -267,7 +347,14 @@ async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(tmp_
     kind="prompt", the correct waiting_on, the correct requester — i.e.
     did this producer's call to register() pass what it claims to, proven
     by reading it back via pure WAL replay rather than trusting the
-    in-memory chain object alone."""
+    in-memory chain object alone.
+
+    part of #4986: both assertions below carry a diagnostic dump on
+    failure only (see :func:`_wal_diagnostic_dump`) — this test's own
+    flakiness on CI (Python 3.12 only, 7/7 today, 0/45 reproduced
+    locally per this session's own finding on that issue) has no known
+    reproduction recipe yet; the next real red now answers its own
+    question instead of needing a second investigation pass."""
     reg = _make_registry(tmp_path)
     _seed(tmp_path, "alpha")
     _seed(tmp_path, "beta")
@@ -289,13 +376,21 @@ async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(tmp_
         e for e in all_events
         if e.get("kind") == "chain_register" and e.get("chain_id") == task_id
     ]
-    assert chain_events, f"no chain_register WAL event found for {task_id!r}"
+    assert chain_events, (
+        f"no chain_register WAL event found for {task_id!r}"
+        + _wal_diagnostic_dump(
+            task_id=task_id, all_events=all_events, caller=caller, request=request,
+        )
+    )
 
     replayed = AgentSnapshot.empty("alpha")
     replayed.apply_events(all_events)
     reconstructed = replayed.pending_chains.get(task_id)
     assert reconstructed is not None, (
         f"chain {task_id!r} must reconstruct from pure WAL replay"
+        + _wal_diagnostic_dump(
+            task_id=task_id, all_events=all_events, caller=caller, request=request,
+        )
     )
     assert reconstructed["task_kind"] == "prompt"
     assert reconstructed["waiting_on"] == ["beta"]
