@@ -168,10 +168,13 @@ async def test_row_shows_real_events_driven_snapshot(tmp_path: Path) -> None:
 
     So this asserts the controller path's real contract — the row appears and
     says the honest thing — and, as the deny half, that it does NOT print rung
-    numbers it never measured. The ladder path's own figures are witnessed
-    where they actually occur, in
-    tests/runtime/test_5618_recovery_episode_gate.py, which drives the real
-    ladder end-to-end."""
+    numbers it never measured.
+
+    Accept sibling (architect, #5630): the figures ARE rendered on the path
+    that measures them — ``test_the_measured_figures_are_reported_while_their_
+    episode_runs`` in tests/runtime/test_5618_recovery_episode_gate.py, which
+    drives the real ladder end-to-end. Without that sibling, this test's deny
+    half would be satisfied by a pane that never shows the figures at all."""
     app, session, reg = await _make_app_with_real_session(tmp_path)
     session._compaction_controller._compacting = True  # arrange: no public setter
     session._audit_events.emit(
