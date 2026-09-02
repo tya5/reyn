@@ -109,7 +109,7 @@ doc↔code gate](../runtime/events.md) と同じ形）。あるキーが agent/s
 | `agent_id` | 文字列 | project | restart | `reyn.yaml` | エージェントの**識別子**— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
 | `auth` | マップ | project | restart | `reyn.yaml` | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | スケジュール付きスキル実行。以下参照。 |
-| `external_transports` | マップ | project | restart | `reyn.yaml` | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
+| `external_transports` | マップ | project | restart | `reyn.yaml` | 受信トランスポート → MCP ツールルーティング、web/AGUI サーバランナー経由でのみ配線 — 素の `reyn chat` では inert（Slack / LINE / Discord など）。以下参照。 |
 | `multimodal` | マップ | project | restart | `reyn.yaml` | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
 | `permissions` | マップ | project · agent · session² | restart⁷ | `reyn.yaml` | デフォルトの Permission ポリシー。以下参照。 |
 | `project_context_path` | 文字列 | project · agent³ | restart⁶ | `reyn.yaml` | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズム。下記の注記参照。 |
@@ -1344,29 +1344,32 @@ multimodal:
 
 ## `external_transports` ブロック
 
-チャット向け受信トランスポート → MCP ツールルーティング。外部トランスポート名（Slack / LINE / Discord / ...）を、リプライを配信する MCP ツール + ルーター出力をツール引数に shape する `args_template` にマップします。
+受信トランスポート → MCP ツールルーティング。**web/AGUI サーバランナー経由でのみ配線されます**（`interfaces/web/deps.py` の outbox interceptor と `interfaces/web/server.py` の cron ジョブ失敗通知 — grep 確認済、#4364）— **素の `reyn chat` はどちらの consumer にも到達しません**。外部トランスポート名（Slack / LINE / Discord / ...）を、リプライを配信する MCP ツール + ルーター出力をツール引数に shape する `args_template` にマップします。
+
+**フラットな形で、`transports:` のラップは不要**です — loader（`runtime/external_routing.py` の `parse_external_transports`）はこのブロックの最上位キーを全てトランスポート名として扱います。`transports:` でラップする形（以前のこの例）は、それ自体が `mcp_tool` を持たない不正な 1 エントリ（名前 `"transports"`）として静かに捨てられます — 直接確認済み: `parse_external_transports({"transports": {"slack": {...}}})` は 0 件を返します。
 
 ```yaml
 external_transports:
-  transports:
-    slack:
-      mcp_tool: slack__post_message
-      args_template:
-        channel: "${TRANSPORT_DEST}"
-        text: "${ROUTER_REPLY}"
-    line:
-      mcp_tool: line__push_message
-      args_template:
-        to: "${TRANSPORT_DEST}"
-        messages:
-          - type: text
-            text: "${ROUTER_REPLY}"
+  slack:
+    mcp_tool: slack__post_message
+    args_template:
+      channel: "${TRANSPORT_DEST}"
+      text: "${ROUTER_REPLY}"
+  line:
+    mcp_tool: line__push_message
+    args_template:
+      to: "${TRANSPORT_DEST}"
+      messages:
+        - type: text
+          text: "${ROUTER_REPLY}"
 ```
 
 | フィールド | 型 | 説明 |
 |-------|------|-------------|
-| `transports.<name>.mcp_tool` | 文字列 | リプライを配信する完全修飾 MCP ツール名 (`<server>__<tool>`)。 |
-| `transports.<name>.args_template` | マップ | MCP ツールに渡される shape。`${TRANSPORT_DEST}` はメッセージごとの宛先 ID（channel / user / room id）に解決、`${ROUTER_REPLY}` はルーターの最終テキストに解決。他の `${VAR}` 参照は標準 interpolation ルールに従って `os.environ` から解決。 |
+| `<name>.mcp_tool` | 文字列 | リプライを配信する完全修飾 MCP ツール名 (`<server>__<tool>`)。 |
+| `<name>.args_template` | マップ | MCP ツールに渡される shape。`${TRANSPORT_DEST}` はメッセージごとの宛先 ID（channel / user / room id）に解決、`${ROUTER_REPLY}` はルーターの最終テキストに解決。他の `${VAR}` 参照は標準 interpolation ルールに従って `os.environ` から解決。 |
+
+`reyn doctor` は、web/AGUI サーバ経由で実行していない限り、ここに設定されたエントリを inert として報告します — `reference/cli/doctor.md` の `external_transports:` 節を参照。
 
 トランスポートごとの contract と利用可能なテンプレート変数の全集合は `src/reyn/runtime/external_routing.py` を参照。
 
