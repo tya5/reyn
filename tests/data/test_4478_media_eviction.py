@@ -146,28 +146,6 @@ def test_a_legacy_flat_media_file_is_a_pin_unprotected_candidate(tmp_path):
     )
 
 
-def test_reviewer_strip_removing_nesting_makes_the_pin_test_fail(tmp_path):
-    """Tier 2: reviewer strip (architect's own required witness) —
-    reverting save_media to the pre-#4478 flat write makes the pin-
-    protection accept test genuinely fail, proving that test actually
-    depends on the nesting rather than passing vacuously."""
-    store = MediaStore(
-        MediaStoreConfig(), project_root=tmp_path, agent_name="alice", session_id="main",
-    )
-    # Simulate the pre-#4478 flat write directly (bypassing save_media's
-    # own nesting) — the same construction save_media used to produce.
-    store.media_dir.mkdir(parents=True, exist_ok=True)
-    flat_path = store.media_dir / "20260101T000000-abc-tool-1.png"
-    flat_path.write_bytes(b"\x89PNG\r\n")
-
-    candidates = cross_session_eviction_candidates(store.media_dir, pin=["alice"])
-    assert flat_path in candidates, (
-        "sanity: a flat write (the pre-#4478 shape) must NOT be excluded "
-        "by pin — proving the pin-protection accept test above is "
-        "genuinely exercising the nesting, not passing vacuously"
-    )
-
-
 # ── the project-wide cap's own widened population ────────────────────────────
 
 
