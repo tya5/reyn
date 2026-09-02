@@ -275,26 +275,57 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
     # TurnOrigin.CLIENT_INPUT at all, verified directly) — this is the
     # correct disposition, a site vanishing because its own reason for
     # existing was removed, not the walk losing sight of a live one.)
-    ("reyn/runtime/inbox_arbiter.py", "InboxArbiter.peek_mid_turn_injection"): _SiteDeclaration(
+    ("reyn/runtime/turn_origin.py", "<module>"): _SiteDeclaration(
         role="reads",
         reason=(
-            "#3792: the mid-turn injection origin gate. Only a CLIENT_INPUT-origin "
-            "queued item is eligible to be spliced into an ALREADY-running turn "
-            "between completion rounds — every other origin (AGENT_REQUEST, "
-            "EXTERNAL_MESSAGE, HOOK, ...) is left untouched in the queue, exactly "
-            "as if this method did not exist. Reads the kind as an eligibility "
-            "check, the same fail-safe if/else shape as "
-            "Session._stamp_execution_context above: an unmapped or non-human "
-            "origin cannot reach the permissive (inject) side. Proposal 0067 P1 "
-            "(#3978): moved from Session._peek_mid_turn_injection onto "
-            "InboxArbiter.peek_mid_turn_injection (InboxArbiter extraction) —"
-            " byte-identical relocation, same site, new qualname."
+            "#5677: MID_TURN_INJECTABLE's own declaration names CLIENT_INPUT "
+            "as one of its 2 members (the founding case #3792 built the whole "
+            "mid-turn-injection feature for — a human steering a running tool "
+            "loop). This is the ONE place that decides mid-turn INTERRUPT "
+            "eligibility, a separate question from slash-dispatch trust (this "
+            "gate's own subject) that used to be answered by reusing THIS "
+            "member's predicate — see MID_TURN_INJECTABLE's own module "
+            "docstring for the full separation."
         ),
         measured_by=(
             "tests/core/test_3792_pr2_session_injection.py::"
-            "test_only_client_input_origin_is_peek_eligible",
+            "test_only_mid_turn_injectable_origins_are_peek_eligible",
         ),
     ),
+    ("reyn/runtime/session.py", "_render_mid_turn_injection"): _SiteDeclaration(
+        role="reads",
+        reason=(
+            "#5677: dispatches an injected item's WIRE/history rendering on "
+            "its own kind — CLIENT_INPUT renders unchanged (role=\"user\", "
+            "bare text, the #3792 shape); every OTHER MID_TURN_INJECTABLE "
+            "member renders role=\"system\" with an attributed "
+            "[<kind>:<name>] prefix, so a non-human producer's injected text "
+            "can never again be indistinguishable from the operator's own "
+            "(architect's §0 finding on #5677 — widening eligibility without "
+            "widening this rendering would reproduce THIS gate's own closed "
+            "defect class one layer down, on the mid-turn wire)."
+        ),
+        measured_by=(
+            "tests/runtime/test_5677_mid_turn_injection_wire_rendering.py::"
+            "test_client_input_injection_renders_role_user_unchanged",
+        ),
+    ),
+    # #5677: the ("reyn/runtime/inbox_arbiter.py",
+    # "InboxArbiter.peek_mid_turn_injection") entry that used to live here
+    # is GONE, not forgotten — verified directly (`git grep
+    # 'TurnOrigin.CLIENT_INPUT' -- src/reyn/runtime/inbox_arbiter.py`
+    # finds nothing). That method no longer names CLIENT_INPUT at all: its
+    # eligibility check reads `kind not in MID_TURN_INJECTABLE`
+    # (turn_origin.py), a set CLIENT_INPUT is one member of, declared with
+    # its own reason next to the member — not this file's job any more,
+    # because "may this producer claim CLIENT_INPUT for slash-dispatch
+    # trust" (what this gate polices) and "may this producer interrupt an
+    # already-running turn" (MID_TURN_INJECTABLE's own question) are
+    # answers to two DIFFERENT questions that used to share one predicate
+    # by accident (#5677's own finding). test_3595_new_axis_mid_turn_
+    # injectable_gate.py is the sibling gate for the second question —
+    # same shape, different member, per architect's own co-vet requirement
+    # that widening this axis needs its own enumeration test, not silence.
     ("reyn/runtime/session.py", "Session.queued_user_messages"): _SiteDeclaration(
         role="reads",
         reason=(

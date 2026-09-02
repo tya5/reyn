@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.runtime.turn_origin import TurnOrigin
+from reyn.runtime.turn_origin import MID_TURN_INJECTABLE
 
 if TYPE_CHECKING:
     from reyn.runtime.services.snapshot_journal import SnapshotJournal
@@ -221,54 +221,59 @@ class InboxArbiter:
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
 
-    async def peek_mid_turn_injection(self) -> "dict | None":
-        """#3792: non-blocking, non-committing peek at the inbox head for a
-        mid-turn ``CLIENT_INPUT`` injection candidate.
+    async def peek_mid_turn_injection(self) -> "list[dict]":
+        """#3792/#5677: non-blocking, non-committing peek at the inbox for
+        EVERY currently-eligible mid-turn injection candidate, in arrival
+        order.
 
-        Returns ``{"payload": dict, "msg_id": str}`` for the FIRST eligible,
-        uncancelled ``CLIENT_INPUT`` in arrival order; ``None`` when there is
-        none (empty queue, or nothing but ineligible origins).
+        Returns ``[{"payload": dict, "msg_id": str, "kind": str}, ...]`` —
+        one entry per eligible (:data:`~reyn.runtime.turn_origin.
+        MID_TURN_INJECTABLE`), uncancelled item found during ONE
+        non-blocking scan of the combined buffer+queue; ``[]`` when there
+        is none (empty queue, or nothing but ineligible origins).
 
         Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT) is
         untouched either way. Everything dequeued along the way is held in
-        ``self.pending_inbox_items``, in arrival order, so nothing is lost: the
-        candidate stays there until ``Session._commit_mid_turn_injection``
-        actually commits it (the caller must have spliced it into the wire
-        first — see ``RouterLoop.run_loop``'s seam), and the items looked past
-        stay there UNCONSUMED for the ordinary turn-boundary ``consume_inbox``.
+        ``self.pending_inbox_items``, in arrival order, so nothing is lost:
+        every returned candidate stays there until
+        ``Session._commit_mid_turn_injection`` actually commits it (the
+        caller must have spliced it into the wire first — see
+        ``RouterLoop.run_loop``'s seam), and the items looked past stay
+        there UNCONSUMED for the ordinary turn-boundary ``consume_inbox``.
 
-        **#5647 changed this rule, deliberately.** #3792 STOPPED at an
-        ineligible head rather than looking further, reasoning that skipping
-        "would silently reorder arrival, and that reordering would leave no
-        trace anywhere". The measured consequence was that the rule inverted
-        its own purpose: on reyn-self a ``broker_drain`` hook posts
-        ``msg_kind=hook`` items continuously, so an operator's prompt was
-        almost always sitting behind one, and mid-turn injection — the feature
-        that exists so a human can steer a running tool loop — never fired at
-        all. The prompt waited for the turn boundary and stayed visible in the
-        TUI's sent-queue, which is exactly what the owner reported.
+        **#5647 changed the single-candidate rule, deliberately** (kept
+        here — see git history for the pre-#5677 docstring's full
+        reasoning): #3792 originally STOPPED at an ineligible head rather
+        than looking further, which measured out to mid-turn injection
+        almost never firing on a busy inbox (a continuous hook producer
+        sitting in front of the one eligible item). #5647 fixed that by
+        looking PAST ineligible items instead of stopping, while keeping
+        arrival order intact (the FIFO buffer, drained before the queue)
+        and leaving an explicit trace (``skipped_over`` on the
+        ``turn_started`` event).
 
-        Both halves of #3792's objection are answered rather than dismissed:
+        **#5677 (owner ruling, verbatim): "溜まっているものは基本inject
+        すべき… わざわざ分けるとコスト増えるだけ".** Collecting every
+        eligible item in ONE scan, instead of returning after the first,
+        is the direct application of that ruling: a caller that injects
+        them all into the SAME completion round pays for one send, not
+        one per item (re-sending the whole prior context on each would be
+        pure waste). Non-eligible items BETWEEN two eligible ones are
+        still looked past and remain in the buffer — only their own kind
+        keeps them out, never their position.
 
-        - *silently reorder arrival* — arrival order is NOT reordered. Only
-          which message the model sees first WITHIN a turn changes. The buffer
-          is FIFO and ``consume_inbox`` drains it before the queue, so the
-          items looked past are still started as turns in arrival order.
-        - *leave no trace anywhere* — the trace is now explicit: the mid-turn
-          ``turn_started`` event carries ``skipped_over``, enumerating the kind
-          and msg_id of every item looked past, in arrival order (empty list
-          when none, so the key is always present and the deny case is
-          distinguishable from an absent field).
-
-        Eligibility itself is UNCHANGED (#3792 / provenance gate #3595): only
-        ``CLIENT_INPUT`` may be injected. What is looked past is every other
-        ``TurnOrigin`` — machine- and agent-originated work.
+        Eligibility is :data:`~reyn.runtime.turn_origin.
+        MID_TURN_INJECTABLE` (#5677 — was hardcoded to ``CLIENT_INPUT``
+        alone, the provenance gate #3595 built for an unrelated question;
+        see that constant's own docstring for why the two questions are
+        separate). What is looked past is every kind NOT in that set.
 
         A CANCELLED item is the one case this DOES discard outright — mirrors
         ``consume_inbox``'s own skip-at-consume handling, since a cancelled
         item was never going to be eligible for anything. That applies to items
-        looked past as well as to the candidate itself.
+        looked past as well as to any candidate.
         """
+        collected: "list[dict]" = []
         scan = 0
         while True:
             # Walk the buffer first, then pull from the queue — one combined
@@ -277,17 +282,18 @@ class InboxArbiter:
                 try:
                     self.pending_inbox_items.append(self._inbox.get_nowait())
                 except asyncio.QueueEmpty:
-                    return None
+                    return collected
             kind, payload = self.pending_inbox_items[scan]
             msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
             if kind != "shutdown" and msg_id in self.cancelled_msg_ids:
                 self.cancelled_msg_ids.discard(msg_id)
                 del self.pending_inbox_items[scan]
                 continue
-            if kind != TurnOrigin.CLIENT_INPUT:
+            if kind not in MID_TURN_INJECTABLE:
                 scan += 1
                 continue
-            return {"payload": payload, "msg_id": msg_id}
+            collected.append({"payload": payload, "msg_id": msg_id, "kind": kind})
+            scan += 1
 
     def skipped_over_before(self, msg_id: "str | None") -> "list[dict]":
         """#5647: the items injection looked past to reach ``msg_id``, as

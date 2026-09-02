@@ -180,4 +180,48 @@ class TurnOrigin(StrEnum):
     PEER_SESSION = "peer_session"
 
 
-__all__ = ["TurnOrigin"]
+#: #5677 (architect co-vet, lead-coder's own correction of #3595's
+#: original slash-dispatch predicate): which kinds may STEER a turn
+#: that is already running — ``InboxArbiter.peek_mid_turn_injection``'s
+#: own eligibility set. This is a SEPARATE question from
+#: ``CLIENT_INPUT``'s "may this text reach slash dispatch" (that
+#: predicate is a trust decision about a text's FORM; this one is about
+#: whether a producer may interrupt an in-flight tool loop at all) —
+#: #3595 answered the first question by closing ``CLIENT_INPUT`` to
+#: non-human producers; #5677 found that ``inbox_arbiter.py`` had
+#: reused that SAME closed predicate to answer the second, unrelated
+#: question, which meant widening injection eligibility could only be
+#: done by reopening #3595's own gate. Declared here, member-by-member,
+#: so the set has exactly one home and the reason for each member's
+#: inclusion (or exclusion) is next to the member it is about, not
+#: reconstructed from a PR description later.
+#:
+#: A member here does not get a free pass on the WIRE: injected content
+#: renders under its OWN ``kind`` (see ``session.py``'s
+#: ``_render_mid_turn_injection``), never silently as ``role="user"``
+#: (the #3595 defect class — a non-human producer's text made
+#: indistinguishable from the operator's own — reproduced ONE LAYER
+#: DOWN, on the mid-turn wire, if this set had been widened without
+#: also widening the rendering).
+MID_TURN_INJECTABLE: "frozenset[TurnOrigin]" = frozenset({
+    # The operator's own typed line — the founding case #3792 built the
+    # whole mid-turn-injection feature for (a human steering a running
+    # tool loop). Renders unchanged, role="user".
+    TurnOrigin.CLIENT_INPUT,
+    # A sub-agent request pulled from another session (#5677's own
+    # motivation, verbatim lead-coder incident: sending a peer a
+    # corrected instruction only reached it at the NEXT turn boundary,
+    # so the wrong first step already ran). Origin is inside the trust
+    # boundary (the operator's own workspace spawned the peer session,
+    # #2103/#3556 narrowing already applies) — unlike EXTERNAL_MESSAGE,
+    # this is not a remote third party steering the turn. Architect's
+    # own recommendation (co-vet on #5677); EXTERNAL_MESSAGE stays OUT
+    # pending an explicit owner ruling (the one open question #5677
+    # itself named — architect and lead-coder's recommendation agrees
+    # on excluding it, so this PR does not pre-empt that decision by
+    # including it and then needing to walk it back).
+    TurnOrigin.AGENT_REQUEST,
+})
+
+
+__all__ = ["MID_TURN_INJECTABLE", "TurnOrigin"]

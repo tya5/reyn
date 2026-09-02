@@ -592,7 +592,13 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: not raised, it stays at 120 and the count now sits further below it;
 #: logged here anyway, matching this file's own convention of disclosing
 #: every surface change, not only the ones that push the ceiling.
-_PUBLIC_MEMBER_CEILING = 120
+#: Raised 120 -> 121 for #5677: ``peek_mid_turn_injections`` — a NEW method.
+#: Genuinely unrelated to slash: it is the ``RouterHostAdapter``-wired
+#: callback ``RouterLoop.run_loop`` invokes through the host to batch-peek
+#: eligible mid-turn injections (``session.py``'s own wiring, mirroring the
+#: already-public ``peek_mid_turn_injection``/``commit_mid_turn_injection``
+#: siblings it renders on top of) — never reached via slash dispatch.
+_PUBLIC_MEMBER_CEILING = 121
 
 
 def test_session_public_surface_does_not_grow() -> None:

@@ -2258,14 +2258,24 @@ class RouterLoop:
             # ``RouterHostAdapter``, PR2 #3792) are a no-op.
             _peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)
             if _peek_injection_fn is not None and not _force_close_now:
-                _injection = await _peek_injection_fn()
-                if _injection is not None:
-                    _injected_payload = _injection["payload"]
-                    _injected_msg = {
-                        "role": "user",
-                        "content": _injected_payload.get("text") or "",
-                    }
-                    messages = [*messages, _injected_msg]
+                _injections = await _peek_injection_fn()
+                if _injections:
+                    # #5677 (owner ruling, verbatim: "溜まっているものは基本
+                    # injectすべき… わざわざ分けるとコスト増えるだけ"):
+                    # every currently-eligible item lands in this SAME
+                    # completion round, not one round trip per item — the
+                    # host has already collected them all
+                    # (``peek_mid_turn_injections``); this loop only
+                    # splices and commits.
+                    #
+                    # #5677 §0 (architect): each item's own WIRE dict was
+                    # already rendered per its OWN kind by the host (never
+                    # hardcoded to role="user" here — see
+                    # ``Session._render_mid_turn_injection``), so a peer's
+                    # text can no longer be indistinguishable from the
+                    # operator's own on the wire.
+                    _injected_wires = [_inj["wire"] for _inj in _injections]
+                    messages = [*messages, *_injected_wires]
                     # #3792: wire-position assert (architect's flagged
                     # pitfall) — a naive splice between an
                     # assistant(tool_calls) message and its role=tool
@@ -2274,23 +2284,33 @@ class RouterLoop:
                     # instead, and the resulting warning names the
                     # tool_result as the anomaly, not the injection. By
                     # construction this seam only ever fires between
-                    # completed rounds (never mid-pair), so the injected
-                    # message must survive repair at the TAIL, unmoved —
-                    # this assert is the fail-fast witness of that
-                    # invariant, checked BEFORE the send, not discovered
-                    # downstream as a misattributed warning.
+                    # completed rounds (never mid-pair), so EVERY injected
+                    # message must survive repair at the TAIL, unmoved and
+                    # in order — this assert is the fail-fast witness of
+                    # that invariant, checked BEFORE the send, not
+                    # discovered downstream as a misattributed warning.
+                    # #5677: generalized from a single ``is`` check to N,
+                    # by IDENTITY (never equality — two injected dicts
+                    # could be byte-identical by coincidence; identity is
+                    # the only check that proves THESE objects, not merely
+                    # matching ones, survived unmoved).
                     from reyn.llm.wire_format import repair_tool_call_pairing
                     _repaired = repair_tool_call_pairing(messages)
-                    assert _repaired[-1] is _injected_msg, (
-                        "#3792: mid-turn injection did not land at the tail "
-                        "after wire repair — the seam's never-mid-pair "
-                        "position invariant was violated"
+                    _tail = _repaired[-len(_injected_wires):] if _injected_wires else []
+                    assert all(
+                        _t is _w for _t, _w in zip(_tail, _injected_wires, strict=True)
+                    ), (
+                        "#3792/#5677: mid-turn injection(s) did not land at "
+                        "the tail after wire repair, unmoved and in order — "
+                        "the seam's never-mid-pair position invariant was "
+                        "violated"
                     )
                     _commit_injection_fn = getattr(
                         host, "commit_mid_turn_injection", None,
                     )
                     if _commit_injection_fn is not None:
-                        await _commit_injection_fn(_injection["msg_id"])
+                        for _inj in _injections:
+                            await _commit_injection_fn(_inj["msg_id"])
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
             # short-circuits the call. Used by phase-step resume so a

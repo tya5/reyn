@@ -62,8 +62,7 @@ def _reconstruct(agent_name: str, snapshot_path: Path, state_log: StateLog) -> A
 # ---------------------------------------------------------------------------
 
 
-_NON_CLIENT_INPUT_KWARGS: dict[TurnOrigin, dict] = {
-    TurnOrigin.AGENT_REQUEST: {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
+_INELIGIBLE_KWARGS: dict[TurnOrigin, dict] = {
     TurnOrigin.AGENT_RESPONSE: {"from_agent": "a", "response": "r", "depth": 1, "chain_id": "c1"},
     TurnOrigin.PIPELINE_RESULT: {"run_id": "run1", "pipeline_name": "p", "status": "ok", "text": "t"},
     TurnOrigin.AGENT_STEP: {"seq": 1},
@@ -78,45 +77,78 @@ _NON_CLIENT_INPUT_KWARGS: dict[TurnOrigin, dict] = {
 
 
 @pytest.mark.asyncio
-async def test_only_client_input_origin_is_peek_eligible(tmp_path):
-    """Tier 2: #3792 — exhaustive origin gate over ALL 10 ``TurnOrigin``
-    members (vacuity guard: asserts the enumeration itself is non-empty and
-    matches the expected 10, so a future member silently added to the enum
-    without a corresponding case here is caught, not silently vacuous).
+async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
+    """Tier 2: #5677 — exhaustive origin gate over ALL 10 ``TurnOrigin``
+    members against :data:`~reyn.runtime.turn_origin.MID_TURN_INJECTABLE`
+    (vacuity guard: asserts the enumeration itself is non-empty and matches
+    the expected 10, so a future member silently added to the enum without
+    a corresponding case here is caught, not silently vacuous).
 
-    Falsification (performed during review): removing the
-    ``if kind != TurnOrigin.CLIENT_INPUT: return None`` check from
-    ``Session._peek_mid_turn_injection`` makes this test go RED — EVERY
-    origin (not just CLIENT_INPUT) becomes peek-eligible.
+    #5677 widened eligibility from ``CLIENT_INPUT`` alone to
+    ``MID_TURN_INJECTABLE`` (``CLIENT_INPUT`` + ``AGENT_REQUEST`` — see
+    that constant's own per-member reasoning). This test is the sibling
+    architect's #5677 co-vet required for the new axis, in the SAME
+    exhaustive-enumeration shape #3595's own site-census gate uses (one
+    file, one gate, both directions — deny-side and accept-side together,
+    not one alone): every OTHER member must still be excluded.
+
+    Falsification (performed during review): reverting
+    ``InboxArbiter.peek_mid_turn_injection``'s eligibility check from
+    ``kind not in MID_TURN_INJECTABLE`` back to
+    ``kind != TurnOrigin.CLIENT_INPUT`` makes the AGENT_REQUEST accept-side
+    assertion below go RED (an empty list, not one entry); widening it to
+    accept every kind unconditionally makes every deny-side assertion below
+    go RED instead.
     """
     all_origins = list(TurnOrigin)
+    eligible_kwargs = {
+        TurnOrigin.CLIENT_INPUT: {"text": "hello"},
+        TurnOrigin.AGENT_REQUEST: {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
+    }
     # Vacuity guard: if TurnOrigin grew, shrank, or the enumeration came back
     # empty, this set-equality against the explicit expected membership
     # (below) fails LOUD — no separate count needed, a set-size mismatch is
     # already a set-inequality.
-    assert set(_NON_CLIENT_INPUT_KWARGS) | {TurnOrigin.CLIENT_INPUT} == set(all_origins), (
-        "TurnOrigin's membership changed — update _NON_CLIENT_INPUT_KWARGS "
-        "above to cover the new/removed member before trusting this gate again"
+    assert set(_INELIGIBLE_KWARGS) | set(eligible_kwargs) == set(all_origins), (
+        "TurnOrigin's membership changed — update _INELIGIBLE_KWARGS/"
+        "eligible_kwargs above to cover the new/removed member before "
+        "trusting this gate again"
     )
 
-    for origin, kwargs in _NON_CLIENT_INPUT_KWARGS.items():
+    # Deny side: every kind OUTSIDE MID_TURN_INJECTABLE stays ineligible.
+    for origin, kwargs in _INELIGIBLE_KWARGS.items():
         session, state_log = _make_session(
             tmp_path / f"{origin.value}.wal", tmp_path / f"{origin.value}.json",
         )
         await session._put_inbox(origin, kwargs)
         result = await session._inbox_arbiter.peek_mid_turn_injection()
-        assert result is None, f"origin {origin!r} must NOT be peek-eligible"
+        assert result == [], f"origin {origin!r} must NOT be peek-eligible"
         await state_log.aclose()
 
-    # Positive control: CLIENT_INPUT (via the real submit_user_text path) IS eligible.
+    # Accept side: CLIENT_INPUT (via the real submit_user_text path) IS eligible.
     session, state_log = _make_session(
         tmp_path / "client_input.wal", tmp_path / "client_input.json",
     )
     await session.submit_user_text("hello")
     result = await session._inbox_arbiter.peek_mid_turn_injection()
-    assert result is not None
-    assert result["payload"]["text"] == "hello"
+    (only,) = result
+    assert only["payload"]["text"] == "hello"
+    assert only["kind"] == TurnOrigin.CLIENT_INPUT
     await state_log.aclose()
+
+    # Accept side: AGENT_REQUEST — #5677's own motivation — is ALSO eligible.
+    session2, state_log2 = _make_session(
+        tmp_path / "agent_request.wal", tmp_path / "agent_request.json",
+    )
+    await session2._put_inbox(
+        TurnOrigin.AGENT_REQUEST,
+        {"from_agent": "peer-agent", "request": "corrected instruction", "depth": 1, "chain_id": "c1"},
+    )
+    result2 = await session2._inbox_arbiter.peek_mid_turn_injection()
+    (only2,) = result2
+    assert only2["payload"]["request"] == "corrected instruction"
+    assert only2["kind"] == TurnOrigin.AGENT_REQUEST
+    await state_log2.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -141,39 +173,89 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
     **consumption order**. #3792's objection to skipping was that it would
     "silently reorder arrival". It does not — injection changes which message
     the model sees first WITHIN a turn; the turn-boundary drain still returns
-    AGENT_REQUEST before CLIENT_INPUT, exactly as this test asserted before.
+    the ineligible head before CLIENT_INPUT, exactly as this test asserted
+    before.
 
-    Strip-falsifier: restore the STOP (return None on an ineligible head) and
-    the peek assertion below goes red — which is the owner's symptom, not a
-    cosmetic difference.
+    #5677 (this update): the head item is now ``HOOK`` rather than
+    ``AGENT_REQUEST`` — ``AGENT_REQUEST`` is itself peek-eligible now (#5677's
+    own motivation), so it can no longer stand in for "an ineligible head" in
+    this test; a still-ineligible kind is needed for THIS test's own claim to
+    keep meaning what it says.
+
+    Strip-falsifier: restore the STOP (return ``[]`` on an ineligible head)
+    and the peek assertion below goes red — which is the owner's symptom, not
+    a cosmetic difference.
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(
-        TurnOrigin.AGENT_REQUEST,
-        {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
-    )
+    await session._put_inbox(TurnOrigin.HOOK, {"name": "on_idle"})
     await session.submit_user_text("second, eligible")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injection()
-    assert peeked is not None, (
-        "#5647: peek must look PAST the ineligible AGENT_REQUEST head to find "
+    assert peeked, (
+        "#5647: peek must look PAST the ineligible HOOK head to find "
         "the operator's message — stopping here is the reported defect"
     )
-    assert peeked["payload"]["text"] == "second, eligible"
+    assert peeked[0]["payload"]["text"] == "second, eligible"
 
     # The item looked past is NOT consumed by the peek, and is still first.
     kind, payload = await session._inbox_arbiter.consume_inbox()
-    assert kind == TurnOrigin.AGENT_REQUEST, (
+    assert kind == TurnOrigin.HOOK, (
         "the FIRST item consume_inbox returns must still be the ineligible "
         "head — injection reorders what the MODEL sees, never what the turn "
         "boundary consumes"
     )
-    assert payload["request"] == "r"
+    assert payload["name"] == "on_idle"
 
     kind2, payload2 = await session._inbox_arbiter.consume_inbox()
     assert kind2 == TurnOrigin.CLIENT_INPUT
     assert payload2["text"] == "second, eligible"
+
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
+    """Tier 2: #5677 (owner ruling, verbatim: "溜まっているものは基本inject
+    すべき… わざわざ分けるとコスト増えるだけ") — multiple queued eligible
+    items are ALL returned by one ``peek_mid_turn_injection()`` call, not
+    just the first, so a caller can splice them into the SAME completion
+    round instead of paying for one round trip per item.
+
+    An ineligible item BETWEEN the two eligible ones is looked past and
+    stays in the buffer — collecting continues past it, the same "skip,
+    don't stop" behavior #5647 established, generalized from "stop at the
+    first eligible hit" to "keep going to the end of what's available".
+
+    Strip-falsifier: reverting ``peek_mid_turn_injection`` to ``return``
+    immediately after the FIRST eligible hit (the pre-#5677 shape) makes
+    the length assertion below go red (1 item, not 2) and the AGENT_REQUEST
+    assertion never runs.
+    """
+    session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
+
+    await session.submit_user_text("first, eligible")
+    await session._put_inbox(TurnOrigin.HOOK, {"name": "on_idle"})  # ineligible, between
+    await session._put_inbox(
+        TurnOrigin.AGENT_REQUEST,
+        {"from_agent": "peer", "request": "second, eligible", "depth": 1, "chain_id": "c1"},
+    )
+
+    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    first, second = peeked  # exactly 2 — a 3rd or a missing one fails to unpack
+    assert first["kind"] == TurnOrigin.CLIENT_INPUT
+    assert first["payload"]["text"] == "first, eligible"
+    assert second["kind"] == TurnOrigin.AGENT_REQUEST
+    assert second["payload"]["request"] == "second, eligible"
+
+    # The ineligible HOOK item looked past remains, unconsumed, in arrival order.
+    kind, payload = await session._inbox_arbiter.consume_inbox()
+    assert kind == TurnOrigin.CLIENT_INPUT
+    kind2, payload2 = await session._inbox_arbiter.consume_inbox()
+    assert kind2 == TurnOrigin.HOOK
+    assert payload2["name"] == "on_idle"
+    kind3, payload3 = await session._inbox_arbiter.consume_inbox()
+    assert kind3 == TurnOrigin.AGENT_REQUEST
 
     await state_log.aclose()
 
@@ -205,13 +287,13 @@ async def test_peek_without_commit_carries_forward_to_normal_consume(tmp_path):
     await session.submit_user_text("carry me")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injection()
-    assert peeked is not None
+    assert peeked
     # Deliberately do NOT commit — simulates the abnormal exit.
 
     kind, payload = await asyncio.wait_for(session._inbox_arbiter.consume_inbox(), timeout=2.0)
     assert kind == TurnOrigin.CLIENT_INPUT
     assert payload["text"] == "carry me"
-    assert payload["_msg_id"] == peeked["msg_id"]
+    assert payload["_msg_id"] == peeked[0]["msg_id"]
 
     await state_log.aclose()
 
@@ -240,8 +322,8 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
 
     msg_id = await session.submit_user_text("inject me", attribution=None)
     peeked = await session._inbox_arbiter.peek_mid_turn_injection()
-    assert peeked is not None
-    assert peeked["msg_id"] == msg_id
+    assert peeked
+    assert peeked[0]["msg_id"] == msg_id
 
     before_history_len = len(session.history)
     assert any(m["id"] == msg_id for m in session.journal.snapshot.inbox)
@@ -262,7 +344,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     turn_started_events = [e for e in events if e.type == "turn_started"]
     (only,) = turn_started_events
     assert only.data["kind"] == TurnOrigin.CLIENT_INPUT
-    assert only.data["chain_id"] == peeked["payload"]["chain_id"]
+    assert only.data["chain_id"] == peeked[0]["payload"]["chain_id"]
 
     await state_log.aclose()
 
