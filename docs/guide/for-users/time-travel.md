@@ -17,7 +17,7 @@ For how it works under the hood, see [Time-Travel concepts](../../concepts/runti
 /rewind
 ```
 
-This opens an interactive checkpoint picker in the TUI, listing the checkpoints on the current branch. Each row shows:
+This opens an interactive checkpoint picker in the TUI, listing the checkpoints on the current branch — plus any abandoned branches, as a tree, when there are any (#3987 ②). Each row shows:
 
 | Column | Description |
 |--------|-------------|
