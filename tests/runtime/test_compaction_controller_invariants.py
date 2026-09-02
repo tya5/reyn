@@ -245,6 +245,52 @@ def test_force_compact_engine_failure_emits_failed():
 
 
 # ---------------------------------------------------------------------------
+# Invariant 3b (#5633, lead-coder BLOCKING on PR #5661): a failure BEFORE
+# compact() is ever called must still emit compaction_failed
+# ---------------------------------------------------------------------------
+
+
+def test_force_compact_pre_compact_setup_failure_emits_failed():
+    """Tier 2: #5633 — a failure in _run_compaction's OWN setup segment
+    (building prev_structured/the input_chunk, before compact() is ever
+    called) must still emit compaction_failed. Before #5633's first
+    revision, force_compact_now's own catch-all emitted for ANY failure in
+    _run_compaction, including this segment; the first #5633 restructure
+    (compact() outside any try, post-processing in its own try) left this
+    EARLIER segment in neither try — a real observability regression
+    caught by lead-coder's own review, not a hypothetical.
+
+    Triggers a REAL exception in real production code (render_summary_
+    for_storage's own ``.strip()`` on a non-string ``topic_arc`` — no
+    mock/stand-in): a genuinely malformed persisted summary (the kind a
+    corrupted history.jsonl could contain) is exactly the kind of input
+    this segment must not silently swallow. compact() must never be
+    reached (compaction_started absent) — proves this is THIS segment's
+    own except firing, not the compact()-internal or post-processing
+    one."""
+    history = [
+        ChatMessage(
+            role="summary", content="stale", seq=0,
+            meta={"structured": {"topic_arc": 12345}},  # not a str -> .strip() raises
+        ),
+        *_history(7),
+    ]
+    ctrl, collected, _, events = _make_controller(history=history, engine_factory=_SucceedingEngine)
+
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))  # must not raise
+
+    kinds = [e.type for e in collected]
+    assert "compaction_started" not in kinds, (
+        f"test setup sanity: compact() must never be reached for this "
+        f"segment's own except to be the one under test — got: {kinds!r}"
+    )
+    assert "compaction_failed" in kinds, (
+        "a failure in _run_compaction's own pre-compact() setup segment "
+        f"must still emit compaction_failed — got: {kinds!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Invariant 4: is_compacting (#5588) — True only while a pass is in flight
 # ---------------------------------------------------------------------------
 

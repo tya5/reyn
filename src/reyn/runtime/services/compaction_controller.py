@@ -470,47 +470,66 @@ class CompactionController:
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
-        prev_structured: dict | None = None
-        if previous_summary is not None:
-            meta = previous_summary.meta or {}
-            structured = meta.get("structured")
-            if isinstance(structured, dict):
-                prev_structured = structured
-                # carry forward the prior covers_through_seq for continuity
-                if "covers_through_seq" not in prev_structured:
-                    prev_structured = {
-                        **prev_structured,
-                        "covers_through_seq": meta.get("covers_through_seq", 0),
-                    }
+        # #5633 (lead-coder review, the gap the first restructure left
+        # silent): this setup segment — building prev_structured, redact,
+        # the input_chunk's own list comprehension over `candidates` — runs
+        # BEFORE compact() is ever called, so compaction_started has not
+        # fired yet on THIS attempt; before this PR, force_compact_now's
+        # own catch-all still emitted `compaction_failed` for a failure
+        # here (an observability regression this PR would otherwise have
+        # introduced, not merely a dangling-marker gap). Its own try/except
+        # keeps compact() itself the only call outside any local try (see
+        # the comment just above that call).
+        try:
+            prev_structured: dict | None = None
+            if previous_summary is not None:
+                meta = previous_summary.meta or {}
+                structured = meta.get("structured")
+                if isinstance(structured, dict):
+                    prev_structured = structured
+                    # carry forward the prior covers_through_seq for continuity
+                    if "covers_through_seq" not in prev_structured:
+                        prev_structured = {
+                            **prev_structured,
+                            "covers_through_seq": meta.get("covers_through_seq", 0),
+                        }
 
-        # FP-0050/#1822 S3 (#1820): strip credential/token values from turn text
-        # before it enters the summarizer input (so secrets aren't baked into the
-        # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
-        _ts = self._threat_scan
-        _redact = None
-        if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
-            from reyn.security.secret_redaction import redact_secrets
-            _redact = redact_secrets
-        # #5531 condition③: this caller is always tail-side — `candidates`
-        # comes from `_select_candidates(turns, prev_cover)`, which only
-        # ever returns turns chronologically AFTER `prev_cover` (the prior
-        # summary's own covers_through_seq) — so the order is always
-        # summary-then-new-turns, never the reverse (that only happens in
-        # retry_loop's own head-shrink path, engine.py).
-        _summary_messages = (
-            [wrap_summary_as_message(prev_structured)] if prev_structured else []
-        )
-        input_chunk = HistoryChunkToCompact(
-            messages=_summary_messages
-            + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
-            section_token_caps={
-                "topic_arc": cfg.section_token_caps.topic_arc,
-                "decisions": cfg.section_token_caps.decisions,
-                "pending": cfg.section_token_caps.pending,
-                "session_user_facts": cfg.section_token_caps.session_user_facts,
-                "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
-            },
-        )
+            # FP-0050/#1822 S3 (#1820): strip credential/token values from turn text
+            # before it enters the summarizer input (so secrets aren't baked into the
+            # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
+            _ts = self._threat_scan
+            _redact = None
+            if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
+                from reyn.security.secret_redaction import redact_secrets
+                _redact = redact_secrets
+            # #5531 condition③: this caller is always tail-side — `candidates`
+            # comes from `_select_candidates(turns, prev_cover)`, which only
+            # ever returns turns chronologically AFTER `prev_cover` (the prior
+            # summary's own covers_through_seq) — so the order is always
+            # summary-then-new-turns, never the reverse (that only happens in
+            # retry_loop's own head-shrink path, engine.py).
+            _summary_messages = (
+                [wrap_summary_as_message(prev_structured)] if prev_structured else []
+            )
+            input_chunk = HistoryChunkToCompact(
+                messages=_summary_messages
+                + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
+                section_token_caps={
+                    "topic_arc": cfg.section_token_caps.topic_arc,
+                    "decisions": cfg.section_token_caps.decisions,
+                    "pending": cfg.section_token_caps.pending,
+                    "session_user_facts": cfg.section_token_caps.session_user_facts,
+                    "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
+                },
+            )
+        except Exception as exc:
+            # #5633: this segment's OWN failure surface — see the comment
+            # above the try for why it needs one (compaction_started has
+            # not fired yet here, but the pre-#5633 catch-all DID emit for
+            # this segment, so omitting this try/except would be a
+            # regression, not merely a non-issue).
+            self._events.emit("compaction_failed", error=str(exc))
+            raise
 
         new_turn_count = len(candidates)
         # #5475 (architect ruling): compaction_started now emits at
