@@ -364,6 +364,7 @@ from reyn.interfaces.slash import reset as _reset_mod  # noqa: E402, F401
 from reyn.interfaces.slash import resident as _resident_mod  # noqa: E402, F401
 from reyn.interfaces.slash import rewind as _rewind_mod  # noqa: E402, F401
 from reyn.interfaces.slash import session as _session_mod  # noqa: E402, F401
+from reyn.interfaces.slash import tasks as _tasks_mod  # noqa: E402, F401
 from reyn.interfaces.slash import visibility as _visibility_mod  # noqa: E402, F401
 
 __all__ = [

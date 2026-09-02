@@ -126,6 +126,7 @@ _KEYS_THE_CHROME_READS = frozenset({
     "model", "model_classes", "model_active_class",
     "visibility_items", "hook_items", "hooks", "pipelines", "cron_jobs",
     "mcp_servers", "skills",
+    "tasks",  # #5654
 })
 
 
@@ -1012,13 +1013,20 @@ async def test_telemetry_pins_to_the_right_edge_with_a_gap_from_navigation(
     """Tier 2b: #4542 — real-TTY-witnessed geometry guard for the stretching
     ``.menu-spacer`` between Navigation (tabs) and Telemetry (StatusLine),
     for the MERGED case specifically (StatusLine shares the last tab row —
-    live-probed: this app's 14 tabs + status text all fit on one row
-    starting at 130 columns, not 100 — an earlier version of this test
+    live-probed: this app's 15 tabs (#5654 added Task) + status text all fit
+    on one row starting at 135 columns. An earlier version of this test
     picked 100 and, without checking, silently exercised the DIFFERENT
-    own-row fallback path instead, where there is no spacer at all — see
-    the sibling test below for that path's own, different mechanism).
+    own-row fallback path instead, where there is no spacer at all (see the
+    sibling test below for that path's own, different mechanism); #5654
+    re-measured the 130 this test had settled on afterward — the merged case
+    still triggered at that width, but #4542's own real gap requirement no
+    longer held (measured: gap=1, not > _TAB_H_PADDING) because the extra tab
+    ate the stretch room the spacer used to have. 135 restores a real,
+    comfortably-measured gap (5) — re-verify this constant again the next
+    time a tab is added or removed, the same way this comment now asks the
+    next reader to.
 
-    A screen wide enough to merge (130 columns) must show TWO things the
+    A screen wide enough to merge (135 columns) must show TWO things the
     spacer specifically causes, neither of which the pre-#4542
     immediately-adjacent layout produced: (1) StatusLine's region reaches
     (or comes very close to) the row's right edge — "pinned right", not
@@ -1034,7 +1042,7 @@ async def test_telemetry_pins_to_the_right_edge_with_a_gap_from_navigation(
     app = TextualChatApp(
         transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
     )
-    async with app.run_test(size=(130, 30)) as pilot:
+    async with app.run_test(size=(135, 30)) as pilot:
         await pilot.pause()
         await pilot.pause()
         screen = app.screen.size

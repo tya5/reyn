@@ -358,7 +358,10 @@ class ToolContext:
     events: Any                                      # EventLog
     permission_resolver: Any | None                  # PermissionResolver
     workspace: Any                                   # Workspace
-    caller_kind: Literal["router"]                   # audit field emitted into tool_* events
+    # #5654: widened from Literal["router"] — an operator-driven op call
+    # (e.g. /tasks) has no LLM tool_calls round behind it, so the router
+    # value would misattribute the audit trail to the wrong actor.
+    caller_kind: Literal["router", "operator"]        # audit field emitted into tool_* events
     # Router-specific state sub-object.
     router_state: RouterCallerState | None = None    # populated for caller_kind="router"
     # #1673: the config-aware ModelResolver, threaded so tool handlers that spawn a

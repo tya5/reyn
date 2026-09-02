@@ -80,6 +80,24 @@ A single `AgentRegistry` instance per process owns all loaded agents and the Ses
 
 The request reaches the target's inbox as an `agent_request` payload (`{from_agent, request, depth, chain_id}`, `depth=1` always) via `InterAgentMessaging.send_to_agent` — reused purely as delivery transport here, not through the older per-turn accumulation path described below.
 
+### Operator visibility (`/tasks`, #5654)
+
+`/tasks` lists this session's own currently-RUNNING tasks (attached session
+only — owner scope decision, no cross-session `--all`) and `/tasks cancel
+<task_id> [confirm]` requests cancellation, through the exact same
+`list_tasks`/`cancel_task` ops the LLM itself calls — never a second,
+slash-specific list/cancel implementation. Cancelling is destructive
+(cross-session, for a `prompt` task) so it follows the same two-step confirm
+pattern `/reset`/`/pending discard` already use: the bare form warns, the
+`confirm` suffix acts.
+
+A `prompt` task's row names the target **agent** it is waiting on
+(`waiting_on`'s sole member) — the target **session id** is not persisted
+anywhere on the chain (only the agent name is), so the row cannot say which
+of that agent's sessions will actually be interrupted if it has more than
+one live. A `pipeline` task's row names the pipeline itself
+(`original_request`, already the pipeline's name at registration).
+
 ### Settling the reply
 
 When the target's reply lands, `InterAgentMessaging.handle_agent_response` checks the registered chain's `kind`: a non-`None` kind (as `run_prompt(async)` always sets) routes to `ChainManager.settle()`, not the older relay-continue path. `settle()`'s `deliver` disposition appends the reply to the caller's history and runs exactly one router turn so the LLM can act on it; `task_settled` fires on the *fact* of settling, independent of the disposition's outcome (ADR-0040 D4④) — a future `on_settle="drop"` caller would still get the hook fired, just with nothing delivered.
