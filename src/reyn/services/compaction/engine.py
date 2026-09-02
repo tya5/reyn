@@ -1990,8 +1990,16 @@ class CompactionEngine:
         Axis 9: applies hard_truncate_summary to the returned topic_arc
         to ensure the body ≤ body_budget tokens deterministically.
 
-        Raises on LLM error; callers wrap in try/except and emit
-        ``compaction_failed`` if needed.
+        Re-raises on LLM/validation error, after emitting ``compaction_failed``
+        itself (see below) — bare, with no marker attribute written on the
+        exception. A caller's own code that runs AFTER this call returns
+        (``CompactionController._run_compaction``'s own post-processing:
+        ``_append_history``/``_render_summary`` etc.) needs its OWN
+        ``try``/``except`` around just that work to close the marker for
+        ITS OWN failures — never around this call too, or the same
+        failure would emit twice. See that method's own comment for the
+        structural (not marker-based) way it keeps the two `try` blocks
+        from overlapping.
 
         #5475 (architect ruling): emits ``compaction_started`` HERE, at the
         one real entry both of this engine's callers share
@@ -1999,7 +2007,19 @@ class CompactionEngine:
         internal compaction attempts) — moved from ``CompactionController``,
         not duplicated (the controller's own former emit is deleted in the
         same change; see #5382/#5455 for why two emit sites for the same
-        kind is the shape this repo rejects). ``new_turn_count``/
+        kind is the shape this repo rejects).
+
+        #5633 (lead-coder finding on PR #5661): ``compaction_failed`` emits
+        HERE too, for the same reason — ``retry_loop``'s own internal
+        compaction attempts (``RecoveryLadder._stage_fold``) had NO
+        ``compaction_failed`` emit anywhere on failure (only
+        ``CompactionController.force_compact_now`` did, #384 in
+        ``compaction_controller.py``), so a ``compaction_started`` marker
+        the TUI shows for a failed ladder-path fold never closed. Emitting
+        here closes it for BOTH callers, the same "one real entry" argument
+        #5475 already made for ``compaction_started``.
+
+        ``new_turn_count``/
         ``had_previous`` are derived from *input_chunk* alone — both are
         genuinely available to every caller. ``covers_through`` is NOT: the
         controller's own caller can supply a real seq (its ``new_turns``
@@ -2054,313 +2074,326 @@ class CompactionEngine:
             input_chars=input_chars,
         )
 
-        # No `_token_cache.clear()` here (removed, #2937): text is immutable and
-        # the tokenizer/fallback choice is a fixed per-session config, so a
-        # cached (model, text) count is valid for the process's entire
-        # lifetime — clearing it had no staleness justification. It forced a
-        # COLD, synchronous, full-history re-tokenization on every turn right
-        # after a compaction (build_history() re-estimates the whole raw
-        # history every turn to check the elide trigger) — on a long
-        # conversation this froze the event loop for real, user-visible
-        # seconds, repeating every time compaction fired again as the chat
-        # kept growing. The cache is now LRU-bounded (`_token_cache_put`)
-        # instead of periodically nuked, so it stays warm (the perf fix)
-        # without growing unboundedly (the memory-leak risk a naive removal
-        # of the clear would have traded it for).
+        try:
+            # No `_token_cache.clear()` here (removed, #2937): text is immutable and
+            # the tokenizer/fallback choice is a fixed per-session config, so a
+            # cached (model, text) count is valid for the process's entire
+            # lifetime — clearing it had no staleness justification. It forced a
+            # COLD, synchronous, full-history re-tokenization on every turn right
+            # after a compaction (build_history() re-estimates the whole raw
+            # history every turn to check the elide trigger) — on a long
+            # conversation this froze the event loop for real, user-visible
+            # seconds, repeating every time compaction fired again as the chat
+            # kept growing. The cache is now LRU-bounded (`_token_cache_put`)
+            # instead of periodically nuked, so it stays warm (the perf fix)
+            # without growing unboundedly (the memory-leak risk a naive removal
+            # of the clear would have traded it for).
 
-        # #5531: `messages` (the single ordered list, condition④) is the
-        # whole wire payload — no separate previous_summary/new_turns
-        # keys to keep in sync with each other (that split is exactly
-        # what made B's append-only prompt framing unfixable per-call:
-        # 2 fields cannot express "which side did the new content come
-        # from").
-        user_content = json.dumps({
-            "messages": input_chunk.messages,
-            "section_token_caps": input_chunk.section_token_caps,
-        }, ensure_ascii=False)
+            # #5531: `messages` (the single ordered list, condition④) is the
+            # whole wire payload — no separate previous_summary/new_turns
+            # keys to keep in sync with each other (that split is exactly
+            # what made B's append-only prompt framing unfixable per-call:
+            # 2 fields cannot express "which side did the new content come
+            # from").
+            user_content = json.dumps({
+                "messages": input_chunk.messages,
+                "section_token_caps": input_chunk.section_token_caps,
+            }, ensure_ascii=False)
 
-        llm_messages = [
-            {"role": "system", "content": _COMPACTION_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
+            llm_messages = [
+                {"role": "system", "content": _COMPACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
 
-        # #4883: the compaction JSON has no required fields (response_format
-        # is {"type": "json_object"} — "must be JSON", not "must have these
-        # keys"). A syntactically-valid-but-structurally-empty response
-        # (e.g. "{}") previously passed through untouched: topic_arc
-        # missing -> "" -> an empty summary silently overwrote the real
-        # turns in history, with no error and no re-prompt. topic_arc IS
-        # the summary, so its absence/emptiness is now a validation
-        # failure, not a silently-accepted default — bounded re-prompt
-        # (same shape 0062's schema_validate_fn uses in router_loop.py),
-        # then raise if still invalid, joining the existing "raise on
-        # empty response" safety net below (compaction_controller.py's
-        # caller already wraps this in try/except and emits
-        # compaction_failed + never calls _append_history on any raise here
-        # — the ONLY change in observable behavior on failure is WHICH cases
-        # raise, not what raising does).
-        #
-        # #4951-B: this used to also name new_turn_seqs as a second
-        # load-bearing field validated here ("covers_through_seq decides
-        # what's now unrecoverable via this call's own fallback"). No
-        # longer true — new_turn_seqs is not in the schema at all now
-        # (removed, see _CHAT_SUMMARY_JSON_SCHEMA's own comment), so there
-        # is nothing to validate: covers_through_seq is derived
-        # unconditionally from compact()'s own input below, never from
-        # this response.
-        max_attempts = 1 + max(0, int(getattr(self._cfg, "max_schema_reprompt_attempts", 1)))
-        # #4883: schema-constrained generation when the model supports it
-        # (json_schema, strict) — the GENERATION-time leg; json_object is
-        # the fallback for models the capability precheck says do not (or
-        # cannot be determined to) support it. Post-parse validation below
-        # is the floor in BOTH cases (see _CHAT_SUMMARY_JSON_SCHEMA's own
-        # docstring for why schema constraints alone can't replace it).
-        #
-        # DELIBERATELY the opposite of 0062's own unsupported-model
-        # behavior — do not unify these two just because they share the
-        # same capability check (architect/lead-coder, #4883): 0062 §2.1
-        # raises StructuredOutputUnsupportedModelError with NO silent
-        # fallback because an AgentStep's caller explicitly asked for
-        # structured output — an unsupported model is THAT step's own
-        # failure, contained to one step. Compaction never had a
-        # schema-constrained contract to violate; it is an opportunistic
-        # upgrade to an existing best-effort call, and its failure mode is
-        # different in kind: raising here means the context window never
-        # opens back up, i.e. the conversation itself cannot continue —
-        # turning "summary quality isn't guaranteed" into "the session is
-        # stuck" would be strictly worse than today. So compaction degrades
-        # instead of raising on an unsupported model — the post-parse
-        # validation floor is what still catches an empty/malformed
-        # json_object response either way.
-        #
-        # The degrade decision is made HERE, before the call — not by
-        # catching a provider rejection and retrying without
-        # response_format (fallback_without_response_format stays False
-        # below, on BOTH legs). 0062's own text is explicit about why (its
-        # capability precheck exists precisely so the call never has to
-        # find out the hard way): "Do NOT catch-classify a provider
-        # rejection for this — a raw 400 can't be reliably told apart from
-        # transient/other errors." A provider rejection despite a True
-        # precheck (the capability table lagging reality) is therefore a
-        # genuine call failure, not a signal to silently retry a
-        # differently-shaped request — it propagates like any other
-        # `_acompletion` failure, caught by CompactionController's
-        # existing try/except (-> compaction_failed), which is the
-        # pre-existing safety net this fix already leans on for the
-        # exhausted-reprompt-budget case above.
-        if await _supports_structured_output(self._model):
-            _response_format = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "compaction_chat_summary",
-                    "schema": _CHAT_SUMMARY_JSON_SCHEMA,
-                    "strict": True,
-                },
-            }
-        else:
-            _response_format = {"type": "json_object"}
-        _fallback_without_rf = False
-        parsed: dict = {}
-        raw = ""
-        response = None
-        reprompt_messages = list(llm_messages)
-        validation_errors: list[str] = []
-        for attempt in range(max_attempts):
-            response = await self._acompletion(
-                reprompt_messages,
-                response_format=_response_format,
-                fallback_without_response_format=_fallback_without_rf,
-            )
-            raw = (response.choices[0].message.content or "").strip()
-            if not raw:
+            # #4883: the compaction JSON has no required fields (response_format
+            # is {"type": "json_object"} — "must be JSON", not "must have these
+            # keys"). A syntactically-valid-but-structurally-empty response
+            # (e.g. "{}") previously passed through untouched: topic_arc
+            # missing -> "" -> an empty summary silently overwrote the real
+            # turns in history, with no error and no re-prompt. topic_arc IS
+            # the summary, so its absence/emptiness is now a validation
+            # failure, not a silently-accepted default — bounded re-prompt
+            # (same shape 0062's schema_validate_fn uses in router_loop.py),
+            # then raise if still invalid, joining the existing "raise on
+            # empty response" safety net below (compaction_controller.py's
+            # caller already wraps this in try/except and emits
+            # compaction_failed + never calls _append_history on any raise here
+            # — the ONLY change in observable behavior on failure is WHICH cases
+            # raise, not what raising does).
+            #
+            # #4951-B: this used to also name new_turn_seqs as a second
+            # load-bearing field validated here ("covers_through_seq decides
+            # what's now unrecoverable via this call's own fallback"). No
+            # longer true — new_turn_seqs is not in the schema at all now
+            # (removed, see _CHAT_SUMMARY_JSON_SCHEMA's own comment), so there
+            # is nothing to validate: covers_through_seq is derived
+            # unconditionally from compact()'s own input below, never from
+            # this response.
+            max_attempts = 1 + max(0, int(getattr(self._cfg, "max_schema_reprompt_attempts", 1)))
+            # #4883: schema-constrained generation when the model supports it
+            # (json_schema, strict) — the GENERATION-time leg; json_object is
+            # the fallback for models the capability precheck says do not (or
+            # cannot be determined to) support it. Post-parse validation below
+            # is the floor in BOTH cases (see _CHAT_SUMMARY_JSON_SCHEMA's own
+            # docstring for why schema constraints alone can't replace it).
+            #
+            # DELIBERATELY the opposite of 0062's own unsupported-model
+            # behavior — do not unify these two just because they share the
+            # same capability check (architect/lead-coder, #4883): 0062 §2.1
+            # raises StructuredOutputUnsupportedModelError with NO silent
+            # fallback because an AgentStep's caller explicitly asked for
+            # structured output — an unsupported model is THAT step's own
+            # failure, contained to one step. Compaction never had a
+            # schema-constrained contract to violate; it is an opportunistic
+            # upgrade to an existing best-effort call, and its failure mode is
+            # different in kind: raising here means the context window never
+            # opens back up, i.e. the conversation itself cannot continue —
+            # turning "summary quality isn't guaranteed" into "the session is
+            # stuck" would be strictly worse than today. So compaction degrades
+            # instead of raising on an unsupported model — the post-parse
+            # validation floor is what still catches an empty/malformed
+            # json_object response either way.
+            #
+            # The degrade decision is made HERE, before the call — not by
+            # catching a provider rejection and retrying without
+            # response_format (fallback_without_response_format stays False
+            # below, on BOTH legs). 0062's own text is explicit about why (its
+            # capability precheck exists precisely so the call never has to
+            # find out the hard way): "Do NOT catch-classify a provider
+            # rejection for this — a raw 400 can't be reliably told apart from
+            # transient/other errors." A provider rejection despite a True
+            # precheck (the capability table lagging reality) is therefore a
+            # genuine call failure, not a signal to silently retry a
+            # differently-shaped request — it propagates like any other
+            # `_acompletion` failure, caught by CompactionController's
+            # existing try/except (-> compaction_failed), which is the
+            # pre-existing safety net this fix already leans on for the
+            # exhausted-reprompt-budget case above.
+            if await _supports_structured_output(self._model):
+                _response_format = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "compaction_chat_summary",
+                        "schema": _CHAT_SUMMARY_JSON_SCHEMA,
+                        "strict": True,
+                    },
+                }
+            else:
+                _response_format = {"type": "json_object"}
+            _fallback_without_rf = False
+            parsed: dict = {}
+            raw = ""
+            response = None
+            reprompt_messages = list(llm_messages)
+            validation_errors: list[str] = []
+            for attempt in range(max_attempts):
+                response = await self._acompletion(
+                    reprompt_messages,
+                    response_format=_response_format,
+                    fallback_without_response_format=_fallback_without_rf,
+                )
+                raw = (response.choices[0].message.content or "").strip()
+                if not raw:
+                    if attempt + 1 < max_attempts:
+                        validation_errors = ["response was empty"]
+                        self._events.emit(
+                            "compaction_schema_invalid",
+                            attempt=attempt,
+                            max_attempts=max_attempts,
+                            errors=validation_errors,
+                        )
+                        reprompt_messages = _append_schema_reprompt(
+                            reprompt_messages, raw, validation_errors,
+                        )
+                        continue
+                    raise ValueError("compaction LLM returned empty response")
+
+                parsed = loads_lenient(
+                    raw,
+                    on_raw_decode=lambda discarded_len, head: logger.warning(
+                        "compaction_json_raw_decode_recovered: discarded %d bytes of "
+                        "trailing garbage after valid JSON object. head=%r",
+                        discarded_len,
+                        head,
+                    ),
+                )
+                validation_errors = _validate_chat_summary_fields(parsed)
+                if not validation_errors:
+                    break
+                self._events.emit(
+                    "compaction_schema_invalid",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    errors=validation_errors,
+                )
                 if attempt + 1 < max_attempts:
-                    validation_errors = ["response was empty"]
-                    self._events.emit(
-                        "compaction_schema_invalid",
-                        attempt=attempt,
-                        max_attempts=max_attempts,
-                        errors=validation_errors,
-                    )
                     reprompt_messages = _append_schema_reprompt(
                         reprompt_messages, raw, validation_errors,
                     )
                     continue
-                raise ValueError("compaction LLM returned empty response")
-
-            parsed = loads_lenient(
-                raw,
-                on_raw_decode=lambda discarded_len, head: logger.warning(
-                    "compaction_json_raw_decode_recovered: discarded %d bytes of "
-                    "trailing garbage after valid JSON object. head=%r",
-                    discarded_len,
-                    head,
-                ),
-            )
-            validation_errors = _validate_chat_summary_fields(parsed)
-            if not validation_errors:
-                break
-            self._events.emit(
-                "compaction_schema_invalid",
-                attempt=attempt,
-                max_attempts=max_attempts,
-                errors=validation_errors,
-            )
-            if attempt + 1 < max_attempts:
-                reprompt_messages = _append_schema_reprompt(
-                    reprompt_messages, raw, validation_errors,
+                raise ValueError(
+                    f"compaction LLM response missing required fields after "
+                    f"{max_attempts} attempt(s): {validation_errors}"
                 )
-                continue
-            raise ValueError(
-                f"compaction LLM response missing required fields after "
-                f"{max_attempts} attempt(s): {validation_errors}"
+
+            # #4703 axis①: this call's own usage, for the compaction_completed
+            # marker CompactionController emits below (never a resummarize-pass
+            # call's usage — those are a rare, bounded-to-1-by-default backstop;
+            # the primary compact() call is the dominant cost, and capturing
+            # every resummarize pass too would need threading usage out of
+            # _resummarize_topic_arc as well, a disclosed follow-up, not silent
+            # scope creep). None if usage genuinely could not be read off the
+            # response — never coerced to 0. Reflects the FINAL (successful)
+            # attempt only — a re-prompt's own usage is not summed in, the same
+            # "primary call dominates, re-prompt passes are a disclosed gap"
+            # shape the resummarize-pass comment above already establishes.
+            _usage = getattr(response, "usage", None)
+            _prompt_tokens = getattr(_usage, "prompt_tokens", None)
+            _completion_tokens = getattr(_usage, "completion_tokens", None)
+            _cost_usd: "float | None" = None
+            if isinstance(_prompt_tokens, int) and isinstance(_completion_tokens, int):
+                from reyn.llm.pricing import TokenUsage, estimate_cost
+                _cost_usd, _ = estimate_cost(
+                    self._model,
+                    TokenUsage(prompt_tokens=_prompt_tokens, completion_tokens=_completion_tokens),
+                )
+
+            # #4951-A: derive unconditionally from the INPUT reyn itself built
+            # and passed to compact() — never from the LLM's output. This is
+            # the fallback that used to fire only when the (now-removed) echo
+            # was empty, promoted to the sole path (owner: "compaction は圧縮
+            # 対象メッセージしか送らないはずなのでいらないと思うんだけど？" —
+            # confirmed correct, #4951). The LLM's echo could only ever match
+            # this value or be wrong (the prompt forbade sorting/filtering/
+            # computing the max, so a model that ignored some turns still
+            # echoed every seq) — there was no case where trusting the echo
+            # over reyn's own input was more correct, only cases where it
+            # silently wasn't (a non-empty-but-wrong echo used to pass through
+            # unchecked; the old fallback only caught an EMPTY echo).
+            #
+            # #4951-B: the ``new_turn_seqs`` KEY itself is now REMOVED from
+            # both the schema (``_CHAT_SUMMARY_JSON_SCHEMA``) and the system
+            # prompt (``reyn.prompt.compaction``) — reyn no longer asks the LLM
+            # to echo it at all (A had already stopped reading the echo; this
+            # closes the other half). Owner ruling: the LLM path's information
+            # gain is zero by construction (established by reading the
+            # prompt's own constraint above, not by measurement — "測定は反例
+            # にしかならん", a measurement can only ever supply a
+            # counterexample). ``ChatSummaryRaw.new_turn_seqs`` is likewise
+            # removed (0 consumers — this dataclass is never constructed
+            # anywhere in the tree; ``ChatSummary.to_dict()`` never included
+            # the field even before this removal).
+            #
+            # #4947 ③ note: this also supersedes ③'s own earlier clamp-based
+            # fix for the same exposure (an over-claiming echo covering a
+            # partial-slice remainder it was never offered) — with the echo
+            # never read at all, there is nothing left to clamp; #4956/#4951-A
+            # closes the exposure at its root instead of bounding its output.
+            #
+            # #5498 (architect ruling, on this exact call site): for
+            # retry_loop's own caller, ``input_chunk.messages``' turn elements
+            # (#5531 renamed the field from ``new_turns``) are litellm
+            # wire dicts with no ``seq`` key at all (see ``SeqUnavailable.
+            # WIRE_DICTS_CARRY_NO_SEQ``'s own docstring) — every ``t.get("seq",
+            # 0)`` above falls to its default, so ``covers`` is structurally
+            # 0 on that path. Confirmed harmless by TWO independent facts, not
+            # one:
+            #   (1) #5612 (architect co-vet, PR #5617): retry_loop's own
+            #       summary IS persisted now, per successful fold
+            #       (``on_summary_used`` -> ``CompactionController.
+            #       persist_recovery_summary``, router_loop_driver.py) — the
+            #       "never persists" claim this comment used to make here is
+            #       no longer true. The 0 computed at THIS call site is still
+            #       harmless, but for a DIFFERENT, still-live reason: the
+            #       persist-time caller never reads this value at all — it
+            #       re-derives its own real ``covers_through_seq`` from
+            #       ``decompose_history_for_retry``'s own ``seq_by_id`` map
+            #       (the actual folded turns' real seqs,
+            #       ``max(..., default=0)`` — router_loop_driver.py's own
+            #       ``_on_recovery_summary_used``) — and even a bogus 0 that
+            #       DID somehow reach ``persist_recovery_summary`` is rejected
+            #       outright there (``if covers_through_seq <= 0: ... return``,
+            #       never appended — ``compaction_controller.py``).
+            #   (2) for the OTHER caller (CompactionController), a real 0
+            #       here would ALSO be masked — ``compaction_controller.py``'s
+            #       own ``covers = chat_summary.covers_through_seq or
+            #       candidates[-1].seq`` falls back to a real seq whenever
+            #       this value is falsy. That ``or`` was written for a
+            #       DIFFERENT reason (a wrong/empty LLM echo, #4951-A) — it
+            #       was never intended as a defense against THIS 0, but it
+            #       happens to also BE one; do not remove it.
+            # Both facts are load-bearing SEPARATELY — either one alone would
+            # still make this 0 harmless today, so a future change that
+            # removes only one of them (e.g. starts persisting retry_loop's
+            # own summary) needs to re-derive whether the other still holds
+            # before assuming this is still safe. See
+            # tests/services/test_5498_retry_loop_covers_zero_never_persisted.py.
+            # #5531: derive from `messages` MINUS every summary element (there
+            # can be more than one — see HistoryChunkToCompact's own
+            # docstring) — none of their own covers_through_seq values are a
+            # "new turn" seq, and each may sit anywhere in the ordered list
+            # now (condition④), not just at index 0. The filter below already
+            # excludes all of them, not just the first.
+            covers = compute_covers_through_seq(
+                [
+                    t.get("seq", 0) for t in input_chunk.messages
+                    if isinstance(t, dict) and t.get("role") != SUMMARY_MESSAGE_ROLE
+                ]
             )
 
-        # #4703 axis①: this call's own usage, for the compaction_completed
-        # marker CompactionController emits below (never a resummarize-pass
-        # call's usage — those are a rare, bounded-to-1-by-default backstop;
-        # the primary compact() call is the dominant cost, and capturing
-        # every resummarize pass too would need threading usage out of
-        # _resummarize_topic_arc as well, a disclosed follow-up, not silent
-        # scope creep). None if usage genuinely could not be read off the
-        # response — never coerced to 0. Reflects the FINAL (successful)
-        # attempt only — a re-prompt's own usage is not summed in, the same
-        # "primary call dominates, re-prompt passes are a disclosed gap"
-        # shape the resummarize-pass comment above already establishes.
-        _usage = getattr(response, "usage", None)
-        _prompt_tokens = getattr(_usage, "prompt_tokens", None)
-        _completion_tokens = getattr(_usage, "completion_tokens", None)
-        _cost_usd: "float | None" = None
-        if isinstance(_prompt_tokens, int) and isinstance(_completion_tokens, int):
-            from reyn.llm.pricing import TokenUsage, estimate_cost
-            _cost_usd, _ = estimate_cost(
+            # #271 — 3-tier topic_arc bounding (replaces the lone Axis-9 blind cut):
+            #   T1 fit         — within budget → no LLM, unchanged (common case).
+            #   T2 re-summarize — overshoot → LLM re-compression (judgment loss, the
+            #                     user's "intentional summary compression is fine"),
+            #                     bounded to ``resummarize_passes`` (default 1).
+            #   T3 hard_truncate — deterministic floor, always applied last so
+            #                     topic_arc ≤ body_budget is NEVER violated (the
+            #                     dead-end-free bound; rare backstop after T2).
+            body_budget = self._budgets.body_budget
+            topic_arc = str(parsed.get("topic_arc") or "")
+            passes = max(0, int(getattr(self._cfg, "resummarize_passes", 1)))
+            for _ in range(passes):
+                before_tokens = estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4)
+                if before_tokens <= body_budget:
+                    break  # T1: fits
+                topic_arc = await self._resummarize_topic_arc(topic_arc, body_budget)
+                self._events.emit(
+                    "summary_resummarized",
+                    original_tokens=before_tokens,
+                    target_budget=body_budget,
+                    result_tokens=estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4),
+                )
+            topic_arc = hard_truncate_summary(  # T3: deterministic floor
+                topic_arc,
+                body_budget,
                 self._model,
-                TokenUsage(prompt_tokens=_prompt_tokens, completion_tokens=_completion_tokens),
+                self._events,
+                use_chars4=self._use_chars4,
             )
 
-        # #4951-A: derive unconditionally from the INPUT reyn itself built
-        # and passed to compact() — never from the LLM's output. This is
-        # the fallback that used to fire only when the (now-removed) echo
-        # was empty, promoted to the sole path (owner: "compaction は圧縮
-        # 対象メッセージしか送らないはずなのでいらないと思うんだけど？" —
-        # confirmed correct, #4951). The LLM's echo could only ever match
-        # this value or be wrong (the prompt forbade sorting/filtering/
-        # computing the max, so a model that ignored some turns still
-        # echoed every seq) — there was no case where trusting the echo
-        # over reyn's own input was more correct, only cases where it
-        # silently wasn't (a non-empty-but-wrong echo used to pass through
-        # unchecked; the old fallback only caught an EMPTY echo).
-        #
-        # #4951-B: the ``new_turn_seqs`` KEY itself is now REMOVED from
-        # both the schema (``_CHAT_SUMMARY_JSON_SCHEMA``) and the system
-        # prompt (``reyn.prompt.compaction``) — reyn no longer asks the LLM
-        # to echo it at all (A had already stopped reading the echo; this
-        # closes the other half). Owner ruling: the LLM path's information
-        # gain is zero by construction (established by reading the
-        # prompt's own constraint above, not by measurement — "測定は反例
-        # にしかならん", a measurement can only ever supply a
-        # counterexample). ``ChatSummaryRaw.new_turn_seqs`` is likewise
-        # removed (0 consumers — this dataclass is never constructed
-        # anywhere in the tree; ``ChatSummary.to_dict()`` never included
-        # the field even before this removal).
-        #
-        # #4947 ③ note: this also supersedes ③'s own earlier clamp-based
-        # fix for the same exposure (an over-claiming echo covering a
-        # partial-slice remainder it was never offered) — with the echo
-        # never read at all, there is nothing left to clamp; #4956/#4951-A
-        # closes the exposure at its root instead of bounding its output.
-        #
-        # #5498 (architect ruling, on this exact call site): for
-        # retry_loop's own caller, ``input_chunk.messages``' turn elements
-        # (#5531 renamed the field from ``new_turns``) are litellm
-        # wire dicts with no ``seq`` key at all (see ``SeqUnavailable.
-        # WIRE_DICTS_CARRY_NO_SEQ``'s own docstring) — every ``t.get("seq",
-        # 0)`` above falls to its default, so ``covers`` is structurally
-        # 0 on that path. Confirmed harmless by TWO independent facts, not
-        # one:
-        #   (1) #5612 (architect co-vet, PR #5617): retry_loop's own
-        #       summary IS persisted now, per successful fold
-        #       (``on_summary_used`` -> ``CompactionController.
-        #       persist_recovery_summary``, router_loop_driver.py) — the
-        #       "never persists" claim this comment used to make here is
-        #       no longer true. The 0 computed at THIS call site is still
-        #       harmless, but for a DIFFERENT, still-live reason: the
-        #       persist-time caller never reads this value at all — it
-        #       re-derives its own real ``covers_through_seq`` from
-        #       ``decompose_history_for_retry``'s own ``seq_by_id`` map
-        #       (the actual folded turns' real seqs,
-        #       ``max(..., default=0)`` — router_loop_driver.py's own
-        #       ``_on_recovery_summary_used``) — and even a bogus 0 that
-        #       DID somehow reach ``persist_recovery_summary`` is rejected
-        #       outright there (``if covers_through_seq <= 0: ... return``,
-        #       never appended — ``compaction_controller.py``).
-        #   (2) for the OTHER caller (CompactionController), a real 0
-        #       here would ALSO be masked — ``compaction_controller.py``'s
-        #       own ``covers = chat_summary.covers_through_seq or
-        #       candidates[-1].seq`` falls back to a real seq whenever
-        #       this value is falsy. That ``or`` was written for a
-        #       DIFFERENT reason (a wrong/empty LLM echo, #4951-A) — it
-        #       was never intended as a defense against THIS 0, but it
-        #       happens to also BE one; do not remove it.
-        # Both facts are load-bearing SEPARATELY — either one alone would
-        # still make this 0 harmless today, so a future change that
-        # removes only one of them (e.g. starts persisting retry_loop's
-        # own summary) needs to re-derive whether the other still holds
-        # before assuming this is still safe. See
-        # tests/services/test_5498_retry_loop_covers_zero_never_persisted.py.
-        # #5531: derive from `messages` MINUS every summary element (there
-        # can be more than one — see HistoryChunkToCompact's own
-        # docstring) — none of their own covers_through_seq values are a
-        # "new turn" seq, and each may sit anywhere in the ordered list
-        # now (condition④), not just at index 0. The filter below already
-        # excludes all of them, not just the first.
-        covers = compute_covers_through_seq(
-            [
-                t.get("seq", 0) for t in input_chunk.messages
-                if isinstance(t, dict) and t.get("role") != SUMMARY_MESSAGE_ROLE
-            ]
-        )
-
-        # #271 — 3-tier topic_arc bounding (replaces the lone Axis-9 blind cut):
-        #   T1 fit         — within budget → no LLM, unchanged (common case).
-        #   T2 re-summarize — overshoot → LLM re-compression (judgment loss, the
-        #                     user's "intentional summary compression is fine"),
-        #                     bounded to ``resummarize_passes`` (default 1).
-        #   T3 hard_truncate — deterministic floor, always applied last so
-        #                     topic_arc ≤ body_budget is NEVER violated (the
-        #                     dead-end-free bound; rare backstop after T2).
-        body_budget = self._budgets.body_budget
-        topic_arc = str(parsed.get("topic_arc") or "")
-        passes = max(0, int(getattr(self._cfg, "resummarize_passes", 1)))
-        for _ in range(passes):
-            before_tokens = estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4)
-            if before_tokens <= body_budget:
-                break  # T1: fits
-            topic_arc = await self._resummarize_topic_arc(topic_arc, body_budget)
-            self._events.emit(
-                "summary_resummarized",
-                original_tokens=before_tokens,
-                target_budget=body_budget,
-                result_tokens=estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4),
+            return ChatSummary(
+                topic_arc=topic_arc,
+                covers_through_seq=covers,
+                decisions=list(parsed.get("decisions") or []),
+                pending=list(parsed.get("pending") or []),
+                session_user_facts=list(parsed.get("session_user_facts") or []),
+                artifacts_referenced=list(parsed.get("artifacts_referenced") or []),
+                prompt_tokens=_prompt_tokens,
+                completion_tokens=_completion_tokens,
+                cost_usd=_cost_usd,
             )
-        topic_arc = hard_truncate_summary(  # T3: deterministic floor
-            topic_arc,
-            body_budget,
-            self._model,
-            self._events,
-            use_chars4=self._use_chars4,
-        )
-
-        return ChatSummary(
-            topic_arc=topic_arc,
-            covers_through_seq=covers,
-            decisions=list(parsed.get("decisions") or []),
-            pending=list(parsed.get("pending") or []),
-            session_user_facts=list(parsed.get("session_user_facts") or []),
-            artifacts_referenced=list(parsed.get("artifacts_referenced") or []),
-            prompt_tokens=_prompt_tokens,
-            completion_tokens=_completion_tokens,
-            cost_usd=_cost_usd,
-        )
+        except Exception as exc:
+            self._events.emit("compaction_failed", error=str(exc))
+            # #5633 (lead-coder review, structural not agreement-based):
+            # no marker is written on *exc* here. Which side emits
+            # `compaction_failed` for a given failure is decided by WHICH
+            # try/except catches it, not by a third party inspecting an
+            # attribute a foreign exception happens to carry --
+            # CompactionController._run_compaction's own except around
+            # THIS call (if any exists at a caller) must not ALSO emit;
+            # see that method's own comment on why its try/except split
+            # keeps this call outside the block that emits.
+            raise
 
 
 # ---------------------------------------------------------------------------

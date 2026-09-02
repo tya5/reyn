@@ -380,8 +380,18 @@ class CompactionController:
         self._compacting = True
         try:
             await self._run_compaction(candidates, latest)
-        except Exception as exc:
-            self._events.emit("compaction_failed", error=str(exc))
+        except Exception:
+            # #5633 (lead-coder review): NOT re-emitted here. Whatever
+            # `_run_compaction` raises has already had its own
+            # `compaction_failed` emitted at its own origin —
+            # `CompactionEngine.compact()`'s own except for a compact()
+            # failure, or `_run_compaction`'s own post-processing
+            # `try`/`except` for anything after `compact()` returns (see
+            # `_run_compaction`'s own comment for why those two `try`
+            # blocks never overlap). This bare catch exists only so a
+            # compaction failure never propagates past `force_compact_now`
+            # to ITS OWN caller.
+            pass
         finally:
             self._compacting = False
 
@@ -460,47 +470,66 @@ class CompactionController:
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
-        prev_structured: dict | None = None
-        if previous_summary is not None:
-            meta = previous_summary.meta or {}
-            structured = meta.get("structured")
-            if isinstance(structured, dict):
-                prev_structured = structured
-                # carry forward the prior covers_through_seq for continuity
-                if "covers_through_seq" not in prev_structured:
-                    prev_structured = {
-                        **prev_structured,
-                        "covers_through_seq": meta.get("covers_through_seq", 0),
-                    }
+        # #5633 (lead-coder review, the gap the first restructure left
+        # silent): this setup segment — building prev_structured, redact,
+        # the input_chunk's own list comprehension over `candidates` — runs
+        # BEFORE compact() is ever called, so compaction_started has not
+        # fired yet on THIS attempt; before this PR, force_compact_now's
+        # own catch-all still emitted `compaction_failed` for a failure
+        # here (an observability regression this PR would otherwise have
+        # introduced, not merely a dangling-marker gap). Its own try/except
+        # keeps compact() itself the only call outside any local try (see
+        # the comment just above that call).
+        try:
+            prev_structured: dict | None = None
+            if previous_summary is not None:
+                meta = previous_summary.meta or {}
+                structured = meta.get("structured")
+                if isinstance(structured, dict):
+                    prev_structured = structured
+                    # carry forward the prior covers_through_seq for continuity
+                    if "covers_through_seq" not in prev_structured:
+                        prev_structured = {
+                            **prev_structured,
+                            "covers_through_seq": meta.get("covers_through_seq", 0),
+                        }
 
-        # FP-0050/#1822 S3 (#1820): strip credential/token values from turn text
-        # before it enters the summarizer input (so secrets aren't baked into the
-        # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
-        _ts = self._threat_scan
-        _redact = None
-        if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
-            from reyn.security.secret_redaction import redact_secrets
-            _redact = redact_secrets
-        # #5531 condition③: this caller is always tail-side — `candidates`
-        # comes from `_select_candidates(turns, prev_cover)`, which only
-        # ever returns turns chronologically AFTER `prev_cover` (the prior
-        # summary's own covers_through_seq) — so the order is always
-        # summary-then-new-turns, never the reverse (that only happens in
-        # retry_loop's own head-shrink path, engine.py).
-        _summary_messages = (
-            [wrap_summary_as_message(prev_structured)] if prev_structured else []
-        )
-        input_chunk = HistoryChunkToCompact(
-            messages=_summary_messages
-            + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
-            section_token_caps={
-                "topic_arc": cfg.section_token_caps.topic_arc,
-                "decisions": cfg.section_token_caps.decisions,
-                "pending": cfg.section_token_caps.pending,
-                "session_user_facts": cfg.section_token_caps.session_user_facts,
-                "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
-            },
-        )
+            # FP-0050/#1822 S3 (#1820): strip credential/token values from turn text
+            # before it enters the summarizer input (so secrets aren't baked into the
+            # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
+            _ts = self._threat_scan
+            _redact = None
+            if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
+                from reyn.security.secret_redaction import redact_secrets
+                _redact = redact_secrets
+            # #5531 condition③: this caller is always tail-side — `candidates`
+            # comes from `_select_candidates(turns, prev_cover)`, which only
+            # ever returns turns chronologically AFTER `prev_cover` (the prior
+            # summary's own covers_through_seq) — so the order is always
+            # summary-then-new-turns, never the reverse (that only happens in
+            # retry_loop's own head-shrink path, engine.py).
+            _summary_messages = (
+                [wrap_summary_as_message(prev_structured)] if prev_structured else []
+            )
+            input_chunk = HistoryChunkToCompact(
+                messages=_summary_messages
+                + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
+                section_token_caps={
+                    "topic_arc": cfg.section_token_caps.topic_arc,
+                    "decisions": cfg.section_token_caps.decisions,
+                    "pending": cfg.section_token_caps.pending,
+                    "session_user_facts": cfg.section_token_caps.session_user_facts,
+                    "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
+                },
+            )
+        except Exception as exc:
+            # #5633: this segment's OWN failure surface — see the comment
+            # above the try for why it needs one (compaction_started has
+            # not fired yet here, but the pre-#5633 catch-all DID emit for
+            # this segment, so omitting this try/except would be a
+            # regression, not merely a non-issue).
+            self._events.emit("compaction_failed", error=str(exc))
+            raise
 
         new_turn_count = len(candidates)
         # #5475 (architect ruling): compaction_started now emits at
@@ -512,39 +541,58 @@ class CompactionController:
         # rejected). This caller's own real `seq` (`candidates[-1].seq` —
         # unlike retry_loop's wire-dict turns, `_turn_to_compactor_input`
         # keeps `seq` per turn) is passed through explicitly.
+        # #5633 (lead-coder review): deliberately OUTSIDE any try/except in
+        # THIS method — a compact() failure is already fully handled at its
+        # own origin (CompactionEngine.compact()'s own except emits
+        # `compaction_failed` and re-raises; see its own docstring). Nothing
+        # here may also catch it: which side emits for a given failure is
+        # decided STRUCTURALLY, by which try/except block the failure
+        # physically raises inside, never by a caller re-inspecting the
+        # exception for a marker.
         chat_summary = await self._engine.compact(
             input_chunk, covers_through=candidates[-1].seq,
         )
-        structured = chat_summary.to_dict()
-        covers = chat_summary.covers_through_seq or candidates[-1].seq
-        # #1820 Part1: frame the rendered summary with a static reference-only
-        # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
-        # history — NOT a fresh instruction — and does not re-execute `pending` work
-        # after a reverse-signal (stop / undo / change of direction). Prepended here
-        # (controller-owned, render-fn-independent) so every rendered summary carries
-        # it. Static string → no LLM dependency.
-        rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
+        try:
+            structured = chat_summary.to_dict()
+            covers = chat_summary.covers_through_seq or candidates[-1].seq
+            # #1820 Part1: frame the rendered summary with a static reference-only
+            # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
+            # history — NOT a fresh instruction — and does not re-execute `pending` work
+            # after a reverse-signal (stop / undo / change of direction). Prepended here
+            # (controller-owned, render-fn-independent) so every rendered summary carries
+            # it. Static string → no LLM dependency.
+            rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
 
-        summary_msg = self._make_summary_message(rendered, structured, covers)
-        self._append_history(summary_msg)
-        self._events.emit(
-            "compaction_completed",
-            new_turn_count=new_turn_count,
-            covers_through_seq=covers,
-            section_lengths={
-                k: len(v) if isinstance(v, list) else len(str(v))
-                for k, v in structured.items()
-                if k != "covers_through_seq"
-            },
-            # #4703 axis①: the compact() LLM call's own real usage — see
-            # ChatSummary's own docstring for why it lives there and not in
-            # ``structured``/``to_dict()`` (never persisted to history.jsonl).
-            # None only when usage genuinely could not be read off the
-            # response — never coerced to 0.
-            prompt_tokens=chat_summary.prompt_tokens,
-            completion_tokens=chat_summary.completion_tokens,
-            cost_usd=chat_summary.cost_usd,
-        )
+            summary_msg = self._make_summary_message(rendered, structured, covers)
+            self._append_history(summary_msg)
+            self._events.emit(
+                "compaction_completed",
+                new_turn_count=new_turn_count,
+                covers_through_seq=covers,
+                section_lengths={
+                    k: len(v) if isinstance(v, list) else len(str(v))
+                    for k, v in structured.items()
+                    if k != "covers_through_seq"
+                },
+                # #4703 axis①: the compact() LLM call's own real usage — see
+                # ChatSummary's own docstring for why it lives there and not in
+                # ``structured``/``to_dict()`` (never persisted to history.jsonl).
+                # None only when usage genuinely could not be read off the
+                # response — never coerced to 0.
+                prompt_tokens=chat_summary.prompt_tokens,
+                completion_tokens=chat_summary.completion_tokens,
+                cost_usd=chat_summary.cost_usd,
+            )
+        except Exception as exc:
+            # #5633: this method's OWN failure surface — everything AFTER
+            # compact() returns a real ChatSummary (rendering, persisting,
+            # emitting compaction_completed). compact() itself is outside
+            # this try (see the comment above it) so its own failures can
+            # never reach here — this except only ever fires for a
+            # genuinely NEW failure, never the same one compact() already
+            # emitted `compaction_failed` for.
+            self._events.emit("compaction_failed", error=str(exc))
+            raise
 
 
 __all__ = ["CompactionController"]

@@ -180,13 +180,41 @@ class ChatLifecycleForwarder:
 
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
+    def on_compaction_started(self, data: dict) -> None:
+        """Surface a ``[⟳ compacting N turns]`` marker when a real compaction
+        pass begins (#5633 — owner: "縮小フロー開始開始通知みたいなものは tui
+        で受けてないのかしら？").
+
+        Before this handler, ``completed``/``failed`` both had a marker but
+        ``started`` had none — asymmetric, and the gap this issue's own
+        finding names: the event was emitted (``engine.py``'s
+        ``compact()``), nothing in ``src/reyn/interfaces/`` ever consumed it.
+
+        Deliberately independent of #5618/#5630's `is_compacting`/
+        `recovery_episode` progress-row gate — that is STATE a polling
+        consumer reads each frame; this is an EDGE, a one-line transcript
+        marker for the moment compaction begins, the same shape
+        ``on_compaction_completed``/``on_compaction_failed`` already use for
+        their own edges. Neither replaces the other: the progress row answers
+        "is it running right now", this marker answers "something just
+        started" for a reader who was not watching the row at that instant.
+
+        ``new_turn_count`` mirrors ``on_compaction_completed``'s own field
+        name for the same count (this pass's target, not its result) —
+        absent degrades to a generic marker, never a fabricated count."""
+        count = data.get("new_turn_count")
+        if isinstance(count, int) and count > 0:
+            self._enqueue(f"[⟳ compacting {count} turn{'s' if count != 1 else ''}]")
+        else:
+            self._enqueue("[⟳ compacting history]")
+
     def on_compaction_failed(self, data: dict) -> None:
         """Surface a ``[✗ compaction failed: <reason>]`` error marker.
 
         ``compaction_controller.py`` emits ``compaction_failed`` when the
         summarisation LLM call raises. Without this handler the user sees the
-        ``compaction_started`` side-effect (spinner clears) but gets no signal
-        that compaction silently failed — early turns are still unsummarised and
+        ``compaction_started`` marker (#5633) but gets no signal that
+        compaction silently failed — early turns are still unsummarised and
         context pressure continues unrelieved.
         """
         reason = str(data.get("error") or "unknown error")
