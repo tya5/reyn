@@ -22,7 +22,7 @@ once, at the same time as the move.
 `Session` still owns `_commit_mid_turn_injection`, `cancel_queued`,
 `restore_state`, `reset_for_rewind`, and the ``_next_turn_context`` flush in
 ``_run_router_loop`` — each of those reaches into this arbiter's public
-attributes (`pending_inbox_item` / `cancelled_msg_ids` / `next_turn_context`)
+attributes (`pending_inbox_items` / `cancelled_msg_ids` / `next_turn_context`)
 rather than owning a private copy, keeping exactly one holder of each field.
 Those methods were not named in the P1 dispatch and have responsibilities
 (recovery, cancellation-API, router-turn bookkeeping) wider than "inbox
@@ -131,9 +131,12 @@ class InboxArbiter:
         self._journal = journal
         self._notify_state_change = notify_state_change
 
-        # #3792: a 1-slot, volatile (not WAL/snapshot-backed) peek buffer —
-        # see ``peek_mid_turn_injection``'s own docstring.
-        self.pending_inbox_item: "tuple[str, dict] | None" = None
+        # #3792/#5647: a volatile (not WAL/snapshot-backed) peek buffer, in
+        # ARRIVAL ORDER — see ``peek_mid_turn_injection``'s own docstring.
+        # Was a 1 slot until #5647: injection now looks PAST an ineligible
+        # head for the operator's own message, and the items it looked past
+        # have to be held somewhere that preserves the order they arrived in.
+        self.pending_inbox_items: "list[tuple[str, dict]]" = []
         # #3300 P3 (Y-server): msg_ids cancelled via ``Session.cancel_queued``
         # while still sitting in the (durable) ``asyncio.Queue`` — see
         # ``consume_inbox``/``drain_to_wake``.
@@ -161,23 +164,55 @@ class InboxArbiter:
         (``drain_to_wake``) must treat this as "nothing dequeued yet" and
         loop again, never dispatching a turn for a cancelled item.
 
-        #3792: reads ``self.pending_inbox_item`` FIRST, ahead of a fresh
-        ``self._inbox.get()``. An item can land there via
+        #3792: drains ``self.pending_inbox_items`` FIRST, from its head, ahead
+        of a fresh ``self._inbox.get()``. Items land there via
         ``peek_mid_turn_injection`` — either because the running turn ended
         (cancel / cap / overflow / LLM exception) before
         ``Session._commit_mid_turn_injection`` ever fired (carry-forward: the
         item is simply processed as an ordinary new turn here, exactly as if
-        the peek had never happened), or because the peeked head was an
-        INELIGIBLE origin (peek deliberately leaves it there rather than
-        skipping past it — see that method). Checking here first is what
-        makes both cases land correctly instead of being stranded behind a
+        the peek had never happened), or because injection looked PAST them to
+        reach an operator message further back (#5647). Checking here first is
+        what makes both cases land correctly instead of being stranded behind a
         ``self._inbox.get()`` that would never see them again.
+
+        #5647, the consumption-order invariant: the buffer is FIFO and is
+        drained before the queue, so items injection looked past are still
+        consumed in arrival order, relative to each other AND to everything
+        still queued behind them. Injection changes which message the model
+        sees first inside a turn; it does not change the order turns are
+        started in.
         """
-        if self.pending_inbox_item is not None:
-            kind, payload = self.pending_inbox_item
-            self.pending_inbox_item = None
+        if self.pending_inbox_items:
+            kind, payload = self.pending_inbox_items.pop(0)
         else:
             kind, payload = await self._inbox.get()
+        return await self._journal_and_filter(kind, payload)
+
+    def _next_nowait(self) -> "tuple[str, dict] | None":
+        """#5647: the next item in arrival order without blocking — buffer
+        head first, then the queue.
+
+        Every non-blocking read of the inbox has to go through here, not
+        ``self._inbox.get_nowait()`` directly. Before #5647 the peek buffer
+        held at most ONE item and ``consume_inbox`` had just emptied it, so a
+        bare ``get_nowait()`` next to it happened to be correct; now the buffer
+        can hold several, and reading the queue directly would skip straight
+        past them — silently reordering exactly what this design promises not
+        to.
+        """
+        if self.pending_inbox_items:
+            return self.pending_inbox_items.pop(0)
+        try:
+            return self._inbox.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    async def _journal_and_filter(
+        self, kind: str, payload: dict,
+    ) -> "tuple[str, dict] | None":
+        """Shared tail of ``consume_inbox``: skip-at-consume for a cancelled
+        item, then journal the consume. Extracted so the buffer-aware read
+        above and the original body stay one behaviour, not two copies."""
         msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
         if kind != "shutdown" and msg_id in self.cancelled_msg_ids:
             self.cancelled_msg_ids.discard(msg_id)
@@ -190,42 +225,90 @@ class InboxArbiter:
         """#3792: non-blocking, non-committing peek at the inbox head for a
         mid-turn ``CLIENT_INPUT`` injection candidate.
 
-        Returns ``{"payload": dict, "msg_id": str}`` when the head is an
-        eligible, uncancelled ``CLIENT_INPUT`` message; ``None`` otherwise
-        (empty queue, or an ineligible-origin head).
+        Returns ``{"payload": dict, "msg_id": str}`` for the FIRST eligible,
+        uncancelled ``CLIENT_INPUT`` in arrival order; ``None`` when there is
+        none (empty queue, or nothing but ineligible origins).
 
-        Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT)
-        is untouched either way. The dequeued item (if any) is held in
-        ``self.pending_inbox_item`` so it is never lost: an eligible
+        Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT) is
+        untouched either way. Everything dequeued along the way is held in
+        ``self.pending_inbox_items``, in arrival order, so nothing is lost: the
         candidate stays there until ``Session._commit_mid_turn_injection``
         actually commits it (the caller must have spliced it into the wire
-        first — see ``RouterLoop.run_loop``'s seam); an ineligible-origin
-        head also stays there, UNCONSUMED, so the ordinary turn-boundary
-        ``consume_inbox`` picks it up next, in arrival order — a queue
-        whose head is ineligible STOPS here rather than skipping ahead
-        (#3792 design: skipping would silently reorder arrival, and that
-        reordering would leave no trace anywhere).
+        first — see ``RouterLoop.run_loop``'s seam), and the items looked past
+        stay there UNCONSUMED for the ordinary turn-boundary ``consume_inbox``.
 
-        A CANCELLED head (``Session.cancel_queued`` already pruned it from
-        the snapshot) is the one case this DOES discard outright — mirrors
+        **#5647 changed this rule, deliberately.** #3792 STOPPED at an
+        ineligible head rather than looking further, reasoning that skipping
+        "would silently reorder arrival, and that reordering would leave no
+        trace anywhere". The measured consequence was that the rule inverted
+        its own purpose: on reyn-self a ``broker_drain`` hook posts
+        ``msg_kind=hook`` items continuously, so an operator's prompt was
+        almost always sitting behind one, and mid-turn injection — the feature
+        that exists so a human can steer a running tool loop — never fired at
+        all. The prompt waited for the turn boundary and stayed visible in the
+        TUI's sent-queue, which is exactly what the owner reported.
+
+        Both halves of #3792's objection are answered rather than dismissed:
+
+        - *silently reorder arrival* — arrival order is NOT reordered. Only
+          which message the model sees first WITHIN a turn changes. The buffer
+          is FIFO and ``consume_inbox`` drains it before the queue, so the
+          items looked past are still started as turns in arrival order.
+        - *leave no trace anywhere* — the trace is now explicit: the mid-turn
+          ``turn_started`` event carries ``skipped_over``, enumerating the kind
+          and msg_id of every item looked past, in arrival order (empty list
+          when none, so the key is always present and the deny case is
+          distinguishable from an absent field).
+
+        Eligibility itself is UNCHANGED (#3792 / provenance gate #3595): only
+        ``CLIENT_INPUT`` may be injected. What is looked past is every other
+        ``TurnOrigin`` — machine- and agent-originated work.
+
+        A CANCELLED item is the one case this DOES discard outright — mirrors
         ``consume_inbox``'s own skip-at-consume handling, since a cancelled
-        item was never going to be eligible for anything.
+        item was never going to be eligible for anything. That applies to items
+        looked past as well as to the candidate itself.
         """
+        scan = 0
         while True:
-            if self.pending_inbox_item is None:
+            # Walk the buffer first, then pull from the queue — one combined
+            # arrival-ordered sequence, not two.
+            if scan >= len(self.pending_inbox_items):
                 try:
-                    self.pending_inbox_item = self._inbox.get_nowait()
+                    self.pending_inbox_items.append(self._inbox.get_nowait())
                 except asyncio.QueueEmpty:
                     return None
-            kind, payload = self.pending_inbox_item
+            kind, payload = self.pending_inbox_items[scan]
             msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
             if kind != "shutdown" and msg_id in self.cancelled_msg_ids:
                 self.cancelled_msg_ids.discard(msg_id)
-                self.pending_inbox_item = None
+                del self.pending_inbox_items[scan]
                 continue
             if kind != TurnOrigin.CLIENT_INPUT:
-                return None
+                scan += 1
+                continue
             return {"payload": payload, "msg_id": msg_id}
+
+    def skipped_over_before(self, msg_id: "str | None") -> "list[dict]":
+        """#5647: the items injection looked past to reach ``msg_id``, as
+        ``[{"kind", "msg_id"}]`` in arrival order.
+
+        Derived from the buffer's own order at commit time rather than
+        remembered from the peek: the buffer IS the arrival-ordered record, so
+        reading it needs no second copy of the same fact to keep in sync (the
+        peek and the commit are separated by a whole LLM round trip, and
+        anything carried across that gap can go stale — a cancel can land in
+        between).
+
+        Empty list when ``msg_id`` is at the head, or is not held at all.
+        """
+        out: "list[dict]" = []
+        for kind, payload in self.pending_inbox_items:
+            held = payload.get("_msg_id") if isinstance(payload, dict) else None
+            if held == msg_id:
+                return out
+            out.append({"kind": kind, "msg_id": held})
+        return []
 
     async def stage_next_turn_context(self, kind: str, payload: dict) -> None:
         """Stage a wake=false ride-along (C) into next-turn context, durably
@@ -304,12 +387,16 @@ class InboxArbiter:
             # either a wake=true trigger arrives or the queue is momentarily
             # empty (Decision A: re-enter the blocking wait in that case).
             while True:
-                try:
-                    kind_nb, p_nb = self._inbox.get_nowait()
-                except asyncio.QueueEmpty:
-                    # Queue empty, no trigger yet — re-enter outer blocking
-                    # wait (Decision A).
+                # #5647: buffer head first, then the queue — a bare
+                # ``get_nowait()`` here would read straight past items the
+                # mid-turn peek is holding, which is the one reordering this
+                # design promises does not happen. See ``_next_nowait``.
+                _nb = self._next_nowait()
+                if _nb is None:
+                    # Nothing pending, no trigger yet — re-enter outer
+                    # blocking wait (Decision A).
                     break
+                kind_nb, p_nb = _nb
 
                 msg_id_nb = (
                     p_nb.get("_msg_id") if isinstance(p_nb, dict) else None

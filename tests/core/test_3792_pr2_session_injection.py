@@ -7,9 +7,10 @@ RouterLoop-level wire-position / strip-falsify witnesses live in
 
 - **origin gate** — only ``TurnOrigin.CLIENT_INPUT`` is peek-eligible; all 9
   members enumerated (vacuity guard: fails loud if the enumeration is empty).
-- **order** — an ineligible head STOPS peek (never skips ahead); the SAME
-  item then surfaces, in order, via the ordinary turn-boundary
-  ``_consume_inbox`` drain.
+- **order** — peek looks PAST an ineligible head to the operator's own
+  message (#5647 replaced #3792's original STOP rule; see that test's own
+  docstring for why), while the ordinary turn-boundary ``_consume_inbox``
+  drain still returns everything in arrival order.
 - **carry-forward** — a peeked-but-never-committed item (the abnormal-exit
   case: cancel / cap / overflow / LLM exception happened before commit) is
   not lost — the next ``_consume_inbox`` call returns the SAME item.
@@ -119,22 +120,32 @@ async def test_only_client_input_origin_is_peek_eligible(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Order — ineligible head stops, never skips ahead
+# Order — injection looks past an ineligible head; consumption order does not
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_ineligible_head_blocks_peek_and_surfaces_via_normal_drain_in_order(tmp_path):
-    """Tier 2: #3792 — an ineligible-origin head STOPS peek (returns None)
-    rather than skipping ahead to a later eligible item; the SAME ineligible
-    item is what the ordinary turn-boundary ``_consume_inbox`` returns next
-    — arrival order preserved, nothing silently reordered.
+async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged(tmp_path):
+    """Tier 2: #5647 replaced this test's original claim, deliberately.
 
-    Falsification (performed during review): making peek skip past an
-    ineligible head to find the next eligible item makes this test go RED
-    — the origin returned by the first ``_consume_inbox`` after the peek
-    attempt would be ``CLIENT_INPUT`` (the 2nd item), not ``AGENT_REQUEST``
-    (the 1st, ineligible, item) — the assertion on ``kind`` below would fail.
+    It used to assert that an ineligible head STOPS peek, and its own
+    docstring named the falsifier: "making peek skip past an ineligible head
+    ... makes this test go RED". #5647 makes peek do exactly that, because the
+    STOP rule inverted its own purpose in practice — on reyn-self a
+    ``broker_drain`` hook posts inbox items continuously, so the operator's
+    prompt was nearly always sitting behind one and mid-turn injection, the
+    feature that exists so a human can steer a running tool loop, never fired
+    (owner-reported: the prompt sat in the TUI's sent-queue instead).
+
+    What survives unchanged is the half that actually carried the invariant:
+    **consumption order**. #3792's objection to skipping was that it would
+    "silently reorder arrival". It does not — injection changes which message
+    the model sees first WITHIN a turn; the turn-boundary drain still returns
+    AGENT_REQUEST before CLIENT_INPUT, exactly as this test asserted before.
+
+    Strip-falsifier: restore the STOP (return None on an ineligible head) and
+    the peek assertion below goes red — which is the owner's symptom, not a
+    cosmetic difference.
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
@@ -145,12 +156,18 @@ async def test_ineligible_head_blocks_peek_and_surfaces_via_normal_drain_in_orde
     await session.submit_user_text("second, eligible")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injection()
-    assert peeked is None, "the ineligible AGENT_REQUEST head must block the peek"
+    assert peeked is not None, (
+        "#5647: peek must look PAST the ineligible AGENT_REQUEST head to find "
+        "the operator's message — stopping here is the reported defect"
+    )
+    assert peeked["payload"]["text"] == "second, eligible"
 
+    # The item looked past is NOT consumed by the peek, and is still first.
     kind, payload = await session._inbox_arbiter.consume_inbox()
     assert kind == TurnOrigin.AGENT_REQUEST, (
-        "the FIRST item _consume_inbox returns must be the same ineligible "
-        "head the peek saw — not the 2nd (eligible) item out of order"
+        "the FIRST item consume_inbox returns must still be the ineligible "
+        "head — injection reorders what the MODEL sees, never what the turn "
+        "boundary consumes"
     )
     assert payload["request"] == "r"
 

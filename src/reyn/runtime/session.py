@@ -3701,7 +3701,7 @@ class Session:
         self._inbox_arbiter.next_turn_context.clear()
         # (#2884 added a hook_driven_turns reset step here — the loop-valve
         # counter mirror. #5561 retired the valve, and the counter with it.)
-        # pending_inbox_item / cancelled_msg_ids / last_sender / last_reply_to
+        # pending_inbox_items / cancelled_msg_ids / last_sender / last_reply_to
         # (proposal 0067 P1, #3978 InboxArbiter extraction): the same latent
         # gap current_task's own comment below names — NONE of these four
         # were part of AgentSnapshot before this extraction either, and
@@ -3715,7 +3715,7 @@ class Session:
         # outlive it. Discovered while moving this state into one holder for
         # this extraction; fixed here rather than deferred, matching the
         # current_task precedent immediately below.
-        self._inbox_arbiter.pending_inbox_item = None
+        self._inbox_arbiter.pending_inbox_items.clear()
         self._inbox_arbiter.cancelled_msg_ids.clear()
         self._inbox_arbiter.last_sender = None
         self._inbox_arbiter.last_reply_to = None
@@ -7155,19 +7155,29 @@ class Session:
         counter is gone; the point about not starting a new turn stands on
         its own.)
 
-        No-op (raises nothing, commits nothing) if ``msg_id`` does not match
-        the currently held ``self._inbox_arbiter.pending_inbox_item`` —
-        defensive: this would only happen if the caller calls commit
-        without a matching prior peek, which is a caller bug, not a runtime
-        condition to paper over silently as a success.
+        No-op (raises nothing, commits nothing) if ``msg_id`` is not held in
+        ``self._inbox_arbiter.pending_inbox_items`` — defensive: this would
+        only happen if the caller calls commit without a matching prior peek,
+        which is a caller bug, not a runtime condition to paper over silently
+        as a success.
+
+        #5647: the held item is no longer necessarily the buffer head, so it is
+        located by msg_id and removed from where it sits. The items ahead of it
+        — the ones injection looked past — stay in the buffer, in arrival
+        order, for the ordinary turn boundary to consume.
         """
-        if self._inbox_arbiter.pending_inbox_item is None:
+        _held = self._inbox_arbiter.pending_inbox_items
+        _idx = next(
+            (
+                i for i, (_k, p) in enumerate(_held)
+                if (p.get("_msg_id") if isinstance(p, dict) else None) == msg_id
+            ),
+            None,
+        )
+        if _idx is None:
             return
-        kind, payload = self._inbox_arbiter.pending_inbox_item
-        held_msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
-        if held_msg_id != msg_id:
-            return
-        self._inbox_arbiter.pending_inbox_item = None
+        skipped_over = self._inbox_arbiter.skipped_over_before(msg_id)
+        kind, payload = _held.pop(_idx)
         self._append_history(ChatMessage(
             role="user", content=payload.get("text") or "", ts=_now_iso(),
             meta=payload.get("meta") or {},
@@ -7185,6 +7195,15 @@ class Session:
             kind=kind,
             chain_id=payload.get("chain_id"),
             seq=self._bump_queue_seq(),
+            # #5647: what this injection looked past to reach the operator's
+            # message, in arrival order. This field is the trace #3792 said a
+            # skip could not leave — enumerated, not counted, so a reader can
+            # tell WHICH work was overtaken and reconstruct the ordering.
+            # Always present, empty list when nothing was looked past: absent
+            # would be indistinguishable from "an older build that could not
+            # look past anything", which is the conflation this codebase's
+            # #5009 pass exists to prevent.
+            skipped_over=skipped_over,
         )
 
     async def _launch_pipeline_from_hook(self, name: str, input_data: "dict | None") -> None:
