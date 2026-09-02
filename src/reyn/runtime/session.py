@@ -1508,6 +1508,10 @@ class Session:
             _ChatBudgetBus(), self._on_limit, self.agent_name, self._non_interactive,
             llm_call_timeout=self._safety.timeout.llm_call_seconds,
             llm_max_retries=self._safety.timeout.llm_max_retries,
+            # #5597: compaction's own optional override — None (default)
+            # means "inherit llm_call_timeout above", read only by
+            # recorded_acompletion's own purpose=="compaction" branch.
+            compaction_llm_call_timeout=self._compaction.llm_call_seconds,
         )
         # Surfaces session-level lifecycle events (compaction, attach/detach, budget warnings) into the conv pane (#162, see session-construction.md#misc-lifecycle-wiring)
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder

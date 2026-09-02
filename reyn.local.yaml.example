@@ -459,6 +459,11 @@
 #       pending: 400
 #       session_user_facts: 200
 #       artifacts_referenced: 300
+#     llm_call_seconds: null           # #5597: per-request timeout for the
+#                                      # compaction LLM call. null (default)
+#                                      # inherits safety.timeout.llm_call_seconds
+#                                      # -- the same value the router's own main
+#                                      # call already uses.
 #
 # chat.reasoning: model reasoning/"thinking" text handling (#1652). Capture of
 # the provider reasoning_content is always-on; these knobs gate what happens

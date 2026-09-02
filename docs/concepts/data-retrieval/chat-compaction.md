@@ -371,6 +371,11 @@ chat:
 
     # Set true to use len(text)//4 instead of litellm.token_counter.
     use_chars4_estimate: false
+
+    # #5597: per-request timeout for the compaction LLM call. null (default)
+    # inherits safety.timeout.llm_call_seconds -- the SAME value the
+    # router's own main call already uses (no separately-chosen number).
+    llm_call_seconds: null
 ```
 
 Weights are sum-arbitrary — any positive integers work; Reyn normalises them at
