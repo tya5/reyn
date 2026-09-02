@@ -1224,9 +1224,11 @@ class TextualChatApp(App):
        between a tab and the pane it opens, most visible on the Cost tab's
        column-aligned table (reyn-reviewer, #4544's own investigation).
        Fixes ALL 5 Static panes (cost/ctx/pipe/cron/help) from this ONE
-       rule — `_MENU_TABS` (chrome.py) has 14 entries, `_LIST_PANES` has 9;
-       the other 9 are OptionList, explicitly excluded (architect's own
-       measurement, #4554): OptionList already has `padding: 0` above by
+       rule — every OTHER `_MENU_TABS` (chrome.py) entry is an OptionList,
+       explicitly excluded (architect's own measurement, #4554). Naming
+       exact `_MENU_TABS`/`_LIST_PANES` entry counts here was tried once
+       and #5654's own Task tab addition already falsified it (#5657) —
+       deliberately not re-added: OptionList already has `padding: 0` above by
        design (full-width row highlight on selection — adding padding here
        would shrink that highlight), so this rule intentionally targets
        Static only, never OptionList. */
