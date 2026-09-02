@@ -3027,6 +3027,12 @@ class RecoveryLadder:
         # it without a param (there is no OTHER caller of either method,
         # so this is not a wider-scope leak).
         self._attempt_len: "int | None" = None
+        # #4944①: tracks whether THIS iteration reached main_call -- reset
+        # at the top of every _run_one_iteration call (an overflow from
+        # compact() itself is a DIFFERENT, unmeasured payload -- guards
+        # the failure-side wire_bytes emission so it never mislabels
+        # "nothing resembling this was sent" as a rejected byte count).
+        self._this_iteration_called_main_call = False
         # #5592 (owner ruling): the ORIGINAL raw_middle length this call
         # started with — captured once, never re-derived, so
         # ``compaction_shrink_recovered``'s own remaining-count field below is
@@ -3353,6 +3359,290 @@ class RecoveryLadder:
         # on its own next pass through this branch, continuing the
         # search.
 
+    async def _stage_fold(self) -> "object | None":
+        """ADR-0044 -- fold. Compacts ``raw_middle`` (or the first
+        ``_attempt_len`` of it) into the running summary via
+        ``compact()``. Returns :data:`_LADDER_CONTINUE` when a
+        still-uncompacted remainder stays in ``raw_middle`` after a
+        successful fold (the rest of THIS iteration is spent folding
+        it, never handed to ``main_call`` incomplete); returns
+        ``None`` (fall through to :meth:`_attempt_main_call`) when
+        ``raw_middle`` was already empty, or the fold left nothing
+        behind. An overflow from ``compact()`` itself is classified
+        (FATAL/RETRYABLE re-raise bare; OVERFLOW wraps as
+        `CompactionOverflowError` for the caller's own `except` to
+        catch) -- see the classification's own inline comment for the
+        full FATAL/RETRYABLE/OVERFLOW rationale."""
+        if not self.raw_middle:
+            return None
+        # Compact raw_middle into the running summary.
+        # Build section_token_caps from budgets.section_caps.
+        section_caps = self._bg.section_caps if self._bg.section_caps else {
+            "topic_arc": 200, "decisions": 400, "pending": 400,
+            "session_user_facts": 200, "artifacts_referenced": 300,
+        }
+        # #4947 ③: offer only the first ``_compact_attempt_len``
+        # turns when a prior attempt this call already failed —
+        # ``None`` (no prior failure yet) offers all of it, the
+        # same as before this change.
+        self._attempt_len = (
+            self._compact_attempt_len if self._compact_attempt_len is not None
+            else len(self.raw_middle)
+        )
+        # #5531 (lead-coder ruling, issuecomment-5463182279): the
+        # input to THIS compact() call is simply "the span being
+        # folded right now" — `_offered`. If a summary element
+        # already sits inside `raw_middle` (decompose's own turns
+        # filter places it there whenever it doesn't fit within
+        # head/tail — see `decompose_history_for_retry`), it rides
+        # along and gets folded together with the rest, same as
+        # any other turn; if it sits outside `raw_middle` (in
+        # `head`/`tail` instead), it simply isn't part of this
+        # fold. No line here decides WHICH — `_offered`'s own
+        # existing chronological order already answers it. A
+        # history can therefore end up holding more than one
+        # `role=="summary"` turn (the untouched original still in
+        # head/tail, plus a fresh one this fold produces) — see
+        # `HistoryChunkToCompact`'s own docstring for the
+        # consequence swept for callers assuming exactly one.
+        _offered = self.raw_middle[:self._attempt_len]
+        _messages = _offered
+        input_chunk = HistoryChunkToCompact(
+            messages=_messages,
+            section_token_caps=section_caps,
+        )
+        try:
+            # #5592: mark this attempt as the NEXT upstream call
+            # within the current recovery episode, exact and
+            # single-producer (see note_upstream_recovery_call_
+            # attempt's own docstring) — a no-op when no episode
+            # is active (e.g. this function's own test-only direct
+            # callers).
+            self._note_upstream_recovery_call_attempt()
+            # #5475: raw_middle's turns are wire dicts (no `seq` —
+            # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
+            # docstring) — a real seq is not available to this caller.
+            chat_summary = await self._engine.compact(
+                input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
+            )
+            # #5612 scope note: a "discard a fold that does not
+            # shrink" rule was drafted here and REMOVED outright
+            # (not deferred, no follow-up issue filed) — a literal
+            # size-only comparison (summary wire bytes vs offered
+            # turns' own wire bytes) broke 10 unrelated,
+            # pre-existing tests whose small/single-turn fixtures
+            # structurally can't beat a structured summary's own
+            # JSON overhead. The rule's own PREMISE was proven
+            # false, not merely its threshold: a persisted summary
+            # re-enters the population of the NEXT fold, so its
+            # framing overhead is absorbed there rather than fixed
+            # forever — architect confirmed the same inequality
+            # holds under the alternative "compare against the
+            # whole head" population too. This PR's own regression
+            # 1 is resolved WITHOUT this rule — see the
+            # `_compacted()` broadening in
+            # test_5296_pr2_byte_reduction_same_turn_retry.py.
+            # #5612 (owner ruling, verbatim: "そもそも compact
+            # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
+            # report EACH successful fold immediately, right here —
+            # not deferred until this whole retry_loop call's own
+            # eventual success/failure. A fold that already
+            # happened is durable-worthy on its own; whether the
+            # LATER main_call this episode is working toward
+            # succeeds, fails, or this episode folds AGAIN after
+            # this (raw_middle still non-empty, `continue` below)
+            # is a separate question this fold's own durability
+            # does not depend on — #5578's own irreversibility
+            # argument ("discarding a fold does not restore
+            # reversibility, it only guarantees paying again")
+            # applies identically whether or not main_call
+            # eventually succeeds. See on_summary_used's own
+            # docstring for the full contract.
+            if self._on_summary_used is not None:
+                await self._on_summary_used(chat_summary, _offered)
+            # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
+            # 5463249759, deferred from PR-1 which reverted the
+            # same line): the fold's result goes where the folded
+            # span itself sat — between `head` and `tail` — so it
+            # lands at the END of `head`. Not a position
+            # decision: `head` keeps at most one summary element
+            # per fold (any prior one this call already carried
+            # is the SAME span's stale representative, replaced
+            # here — never two summaries accumulating from ONE
+            # fold). This is also what makes the summary reach
+            # `main_call`'s wire at all once raw_middle later
+            # empties — main_call receives `head`/`tail`
+            # directly, never `raw_middle`.
+            #
+            # PR-1 reverted this exact line because it broke
+            # retry_loop's OLD termination proof (`head` is no
+            # longer monotonically non-growing once a fold can
+            # re-add an element to it — Phase 2 below could pull
+            # the just-appended element right back into
+            # raw_middle and re-fold it, an observed
+            # oscillation). What makes this safe to reintroduce
+            # is THIS PR's own Phase 1/2 change (below): they now
+            # SKIP any `role=="summary"` element when choosing
+            # what to pull (`_split_off_non_summary`) — Phase 2
+            # structurally cannot pull the element this line just
+            # appended back into raw_middle any more, which is
+            # what the old oscillation depended on. (#5531 PR-3:
+            # this is now ALSO covered by the lexicographic
+            # measure this function's own docstring proves —
+            # ``max_iterations`` no longer exists as a backstop.)
+            self.head = [
+                t for t in self.head if t.get("role") != SUMMARY_MESSAGE_ROLE
+            ] + [wrap_summary_as_message(chat_summary.to_dict())]
+            # Only the ATTEMPTED slice is compacted — a smaller
+            # remainder (if any) stays in raw_middle for a later
+            # iteration. #5531 §10 (architect/owner correction,
+            # 2026-08-30): ``_compact_attempt_len`` now DOUBLES
+            # here (capped at the new, shorter raw_middle's own
+            # length) rather than staying at whatever size just
+            # worked — a slice that succeeded at a SMALL size
+            # after prior halvings means the turn(s) that made it
+            # fail before are now GONE (folded into the summary
+            # just appended to ``head``), so the remainder is
+            # more likely to compact in fewer, larger attempts;
+            # holding the small size would keep folding the
+            # remainder one attempt at a time for no reason once
+            # the dominant turn is gone (owner: "1 件で 入った
+            # ∴ その turn が 支配的だった ── それが消えた今 残りは
+            # まとめて入る可能性が高い"). This does not reopen
+            # #4950's own "uniformly-hard-to-compact input
+            # re-discovers the same halving from scratch"
+            # finding — THAT measured a full reset to ``None``
+            # (the whole remainder) on every success; doubling is
+            # bounded (a uniformly-hard input immediately fails
+            # at the doubled size and halves right back down —
+            # #10's own docstring works through both input
+            # shapes). Any slice that turns out too large for the
+            # new, smaller raw_middle just clips naturally at the
+            # slice below; no explicit clamping needed there.
+            self.raw_middle = self.raw_middle[self._attempt_len:]
+            if self.raw_middle:
+                self._compact_attempt_len = min(self._attempt_len * 2, len(self.raw_middle))
+            # #4947 ③ (CI red on #4950, architect-ruled): reset the
+            # same-cause streak here, and ONLY here — not on any
+            # other escalation branch. The cap's own words below
+            # ("evidence shrinking cannot fix THAT cause" / "without
+            # shrinking ever changing anything") are already false
+            # the moment ONE slice compacts: this is the one branch
+            # where work is PERMANENTLY reduced (the compacted
+            # turns are gone from raw_middle for good, absorbed
+            # into the summary element now in ``head``) — every
+            # OTHER escalation branch
+            # (Phase 1/2, the T_max-override halving) only MOVES
+            # content between head/tail/raw_middle, so the same-
+            # cause streak staying armed there is still correct: a
+            # cause recurring across a pure move is still evidence
+            # nothing is being fixed. A broader "reset on any
+            # progress" trigger would defeat the cap entirely
+            # (something changes on every escalation branch, every
+            # iteration). Both fields reset together — resetting
+            # only one leaves the other's next failure starting
+            # from "recover #2" instead of "#1".
+            self._last_recover_cause = None
+            self._consecutive_same_cause = 0
+            if self.raw_middle:
+                # #4947 ③: ``main_call`` never receives ``raw_middle``
+                # directly (only ``head``/``tail``/``new_msg``) —
+                # calling it now would silently drop this still-
+                # uncompacted remainder from what the LLM
+                # actually sees. Spend the rest of THIS
+                # iteration's budget compacting the remainder
+                # instead of calling main_call with an incomplete
+                # summary.
+                return _LADDER_CONTINUE
+        except Exception as exc:
+            # #5543 / #5531 §10 (owner precondition for abolishing
+            # `max_iterations`, landed in this SAME PR — see this
+            # function's own "Bounded termination proof" docstring
+            # item 1): classify BEFORE deciding whether to enter
+            # the shrink ladder at all. Only OVERFLOW ever gets
+            # wrapped as `CompactionOverflowError` and offered to
+            # the ladder below — the ladder's own termination
+            # proof depends on every exception that reaches it
+            # being genuinely shrinkable.
+            #
+            # FATAL (owner, #3783 verbatim): "An AttributeError in
+            # our own code must not become 'quietly shrink, then
+            # UnrecoveredError'" — re-raised bare, immediately,
+            # never shrunk. Without T3 (retired, #5531 §10) this
+            # is now the ONLY thing standing between a genuine
+            # reyn-side bug and the whole T_max floor being walked
+            # burning real LLM calls first.
+            #
+            # RETRYABLE (5xx/rate-limit/network/quota, including
+            # #5329's own quota-exhaustion incident this replaces
+            # — a provider usage-window exhaustion that used to
+            # get wrapped here and burn 2+ wasted round-trips into
+            # the SAME dead window before T3 finally gave up):
+            # re-raised bare too — shrinking the input cannot fix
+            # an infra condition or a wait-bound quota window
+            # either. #5543's own spec routes RETRYABLE through
+            # the SAME backoff machinery the router already uses
+            # (`llm.py`'s `_llm_call_with_retry`) rather than
+            # here — compact()'s own LLM call is not yet wired
+            # into that machinery (a disclosed, separate gap: it
+            # has never been retried, #5543's own second named
+            # defect) — re-raising bare, unwired, is still SAFE
+            # (the SAME bare-propagation shape #5256's quota gate
+            # and `_handle_inbox_text`'s generic catch-all already
+            # handle without ending the session), just not yet
+            # backoff-retried; wiring that in is future scope, not
+            # a regression this PR introduces (quota's own bare
+            # re-raise, the ONE RETRYABLE member this site already
+            # special-cased, is UNCHANGED behavior).
+            #
+            # OVERFLOW (including the bare "matches none of FATAL/
+            # RETRYABLE" fallthrough): #3783 stage 3's own
+            # OWNER-RATIFIED default for THIS site specifically —
+            # wrapped and offered to the shrink ladder below,
+            # bounded by the same-cause cap
+            # (test_input_independent_exception_hits_the_cap_
+            # not_an_infinite_loop). Deliberately still the bare
+            # ``classify_llm_failure`` check, not the stronger
+            # ``is_shrinkable_overflow`` (below).
+            #
+            # #5622 (issue) proposed unifying this site onto
+            # ``is_shrinkable_overflow`` too — the SAME stronger
+            # predicate #5593 introduced for
+            # ``router_loop_driver.py``'s own 2 arms. Tried, then
+            # reverted here: #5593's own PR body scopes that
+            # stronger default EXPLICITLY to "this module's [i.e.
+            # router_loop_driver.py's] own two call sites only" —
+            # because those 2 arms catch bare ``Exception`` from
+            # ``loop.run()`` (literally anything), where an
+            # unclassifiable exception silently walking the whole
+            # shrink ladder is unbounded blast radius. THIS site
+            # only ever catches an exception from inside
+            # ``compact()`` itself — the narrower surface #3783's
+            # owner ruling ("only exceptions that make compaction
+            # IMPOSSIBLE TO CONTINUE should propagate; the default
+            # should be recover") deliberately targeted, and
+            # #3783 stage 3's own ratified test still exercises
+            # today. Applying #5593's stronger check here silently
+            # inverted that owner ruling for this one site,
+            # regressing 11 pre-existing tests (#3783/#4947/#5630)
+            # under CI (lead-coder's own catch, PR #5642) — see
+            # that PR's own body for the full trace.
+            #
+            # The real, still-valid gain #5622 (issue) named is
+            # KEPT: ``is_shrinkable_overflow`` itself now lives
+            # here (public, importable) instead of being
+            # duplicated as a router_loop_driver.py-local
+            # function — router_loop_driver.py's own 2 sites
+            # import it from here unchanged. Only the 3rd
+            # site's OWN discriminator stays the bare
+            # ``classify_llm_failure`` check it always was — 2
+            # deliberately different discriminators for 2
+            # deliberately different blast radii, not a drift.
+            if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
+                raise
+            raise CompactionOverflowError(str(exc)) from exc
+        return None
+
     async def run(self) -> Any:
         """Drive :meth:`_run_one_iteration` — the ladder's own former
         ``while True:`` loop body (#5631 candidate 1), unchanged control
@@ -3381,286 +3671,16 @@ class RecoveryLadder:
         ``while True:`` simply loop again. Raises exactly where the
         former body did (``UnrecoveredError``, or a re-raised FATAL/
         RETRYABLE exception)."""
-        # #4944①: tracks whether THIS iteration reached main_call — a
-        # compact() call that overflows raises from a DIFFERENT payload
-        # (raw_middle + section_caps, not head/summary/tail/new_msg) that
-        # this function does not measure. Guards the failure-side
-        # wire_bytes emission below so it never mislabels "nothing
-        # resembling this was sent" as a rejected byte count.
-        _this_iteration_called_main_call = False
+        self._this_iteration_called_main_call = False
         try:
-            if self.raw_middle:
-                # Compact raw_middle into the running summary.
-                # Build section_token_caps from budgets.section_caps.
-                section_caps = self._bg.section_caps if self._bg.section_caps else {
-                    "topic_arc": 200, "decisions": 400, "pending": 400,
-                    "session_user_facts": 200, "artifacts_referenced": 300,
-                }
-                # #4947 ③: offer only the first ``_compact_attempt_len``
-                # turns when a prior attempt this call already failed —
-                # ``None`` (no prior failure yet) offers all of it, the
-                # same as before this change.
-                self._attempt_len = (
-                    self._compact_attempt_len if self._compact_attempt_len is not None
-                    else len(self.raw_middle)
-                )
-                # #5531 (lead-coder ruling, issuecomment-5463182279): the
-                # input to THIS compact() call is simply "the span being
-                # folded right now" — `_offered`. If a summary element
-                # already sits inside `raw_middle` (decompose's own turns
-                # filter places it there whenever it doesn't fit within
-                # head/tail — see `decompose_history_for_retry`), it rides
-                # along and gets folded together with the rest, same as
-                # any other turn; if it sits outside `raw_middle` (in
-                # `head`/`tail` instead), it simply isn't part of this
-                # fold. No line here decides WHICH — `_offered`'s own
-                # existing chronological order already answers it. A
-                # history can therefore end up holding more than one
-                # `role=="summary"` turn (the untouched original still in
-                # head/tail, plus a fresh one this fold produces) — see
-                # `HistoryChunkToCompact`'s own docstring for the
-                # consequence swept for callers assuming exactly one.
-                _offered = self.raw_middle[:self._attempt_len]
-                _messages = _offered
-                input_chunk = HistoryChunkToCompact(
-                    messages=_messages,
-                    section_token_caps=section_caps,
-                )
-                try:
-                    # #5592: mark this attempt as the NEXT upstream call
-                    # within the current recovery episode, exact and
-                    # single-producer (see note_upstream_recovery_call_
-                    # attempt's own docstring) — a no-op when no episode
-                    # is active (e.g. this function's own test-only direct
-                    # callers).
-                    self._note_upstream_recovery_call_attempt()
-                    # #5475: raw_middle's turns are wire dicts (no `seq` —
-                    # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
-                    # docstring) — a real seq is not available to this caller.
-                    chat_summary = await self._engine.compact(
-                        input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
-                    )
-                    # #5612 scope note: a "discard a fold that does not
-                    # shrink" rule was drafted here and REMOVED outright
-                    # (not deferred, no follow-up issue filed) — a literal
-                    # size-only comparison (summary wire bytes vs offered
-                    # turns' own wire bytes) broke 10 unrelated,
-                    # pre-existing tests whose small/single-turn fixtures
-                    # structurally can't beat a structured summary's own
-                    # JSON overhead. The rule's own PREMISE was proven
-                    # false, not merely its threshold: a persisted summary
-                    # re-enters the population of the NEXT fold, so its
-                    # framing overhead is absorbed there rather than fixed
-                    # forever — architect confirmed the same inequality
-                    # holds under the alternative "compare against the
-                    # whole head" population too. This PR's own regression
-                    # 1 is resolved WITHOUT this rule — see the
-                    # `_compacted()` broadening in
-                    # test_5296_pr2_byte_reduction_same_turn_retry.py.
-                    # #5612 (owner ruling, verbatim: "そもそも compact
-                    # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
-                    # report EACH successful fold immediately, right here —
-                    # not deferred until this whole retry_loop call's own
-                    # eventual success/failure. A fold that already
-                    # happened is durable-worthy on its own; whether the
-                    # LATER main_call this episode is working toward
-                    # succeeds, fails, or this episode folds AGAIN after
-                    # this (raw_middle still non-empty, `continue` below)
-                    # is a separate question this fold's own durability
-                    # does not depend on — #5578's own irreversibility
-                    # argument ("discarding a fold does not restore
-                    # reversibility, it only guarantees paying again")
-                    # applies identically whether or not main_call
-                    # eventually succeeds. See on_summary_used's own
-                    # docstring for the full contract.
-                    if self._on_summary_used is not None:
-                        await self._on_summary_used(chat_summary, _offered)
-                    # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
-                    # 5463249759, deferred from PR-1 which reverted the
-                    # same line): the fold's result goes where the folded
-                    # span itself sat — between `head` and `tail` — so it
-                    # lands at the END of `head`. Not a position
-                    # decision: `head` keeps at most one summary element
-                    # per fold (any prior one this call already carried
-                    # is the SAME span's stale representative, replaced
-                    # here — never two summaries accumulating from ONE
-                    # fold). This is also what makes the summary reach
-                    # `main_call`'s wire at all once raw_middle later
-                    # empties — main_call receives `head`/`tail`
-                    # directly, never `raw_middle`.
-                    #
-                    # PR-1 reverted this exact line because it broke
-                    # retry_loop's OLD termination proof (`head` is no
-                    # longer monotonically non-growing once a fold can
-                    # re-add an element to it — Phase 2 below could pull
-                    # the just-appended element right back into
-                    # raw_middle and re-fold it, an observed
-                    # oscillation). What makes this safe to reintroduce
-                    # is THIS PR's own Phase 1/2 change (below): they now
-                    # SKIP any `role=="summary"` element when choosing
-                    # what to pull (`_split_off_non_summary`) — Phase 2
-                    # structurally cannot pull the element this line just
-                    # appended back into raw_middle any more, which is
-                    # what the old oscillation depended on. (#5531 PR-3:
-                    # this is now ALSO covered by the lexicographic
-                    # measure this function's own docstring proves —
-                    # ``max_iterations`` no longer exists as a backstop.)
-                    self.head = [
-                        t for t in self.head if t.get("role") != SUMMARY_MESSAGE_ROLE
-                    ] + [wrap_summary_as_message(chat_summary.to_dict())]
-                    # Only the ATTEMPTED slice is compacted — a smaller
-                    # remainder (if any) stays in raw_middle for a later
-                    # iteration. #5531 §10 (architect/owner correction,
-                    # 2026-08-30): ``_compact_attempt_len`` now DOUBLES
-                    # here (capped at the new, shorter raw_middle's own
-                    # length) rather than staying at whatever size just
-                    # worked — a slice that succeeded at a SMALL size
-                    # after prior halvings means the turn(s) that made it
-                    # fail before are now GONE (folded into the summary
-                    # just appended to ``head``), so the remainder is
-                    # more likely to compact in fewer, larger attempts;
-                    # holding the small size would keep folding the
-                    # remainder one attempt at a time for no reason once
-                    # the dominant turn is gone (owner: "1 件で 入った
-                    # ∴ その turn が 支配的だった ── それが消えた今 残りは
-                    # まとめて入る可能性が高い"). This does not reopen
-                    # #4950's own "uniformly-hard-to-compact input
-                    # re-discovers the same halving from scratch"
-                    # finding — THAT measured a full reset to ``None``
-                    # (the whole remainder) on every success; doubling is
-                    # bounded (a uniformly-hard input immediately fails
-                    # at the doubled size and halves right back down —
-                    # #10's own docstring works through both input
-                    # shapes). Any slice that turns out too large for the
-                    # new, smaller raw_middle just clips naturally at the
-                    # slice below; no explicit clamping needed there.
-                    self.raw_middle = self.raw_middle[self._attempt_len:]
-                    if self.raw_middle:
-                        self._compact_attempt_len = min(self._attempt_len * 2, len(self.raw_middle))
-                    # #4947 ③ (CI red on #4950, architect-ruled): reset the
-                    # same-cause streak here, and ONLY here — not on any
-                    # other escalation branch. The cap's own words below
-                    # ("evidence shrinking cannot fix THAT cause" / "without
-                    # shrinking ever changing anything") are already false
-                    # the moment ONE slice compacts: this is the one branch
-                    # where work is PERMANENTLY reduced (the compacted
-                    # turns are gone from raw_middle for good, absorbed
-                    # into the summary element now in ``head``) — every
-                    # OTHER escalation branch
-                    # (Phase 1/2, the T_max-override halving) only MOVES
-                    # content between head/tail/raw_middle, so the same-
-                    # cause streak staying armed there is still correct: a
-                    # cause recurring across a pure move is still evidence
-                    # nothing is being fixed. A broader "reset on any
-                    # progress" trigger would defeat the cap entirely
-                    # (something changes on every escalation branch, every
-                    # iteration). Both fields reset together — resetting
-                    # only one leaves the other's next failure starting
-                    # from "recover #2" instead of "#1".
-                    self._last_recover_cause = None
-                    self._consecutive_same_cause = 0
-                    if self.raw_middle:
-                        # #4947 ③: ``main_call`` never receives ``raw_middle``
-                        # directly (only ``head``/``tail``/``new_msg``) —
-                        # calling it now would silently drop this still-
-                        # uncompacted remainder from what the LLM
-                        # actually sees. Spend the rest of THIS
-                        # iteration's budget compacting the remainder
-                        # instead of calling main_call with an incomplete
-                        # summary.
-                        return _LADDER_CONTINUE
-                except Exception as exc:
-                    # #5543 / #5531 §10 (owner precondition for abolishing
-                    # `max_iterations`, landed in this SAME PR — see this
-                    # function's own "Bounded termination proof" docstring
-                    # item 1): classify BEFORE deciding whether to enter
-                    # the shrink ladder at all. Only OVERFLOW ever gets
-                    # wrapped as `CompactionOverflowError` and offered to
-                    # the ladder below — the ladder's own termination
-                    # proof depends on every exception that reaches it
-                    # being genuinely shrinkable.
-                    #
-                    # FATAL (owner, #3783 verbatim): "An AttributeError in
-                    # our own code must not become 'quietly shrink, then
-                    # UnrecoveredError'" — re-raised bare, immediately,
-                    # never shrunk. Without T3 (retired, #5531 §10) this
-                    # is now the ONLY thing standing between a genuine
-                    # reyn-side bug and the whole T_max floor being walked
-                    # burning real LLM calls first.
-                    #
-                    # RETRYABLE (5xx/rate-limit/network/quota, including
-                    # #5329's own quota-exhaustion incident this replaces
-                    # — a provider usage-window exhaustion that used to
-                    # get wrapped here and burn 2+ wasted round-trips into
-                    # the SAME dead window before T3 finally gave up):
-                    # re-raised bare too — shrinking the input cannot fix
-                    # an infra condition or a wait-bound quota window
-                    # either. #5543's own spec routes RETRYABLE through
-                    # the SAME backoff machinery the router already uses
-                    # (`llm.py`'s `_llm_call_with_retry`) rather than
-                    # here — compact()'s own LLM call is not yet wired
-                    # into that machinery (a disclosed, separate gap: it
-                    # has never been retried, #5543's own second named
-                    # defect) — re-raising bare, unwired, is still SAFE
-                    # (the SAME bare-propagation shape #5256's quota gate
-                    # and `_handle_inbox_text`'s generic catch-all already
-                    # handle without ending the session), just not yet
-                    # backoff-retried; wiring that in is future scope, not
-                    # a regression this PR introduces (quota's own bare
-                    # re-raise, the ONE RETRYABLE member this site already
-                    # special-cased, is UNCHANGED behavior).
-                    #
-                    # OVERFLOW (including the bare "matches none of FATAL/
-                    # RETRYABLE" fallthrough): #3783 stage 3's own
-                    # OWNER-RATIFIED default for THIS site specifically —
-                    # wrapped and offered to the shrink ladder below,
-                    # bounded by the same-cause cap
-                    # (test_input_independent_exception_hits_the_cap_
-                    # not_an_infinite_loop). Deliberately still the bare
-                    # ``classify_llm_failure`` check, not the stronger
-                    # ``is_shrinkable_overflow`` (below).
-                    #
-                    # #5622 (issue) proposed unifying this site onto
-                    # ``is_shrinkable_overflow`` too — the SAME stronger
-                    # predicate #5593 introduced for
-                    # ``router_loop_driver.py``'s own 2 arms. Tried, then
-                    # reverted here: #5593's own PR body scopes that
-                    # stronger default EXPLICITLY to "this module's [i.e.
-                    # router_loop_driver.py's] own two call sites only" —
-                    # because those 2 arms catch bare ``Exception`` from
-                    # ``loop.run()`` (literally anything), where an
-                    # unclassifiable exception silently walking the whole
-                    # shrink ladder is unbounded blast radius. THIS site
-                    # only ever catches an exception from inside
-                    # ``compact()`` itself — the narrower surface #3783's
-                    # owner ruling ("only exceptions that make compaction
-                    # IMPOSSIBLE TO CONTINUE should propagate; the default
-                    # should be recover") deliberately targeted, and
-                    # #3783 stage 3's own ratified test still exercises
-                    # today. Applying #5593's stronger check here silently
-                    # inverted that owner ruling for this one site,
-                    # regressing 11 pre-existing tests (#3783/#4947/#5630)
-                    # under CI (lead-coder's own catch, PR #5642) — see
-                    # that PR's own body for the full trace.
-                    #
-                    # The real, still-valid gain #5622 (issue) named is
-                    # KEPT: ``is_shrinkable_overflow`` itself now lives
-                    # here (public, importable) instead of being
-                    # duplicated as a router_loop_driver.py-local
-                    # function — router_loop_driver.py's own 2 sites
-                    # import it from here unchanged. Only the 3rd
-                    # site's OWN discriminator stays the bare
-                    # ``classify_llm_failure`` check it always was — 2
-                    # deliberately different discriminators for 2
-                    # deliberately different blast radii, not a drift.
-                    if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
-                        raise
-                    raise CompactionOverflowError(str(exc)) from exc
+            outcome = await self._stage_fold()
+            if outcome is not None:
+                return outcome
 
             # #5531 PR-2: `main_call` no longer takes a separate `summary=`
             # — whichever summary element(s) belong on this wire already
             # sit inside `head`/`tail` themselves.
-            _this_iteration_called_main_call = True
+            self._this_iteration_called_main_call = True
             # #5592: same single-producer mark as the compact() call site
             # above — main_call is retry_loop's OTHER upstream call.
             self._note_upstream_recovery_call_attempt()
@@ -3772,7 +3792,7 @@ class RecoveryLadder:
             self._last_recover_is_byte_limit = (
                 getattr(_overflow_exc.__cause__, "status_code", None) == 413
             )
-            if self._last_recover_is_byte_limit and _this_iteration_called_main_call:
+            if self._last_recover_is_byte_limit and self._this_iteration_called_main_call:
                 # #4944①: the size that WAS SENT and got REJECTED — the
                 # real limit is < this value (an upper bound), the pair to
                 # the ``accepted=True`` emission above. ``head``/``tail``/
