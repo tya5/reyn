@@ -32,6 +32,7 @@ from reyn.runtime.chat_message import (
     SPILL_TARGET_CONTENT_HASH_META_KEY,
     SPILL_TARGET_SEQ_META_KEY,
     SPILLED_META_KEY,
+    Disclosure,
     Spillability,
 )
 
@@ -500,6 +501,35 @@ def resolve_effective_trigger_and_budgets(
     return effective_trigger, head_budget, tail_budget
 
 
+def _is_model_visible(m: Any) -> bool:
+    """#5678: true for a ``role="system"`` entry declared ``Disclosure.
+    MODEL`` — the ONE new case both projection filters below now admit,
+    alongside their own always-included roles (user/assistant/tool/agent,
+    ``decompose_history_for_retry``'s own summary bridge too).
+
+    A single shared predicate, not duplicated inline at both call sites:
+    the two filters' base role tuples genuinely differ (one includes
+    ``SUMMARY_MESSAGE_ROLE``, the other does not — #5678's own census
+    caught a prior claim that they were "the same filter twice", which
+    was wrong), but the system/MODEL admission rule is identical at
+    both, and drift between two hand-copied conditions is exactly the
+    silent-inconsistency class #5678 exists to close for THIS axis.
+
+    ``m.disclosure`` is ``None`` for every non-``"system"`` role (see
+    ``Disclosure``'s own docstring / ``_normalize_disclosure``) and for
+    a ``role="system"`` entry it is NEVER ``None`` (``ChatMessage.
+    __init__`` raises otherwise, and a pre-#5678 persisted line is
+    migrated to a real value before construction) — so the ``is not
+    None`` guard here is a defensive belt, not a live branch for any
+    reachable production value.
+    """
+    return (
+        m.role == "system"
+        and m.disclosure is not None
+        and m.disclosure >= Disclosure.MODEL
+    )
+
+
 # ── RouterHistoryBuffer ───────────────────────────────────────────────────────
 
 
@@ -875,7 +905,9 @@ class RouterHistoryBuffer:
 
     def _elide_candidate_turns(self, history: list) -> "tuple[list, int]":
         """Return ``(turns, watermark)`` — role-filtered (E-full #383 —
-        user/assistant/tool/agent only, ``summary`` stays Reyn-internal),
+        user/assistant/tool/agent, plus #5678: a ``role="system"`` entry
+        declared ``Disclosure.MODEL`` — see ``_is_model_visible``;
+        ``summary`` and every OTHER ``system`` entry stay Reyn-internal),
         then PERMANENTLY watermark-filtered (#4954(2) — a compacted turn
         never re-enters this projection). *watermark* is also returned
         (not just consumed here) because :meth:`build_history` needs the
@@ -892,7 +924,7 @@ class RouterHistoryBuffer:
         compacted turn out of ``build_history``'s own projection."""
         turns = [
             m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
+            if m.role in ("user", "assistant", "tool", "agent") or _is_model_visible(m)
         ]
         # #4954(2) TESTS-READ finding (lead-coder): ``seq == 0`` is the
         # #3704 sentinel for "no coordinate assigned" (pre-#3704 legacy
@@ -1152,6 +1184,7 @@ class RouterHistoryBuffer:
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent", SUMMARY_MESSAGE_ROLE)
+            or _is_model_visible(m)
         ]
         turns = self._apply_watermark_filter(turns, watermark)
 

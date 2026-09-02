@@ -126,6 +126,7 @@ from reyn.runtime.chat_message import (
     TOOL_ERROR_MESSAGE_META_KEY,
     TOOL_STATUS_ERROR,
     TOOL_STATUS_META_KEY,
+    Disclosure,
 )
 
 from ._meta_keys import RESULT_KIND_KEY, RESULT_META_KEY
@@ -134,11 +135,12 @@ if TYPE_CHECKING:
     from reyn.runtime.chat_message import ChatMessage
     from reyn.runtime.outbox import OutboxMessage
 
-# Roles with no operator-facing conversation surface: ``system`` is persisted
-# lifecycle chrome and ``summary`` is the chat-compactor's internal carry —
-# both filtered at the LLM wire boundary, so neither belongs in the restored
-# scrollback.
-_SKIP_ROLES = frozenset({"system", "summary"})
+# ``summary`` (the chat-compactor's internal carry) has no operator-facing
+# conversation surface at all — always skipped, unconditionally, same as
+# before #5678. ``system`` is NOT in this set any more (#5678): whether a
+# role="system" entry restores is now read off its OWN declared
+# ``Disclosure`` (see the ladder rule below), never a blanket role skip.
+_SKIP_ROLES = frozenset({"summary"})
 
 #: Marker stamped on every restored frame's ``meta`` so a consumer (or a test)
 #: can tell a hydrated turn from a live one. Purely informational — the frame
@@ -242,12 +244,22 @@ def project_restored_frames(
       ``{"error_message": ...}``) for a FAILURE — read directly off the
       persisted ``meta[TOOL_STATUS_META_KEY]`` typed flag (:func:`_failure_meta`;
       #73), never re-derived from ``m.text``.
-    - ``system`` / ``summary``       → skipped (internal chrome), EXCEPT a
-      ``system`` entry carrying ``meta["kind"] == "turn_cancelled"``
-      (#3694) — a genuinely-cancelled turn's durable outcome, rescued by
-      ``meta.kind`` rather than by role so every OTHER ``system`` entry
-      (``state_change``, real SP chrome) stays skipped → ``kind="system"``,
-      matching the live path's own outbox rendering.
+    - ``summary``                    → always skipped (chat-compactor
+      internal carry, no operator-facing surface at all).
+    - ``system``                     → dispatched on its OWN declared
+      ``Disclosure`` (#5678), never a blanket role skip: ``INTERNAL``
+      (SP chrome, ``notify_state_change``) is skipped; ``OPERATOR`` and
+      ``MODEL`` both restore as ``kind="system"`` — the ladder's own
+      structural rule (see ``Disclosure``'s docstring: MODEL implies
+      OPERATOR-visible) means a single ``disclosure >= Disclosure.
+      OPERATOR`` check covers both, matching the live path's own outbox
+      rendering for the shapes that have one (``notify_turn_cancelled``
+      / ``RouterLoop``'s #3694 terminal, ``_handle_hook_message``'s E
+      push). Pre-#5678 persisted lines (no ``disclosure`` key at all)
+      migrate through ``_migrate_legacy_chat_message`` to EXACTLY what
+      this method used to check directly (``meta["kind"] ==
+      "turn_cancelled"`` → ``OPERATOR``, everything else → ``INTERNAL``)
+      — see that function's own docstring.
 
     An assistant message carrying ONLY ``tool_calls`` (empty text) produces no
     ``agent`` frame of its own — the call header is delivered entirely through
@@ -267,14 +279,20 @@ def project_restored_frames(
         role = m.role
         meta = m.meta or {}
         if role in _SKIP_ROLES:
-            # #3694: a cancelled-turn outcome reuses role="system" (the
-            # same no-new-role precedent as notify_state_change), so the
-            # blanket _SKIP_ROLES exclusion above would silently drop it
-            # too — restoring the exact "why was there no reply" gap this
-            # entry exists to close. Rescued by meta.kind, never by role:
-            # every OTHER system entry (state_change, genuine SP chrome)
-            # stays skipped.
-            if role == "system" and meta.get("kind") == "turn_cancelled":
+            continue
+        if role == "system":
+            # #5678: dispatched on the entry's OWN declared Disclosure,
+            # never a blanket role skip — INTERNAL (SP chrome,
+            # notify_state_change) stays skipped; OPERATOR (#3694's
+            # cancelled-turn outcome) and MODEL (a hook push, a
+            # ride-along, a mid-turn AGENT_REQUEST injection) both
+            # restore, by the ladder's own structural rule (MODEL implies
+            # OPERATOR-visible — see Disclosure's own docstring). A
+            # pre-#5678 persisted line has already migrated to the
+            # equivalent value via _migrate_legacy_chat_message before
+            # reaching here, so this ONE check covers every era of
+            # history.jsonl the same way.
+            if m.disclosure is not None and m.disclosure >= Disclosure.OPERATOR:
                 frames.append(
                     OutboxMessage(
                         kind="system",

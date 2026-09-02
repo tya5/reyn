@@ -25,6 +25,7 @@ from reyn.prompt.loop_control import (
     # `from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE`.
 )
 from reyn.prompt.loop_control import tool_call_cap_notice as _tool_call_cap_notice_text
+from reyn.runtime.chat_message import Disclosure
 from reyn.runtime.router_system_prompt import (
     build_system_prompt,
 )
@@ -1111,6 +1112,10 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
+        # #5678: required (raises) when role="system" — see
+        # ``Disclosure``'s own docstring. Irrelevant (ignored) for every
+        # other role.
+        disclosure: "object | None" = None,
     ) -> None: ...
 
     # The memory-store capability (``remember`` / ``forget`` / ``read_body``).
@@ -1679,11 +1684,16 @@ class RouterLoop:
         except Exception:  # noqa: BLE001 — narration must never break the turn
             logger.exception("router: agent_delta audit-event emit failed")
 
-    async def run(self, user_text: str, history: list[dict]) -> TokenUsage:
+    async def run(self, user_text: "str | None", history: list[dict]) -> TokenUsage:
         """Process one user utterance end-to-end. Emits to host.put_outbox.
 
         Returns the total TokenUsage accumulated across all LLM calls so the
         caller can credit it to the session-level usage counter (F4 Bug 2).
+
+        ``user_text=None`` (#5678/#5686): this turn's content is already
+        the tail of ``history`` — no separate wire seed is appended. See
+        the trailing-user-message guard's own comment below for the full
+        rationale and the alternative architect explicitly rejected.
         """
         self._total_usage = TokenUsage()
         self._last_call_usage = TokenUsage()
@@ -1994,6 +2004,32 @@ class RouterLoop:
         # an empty / mismatched history alive).
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
+        # #5678/#5686: ``user_text is None`` means "this turn's content is
+        # ALREADY the tail of `history` — there is no separate seed at
+        # all", not "the seed happens to be empty". Structural fix for the
+        # #5686 finding: the OLD guard asked "is the tail role=='user'?",
+        # which answers a DIFFERENT question than the one it was meant to
+        # ("has this turn's content already been appended?") — a
+        # role="system" MODEL-disclosed entry (E, once #5678's allowlist
+        # widening makes it the tail) answers the old question "no" while
+        # the real answer is "yes", so the guard fired anyway and produced
+        # a SECOND, unattributed, misattributed role="user" copy of E's
+        # own content. `None` names the true condition directly instead of
+        # inferring it from a role check that a widened allowlist can
+        # falsify — E passes it once its own entry is allowlist-included
+        # (`Session._handle_hook_message`); every OTHER caller keeps
+        # passing its own text unchanged, so this is additive, not a
+        # behavior change for CLIENT_INPUT/agent_request/pipeline_result.
+        #
+        # Architect ruling (rejected alternative): comparing message
+        # CONTENT instead of checking `user_text is None` was proposed and
+        # rejected — two independently-rendered strings (the history
+        # entry's own render vs whatever this call happens to pass) being
+        # byte-equal is not guaranteed to stay true (#5677 §0 already
+        # renders per-kind, not uniformly), so a content-equality guard
+        # fails OPEN (silently reappends) the moment rendering diverges,
+        # reproducing the exact double-delivery this fix exists to close.
+        #
         # When history's last entry is a user message, trust it — it is
         # either:
         #   - text identical to ``user_text`` (= the normal chat path,
@@ -2004,7 +2040,7 @@ class RouterLoop:
         #     produce a duplicate text-only entry).
         # Only append the fallback text user message when history is
         # empty / mismatched (= defensive for direct-RouterLoop tests).
-        if not history or history[-1].get("role") != "user":
+        if user_text is not None and (not history or history[-1].get("role") != "user"):
             messages.append({"role": "user", "content": user_text})
 
         # #4960: guarantee a final durable record for any agent_delta
@@ -3037,6 +3073,11 @@ class RouterLoop:
                 role="system",
                 content="Turn interrupted by user.",
                 meta={"kind": "turn_cancelled", "chain_id": self.chain_id},
+                # #5678: same rung as Session.notify_turn_cancelled's own
+                # mirrored shape (comment above) — a UI acknowledgement,
+                # not conversational content: reaches TUI restore (#3694)
+                # but never the model's own projection.
+                disclosure=Disclosure.OPERATOR,
             )
             return self._total_usage
 

@@ -52,6 +52,7 @@ from reyn.config.chat import SafetyConfig
 from reyn.core.events.state_log import StateLog
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import build_hook_payload
+from reyn.runtime.chat_message import Disclosure
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
@@ -88,13 +89,21 @@ def _make_session(
     )
 
 
-def _fake_run_turn(session: Session) -> list[str]:
+def _fake_run_turn(session: Session) -> "list[str | None]":
     """Replace the LLM boundary with a recorder of the per-turn user_text —
     the observable proof of which turns actually ran (mirrors
-    ``tests/core/test_hook_loop_valve_1800_7.py``)."""
-    ran: list[str] = []
+    ``tests/core/test_hook_loop_valve_1800_7.py``).
 
-    async def _noop(user_text: str, chain_id: str) -> None:
+    #5678/#5686: a hook-driven (E) turn now passes ``user_text=None`` —
+    its content already reached the model as a projected history entry,
+    never as a separate seed (see ``Session._handle_hook_message``'s own
+    docstring) — so this recorder's own entries are ``None`` for a
+    hook-driven turn, not the pushed text. The test below reads the
+    ACTUAL delivery mechanism (the history entry) for the text claim.
+    """
+    ran: "list[str | None]" = []
+
+    async def _noop(user_text: "str | None", chain_id: str) -> None:
         ran.append(user_text)
 
     session._loop_driver.run_turn = _noop  # type: ignore[method-assign]
@@ -142,12 +151,21 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
     EXTERNAL-event input (dispatched through the real ``HookDispatcher.
     dispatch``, the same call the fs-watcher ingress path makes) emits
     ``composed:deploy_approved``; a Sync ``on: composed:deploy_approved`` wake
-    hook is OBSERVED to fire — the pushed text lands as a real router turn.
+    hook is OBSERVED to fire — a router turn is driven, and (#5678) the
+    pushed text lands in the model's own history projection, attributed.
     This proves the full chain: config -> Session reads composers_config ->
     start_composers -> HookBus -> Composer -> composed HookEvent ->
     ComposedEventConsumer -> HookDispatcher.dispatch_bus_event -> the
     consumer hook's push -> inbox kind="hook" -> a driven turn. Mechanism-only
-    (a bare ``Composer``/``load_hooks`` unit test) would NOT observe this."""
+    (a bare ``Composer``/``load_hooks`` unit test) would NOT observe this.
+
+    #5678/#5686: the driven turn's OWN seed (``ran``, via
+    ``_fake_run_turn``) is ``None`` now — E's content reaches the model
+    via the projected history entry instead of a separate text seed (see
+    ``Session._handle_hook_message``'s own docstring). This test's real
+    claim moved with the mechanism: it now reads ``session.history``
+    directly for the pushed text, not the (no-longer-carrying-it)
+    recorder."""
     hooks_config = [
         {"on": "composed:deploy_approved", "template_push": {"message": "composed fired!", "wake": True}},
     ]
@@ -176,18 +194,13 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
             "file_changed",
             build_hook_payload("file_changed", path="/repo/x.py", event_type="modified"),
         )
-        # #5686/#5687: the pushed text now lands ATTRIBUTED
-        # ("[hook:<name>] composed fired!"), not bare — the correct
-        # tightening of this test's own claim ("the pushed text lands as
-        # a real router turn"), not a weakening: _handle_hook_message's
-        # turn seed matches its history entry / outbox announcement now,
-        # instead of drifting from them (a #3595-class misattribution
-        # this PR closed). A membership/equality check against the bare
-        # string would wait forever for a value that never arrives again
-        # — partial-match (`in`) on the composed text is what survives a
-        # future attribution-prefix change without re-encoding the exact
-        # prefix shape here.
-        await _wait_until(lambda: any("composed fired!" in r for r in ran))
+        # #5678: `ran` no longer carries the pushed text (the driven
+        # turn's own seed is None — see _fake_run_turn's own docstring;
+        # #5686/#5687's own standalone `attributed`-not-bare fix is
+        # superseded here since the seed is None entirely now), so
+        # waiting on `ran` becoming non-empty is what proves a turn was
+        # driven; the TEXT claim is verified below, against history.
+        await _wait_until(lambda: ran)
     finally:
         await session.shutdown()
         try:
@@ -195,14 +208,24 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
         except asyncio.TimeoutError:
             run_task.cancel()
 
-    (only_turn,) = ran  # exactly one hook-driven turn — a 2nd or 0 fails to unpack
-    assert "composed fired!" in only_turn, (
-        f"expected the one hook-driven turn's text to contain "
-        f"'composed fired!' (attributed, per #5686) — got {only_turn!r}"
+    assert ran == [None], (
+        f"exactly one hook-driven turn, its own seed None (#5678 — "
+        f"content already in history, not a separate text seed) — "
+        f"got {ran!r}"
     )
-    assert only_turn.startswith("[hook:"), (
-        f"the hook-driven turn's own seed must carry the [hook:<name>] "
-        f"attribution prefix (#5686) — got {only_turn!r}"
+    matches = [
+        m for m in session.history
+        if m.role == "system" and "composed fired!" in m.text
+    ]
+    (only_entry,) = matches  # exactly one — a 2nd or 0 fails to unpack
+    assert only_entry.text.startswith("[hook:"), (
+        f"the pushed text must land in history attributed with the "
+        f"[hook:<name>] prefix (#5686) — got {only_entry.text!r}"
+    )
+    assert only_entry.disclosure is not None and only_entry.disclosure >= Disclosure.MODEL, (
+        f"the pushed text's history entry must be declared at least "
+        f"MODEL-disclosed (#5678) so it actually reaches the model's own "
+        f"projection — got {only_entry.disclosure!r}"
     )
 
 

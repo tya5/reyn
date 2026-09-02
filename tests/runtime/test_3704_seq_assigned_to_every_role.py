@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import ChatMessage, Disclosure
 from tests._support.session import make_session as _make_session
 
 # ── (a) assign side: every role gets a monotonic seq ────────────────────────
@@ -43,7 +43,9 @@ def test_every_role_gets_a_nonzero_seq_at_persist_time(tmp_path, monkeypatch):
     session._append_history(ChatMessage(role="user", content="hello", ts="t1"))
     session._append_history(ChatMessage(role="assistant", content="hi", ts="t2"))
     session._append_history(ChatMessage(role="tool", content="result", ts="t3"))
-    session._append_history(ChatMessage(role="system", content="note", ts="t4"))
+    session._append_history(
+        ChatMessage(role="system", content="note", ts="t4", disclosure=Disclosure.INTERNAL),
+    )
 
     seqs = [m.seq for m in session.history]
     assert all(s > 0 for s in seqs), f"expected every entry to get a nonzero seq, got {seqs!r}"

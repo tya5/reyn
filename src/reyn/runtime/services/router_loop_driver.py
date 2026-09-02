@@ -270,11 +270,17 @@ class RouterLoopDriver:
 
     # ── Cap enforcement ───────────────────────────────────────────────────────
 
-    async def _check_cap(self, user_text: str) -> None:
+    async def _check_cap(self, user_text: "str | None") -> None:
         """Increment the per-turn router invocation counter and enforce the cap.
 
         Raises RouterCapExceeded when the counter would exceed the configured
         cap. cap=0 disables the check.
+
+        ``user_text=None`` (#5678/#5686): the counter/cap check itself is
+        content-independent (a per-turn invocation count), so this is a
+        pure type widen — ``BudgetGateway.check_and_increment_router_cap``
+        only reads ``user_text`` for the CAP-EXCEEDED error event's own
+        truncated preview, handled there.
 
         FP-0005: when ``safety.on_limit.mode`` is ``interactive`` /
         ``auto_extend`` and the cap is hit, ask the user / auto-extend
@@ -570,7 +576,7 @@ class RouterLoopDriver:
         return False
 
     async def _run_with_shrink_and_byte_reduction(
-        self, loop: Any, user_text: str, *, chain_id: str,
+        self, loop: Any, user_text: "str | None", *, chain_id: str,
     ) -> Any:
         """#5296 PR-2 / #5364 §1.6 wrapper: same-turn recovery for an
         ``UnrecoveredError`` — MODE-INDEPENDENT (byte-limited HTTP 413 OR
@@ -712,7 +718,9 @@ class RouterLoopDriver:
                 )
                 continue
 
-    async def _run_with_shrink(self, loop: Any, user_text: str, *, chain_id: str = "") -> Any:
+    async def _run_with_shrink(
+        self, loop: Any, user_text: "str | None", *, chain_id: str = "",
+    ) -> Any:
         """Run the router once with the reactive bounded-shrink ``retry_loop``.
 
         Returns the router usage, or raises ``_ContextOverflowError``
@@ -799,7 +807,18 @@ class RouterLoopDriver:
             _head, _raw_middle, _tail, _, _seq_by_id = (
                 self._history_buffer.decompose_history_for_retry()
             )
-            _new_msg = {"role": "user", "content": user_text}
+            # #5678/#5686: RetryPayload.new_msg (compaction/engine.py) is a
+            # required dict — the retry ladder reserves real budget for it
+            # (new_msg_budget) and estimates its byte/token cost, so it
+            # cannot simply be omitted for user_text=None without widening
+            # that dataclass's own contract (out of scope here). "" is the
+            # zero-cost placeholder matching enforce_new_msg_budget's OWN
+            # established None-means-nothing-new convention (this same
+            # file, above) — E's actual content is already inside
+            # `history` (that's the whole point of user_text=None), so
+            # decompose_history_for_retry's head/raw_middle/tail already
+            # carries it; a non-empty new_msg here would double-count it.
+            _new_msg = {"role": "user", "content": user_text or ""}
 
             return await self._drive_retry_ladder(
                 _RetryPayload(
@@ -810,7 +829,7 @@ class RouterLoopDriver:
             )
 
     async def _drive_retry_ladder(
-        self, payload: "_RetryPayload", *, loop: Any, user_text: str,
+        self, payload: "_RetryPayload", *, loop: Any, user_text: "str | None",
         chain_id: str,
     ) -> Any:
         """Run the bounded-shrink ladder for one recovery episode.
@@ -1128,7 +1147,7 @@ class RouterLoopDriver:
 
     # ── Main turn entry point ─────────────────────────────────────────────────
 
-    async def run_turn(self, user_text: str, chain_id: str) -> None:
+    async def run_turn(self, user_text: "str | None", chain_id: str) -> None:
         """Run RouterLoop for one user utterance.
 
         Enforces the per-turn cap, builds history, and calls RouterLoop.run().
@@ -1136,6 +1155,10 @@ class RouterLoopDriver:
         callbacks.
 
         Raises RouterCapExceeded when the per-turn cap is reached.
+
+        ``user_text=None`` (#5678/#5686): this turn's content is already
+        the tail of the built history — see ``RouterLoop.run``'s own
+        docstring for the full contract this threads through to.
         """
         from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.services.compaction.engine import (
