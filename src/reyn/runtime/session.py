@@ -5339,6 +5339,13 @@ class Session:
             hook_cwd=lambda: (
                 str(self._workspace_base_dir) if self._workspace_base_dir else None
             ),
+            hook_cwd_for_origin=lambda origin: (
+                str(self._reyn_state_root.parent)
+                if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+                else (
+                    str(self._workspace_base_dir) if self._workspace_base_dir else None
+                )
+            ),
             hook_process_context=self._build_hook_process_context,
             # #5210: same deferred-lambda-over-live-state idiom as hook_cwd/
             # hook_process_context above — the model (and therefore the

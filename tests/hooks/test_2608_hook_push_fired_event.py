@@ -135,4 +135,5 @@ async def test_shell_exec_hook_still_emits_hook_shell_executed_not_push_fired():
     await disp.dispatch("session_start", {})
 
     await settle(log)
+    assert [e for e in collected if e.type == "hook_shell_executed"] == []
     assert [e for e in collected if e.type == "hook_push_fired"] == []

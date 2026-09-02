@@ -755,7 +755,7 @@ See [sandbox](sandbox.md) for the full backend model and [permission model](perm
 
 ### P6 event: `hook_shell_executed`
 
-Every `exec`/`exec_capture` hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event (under the "tool" group; the event kind name itself is unchanged by #3226 Phase 4 — only the `mode` value below was renamed), recording:
+Every `exec`/`exec_capture` hook run — including silently auto-approved runs — emits a `hook_shell_executed` P6 event (under the "tool" group; the event kind name itself is unchanged by #3226 Phase 4 — only the `mode` value below was renamed). The event records the resolved `cwd` and declaring `origin` (`project`, `per-agent`, or `per-session`) alongside the command, so audit readers can tell which configuration tree supplied the working directory:
 
 ```
 exec: <command> [rc=N]

@@ -23,6 +23,7 @@ real (non-mock) ``NoopBackend`` for the filesystem witness (③) — no mocks.
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import fields
 from pathlib import Path
 
@@ -30,6 +31,7 @@ import pytest
 
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.loader import load_hooks
+from reyn.hooks.schema import hook_origin_is_at_least_as_specific_as
 from reyn.hooks.shell_runner import HookProcessContext
 from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.noop_backend import NoopBackend
@@ -124,6 +126,245 @@ async def test_dispatcher_threads_a_different_agent_name_per_agent(monkeypatch):
 
     names = {argv[-1]: ctx.as_env()["REYN_AGENT_NAME"] for argv, _cwd, ctx in backend.calls}
     assert names == {"coder1": "coder1", "coder2": "coder2"}
+
+
+@pytest.mark.asyncio
+async def test_project_origin_uses_project_cwd_while_agent_origin_uses_agent_cwd(monkeypatch):
+    """Tier 2: project-layer hooks use the project tree; agent-layer hooks use the agent tree."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    backend = _RecordingBackend()
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["echo", "project"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=backend,
+        hook_cwd=lambda: "/workspace/agents/coder1",
+        hook_cwd_for_origin=lambda origin: (
+            "/workspace" if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+            else "/workspace/agents/coder1"
+        ),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    [(_argv, cwd, _ctx)] = backend.calls
+    assert cwd == "/workspace"
+
+
+@pytest.mark.asyncio
+async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
+    tmp_path, monkeypatch, out_of_process_reyn,
+):
+    """Tier 2: real sessions execute project and per-agent hooks in their declared trees.
+
+    #5637's own defect, restated: the shared/project ``.reyn/config/hooks.yaml``
+    layer is loaded by EVERY session regardless of ``agent_name`` (it is not
+    scoped to one agent) — so a repo agent's own session (base_dir =
+    ``repos/coder1``) ALSO dispatches the runtime-origin hook, and before this
+    fix that dispatch ran in the AGENT's own tree (``[Errno 2]`` — the file
+    ``.reyn/hooks/broker_drain.py`` the owner's real project.hooks.yaml names
+    does not exist under ``repos/coder1/``). An earlier revision of this test
+    injected each hook ALONE via ``HookDispatcher.replace_registry`` (private
+    reach, and each session only ever saw ONE hook) — that shape cannot
+    witness this defect at all, since the agent session never had a
+    runtime-origin hook to run in the first place (lead-coder BLOCKING,
+    head 2358e1bac).
+
+    Real 2-layer ``hooks.yaml`` on disk, loaded through the SAME path
+    production uses (``Session._build_hook_registry`` — the project layer via
+    ``_load_in_set``, the per-agent layer via ``_read_per_agent_hooks``), and
+    dispatched via a real ``session.run()`` (its own ``session_start`` hook
+    dispatch, the exact call site #5637 fixed) — no ``replace_registry``.
+    ``inbox.put(("shutdown", {}))`` beforehand makes ``run_one_iteration``
+    exit immediately after the ``session_start`` dispatch that already
+    happened at the top of ``run()``.
+
+    The child only runs a cwd probe and does not import Reyn; the subprocess
+    pin fixture still declares this file because it uses ``sys.executable``.
+    Markers write into a plain ``MARKER_DIR`` env var this test controls
+    directly (NOT reyn's own per-session ``$TMPDIR``/``_child_temp_dir`` —
+    ``Session.run()``'s own ``finally`` clause ``shutil.rmtree``s that
+    directory as part of ordinary teardown, which would silently wipe a
+    marker written during THIS SAME run before this test ever gets to read
+    it back; measured directly), distinguished by CONTENT (``Path.cwd()``)
+    and by FILENAME (``runtime_cwd.txt`` vs ``agent_cwd.txt``), never by
+    which directory a marker landed in.
+
+    ``sandbox_backend=NoopBackend()`` is passed explicitly, a real
+    (non-mock) backend — this file's own established convention (see the
+    module docstring) — NOT left to ``get_default_backend()``'s own
+    platform resolution, and disclosed here as a genuine, verified gap
+    rather than an unstated shortcut: measured directly (reverting this to
+    let ``get_default_backend()`` resolve normally, on a real macOS host
+    where ``sandbox-exec`` is available and enforcing) that a per-agent
+    (untrusted, ``.reyn/agents/<name>/hooks.yaml``) hook's ``write_paths``
+    is UNCONDITIONALLY rejected as a self-grant (#5356, ``hooks/
+    loader.py`` — ``_AGENT_WRITABLE_ORIGINS`` does not include the
+    ``trusted-per-agent`` origin #5505/#5669 later added, so the untrusted
+    layer alone still has no path to a grant). Both real backends
+    (``backends/seatbelt.py``, ``backends/landlock.py``) grant writes
+    ONLY via ``policy.write_paths`` — no exception for ``$TMPDIR``/
+    ``agent_state_dir``/the agent's own ``base_dir`` — so an OPERATOR can
+    grant a per-agent hook write access via the TRUSTED per-agent layer
+    (``.reyn/config/agents/<name>/hooks.yaml``, #5505/#5669), but this
+    UNTRUSTED (agent-writable) layer genuinely cannot self-grant one. This
+    is a PRE-EXISTING fact (reproduced identically against this test's own
+    prior revision, before this fix), not introduced by this PR, and out
+    of #5637's own scope (cwd resolution, not sandbox write grants) —
+    reported to lead-coder as a disclosed remainder, not silently patched
+    over. CI itself never exercised this path (``ubuntu-latest`` runners
+    resolve Landlock only when the kernel/package are actually available,
+    Noop otherwise) — a bare macOS run is what surfaces it.
+    """
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    monkeypatch.chdir(tmp_path)
+    markers_dir = tmp_path / "markers"
+    markers_dir.mkdir()
+    monkeypatch.setenv("MARKER_DIR", str(markers_dir))
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    agent_tree = project / "repos" / "coder1"
+    agent_tree.mkdir(parents=True)
+    from reyn.runtime.session_params import ReactivityConfig
+    from tests._support.agent_session import make_session
+
+    runtime_script = project / "record_runtime_cwd.py"
+    runtime_script.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['MARKER_DIR'], 'runtime_cwd.txt').write_text(str(Path.cwd()))\n",
+        encoding="utf-8",
+    )
+    agent_script = project / "record_agent_cwd.py"
+    agent_script.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['MARKER_DIR'], 'agent_cwd.txt').write_text(str(Path.cwd()))\n",
+        encoding="utf-8",
+    )
+
+    # Project layer (.reyn/config/hooks.yaml) — shared, read by EVERY
+    # session's own Session._build_hook_registry regardless of agent_name.
+    runtime_hooks = project / ".reyn" / "config" / "hooks.yaml"
+    runtime_hooks.parent.mkdir(parents=True, exist_ok=True)
+    runtime_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable) + ", " + repr(str(runtime_script)) + "]\n",
+        encoding="utf-8",
+    )
+
+    project_session = make_session(
+        agent_name="project-agent", workspace_state_dir=project / ".reyn",
+        workspace_base_dir=project, snapshot_path=project / ".reyn" / "project.json",
+        state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
+        sandbox_backend=NoopBackend(),
+    )
+    await project_session.inbox.put(("shutdown", {}))
+    await project_session.run()
+    runtime_markers = list(markers_dir.rglob("runtime_cwd.txt"))
+    assert runtime_markers, "the runtime-origin hook must fire during a project session"
+    assert runtime_markers[0].read_text(encoding="utf-8") == str(project)
+    runtime_markers[0].unlink()
+
+    # Per-agent (untrusted) layer — ``.reyn/agents/coder1/hooks.yaml``, read
+    # ONLY by a session whose own agent_name is "coder1" (_read_per_agent_hooks).
+    agent_hooks = project / ".reyn" / "agents" / "coder1" / "hooks.yaml"
+    agent_hooks.parent.mkdir(parents=True, exist_ok=True)
+    agent_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable) + ", " + repr(str(agent_script)) + "]\n",
+        encoding="utf-8",
+    )
+    agent_session = make_session(
+        agent_name="coder1", workspace_state_dir=project / ".reyn",
+        workspace_base_dir=agent_tree, snapshot_path=project / ".reyn" / "coder1.json",
+        state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
+        sandbox_backend=NoopBackend(),
+    )
+    await agent_session.inbox.put(("shutdown", {}))
+    await agent_session.run()
+
+    # #5637's own defect scenario: the SAME project-wide runtime-origin hook
+    # dispatched from an AGENT session (base_dir = repos/coder1) must still
+    # resolve cwd to the PROJECT tree — never the agent's own base_dir. No
+    # earlier revision of this test drove this dispatch at all.
+    runtime_markers = list(markers_dir.rglob("runtime_cwd.txt"))
+    agent_markers = list(markers_dir.rglob("agent_cwd.txt"))
+    assert runtime_markers, (
+        "the runtime-origin hook must ALSO fire during the agent session — "
+        "it is a project-wide layer, loaded regardless of agent_name"
+    )
+    assert runtime_markers[0].read_text(encoding="utf-8") == str(project), (
+        "a runtime-origin hook dispatched from an agent session must resolve "
+        "cwd to the PROJECT tree, not the agent's own base_dir — this IS "
+        "#5637's own defect (a repo-agent session running the shared hook "
+        "in the wrong tree, [Errno 2] on the owner's real machine)"
+    )
+    assert agent_markers
+    assert agent_markers[0].read_text(encoding="utf-8") == str(agent_tree)
+
+
+@pytest.mark.asyncio
+async def test_per_agent_origin_uses_agent_cwd(monkeypatch):
+    """Tier 2: a per-agent hook is handed the agent's own cwd."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    backend = _RecordingBackend()
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["echo", "agent"]}], origin="per-agent"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=backend,
+        hook_cwd=lambda: "/workspace/agents/coder1",
+        hook_cwd_for_origin=lambda origin: (
+            "/workspace" if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+            else "/workspace/agents/coder1"
+        ),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    [(_argv, cwd, _ctx)] = backend.calls
+    assert cwd == "/workspace/agents/coder1"
+
+
+@pytest.mark.asyncio
+async def test_shell_audit_event_records_origin_and_cwd(tmp_path, monkeypatch):
+    """Tier 2: shell-hook audit events identify the declaring layer and cwd."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    events: list[tuple[str, dict]] = []
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["true"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=NoopBackend(),
+        hook_cwd_for_origin=lambda origin: "/workspace" if origin == "runtime" else "/agent",
+        hook_temp_dir=lambda: str(tmp_path),
+        emit_event=lambda event_type, **data: events.append((event_type, data)),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    shell_events = [data for event_type, data in events if event_type == "hook_shell_executed"]
+    assert shell_events
+    assert shell_events[-1]["cwd"] == "/workspace"
+    assert shell_events[-1]["origin"] == "runtime"
+
+
+@pytest.mark.asyncio
+async def test_failed_shell_audit_event_records_origin_and_cwd(tmp_path, monkeypatch):
+    """Tier 2: failed shell hooks retain cwd and origin in their audit event."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    events: list[tuple[str, dict]] = []
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": [sys.executable, "-c", "raise SystemExit(3)"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=NoopBackend(),
+        hook_cwd_for_origin=lambda origin: "/workspace" if origin == "runtime" else "/agent",
+        hook_temp_dir=lambda: str(tmp_path),
+        emit_event=lambda event_type, **data: events.append((event_type, data)),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    shell_events = [data for event_type, data in events if event_type == "hook_shell_executed"]
+    assert shell_events
+    assert shell_events[-1]["returncode"] == -1
+    assert shell_events[-1]["cwd"] == "/workspace"
+    assert shell_events[-1]["origin"] == "runtime"
 
 
 @pytest.mark.asyncio

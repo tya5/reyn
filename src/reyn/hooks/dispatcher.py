@@ -97,6 +97,7 @@ class HookDispatcher:
         is_hook_disabled: "Callable[[HookDef], bool] | None" = None,
         bus: "HookBus | None" = None,
         hook_cwd: "Callable[[], str | None] | None" = None,
+        hook_cwd_for_origin: "Callable[[str], str | None] | None" = None,
         hook_process_context: "Callable[[], Any] | None" = None,
         hook_temp_dir: "Callable[[], str | None] | None" = None,
         resolve_exec_capture_output_cap: "Callable[[], tuple[int, str] | None] | None" = None,
@@ -153,6 +154,7 @@ class HookDispatcher:
         # before this parameter existed (hook exec inherits reyn's own launch
         # cwd, same as always).
         self._hook_cwd = hook_cwd
+        self._hook_cwd_for_origin = hook_cwd_for_origin
         self._hook_process_context = hook_process_context
         self._hook_temp_dir = hook_temp_dir
         # #5210: same "live callable, not a value frozen at construction time"
@@ -476,10 +478,15 @@ class HookDispatcher:
                 write_paths=hook.write_paths,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
+                hook_origin=hook.origin,
                 emit_event=self._emit_event,
                 # #5084 ④: read live, same as consent_bus_now() above — a
                 # relative exec argv resolves inside the agent's OWN tree.
-                cwd=self._hook_cwd() if self._hook_cwd is not None else None,
+                cwd=(
+                    self._hook_cwd_for_origin(hook.origin)
+                    if self._hook_cwd_for_origin is not None
+                    else (self._hook_cwd() if self._hook_cwd is not None else None)
+                ),
                 temp_dir=self._hook_temp_dir() if self._hook_temp_dir is not None else None,
                 hook_process_context=(
                     self._hook_process_context()
@@ -509,9 +516,14 @@ class HookDispatcher:
                 write_paths=hook.write_paths,
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
+                hook_origin=hook.origin,
                 emit_event=self._emit_event,
                 # #5084 ④: same live cwd/env source as the exec branch above.
-                cwd=self._hook_cwd() if self._hook_cwd is not None else None,
+                cwd=(
+                    self._hook_cwd_for_origin(hook.origin)
+                    if self._hook_cwd_for_origin is not None
+                    else (self._hook_cwd() if self._hook_cwd is not None else None)
+                ),
                 temp_dir=self._hook_temp_dir() if self._hook_temp_dir is not None else None,
                 hook_process_context=(
                     self._hook_process_context()
