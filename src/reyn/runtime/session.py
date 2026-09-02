@@ -8064,7 +8064,24 @@ class Session:
             meta={"chain_id": chain_id},
         ))
         try:
-            await self._run_router_loop(text, chain_id)
+            # #5686: attributed, not raw text — RouterLoop.run's own
+            # fallback (router_loop.py's messages.append({"role":"user",
+            # ...}) guard) fires for this call every time today (E's
+            # own history entry is role="system", excluded from
+            # build_history's allowlist, so history[-1] is never
+            # "user"), delivering the hook's bare, unattributed text as
+            # a #3595-class misattributed operator turn. Using
+            # `attributed` here restores the SAME [hook:<name>] prefix
+            # already used for history/outbox above, at the ONE
+            # remaining mouth that had drifted from it (comment
+            # `:8021-8025` above already claims all three agree — this
+            # was the one that didn't). Deliberately NOT the #5678 fix
+            # (this stays role="user" until #5678's own allowlist
+            # widening + RouterLoop.run(user_text=None) bridge land
+            # together) — safe standalone today because that guard's
+            # fallback still fires exactly as before, just with
+            # attributed content instead of raw.
+            await self._run_router_loop(attributed, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(
                 exc, chain_id=chain_id, user_text=text,
