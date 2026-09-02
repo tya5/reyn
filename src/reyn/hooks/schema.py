@@ -392,19 +392,26 @@ class HookDef:
         PR as first scoped): only meaningful on ``template_push`` /
         ``exec_capture`` — the two schemes that write history at all
         (``exec``'s own output is discarded, never appended). ``None``
-        (undeclared) resolves to ``Spillability.FIRST_CHOICE`` at the
-        ONE push-construction site (``HookDispatcher._push_resolved``)
-        that feeds BOTH consumers — the wake=true trigger
-        (``Session._handle_hook_message``) and the wake=false
-        ride-along (``_handle_inbox_text``'s ``next_turn_context``
-        staging) — so a declaration made here is never silently
-        invisible to one of the two mouths (#5514 §8's own named
-        hazard). ``FIRST_CHOICE`` is the default, not ``LAST_RESORT``
-        (``Spillability.default()``'s own general-purpose choice):
-        #5514's own opening motivation was "``template_push`` has no
-        cap and no offload" — defaulting its own knob to the LEAST
-        eager-to-spill tier would protect the exact path the issue
-        exists to fix last.
+        (undeclared) resolves to ``Spillability.default()``
+        (``LAST_RESORT`` — #5689, owner ruling: "規定は LAST の方が良
+        い") at the ONE push-construction site
+        (``HookDispatcher._push_resolved``) that feeds BOTH consumers
+        — the wake=true trigger (``Session._handle_hook_message``) and
+        the wake=false ride-along (``_handle_inbox_text``'s
+        ``next_turn_context`` staging) — so a declaration made here is
+        never silently invisible to one of the two mouths (#5514 §8's
+        own named hazard). ``LAST_RESORT``, not ``FIRST_CHOICE``, is
+        the default (#5689 correction — an EARLIER version of this
+        docstring named ``FIRST_CHOICE`` as the default and attributed
+        that tier choice to the owner; only the field's OWN existence
+        on ``template_push``/``exec_capture`` was owner-ratified, the
+        tier-default reasoning was this file's own prose): #5514's
+        opening concern ("``template_push`` has no cap and no
+        offload") is answered by the SPILL MECHANISM existing at all
+        — ``LAST_RESORT`` still spills, only after ``FIRST_CHOICE``
+        content is exhausted — not by which tier is the default, so
+        the safe-side general default (``Spillability.default()``)
+        is what this field should have used from the start.
     spillability_max_chars:
         Required precisely when ``spillability`` is
         ``Spillability.NEVER`` — offload (spill) is the only other

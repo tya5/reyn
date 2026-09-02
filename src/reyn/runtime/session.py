@@ -8092,18 +8092,23 @@ class Session:
             # silently misses the other" hazard #5514 §8 itself named,
             # just manifesting at THIS mouth instead of the one §8's own
             # text anticipated. Undeclared (no ``spillability`` key, a
-            # payload not built through ``_push_resolved`` at all) still
-            # falls back to ``FIRST_CHOICE`` — ``HookDef.spillability``'s
-            # own docstring is the reason: `None` (undeclared) resolves
-            # to FIRST_CHOICE, not ``Spillability.default()``'s general
-            # LAST_RESORT, because #5514's own opening motivation was
-            # "template_push has no cap and no offload" — defaulting its
-            # own knob to the least eager-to-spill tier would protect
-            # the exact path the issue exists to fix last.
+            # payload not built through ``_push_resolved`` at all) falls
+            # back to ``Spillability.default()`` (LAST_RESORT — #5689,
+            # owner ruling), the SAME fallback the C ride-along sibling
+            # below already used (``Spillability.LAST_RESORT``) — this
+            # site's own OLD ``FIRST_CHOICE`` hardcode was itself a
+            # second, undeclared instance of #5514 §8's own hazard: the
+            # two mouths' fallbacks had silently diverged from each
+            # other. #5689 corrected the general default (dispatcher.py's
+            # own construction site); this call reads it via
+            # ``Spillability.default()`` rather than re-hardcoding a
+            # (now-aligned) literal, so a future change to the general
+            # default cannot re-diverge the two mouths without touching
+            # both.
             spillability=(
                 Spillability(payload["spillability"])
                 if "spillability" in payload
-                else Spillability.FIRST_CHOICE
+                else Spillability.default()
             ),
             # #5678: a hook push is producer-authored content meant for
             # the model (this method's own reason for existing) — MODEL,
