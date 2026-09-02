@@ -3252,33 +3252,10 @@ class RecoveryLadder:
     def _stage_halve_room(self) -> None:
         """ADR-0044 — halve the room. Reached once ``raw_middle`` is
         empty and neither :meth:`_stage_refill_phase1` nor
-        :meth:`_stage_refill_phase2` had anything left to trim. #5531
-        PR-2 (owner ruling, §2/§3 item 7): token-only shrinking is
-        exhausted (head/tail already at or below their token minimums,
-        or hold nothing but a reserved summary) — applies REGARDLESS of
-        cause (token overflow or an HTTP 413 byte limit both reach
-        here).
-
-        Reservation redesign (owner, §1 invariant 5, replacing "halve
-        T_max whole" — §3 item 8): SP/new_msg/summary are RESERVED —
-        fixed deductions from the candidate ceiling, never apportioned
-        by weight. Only the REMAINDER (``room``) is apportioned, and
-        only between head/tail — body/new_msg play no part in this
-        ladder's own floor (new_msg is reserved, not apportioned; body
-        belongs to ``compact()``'s own budget, not ``main_call``'s).
-
-        Terminal (room floor): raises :class:`UnrecoveredError` when SP
-        + new_msg + the CURRENT summary (never shrunk by this ladder)
-        would not fit even at the halved candidate with head/tail at
-        zero — halving again cannot possibly succeed either.
-
-        On success, immediately re-checks tail/head against the NEW,
-        smaller minimums and shrinks in this SAME iteration via the SAME
-        :meth:`_stage_refill_phase1`/:meth:`_stage_refill_phase2` the
-        main escalation chain uses — without this, halving the ceiling
-        costs one iteration and shrinking content down to it costs a
-        second (``main_call`` retried with UNCHANGED content just
-        re-confirms the same overflow)."""
+        :meth:`_stage_refill_phase2` had anything left to trim -- see
+        this method's own inline comments for the reservation-redesign
+        rationale, the room-floor terminal, and the same-iteration
+        refill re-check."""
         _summary_tokens_current = _summary_tokens_in(
             self.head, self.tail, model=self._model, use_chars4=self._use_chars4,
         )
