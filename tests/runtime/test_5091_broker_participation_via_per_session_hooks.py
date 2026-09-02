@@ -247,16 +247,15 @@ async def test_session_start_exec_hook_resolves_the_register_script_in_its_own_b
     Drives the REAL ``Session._hook_dispatcher.dispatch("session_start",
     ...)`` — the production code path, not a stand-alone `HookDispatcher`
     — with a real ``NoopBackend`` executing a real (if trivial)
-    ``register_with_broker.py`` placed in the agent's own `base_dir`. The
-    script writes a marker file using only its OWN cwd (`Path("registered
-    ").write_text(...)`, no absolute path), so the marker landing in the
-    RIGHT agent's directory is only possible if `hook_cwd` genuinely
-    resolved to THIS agent's own `base_dir` — the exact #5084 ④ mechanism
-    #5091 kept unmodified."""
+    ``register_with_broker.py`` placed in the project tree. Startup-origin
+    hooks run from the project tree by contract, while per-agent and
+    per-session origins retain their agent base directory. The marker uses
+    only its own cwd, pinning the startup-origin half of #5637."""
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    monkeypatch.chdir(tmp_path)
     base_dir = tmp_path / "coder-smith-base"
     base_dir.mkdir(parents=True)
-    (base_dir / "register_with_broker.py").write_text(
+    (tmp_path / "register_with_broker.py").write_text(
         "from pathlib import Path\n"
         "Path('registered.marker').write_text('coder-smith')\n",
         encoding="utf-8",
@@ -293,5 +292,5 @@ async def test_session_start_exec_hook_resolves_the_register_script_in_its_own_b
 
     await session._hook_dispatcher.dispatch("session_start", {})
 
-    await _wait_for(lambda: (base_dir / "registered.marker").exists())
-    assert (base_dir / "registered.marker").read_text(encoding="utf-8") == "coder-smith"
+    await _wait_for(lambda: (tmp_path / "registered.marker").exists())
+    assert (tmp_path / "registered.marker").read_text(encoding="utf-8") == "coder-smith"
