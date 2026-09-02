@@ -40,6 +40,7 @@
   "tests/runtime/test_5167_mcp_hook_auto_subscribe.py",
   "tests/runtime/test_5226_process_registry.py",
   "tests/runtime/test_proctitle_3869.py",
+  "tests/runtime/test_run_exec_async_4733.py",
   "tests/scripts/test_3233_inprocess_env_identity.py",
   "tests/scripts/test_3723_flowview_pin_check.py",
   "tests/scripts/test_check_approval_ledger_import_boundary_5177.py",
