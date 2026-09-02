@@ -3359,6 +3359,86 @@ class RecoveryLadder:
         # on its own next pass through this branch, continuing the
         # search.
 
+    def _classify_and_wrap_compact_failure(self, exc: Exception) -> "None":
+        """Classify an exception raised from ``compact()`` inside
+        :meth:`_stage_fold` and either re-raise it bare (FATAL/
+        RETRYABLE) or wrap it as :class:`CompactionOverflowError` for
+        :meth:`_stage_fold`'s own ``except`` to catch (OVERFLOW). Always
+        raises — never returns normally.
+
+        #5543 / #5531 §10 (owner precondition for abolishing
+        `max_iterations`, landed in this SAME PR — see this class's own
+        "Bounded termination proof" docstring item 1): classify BEFORE
+        deciding whether to enter the shrink ladder at all. Only
+        OVERFLOW ever gets wrapped as `CompactionOverflowError` and
+        offered to the ladder — the ladder's own termination proof
+        depends on every exception that reaches it being genuinely
+        shrinkable.
+
+        FATAL (owner, #3783 verbatim): "An AttributeError in our own
+        code must not become 'quietly shrink, then UnrecoveredError'" —
+        re-raised bare, immediately, never shrunk. Without T3 (retired,
+        #5531 §10) this is now the ONLY thing standing between a genuine
+        reyn-side bug and the whole T_max floor being walked burning
+        real LLM calls first.
+
+        RETRYABLE (5xx/rate-limit/network/quota, including #5329's own
+        quota-exhaustion incident this replaces — a provider usage-
+        window exhaustion that used to get wrapped here and burn 2+
+        wasted round-trips into the SAME dead window before T3 finally
+        gave up): re-raised bare too — shrinking the input cannot fix an
+        infra condition or a wait-bound quota window either. #5543's own
+        spec routes RETRYABLE through the SAME backoff machinery the
+        router already uses (`llm.py`'s `_llm_call_with_retry`) rather
+        than here — compact()'s own LLM call is not yet wired into that
+        machinery (a disclosed, separate gap: it has never been
+        retried, #5543's own second named defect) — re-raising bare,
+        unwired, is still SAFE (the SAME bare-propagation shape #5256's
+        quota gate and `_handle_inbox_text`'s generic catch-all already
+        handle without ending the session), just not yet backoff-
+        retried; wiring that in is future scope, not a regression this
+        PR introduces (quota's own bare re-raise, the ONE RETRYABLE
+        member this site already special-cased, is UNCHANGED behavior).
+
+        OVERFLOW (including the bare "matches none of FATAL/RETRYABLE"
+        fallthrough): #3783 stage 3's own OWNER-RATIFIED default for
+        THIS site specifically — wrapped and offered to the shrink
+        ladder, bounded by the same-cause cap
+        (test_input_independent_exception_hits_the_cap_not_an_infinite_
+        loop). Deliberately still the bare ``classify_llm_failure``
+        check, not the stronger ``is_shrinkable_overflow``.
+
+        #5622 (issue) proposed unifying this site onto
+        ``is_shrinkable_overflow`` too — the SAME stronger predicate
+        #5593 introduced for ``router_loop_driver.py``'s own 2 arms.
+        Tried, then reverted here: #5593's own PR body scopes that
+        stronger default EXPLICITLY to "this module's [i.e.
+        router_loop_driver.py's] own two call sites only" — because
+        those 2 arms catch bare ``Exception`` from ``loop.run()``
+        (literally anything), where an unclassifiable exception silently
+        walking the whole shrink ladder is unbounded blast radius. THIS
+        site only ever catches an exception from inside ``compact()``
+        itself — the narrower surface #3783's owner ruling ("only
+        exceptions that make compaction IMPOSSIBLE TO CONTINUE should
+        propagate; the default should be recover") deliberately
+        targeted, and #3783 stage 3's own ratified test still exercises
+        today. Applying #5593's stronger check here silently inverted
+        that owner ruling for this one site, regressing 11 pre-existing
+        tests (#3783/#4947/#5630) under CI (lead-coder's own catch, PR
+        #5642) — see that PR's own body for the full trace.
+
+        The real, still-valid gain #5622 (issue) named is KEPT:
+        ``is_shrinkable_overflow`` itself now lives here (public,
+        importable) instead of being duplicated as a
+        router_loop_driver.py-local function — router_loop_driver.py's
+        own 2 sites import it from here unchanged. Only the 3rd site's
+        OWN discriminator stays the bare ``classify_llm_failure`` check
+        it always was — 2 deliberately different discriminators for 2
+        deliberately different blast radii, not a drift."""
+        if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
+            raise
+        raise CompactionOverflowError(str(exc)) from exc
+
     async def _stage_fold(self) -> "object | None":
         """ADR-0044 -- fold. Compacts ``raw_middle`` (or the first
         ``_attempt_len`` of it) into the running summary via
@@ -3555,92 +3635,7 @@ class RecoveryLadder:
                 # summary.
                 return _LADDER_CONTINUE
         except Exception as exc:
-            # #5543 / #5531 §10 (owner precondition for abolishing
-            # `max_iterations`, landed in this SAME PR — see this
-            # function's own "Bounded termination proof" docstring
-            # item 1): classify BEFORE deciding whether to enter
-            # the shrink ladder at all. Only OVERFLOW ever gets
-            # wrapped as `CompactionOverflowError` and offered to
-            # the ladder below — the ladder's own termination
-            # proof depends on every exception that reaches it
-            # being genuinely shrinkable.
-            #
-            # FATAL (owner, #3783 verbatim): "An AttributeError in
-            # our own code must not become 'quietly shrink, then
-            # UnrecoveredError'" — re-raised bare, immediately,
-            # never shrunk. Without T3 (retired, #5531 §10) this
-            # is now the ONLY thing standing between a genuine
-            # reyn-side bug and the whole T_max floor being walked
-            # burning real LLM calls first.
-            #
-            # RETRYABLE (5xx/rate-limit/network/quota, including
-            # #5329's own quota-exhaustion incident this replaces
-            # — a provider usage-window exhaustion that used to
-            # get wrapped here and burn 2+ wasted round-trips into
-            # the SAME dead window before T3 finally gave up):
-            # re-raised bare too — shrinking the input cannot fix
-            # an infra condition or a wait-bound quota window
-            # either. #5543's own spec routes RETRYABLE through
-            # the SAME backoff machinery the router already uses
-            # (`llm.py`'s `_llm_call_with_retry`) rather than
-            # here — compact()'s own LLM call is not yet wired
-            # into that machinery (a disclosed, separate gap: it
-            # has never been retried, #5543's own second named
-            # defect) — re-raising bare, unwired, is still SAFE
-            # (the SAME bare-propagation shape #5256's quota gate
-            # and `_handle_inbox_text`'s generic catch-all already
-            # handle without ending the session), just not yet
-            # backoff-retried; wiring that in is future scope, not
-            # a regression this PR introduces (quota's own bare
-            # re-raise, the ONE RETRYABLE member this site already
-            # special-cased, is UNCHANGED behavior).
-            #
-            # OVERFLOW (including the bare "matches none of FATAL/
-            # RETRYABLE" fallthrough): #3783 stage 3's own
-            # OWNER-RATIFIED default for THIS site specifically —
-            # wrapped and offered to the shrink ladder below,
-            # bounded by the same-cause cap
-            # (test_input_independent_exception_hits_the_cap_
-            # not_an_infinite_loop). Deliberately still the bare
-            # ``classify_llm_failure`` check, not the stronger
-            # ``is_shrinkable_overflow`` (below).
-            #
-            # #5622 (issue) proposed unifying this site onto
-            # ``is_shrinkable_overflow`` too — the SAME stronger
-            # predicate #5593 introduced for
-            # ``router_loop_driver.py``'s own 2 arms. Tried, then
-            # reverted here: #5593's own PR body scopes that
-            # stronger default EXPLICITLY to "this module's [i.e.
-            # router_loop_driver.py's] own two call sites only" —
-            # because those 2 arms catch bare ``Exception`` from
-            # ``loop.run()`` (literally anything), where an
-            # unclassifiable exception silently walking the whole
-            # shrink ladder is unbounded blast radius. THIS site
-            # only ever catches an exception from inside
-            # ``compact()`` itself — the narrower surface #3783's
-            # owner ruling ("only exceptions that make compaction
-            # IMPOSSIBLE TO CONTINUE should propagate; the default
-            # should be recover") deliberately targeted, and
-            # #3783 stage 3's own ratified test still exercises
-            # today. Applying #5593's stronger check here silently
-            # inverted that owner ruling for this one site,
-            # regressing 11 pre-existing tests (#3783/#4947/#5630)
-            # under CI (lead-coder's own catch, PR #5642) — see
-            # that PR's own body for the full trace.
-            #
-            # The real, still-valid gain #5622 (issue) named is
-            # KEPT: ``is_shrinkable_overflow`` itself now lives
-            # here (public, importable) instead of being
-            # duplicated as a router_loop_driver.py-local
-            # function — router_loop_driver.py's own 2 sites
-            # import it from here unchanged. Only the 3rd
-            # site's OWN discriminator stays the bare
-            # ``classify_llm_failure`` check it always was — 2
-            # deliberately different discriminators for 2
-            # deliberately different blast radii, not a drift.
-            if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
-                raise
-            raise CompactionOverflowError(str(exc)) from exc
+            self._classify_and_wrap_compact_failure(exc)
         return None
 
     async def run(self) -> Any:
