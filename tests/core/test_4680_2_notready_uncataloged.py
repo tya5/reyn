@@ -26,7 +26,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_budget import (
-    _FALLBACK_MAX_INPUT_TOKENS,
+    _STARTUP_FALLBACK_MAX_INPUT_TOKENS,
     MaxInputTokensFallbackReason,
     _resolve_max_input,
     _warned_models,
@@ -85,7 +85,7 @@ def test_resolve_max_input_reports_not_ready_reason(monkeypatch) -> None:
         "reyn.llm.litellm_bootstrap.ensure_litellm_ready_or_defer", _raise_not_ready,
     )
     value, source, reason = _resolve_max_input("some/model-4680-2-a")
-    assert value == _FALLBACK_MAX_INPUT_TOKENS
+    assert value == _STARTUP_FALLBACK_MAX_INPUT_TOKENS
     assert reason is MaxInputTokensFallbackReason.NOT_READY
     assert "not yet loaded" in source
 
@@ -95,7 +95,7 @@ def test_resolve_max_input_reports_uncataloged_reason() -> None:
     loaded/reachable — no NOT_READY monkeypatch here) reports
     ``UNCATALOGED``."""
     value, source, reason = _resolve_max_input("unknown/garbage-4680-2-b")
-    assert value == _FALLBACK_MAX_INPUT_TOKENS
+    assert value == _STARTUP_FALLBACK_MAX_INPUT_TOKENS
     assert reason is MaxInputTokensFallbackReason.UNCATALOGED
     assert "not cataloged" in source
 
@@ -225,7 +225,7 @@ def test_not_ready_then_resolved_emits_a_correction_log(monkeypatch, caplog) -> 
     )
     with caplog.at_level(logging.WARNING):
         first = get_max_input_tokens(model)
-    assert first == _FALLBACK_MAX_INPUT_TOKENS
+    assert first == _STARTUP_FALLBACK_MAX_INPUT_TOKENS
     assert any("not finished loading" in r.message for r in caplog.records)
     caplog.clear()
 
@@ -235,7 +235,7 @@ def test_not_ready_then_resolved_emits_a_correction_log(monkeypatch, caplog) -> 
 
     with caplog.at_level(logging.WARNING):
         second = get_max_input_tokens(model)
-    assert second != _FALLBACK_MAX_INPUT_TOKENS
+    assert second != _STARTUP_FALLBACK_MAX_INPUT_TOKENS
     assert any(
         "is now resolved via litellm catalog" in r.message for r in caplog.records
     ), (

@@ -60,12 +60,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Conservative default when LiteLLM does not recognize the model.
-# 128K is a reasonable floor — all modern production models (Gemini, GPT-4o,
-# Claude 3.x) have context windows of ≥128K, so compaction using this default
-# will trigger earlier than necessary but never allow the prompt to exceed the
-# real budget.
-_FALLBACK_MAX_INPUT_TOKENS = 128_000
+# ★ Stand-in only, used before litellm resolves a real value (#5625) —
+# `reason="not_ready"` (still loading, self-corrects) or `"uncataloged"`
+# (permanent). NOT the model's real context window: read the resolved value
+# off `max_input_tokens_applied` on the `llm_request` audit-event instead.
+# Why 128_000 specifically: this module's own "Fallback policy" docstring.
+_STARTUP_FALLBACK_MAX_INPUT_TOKENS = 128_000
 
 
 class MaxInputTokensFallbackReason(str, Enum):
@@ -229,8 +229,8 @@ def _resolve_max_input(
         else "model not cataloged"
     )
     return (
-        _FALLBACK_MAX_INPUT_TOKENS,
-        f"reyn fallback default: {_FALLBACK_MAX_INPUT_TOKENS:,} tokens ({reason_text})",
+        _STARTUP_FALLBACK_MAX_INPUT_TOKENS,
+        f"reyn fallback default: {_STARTUP_FALLBACK_MAX_INPUT_TOKENS:,} tokens ({reason_text})",
         reason,
     )
 
@@ -245,7 +245,7 @@ def get_max_input_tokens(
     """Return the maximum input token budget for *model*.
 
     Queries LiteLLM's model catalog (`litellm.get_model_info`). If the model
-    is not recognized, returns the conservative default (_FALLBACK_MAX_INPUT_TOKENS)
+    is not recognized, returns the conservative default (_STARTUP_FALLBACK_MAX_INPUT_TOKENS)
     and emits a ``model_budget_fallback`` observability event.
 
     Parameters
@@ -280,7 +280,7 @@ def get_max_input_tokens(
                 f"model_budget: litellm has not finished loading in this "
                 f"process yet, so model={model!r}'s real context window is "
                 f"not known — using conservative fallback of "
-                f"{_FALLBACK_MAX_INPUT_TOKENS:,} tokens (temporary; will "
+                f"{_STARTUP_FALLBACK_MAX_INPUT_TOKENS:,} tokens (temporary; will "
                 f"self-correct once litellm is ready)"
             )
         else:
@@ -288,7 +288,7 @@ def get_max_input_tokens(
                 f"model_budget: max_input_tokens unknown for model={model!r} "
                 f"— litellm has no catalog entry for it (checked after "
                 f"litellm finished loading); using conservative fallback of "
-                f"{_FALLBACK_MAX_INPUT_TOKENS:,} tokens (permanent for this "
+                f"{_STARTUP_FALLBACK_MAX_INPUT_TOKENS:,} tokens (permanent for this "
                 f"process unless llm.models.<tier>.max_input_tokens is "
                 f"configured, or litellm's own catalog is updated)"
             )
@@ -297,7 +297,7 @@ def get_max_input_tokens(
             events.emit(
                 "model_budget_fallback",
                 model=model,
-                fallback_tokens=_FALLBACK_MAX_INPUT_TOKENS,
+                fallback_tokens=_STARTUP_FALLBACK_MAX_INPUT_TOKENS,
                 reason=reason.value,
                 phase=phase,
                 run_id=run_id,
@@ -331,7 +331,7 @@ def get_max_input_tokens(
             f"model_budget: max_input_tokens for model={model!r} is now "
             f"resolved via litellm catalog to {value:,} tokens (previously "
             f"used the temporary NOT_READY fallback of "
-            f"{_FALLBACK_MAX_INPUT_TOKENS:,})"
+            f"{_STARTUP_FALLBACK_MAX_INPUT_TOKENS:,})"
         )
     return value
 

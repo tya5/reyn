@@ -183,5 +183,5 @@ def test_a_model_with_no_registered_override_still_uses_the_catalog():
     unrelated model never registered still resolves through the normal
     catalog/fallback path, unaffected."""
     result = get_max_input_tokens("unknown/garbage-model-4689-unregistered")
-    from reyn.llm.model_budget import _FALLBACK_MAX_INPUT_TOKENS
-    assert result == _FALLBACK_MAX_INPUT_TOKENS
+    from reyn.llm.model_budget import _STARTUP_FALLBACK_MAX_INPUT_TOKENS
+    assert result == _STARTUP_FALLBACK_MAX_INPUT_TOKENS
