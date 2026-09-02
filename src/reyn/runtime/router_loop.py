@@ -4772,6 +4772,22 @@ class RouterLoop:
                 )
             _run_prompt_async_bound = _run_prompt_async_bound_impl
 
+        # #4733: exec(collect="async") binding (mirror run_prompt(collect=
+        # "async") above). Only a host implementing RouterHostAdapter's full
+        # surface has run_exec_async; a narrower test-double host leaves this
+        # None.
+        _exec_async_bound: Any = None
+        if hasattr(self.host, "run_exec_async") and callable(
+            getattr(self.host, "run_exec_async", None)
+        ):
+            async def _exec_async_bound_impl(
+                *, argv: "list[str]", timeout_seconds: "int | None" = None,
+            ) -> dict:
+                return await self.host.run_exec_async(
+                    argv=argv, timeout_seconds=timeout_seconds,
+                )
+            _exec_async_bound = _exec_async_bound_impl
+
         # #2103 C1: topology-create binding (mirror agent-spawn). Only multi-agent hosts
         # implement ``create_topology``; a host without it leaves this None.
         _topology_create_bound: Any = None
@@ -4811,6 +4827,9 @@ class RouterLoop:
             # Proposal 0067 P4e (#3978): run_prompt(collect="async") dispatch
             # (None for non-multi-session hosts).
             run_prompt_async_fn=_run_prompt_async_bound,
+            # #4733: exec(collect="async") dispatch (None for a narrower
+            # test-double host).
+            sandboxed_exec_async_fn=_exec_async_bound,
             # #2103 S1bc: session-spawn dispatch (None for non-multi-session hosts).
             spawn_session_fn=_spawn_session_bound,
             # Proposal 0067 P5 (#3978): send_to_session dispatch (None for

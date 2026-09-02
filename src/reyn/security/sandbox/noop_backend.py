@@ -15,7 +15,7 @@ import logging
 import os
 import signal
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from ._subprocess_io import communicate_capped, kill_process_tree
 from .backend import (
@@ -179,6 +179,7 @@ class NoopBackend:
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
+        sink: "Callable[[int, bytes], None] | None" = None,
     ) -> SandboxResult:
         _warn_once()
 
@@ -224,6 +225,7 @@ class NoopBackend:
                         input=stdin,
                         max_bytes=policy.max_output_bytes,
                         timeout=policy.timeout_seconds,
+                        sink=sink,
                     )
                     return SandboxResult(
                         returncode=proc.returncode,
@@ -277,6 +279,7 @@ class NoopBackend:
             lambda: communicate_capped(
                 proc, max_bytes=policy.max_output_bytes,
                 timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
+                sink=sink,
             ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())

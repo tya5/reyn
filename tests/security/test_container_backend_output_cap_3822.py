@@ -77,13 +77,15 @@ async def test_docker_backend_run_passes_policy_max_output_bytes_through():
     backend.docker_bin = "bash"
     backend.container = ""  # unused once docker_bin is bash; argv shape below ignores it
 
-    async def _local_runner(argv, *, stdin=None, timeout=None, max_bytes=None):
+    async def _local_runner(argv, *, stdin=None, timeout=None, max_bytes=None, sink=None):
         # Strip everything before the real payload argv (mirrors the existing
         # "local runner Fake" pattern in test_container_backend_1115_stage2.py)
         # and run it for real, honoring max_bytes exactly like the production
         # runner would.
         payload = argv[argv.index("reyn-exec") + 1:]
-        return await _async_runner(payload, stdin=stdin, timeout=timeout, max_bytes=max_bytes)
+        return await _async_runner(
+            payload, stdin=stdin, timeout=timeout, max_bytes=max_bytes, sink=sink,
+        )
 
     backend._runner = _local_runner
     policy = SandboxPolicy(timeout_seconds=30, max_output_bytes=over)

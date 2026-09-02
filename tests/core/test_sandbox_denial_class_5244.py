@@ -131,7 +131,7 @@ class _NetworkDenyingBackend:
 
         return WrappedCommand(argv=list(argv), env={})
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None):
         return SandboxResult(
             returncode=1, stdout=b"", stderr=_REAL_NETWORK_STDERR_TASKGROUP,
         )

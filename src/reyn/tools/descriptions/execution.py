@@ -44,10 +44,9 @@ exec_ = ToolDescription(
         "operator-configured default, up to the operator's own configured "
         "maximum; a request above that maximum is rejected, and the "
         "rejection names the actual maximum. If you need longer than that, "
-        "run it in the background instead (spawn an ephemeral session, or "
-        "run_pipeline with collect=\"async\") — background work runs on a "
-        "separate budget from this foreground wall-clock cap, and you can "
-        "stop it with cancel_task."
+        "run it in the background instead (collect=\"async\") — "
+        "background work runs on a separate budget from this foreground "
+        "wall-clock cap, and you can stop it with cancel_task."
     ),
     ja=(
         "サンドボックス環境内でコマンドを実行する（FP-0017）。サンドボックス"
@@ -57,9 +56,9 @@ exec_ = ToolDescription(
         "timeout: 任意 — オペレーター設定の既定タイムアウトを、オペレーター"
         "自身が設定した上限まで延長できる。上限を超える要求は拒否され、"
         "拒否時に実際の上限値が示される。それ以上必要な場合はバックグラウン"
-        "ドで実行すること（一時セッションを生成する、または run_pipeline を"
-        "collect=\"async\" で使う）— バックグラウンドの作業はこの前景ウォー"
-        "ルクロック上限とは別の予算で動作し、cancel_task で停止できる。"
+        "ドで実行すること（collect=\"async\"）— バックグラウンドの作業はこ"
+        "の前景ウォールクロック上限とは別の予算で動作し、cancel_task で停止"
+        "できる。"
     ),
 )
 
@@ -112,6 +111,20 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "になり、上限を超える要求は拒否され、拒否時に実際の上限値が"
                 "示される。"
             ),
+        ),
+        # #4733: optional, one declared value ("async"). Omitting it keeps
+        # exec synchronous — byte-identical to before this parameter
+        # existed; there is no separate "attached" value to declare (sync
+        # IS what omission already means). Deliberately terse — the main
+        # tool description (`exec_.text` above) already spells out the
+        # describe_task/task_settled/cancel_task shape; re-stating it here
+        # in full (in BOTH languages) would be pure duplicated token
+        # weight on every catalog listing, the exact thing a tight-window
+        # turn (tests/runtime/test_intervention_subscriber_guard.py) can't
+        # absorb.
+        "collect": ParamDescription(
+            text='Optional — "async" runs this in the background (see the tool description).',
+            ja='任意 — "async" でバックグラウンド実行（ツール説明を参照）。',
         ),
     },
 }

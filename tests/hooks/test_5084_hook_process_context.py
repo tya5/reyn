@@ -80,7 +80,7 @@ class _RecordingBackend:
 
     async def run(
         self, argv, policy, *, stdin=None, cwd=None, cancel_event=None,
-        hook_process_context=None,
+        hook_process_context=None, sink=None,
     ):
         self.calls.append((list(argv), cwd, hook_process_context))
         return SandboxResult(returncode=0, stdout=b"", stderr=b"")
