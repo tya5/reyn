@@ -527,6 +527,7 @@ class RouterHostAdapter:
         # server re-probed on the next turn instead of being frozen as a
         # capability the model is never told about.
         self._mcp_tools_cache: dict[str, ToolsAnswered] | None = None
+        self._mcp_probe_cooldown_until: dict[str, float] = {}
         # FP-0037 S1: mtime of the cache file when we last loaded from it.
         # None = never loaded from disk. Used by maybe_reload_mcp_tools_cache_from_disk
         # to detect when the CLI has written a fresher version.
@@ -2596,7 +2597,12 @@ class RouterHostAdapter:
                 self._mcp_tools_cache = {}
 
         servers = self._mcp_servers_flat()
-        unanswered = [name for name in servers if name not in self._mcp_tools_cache]
+        import time
+        unanswered = [
+            name for name in servers
+            if name not in self._mcp_tools_cache
+            and time.monotonic() >= self._mcp_probe_cooldown_until.get(name, 0.0)
+        ]
         if not unanswered:
             return
 
@@ -2627,6 +2633,7 @@ class RouterHostAdapter:
                     reason="timeout",
                     per_server_timeout=per_server_timeout,
                 )
+                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
                 return server_name, ToolsUnknown(reason="timeout")
             except Exception as exc:  # noqa: BLE001 — adapter must never raise
                 self._events.emit(
@@ -2636,6 +2643,7 @@ class RouterHostAdapter:
                     per_server_timeout=per_server_timeout,
                     detail=repr(exc),
                 )
+                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
                 return server_name, ToolsUnknown(reason="exception", detail=repr(exc))
             # mcp_list_tools may return [{"error": "..."}] instead of raising.
             # #3520: an error sentinel and NO usable tool is the same non-answer
@@ -2648,6 +2656,7 @@ class RouterHostAdapter:
             raw = [t for t in (tools or []) if isinstance(t, dict)]
             cleaned = [t for t in raw if "error" not in t and t.get("name")]
             if not cleaned and any("error" in t for t in raw):
+                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
                 self._events.emit(
                     "mcp_tool_probe_degraded",
                     server=server_name,
