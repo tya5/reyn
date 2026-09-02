@@ -10235,12 +10235,15 @@ class Session:
         """#5618: this session's loop driver's current recovery-episode number,
         or None when it is not recovering.
 
-        ``getattr`` because ``_loop_driver`` is an injectable seam
-        (``ExecutionDriver``) — ``PipelineExecutorDriver`` and the pipeline
-        test drivers run no retry ladder at all, so "no episode" is their true
-        answer, not a forgotten field. The two drivers that CAN recover both
-        declare it, and the seam test pins that they do."""
-        return getattr(self._loop_driver, "recovery_episode", None)
+        Read DIRECTLY, never through a ``getattr`` default (architect, #5630):
+        a default would make ``None`` mean two different things — "this driver
+        is not recovering" and "this driver never implemented the field" — and
+        the second is a fail-open that silently restores the very #5618 bug
+        this method exists to fix, on any future driver that forgets. Absent
+        must be loud. ``recovery_episode`` is declared on the ``ExecutionDriver``
+        seam, so a driver that runs no retry ladder answers None on purpose
+        (``PipelineExecutorDriver`` does exactly that) rather than by omission."""
+        return self._loop_driver.recovery_episode
 
     def _on_compaction_progress_event(self, event) -> None:
         """#5588: see :attr:`_compaction_progress_state`'s own comment at

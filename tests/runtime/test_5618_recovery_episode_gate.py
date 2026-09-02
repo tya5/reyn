@@ -96,6 +96,13 @@ class _ProbingLoop:
             # point of the pairing — without it, a "fix" that made the
             # controller flag rise on the ladder path would pass unnoticed.
             "controller": self._session._compaction_controller.is_compacting,
+            # #5630 (architect): the episode NUMBER, read from the driver's own
+            # public ``recovery_episode`` property. The figures alone cannot
+            # witness a mid-recovery identity change — they only blank in the
+            # gaps between these sample points — so the number is what makes
+            # the strip below actually fail. Ruled policy-OK on review: what is
+            # read here is a public property of a real driver.
+            "episode": self._session._loop_driver.recovery_episode,
         })
 
     async def run(self, *, user_text: str, history: "list[dict]") -> "object | None":
@@ -374,6 +381,41 @@ def test_a_previous_recoverys_figures_are_never_shown_during_the_next(
     )
 
 
+def test_one_recovery_keeps_one_episode_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: a single uninterrupted recovery carries ONE episode identity.
+
+    This is the witness for ``continues_previous``, and it exists because an
+    earlier version of this file could not produce one. The two episode scopes
+    do NOT nest — the wrapper opens the outer one from its `except` clause,
+    AFTER the ladder's own scope has already unwound — so a plain
+    "depth 0->1 allocates a number" rule hands one recovery two identities
+    (measured: 1, 1, 2 across a single drive).
+
+    That matters because the figures are joined against the episode they were
+    stamped in: the moment a second identity is allocated, everything measured
+    under the first is judged stale and the row goes empty in the middle of the
+    recovery the user is watching.
+
+    **Why this reads the number and not the figures.** The sibling below
+    watches the figures instead, and cannot see this: the blanking falls in the
+    gaps BETWEEN the points where the ladder calls the loop, so the figures
+    look continuous at that sampling resolution while the identity underneath
+    has already changed. Reviewer strip (architect, #5630): remove
+    ``continues_previous`` from ``_recovery_episode_scope`` and this test goes
+    red on two distinct identities — measured, not predicted."""
+    _session, loop, _result = _drive_a_recovery(tmp_path, monkeypatch)
+
+    episodes = [s["episode"] for s in loop.samples if s["episode"] is not None]
+    assert episodes, "the ladder never ran, so this test would pass vacuously"
+    assert set(episodes) == {episodes[0]}, (
+        f"one recovery carried more than one episode identity ({episodes!r}) — "
+        f"the figures measured under the earlier one are judged stale the "
+        f"instant the later one is allocated, and the row blanks mid-recovery"
+    )
+
+
 def test_the_figures_do_not_blank_out_between_the_ladders_own_calls(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -382,24 +424,16 @@ def test_the_figures_do_not_blank_out_between_the_ladders_own_calls(
 
     **What this does and does not witness.** Samples are taken where the ladder
     calls the loop, which is a handful of points across the whole recovery. At
-    that resolution this pins the ordinary case (a figure, once shown, keeps
-    being shown) but it does NOT catch every way the join could blank a live
-    figure — in particular it did not catch the two-identity defect described
-    below, which was found by instrumenting the episode number directly during
-    development and is NOT covered by any test here. Disclosed rather than
-    implied: the production consumer polls on its own ~1s heartbeat and so
-    samples far more finely than this test can.
-
-    The defect, kept on the record because the fix it produced is load-bearing:
-    the ladder opens an episode scope, and the wrapper opens a SECOND one from
-    its `except` clause AFTER the first has already unwound, so a naive
-    "0->1 allocates a number" rule handed one uninterrupted recovery two
-    identities (measured during development: 1, 1, 2 across a single drive).
-    Because figures are joined against the episode they were stamped in,
-    everything measured before the second identity was allocated would be
-    judged stale at that instant, and the row would go empty in the middle of
-    the recovery the user is watching. ``_recovery_episode_scope``'s
-    ``continues_previous`` is what prevents it."""
+    that resolution this pins the ordinary case — a figure, once shown, keeps
+    being shown — but it cannot see a blanking that falls entirely in the gaps
+    BETWEEN those points. The two-identity defect is exactly such a case, which
+    is why it has its own witness above
+    (``test_one_recovery_keeps_one_episode_identity``, reading the episode
+    number rather than the figures): this test stayed green through that defect
+    and through the reviewer strip that reintroduces it. Kept because the
+    figures are what the user actually reads, and because the production
+    consumer polls on its own ~1s heartbeat and so samples far more finely than
+    either test does."""
     _session, loop, _result = _drive_a_recovery(tmp_path, monkeypatch)
 
     live = [s for s in loop.samples if s["is_compacting"]]
