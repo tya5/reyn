@@ -1991,12 +1991,15 @@ class CompactionEngine:
         to ensure the body ≤ body_budget tokens deterministically.
 
         Re-raises on LLM/validation error, after emitting ``compaction_failed``
-        itself (see below) — a caller MAY additionally emit its own
-        ``compaction_failed`` for a failure in its own post-``compact()``
-        work (``CompactionController._run_compaction``'s own post-processing:
-        ``_append_history``/``_render_summary`` etc.), but must first check
-        the raised exception for ``_reyn_compaction_failed_emitted`` (set
-        below) to avoid a duplicate emission for the SAME failure.
+        itself (see below) — bare, with no marker attribute written on the
+        exception. A caller's own code that runs AFTER this call returns
+        (``CompactionController._run_compaction``'s own post-processing:
+        ``_append_history``/``_render_summary`` etc.) needs its OWN
+        ``try``/``except`` around just that work to close the marker for
+        ITS OWN failures — never around this call too, or the same
+        failure would emit twice. See that method's own comment for the
+        structural (not marker-based) way it keeps the two `try` blocks
+        from overlapping.
 
         #5475 (architect ruling): emits ``compaction_started`` HERE, at the
         one real entry both of this engine's callers share
@@ -2381,12 +2384,15 @@ class CompactionEngine:
             )
         except Exception as exc:
             self._events.emit("compaction_failed", error=str(exc))
-            # #5633: mark so CompactionController's own except (the
-            # controller-path's OTHER failure surface -- post-processing
-            # after this call returns, e.g. _append_history/_render_summary
-            # raising) doesn't emit a SECOND compaction_failed for the
-            # SAME failure -- see compaction_controller.py's own check.
-            exc._reyn_compaction_failed_emitted = True  # type: ignore[attr-defined]
+            # #5633 (lead-coder review, structural not agreement-based):
+            # no marker is written on *exc* here. Which side emits
+            # `compaction_failed` for a given failure is decided by WHICH
+            # try/except catches it, not by a third party inspecting an
+            # attribute a foreign exception happens to carry --
+            # CompactionController._run_compaction's own except around
+            # THIS call (if any exists at a caller) must not ALSO emit;
+            # see that method's own comment on why its try/except split
+            # keeps this call outside the block that emits.
             raise
 
 

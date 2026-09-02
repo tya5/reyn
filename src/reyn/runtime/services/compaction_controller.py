@@ -380,18 +380,18 @@ class CompactionController:
         self._compacting = True
         try:
             await self._run_compaction(candidates, latest)
-        except Exception as exc:
-            # #5633: CompactionEngine.compact() now emits its OWN
-            # `compaction_failed` (the same "one real entry" argument
-            # #5475 already made for `compaction_started` — see
-            # compact()'s own docstring) and marks the exception it raises
-            # with `_reyn_compaction_failed_emitted` so this catch-all
-            # (which also covers failures in THIS method's own post-
-            # compact() work — `_append_history`/`_render_summary`, not
-            # reached by compact()'s own try) doesn't emit a second
-            # `compaction_failed` for the identical failure.
-            if not getattr(exc, "_reyn_compaction_failed_emitted", False):
-                self._events.emit("compaction_failed", error=str(exc))
+        except Exception:
+            # #5633 (lead-coder review): NOT re-emitted here. Whatever
+            # `_run_compaction` raises has already had its own
+            # `compaction_failed` emitted at its own origin —
+            # `CompactionEngine.compact()`'s own except for a compact()
+            # failure, or `_run_compaction`'s own post-processing
+            # `try`/`except` for anything after `compact()` returns (see
+            # `_run_compaction`'s own comment for why those two `try`
+            # blocks never overlap). This bare catch exists only so a
+            # compaction failure never propagates past `force_compact_now`
+            # to ITS OWN caller.
+            pass
         finally:
             self._compacting = False
 
@@ -522,39 +522,58 @@ class CompactionController:
         # rejected). This caller's own real `seq` (`candidates[-1].seq` —
         # unlike retry_loop's wire-dict turns, `_turn_to_compactor_input`
         # keeps `seq` per turn) is passed through explicitly.
+        # #5633 (lead-coder review): deliberately OUTSIDE any try/except in
+        # THIS method — a compact() failure is already fully handled at its
+        # own origin (CompactionEngine.compact()'s own except emits
+        # `compaction_failed` and re-raises; see its own docstring). Nothing
+        # here may also catch it: which side emits for a given failure is
+        # decided STRUCTURALLY, by which try/except block the failure
+        # physically raises inside, never by a caller re-inspecting the
+        # exception for a marker.
         chat_summary = await self._engine.compact(
             input_chunk, covers_through=candidates[-1].seq,
         )
-        structured = chat_summary.to_dict()
-        covers = chat_summary.covers_through_seq or candidates[-1].seq
-        # #1820 Part1: frame the rendered summary with a static reference-only
-        # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
-        # history — NOT a fresh instruction — and does not re-execute `pending` work
-        # after a reverse-signal (stop / undo / change of direction). Prepended here
-        # (controller-owned, render-fn-independent) so every rendered summary carries
-        # it. Static string → no LLM dependency.
-        rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
+        try:
+            structured = chat_summary.to_dict()
+            covers = chat_summary.covers_through_seq or candidates[-1].seq
+            # #1820 Part1: frame the rendered summary with a static reference-only
+            # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
+            # history — NOT a fresh instruction — and does not re-execute `pending` work
+            # after a reverse-signal (stop / undo / change of direction). Prepended here
+            # (controller-owned, render-fn-independent) so every rendered summary carries
+            # it. Static string → no LLM dependency.
+            rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
 
-        summary_msg = self._make_summary_message(rendered, structured, covers)
-        self._append_history(summary_msg)
-        self._events.emit(
-            "compaction_completed",
-            new_turn_count=new_turn_count,
-            covers_through_seq=covers,
-            section_lengths={
-                k: len(v) if isinstance(v, list) else len(str(v))
-                for k, v in structured.items()
-                if k != "covers_through_seq"
-            },
-            # #4703 axis①: the compact() LLM call's own real usage — see
-            # ChatSummary's own docstring for why it lives there and not in
-            # ``structured``/``to_dict()`` (never persisted to history.jsonl).
-            # None only when usage genuinely could not be read off the
-            # response — never coerced to 0.
-            prompt_tokens=chat_summary.prompt_tokens,
-            completion_tokens=chat_summary.completion_tokens,
-            cost_usd=chat_summary.cost_usd,
-        )
+            summary_msg = self._make_summary_message(rendered, structured, covers)
+            self._append_history(summary_msg)
+            self._events.emit(
+                "compaction_completed",
+                new_turn_count=new_turn_count,
+                covers_through_seq=covers,
+                section_lengths={
+                    k: len(v) if isinstance(v, list) else len(str(v))
+                    for k, v in structured.items()
+                    if k != "covers_through_seq"
+                },
+                # #4703 axis①: the compact() LLM call's own real usage — see
+                # ChatSummary's own docstring for why it lives there and not in
+                # ``structured``/``to_dict()`` (never persisted to history.jsonl).
+                # None only when usage genuinely could not be read off the
+                # response — never coerced to 0.
+                prompt_tokens=chat_summary.prompt_tokens,
+                completion_tokens=chat_summary.completion_tokens,
+                cost_usd=chat_summary.cost_usd,
+            )
+        except Exception as exc:
+            # #5633: this method's OWN failure surface — everything AFTER
+            # compact() returns a real ChatSummary (rendering, persisting,
+            # emitting compaction_completed). compact() itself is outside
+            # this try (see the comment above it) so its own failures can
+            # never reach here — this except only ever fires for a
+            # genuinely NEW failure, never the same one compact() already
+            # emitted `compaction_failed` for.
+            self._events.emit("compaction_failed", error=str(exc))
+            raise
 
 
 __all__ = ["CompactionController"]

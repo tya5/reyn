@@ -94,7 +94,14 @@ class _AbortingEngine(CompactionEngine):
         self, input_chunk: HistoryChunkToCompact, *, covers_through: CoversThrough,
     ) -> ChatSummary:
         _emit_compaction_started(self._events, input_chunk, covers_through)
-        raise RuntimeError("aborting engine stub: test-time abort")
+        # #5633: mirrors CompactionEngine.compact()'s own real except —
+        # compaction_failed now emits from compact() itself (the same
+        # "one real entry both callers share" argument #5475 already made
+        # for compaction_started), so a stub whose own event log nobody
+        # watches would otherwise silently stop producing that event too.
+        error = RuntimeError("aborting engine stub: test-time abort")
+        self._events.emit("compaction_failed", error=str(error))
+        raise error
 
 
 class _SucceedingEngine(CompactionEngine):
