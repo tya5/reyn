@@ -223,20 +223,40 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
 
     # Issue #383 PR-C: emit path-ref via MediaStore when available;
     # fall back to inline base64 when not configured.
-    media_block: dict
+    #
+    # #5653: MediaStore.save_media now runs the project-wide storage cap
+    # pre-check (_evict_cross_session_over_cap) and can raise
+    # MediaStoreWriteUnavailable — falling back to the SAME inline-base64
+    # path this function already uses for "no MediaStore configured" is
+    # the smaller, idiom-matching degrade (see web.py's own #5653 comment
+    # on the identical shape) rather than letting the raise propagate to
+    # dispatch_tool's generic `except Exception` and fail the whole read.
+    media_store_unavailable = False
+    media_block_ref: "dict | None" = None
     if ctx.media_store is not None:
-        media_block = ctx.media_store.save_media(
-            image_bytes, mime_type=mime_type,
-            chain_id=ctx.run_id or "", tool="file_read", seq=1,
-        )
+        from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+        try:
+            media_block_ref = ctx.media_store.save_media(
+                image_bytes, mime_type=mime_type,
+                chain_id=ctx.run_id or "", tool="file_read", seq=1,
+            )
+        except MediaStoreWriteUnavailable:
+            media_store_unavailable = True
+    if media_block_ref is not None:
+        media_block = media_block_ref
     else:
         import base64
+        if media_store_unavailable:
+            ctx.events.emit(
+                "file_read_media_write_unavailable",
+                path=op.path, size_bytes=len(image_bytes), mime_type=mime_type,
+            )
         data_b64 = base64.b64encode(image_bytes).decode("ascii")
         media_block = {"type": "image", "data": data_b64, "mimeType": mime_type}
     ctx.events.emit(
         "tool_executed", op="read_file", path=op.path,
         mode="binary", mime_type=mime_type, media_block_count=1,
-        stored_as=("path_ref" if ctx.media_store is not None else "inline_b64"),
+        stored_as=("path_ref" if media_block_ref is not None else "inline_b64"),
     )
     return {
         "kind": "file", "op": "read", "path": op.path,

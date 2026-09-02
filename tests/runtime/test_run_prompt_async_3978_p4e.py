@@ -335,8 +335,10 @@ def _wal_diagnostic_dump(
 async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(
     tmp_path, request,
 ):
-    """Tier 2c: NOT a truncate-falsify test — this replays every WAL event
-    from applied_seq=0 (nothing is truncated below any floor). The actual
+    """Tier 2c: NOT a truncate-falsify test — this replays from
+    applied_seq=0 with only this ONE chain's own terminal events
+    (chain_resolve/chain_timeout_fired) excluded (see the 3rd paragraph
+    below for why); nothing is truncated below any floor. The actual
     truncation-survives-WAL-truncation coverage for kind/waiting_on/
     requester lives in
     tests/core/test_agent_snapshot.py::test_truncate_falsify_requester_survives_wal_truncation
@@ -349,12 +351,48 @@ async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(
     by reading it back via pure WAL replay rather than trusting the
     in-memory chain object alone.
 
-    part of #4986: both assertions below carry a diagnostic dump on
-    failure only (see :func:`_wal_diagnostic_dump`) — this test's own
-    flakiness on CI (Python 3.12 only, 7/7 today, 0/45 reproduced
-    locally per this session's own finding on that issue) has no known
-    reproduction recipe yet; the next real red now answers its own
-    question instead of needing a second investigation pass."""
+    part of #4986: root-caused via the #5660 diagnostic dump firing for
+    real on CI (2026-09-02, PR #5666 CI, Python 3.12, xdist gw1) — the
+    WAL was NEVER missing an event (``chain_register``/``chain_update``
+    always land before ``flush()`` returns; the dump's own drain state
+    showed ``queue.qsize()=0, drainer.done()=True`` every time). The red
+    was a genuine SHAPE mismatch: ``run_prompt_async`` starts ``beta``'s
+    own turn loop as a background task
+    (``AgentRegistry.ensure_running`` → ``asyncio.create_task(session.
+    run())``, awaited only far enough to SCHEDULE it, not to let it
+    finish) — production's own real, intended concurrency, not a bug.
+    Whether that background task races far enough to have ``beta``
+    reply and ``alpha`` settle the chain (writing a ``chain_resolve``
+    WAL event that POPS ``pending_chains``, ``agent_snapshot.py``'s own
+    correct behaviour) before this test's one ``await`` point
+    (``flush()``) is genuinely a coin flip under load — CI merged 20
+    PRs the day this was measured; this session's own 0/45 local
+    attempts never hit the timing. Chasing that race (with a sleep, a
+    retry, or a timeout marker) is explicitly out — CLAUDE.md: "A test
+    writes no duration, in EITHER direction."
+
+    So the invariant actually worth pinning is narrowed to what this
+    test's docstring already claims — did ``run_prompt_async``'s own
+    ``register()`` call write the RIGHT ``chain_register``/
+    ``chain_update`` shape, reconstructible by replay — not "is the
+    chain still pending right now," which depends on whether a
+    same-chain ``chain_resolve``/``chain_timeout_fired`` event ALSO
+    landed by the time ``flush()`` returned. Replay excludes any such
+    terminal event for THIS ``task_id`` before reading
+    ``pending_chains`` — deterministically constructing the
+    "resolve has not landed" state the assertion actually needs,
+    regardless of how far the real background race got. This changes
+    nothing about what ran or how long anything waited — whether a
+    terminal event exists is discovered by reading the ALREADY-
+    COLLECTED WAL events, never by waiting for or against one to
+    appear — it only narrows which of those events this assertion
+    reads, which is exactly the "narrow to what would flip RED for a
+    real defect" shape (six-questions #1).
+
+    Both assertions below still carry a diagnostic dump on failure
+    only (see :func:`_wal_diagnostic_dump`, left in place per
+    lead-coder's own recommendation — the same dump would name any
+    FUTURE shape mismatch, not just this one, now root-caused one)."""
     reg = _make_registry(tmp_path)
     _seed(tmp_path, "alpha")
     _seed(tmp_path, "beta")
@@ -383,11 +421,27 @@ async def test_registered_chain_wal_event_reconstructs_with_the_right_shape(
         )
     )
 
+    # #4986: exclude a same-chain TERMINAL event (chain_resolve /
+    # chain_timeout_fired) from this replay — beta's own background turn
+    # (started by run_prompt_async itself, racing independently of this
+    # test) may or may not have settled the chain by the time flush()
+    # returned above; this test pins the REGISTRATION shape, not that
+    # race's outcome (see this test's own docstring). A real registration
+    # defect (wrong kind/waiting_on/requester) still fails identically
+    # either way — only a terminal event for THIS task_id is dropped.
+    replay_events = [
+        e for e in all_events
+        if not (
+            e.get("chain_id") == task_id
+            and e.get("kind") in ("chain_resolve", "chain_timeout_fired")
+        )
+    ]
     replayed = AgentSnapshot.empty("alpha")
-    replayed.apply_events(all_events)
+    replayed.apply_events(replay_events)
     reconstructed = replayed.pending_chains.get(task_id)
     assert reconstructed is not None, (
-        f"chain {task_id!r} must reconstruct from pure WAL replay"
+        f"chain {task_id!r} must reconstruct from pure WAL replay "
+        "(terminal events for this chain excluded — see this test's own docstring)"
         + _wal_diagnostic_dump(
             task_id=task_id, all_events=all_events, caller=caller, request=request,
         )

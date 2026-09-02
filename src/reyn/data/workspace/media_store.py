@@ -1034,6 +1034,19 @@ class MediaStore:
         candidate, disclosed in :func:`cross_session_eviction_
         candidates`'s own call site, never silently claimed safe).
         """
+        # #5653: the project-wide storage cap PRE-check (#5366 §3 / #4478),
+        # previously wired only into save_tool_result — a media-only-heavy
+        # project never self-triggered eviction from THIS method, so the
+        # population #4478 widened to include media only ever got
+        # CONSULTED on a tool-result write. Same "raises before writing
+        # bytes that would push the project further over cap" contract as
+        # save_tool_result's own call to this method — see
+        # _evict_cross_session_over_cap's own docstring. All 4 real callers
+        # of save_media (web.py/file.py/mcp.py/router_loop.py) now catch
+        # MediaStoreWriteUnavailable and degrade (this issue's own "What's
+        # needed" ①②, read individually per call site — see each site's
+        # own #5653 comment).
+        self._evict_cross_session_over_cap()
         media_dir = (
             media_content_dir_for(
                 self._project_root, self._agent_name, self._session_id, self._config,
@@ -1420,17 +1433,18 @@ class MediaStore:
         candidate, never excluded (disclosed, never migrated — #4478's
         own owner-scoped ruling: reyn-self carries 0 such files today).
 
-        ⚠️ Also disclosed: this pre-check runs from :meth:`save_tool_
-        result` only (unchanged from #5366) — a media-only-heavy
-        project does not self-trigger eviction from :meth:`save_media`
-        itself; the population widened here still only gets CONSULTED
-        on a tool-result write. Wiring the same pre-check into
-        :meth:`save_media` touches 4 real call sites
-        (``web.py``/``file.py``/``mcp.py``/``router_loop.py``) whose own
-        ``MediaStoreWriteUnavailable`` handling is unaudited — out of
-        this PR's own authorized scope (witnesses 1/3/4/5 only,
-        lead-coder), named here as a real follow-up, not silently
-        assumed solved.
+        #5653: also runs from :meth:`save_media` now (this method used to
+        run from :meth:`save_tool_result` only, #5366 — a media-only-heavy
+        project never self-triggered eviction from ITS OWN writes, so the
+        population widened here only ever got CONSULTED on a tool-result
+        write). All 4 real callers of ``save_media``
+        (``web.py``/``file.py``/``mcp.py``/``router_loop.py``) were audited
+        for this PR and each degrades ``MediaStoreWriteUnavailable``
+        individually — see each site's own #5653 comment for why the
+        degrade differs (an inline-base64 fallback at 2 sites, a
+        return-``None``-to-a-caller-that-already-handles-it at the third,
+        an append-the-raw-item-and-continue at the fourth's own batch
+        loop).
 
         Runs BEFORE the write this call is guarding (a pre-check, same
         shape as the ``durability_failed`` check right above its own

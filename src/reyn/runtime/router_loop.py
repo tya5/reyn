@@ -445,8 +445,11 @@ def _as_path_ref(
     A path-ref block is returned as-is (its on-disk path is the handle, valid
     even without a live store object). An inline-base64 block is persisted to
     the MediaStore (``save_media``) so it gains a path — requires a store.
-    Returns ``None`` when no path can be obtained (inline + no store, or
-    undecodable base64) — the caller then degrades consciously.
+    Returns ``None`` when no path can be obtained (inline + no store,
+    undecodable base64, or #5653: the store's own project-wide storage cap
+    pre-check refuses the write via ``MediaStoreWriteUnavailable``) — the
+    caller then degrades consciously (both current callers already treat
+    ``None`` as "skip this item, still surface the overall count").
     """
     block_type = block.get("type") or "image"
     default_mime = _default_mime_for_block_type(block_type)
@@ -464,8 +467,15 @@ def _as_path_ref(
             raw = base64.b64decode(data)
         except (ValueError, TypeError):
             return None
+        from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
         mime = block.get("mime_type") or block.get("mimeType") or default_mime
-        saved = media_store.save_media(raw, mime_type=mime, tool=tool_name, seq=seq)
+        try:
+            saved = media_store.save_media(raw, mime_type=mime, tool=tool_name, seq=seq)
+        except MediaStoreWriteUnavailable:
+            # #5653: the store's own project-wide storage cap pre-check
+            # refused this write — same "no path obtainable" shape as
+            # undecodable base64 just above, degrades the same way.
+            return None
         return {"path": saved["path"], "mime_type": saved.get("mime_type", mime), "type": block_type}
     return None
 
