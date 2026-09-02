@@ -3190,24 +3190,50 @@ async def retry_loop(
                     # re-raise, the ONE RETRYABLE member this site already
                     # special-cased, is UNCHANGED behavior).
                     #
-                    # OVERFLOW: unchanged from #3783 stage 3's own
-                    # ratified default — wrapped and offered to the
-                    # shrink ladder below.
+                    # OVERFLOW (including the bare "matches none of FATAL/
+                    # RETRYABLE" fallthrough): #3783 stage 3's own
+                    # OWNER-RATIFIED default for THIS site specifically —
+                    # wrapped and offered to the shrink ladder below,
+                    # bounded by the same-cause cap
+                    # (test_input_independent_exception_hits_the_cap_
+                    # not_an_infinite_loop). Deliberately still the bare
+                    # ``classify_llm_failure`` check, not the stronger
+                    # ``is_shrinkable_overflow`` (below).
                     #
-                    # #5622: this call site used to check
-                    # ``classify_llm_failure(exc) is not LLMFailureClass.
-                    # OVERFLOW`` alone — the ONE call site (of 3 across
-                    # the codebase) that had drifted off the shared
-                    # ``is_shrinkable_overflow`` predicate the other 2
-                    # (``router_loop_driver.py``) already use, #5577's
-                    # own "2 discriminators for one question" shape
-                    # recurring. `classify_llm_failure`'s bare fallthrough
-                    # is OVERFLOW for the keyword-only case too — a
-                    # non-context-shaped exception whose message merely
-                    # RESEMBLES one (no typed `ContextWindowExceededError`,
-                    # no 413, no real overflow keyword) used to still
-                    # enter the shrink ladder here; now it does not.
-                    if not is_shrinkable_overflow(exc):
+                    # #5622 (issue) proposed unifying this site onto
+                    # ``is_shrinkable_overflow`` too — the SAME stronger
+                    # predicate #5593 introduced for
+                    # ``router_loop_driver.py``'s own 2 arms. Tried, then
+                    # reverted here: #5593's own PR body scopes that
+                    # stronger default EXPLICITLY to "this module's [i.e.
+                    # router_loop_driver.py's] own two call sites only" —
+                    # because those 2 arms catch bare ``Exception`` from
+                    # ``loop.run()`` (literally anything), where an
+                    # unclassifiable exception silently walking the whole
+                    # shrink ladder is unbounded blast radius. THIS site
+                    # only ever catches an exception from inside
+                    # ``compact()`` itself — the narrower surface #3783's
+                    # owner ruling ("only exceptions that make compaction
+                    # IMPOSSIBLE TO CONTINUE should propagate; the default
+                    # should be recover") deliberately targeted, and
+                    # #3783 stage 3's own ratified test still exercises
+                    # today. Applying #5593's stronger check here silently
+                    # inverted that owner ruling for this one site,
+                    # regressing 11 pre-existing tests (#3783/#4947/#5630)
+                    # under CI (lead-coder's own catch, PR #5642) — see
+                    # that PR's own body for the full trace.
+                    #
+                    # The real, still-valid gain #5622 (issue) named is
+                    # KEPT: ``is_shrinkable_overflow`` itself now lives
+                    # here (public, importable) instead of being
+                    # duplicated as a router_loop_driver.py-local
+                    # function — router_loop_driver.py's own 2 sites
+                    # import it from here unchanged. Only the 3rd
+                    # site's OWN discriminator stays the bare
+                    # ``classify_llm_failure`` check it always was — 2
+                    # deliberately different discriminators for 2
+                    # deliberately different blast radii, not a drift.
+                    if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
                         raise
                     raise CompactionOverflowError(str(exc)) from exc
 
