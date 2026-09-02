@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from reyn.config_axis import Axis
+
 
 @dataclass
 class EmbeddingIndexConfig:
@@ -52,8 +54,8 @@ class EmbeddingIndexConfig:
                          deferring to an owner:decide gate.
     """
 
-    actions: bool = True
-    repo_knowledge: bool = False
+    actions: bool = field(default=True, metadata={"axis": Axis.PROJECT})
+    repo_knowledge: bool = field(default=False, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -163,19 +165,20 @@ class EmbeddingConfig:
                        exceeds this value (UX gap fix B, ADR-0033 §2.1).
     """
 
-    enabled: bool = False
+    enabled: bool = field(default=False, metadata={"axis": Axis.PROJECT})
     index: EmbeddingIndexConfig = field(default_factory=EmbeddingIndexConfig)
-    default_class: str = "standard"
+    default_class: str = field(default="standard", metadata={"axis": Axis.PROJECT})
     classes: dict[str, EmbeddingClassSpec] = field(
-        default_factory=lambda: dict(_DEFAULT_EMBEDDING_CLASSES)
+        default_factory=lambda: dict(_DEFAULT_EMBEDDING_CLASSES),
+        metadata={"axis": Axis.PROJECT},
     )
-    batch_size: int = 100
-    max_concurrent_batches: int = 1
-    max_retries: int = 3
-    retry_backoff: Literal["exponential", "linear"] = "exponential"
-    timeout: float = 60.0
-    tokenizer: str = "cl100k_base"
-    cost_warn_threshold: int = 10000
+    batch_size: int = field(default=100, metadata={"axis": Axis.PROJECT})
+    max_concurrent_batches: int = field(default=1, metadata={"axis": Axis.PROJECT})
+    max_retries: int = field(default=3, metadata={"axis": Axis.PROJECT})
+    retry_backoff: Literal["exponential", "linear"] = field(default="exponential", metadata={"axis": Axis.PROJECT})
+    timeout: float = field(default=60.0, metadata={"axis": Axis.PROJECT})
+    tokenizer: str = field(default="cl100k_base", metadata={"axis": Axis.PROJECT})
+    cost_warn_threshold: int = field(default=10000, metadata={"axis": Axis.PROJECT})
 
     def resolve_class(self, name: str) -> EmbeddingClassSpec:
         """Look up a class by name; raise ``KeyError`` if unknown."""

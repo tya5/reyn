@@ -20,6 +20,7 @@ are not tied to any specific domain.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from reyn.config_axis import Axis
 from reyn.llm.pricing import (
     CostBreakdown,
     EmbeddingCost,
@@ -48,13 +50,33 @@ logger = logging.getLogger(__name__)
 #: hand-maintained literal set (PREFERENCE_KEYS stays the ONE declaration
 #: of the ③ axis's vocabulary; this module only needs to know which of
 #: those keys IT is the consumer for).
+#:
+#: #4206 (this migration): PREFERENCE_KEYS itself now derives from
+#: ``walk_config_schema()`` — which walks ``ReynConfig``, which imports
+#: THIS module's own ``CostConfig``/``CostLimitConfig`` (via
+#: ``config/chat.py``). Computing this set at MODULE IMPORT time (the
+#: pre-#4206 shape, a plain module-level assignment) would therefore
+#: import ``reyn.runtime.preferences`` while THIS module is still
+#: mid-initialization — a genuine circular import (verified directly:
+#: ``ImportError: cannot import name 'PREFERENCE_KEYS' from partially
+#: initialized module``), not merely an ordering nuisance. Deferred via
+#: module ``__getattr__`` (PEP 562) instead: every real reference stays
+#: the same bare ``_WARN_RATIO_PREFERENCE_KEYS`` name (no caller,
+#: including ``test_4724_warn_ratio_overrides.py``'s own module-level
+#: import, needs to change), but the VALUE is computed lazily on first
+#: access — by which point ``ReynConfig``'s full class tree (including
+#: this module's own classes) has already finished importing.
+@functools.cache
 def _load_warn_ratio_preference_keys() -> "frozenset[str]":
     from reyn.runtime.preferences import PREFERENCE_KEYS
 
     return frozenset(k for k in PREFERENCE_KEYS if k.startswith("cost."))
 
 
-_WARN_RATIO_PREFERENCE_KEYS: "frozenset[str]" = _load_warn_ratio_preference_keys()
+def __getattr__(name: str) -> object:
+    if name == "_WARN_RATIO_PREFERENCE_KEYS":
+        return _load_warn_ratio_preference_keys()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 #: Models already reported as unpriced (#3695). Once per model per process:
 #: the condition holds for every call to that model, so a per-call warning
@@ -127,8 +149,8 @@ class CostLimitConfig:
     sets this key gets.
     """
 
-    hard_limit: float | None = None
-    warn_ratio: float = 0.8
+    hard_limit: float | None = field(default=None, metadata={"axis": Axis.BOUNDING})
+    warn_ratio: float = field(default=0.8, metadata={"axis": Axis.PREFERENCE, "override_enabled": True})
 
     @property
     def warn_threshold(self) -> float | None:
@@ -180,18 +202,19 @@ def _validate_warn_ratio_overrides(overrides: "dict[str, float] | None") -> None
         return
     from reyn.runtime.preferences import PREFERENCE_KEYS, UnknownPreferenceKeyError
 
-    unknown = set(overrides) - _WARN_RATIO_PREFERENCE_KEYS
+    warn_ratio_keys = _load_warn_ratio_preference_keys()
+    unknown = set(overrides) - warn_ratio_keys
     if unknown:
         raise UnknownPreferenceKeyError(
             f"warn_ratio_overrides: unrecognized key(s) {sorted(unknown)!r} — "
             f"not in the cost.* warn-ratio subset of PREFERENCE_KEYS "
-            f"({sorted(_WARN_RATIO_PREFERENCE_KEYS)!r})."
+            f"({sorted(warn_ratio_keys)!r})."
         )
     # Defensive: PREFERENCE_KEYS itself is the ONE declaration (#4206); this
     # subset is DERIVED from it (never a second, independently-drifting
     # literal set), so the assert below is a not-both-drifted guard, not a
     # live check against operator input.
-    assert _WARN_RATIO_PREFERENCE_KEYS <= PREFERENCE_KEYS  # noqa: S101
+    assert warn_ratio_keys <= PREFERENCE_KEYS  # noqa: S101
 
 
 @dataclass
@@ -205,8 +228,8 @@ class CostConfig:
 
     per_agent_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     per_agent_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
-    rate_limit_per_minute: dict[str, int] = field(default_factory=dict)
-    rate_limit_warn_ratio: float = 0.8
+    rate_limit_per_minute: dict[str, int] = field(default_factory=dict, metadata={"axis": Axis.BOUNDING})
+    rate_limit_warn_ratio: float = field(default=0.8, metadata={"axis": Axis.PREFERENCE, "override_enabled": True})
     # PR25: persistent daily / monthly quota (reset automatically at period boundary)
     daily_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     daily_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)

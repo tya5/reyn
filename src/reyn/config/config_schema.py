@@ -67,6 +67,42 @@ class SchemaNode:
     ``str``, or a ``Literal[...]`` — ``None`` for dict leaves. Lets callers
     introspect valid values (e.g. pick a non-default ``Literal`` member)."""
 
+    axis: "object | None" = None
+    """#4206: the :class:`~reyn.config_axis.Axis` this leaf is
+    classified under (from ``field(metadata={"axis": Axis.X})``), or
+    ``None`` for a leaf with no axis metadata yet. Typed ``object`` (not
+    ``Axis`` directly) to keep this module free of a hard import on
+    ``config_axis`` — the SAME reason ``desc``/``fallback`` extraction
+    above reads raw ``field.metadata`` rather than importing their own
+    owning modules. ``tests/config/test_4206_axis_coverage.py`` is the
+    ONE place ``None`` here is asserted to never occur for a real leaf."""
+
+    override_enabled: bool = False
+    """#4206: True when this leaf's field ALSO declares
+    ``"override_enabled": True`` alongside its axis — a SEPARATE,
+    narrower claim than the axis itself ("this leaf has a LIVE
+    agent/session override receptacle today", not just "this leaf is
+    classified under axis X"; see ``reyn.config_axis.Axis``'s own
+    module docstring). ``runtime.bounding.BOUNDING_KEYS`` /
+    ``runtime.preferences.PREFERENCE_KEYS`` derive from exactly this
+    flag (filtered by axis), never from axis membership alone."""
+
+    override_key: "str | None" = None
+    """#4206: the key an operator actually writes inside a ``bounding:``/
+    ``preferences:`` override block for this leaf, when it differs from
+    ``key`` (this leaf's own full dotted ``ReynConfig`` path) — from
+    ``field(metadata={"override_key": "..."})``. ``None`` (the default)
+    means "same as ``key``", true for every #4206 PREFERENCE_KEYS member
+    today. The ONE real exception found deriving ``BOUNDING_KEYS``:
+    ``llm.model``'s own override block writes the bare ``model`` (an
+    established, tested operator-facing vocabulary — ``bounding: {model:
+    ...}`` — that predates this leaf's own nesting under ``llm:``, and
+    which ``BOUNDING_KEYS``/``compose_model_ceiling`` callers already
+    read by that bare name). Never used for a leaf's OWN identity
+    (``key`` stays canonical everywhere else, incl. ``reyn config get/
+    set``) — only for what the SEPARATE override-block vocabulary
+    accepts."""
+
 
 #: Sentinel for fields whose default can only be computed by calling
 #: ``default_factory()``.  We eagerly call the factory so this sentinel
@@ -911,6 +947,9 @@ def _walk(
                 default=default,
                 is_dict_leaf=True,
                 desc=desc,
+                axis=_field_axis(dc_field),
+                override_enabled=_field_override_enabled(dc_field),
+                override_key=_field_override_key(dc_field),
             ))
         elif dataclasses.is_dataclass(inner):
             # Nested dataclass — recurse.
@@ -926,6 +965,9 @@ def _walk(
                 is_dict_leaf=False,
                 desc=desc,
                 field_type=inner,
+                axis=_field_axis(dc_field),
+                override_enabled=_field_override_enabled(dc_field),
+                override_key=_field_override_key(dc_field),
             ))
 
 
@@ -935,6 +977,38 @@ def _field_desc(f: dataclasses.Field) -> str:  # type: ignore[type-arg]
     if meta and isinstance(meta, typing.Mapping):
         return str(meta.get("desc", ""))
     return ""
+
+
+def _field_axis(f: dataclasses.Field) -> "object | None":  # type: ignore[type-arg]
+    """Extract ``axis`` from ``field(metadata={'axis': Axis.X, ...})``, or
+    return ``None`` — the SAME extraction shape :func:`_field_desc` uses
+    for ``desc``, mirrored here for #4206's own axis metadata."""
+    meta = getattr(f, "metadata", None)
+    if meta and isinstance(meta, typing.Mapping):
+        return meta.get("axis")
+    return None
+
+
+def _field_override_enabled(f: dataclasses.Field) -> bool:  # type: ignore[type-arg]
+    """Extract ``override_enabled`` from ``field(metadata={'override_enabled':
+    True, ...})``, or return ``False`` — see :class:`SchemaNode`'s own
+    ``override_enabled`` field docstring for why this is a SEPARATE flag
+    from ``axis``."""
+    meta = getattr(f, "metadata", None)
+    if meta and isinstance(meta, typing.Mapping):
+        return bool(meta.get("override_enabled", False))
+    return False
+
+
+def _field_override_key(f: dataclasses.Field) -> "str | None":  # type: ignore[type-arg]
+    """Extract ``override_key`` from ``field(metadata={'override_key':
+    '...', ...})``, or return ``None`` — see :class:`SchemaNode`'s own
+    ``override_key`` field docstring."""
+    meta = getattr(f, "metadata", None)
+    if meta and isinstance(meta, typing.Mapping):
+        value = meta.get("override_key")
+        return str(value) if value is not None else None
+    return None
 
 
 def _is_schema_internal(f: dataclasses.Field) -> bool:  # type: ignore[type-arg]

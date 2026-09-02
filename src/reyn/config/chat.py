@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from reyn.config_axis import Axis
+
 # ── FP-0004: safety: section (user-facing unified schema) ──────────────────
 # PR22: CostConfig + CostLimitConfig live in `reyn.runtime.budget` (re-exported here
 # for ReynConfig typing). They include domain logic (warn_threshold etc.)
@@ -59,10 +61,10 @@ class LoopConfig:
     condition is a single observed cycle, observer lead-coder).
     """
 
-    max_router_calls_per_turn: int = 3
-    max_agent_hops: int = 3
-    max_router_iterations: int = 5
-    max_tool_calls_per_turn: int = 50
+    max_router_calls_per_turn: int = field(default=3, metadata={"axis": Axis.BOUNDING})
+    max_agent_hops: int = field(default=3, metadata={"axis": Axis.BOUNDING})
+    max_router_iterations: int = field(default=5, metadata={"axis": Axis.BOUNDING})
+    max_tool_calls_per_turn: int = field(default=50, metadata={"axis": Axis.BOUNDING})
 
 
 @dataclass
@@ -101,10 +103,10 @@ class TimeoutConfig:
             CPU load; it does not itself change the default.
     """
 
-    llm_call_seconds: float = 60.0
-    llm_max_retries: int = 3
-    chain_seconds: float = 60.0
-    mcp_probe_seconds: float = 5.0
+    llm_call_seconds: float = field(default=60.0, metadata={"axis": Axis.BOUNDING})
+    llm_max_retries: int = field(default=3, metadata={"axis": Axis.BOUNDING})
+    chain_seconds: float = field(default=60.0, metadata={"axis": Axis.BOUNDING})
+    mcp_probe_seconds: float = field(default=5.0, metadata={"axis": Axis.BOUNDING})
 
 
 ON_LIMIT_MODES = ("interactive", "unattended", "auto_extend")
@@ -152,9 +154,9 @@ class OnLimitConfig:
     as a refusal.
     """
 
-    mode: Literal["interactive", "unattended", "auto_extend"] = "interactive"
-    auto_extend_times: int = 1
-    ask_timeout_seconds: float = 0.0
+    mode: Literal["interactive", "unattended", "auto_extend"] = field(default="interactive", metadata={"axis": Axis.BOUNDING})
+    auto_extend_times: int = field(default=1, metadata={"axis": Axis.BOUNDING})
+    ask_timeout_seconds: float = field(default=0.0, metadata={"axis": Axis.BOUNDING})
 
 
 # ``safety.threat_scan.capability_narrowing`` — the untrusted-content CAPABILITY
@@ -203,12 +205,12 @@ class ThreatScanConfig:
       ``_untrusted`` profile), one ladder of three settings. See
       ``CAPABILITY_NARROWING_MODES`` below.
     """
-    enabled: bool = True
-    fail_open: bool = True
-    fence_enabled: bool = True
-    block_severity: str = "block"
-    custom_patterns: list = field(default_factory=list)
-    capability_narrowing: str = "off"
+    enabled: bool = field(default=True, metadata={"axis": Axis.BOUNDING})
+    fail_open: bool = field(default=True, metadata={"axis": Axis.BOUNDING})
+    fence_enabled: bool = field(default=True, metadata={"axis": Axis.BOUNDING})
+    block_severity: str = field(default="block", metadata={"axis": Axis.BOUNDING})
+    custom_patterns: list = field(default_factory=list, metadata={"axis": Axis.BOUNDING})
+    capability_narrowing: str = field(default="off", metadata={"axis": Axis.BOUNDING})
 
     def __post_init__(self) -> None:
         if self.capability_narrowing not in CAPABILITY_NARROWING_MODES:
@@ -254,9 +256,9 @@ class CostWarnConfig:
       session (no TTY) fail-closes (the switch is denied) since it cannot
       confirm. Session-startup stays warn-only regardless of this flag.
     """
-    enabled: bool = True
-    model_threshold_per_1m_input_usd: float = 5.0
-    block_on_high_cost: bool = False
+    enabled: bool = field(default=True, metadata={"axis": Axis.PREFERENCE})
+    model_threshold_per_1m_input_usd: float = field(default=5.0, metadata={"axis": Axis.PREFERENCE})
+    block_on_high_cost: bool = field(default=False, metadata={"axis": Axis.PREFERENCE})
 
 
 @dataclass
@@ -316,14 +318,14 @@ class OffloadConfig:
     value MUST go through ``context_builder.INLINE_CAP_BYTES_PER_TOKEN``,
     never a second independently-derived ratio.
     """
-    enabled: bool = False
-    max_inline_bytes: int = 16_384
-    preview_head_chars: int = 6_000
-    preview_tail_chars: int = 2_000
-    cap_ceil_tokens: int = 4_096
-    cap_alpha: float = 0.5
-    structured_inline_max_chars: int = 2_000
-    structured_preview_chars: int = 600
+    enabled: bool = field(default=False, metadata={"axis": Axis.PROJECT})
+    max_inline_bytes: int = field(default=16_384, metadata={"axis": Axis.BOUNDING})
+    preview_head_chars: int = field(default=6_000, metadata={"axis": Axis.BOUNDING})
+    preview_tail_chars: int = field(default=2_000, metadata={"axis": Axis.BOUNDING})
+    cap_ceil_tokens: int = field(default=4_096, metadata={"axis": Axis.BOUNDING})
+    cap_alpha: float = field(default=0.5, metadata={"axis": Axis.BOUNDING})
+    structured_inline_max_chars: int = field(default=2_000, metadata={"axis": Axis.BOUNDING})
+    structured_preview_chars: int = field(default=600, metadata={"axis": Axis.BOUNDING})
 
 
 def _build_offload_config(raw: object) -> "OffloadConfig":
@@ -386,8 +388,8 @@ class RenderTemplateConfig:
     that a runaway generator stops quickly; an operator raises them for a large
     report or lowers them to harden a shared host.
     """
-    max_output_chars: int = 256_000
-    wall_clock_seconds: float = 5.0
+    max_output_chars: int = field(default=256_000, metadata={"axis": Axis.PROJECT})
+    wall_clock_seconds: float = field(default=5.0, metadata={"axis": Axis.PROJECT})
 
 
 def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
@@ -464,7 +466,7 @@ class ReadCapConfig:
     claim like "another tool uses N" that a reader could dispute without
     being able to verify it against reyn's own behaviour.
     """
-    inline_bytes: int = 10_240   # 10 KiB
+    inline_bytes: int = field(default=10_240, metadata={"axis": Axis.BOUNDING})   # 10 KiB
 
 
 def _build_read_cap_config(raw: object) -> "ReadCapConfig":
@@ -523,7 +525,7 @@ class HistoryResidentConfig:
     one would make ordinary scrollback/rewind pay for reloads more often than
     necessary.
     """
-    max_bytes: int = 256 * 1024 * 1024  # 256 MiB
+    max_bytes: int = field(default=256 * 1024 * 1024, metadata={"axis": Axis.BOUNDING})  # 256 MiB
 
 
 def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
@@ -571,7 +573,7 @@ class ImageConfig:
     short terminal (or one who wants larger previews) can change it
     without a code edit.
     """
-    row_height_cells: int = 20
+    row_height_cells: int = field(default=20, metadata={"axis": Axis.PREFERENCE})
 
 
 def _build_image_config(raw: object) -> "ImageConfig":
@@ -613,7 +615,7 @@ class TuiConfig:
     window — the config key exists specifically so an operator who wants
     an earlier or later warning can change it without a code edit.
     """
-    context_usage_warn_percent: int = 80
+    context_usage_warn_percent: int = field(default=80, metadata={"axis": Axis.PREFERENCE})
 
 
 def _build_tui_config(raw: object) -> "TuiConfig":
@@ -684,12 +686,12 @@ class SpawnConfig:
             fails the step. ``0`` = unlimited.
     """
 
-    max_depth: int = 10
-    max_children: int = 20
+    max_depth: int = field(default=10, metadata={"axis": Axis.BOUNDING})
+    max_children: int = field(default=20, metadata={"axis": Axis.BOUNDING})
     # Pipeline S5 fan-out spawn bounds (#2187 for_each). Conservative finite
     # defaults; 0 = unlimited (operator opt-out).
-    max_pipeline_fan_out_depth: int = 5
-    max_pipeline_spawns: int = 100
+    max_pipeline_fan_out_depth: int = field(default=5, metadata={"axis": Axis.BOUNDING})
+    max_pipeline_spawns: int = field(default=100, metadata={"axis": Axis.BOUNDING})
 
 
 @dataclass
@@ -721,11 +723,11 @@ class SafetyConfig:
 @dataclass
 class CompactionSectionCaps:
     """Per-section token budgets for chat_summary BODY."""
-    topic_arc: int = 200
-    decisions: int = 400
-    pending: int = 400
-    session_user_facts: int = 200
-    artifacts_referenced: int = 300
+    topic_arc: int = field(default=200, metadata={"axis": Axis.BOUNDING})
+    decisions: int = field(default=400, metadata={"axis": Axis.BOUNDING})
+    pending: int = field(default=400, metadata={"axis": Axis.BOUNDING})
+    session_user_facts: int = field(default=200, metadata={"axis": Axis.BOUNDING})
+    artifacts_referenced: int = field(default=300, metadata={"axis": Axis.BOUNDING})
 
 
 @dataclass
@@ -768,25 +770,25 @@ class CompactionConfig:
         "tail":             15,
         "new_msg":          10,
         "compaction_batch": 60,
-    })
+    }, metadata={"axis": Axis.PREFERENCE})
     section_weights: dict = field(default_factory=lambda: {
         "topic_arc":            5,    # abstract suppression
         "decisions":            40,   # specific data emphasis
         "pending":              25,
         "session_user_facts":   10,
         "artifacts_referenced": 35,   # path/line preservation
-    })
+    }, metadata={"axis": Axis.PREFERENCE})
     # section_caps_spec_tokens: static overhead budget for section_token_caps
     # serialisation in the compactor prompt.
-    section_caps_spec_tokens: int = 100
+    section_caps_spec_tokens: int = field(default=100, metadata={"axis": Axis.BOUNDING})
     # Tokeniser opt-out (Axis 10): set True for latency-sensitive deployments.
-    use_chars4_estimate: bool = False
-    body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
+    use_chars4_estimate: bool = field(default=False, metadata={"axis": Axis.BOUNDING})
+    body_token_cap: int = field(default=1500, metadata={"axis": Axis.BOUNDING})          # hard cap on summary body tokens (post-truncation)
     # #271 re-summarize (T2): max LLM re-compression passes when a produced
     # topic_arc overshoots body_budget, before the deterministic T3
     # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
     # skip T2 (straight to the floor, = pre-#271 behaviour).
-    resummarize_passes: int = 1
+    resummarize_passes: int = field(default=1, metadata={"axis": Axis.BOUNDING})
     # #4883: bounded re-prompt budget when the compaction JSON response is
     # missing topic_arc (a syntactically-valid but content-free response,
     # e.g. "{}", previously accepted silently as an empty summary). #4951-B:
@@ -805,14 +807,14 @@ class CompactionConfig:
     # existing try/except turns that into a compaction_failed event, never
     # a silently-accepted empty summary) — operator-tunable via this field
     # if a specific deployment's models warrant a different budget.
-    max_schema_reprompt_attempts: int = 1
+    max_schema_reprompt_attempts: int = field(default=1, metadata={"axis": Axis.BOUNDING})
     # #5296: stop-line for same-turn recovery after a measured payload
     # constraint. This stop-line applies only to the irreversible
     # compaction step; it never controls spill. Spill is triggered by the
     # constraint itself, not by this policy. `never` permits only reversible
     # reductions; `next_turn` (the default) preserves compaction for the
     # following turn.
-    fold_persist_policy: Literal["never", "next_turn"] = "next_turn"
+    fold_persist_policy: Literal["never", "next_turn"] = field(default="next_turn", metadata={"axis": Axis.PREFERENCE})
     # #5592 (owner ruling, real-machine incident: 2469 spillable
     # raw_middle candidates -> 2469 compact() calls at ~6s each, ~4.1
     # hours, same shape independently possible on the main_call/head-tail
@@ -825,7 +827,7 @@ class CompactionConfig:
     # escape hatch: it is NOT the safer choice (a rejected request is
     # still billed and its own size is not observable from inside reyn —
     # see docs/reference/config/reyn-yaml.md's own entry for this field).
-    spill_granularity: Literal["tier", "turn"] = "tier"
+    spill_granularity: Literal["tier", "turn"] = field(default="tier", metadata={"axis": Axis.BOUNDING})
     # #5597 (owner real machine: a compaction LLM call with no per-request
     # timeout hung 11+ minutes when the upstream stopped responding — the
     # main-loop call already has `safety.timeout.llm_call_seconds`; this
@@ -849,7 +851,7 @@ class CompactionConfig:
     # Unmeasured today (lead-coder's own real-machine incident had only 2
     # data points, 18.7s and >4min-before-500) — the default stays
     # inherited, not a new number, until a real p95 says otherwise.
-    llm_call_seconds: "float | None" = None
+    llm_call_seconds: "float | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
     # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
     # retry_loop's own `max_iterations` safety cap, previously a signature
     # default only (8) with no operator-facing knob: router_loop_driver.py
@@ -873,7 +875,7 @@ class CompactionConfig:
     # warns once at load if the key is set. A follow-up PR removes the
     # field/parsing entirely and registers the key in
     # `check_retired_config_keys_denylist.py`'s denylist.
-    max_shrink_iterations: int = 8
+    max_shrink_iterations: int = field(default=8, metadata={"axis": Axis.BOUNDING})
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
 
     def __post_init__(self) -> None:
@@ -908,9 +910,9 @@ class ReasoningConfig:
       ``continuity``. ``<= 0`` (e.g. 0 / -1) = unbounded (keep all). Bounding
       matters on gemini (no provider auto-filter → reasoning is billed in full).
     """
-    continuity: bool = True
-    display: bool = True
-    recent_turns: int = 3
+    continuity: bool = field(default=True, metadata={"axis": Axis.PREFERENCE})
+    display: bool = field(default=True, metadata={"axis": Axis.PREFERENCE, "override_enabled": True})
+    recent_turns: int = field(default=3, metadata={"axis": Axis.PREFERENCE})
 
 
 # #3273 (#4223 removed ``inline``/``auto`` — owner instruction, 2026-08-11):
@@ -956,8 +958,8 @@ class GutterConfig:
     ``FlowView`` flags — ``left_gutter_visible`` / ``right_gutter_visible``);
     reyn does not invent a coarser or finer one.
     """
-    left: bool = True
-    right: bool = True
+    left: bool = field(default=True, metadata={"axis": Axis.PREFERENCE})
+    right: bool = field(default=True, metadata={"axis": Axis.PREFERENCE})
 
 
 @dataclass
@@ -1051,13 +1053,13 @@ class ChatConfig:
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
-    render_mode: Literal["alt-screen", "plain"] = "alt-screen"
+    render_mode: Literal["alt-screen", "plain"] = field(default="alt-screen", metadata={"axis": Axis.PREFERENCE})
     gutters: GutterConfig = field(default_factory=GutterConfig)
-    neutralize_body: bool = False
-    image_url_schemes: "list[str]" = field(default_factory=list)
-    empty_stop_retry: bool = False
-    theme: "str | None" = None
-    stream_repaint_min_interval: float = 1 / 30
+    neutralize_body: bool = field(default=False, metadata={"axis": Axis.CAPABILITY})
+    image_url_schemes: "list[str]" = field(default_factory=list, metadata={"axis": Axis.CAPABILITY})
+    empty_stop_retry: bool = field(default=False, metadata={"axis": Axis.BOUNDING})
+    theme: "str | None" = field(default=None, metadata={"axis": Axis.PREFERENCE})
+    stream_repaint_min_interval: float = field(default=1 / 30, metadata={"axis": Axis.PREFERENCE})
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:

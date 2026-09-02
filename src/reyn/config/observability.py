@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from reyn.config_axis import Axis
+
 
 @dataclass
 class OtelConfig:
@@ -33,10 +35,10 @@ class OtelConfig:
             convention; only enable against a trusted collector).
     """
 
-    endpoint: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
-    service_name: str = "reyn"
-    capture_content: bool = False
+    endpoint: str = field(default="", metadata={"axis": Axis.PROJECT})
+    headers: dict[str, str] = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
+    service_name: str = field(default="reyn", metadata={"axis": Axis.PROJECT})
+    capture_content: bool = field(default=False, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass

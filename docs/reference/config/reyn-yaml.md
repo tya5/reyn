@@ -685,14 +685,14 @@ llm:
 
 ### `llm.router` fields
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `use` | bool | `false` | Master switch. `false` → direct `litellm.acompletion`. Supersedes `REYN_LLM_USE_ROUTER`. |
-| `num_retries` | int | `3` | Infra-exception retry count (Retry-After aware). Supersedes `REYN_LLM_ROUTER_NUM_RETRIES`. |
-| `fallbacks` | map | `{}` | `primary_model → [fallback_model, …]`. Empty → single-deployment Router (no chain). |
-| `cooldown_time` | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
-| `allowed_fails` | int\|null | `null` | Failures before a deployment is cooled down. |
-| `retry_policy` | map\|null | `null` | Per-exception-type retry counts. Absent (null) → litellm defaults (`num_retries` applies uniformly). When set, constructs a `litellm.RetryPolicy` and passes it to the Router. Supported keys: `RateLimitErrorRetries`, `TimeoutErrorRetries`, `BadRequestErrorRetries`, `AuthenticationErrorRetries`, `ContentPolicyViolationErrorRetries`, `InternalServerErrorRetries`. |
+| Field | Axis | Type | Default | Meaning |
+|---|---|---|---|---|
+| `use` | project | bool | `false` | Master switch. `false` → direct `litellm.acompletion`. Supersedes `REYN_LLM_USE_ROUTER`. |
+| `num_retries` | project | int | `3` | Infra-exception retry count (Retry-After aware). Supersedes `REYN_LLM_ROUTER_NUM_RETRIES`. |
+| `fallbacks` | project | map | `{}` | `primary_model → [fallback_model, …]`. Empty → single-deployment Router (no chain). |
+| `cooldown_time` | project | float\|null | `null` | Seconds a deployment is cooled down after `allowed_fails` failures. Only meaningful with a fallback chain. |
+| `allowed_fails` | project | int\|null | `null` | Failures before a deployment is cooled down. |
+| `retry_policy` | project | map\|null | `null` | Per-exception-type retry counts. Absent (null) → litellm defaults (`num_retries` applies uniformly). When set, constructs a `litellm.RetryPolicy` and passes it to the Router. Supported keys: `RateLimitErrorRetries`, `TimeoutErrorRetries`, `BadRequestErrorRetries`, `AuthenticationErrorRetries`, `ContentPolicyViolationErrorRetries`, `InternalServerErrorRetries`. |
 
 On the Router path, retry count is **config-only**: `num_retries` is taken from
 `llm.router.num_retries` (a per-call `max_retries` is not applied), so the retry
@@ -722,10 +722,10 @@ Controls the **timing** of the Reyn self-retry layer only (semantic-retry
 behaviours — EmptyLLMResponseError, empty\_stop\_retry, compaction shrink — are
 unaffected). Both defaults are `true`.
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `jitter` | bool | `true` | Apply equal jitter (AWS pattern): `sleep = base/2 + uniform(0, base/2)` where `base = min(base_s * 2**attempt, max_backoff)`. Range `[base/2, base]`. Prevents thundering herd when parallel chains retry in lockstep. `false` → pure exponential (2 s, 4 s, 8 s, 16 s). |
-| `respect_retry_after` | bool | `true` | When a retryable exception carries a `Retry-After` header (delta-seconds **or** HTTP-date), honour it (capped at `_LLM_RETRY_MAX_BACKOFF_S` = 16 s) **instead of** the jittered backoff. Falls back to jittered backoff when the header is absent or unparseable. `false` → always use jittered backoff. |
+| Field | Axis | Type | Default | Meaning |
+|---|---|---|---|---|
+| `jitter` | project | bool | `true` | Apply equal jitter (AWS pattern): `sleep = base/2 + uniform(0, base/2)` where `base = min(base_s * 2**attempt, max_backoff)`. Range `[base/2, base]`. Prevents thundering herd when parallel chains retry in lockstep. `false` → pure exponential (2 s, 4 s, 8 s, 16 s). |
+| `respect_retry_after` | project | bool | `true` | When a retryable exception carries a `Retry-After` header (delta-seconds **or** HTTP-date), honour it (capped at `_LLM_RETRY_MAX_BACKOFF_S` = 16 s) **instead of** the jittered backoff. Falls back to jittered backoff when the header is absent or unparseable. `false` → always use jittered backoff. |
 
 > **Router path**: when `llm.router.use: true`, the litellm.Router owns
 > infra-exception retry with its own `Retry-After` respect. The `llm.retry`
@@ -783,10 +783,10 @@ marker (2 columns) and a right elapsed/token readout (12 columns) — and each
 costs its width on **every** row. These two flags set what the pane opens
 with; they are independent, matching the underlying widget's own granularity.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `left` | bool | `true` | Show the left (state-marker) gutter when the pane opens. |
-| `right` | bool | `true` | Show the right (elapsed / turn-token) gutter when the pane opens. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `left` | preference | bool | `true` | Show the left (state-marker) gutter when the pane opens. |
+| `right` | preference | bool | `true` | Show the right (elapsed / turn-token) gutter when the pane opens. |
 
 Either can also be toggled at any time from the keyboard — `ctrl+g` (left) and
 `ctrl+t` (right), both listed in the TUI's Help pane. **A keyboard toggle is
@@ -841,9 +841,9 @@ not to "tool-result rendering" as a whole; the summary line, the expanded
 detail view, and a failed call's own error line are unconditionally
 covered either way.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `neutralize_body` | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `neutralize_body` | capability | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
 
 ### `chat.image_url_schemes`
 
@@ -860,9 +860,9 @@ so the fetch always routes through the SSRF-pinned client
 (`_network.py`'s `build_async_http_client(pin_ssrf=True)`) unconditionally,
 independent of this scheme setting.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `image_url_schemes` | list[str] | `[]` | Restrict `present`'s image-src fetch to these schemes; empty = unrestricted (http + https). |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `image_url_schemes` | capability | list[str] | `[]` | Restrict `present`'s image-src fetch to these schemes; empty = unrestricted (http + https). |
 
 ### `chat.empty_stop_retry`
 
@@ -890,9 +890,9 @@ is unmeasured (#3698's anyio cancel-scope is a candidate) — it only changes
 what happens *after* one is detected. The `router_empty_response_detected`
 audit event fires regardless of this setting.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `empty_stop_retry` | bool | `false` | Resend one self-describing continuation nudge (`role="system"`, #5273/#5274 — not a bare `"resume"`) when the router loop detects an empty `finish_reason="stop"` response. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `empty_stop_retry` | bounding | bool | `false` | Resend one self-describing continuation nudge (`role="system"`, #5273/#5274 — not a bare `"resume"`) when the router loop detects an empty `finish_reason="stop"` response. |
 
 ### `chat.theme`
 
@@ -906,9 +906,9 @@ is accepted — reyn's own theme, or any of Textual's built-ins (`nord`,
 Textual itself resolves the theme, not here, so this config layer never
 carries its own copy of Textual's theme registry to keep in sync.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `theme` | str \| null | `null` | Textual theme name for the interactive TUI. `null` keeps reyn's own default (`"reyn"`). |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `theme` | preference | str \| null | `null` | Textual theme name for the interactive TUI. `null` keeps reyn's own default (`"reyn"`). |
 
 ### `chat.stream_repaint_min_interval`
 
@@ -936,20 +936,20 @@ the default instead of disabling the budget — `0` means "repaint on every
 delta", the pre-#3570 behaviour the measurement above exists to keep
 operators out of.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `stream_repaint_min_interval` | float | `0.0333` (1/30) | Seconds between two repaints of the same streamed reply. Non-positive falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `stream_repaint_min_interval` | preference | float | `0.0333` (1/30) | Seconds between two repaints of the same streamed reply. Non-positive falls back to the default. |
 
 ### `chat.reasoning` fields
 
 Capture of the provider `reasoning_content` is **always-on**; these knobs gate
 what happens afterwards. Both `continuity` and `display` default **on**.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `continuity` | bool | `true` | Persist reasoning to history **and** replay the recent turns' reasoning into the next turn's system prompt (cross-user-turn reasoning continuity, a text-section mirroring `act_turn_reasoning`). Opt-out to disable persist + replay. |
-| `display` | bool | `true` | Surface reasoning in the UI (TUI + web, collapsible). Opt-out to hide it. Independent of `continuity`. |
-| `recent_turns` | int | `3` | How many recent turns' reasoning to replay under `continuity`. `<= 0` (e.g. `0` / `-1`) = unbounded (keep all). Bounding matters on Gemini — there is no provider auto-filter, so reasoning accumulates and is billed in full. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `continuity` | preference | bool | `true` | Persist reasoning to history **and** replay the recent turns' reasoning into the next turn's system prompt (cross-user-turn reasoning continuity, a text-section mirroring `act_turn_reasoning`). Opt-out to disable persist + replay. |
+| `display` | preference | bool | `true` | Surface reasoning in the UI (TUI + web, collapsible). Opt-out to hide it. Independent of `continuity`. |
+| `recent_turns` | preference | int | `3` | How many recent turns' reasoning to replay under `continuity`. `<= 0` (e.g. `0` / `-1`) = unbounded (keep all). Bounding matters on Gemini — there is no provider auto-filter, so reasoning accumulates and is billed in full. |
 
 > **Provider note**: on the Gemini-via-proxy path the reasoning is replayed as a
 > text section (the model sees it in-prompt), and `reasoning_content` is stripped
@@ -1080,11 +1080,11 @@ tool_use:
   universal_wrappers_enabled: true    # default; set false to opt out
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised direct tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
-| `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
-| `universal_wrappers_enabled` | bool | `true` | **#4552 PR-3 — moved here from `action_retrieval.universal_wrappers_enabled`** (architect's ruling: a `tool_use`/presentation-scheme property, not a retrieval setting). For a layer whose `scheme` resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block) (#4564 — this flag has NO effect on `search_actions` visibility in any scheme).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose `scheme` is `enumerate-all`/`retrieval` — those never consult this flag. Setting it explicitly `true` while `scheme` isn't `universal-category` has no effect; `reyn config validate` reports that combination (#4231(C)). |
+| Key | Axis | Type | Default | Description |
+|-----|---|------|---------|-------------|
+| `scheme` | project | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised direct tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
+| `transport` | project | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
+| `universal_wrappers_enabled` | project | bool | `true` | **#4552 PR-3 — moved here from `action_retrieval.universal_wrappers_enabled`** (architect's ruling: a `tool_use`/presentation-scheme property, not a retrieval setting). For a layer whose `scheme` resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block) (#4564 — this flag has NO effect on `search_actions` visibility in any scheme).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose `scheme` is `enumerate-all`/`retrieval` — those never consult this flag. Setting it explicitly `true` while `scheme` isn't `universal-category` has no effect; `reyn config validate` reports that combination (#4231(C)). |
 
 See [Concepts: universal catalog](../../concepts/tools-integrations/universal-catalog.md) for the full `list_actions` / `describe_action` / `invoke_action` wrapper semantics (category discovery, error-recovery `suggestions`, weak-model landing design).
 
@@ -1191,10 +1191,10 @@ Priority chain (highest first):
 
 `verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `web_fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
-| `web_fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `web_fetch.max_download_bytes` | bounding | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
+| `web_fetch.allow_private_ips` | capability | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
 
 > ℹ️ **#4274**: `web_fetch.*` now reaches every live chat session's
 > `web_fetch` op execution (`SessionFactoryConfig.web_fetch_config` →
@@ -1224,14 +1224,14 @@ gateway:
     tls_keyfile: /path/to/key.pem       # operator TLS key (T3); set together with tls_certfile
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `gateway.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
-| `gateway.default_design` | str | `null` | The OpenUI host's default design slug, served by `GET /api/web/config` (#4317). Resolution priority: `REYN_WEB_DEFAULT_DESIGN` env var → this field → first available design alphabetically. Was `web.default_design` pre-#4174-T4; T4's split enumerated `ws_max_size`/`auth`/`surfaces` but dropped this field entirely, leaving it with no address in the typed schema for a full cycle — #4317 gave it one. **A genuine behavior change, not a pure bugfix**: the old key was read via a raw `yaml.safe_load` of `reyn.yaml` that bypassed the loader/schema entirely, so it kept resolving `web.default_design:` correctly the whole time despite the schema no longer knowing that key — an operator still on the old key now gets nothing here (falls through to the next priority level) instead of the silently-surviving old value. `reyn config validate`/`migrate` surface the rename via the `"web"` `RenamedKeyHint`, alongside `auth`/`ws_max_size`/`surfaces`. |
-| `gateway.auth.token` | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so no gateway surface is ever left unauthenticated. The token gates **every** functional surface uniformly — the AG-UI chat routes, `/api`, `/a2a`, `/mcp`, and the resource-fetch routes — not the AG-UI surface alone. |
-| `gateway.auth.require_token_on_loopback` | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
-| `gateway.auth.tls_certfile` | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |
-| `gateway.auth.tls_keyfile` | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `gateway.ws_max_size` | project | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
+| `gateway.default_design` | project | str | `null` | The OpenUI host's default design slug, served by `GET /api/web/config` (#4317). Resolution priority: `REYN_WEB_DEFAULT_DESIGN` env var → this field → first available design alphabetically. Was `web.default_design` pre-#4174-T4; T4's split enumerated `ws_max_size`/`auth`/`surfaces` but dropped this field entirely, leaving it with no address in the typed schema for a full cycle — #4317 gave it one. **A genuine behavior change, not a pure bugfix**: the old key was read via a raw `yaml.safe_load` of `reyn.yaml` that bypassed the loader/schema entirely, so it kept resolving `web.default_design:` correctly the whole time despite the schema no longer knowing that key — an operator still on the old key now gets nothing here (falls through to the next priority level) instead of the silently-surviving old value. `reyn config validate`/`migrate` surface the rename via the `"web"` `RenamedKeyHint`, alongside `auth`/`ws_max_size`/`surfaces`. |
+| `gateway.auth.token` | project | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so no gateway surface is ever left unauthenticated. The token gates **every** functional surface uniformly — the AG-UI chat routes, `/api`, `/a2a`, `/mcp`, and the resource-fetch routes — not the AG-UI surface alone. |
+| `gateway.auth.require_token_on_loopback` | project | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
+| `gateway.auth.tls_certfile` | project | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |
+| `gateway.auth.tls_keyfile` | project | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
 
 **Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `gateway.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
 
@@ -1511,10 +1511,10 @@ fs_watch:
   debounce_seconds: 0.2   # optional
 ```
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `paths` | list[string] | `[]` | Directories watched recursively for create/modify/delete events. Empty (the default) → the watcher never starts, byte-identical to a build with no `fs_watch:` config. |
-| `debounce_seconds` | float | `0.2` | A burst of events for the same path within this window coalesces into a single `file_changed` fire (one logical change = one hook fire, not one fire per underlying filesystem event). |
+| Key | Axis | Type | Default | Description |
+|-----|---|------|---------|-------------|
+| `paths` | project | list[string] | `[]` | Directories watched recursively for create/modify/delete events. Empty (the default) → the watcher never starts, byte-identical to a build with no `fs_watch:` config. |
+| `debounce_seconds` | project | float | `0.2` | A burst of events for the same path within this window coalesces into a single `file_changed` fire (one logical change = one hook fire, not one fire per underlying filesystem event). |
 
 Requires the `watchdog` package: `pip install reyn[fs-watch]`. `paths`
 configured without the extra installed logs a warning once and disables the
@@ -1574,13 +1574,13 @@ sandbox:
 > longer a default; an operator who wants it back opts in. Still scope
 > `allow_write_paths` to the narrowest directories the process actually needs.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
-| `on_unsupported` | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable, `backend: auto` found no platform backend (the auto path honors this too), OR the selected backend **failed its enforcement self-test** (it is present but did not deny — such a backend is treated exactly like an absent one). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it works with the default `backend: auto` and against a present-but-inert backend). `ignore` silently falls back. |
-| `mode` | string | `compat` | #3823: which DEFAULT the resolved policy uses for a `policy` key the operator left **unset** below — never a key the operator wrote explicitly (an explicit `allow_X`/`deny_X` or bare bool always wins over `mode`). `compat` (default) leaves every axis at its compat default (nothing blocked; audit/events/timeout/cancel-teardown still apply). `strict` flips network/subprocess/env to their closed default (network off, subprocess denied, env passes nothing) — `allow_write_paths` is UNAFFECTED by mode (stays the caller-supplied per-op workspace floor, operator-unknowable) and read has no mode-based default at all (no `allow_read_paths` concept, #1199 — only an explicit `deny_read_paths` narrows either mode). Allowed: `{compat, strict}` — not `custom` (owner ruling: was never a third direction, was the symptom of `mode`/`policy` having no composition rule) and not `off` (expressible as `compat` with every axis at its compat default). |
-| `policy` | map | _none_ | **Agent-level (operator) sandbox policy, in the config vocabulary below (#3823).** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates, on the `network`/`subprocess`/`env` axes — **winning over** op-declared fields, so a skill or the LLM cannot widen it. `allow_write_paths` (and the read/write deny-lists) do NOT participate in that intersection: an operator cannot know in advance what directory an op needs, so the kernel backend consumes them directly (#3901 PR-B ③). Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
-| `require_capabilities` | list of string | `[]` | **#4935, opt-in only.** Named-service capability classes (declared, never probed — see `reyn.security.sandbox.capability`'s own module docstring) the operator requires the RESOLVED backend to support. Today the only known name is `ipc_named_service` — e.g. Seatbelt's `com.apple.SecurityServer` grant (#4937), which `gh` needs. `dscl`/`scutil` need OTHER named services under this SAME category that are **not** granted today — requiring this capability does **not** make them work; it only rejects a backend with no mechanism at all (noop/landlock resolve to NOT_SUPPORTED; Seatbelt always resolves to SUPPORTED regardless of which specific service you actually need, since the declaration is per-category, not per-service — see `reyn.security.sandbox.capability`'s own module docstring for exactly which services are and aren't granted today). An unrecognised name raises at config-load time. Empty (the default) means this field changes nothing — no run is affected unless you name a capability. When the resolved backend does NOT support a required capability, `sandbox.on_unsupported` (the SAME 3-way knob above, not a new vocabulary) governs the response. `reyn doctor` discloses each declared backend's own support under the sandbox posture section (C-5). |
+| Key | Axis | Type | Default | Description |
+|-----|---|------|---------|-------------|
+| `backend` | capability | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
+| `on_unsupported` | capability | string | `warn` | Policy when **no OS sandbox backend is available** — whether an explicit `backend` was forced-but-unavailable, `backend: auto` found no platform backend (the auto path honors this too), OR the selected backend **failed its enforcement self-test** (it is present but did not deny — such a backend is treated exactly like an absent one). `warn` logs a WARNING at selection and falls back to `noop` (default — not silent). `error` raises `RuntimeError` (**fail-closed** — refuse to run AI-generated code unsandboxed; set this where enforcement is required, and it works with the default `backend: auto` and against a present-but-inert backend). `ignore` silently falls back. |
+| `mode` | capability | string | `compat` | #3823: which DEFAULT the resolved policy uses for a `policy` key the operator left **unset** below — never a key the operator wrote explicitly (an explicit `allow_X`/`deny_X` or bare bool always wins over `mode`). `compat` (default) leaves every axis at its compat default (nothing blocked; audit/events/timeout/cancel-teardown still apply). `strict` flips network/subprocess/env to their closed default (network off, subprocess denied, env passes nothing) — `allow_write_paths` is UNAFFECTED by mode (stays the caller-supplied per-op workspace floor, operator-unknowable) and read has no mode-based default at all (no `allow_read_paths` concept, #1199 — only an explicit `deny_read_paths` narrows either mode). Allowed: `{compat, strict}` — not `custom` (owner ruling: was never a third direction, was the symptom of `mode`/`policy` having no composition rule) and not `off` (expressible as `compat` with every axis at its compat default). |
+| `policy` | capability | map | _none_ | **Agent-level (operator) sandbox policy, in the config vocabulary below (#3823).** When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates, on the `network`/`subprocess`/`env` axes — **winning over** op-declared fields, so a skill or the LLM cannot widen it. `allow_write_paths` (and the read/write deny-lists) do NOT participate in that intersection: an operator cannot know in advance what directory an op needs, so the kernel backend consumes them directly (#3901 PR-B ③). Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern. See sub-keys below. |
+| `require_capabilities` | capability | list of string | `[]` | **#4935, opt-in only.** Named-service capability classes (declared, never probed — see `reyn.security.sandbox.capability`'s own module docstring) the operator requires the RESOLVED backend to support. Today the only known name is `ipc_named_service` — e.g. Seatbelt's `com.apple.SecurityServer` grant (#4937), which `gh` needs. `dscl`/`scutil` need OTHER named services under this SAME category that are **not** granted today — requiring this capability does **not** make them work; it only rejects a backend with no mechanism at all (noop/landlock resolve to NOT_SUPPORTED; Seatbelt always resolves to SUPPORTED regardless of which specific service you actually need, since the declaration is per-category, not per-service — see `reyn.security.sandbox.capability`'s own module docstring for exactly which services are and aren't granted today). An unrecognised name raises at config-load time. Empty (the default) means this field changes nothing — no run is affected unless you name a capability. When the resolved backend does NOT support a required capability, `sandbox.on_unsupported` (the SAME 3-way knob above, not a new vocabulary) governs the response. `reyn doctor` discloses each declared backend's own support under the sandbox posture section (C-5). |
 
 ### `sandbox.policy` sub-keys
 
@@ -1629,9 +1629,9 @@ A plain top-level scalar (#4174 T5 — flattened from the old `agent: {id:
 ...}` namespace: that block held exactly one field, so the namespace added
 indirection without adding structure).
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `agent_id` | string | `reyn/<hostname>` | Stable identifier for this Reyn instance. Stamped onto every P6 event payload as `agent_id` and injected into outgoing MCP, A2A, and external HTTP requests as the `X-Reyn-Agent-Id` header (SOC2 / ISO27001 / METI v1.1 audit pattern). Recommended format: `reyn/<org>/<role>` (operator-defined). An empty string falls back to the default so leaving the field blank does not emit an empty `agent_id` into events or headers. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `agent_id` | project | string | `reyn/<hostname>` | Stable identifier for this Reyn instance. Stamped onto every P6 event payload as `agent_id` and injected into outgoing MCP, A2A, and external HTTP requests as the `X-Reyn-Agent-Id` header (SOC2 / ISO27001 / METI v1.1 audit pattern). Recommended format: `reyn/<org>/<role>` (operator-defined). An empty string falls back to the default so leaving the field blank does not emit an empty `agent_id` into events or headers. |
 
 The default `reyn/<hostname>` gives a fresh install a usable identity without operator action. Override in `reyn.yaml` when running multi-agent fleets or enterprise deployments that need a stable per-role identifier.
 
@@ -1657,12 +1657,12 @@ observability:
 
 ### `observability.otel` fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `otel.endpoint` | string | `""` | OTLP HTTP base URL (e.g. `http://localhost:4318`). Empty = not attached; the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var is honored as a fallback, so OTEL can be enabled purely from the environment. |
-| `otel.headers` | map | `{}` | Per-request HTTP headers (auth tokens, tenant ids). Values support `${VAR}` env interpolation. |
-| `otel.service_name` | string | `reyn` | The `service.name` resource attribute reported to the collector. |
-| `otel.capture_content` | bool | `false` | GenAI content-capture gate. `false` (default) emits refs and token/cost counts only — never a raw prompt/response body in a span or log. Set `true` to opt into content capture (only against a trusted collector). |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `otel.endpoint` | project | string | `""` | OTLP HTTP base URL (e.g. `http://localhost:4318`). Empty = not attached; the standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var is honored as a fallback, so OTEL can be enabled purely from the environment. |
+| `otel.headers` | project | map | `{}` | Per-request HTTP headers (auth tokens, tenant ids). Values support `${VAR}` env interpolation. |
+| `otel.service_name` | project | string | `reyn` | The `service.name` resource attribute reported to the collector. |
+| `otel.capture_content` | project | bool | `false` | GenAI content-capture gate. `false` (default) emits refs and token/cost counts only — never a raw prompt/response body in a span or log. Set `true` to opt into content capture (only against a trusted collector). |
 
 Requires the OTEL SDK: `pip install reyn[observability]`. An endpoint configured
 without the SDK installed logs once and stays not-attached (fail-open) — the
@@ -1681,9 +1681,9 @@ delegation:
 
 ### `delegation` fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `delegation.capability_default` | `inherit` \| `deny` | `inherit` | `inherit` — a delegate inherits the spawner's capability surface (no extra narrowing; byte-identical to pre-#2081). `deny` — an **unbound** delegate is narrowed by the built-in restrictive `_delegate` profile (dangerous-tool classes denied: re-delegation, side-effect execution, memory-writes, MCP install) unless a topology `capability_profile` binding re-grants it (the binding **replaces** the default — composition is most-restrictive-wins and cannot re-grant). The default-deny propagates **recursively**: a sub-delegate is itself a delegate, so a re-granted coordinator's own sub-delegates are still default-denied (no laundering). |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `delegation.capability_default` | capability | `inherit` \| `deny` | `inherit` | `inherit` — a delegate inherits the spawner's capability surface (no extra narrowing; byte-identical to pre-#2081). `deny` — an **unbound** delegate is narrowed by the built-in restrictive `_delegate` profile (dangerous-tool classes denied: re-delegation, side-effect execution, memory-writes, MCP install) unless a topology `capability_profile` binding re-grants it (the binding **replaces** the default — composition is most-restrictive-wins and cannot re-grant). The default-deny propagates **recursively**: a sub-delegate is itself a delegate, so a re-granted coordinator's own sub-delegates are still default-denied (no laundering). |
 
 Only the unbound-delegate fallback is affected. A top-level agent and any topology-bound agent are unchanged. The restrictive floor reuses the same single-sourced dangerous-tool taxonomy as the `_untrusted` content-narrowing profile; operators may tune it independently via `.reyn/capability_profiles/_delegate.yaml`.
 
@@ -2038,11 +2038,11 @@ cost_warn:
   block_on_high_cost: false              # optional confirm gate (see below)
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | bool | `true` | Master switch. Set to `false` to silence all model-cost warnings. |
-| `model_threshold_per_1m_input_usd` | float | `5.0` | Warn when the selected model's input rate exceeds this value (USD per 1M tokens). Default catches Opus-class (~$15/1M) without triggering on Sonnet-class (~$3/1M). |
-| `block_on_high_cost` | bool | `false` | When `true`, a `/model <class>` switch to a high-cost model is held for an interactive confirmation and applies **only on approval** (routed through the shared safety-limit framework, the same one budget-exceed continuation uses). A decline leaves the current model unchanged. A non-interactive session (no TTY) **fail-closes** — it cannot show the confirm, so the high-cost switch is denied; keep this `false` to use high-cost models head-less. Session startup stays warn-only regardless of this flag. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `enabled` | preference | bool | `true` | Master switch. Set to `false` to silence all model-cost warnings. |
+| `model_threshold_per_1m_input_usd` | preference | float | `5.0` | Warn when the selected model's input rate exceeds this value (USD per 1M tokens). Default catches Opus-class (~$15/1M) without triggering on Sonnet-class (~$3/1M). |
+| `block_on_high_cost` | preference | bool | `false` | When `true`, a `/model <class>` switch to a high-cost model is held for an interactive confirmation and applies **only on approval** (routed through the shared safety-limit framework, the same one budget-exceed continuation uses). A decline leaves the current model unchanged. A non-interactive session (no TTY) **fail-closes** — it cannot show the confirm, so the high-cost switch is denied; keep this `false` to use high-cost models head-less. Session startup stays warn-only regardless of this flag. |
 
 **Pricing source:** reyn looks up model costs from the [LiteLLM pricing database](https://github.com/BerriAI/litellm) (`litellm.model_cost`). Models not in the database are treated as below-threshold (no warning). Custom or proxy models that resolve to a key in the database will be matched.
 
@@ -2066,16 +2066,16 @@ offload:
   structured_preview_chars: 600      # how much of it stays inline beside the ref
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. The size fields below apply only while it is `true`. |
-| `max_inline_bytes` | int | `16384` | Absolute ceiling on the inline preview a capped text result leaves behind. **Also feeds the turn budget's force-close reserve** — it is what the OS reserves for "one more increment", so lowering it lets a turn run longer before force-close fires. |
-| `preview_head_chars` | int | `6000` | How much of the body's head that inline preview keeps. The body itself is stored and referenced, never lost. |
-| `preview_tail_chars` | int | `2000` | The same for the tail. |
-| `cap_ceil_tokens` | int | `4096` | Upper clamp on the per-turn token cap, so a large-context model still gets a lean inline. |
-| `cap_alpha` | float | `0.5` | Budget-relative term: the cap is `min(cap_ceil_tokens, cap_alpha × effective_trigger)`, which keeps a capped turn compactable on a small-context model too. |
-| `structured_inline_max_chars` | int | `2000` | Serialized size at which a structured (dict/list) result is stored under its own ref instead of staying inline. |
-| `structured_preview_chars` | int | `600` | How much of that serialization stays inline beside the ref. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `enabled` | project | bool | `false` | Master switch. `true` opts in to the text token cap, the structured inline cap, and the media follow-up budget bound. The size fields below apply only while it is `true`. |
+| `max_inline_bytes` | bounding | int | `16384` | Absolute ceiling on the inline preview a capped text result leaves behind. **Also feeds the turn budget's force-close reserve** — it is what the OS reserves for "one more increment", so lowering it lets a turn run longer before force-close fires. |
+| `preview_head_chars` | bounding | int | `6000` | How much of the body's head that inline preview keeps. The body itself is stored and referenced, never lost. |
+| `preview_tail_chars` | bounding | int | `2000` | The same for the tail. |
+| `cap_ceil_tokens` | bounding | int | `4096` | Upper clamp on the per-turn token cap, so a large-context model still gets a lean inline. |
+| `cap_alpha` | bounding | float | `0.5` | Budget-relative term: the cap is `min(cap_ceil_tokens, cap_alpha × effective_trigger)`, which keeps a capped turn compactable on a small-context model too. |
+| `structured_inline_max_chars` | bounding | int | `2000` | Serialized size at which a structured (dict/list) result is stored under its own ref instead of staying inline. |
+| `structured_preview_chars` | bounding | int | `600` | How much of that serialization stays inline beside the ref. |
 
 ## `render_template` block
 
@@ -2087,10 +2087,10 @@ render_template:
   wall_clock_seconds: 5.0    # elapsed-time backstop for a runaway loop
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `max_output_chars` | int | `256000` | The streaming character budget. The render truncates the moment cumulative output exceeds it. A non-positive or non-numeric value falls back to the default. |
-| `wall_clock_seconds` | float | `5.0` | Elapsed-time backstop. Jinja2 exposes no iteration count, so wall-clock bounds a runaway loop that emits little text per step. A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `max_output_chars` | project | int | `256000` | The streaming character budget. The render truncates the moment cumulative output exceeds it. A non-positive or non-numeric value falls back to the default. |
+| `wall_clock_seconds` | project | float | `5.0` | Elapsed-time backstop. Jinja2 exposes no iteration count, so wall-clock bounds a runaway loop that emits little text per step. A non-positive or non-numeric value falls back to the default. |
 
 The defaults are generous enough for real reports / configs and tight enough that a runaway generator stops quickly. Omitting the block leaves both at their defaults (behaviour unchanged).
 
@@ -2103,9 +2103,9 @@ read_cap:
   inline_bytes: 10240   # 10 KiB — ceiling on a single inline read/load result
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `inline_bytes` | int | `10240` | Ceiling, in bytes, on what `file.read` / `load_skill` return inline before truncating. A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `inline_bytes` | bounding | int | `10240` | Ceiling, in bytes, on what `file.read` / `load_skill` return inline before truncating. A non-positive or non-numeric value falls back to the default. |
 
 **Why 10 KiB**: both consumers gained a resume mechanism the same night this default was chosen — `file.read` via `char_offset` (#4432), `load_skill` via deferring to `read_file(offset=next_offset)` (#4431). A truncated read loses at most one round-trip, not the rest of the content, which is what makes a small default safe rather than arbitrary. Omitting the block keeps this default (behaviour unchanged).
 
@@ -2118,9 +2118,9 @@ history_resident:
   max_bytes: 268435456   # 256 MiB — ceiling on Session.history's resident size
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `max_bytes` | int | `268435456` (256 MiB) | Ceiling, in bytes, on `Session.history`'s in-memory footprint. Once exceeded, the oldest resident entries are evicted (never the just-appended newest one) until the cap is met again. A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `max_bytes` | bounding | int | `268435456` (256 MiB) | Ceiling, in bytes, on `Session.history`'s in-memory footprint. Once exceeded, the oldest resident entries are evicted (never the just-appended newest one) until the cap is met again. A non-positive or non-numeric value falls back to the default. |
 
 Eviction is not information loss: `Session.history` is a cache, not the source of truth — `history.jsonl` (append-only, on disk) is, and every entry evicted from memory reloads on demand via the already-shipped backward-hydrate path (TUI scrollback paging, in-conversation search, and WAL rewind visibility all already page older entries back in as needed). This closes an unbounded-growth defect (`self.history` previously had no cap at all — see #4387) independent of any claim about what fraction of a given memory ceiling `history` itself accounts for, which this config does not measure or claim to fix.
 
@@ -2133,9 +2133,9 @@ image:
   row_height_cells: 20   # fixed height every inline image is rendered at
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `row_height_cells` | int | `20` | Fixed height, in terminal rows, for every inline image `present` renders. A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `row_height_cells` | preference | int | `20` | Fixed height, in terminal rows, for every inline image `present` renders. A non-positive or non-numeric value falls back to the default. |
 
 **Why this is operator-configurable**: the "right" row count is a function of your own terminal height and how much scrollback a photo should occupy — not something reyn can decide for every environment. 20 is a shipped default (tall enough for real photo detail, short enough not to dominate a typical terminal), not a measured "correct" number. Omitting the block keeps this default (behaviour unchanged).
 
@@ -2148,9 +2148,9 @@ tui:
   context_usage_warn_percent: 80   # ctx% at/above this gets the "ctx" label
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `context_usage_warn_percent` | int | `80` | Context-window usage percent at which the status bar labels the figure (`ctx NN%`) instead of showing it bare. A non-numeric value or one outside `0`–`100` falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `context_usage_warn_percent` | preference | int | `80` | Context-window usage percent at which the status bar labels the figure (`ctx NN%`) instead of showing it bare. A non-numeric value or one outside `0`–`100` falls back to the default. |
 
 **Why this is operator-configurable**: 80 is a shipped default (a plain, unsurprising round number), not a measured "correct" threshold for every operator's own risk tolerance or model/context window — same discipline as `image.row_height_cells` above. Omitting the block keeps this default (behaviour unchanged).
 
@@ -2357,17 +2357,17 @@ embedding:
 
 ### `embedding` fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | **The provider/cost gate — one meaning only** (#4156): may reyn call an embedding provider at all. Default `false` (opt-in / predictable-safe default — embedding needs a provider + cost). Clean-break replacement for the retired `action_retrieval.embedding_class` gate (no alias) — the on/off decision lives here; the model class is the separate `default_class` field below, unaffected. **Symmetric model**: `enabled: false` hides everything below regardless of `index.*` — non-semantic discovery (`list_actions`, …) and load/invoke verbs (`invoke_action`, …) are unaffected. When `embedding.enabled` is `false`, the `embed` op pre-flights and returns a decision-enabling `status: "blocked"` result (naming this key) rather than a silent no-op or an opaque provider error. Prior to #4156, this single flag ALSO decided WHAT gets embedded (bundling the action catalog with an unconditional repo-wide index build, every router-loop turn, with no way to get one without the other) — that decision now lives in `index` below. |
-| `index.actions` | bool | `true` | #4156 — build the ~10-entry action/mcp/pipeline catalog index `search_actions` depends on, when `enabled: true`. Negligible TPM contribution (fixed, small population) — kept on by default so the pre-#4156 `search_actions` experience is unchanged for an operator who never touches this field. |
-| `index.repo_knowledge` | bool | `false` | #4156 — build the FP-0066 P3b **repo-knowledge index** (`knowledge_repo_doc` + `knowledge_repo_src` — every reachable `.md` doc and every other source file in the repo, chunked — measured at ~1,609 chunks / ~4.86M tokens on this repo at #4156's filing, and it scales with the repo, not fixed), when `enabled: true`. Scheduled on **every router-loop turn** (`sync_repo_ingest_background`, a no-op once the index is clean). **Default `false`** — this is the workload that burned through an owner's 5M TPM budget in one burst while they only wanted the ~10-entry action catalog (TPM is a tokens-per-minute ceiling; batching cannot reduce total tokens sent, only not indexing can). When this field is `false` and a turn would have ingested the repo-knowledge index, reyn logs one line per process (`repo knowledge indexing is off (embedding.index.repo_knowledge: false, the default) — ...`) rather than skipping silently. |
-| `default_class` | string | `standard` | Class used when embedding ops don't specify one (used only when `enabled: true`). Must be a key in `classes`. |
-| `batch_size` | int | `100` | Texts per embedding API call. Valid range: 1–2048. |
-| `max_concurrent_batches` | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
-| `max_retries` | int | `3` | Transient-error retries per batch call. Valid range: 0–10. |
-| `retry_backoff` | string | `exponential` | Backoff strategy: `exponential` or `linear`. |
-| `timeout` | float | `60.0` | Per-attempt deadline in seconds — how long reyn waits for one embedding attempt before giving up. `<= 0` opts out (no bound — the call is then capped only by litellm's own `request_timeout`, 6000s/attempt, which is indistinguishable from a hang; a warning is logged). The default matches `safety.timeout.llm_call_seconds`: an embedding call is the same kind of call as a chat LLM call. Applies **per attempt**, so the worst-case **wait** is `timeout × max_retries` plus backoff. **This bounds waiting, not spending — see the note below.** |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `enabled` | project | bool | `false` | **The provider/cost gate — one meaning only** (#4156): may reyn call an embedding provider at all. Default `false` (opt-in / predictable-safe default — embedding needs a provider + cost). Clean-break replacement for the retired `action_retrieval.embedding_class` gate (no alias) — the on/off decision lives here; the model class is the separate `default_class` field below, unaffected. **Symmetric model**: `enabled: false` hides everything below regardless of `index.*` — non-semantic discovery (`list_actions`, …) and load/invoke verbs (`invoke_action`, …) are unaffected. When `embedding.enabled` is `false`, the `embed` op pre-flights and returns a decision-enabling `status: "blocked"` result (naming this key) rather than a silent no-op or an opaque provider error. Prior to #4156, this single flag ALSO decided WHAT gets embedded (bundling the action catalog with an unconditional repo-wide index build, every router-loop turn, with no way to get one without the other) — that decision now lives in `index` below. |
+| `index.actions` | project | bool | `true` | #4156 — build the ~10-entry action/mcp/pipeline catalog index `search_actions` depends on, when `enabled: true`. Negligible TPM contribution (fixed, small population) — kept on by default so the pre-#4156 `search_actions` experience is unchanged for an operator who never touches this field. |
+| `index.repo_knowledge` | project | bool | `false` | #4156 — build the FP-0066 P3b **repo-knowledge index** (`knowledge_repo_doc` + `knowledge_repo_src` — every reachable `.md` doc and every other source file in the repo, chunked — measured at ~1,609 chunks / ~4.86M tokens on this repo at #4156's filing, and it scales with the repo, not fixed), when `enabled: true`. Scheduled on **every router-loop turn** (`sync_repo_ingest_background`, a no-op once the index is clean). **Default `false`** — this is the workload that burned through an owner's 5M TPM budget in one burst while they only wanted the ~10-entry action catalog (TPM is a tokens-per-minute ceiling; batching cannot reduce total tokens sent, only not indexing can). When this field is `false` and a turn would have ingested the repo-knowledge index, reyn logs one line per process (`repo knowledge indexing is off (embedding.index.repo_knowledge: false, the default) — ...`) rather than skipping silently. |
+| `default_class` | project | string | `standard` | Class used when embedding ops don't specify one (used only when `enabled: true`). Must be a key in `classes`. |
+| `batch_size` | project | int | `100` | Texts per embedding API call. Valid range: 1–2048. |
+| `max_concurrent_batches` | project | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
+| `max_retries` | project | int | `3` | Transient-error retries per batch call. Valid range: 0–10. |
+| `retry_backoff` | project | string | `exponential` | Backoff strategy: `exponential` or `linear`. |
+| `timeout` | project | float | `60.0` | Per-attempt deadline in seconds — how long reyn waits for one embedding attempt before giving up. `<= 0` opts out (no bound — the call is then capped only by litellm's own `request_timeout`, 6000s/attempt, which is indistinguishable from a hang; a warning is logged). The default matches `safety.timeout.llm_call_seconds`: an embedding call is the same kind of call as a chat LLM call. Applies **per attempt**, so the worst-case **wait** is `timeout × max_retries` plus backoff. **This bounds waiting, not spending — see the note below.** |
 
 > **`embedding.timeout` does not reduce what you are billed for.** It caps how long reyn *waits*; it does not cap how many requests the provider *receives*. One attempt can put up to **3** HTTP requests on the wire — the OpenAI SDK client retries internally (`max_retries=2` by default), underneath litellm and underneath this knob — so `max_retries: 3` can deliver up to **9** requests for a single `embed`. Measured against a fast-erroring provider, all 9 are delivered in ~7.6s with the default `timeout: 60.0`: the bound never engages at all. **Lowering `timeout` does not lower that count**, and reyn's own retry log (`attempt 1/3`) counts attempts, not requests. reyn's embedding cost report records at most one response per `embed`, so it is a lower bound on requests delivered. See [#3047](https://github.com/tya5/reyn/issues/3047) for the measurements and the open decisions.
 | `tokenizer` | string | `cl100k_base` | tiktoken encoding used for chunk-size estimation. |
@@ -2437,18 +2437,18 @@ chat:
 
 ### `chat.compaction` fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `component_weights` | map[str,int] | `{head:10, body:5, tail:15, new_msg:10, compaction_batch:60}` | Integer weights for each prompt component, normalised to `main_pool` at runtime. Sum is arbitrary; larger values give more token budget to that component. |
-| `section_weights` | map[str,int] | (per-section default) | Integer weights for sub-section allocation within the body budget. Same shape semantics as `component_weights`. |
-| `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
-| `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation. |
-| `resummarize_passes` | int | `1` | Max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `0` = skip re-summary (straight to the floor). |
-| `max_schema_reprompt_attempts` | int | `1` | #4883: bounded re-prompt budget when the compaction LLM's JSON response has an empty/missing `topic_arc` (whose emptiness can't be told apart from a dead response). Exhausting the budget raises rather than silently accepting an empty summary. `0` = raise on the first invalid response, no re-prompt. `new_turn_seqs` plays no part in this: `covers_through_seq` is derived from `compact()`'s own input, never read from an LLM echo (#4951-A) — and #4951-B removed the `new_turn_seqs` key from the schema/prompt entirely, so there is nothing left to gate or not gate. |
-| `fold_persist_policy` | `never` \| `next_turn` | `next_turn` | #5296: controls whether a recovered overflow is followed by a DURABLE compaction step — on two separate branches, both gated on this SAME knob. **① Failure branch** (pre-#5578): after a measured shrink-ladder exhaustion (`UnrecoveredError`) — any overflow axis, byte-limit (HTTP 413) or token-context, since #5578 (pre-#5578 this only fired for a byte-limit cause; a token-cause exhaustion had no persisted recovery at all, so every subsequent turn re-ran the identical shrink from the same un-compacted history) — a real compaction pass runs (`force_compact_now`, a new LLM call). **② Success branch** (#5578, widened by #5612): each SUCCESSFUL fold the recovery's own shrink ladder produces is durably persisted immediately (`CompactionController.persist_recovery_summary`) — not deferred until the whole recovery episode's own success or failure (#5578's own original scope); no new LLM call, no new compaction pass, only recording a fold that already happened, as many times as the ladder folds within one episode. `next_turn` (the default — shipped, opt-out, not opt-in) keeps both branches live; `never` disables both, ending a failed recovery with the existing structured error and leaving any fold this episode already produced in-memory only (never persisted, re-paid next turn). It does not control spill directly, but the SAME durability now applies there too (#5612): reactive overflow-recovery spill (`spill_turn_content`) durably appends a `role="spill_record"` entry to `history.jsonl` once per successfully-spilled turn — spill itself is still triggered by the constraint, not by this knob, but the record it leaves behind survives a restart the same way a fold does (superseding the pre-#5612 in-memory-only `_spill_overlay`, which is gone). (Distinct from the write-time cap's own `SPILLED_META_KEY`, which is persisted as part of a NEW entry's own meta at append time — a different code path reusing the same vocabulary, not this reactive one.) |
-| `spill_granularity` | `tier` \| `turn` | `tier` | #5592: how many candidates rung① (spill) hands to ONE upstream request. **`tier` names a `Spillability` tier (`FIRST_CHOICE`/`LAST_RESORT`) — not a positional stage (`head`/`mid`/`tail`), which this field never selects.** `tier` sends every eligible candidate sharing the same `Spillability` tier in a single request — turning a request count that scaled with the number of spillable candidates into one request per tier, at most two per overflow, per positional stage. `turn` reverts to one candidate per request (the pre-#5592 behavior) — **this is NOT the safer choice**: the upstream request count then scales with candidate count, a rejected request is still billed, and its size is not observable from inside reyn (owner ruling, #5592). Population (how many candidates exist, `levers_left`'s own count) is unchanged by this field either way — only how many requests it takes to consume that population changes. |
-| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
-| `llm_call_seconds` | float (s) \| `null` | `null` | #5597: per-request timeout for the compaction LLM call (`CompactionEngine._acompletion`'s own call, via the `recorded_acompletion` funnel). `null` (default) inherits `safety.timeout.llm_call_seconds` — the SAME value the router's own main call already uses, never a separately-chosen number (owner ruling: "新しい数を作らない。routerの値をそのまま使う"). An operator override here applies to compaction calls only, leaving the router's own timeout untouched. Does not affect `num_retries`, which is resolved independently via the existing `LLMCallLimitContext`. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `component_weights` | preference | map[str,int] | `{head:10, body:5, tail:15, new_msg:10, compaction_batch:60}` | Integer weights for each prompt component, normalised to `main_pool` at runtime. Sum is arbitrary; larger values give more token budget to that component. |
+| `section_weights` | preference | map[str,int] | (per-section default) | Integer weights for sub-section allocation within the body budget. Same shape semantics as `component_weights`. |
+| `section_caps_spec_tokens` | bounding | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
+| `body_token_cap` | bounding | int | `1500` | Hard cap on summary body tokens after post-truncation. |
+| `resummarize_passes` | bounding | int | `1` | Max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `0` = skip re-summary (straight to the floor). |
+| `max_schema_reprompt_attempts` | bounding | int | `1` | #4883: bounded re-prompt budget when the compaction LLM's JSON response has an empty/missing `topic_arc` (whose emptiness can't be told apart from a dead response). Exhausting the budget raises rather than silently accepting an empty summary. `0` = raise on the first invalid response, no re-prompt. `new_turn_seqs` plays no part in this: `covers_through_seq` is derived from `compact()`'s own input, never read from an LLM echo (#4951-A) — and #4951-B removed the `new_turn_seqs` key from the schema/prompt entirely, so there is nothing left to gate or not gate. |
+| `fold_persist_policy` | preference | `never` \| `next_turn` | `next_turn` | #5296: controls whether a recovered overflow is followed by a DURABLE compaction step — on two separate branches, both gated on this SAME knob. **① Failure branch** (pre-#5578): after a measured shrink-ladder exhaustion (`UnrecoveredError`) — any overflow axis, byte-limit (HTTP 413) or token-context, since #5578 (pre-#5578 this only fired for a byte-limit cause; a token-cause exhaustion had no persisted recovery at all, so every subsequent turn re-ran the identical shrink from the same un-compacted history) — a real compaction pass runs (`force_compact_now`, a new LLM call). **② Success branch** (#5578, widened by #5612): each SUCCESSFUL fold the recovery's own shrink ladder produces is durably persisted immediately (`CompactionController.persist_recovery_summary`) — not deferred until the whole recovery episode's own success or failure (#5578's own original scope); no new LLM call, no new compaction pass, only recording a fold that already happened, as many times as the ladder folds within one episode. `next_turn` (the default — shipped, opt-out, not opt-in) keeps both branches live; `never` disables both, ending a failed recovery with the existing structured error and leaving any fold this episode already produced in-memory only (never persisted, re-paid next turn). It does not control spill directly, but the SAME durability now applies there too (#5612): reactive overflow-recovery spill (`spill_turn_content`) durably appends a `role="spill_record"` entry to `history.jsonl` once per successfully-spilled turn — spill itself is still triggered by the constraint, not by this knob, but the record it leaves behind survives a restart the same way a fold does (superseding the pre-#5612 in-memory-only `_spill_overlay`, which is gone). (Distinct from the write-time cap's own `SPILLED_META_KEY`, which is persisted as part of a NEW entry's own meta at append time — a different code path reusing the same vocabulary, not this reactive one.) |
+| `spill_granularity` | bounding | `tier` \| `turn` | `tier` | #5592: how many candidates rung① (spill) hands to ONE upstream request. **`tier` names a `Spillability` tier (`FIRST_CHOICE`/`LAST_RESORT`) — not a positional stage (`head`/`mid`/`tail`), which this field never selects.** `tier` sends every eligible candidate sharing the same `Spillability` tier in a single request — turning a request count that scaled with the number of spillable candidates into one request per tier, at most two per overflow, per positional stage. `turn` reverts to one candidate per request (the pre-#5592 behavior) — **this is NOT the safer choice**: the upstream request count then scales with candidate count, a rejected request is still billed, and its size is not observable from inside reyn (owner ruling, #5592). Population (how many candidates exist, `levers_left`'s own count) is unchanged by this field either way — only how many requests it takes to consume that population changes. |
+| `use_chars4_estimate` | bounding | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
+| `llm_call_seconds` | bounding | float (s) \| `null` | `null` | #5597: per-request timeout for the compaction LLM call (`CompactionEngine._acompletion`'s own call, via the `recorded_acompletion` funnel). `null` (default) inherits `safety.timeout.llm_call_seconds` — the SAME value the router's own main call already uses, never a separately-chosen number (owner ruling: "新しい数を作らない。routerの値をそのまま使う"). An operator override here applies to compaction calls only, leaving the router's own timeout untouched. Does not affect `num_retries`, which is resolved independently via the existing `LLMCallLimitContext`. |
 
 ### `chat.compaction.section_token_caps` fields
 
@@ -2474,13 +2474,13 @@ payload will look like). Recovery is now entirely reactive: an actual
 overflow the LLM call raises is caught by `retry_loop`'s own overflow
 ladder, not pre-empted a turn ahead of time.
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `topic_arc` | `200` | Token target for the topic-arc summary section — the only one of the five that's enforced after the LLM returns (see above). |
-| `decisions` | `400` | Token target for the decisions section, given to the LLM as prompt guidance — not enforced on the returned value. |
-| `pending` | `400` | Token target for the pending-items section, given to the LLM as prompt guidance — not enforced on the returned value. |
-| `session_user_facts` | `200` | Token target for user-facts carried across compactions, given to the LLM as prompt guidance — not enforced on the returned value. |
-| `artifacts_referenced` | `300` | Token target for artifact reference listings, given to the LLM as prompt guidance — not enforced on the returned value. |
+| Field | Axis | Default | Description |
+|-------|---|---------|-------------|
+| `topic_arc` | bounding | `200` | Token target for the topic-arc summary section — the only one of the five that's enforced after the LLM returns (see above). |
+| `decisions` | bounding | `400` | Token target for the decisions section, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `pending` | bounding | `400` | Token target for the pending-items section, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `session_user_facts` | bounding | `200` | Token target for user-facts carried across compactions, given to the LLM as prompt guidance — not enforced on the returned value. |
+| `artifacts_referenced` | bounding | `300` | Token target for artifact reference listings, given to the LLM as prompt guidance — not enforced on the returned value. |
 
 ### Removed keys
 
@@ -2530,20 +2530,20 @@ audit_events:
   provider_body_max_chars: 4000          # cap on the kept provider_body/provider_response (default)
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_bytes` | int | `10485760` (10 MB) | Rotate the active event file when it exceeds this size. `0` = no size-based rotation. |
-| `max_age_seconds` | int | `86400` (1 day) | Rotate the active event file when it exceeds this age in seconds. `0` = no age-based rotation. |
-| `cleanup_period_days` | int | `30` | Automatic-purge age axis (#4479) — files whose filename date is older than this many days are deleted. `0` disables this axis. |
-| `max_disk_usage_percent` | float | `10` | Automatic-purge size axis (#4479) — once the events directory's own total size exceeds this percent of the filesystem's current FREE space, oldest files are deleted until back under. `0` disables this axis. |
-| `backend` | string | `local` | **#4496 — where audit-events are WRITTEN.** `local` (default) preserves current behavior — events land under `.reyn/events` exactly as before this field existed. `discard` (sink-null) writes nothing to disk; subscriber delivery (the TUI/AG-UI forwarders, hooks, OTEL) and the per-emitter `audit_seq` continuity (#4496 PR-1) are UNCHANGED either way — see [Concepts: events](../../concepts/runtime/events.md#write-side-backend-4496) for the structural guarantee. **`discard` means `reyn events replay` / support-bundle / dogfood_trace have nothing to read for this run — in particular, support-bundle is the tool operators use to report bugs, so this trades that away.** `network` is not yet a valid value (an unrecognized string, `network` included, falls back to `local`) — its on-failure semantics are an open design question tracked in #4496. |
-| `agent_delta_coalesce_fragments` | int | `100` | **#4960 — architect ruling C.** `agent_delta` is durably written once per this many RAW PROVIDER CHUNKS (or `agent_delta_coalesce_interval_ms`, whichever comes first), per streaming chain, plus one final record when a stream ends. **#5261/#5268: an `agent_delta` event may itself already merge more than one raw provider chunk** (source-side merge at the LLM-call boundary, before this event is ever emitted) — the threshold's UNIT was kept as raw chunks (it sums each event's own `raw_chunk_count`, not a flat `+1` per event), so the default number of durable records per streamed reply is UNCHANGED by that merge; only the write side's own counting arithmetic became correct again. Live TUI/AG-UI delivery is UNAFFECTED (every emitted event still dispatches to subscribers unthrottled) — this only throttles what reaches `.reyn/events`. Measured (2000-delta/60KB real streamed reply, `agent_delta_include_text=true`, predating #5261's source-side merge — one event per raw chunk at measurement time): unthrottled, `agent_delta` was 99.4% of that run's audit file bytes — this figure assumes `text` is being written; with `agent_delta_include_text`'s default (`false`, below), a coalesced record's bytes are smaller and this percentage does not apply as measured. A non-positive or non-numeric value falls back to the default. |
-| `agent_delta_coalesce_interval_ms` | int | `2000` | **#4960 — the same coalescing window's time axis**, in milliseconds. Primarily protects against a process-level death (SIGKILL / OOM-kill / host crash) that the terminal-flush-on-stream-end mechanism cannot catch (a Python `finally` never runs then) — secondarily gives periodic evidence for an idle-but-long-lived stream. A non-positive or non-numeric value falls back to the default. |
-| `agent_delta_include_text` | bool | `false` | **#4666 item ① — opt-in for the streamed reply's own CONTENT** in the durable `agent_delta` record (mirrors the OpenTelemetry GenAI convention: "every attribute that can hold prompt/output content is opt-in, default metadata-only"). ITS OWN knob, deliberately not tied to `agent_delta_coalesce_*` above (owner ruling: each content opt-in gets a separate toggle) — coalescing still happens regardless of this flag; only the `text` field WITHIN an already-coalesced record is conditional. Off (default): the durable record keeps `chain_id`/`round_index`/`coalesced_fragment_count`/`audit_seq` but drops `text` — #4960's own reason for coalescing ("a partial reply of N fragments existed", for cost accountability) still holds without it. **⚠️ Default-behavior change, 2026-08-21 (#4666, owner ruling): before this field existed, `agent_delta`'s reply content was ALWAYS durably recorded — no opt-in or opt-out existed. If you relied on `.reyn/events` carrying streamed-reply text, set this to `true`.** UNCHANGED either way: live TUI/AG-UI delivery (every fragment, full text, always) and `history.jsonl` (the completed reply's own persistence, a separate mechanism entirely). |
-| `completed_response_include_text` | bool | `false` | **#4666 item ② — opt-in for the completed model→user text**: `agent_response_committed` (new kind, [events reference](../runtime/events.md) — the terminal reply, force-close/wrap-up text, tool_calls-round accompanying text) and `user_intervention_requested`'s `question`/`suggestions`/`options` (the model's `ask_user` question — governed by ② because it is content the MODEL directed at the user, the SAME reason every other kind this field covers is ②'s, not because it must share a knob with anything else). ITS OWN knob, separate from `agent_delta_include_text` above AND `user_input_include_text` below (owner ruling, same instruction: one toggle must never cover more than one content opt-in) — turning ON only one of ② or ③ for an `ask_user` exchange is a valid, deliberate operator choice (e.g. keep the question, drop the answer), not a defect. Both events fire unconditionally; off (default), `LocalEventBackend.write()` drops only the free-text field(s) — every other field (`chain_id`/`intervention_id`) is kept, so "a response was committed"/"a question was asked" remains provable without content. UNCHANGED either way: live TUI/AG-UI delivery and any opt-in OTEL subscriber. **This field also governs `ask_user`'s `question` on `tool_called.args`** (#4666 item ③b, `reyn.core.dispatch.content_declarations` — the dispatcher-level gap #4970's review found; see `user_input_include_text`'s row for the matching `answer` half and its own remaining scope note). |
-| `user_input_include_text` | bool | `false` | **#4666 item ③ — opt-in for the user's OWN typed/chosen text**, ITS OWN knob (separate from `agent_delta_include_text` and `completed_response_include_text` above, both tracked under #4666). Covers 6 kinds, one content field each (AST census — an earlier pass found 3 and undercounted): `user_submitted`/`user_message_received` (`text`), `intervention_answer_submitted` (`text`), `user_answered_intervention` (`answer_text`), `user_intervention_received` (`answer`), `router_retry_exhausted` (`user_message`, truncated to 200 chars at the emit site regardless of this flag). No coalescing here — each event is still written individually; the knob only decides whether the one content field survives. Off (default): every other field on the kind (`chain_id`/`intervention_id`/`msg_id`/`seq`/etc.) still records that a submission/answer happened. **⚠️ Default-behavior change, 2026-08-21 (#4666): before this field existed, these 6 kinds' content was ALWAYS durably recorded.** UNCHANGED either way: live subscriber delivery (TUI/AG-UI/peer broadcast) and `history.jsonl`. **This field also governs `ask_user`'s `answer` on `tool_returned.result`** (#4666 item ③b: a per-tool "this field is conversation content" declaration, `reyn.core.dispatch.content_declarations` — closes the gap #4970's review found, where `ask_user`'s question/answer reached the audit log via the generic `tool_called`/`tool_returned` kinds unconditionally, bypassing ②③ entirely). **Scope, measured, not extended by guess:** only `ask_user` declares any field today (the sole tool whose args/result structurally ARE a conversation exchange); `mcp_called.args` was measured and excluded — an MCP tool's args are model-decided call parameters, the same class as any other tool's args, not a dedicated question/answer channel. A tool that shows the user free text and forgets to declare it leaks that text silently — this bound only catches the declared set GROWING, never catches a tool that should have declared and didn't (see the registry module's own docstring for the full disclosure). |
-| `provider_body_include_text` | bool | `false` | **#4975 — architect ruling (c), a LATTICE-MEET, not its own independent opt-in.** Gates `llm_request_error`'s `provider_body`/`provider_response` (a provider's own error-response body — reyn does not control its shape, so a 4xx/5xx body could quote back request content of any of the 3 #4666 content classes above; reyn cannot tell in advance which one). Showing either field requires ALL of `agent_delta_include_text` AND `completed_response_include_text` AND `user_input_include_text` above AND this field's own opt-in — the narrowest participant wins (same `compose_resolved` lattice-meet idiom this repo's permission resolution already uses). Rejected alternatives: OR-composition (any one opt-in lets all 3 content classes through — too loose) and a brand-new independent knob (doesn't correspond to a payload an operator can name). `error_type`/`status_code` are always recorded regardless of the gate; `provider_body_length`/`provider_response_length` are also always recorded when a body existed, gate-independent, so "existed but hidden" stays distinguishable from "genuinely absent". `LocalEventBackend.declare_gaps()` names this gap while any of the 4 participants is off. Whether providers actually echo conversation content in their error bodies is a separate, unmeasured question tracked in #4975's own issue — this knob only builds the permission surface for when that's confirmed. |
-| `provider_body_max_chars` | int | `4000` | **#4975 — the cap on the SHOWN `provider_body`/`provider_response`** when `provider_body_include_text`'s meet holds (reyn cannot bound a provider's own body size otherwise). `provider_body_truncated`/`provider_response_truncated` is added only when the cap actually cut something, so a caller can tell a capped body from a genuinely short one. A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `max_bytes` | project | int | `10485760` (10 MB) | Rotate the active event file when it exceeds this size. `0` = no size-based rotation. |
+| `max_age_seconds` | project | int | `86400` (1 day) | Rotate the active event file when it exceeds this age in seconds. `0` = no age-based rotation. |
+| `cleanup_period_days` | project | int | `30` | Automatic-purge age axis (#4479) — files whose filename date is older than this many days are deleted. `0` disables this axis. |
+| `max_disk_usage_percent` | project | float | `10` | Automatic-purge size axis (#4479) — once the events directory's own total size exceeds this percent of the filesystem's current FREE space, oldest files are deleted until back under. `0` disables this axis. |
+| `backend` | project | string | `local` | **#4496 — where audit-events are WRITTEN.** `local` (default) preserves current behavior — events land under `.reyn/events` exactly as before this field existed. `discard` (sink-null) writes nothing to disk; subscriber delivery (the TUI/AG-UI forwarders, hooks, OTEL) and the per-emitter `audit_seq` continuity (#4496 PR-1) are UNCHANGED either way — see [Concepts: events](../../concepts/runtime/events.md#write-side-backend-4496) for the structural guarantee. **`discard` means `reyn events replay` / support-bundle / dogfood_trace have nothing to read for this run — in particular, support-bundle is the tool operators use to report bugs, so this trades that away.** `network` is not yet a valid value (an unrecognized string, `network` included, falls back to `local`) — its on-failure semantics are an open design question tracked in #4496. |
+| `agent_delta_coalesce_fragments` | project | int | `100` | **#4960 — architect ruling C.** `agent_delta` is durably written once per this many RAW PROVIDER CHUNKS (or `agent_delta_coalesce_interval_ms`, whichever comes first), per streaming chain, plus one final record when a stream ends. **#5261/#5268: an `agent_delta` event may itself already merge more than one raw provider chunk** (source-side merge at the LLM-call boundary, before this event is ever emitted) — the threshold's UNIT was kept as raw chunks (it sums each event's own `raw_chunk_count`, not a flat `+1` per event), so the default number of durable records per streamed reply is UNCHANGED by that merge; only the write side's own counting arithmetic became correct again. Live TUI/AG-UI delivery is UNAFFECTED (every emitted event still dispatches to subscribers unthrottled) — this only throttles what reaches `.reyn/events`. Measured (2000-delta/60KB real streamed reply, `agent_delta_include_text=true`, predating #5261's source-side merge — one event per raw chunk at measurement time): unthrottled, `agent_delta` was 99.4% of that run's audit file bytes — this figure assumes `text` is being written; with `agent_delta_include_text`'s default (`false`, below), a coalesced record's bytes are smaller and this percentage does not apply as measured. A non-positive or non-numeric value falls back to the default. |
+| `agent_delta_coalesce_interval_ms` | project | int | `2000` | **#4960 — the same coalescing window's time axis**, in milliseconds. Primarily protects against a process-level death (SIGKILL / OOM-kill / host crash) that the terminal-flush-on-stream-end mechanism cannot catch (a Python `finally` never runs then) — secondarily gives periodic evidence for an idle-but-long-lived stream. A non-positive or non-numeric value falls back to the default. |
+| `agent_delta_include_text` | project | bool | `false` | **#4666 item ① — opt-in for the streamed reply's own CONTENT** in the durable `agent_delta` record (mirrors the OpenTelemetry GenAI convention: "every attribute that can hold prompt/output content is opt-in, default metadata-only"). ITS OWN knob, deliberately not tied to `agent_delta_coalesce_*` above (owner ruling: each content opt-in gets a separate toggle) — coalescing still happens regardless of this flag; only the `text` field WITHIN an already-coalesced record is conditional. Off (default): the durable record keeps `chain_id`/`round_index`/`coalesced_fragment_count`/`audit_seq` but drops `text` — #4960's own reason for coalescing ("a partial reply of N fragments existed", for cost accountability) still holds without it. **⚠️ Default-behavior change, 2026-08-21 (#4666, owner ruling): before this field existed, `agent_delta`'s reply content was ALWAYS durably recorded — no opt-in or opt-out existed. If you relied on `.reyn/events` carrying streamed-reply text, set this to `true`.** UNCHANGED either way: live TUI/AG-UI delivery (every fragment, full text, always) and `history.jsonl` (the completed reply's own persistence, a separate mechanism entirely). |
+| `completed_response_include_text` | project | bool | `false` | **#4666 item ② — opt-in for the completed model→user text**: `agent_response_committed` (new kind, [events reference](../runtime/events.md) — the terminal reply, force-close/wrap-up text, tool_calls-round accompanying text) and `user_intervention_requested`'s `question`/`suggestions`/`options` (the model's `ask_user` question — governed by ② because it is content the MODEL directed at the user, the SAME reason every other kind this field covers is ②'s, not because it must share a knob with anything else). ITS OWN knob, separate from `agent_delta_include_text` above AND `user_input_include_text` below (owner ruling, same instruction: one toggle must never cover more than one content opt-in) — turning ON only one of ② or ③ for an `ask_user` exchange is a valid, deliberate operator choice (e.g. keep the question, drop the answer), not a defect. Both events fire unconditionally; off (default), `LocalEventBackend.write()` drops only the free-text field(s) — every other field (`chain_id`/`intervention_id`) is kept, so "a response was committed"/"a question was asked" remains provable without content. UNCHANGED either way: live TUI/AG-UI delivery and any opt-in OTEL subscriber. **This field also governs `ask_user`'s `question` on `tool_called.args`** (#4666 item ③b, `reyn.core.dispatch.content_declarations` — the dispatcher-level gap #4970's review found; see `user_input_include_text`'s row for the matching `answer` half and its own remaining scope note). |
+| `user_input_include_text` | project | bool | `false` | **#4666 item ③ — opt-in for the user's OWN typed/chosen text**, ITS OWN knob (separate from `agent_delta_include_text` and `completed_response_include_text` above, both tracked under #4666). Covers 6 kinds, one content field each (AST census — an earlier pass found 3 and undercounted): `user_submitted`/`user_message_received` (`text`), `intervention_answer_submitted` (`text`), `user_answered_intervention` (`answer_text`), `user_intervention_received` (`answer`), `router_retry_exhausted` (`user_message`, truncated to 200 chars at the emit site regardless of this flag). No coalescing here — each event is still written individually; the knob only decides whether the one content field survives. Off (default): every other field on the kind (`chain_id`/`intervention_id`/`msg_id`/`seq`/etc.) still records that a submission/answer happened. **⚠️ Default-behavior change, 2026-08-21 (#4666): before this field existed, these 6 kinds' content was ALWAYS durably recorded.** UNCHANGED either way: live subscriber delivery (TUI/AG-UI/peer broadcast) and `history.jsonl`. **This field also governs `ask_user`'s `answer` on `tool_returned.result`** (#4666 item ③b: a per-tool "this field is conversation content" declaration, `reyn.core.dispatch.content_declarations` — closes the gap #4970's review found, where `ask_user`'s question/answer reached the audit log via the generic `tool_called`/`tool_returned` kinds unconditionally, bypassing ②③ entirely). **Scope, measured, not extended by guess:** only `ask_user` declares any field today (the sole tool whose args/result structurally ARE a conversation exchange); `mcp_called.args` was measured and excluded — an MCP tool's args are model-decided call parameters, the same class as any other tool's args, not a dedicated question/answer channel. A tool that shows the user free text and forgets to declare it leaks that text silently — this bound only catches the declared set GROWING, never catches a tool that should have declared and didn't (see the registry module's own docstring for the full disclosure). |
+| `provider_body_include_text` | project | bool | `false` | **#4975 — architect ruling (c), a LATTICE-MEET, not its own independent opt-in.** Gates `llm_request_error`'s `provider_body`/`provider_response` (a provider's own error-response body — reyn does not control its shape, so a 4xx/5xx body could quote back request content of any of the 3 #4666 content classes above; reyn cannot tell in advance which one). Showing either field requires ALL of `agent_delta_include_text` AND `completed_response_include_text` AND `user_input_include_text` above AND this field's own opt-in — the narrowest participant wins (same `compose_resolved` lattice-meet idiom this repo's permission resolution already uses). Rejected alternatives: OR-composition (any one opt-in lets all 3 content classes through — too loose) and a brand-new independent knob (doesn't correspond to a payload an operator can name). `error_type`/`status_code` are always recorded regardless of the gate; `provider_body_length`/`provider_response_length` are also always recorded when a body existed, gate-independent, so "existed but hidden" stays distinguishable from "genuinely absent". `LocalEventBackend.declare_gaps()` names this gap while any of the 4 participants is off. Whether providers actually echo conversation content in their error bodies is a separate, unmeasured question tracked in #4975's own issue — this knob only builds the permission surface for when that's confirmed. |
+| `provider_body_max_chars` | project | int | `4000` | **#4975 — the cap on the SHOWN `provider_body`/`provider_response`** when `provider_body_include_text`'s meet holds (reyn cannot bound a provider's own body size otherwise). `provider_body_truncated`/`provider_response_truncated` is added only when the cap actually cut something, so a caller can tell a capped body from a genuinely short one. A non-positive or non-numeric value falls back to the default. |
 
 Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely. `backend: discard` makes both rotation fields moot (nothing is ever written to rotate).
 
@@ -2564,9 +2564,9 @@ artifacts:
   remote_fallback_limit: 50   # default
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `remote_fallback_limit` | int | `50` | Caps the ref-table fallback to the N NEWEST entries (newest-first). A non-positive or non-numeric value falls back to the default. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `remote_fallback_limit` | bounding | int | `50` | Caps the ref-table fallback to the N NEWEST entries (newest-first). A non-positive or non-numeric value falls back to the default. |
 
 `remote_fallback_limit` is a **UX-scale default, not a performance one** — a single `stat()` costs order-microseconds, so even 10,000 rows costs tens of milliseconds; the binding constraint is how many newest-first rows an operator would ever actually scroll through in a list pane, which is a couple of dozen at most. The Artifacts pane's own disclosure text always states "newest N of M" so a truncation is never silent — raise this value if your own usage wants more history visible at once.
 
@@ -2580,10 +2580,10 @@ storage:
   pin: []                  # agent names whose content is never evicted
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_bytes` | int \| null | `null` (unlimited) | Project-wide cap across every session's history-content. A non-positive or non-numeric value falls back to unlimited — the same state as omitting the key entirely, never a silently-active cap of some other size. |
-| `pin` | list[str] | `[]` | Agent names (not session ids) whose own history-content is NEVER an eviction candidate under this cap, regardless of whether that agent's process is currently running. A non-list value, or a non-string list entry, is dropped rather than propagated. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `max_bytes` | project | int \| null | `null` (unlimited) | Project-wide cap across every session's history-content. A non-positive or non-numeric value falls back to unlimited — the same state as omitting the key entirely, never a silently-active cap of some other size. |
+| `pin` | project | list[str] | `[]` | Agent names (not session ids) whose own history-content is NEVER an eviction candidate under this cap, regardless of whether that agent's process is currently running. A non-list value, or a non-string list entry, is dropped rather than propagated. |
 
 This is a **DIFFERENT number from `MediaStoreConfig`'s own per-store `history_content_max_bytes`** (2 GiB, not operator-configurable here) — that field is a per-SESSION fail-safe backstop; this one bounds the WHOLE `.reyn/memory/history-content/` tree across every session in the project, which is the number an operator can actually name (nobody chooses how many sessions a project spawns, so "N bytes per session" would silently mean "N × session-count total"). The two never share a name on purpose — reusing one name for both would make it unreadable which cap is actually in effect for a given eviction.
 
@@ -2604,17 +2604,17 @@ voice:
   max_duration_s: 300.0   # auto-cancel recordings longer than this (seconds)
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `true` | Set `false` to hard-disable F2 dictation even when deps are installed. |
-| `model` | string | `small` | Whisper model size: `tiny` / `base` / `small` / `medium` / `large-v3`. |
-| `language` | string \| null | `ja` | ISO 639-1 language code. `""` or `null` enables auto-detection (less reliable for short clips). |
-| `device` | string | `cpu` | Inference device: `cpu` or `cuda`. `auto` is not supported — it picks the wrong device on some Mac setups. |
-| `compute_type` | string | `int8` | Quantisation: `int8` / `float16` / `float32`. |
-| `sample_rate` | int | `16000` | Sample rate (Hz). Whisper expects 16 kHz mono — do not change. |
-| `cpu_threads` | int | `4` | CPU threads for faster-whisper. `0` = OpenMP default. Pinning to 4 avoids OpenMP/Python-threading deadlocks on Apple Silicon. |
-| `num_workers` | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
-| `max_duration_s` | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `enabled` | project | bool | `true` | Set `false` to hard-disable F2 dictation even when deps are installed. |
+| `model` | project | string | `small` | Whisper model size: `tiny` / `base` / `small` / `medium` / `large-v3`. |
+| `language` | project | string \| null | `ja` | ISO 639-1 language code. `""` or `null` enables auto-detection (less reliable for short clips). |
+| `device` | project | string | `cpu` | Inference device: `cpu` or `cuda`. `auto` is not supported — it picks the wrong device on some Mac setups. |
+| `compute_type` | project | string | `int8` | Quantisation: `int8` / `float16` / `float32`. |
+| `sample_rate` | project | int | `16000` | Sample rate (Hz). Whisper expects 16 kHz mono — do not change. |
+| `cpu_threads` | project | int | `4` | CPU threads for faster-whisper. `0` = OpenMP default. Pinning to 4 avoids OpenMP/Python-threading deadlocks on Apple Silicon. |
+| `num_workers` | project | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
+| `max_duration_s` | project | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
 
 ## `multimodal` block
 
@@ -2630,14 +2630,14 @@ multimodal:
   model_capability_overrides: {}  # declared media capabilities for a proxied/uncataloged model
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `max_bytes` | int | `5000000` (5 MB) | Decoded-payload byte cap before the on-oversize gate fires. Counts the binary size (`len(response.content)` / `len(file_bytes)`), not the base64-encoded shape. |
-| `on_oversize` | string | `ask` | What to do when a piece of media exceeds `max_bytes`: `ask` (prompt the user via the intervention bus with size + source info; yes loads the media, no drops it), `allow` (silently accept; use in trusted non-interactive pipelines), `deny` (silently reject; the op returns `status="denied"` — use in cost-sensitive contexts). |
-| `media_dir` | string | `.reyn/media` | Project-relative directory for image binary storage. Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
-| `tool_results_dir` | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps. |
-| `base_url` | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption. When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), saved artefacts carry a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
-| `model_capability_overrides` | `{model: {capability_field: bool}}` | `{}` | **(#5509)** Declares a model's media capability when litellm's own catalog doesn't know the model string at all. This is the ORDINARY case, not an edge case, for a proxy-routed deployment (a name like `openai/my-proxy-model` misses litellm's static catalog — `get_model_info` raises for it) — without a declaration, **every non-text attachment for that model silently degrades to a lossless path-ref instead of being embedded inline**, which reads to a user as "attachments stopped working". `capability_field` is NOT any litellm `get_model_info` field — only the ones reyn's own code actually queries (`reyn.llm.model_media_capability.QUERIED_CAPABILITY_FIELDS_BY_MODALITY`'s own values; today just `supports_vision`) — a wider litellm field would be accepted but silently do nothing. A one-time warning (`media_capability_unknown` in the log, naming the exact key to set) fires the first time this happens for a given `(model, capability_field)` pair. See `reyn.llm.model_media_capability`'s own module docstring for the full 3-state (supported / unsupported / unknown) resolution rule. Example: `{"openai/my-proxy-model": {"supports_vision": true}}`. |
+| Field | Axis | Type | Default | Description |
+|-------|---|------|---------|-------------|
+| `max_bytes` | bounding | int | `5000000` (5 MB) | Decoded-payload byte cap before the on-oversize gate fires. Counts the binary size (`len(response.content)` / `len(file_bytes)`), not the base64-encoded shape. |
+| `on_oversize` | bounding | string | `ask` | What to do when a piece of media exceeds `max_bytes`: `ask` (prompt the user via the intervention bus with size + source info; yes loads the media, no drops it), `allow` (silently accept; use in trusted non-interactive pipelines), `deny` (silently reject; the op returns `status="denied"` — use in cost-sensitive contexts). |
+| `media_dir` | project | string | `.reyn/media` | Project-relative directory for image binary storage. Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
+| `tool_results_dir` | project | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps. |
+| `base_url` | project | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption. When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), saved artefacts carry a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
+| `model_capability_overrides` | project | `{model: {capability_field: bool}}` | `{}` | **(#5509)** Declares a model's media capability when litellm's own catalog doesn't know the model string at all. This is the ORDINARY case, not an edge case, for a proxy-routed deployment (a name like `openai/my-proxy-model` misses litellm's static catalog — `get_model_info` raises for it) — without a declaration, **every non-text attachment for that model silently degrades to a lossless path-ref instead of being embedded inline**, which reads to a user as "attachments stopped working". `capability_field` is NOT any litellm `get_model_info` field — only the ones reyn's own code actually queries (`reyn.llm.model_media_capability.QUERIED_CAPABILITY_FIELDS_BY_MODALITY`'s own values; today just `supports_vision`) — a wider litellm field would be accepted but silently do nothing. A one-time warning (`media_capability_unknown` in the log, naming the exact key to set) fires the first time this happens for a given `(model, capability_field)` pair. See `reyn.llm.model_media_capability`'s own module docstring for the full 3-state (supported / unsupported / unknown) resolution rule. Example: `{"openai/my-proxy-model": {"supports_vision": true}}`. |
 
 **Materialise is image-only, independent of `model_capability_overrides` above** (#5509 close, architect ruling, 2026-09-02): `/attachment` accepts any file type, but today only an `image/*` attachment is ever embedded inline — every other type (PDF, video, audio, arbitrary file) always degrades to a lossless path-ref, on EVERY model, regardless of what that model actually supports. This is not an unimplemented capability check; it is the consequence of having no established per-item token bound for those types yet — a bound this repo will not invent (measured: `litellm.model_cost`'s 3,518 models declare only price fields per modality, e.g. `input_cost_per_image`/`annotation_cost_per_page`, never a token-count field, and a document's real token cost scales with page count × per-page content in a provider-dependent way no single constant could honestly bound). Re-opening this for a given modality needs, in order: ① a real capability gate (litellm already exposes a per-modality field for this; reyn does not yet query it — adding the query is part of re-opening, not a separate step), ② a genuine per-item token bound (either measured — send one known document and read the `usage.prompt_tokens` delta — or a new operator-declared `multimodal.*` override; never a guessed constant), only then ③ adding that modality to reyn's own internal mime-to-modality map.
 

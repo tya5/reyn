@@ -42,9 +42,49 @@ from __future__ import annotations
 
 from reyn.llm.model_resolver import STANDARD_CLASSES
 
-#: The ONE key #4206 ②'s current scope covers — see the module docstring
-#: for why ``timeout``/``router_max_iterations`` are not (yet) here.
-BOUNDING_KEYS: "frozenset[str]" = frozenset({"model"})
+
+def _derive_bounding_keys() -> "frozenset[str]":
+    """#4206 (architect ruling, 2026-09-02T04:01): every ``ReynConfig``
+    leaf whose field declares BOTH ``axis=Axis.BOUNDING`` and
+    ``override_enabled=True`` — the SAME derivation shape
+    ``reyn.runtime.preferences._derive_preference_keys`` uses for ③.
+    Classifying a leaf ``Axis.BOUNDING`` is NOT the same claim as "this
+    leaf has a live ``bounding:`` override receptacle" — see
+    ``reyn.config_axis.Axis``'s own module docstring: architect's
+    explicit instruction was NOT to bulk-add every newly-bounding-
+    classified leaf (~40, mostly ``safety.*``) into this set at once,
+    only the leaves with MEASURED real demand get
+    ``"override_enabled": True`` — today that is exactly the 1
+    pre-existing member this set already had by hand (``llm.model``).
+    Note on import timing (corrected, measured directly against the PR
+    head — the prior wording here was wrong): the full config tree
+    genuinely IS pulled in at THIS module's own import time —
+    ``BOUNDING_KEYS`` below is evaluated at module scope, so
+    ``config_schema`` (and the whole ``ReynConfig`` tree behind it)
+    loads then regardless of whether this ``import`` sits inside the
+    function body or at the top of the file. See
+    ``reyn.runtime.preferences._derive_preference_keys``'s own docstring
+    for where the real circular import lives (``runtime/budget/budget.py``,
+    fixed there via a PEP 562 ``__getattr__`` deferral) and why the lazy
+    import kept here is not load-bearing for it — it stays only for
+    symmetry with that sibling helper."""
+    from reyn.config.config_schema import walk_config_schema
+    from reyn.config_axis import Axis
+    return frozenset(
+        node.override_key or node.key for node in walk_config_schema()
+        if node.axis == Axis.BOUNDING and node.override_enabled
+    )
+
+
+#: See :func:`_derive_bounding_keys` — the ONE key #4206 ②'s current
+#: scope covers (``llm.model``, this file's own ``"model"`` bounding-
+#: mapping key — see the module docstring for why ``timeout``/
+#: ``router_max_iterations`` are not (yet) here). DERIVED from field
+#: metadata (#4206, architect ruling), replacing the pre-#4206
+#: hand-typed ``frozenset({"model"})`` — same content, same composition
+#: mechanism (:func:`compose_model_ceiling` below is unchanged), only
+#: the SOURCE of this one set moved.
+BOUNDING_KEYS: "frozenset[str]" = _derive_bounding_keys()
 
 
 class UnknownBoundingKeyError(ValueError):

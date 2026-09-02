@@ -61,6 +61,7 @@ from reyn.config.media import (
 from reyn.config.observability import (
     ObservabilityConfig,
 )
+from reyn.config_axis import Axis
 from reyn.runtime.budget.budget import CostConfig
 from reyn.runtime.external_routing import ExternalTransportRouting
 
@@ -76,7 +77,7 @@ class ReynConfig:
     # `build_system_prompt(output_language=...)`.
     output_language: str | None = field(
         default=None,
-        metadata={"desc": "Language code injected into the context frame for all LLM outputs."},
+        metadata={"axis": Axis.PREFERENCE, "override_enabled": True, "desc": "Language code injected into the context frame for all LLM outputs."},
     )
     # #1829: LLM-layer config — the litellm.Router resilience surface
     # (llm.router.*: use / num_retries / fallbacks / cooldown_time /
@@ -99,7 +100,7 @@ class ReynConfig:
     # — clean break, no alias; existing reyn.yaml `shell:` keys must be renamed.)
     permissions: dict = field(
         default_factory=dict,
-        metadata={"desc": "Pre-declare `allow`/`deny` for specific Control IR ops, skipping the interactive prompt."},
+        metadata={"axis": Axis.CAPABILITY, "desc": "Pre-declare `allow`/`deny` for specific Control IR ops, skipping the interactive prompt."},
     )
     # MCP server definitions.  Merged across config sources (servers dict is shallow-merged;
     # local overrides project which overrides global).
@@ -126,7 +127,7 @@ class ReynConfig:
     #         headers:
     #           Authorization: "Bearer ${GITHUB_TOKEN}"
     #           X-API-Version: "2024-01-01"
-    mcp: dict = field(default_factory=dict)
+    mcp: dict = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
     # FP-0016 Component E — agent identity for audit trail + HTTP header
     # propagation. Default `reyn/<hostname>` when reyn.yaml has no
     # `agent_id:` key. Read by Session to construct its EventLog and
@@ -134,7 +135,7 @@ class ReynConfig:
     # #4174 T5: flattened from the `agent: {id: ...}` namespace (a
     # single-field wrapper — same disposition as T1's `python:` deletion)
     # to a plain top-level scalar.
-    agent_id: str = field(default_factory=_default_agent_id)
+    agent_id: str = field(default_factory=_default_agent_id, metadata={"axis": Axis.PROJECT})
     # #2081 — cross-agent delegation policy. ``delegation.capability_default``
     # (inherit|deny, default=inherit) selects the capability floor an UNBOUND
     # delegated agent receives. Default ``inherit`` = byte-identical to pre-#2081.
@@ -195,7 +196,7 @@ class ReynConfig:
     #
     # An explicit value pins one path (e.g. ``"CLAUDE.md"`` to reuse that
     # source); ``""`` disables injection entirely.
-    project_context_path: str | None = None
+    project_context_path: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
     # RAG embedding settings (ADR-0033 Phase 1). Default-completed: usable
     # without any reyn.yaml edits after `pip install reyn` + OPENAI_API_KEY.
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -254,14 +255,14 @@ class ReynConfig:
     # #1800 slice 5b: the raw ``hooks:`` block (a list of hook entries). Kept raw
     # here and parsed via ``load_hooks`` at Session construction. Empty (default)
     # → empty registry → the HookDispatcher is a no-op.
-    hooks: list = field(default_factory=list)
+    hooks: list = field(default_factory=list, metadata={"axis": Axis.PROJECT})
     # Hook-Event Redesign Phase 4b/5 (proposal 0059 §5/§9, #2880/#2881): the raw
     # ``composers:`` block (a list of Composer definitions). Kept raw here and
     # parsed via ``reyn.hooks.composer.load_composers`` at Session construction
     # (the startup/OUT-set layer of the same 4-layer additive combine ``hooks:``
     # uses). Empty (default) → no composers → ``start_composers`` is never
     # called → byte-identical to pre-Composer behavior.
-    composers: list = field(default_factory=list)
+    composers: list = field(default_factory=list, metadata={"axis": Axis.PROJECT})
     # #4552 PR-3+4: `action_retrieval` field DELETED entirely (was FP-0034's
     # universal catalog gating + action retrieval, D13/D14). Its 4 fields
     # were removed/moved across the #4552 arc: hot_list_n/hot_list_seed
@@ -295,7 +296,7 @@ class ReynConfig:
     # full incident this fixes).
     external_transports: "ExternalTransportRouting" = field(
         default_factory=ExternalTransportRouting,
-        metadata={"dict_leaf": True},
+        metadata={"axis": Axis.PROJECT, "dict_leaf": True},
     )
     # #2548 PR-A: skill registry config. Raw dict passed to
     # reyn.data.skills.registry.build_skill_registry at session /
@@ -314,7 +315,7 @@ class ReynConfig:
     # the pair describes 4 states, not 6. The removed `auto_invoke` key is
     # rejected at load by loader._validate_skill_visibility.
     # Merged across config tiers by name (explicit entries win on collision).
-    skills: dict = field(default_factory=dict)
+    skills: dict = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
     # Pipeline registry config. Raw dict passed to
     # reyn.data.pipelines.registry.build_pipeline_registry at session-factory
     # time (SessionFactoryConfig.from_config). Pipelines are registered PURELY
@@ -338,7 +339,7 @@ class ReynConfig:
     # Absent/empty → no pipelines loaded. Merged across config tiers by name
     # (explicit entries win on collision) — same union-merge shape as
     # ``skills`` (see ``_merge`` in loader.py).
-    pipelines: dict = field(default_factory=dict)
+    pipelines: dict = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
     # FP-0054 PR-C: named-presentation-template registry config. Raw dict passed to
     # reyn.data.presentations.registry.build_presentation_registry at session-factory
     # time (SessionFactoryConfig.from_config). A named template's value is a
@@ -358,7 +359,7 @@ class ReynConfig:
     #         enabled: true                            # optional, default true
     # Merged across config tiers by name (explicit entries win on collision) — same
     # union-merge shape as ``skills`` / ``pipelines`` (see ``_merge`` in loader.py).
-    presentations: dict = field(default_factory=dict)
+    presentations: dict = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
 
     # #4194: the policy-tier unknown/renamed config-key COUNT
     # (``loader._warn_unknown_config_keys``'s return value, attached here
