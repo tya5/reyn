@@ -26,7 +26,54 @@ test pins that a REAL test-file change still surfaces.
 """
 from __future__ import annotations
 
+import re
+import shlex
 import subprocess
+
+from tests._support.paths import REPO_ROOT
+
+# #5691 BLOCKING (lead-coder review): the first cut of this test hand-typed
+# its OWN copy of the git invocation, so it stayed green even if the flag
+# were removed from the workflow file — it was testing itself, not the
+# thing it claimed to. This regex finds the SAME `CHANGED=$(...)` block
+# `.github/workflows/test.yml`'s "Run test-tier audit" step actually
+# contains (three physical lines, backslash-continued); the argv used
+# below is EXTRACTED from that match, never re-typed, so editing/removing
+# `--diff-filter=d` in the workflow changes what this test runs, not just
+# what it asserts about.
+_CHANGED_BLOCK_RE = re.compile(
+    r"CHANGED=\$\(\s*(git diff .*?)\s*\)", re.DOTALL,
+)
+
+
+def _extract_changed_files_argv(*, base_ref: str, head_ref: str) -> "list[str]":
+    """Read `.github/workflows/test.yml` fresh off disk, find the
+    `CHANGED=$(git diff ...)` block inside the "Run test-tier audit" step,
+    and return the argv it actually runs — with the GitHub Actions
+    `${{ github.event.pull_request.base.sha }}"...HEAD` expression
+    substituted for this test's own constructed refs (the one templated
+    piece a local git invocation cannot resolve itself)."""
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "test.yml"
+    text = workflow_path.read_text(encoding="utf-8")
+    match = _CHANGED_BLOCK_RE.search(text)
+    assert match is not None, (
+        "could not find a CHANGED=$(git diff ...) block in "
+        f"{workflow_path} — the workflow's own shape changed; update this "
+        "extraction, don't loosen it"
+    )
+    snippet = match.group(1)
+    snippet = snippet.replace(
+        '"${{ github.event.pull_request.base.sha }}"...HEAD',
+        f'"{base_ref}"...{head_ref}',
+    )
+    # Backslash line-continuations -> one shell-quoted line shlex can parse.
+    snippet = snippet.replace("\\\n", " ")
+    argv = shlex.split(snippet)
+    assert "--diff-filter=d" in argv, (
+        f"the workflow's own CHANGED= invocation no longer excludes pure "
+        f"deletions (--diff-filter=d) — extracted argv: {argv!r}"
+    )
+    return argv
 
 
 def _git(*args: str, cwd: str) -> str:
@@ -44,15 +91,13 @@ def _has_branch(repo_dir: str, name: str) -> bool:
 
 
 def _changed_test_files(base_ref: str, head_ref: str, *, repo_dir: str) -> "list[str]":
-    """The EXACT invocation `.github/workflows/test.yml`'s "Run test-tier
-    audit" step uses for its own `$CHANGED` — three-dot range, the
-    `--diff-filter=d` fix, the `tests/**.py` pathspec."""
+    """Runs the EXACT invocation `.github/workflows/test.yml`'s "Run
+    test-tier audit" step uses for its own `$CHANGED`, extracted fresh
+    from the workflow file itself (see `_extract_changed_files_argv`) —
+    not a hand-typed copy of it."""
+    argv = _extract_changed_files_argv(base_ref=base_ref, head_ref=head_ref)
     result = subprocess.run(
-        [
-            "git", "diff", "--name-only", "--diff-filter=d",
-            f"{base_ref}...{head_ref}", "--", "tests/**.py",
-        ],
-        cwd=repo_dir, capture_output=True, text=True, check=True,
+        argv, cwd=repo_dir, capture_output=True, text=True, check=True,
     )
     return [line for line in result.stdout.splitlines() if line]
 
@@ -67,6 +112,11 @@ def test_a_deletion_only_branch_reports_no_changed_test_files(tmp_path):
     _git("config", "user.email", "test@example.com", cwd=repo_dir)
     _git("config", "user.name", "Test", cwd=repo_dir)
 
+    # check_tests_path_literal_reference.py: "tests/test_gone.py"/
+    # "tests/test_keep.py" below are deliberate ILLUSTRATIVE fixture
+    # filenames inside a disposable git repo THIS test builds in tmp_path
+    # (mirrors test_detect_5478_deleted_files.py's own disclosure) —
+    # never a reference to a real file in THIS repo's own tests/ tree.
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_gone.py").write_text("def test_x(): pass\n")
     (tmp_path / "tests" / "test_keep.py").write_text("def test_y(): pass\n")
@@ -100,6 +150,10 @@ def test_a_genuinely_modified_test_file_still_surfaces(tmp_path):
     _git("config", "user.email", "test@example.com", cwd=repo_dir)
     _git("config", "user.name", "Test", cwd=repo_dir)
 
+    # check_tests_path_literal_reference.py: "tests/test_edit_me.py"/
+    # "tests/test_gone.py" below are deliberate ILLUSTRATIVE fixture
+    # filenames inside a disposable git repo THIS test builds in tmp_path —
+    # never a reference to a real file in THIS repo's own tests/ tree.
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_edit_me.py").write_text('"""Tier 1: x."""\ndef test_x(): pass\n')
     (tmp_path / "tests" / "test_gone.py").write_text("def test_y(): pass\n")

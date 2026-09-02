@@ -425,21 +425,6 @@
     "class": "never-existed"
   },
   {
-    "file": "scripts/check_migration_diff_shape.py",
-    "literal": "tests/foo/bar.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "scripts/check_migration_diff_shape.py",
-    "literal": "tests/old/path.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "scripts/check_migration_diff_shape.py",
-    "literal": "tests/test_a.py",
-    "class": "never-existed"
-  },
-  {
     "file": "scripts/check_tests_dir_names.py",
     "literal": "tests/scripts/__init__.py",
     "class": "never-existed"
@@ -525,38 +510,18 @@
     "class": "stale"
   },
   {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/core/test_a.py",
+    "file": "tests/scripts/test_5691_ci_diff_filter_excludes_deletions.py",
+    "literal": "tests/test_edit_me.py",
     "class": "never-existed"
   },
   {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/core/test_a_moved.py",
+    "file": "tests/scripts/test_5691_ci_diff_filter_excludes_deletions.py",
+    "literal": "tests/test_gone.py",
     "class": "never-existed"
   },
   {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/does_not_exist/__init__.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/newpkg/__init__.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/newpkg/test_new.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/test_a.py",
-    "class": "never-existed"
-  },
-  {
-    "file": "tests/scripts/test_check_migration_diff_shape_3879.py",
-    "literal": "tests/test_b.py",
+    "file": "tests/scripts/test_5691_ci_diff_filter_excludes_deletions.py",
+    "literal": "tests/test_keep.py",
     "class": "never-existed"
   },
   {
