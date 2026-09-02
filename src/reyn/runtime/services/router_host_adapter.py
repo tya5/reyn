@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -54,6 +55,9 @@ logger = logging.getLogger(__name__)
 # derive their own defaults from the SAME source instead of two independently
 # hardcoded ``5.0`` literals drifting apart.
 _DEFAULT_MCP_PROBE_SECONDS = TimeoutConfig().mcp_probe_seconds
+# Persistent failures should not make every turn pay the probe timeout; the
+# cooldown is temporary so a server that recovers is re-probed automatically.
+_MCP_PROBE_FAILURE_COOLDOWN_SECONDS: float = 60.0
 
 
 @dataclass(frozen=True)
@@ -501,6 +505,7 @@ class RouterHostAdapter:
         # legacy if/elif tool-dispatch tree) → `hooks_add`'s write-target
         # helper falls back to its pre-#4215 global-write behavior.
         session_state_dir_fn: "Callable[[], Path] | None" = None,
+        clock: "Callable[[], float] | None" = None,
     ) -> None:
         self._op_ctx_source = op_context_source
         self._mcp_gateway = mcp_gateway_inputs
@@ -511,6 +516,7 @@ class RouterHostAdapter:
         self._turn_budget_engine: Any = _TURN_BUDGET_ENGINE_UNSET
         self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._session_state_dir_fn = session_state_dir_fn  # #4215①
+        self._clock = clock or time.monotonic
         self._agent_name = agent_name
         self._agent_role = agent_role
         self.output_language = output_language
@@ -2597,11 +2603,10 @@ class RouterHostAdapter:
                 self._mcp_tools_cache = {}
 
         servers = self._mcp_servers_flat()
-        import time
         unanswered = [
             name for name in servers
             if name not in self._mcp_tools_cache
-            and time.monotonic() >= self._mcp_probe_cooldown_until.get(name, 0.0)
+            and self._clock() >= self._mcp_probe_cooldown_until.get(name, 0.0)
         ]
         if not unanswered:
             return
@@ -2633,7 +2638,7 @@ class RouterHostAdapter:
                     reason="timeout",
                     per_server_timeout=per_server_timeout,
                 )
-                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
+                self._mcp_probe_cooldown_until[server_name] = self._clock() + _MCP_PROBE_FAILURE_COOLDOWN_SECONDS
                 return server_name, ToolsUnknown(reason="timeout")
             except Exception as exc:  # noqa: BLE001 — adapter must never raise
                 self._events.emit(
@@ -2643,7 +2648,7 @@ class RouterHostAdapter:
                     per_server_timeout=per_server_timeout,
                     detail=repr(exc),
                 )
-                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
+                self._mcp_probe_cooldown_until[server_name] = self._clock() + _MCP_PROBE_FAILURE_COOLDOWN_SECONDS
                 return server_name, ToolsUnknown(reason="exception", detail=repr(exc))
             # mcp_list_tools may return [{"error": "..."}] instead of raising.
             # #3520: an error sentinel and NO usable tool is the same non-answer
@@ -2656,7 +2661,7 @@ class RouterHostAdapter:
             raw = [t for t in (tools or []) if isinstance(t, dict)]
             cleaned = [t for t in raw if "error" not in t and t.get("name")]
             if not cleaned and any("error" in t for t in raw):
-                self._mcp_probe_cooldown_until[server_name] = time.monotonic() + 60.0
+                self._mcp_probe_cooldown_until[server_name] = self._clock() + _MCP_PROBE_FAILURE_COOLDOWN_SECONDS
                 self._events.emit(
                     "mcp_tool_probe_degraded",
                     server=server_name,
