@@ -1323,6 +1323,18 @@ class Session:
 
         # HookBus/HookDispatcher/fs_watcher/composers/hot_reloader built together below; the config-derivation feeding them stays inline as builder inputs (#1800 slice 5b / #3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         self._startup_hooks_raw: list = hooks_config if isinstance(hooks_config, list) else []
+        # #5505: trusted-per-agent hooks layer (.reyn/config/agents/<name>/hooks.yaml)
+        # — BOOT-ONLY, captured ONCE here (mirrors self._startup_hooks_raw immediately
+        # above; _build_hook_registry never re-reads this file, even on hot-reload) and
+        # FAIL-LOUD: a genuine YAML syntax error propagates uncaught from this read,
+        # refusing Session construction — architect ruling (#5505/#5351): this layer
+        # carries PERMISSION-bearing values, so a bad file silently dropping mid-session
+        # (the untrusted-layer shape every other post-startup layer has) is worse than
+        # refusing to boot. See _build_hook_registry's own docstring for the combine
+        # position (between runtime and per-agent) and _read_trusted_per_agent_hooks_raw's
+        # own docstring for why this is NOT routed through _read_hooks_yaml_layer_key
+        # (that helper drop-and-warns on a read failure — the opposite contract).
+        self._trusted_per_agent_hooks_raw: list = self._read_trusted_per_agent_hooks_raw()
         # composers: startup (OUT-set) layer, combined with the other 3 layers by _build_composer_defs; v1 startup-only, no hot-reload (Hook-Event Redesign Phase 4b/5, #2880/#2881, see session-construction.md#family-3-hook-event-reactivity)
         self._startup_composers_raw: list = (
             composers_config if isinstance(composers_config, list) else []
@@ -6424,17 +6436,38 @@ class Session:
         hr.register_seam("visibility_override", self._reapply_visibility_override_seam)
 
     def _build_hook_registry(self, in_set: "dict | None" = None) -> "object":
-        """Build the LAYERED hook registry — the three-layer COMBINE (#2073 S2b + the
-        per-agent-hooks add-on), ADDITIVE in order startup → runtime → per-agent:
+        """Build the LAYERED hook registry — the #2073 S2b + per-agent-hooks
+        + #5505 trusted-per-agent COMBINE, ADDITIVE in
+        :data:`~reyn.hooks.schema.HOOK_ORIGIN_ORDER`'s own order (startup →
+        runtime → trusted-per-agent → per-agent → per-session):
 
         - **startup** — the reyn.yaml hooks (``self._startup_hooks_raw``, captured once
           at boot, the restart-only OUT-set, never re-read on a reload);
         - **runtime** — the global ``.reyn/config/hooks.yaml`` (from the IN-set);
+        - **trusted-per-agent** (#5505) — ``.reyn/config/agents/<name>/hooks.yaml``
+          (``self._trusted_per_agent_hooks_raw``, captured ONCE at boot like
+          ``startup`` — NOT re-read here even though this method itself is
+          called on every hot-reload, and NOT try/except-wrapped like every
+          layer below: a malformed file there fails the SAME way a bad
+          startup layer does, at the FIRST call this method ever makes
+          (boot), never later — architect ruling: this layer carries
+          PERMISSION-bearing values (the ONLY keys allowed here — the
+          #5356 rejection this layer exists to give operators back — see
+          ``reyn.hooks.loader``'s own ``_AGENT_WRITABLE_ORIGINS``/
+          ``_AGENT_WRITABLE_SANDBOX_KEYS``), so a silently-dropped mid-session
+          permission is worse than a refused boot);
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
-          IN-set grain but scoped per agent).
+          IN-set grain but scoped per agent);
+        - **per-session** — the 4th, most-specific layer (#2285).
 
-        Rebuilding from scratch each call means a removed hook (runtime or per-agent)
-        simply isn't in the new registry — removal handled by construction.
+        Rebuilding from scratch each call means a removed hook (runtime,
+        per-agent, or per-session) simply isn't in the new registry —
+        removal handled by construction. ``trusted-per-agent`` is the one
+        exception: it is NOT in the hot-reload IN-set at all (architect
+        ruling, #5505/#5351 open item ①) — a change to that FILE has no
+        effect until restart, by design; only the cached
+        ``self._trusted_per_agent_hooks_raw`` (read once, see ``__init__``)
+        is ever consulted here.
 
         Threads ``self._composed_schemas`` (#2889 — computed once in
         ``__init__`` from ``self._composer_defs``, BEFORE this is first
@@ -6448,10 +6481,11 @@ class Session:
         this — a malformed persisted ``.reyn/config/hooks.yaml`` or per-agent file must NOT
         crash boot, NOR may one bad UNTRUSTED layer drop a good sibling. So the trusted
         startup layer (reyn.yaml — the operator's) must load (a failure propagates =
-        fail loud), then each untrusted layer is try-added INDEPENDENTLY: a bad runtime
-        keeps startup ∪ per-agent; a bad per-agent keeps startup ∪ runtime; each bad
-        layer is dropped + warned. (On the reload path validate-before-apply also rejects
-        a bad runtime layer up front; this is the boot + defence-in-depth guard.)
+        fail loud), the trusted-per-agent layer likewise (see above), then each REMAINING
+        untrusted layer is try-added INDEPENDENTLY: a bad runtime keeps every OTHER good
+        layer; a bad per-agent likewise; each bad layer is dropped + warned. (On the
+        reload path validate-before-apply also rejects a bad runtime layer up front; this
+        is the boot + defence-in-depth guard.)
 
         #5213: each layer is now parsed by its OWN ``load_hooks`` call
         (``origin=<label>``), and the resulting registries' ``HookDef``
@@ -6475,8 +6509,30 @@ class Session:
         defs = load_hooks(
             list(self._startup_hooks_raw), composed_schemas, origin="startup",
         ).all_defs()
+
+        # runtime — untrusted, try-added (see the loop below for per-agent/per-session).
+        if runtime_list:
+            try:
+                defs = defs + load_hooks(runtime_list, composed_schemas, origin="runtime").all_defs()
+            except HookConfigError as exc:
+                logger.warning(
+                    "config hot-reload: malformed runtime hooks layer — skipped, keeping "
+                    "the valid hook layers: %s", exc,
+                )
+                self._audit_events.emit(
+                    "hooks_layer_rejected", layer="runtime", reason=str(exc),
+                )
+
+        # #5505: trusted-per-agent — UNGUARDED, matching the trusted startup
+        # layer above (not the try/except every layer below it gets). The
+        # combine position (between runtime and per-agent) is
+        # HOOK_ORIGIN_ORDER's own — see this method's own docstring for the
+        # boot-only/fail-loud rationale.
+        defs = defs + load_hooks(
+            list(self._trusted_per_agent_hooks_raw), composed_schemas, origin="trusted-per-agent",
+        ).all_defs()
+
         for label, layer in (
-            ("runtime", runtime_list),
             ("per-agent", per_agent_list),
             ("per-session", per_session_list),  # #2285: session-defined hooks (try-add like untrusted)
         ):
@@ -6570,10 +6626,48 @@ class Session:
         SAME primitive :meth:`_read_per_agent_hooks` uses."""
         return self._read_hooks_yaml_layer_key(self._hooks_yaml_layers()[1][1], "hooks")
 
+    def _trusted_per_agent_hooks_path(self) -> Path:
+        """#5505: ``.reyn/config/agents/<name>/hooks.yaml`` — the trusted
+        per-agent hooks layer's own path. Deliberately NOT added to
+        :meth:`_hooks_yaml_layers` (that registry is shared by BOTH the
+        ``hooks:`` and ``composers:`` readers — this layer carries ONLY
+        ``hooks:``, composers were never part of this issue's scope), so
+        it gets its own dedicated accessor rather than a 3rd tuple entry
+        that would silently also expose a ``composers:`` key nothing reads
+        from this path today."""
+        return (
+            self._hot_reload_project_root() / ".reyn" / "config" / "agents"
+            / self.agent_name / "hooks.yaml"
+        )
+
+    def _read_trusted_per_agent_hooks_raw(self) -> list:
+        """#5505: read the trusted per-agent hooks layer's ``hooks:`` key —
+        BOOT-ONLY (called exactly once, from ``__init__``, into
+        ``self._trusted_per_agent_hooks_raw``; :meth:`_build_hook_registry`
+        reads that cached list on every call, never this method again) and
+        FAIL-LOUD: unlike :meth:`_read_hooks_yaml_layer_key` (which every
+        OTHER hooks.yaml-shaped layer uses, and which drop-and-warns via
+        ``self._hooks_config_warnings`` on a ``HookYamlReadError``), this
+        calls :func:`~reyn.config.loader.read_and_expand_hooks_yaml`
+        DIRECTLY — a genuine YAML syntax error propagates uncaught,
+        refusing Session construction (architect ruling, #5505/#5351: a
+        permission-bearing layer failing silently mid-session is worse
+        than refusing to boot; see :meth:`_build_hook_registry`'s own
+        docstring). ``[]`` when the file or key is absent — a no-op layer,
+        same as every sibling reader."""
+        from reyn.config.loader import read_and_expand_hooks_yaml
+        data = read_and_expand_hooks_yaml(
+            self._trusted_per_agent_hooks_path(),
+            agent_name=self.agent_name,
+            project_root=self._hot_reload_project_root(),
+        )
+        hooks = (data or {}).get("hooks")
+        return hooks if isinstance(hooks, list) else []
+
     def _build_composer_defs(self, in_set: "dict | None" = None) -> list:
         """Build the LAYERED ``ComposerDef`` list (Hook-Event Redesign Phase 4b/5,
         proposal 0059 §5/§9, #2880/#2881) — the SAME 4-layer additive COMBINE
-        shape as :meth:`_build_hook_registry` (startup -> runtime -> per-agent
+        shape :meth:`_build_hook_registry` used to have (startup -> runtime -> per-agent
         -> per-session), applied to ``composers:`` instead of ``hooks:``.
 
         Unlike hooks, composers are v1 **startup-only** — this is called ONCE
@@ -6584,10 +6678,12 @@ class Session:
         concern from a hook-registry swap, which has no analogous in-flight
         state to lose).
 
-        Per-layer resilience mirrors ``_build_hook_registry`` exactly: the
-        trusted startup (reyn.yaml) layer must parse+cycle-check cleanly or
-        this fails loud (an operator config error); each of the 3 untrusted
-        layers (runtime/per-agent/per-session) is try-added independently — a
+        Per-layer resilience mirrors ``_build_hook_registry``'s pre-#5505
+        shape (composers never gained the #5505 trusted-per-agent layer —
+        out of that issue's scope, ``hooks:``-only): the trusted startup
+        (reyn.yaml) layer must parse+cycle-check cleanly or this fails loud
+        (an operator config error); each of the 3 untrusted layers
+        (runtime/per-agent/per-session) is try-added independently — a
         malformed layer is warned + dropped, keeping its valid siblings."""
         from reyn.hooks.composer import ComposerConfigError, load_composers
         runtime = (in_set or {}).get("composers") or []

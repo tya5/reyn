@@ -529,9 +529,16 @@ def _parse_entry(
                 f"its own {origin} hooks.yaml, so a "
                 f"{_agent_writable_key} grant declared there is a "
                 f"self-grant, not an operator's expressed will (#5356). "
+                # #5505: this used to point at startup/runtime only — both
+                # agent-LESS layers, no per-agent grant mechanism existed
+                # at all until this trusted layer landed (architect's own
+                # point reviewing #5505: the old guidance goes stale the
+                # moment this layer exists, so it must move in the SAME
+                # PR, not a follow-up).
                 f"Declare {_agent_writable_key} at the startup "
-                f"(reyn.yaml) or runtime (.reyn/config/hooks.yaml) layer "
-                f"instead — neither is agent-writable."
+                f"(reyn.yaml), runtime (.reyn/config/hooks.yaml), or "
+                f"trusted-per-agent (.reyn/config/agents/<name>/hooks.yaml) "
+                f"layer instead — none of the three is agent-writable."
             )
 
     subprocess_raw = _sandbox_bool("subprocess")

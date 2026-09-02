@@ -77,10 +77,14 @@ table's `Declared in` cells against them in CI, mirroring
 [`events.md`'s own doc↔code gate](../runtime/events.md). A key gaining
 agent/session write capability without this table catching up → red.
 
-⚠️ **One exception to the exception**: `composers` is read from the same 4-layer
-combine as `hooks` (`reyn.yaml` ∪ `.reyn/config/hooks.yaml` ∪ per-agent ∪
+⚠️ **One exception to the exception**: `composers` is read from its own
+4-layer combine (`reyn.yaml` ∪ `.reyn/config/hooks.yaml` ∪ per-agent ∪
 per-session) but is **not** hot-reloaded — added or removed entries take effect
-at the next session start.
+at the next session start. `hooks` itself gained a 5th layer, `.reyn/config/
+agents/<name>/hooks.yaml` (trusted per-agent, #5505 — see [hooks §
+sandbox](../../concepts/runtime/hooks.md#which-layer-may-grant-the-three-sandbox-axes)),
+which `composers` does NOT share — that layer carries only the permission-
+bearing per-hook keys, out of `composers`'s own scope.
 
 Note that this table's axis is only the two **project-level** surfaces
 (`reyn.yaml` and `.reyn/config/`). `hooks`, `composers`, and the permission keys
@@ -1346,6 +1350,16 @@ hooks:
 | `pipeline_launch` | map | _none_ | Launch a registered pipeline (one of the four schemes). `name` (required — the pipeline's registered name; unregistered → warns and skips the launch, the hook point still completes), `input_template` (optional — a `dict`'s string leaves are each Jinja2-rendered against the event's template vars; a plain string is rendered once and its output parsed as a JSON object; omitted → `input=None`). Async/detached: the result arrives later on this session's own inbox as a `pipeline_result` message. |
 | `fold` | bool | `true` (the floor) | #5516 — **`exec` / `exec_capture` / `template_push` only** (not `pipeline_launch`, which can never fold — see below). When several queued events are already waiting at launch time, this hook's default is to receive them all in ONE launch (`exec`/`exec_capture`: one array on stdin; `template_push`: N renders concatenated into one push) rather than one launch per event. Set `false` to opt OUT — each event still arrives array-wrapped (`[payload]`, single-item — the array shape itself is unconditional), but as its own separate launch. The one real reason to opt out: wanting more wake opportunities — a hook that should "think" once per event, not once per batch. **If you opt out, know the cost**: an opted-out hook spends ONE inbox turn PER EVENT instead of once per batch — a burst that would cost a folded hook 1 turn costs an opted-out one N. Declaring `fold:` on a `pipeline_launch` hook is a `HookConfigError` (its receiver takes one `input: dict` per launch and can never fold; the key would silently do nothing there otherwise). |
 
+> ⚠️ `subprocess`/`network`/`write_paths` are REJECTED at the untrusted
+> per-agent (`.reyn/agents/<name>/hooks.yaml`) and per-session layers
+> (#5356 — an agent can already write either file, so a grant there is a
+> confused-deputy self-grant). To grant one of these to ONE specific
+> agent, declare it at the **trusted per-agent** layer instead —
+> `.reyn/config/agents/<name>/hooks.yaml` (#5505) — which is honored the
+> same as `reyn.yaml`/`.reyn/config/hooks.yaml`. See [Concepts: hooks §
+> Which layer may grant the three sandbox
+> axes](../../concepts/runtime/hooks.md#which-layer-may-grant-the-three-sandbox-axes).
+
 **Interpolating a project path — `${REYN_PROJECT_DIR}`, not an absolute
 path.** `reyn.yaml`'s `hooks:` block (this layer only — `exec`/`exec_capture`
 argv, `write_paths`) expands reyn's own `${REYN_PROJECT_DIR}` token to this
@@ -1471,11 +1485,12 @@ for the current bounding mechanisms, and
 [Concepts: hooks § Async Bus and Composer](../../concepts/runtime/hooks.md#async-bus-and-composer-event-correlation)
 for the composed→wake wiring itself.
 
-Composers are read from the SAME 4-layer additive combine as `hooks:`
-(`reyn.yaml` startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪
-per-session) but are **startup-only** — added/removed composer entries take
-effect on the next session start, not via the hooks hot-reload seam (a live
-Composer's in-flight `PendingStore` correlation state has no analogous
+Composers are read from their own 4-layer additive combine (`reyn.yaml`
+startup ∪ `.reyn/config/hooks.yaml` runtime ∪ per-agent ∪ per-session — the
+SAME 4 layers `hooks:` had before #5505's trusted-per-agent layer, which is
+`hooks:`-only) but are **startup-only** — added/removed composer entries
+take effect on the next session start, not via the hooks hot-reload seam (a
+live Composer's in-flight `PendingStore` correlation state has no analogous
 reload-time reconciliation yet).
 
 ## `fs_watch` block

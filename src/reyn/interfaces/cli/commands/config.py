@@ -358,19 +358,23 @@ def _validate() -> None:
     ``allow_write_paths`` (the agent-level sandbox.policy field name,
     written at the wrong per-hook site) pass ``validate`` silently while
     doing nothing — architect's own real incident. #4501 closed it for
-    ONE of hooks' three real input paths: the ``.reyn/config/hooks.yaml``
-    runtime IN-set. #4364 PR-1 found the other two the same night —
-    ``_build_hook_registry``'s own 3-layer COMBINE (startup / runtime /
-    per-agent) names them: reyn.yaml's own top-level ``hooks:`` (the
+    ONE of hooks' real input paths: the ``.reyn/config/hooks.yaml``
+    runtime IN-set. #4364 PR-1 found two more the same night —
+    ``_build_hook_registry``'s own (then-3-layer, now #5505's 5-layer)
+    COMBINE names them: reyn.yaml's own top-level ``hooks:`` (the
     layer ``docs/concepts/runtime/hooks.md`` actually tells operators to
     write in, and architect's own real incident lived there, not in the
-    IN-set #4501 fixed) and every ``.reyn/agents/<name>/hooks.yaml``. All
-    three now feed through ``load_hooks`` (the SAME parser hook-loading
-    itself uses, per this function's own "check exactly what startup
-    checks" discipline) and any ``HookConfigError`` per source is
-    reported as a fourth labeled section — never raised: this command
-    REPORTS, per the docstring above, so a malformed hook entry is caught
-    here rather than only at the next actual hook-load.
+    IN-set #4501 fixed) and every ``.reyn/agents/<name>/hooks.yaml``. #5505
+    added a 4th: every ``.reyn/config/agents/<name>/hooks.yaml`` (the
+    trusted per-agent layer) — the same reasoning applies unchanged (a
+    malformed entry there would otherwise only surface at the NEXT boot,
+    refusing it per that layer's own fail-loud contract, with no earlier
+    warning). All four now feed through ``load_hooks`` (the SAME parser
+    hook-loading itself uses, per this function's own "check exactly what
+    startup checks" discipline) and any ``HookConfigError`` per source is
+    reported as a labeled section — never raised: this command REPORTS,
+    per the docstring above, so a malformed hook entry is caught here
+    rather than only at the next actual hook-load.
 
     Uses ``build_policy_tier_config`` — the SAME construction
     ``load_config``'s own startup warning uses (architect's explicit
@@ -396,6 +400,7 @@ def _validate() -> None:
         build_policy_tier_config,
         load_hot_reload_config,
         load_per_agent_hooks,
+        load_trusted_per_agent_hooks,
     )
     from reyn.hooks.loader import load_hooks
     from reyn.hooks.schema import HookConfigError
@@ -416,8 +421,10 @@ def _validate() -> None:
     # #4501/#4364 PR-1: hooks[] entries are a free-form list the top-level
     # schema walk above never opens — feed EVERY real input path through the
     # real parser to catch a malformed/wrong-scope key inside one, same as an
-    # actual hook-load would. Three sources, mirroring
-    # Session._build_hook_registry's own startup/runtime/per-agent layers:
+    # actual hook-load would. Four sources, mirroring
+    # Session._build_hook_registry's own startup/runtime/trusted-per-agent/
+    # per-agent layers (this command has no per-SESSION source — there is
+    # no live session to read one from):
     hook_entry_errors: dict[str, str] = {}
 
     # (1) reyn.yaml top-level `hooks:` (the startup layer — the one
@@ -456,6 +463,28 @@ def _validate() -> None:
                 load_hooks(agent_hooks_raw)
             except HookConfigError as exc:
                 hook_entry_errors[f".reyn/agents/{agent_dir.name}/hooks.yaml"] = str(exc)
+
+    # (4) every .reyn/config/agents/<name>/hooks.yaml (#5505: the trusted
+    # per-agent layer — a 4th real input path this command's own docstring
+    # names, added the moment the layer exists per CLAUDE.md's "a mechanism
+    # describing doc/check is stale the moment the mechanism changes"; a
+    # malformed file here would otherwise only surface at the NEXT actual
+    # boot, refusing it (fail-loud, #5505) with no earlier warning this
+    # report-only command could have given). Same `.reyn/config/` root as
+    # (2) above, per-agent-scoped like (3) — load_trusted_per_agent_hooks
+    # mirrors Session._read_trusted_per_agent_hooks_raw exactly.
+    trusted_agents_dir = project_root / ".reyn" / "config" / "agents"
+    if trusted_agents_dir.is_dir():
+        for agent_dir in sorted(trusted_agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            trusted_hooks_raw = load_trusted_per_agent_hooks(project_root, agent_dir.name)
+            if not trusted_hooks_raw:
+                continue
+            try:
+                load_hooks(trusted_hooks_raw)
+            except HookConfigError as exc:
+                hook_entry_errors[f".reyn/config/agents/{agent_dir.name}/hooks.yaml"] = str(exc)
 
     # #4631: mcp.<name> written where mcp.servers.<name> belongs loads
     # without error AND without a warning (unknown_config_keys never opens

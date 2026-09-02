@@ -1229,6 +1229,42 @@ def load_per_agent_hooks(
     return hooks if isinstance(hooks, list) else []
 
 
+def load_trusted_per_agent_hooks(
+    project_root: "Path | None", agent_name: str
+) -> list:
+    """#5505: load the TRUSTED per-agent hooks layer — ONLY
+    ``.reyn/config/agents/<name>/hooks.yaml`` (NOT
+    ``.reyn/agents/<name>/hooks.yaml``, :func:`load_per_agent_hooks`'s own
+    path — same directory NAME, different parent, a real trust boundary:
+    ``.reyn/config/`` is under ``_RECOVERY_CORE_WRITE_PREFIXES``, so an
+    agent cannot write here via the ordinary file-write op, unlike the
+    untrusted per-agent layer).
+
+    Carries ONLY the permission-bearing keys (``write_paths``/
+    ``subprocess``/``network`` — :data:`~reyn.hooks.sandbox_scope.
+    HOOK_SANDBOX_SCOPE`'s own right column) that #5356 made impossible to
+    grant per-agent at all; positional hook values still belong at the
+    existing (untrusted) per-agent layer.
+
+    Same read shape as :func:`load_per_agent_hooks` (this function's own
+    sibling): ``[]`` when the file or key is absent — a no-op layer, never
+    a special case a caller has to handle. Callers that need this layer's
+    OWN boot-only/fail-loud contract (a genuine parse failure must refuse
+    to proceed, not silently degrade to ``[]`` — architect ruling,
+    #5505/#5351: this layer is permission-bearing, so a bad file silently
+    dropping mid-session is worse than refusing to boot) get that from
+    :func:`read_and_expand_hooks_yaml` itself, which this function does
+    NOT swallow: a genuine YAML syntax error still raises
+    ``HookYamlReadError`` here, uncaught — the same shape
+    :func:`load_per_agent_hooks` already has for its own layer, kept
+    consistent rather than special-cased per caller."""
+    root = (project_root or Path.cwd()).resolve()
+    path = root / ".reyn" / "config" / "agents" / agent_name / "hooks.yaml"
+    data = read_and_expand_hooks_yaml(path, agent_name=agent_name, project_root=root)
+    hooks = (data or {}).get("hooks")
+    return hooks if isinstance(hooks, list) else []
+
+
 def _build_external_transports_config(raw: object):
     """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
 
