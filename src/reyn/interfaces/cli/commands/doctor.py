@@ -141,6 +141,31 @@ PID-keyed markers each reyn CLI process writes about ITSELF at startup
 (that is the OS's job, per lead-coder's own ruling). D-2 unchanged:
 report-only — no kill, no TTL expiry; that judgment call is explicitly
 out of #5226's own scope until the count is visible at all.
+
+#4364 (this slice, 2026-09-02, lead-coder assignment — issue-comment
+candidate ②, chosen because it directly matches the owner's own
+motivating incident, "会社で llm.model の設定効果なさそうな挙動を見た"):
+declared vs. COMPOSED for every #4206 leaf with a live agent-layer
+override receptacle (:func:`_print_bounding_preference_composition`) —
+the general form C-5/C-6 already established (declared config next to
+its resolved/enforced effect), applied to axes ② (``BOUNDING_KEYS``,
+narrowest-wins, ``runtime/bounding.py``) and ③ (``PREFERENCE_KEYS``,
+last-wins, ``runtime/preferences.py``) instead of sandbox posture. Reads
+:func:`~reyn.config.config_schema.walk_config_schema`'s own ``axis``/
+``override_enabled`` metadata (#5673, landed the same day) rather than a
+second hand list — the exact "no new machinery, read and display what's
+already there" increment #4364 requires. Loads each agent's own
+``profile.yaml`` via :meth:`~reyn.runtime.profile.AgentProfile.load` —
+the SAME validated loader a real session-spawn already uses — never a
+second hand-parse. Reports mismatches only (an agent that sets no
+override, or narrows to the same value, produces no line). Session-layer
+overrides (``resolve_preference``'s third parameter) are NOT visible to
+doctor — a separate, one-shot process with no live session, the same D-2
+limitation C-2/C-3(b) already disclose for other session-scoped state;
+this function's own printed line says so explicitly. Deliberately does
+NOT cover ``B-1``..``B-4`` (the ``config validate``-side candidates from
+the same issue-comment) — lead-coder's explicit scope note: handled
+separately.
 """
 from __future__ import annotations
 
@@ -176,6 +201,22 @@ _MEASURABLE_LEAF_KEYS: Final[tuple[str, ...]] = (
     "audit_events.max_disk_usage_percent",
     "sandbox.backend",
     "sandbox.on_unsupported",
+    # #4364 (this slice, 2026-09-02): every leaf carrying a LIVE
+    # agent-layer override receptacle (config_axis.py's #4206 axes ②/③,
+    # `override_enabled=True`) — this module now reads the COMPOSED
+    # value for each (see `_print_bounding_preference_composition`),
+    # not merely the declared one, so each qualifies as measurable by
+    # this list's own criterion below.
+    "llm.model",
+    "chat.reasoning.display",
+    "cost.daily_cost_usd.warn_ratio",
+    "cost.daily_tokens.warn_ratio",
+    "cost.monthly_cost_usd.warn_ratio",
+    "cost.monthly_tokens.warn_ratio",
+    "cost.per_agent_cost_usd.warn_ratio",
+    "cost.per_agent_tokens.warn_ratio",
+    "cost.rate_limit_warn_ratio",
+    "output_language",
 )
 _MEASURABILITY_CRITERION: Final[str] = (
     "a leaf counts as measurable here iff this module reads its LIVE EFFECT "
@@ -404,6 +445,14 @@ def run(args: argparse.Namespace) -> None:
     print("Sandbox posture — declared vs. RESOLVED (absence of a declaration")
     print("does not mean unrestricted; see the resolved backend below):")
     _print_sandbox_posture(config)
+
+    # ── #4364 (this slice, 2026-09-02): bounding/preference declared vs.
+    # composed — the general "declared ↔ effective" form (C-5/C-6) applied
+    # to #4206's ②/③ agent-layer override axes.
+    print()
+    print("Agent-layer overrides — declared (project) vs. COMPOSED (after")
+    print("each agent's own bounding:/preferences:), mismatches only:")
+    _print_bounding_preference_composition(config, resolved_root)
 
     # ── C-3(b): MCP negotiated protocol version + capabilities (#4364) ─────
     print()
@@ -1088,6 +1137,133 @@ def _print_sandbox_posture(config: object) -> None:
             "is empty) — this backend's own support: "
             + ", ".join(f"{k}={v.value}" for k, v in supported.items()),
         )
+
+
+def _print_bounding_preference_composition(config: object, project_root: Path) -> None:
+    """#4364 (this slice, 2026-09-02, lead-coder assignment): declared
+    (project-level schema default) vs. COMPOSED (after applying each
+    agent's own ``bounding:``/``preferences:`` override) for every
+    #4206 leaf with a live override receptacle — the general form of
+    C-5/C-6's "declared ↔ effective" pattern, applied to axes ②/③
+    instead of sandbox posture. Owner's own motivating incident (issue
+    body, verbatim): "会社で llm.model の設定効果なさそうな挙動を見た"
+    — ``llm.model`` is exactly axis ②'s one member today.
+
+    No new machinery: reads ``config_axis.py``'s existing
+    ``walk_config_schema()`` axis/``override_enabled`` metadata (#5673),
+    composes via the SAME ``compose_model_ceiling``/``resolve_preference``
+    every real agent spawn already calls (``runtime/bounding.py``/
+    ``runtime/preferences.py``), and loads each agent's profile the SAME
+    way a real session does (``AgentProfile.load`` — the same validated
+    loader, not a second hand-parse of the YAML, D-1: measure the actual
+    loaded effect).
+
+    D-2: reads only ``.reyn/agents/<name>/profile.yaml`` — a STATIC,
+    on-disk declaration. The SESSION layer (``resolve_preference``'s own
+    ``session_preferences`` parameter) is a live, in-process value no
+    separate one-shot ``doctor`` process can see — same limitation
+    C-2/C-3(b) already disclose for other session-scoped state; this
+    function's own printed line says so (D-3) rather than silently
+    only covering 2 of the 3 real layers.
+
+    Reports ONLY a mismatch (declared != composed) — an agent that sets
+    no override, or narrows to the SAME value the project already has,
+    produces no line (lead-coder's own scope: "食い違いを報告する").
+    An agent whose profile.yaml fails to load (a bounding/preferences
+    key #4206 doesn't recognize, or an out-of-range ``bounding.model``
+    value — the same validation a real session-load already enforces,
+    ``AgentProfile.load``) is reported by name, not silently skipped —
+    the SAME defect class ``AgentProfile.load`` failing at real
+    session-start would abort with, made visible ahead of time instead
+    of at the next agent boot."""
+    from reyn.config.config_schema import resolve_config_value, walk_config_schema
+    from reyn.config_axis import Axis
+    from reyn.runtime.bounding import compose_model_ceiling
+    from reyn.runtime.preferences import resolve_preference
+    from reyn.runtime.profile import AgentProfile
+
+    bounding_nodes = [
+        n for n in walk_config_schema()
+        if n.axis == Axis.BOUNDING and n.override_enabled
+    ]
+    preference_nodes = [
+        n for n in walk_config_schema()
+        if n.axis == Axis.PREFERENCE and n.override_enabled
+    ]
+
+    agents_dir = project_root / ".reyn" / "agents"
+    agent_names = (
+        sorted(p.name for p in agents_dir.iterdir() if p.is_dir())
+        if agents_dir.is_dir() else []
+    )
+    if not agent_names:
+        print("  no .reyn/agents/<name>/ found — nothing to compose against")
+        print(
+            "  (session-layer overrides are never visible to doctor — a "
+            "separate, one-shot process with no live session, D-2)",
+        )
+        return
+
+    mismatches = 0
+    load_errors: list[str] = []
+    for agent_name in agent_names:
+        try:
+            profile = AgentProfile.load(agents_dir / agent_name)
+        except FileNotFoundError:
+            continue  # a directory with no profile.yaml — not a real agent
+        except Exception as exc:  # noqa: BLE001 — D-1: report the real failure, never swallow it silently
+            load_errors.append(f"{agent_name}: {exc}")
+            continue
+
+        for node in bounding_nodes:
+            override_key = node.override_key or node.key
+            if override_key not in profile.bounding:
+                continue
+            _found, declared_bounding = resolve_config_value(config, node.key)
+            raw_agent_bound = profile.bounding[override_key]
+            composed_bounding: "str | None" = compose_model_ceiling(
+                declared_bounding,
+                str(raw_agent_bound) if raw_agent_bound is not None else None,
+            )
+            if composed_bounding != declared_bounding:
+                mismatches += 1
+                print(
+                    f"  ⚠ [{agent_name}] {node.key} (bounding.{override_key}): "
+                    f"declared={declared_bounding!r}, composed={composed_bounding!r}",
+                )
+
+        for node in preference_nodes:
+            if node.key not in profile.preferences:
+                continue
+            _found, declared_pref = resolve_config_value(config, node.key)
+            composed_pref: object = resolve_preference(
+                node.key, declared_pref, agent_preferences=profile.preferences,
+            )
+            if composed_pref != declared_pref:
+                mismatches += 1
+                print(
+                    f"  ⚠ [{agent_name}] {node.key} (preferences.{node.key}): "
+                    f"declared={declared_pref!r}, composed={composed_pref!r}",
+                )
+
+    if load_errors:
+        print(f"  ✗ {len(load_errors)} agent profile(s) failed to load (not compared):")
+        for line in load_errors:
+            print(f"    {line}")
+    if mismatches == 0:
+        qualifier = (
+            f" (among the {len(agent_names) - len(load_errors)} that loaded)"
+            if load_errors else ""
+        )
+        print(
+            f"  ✓ no agent narrows/overrides these "
+            f"{len(bounding_nodes) + len(preference_nodes)} key(s) away from "
+            f"the project default{qualifier}",
+        )
+    print(
+        "  (session-layer overrides are never visible to doctor — a "
+        "separate, one-shot process with no live session, D-2)",
+    )
 
 
 def _print_mcp_negotiation(config: object, project_root: Path) -> None:
