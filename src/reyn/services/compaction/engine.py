@@ -3018,6 +3018,15 @@ class RecoveryLadder:
         # comment below for why re-slicing the SAME ``raw_middle`` on every
         # iteration without persisting this would just recreate the old cycle.
         self._compact_attempt_len: "int | None" = None
+        # #5631 candidate 1: the SENT slice for THIS iteration only --
+        # computed once in ``_stage_fold`` and reused by ``_stage_spill``
+        # (rung① offers exactly what rung②'s own compact() attempt just
+        # sent, per #5592 — see ``_stage_spill``'s own docstring). Was a
+        # plain local shared by both former inline sections of one
+        # function body; now a field so the two extracted methods share
+        # it without a param (there is no OTHER caller of either method,
+        # so this is not a wider-scope leak).
+        self._attempt_len: "int | None" = None
         # #5592 (owner ruling): the ORIGINAL raw_middle length this call
         # started with — captured once, never re-derived, so
         # ``compaction_shrink_recovered``'s own remaining-count field below is
@@ -3138,6 +3147,94 @@ class RecoveryLadder:
         self._compact_attempt_len = None
         return True
 
+    def _stage_spill(self) -> bool:
+        """ADR-0044 rung① — spill. #5531 §10 (owner ruling, "spill is the
+        ladder's first rung"): try spilling before touching
+        ``_compact_attempt_len`` at all. Looping via ``_LADDER_CONTINUE``
+        (was bare ``continue``) re-runs ``compact()`` on the SAME
+        ``_attempt_len`` slice (unchanged by a spill — only the CONTENT
+        of the spilled candidates shrank) — #9.5's own no-cursor rule:
+        each call re-scans fresh, so this naturally keeps consuming
+        candidates until either the overflow resolves or the population
+        is exhausted.
+
+        #5592 (owner ruling, real-machine incident: 2469 raw_middle
+        candidates -> 2469 compact() calls at ~6s each, ~4.1 hours;
+        SUPERSEDES this PR's own withdrawn doubling-batch draft,
+        1,2,4,8... — architect's own words: "owner's whole-tier batch is
+        better than my doubling: what's expensive is the CALL COUNT, not
+        the over-spilled bytes"): ``spill_fn`` now decides, in ONE call,
+        how many candidates to hand back — this rung just applies
+        whatever it returns and retries. ``chat.compaction.
+        spill_granularity`` (the caller's own config, this function
+        stays agnostic to it) controls ``spill_fn``'s own batch size:
+        ``tier`` (default) returns every eligible candidate sharing the
+        SAME ``Spillability`` tier in one shot (O(1) calls per overflow
+        regardless of N — #5592's own simulation: candidates 1483, upper
+        bound 2 calls for this face); ``turn`` reproduces the pre-#5592
+        one-candidate-at-a-time behavior exactly (O(N) calls) — a config
+        escape hatch, explicitly documented as NOT the safe default
+        (``docs/reference/config/reyn-yaml.md``).
+
+        #5592 (owner ruling, correcting #9.6): the population for THIS
+        spill attempt is ``raw_middle[:_attempt_len]`` — the SAME slice
+        this iteration's own ``compact()`` call just sent and had
+        rejected, not ``raw_middle`` in its entirety. These coincide on
+        the very first attempt (``_attempt_len == len(raw_middle)`` when
+        ``_compact_attempt_len`` is still ``None``); they diverge only
+        after rung② has halved at least once, and it is the SENT slice
+        that must be offered to spill, not the untried remainder sitting
+        past it.
+
+        Returns whether any candidate was actually spilled — the caller
+        (:meth:`_run_one_iteration`) returns :data:`_LADDER_CONTINUE`
+        when it does (rung① exhausted, or no ``spill_fn`` at all, falls
+        through to :meth:`_stage_halve_slice`)."""
+        return self._spill_batch_from_offered(self.raw_middle[:self._attempt_len]) > 0
+
+    def _stage_halve_slice(self) -> None:
+        """ADR-0044 rung② — halve the slice. Only reached once rung①
+        (:meth:`_stage_spill`) is exhausted (or no ``spill_fn`` at all).
+        #5531 §10 (architect/owner correction, 2026-08-30): "fail →
+        halve, succeed → double" — a genuine binary search, not the old
+        one-way ratchet. A SUCCESS's own doubling happens at the success
+        site itself (inside :meth:`_stage_fold`, right after
+        ``raw_middle = raw_middle[_attempt_len:]`` — the only place that
+        knows "this attempt just succeeded"), never here; this method
+        only ever HALVES, because reaching it means the LAST attempt at
+        the current ``_attempt_len`` just failed.
+
+        Terminal (mid floor): raises :class:`UnrecoveredError` when a
+        single turn offered alone still overflows AND spilling it (just
+        tried by the caller) did not resolve it either — halving further
+        cannot produce a smaller nonzero slice. #5531 §3 item 12:
+        mode-independent (a floor is a floor regardless of which HTTP
+        shape triggered the overflow)."""
+        _current_attempt = (
+            self._compact_attempt_len if self._compact_attempt_len is not None
+            else len(self.raw_middle)
+        )
+        if _current_attempt <= 1:
+            raise UnrecoveredError(
+                (
+                    "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
+                    if self._last_recover_is_byte_limit
+                    else "retry_loop: shrinking "
+                ) + "recurred compacting a single raw_middle turn "
+                "alone — mid cannot be split any further (the "
+                "turn-count floor), and spilling every available "
+                "candidate in raw_middle did not resolve this "
+                "either." + (
+                    _learned_byte_limit_clause(
+                        last_accepted_wire_bytes=self._last_accepted_wire_bytes,
+                        last_rejected_wire_bytes=self._last_rejected_wire_bytes,
+                    ) if self._last_recover_is_byte_limit else ""
+                ),
+                terminal=RetryLoopTerminal.MID_FLOOR,
+                saw_byte_limit=self._last_recover_is_byte_limit,
+            )
+        self._compact_attempt_len = max(_current_attempt // 2, 1)
+
     async def run(self) -> Any:
         """Drive :meth:`_run_one_iteration` — the ladder's own former
         ``while True:`` loop body (#5631 candidate 1), unchanged control
@@ -3185,7 +3282,7 @@ class RecoveryLadder:
                 # turns when a prior attempt this call already failed —
                 # ``None`` (no prior failure yet) offers all of it, the
                 # same as before this change.
-                _attempt_len = (
+                self._attempt_len = (
                     self._compact_attempt_len if self._compact_attempt_len is not None
                     else len(self.raw_middle)
                 )
@@ -3205,7 +3302,7 @@ class RecoveryLadder:
                 # head/tail, plus a fresh one this fold produces) — see
                 # `HistoryChunkToCompact`'s own docstring for the
                 # consequence swept for callers assuming exactly one.
-                _offered = self.raw_middle[:_attempt_len]
+                _offered = self.raw_middle[:self._attempt_len]
                 _messages = _offered
                 input_chunk = HistoryChunkToCompact(
                     messages=_messages,
@@ -3319,9 +3416,9 @@ class RecoveryLadder:
                     # shapes). Any slice that turns out too large for the
                     # new, smaller raw_middle just clips naturally at the
                     # slice below; no explicit clamping needed there.
-                    self.raw_middle = self.raw_middle[_attempt_len:]
+                    self.raw_middle = self.raw_middle[self._attempt_len:]
                     if self.raw_middle:
-                        self._compact_attempt_len = min(_attempt_len * 2, len(self.raw_middle))
+                        self._compact_attempt_len = min(self._attempt_len * 2, len(self.raw_middle))
                     # #4947 ③ (CI red on #4950, architect-ruled): reset the
                     # same-cause streak here, and ONLY here — not on any
                     # other escalation branch. The cap's own words below
@@ -3624,90 +3721,11 @@ class RecoveryLadder:
 
         # Shrink escalation: reduce context size monotonically.
         if self.raw_middle:
-            # #5531 §10 rung① (owner ruling, "spill is the ladder's first
-            # rung"): try spilling before touching ``_compact_attempt_len``
-            # at all. Looping via ``continue`` re-runs ``compact()`` on
-            # the SAME ``_attempt_len`` slice (unchanged by a spill — only
-            # the CONTENT of the spilled candidates shrank) — #9.5's own
-            # no-cursor rule: each call re-scans fresh, so this naturally
-            # keeps consuming candidates until either the overflow
-            # resolves or the population is exhausted.
-            #
-            # #5592 (owner ruling, real-machine incident: 2469 raw_middle
-            # candidates -> 2469 compact() calls at ~6s each, ~4.1 hours;
-            # SUPERSEDES this PR's own withdrawn doubling-batch draft,
-            # 1,2,4,8... — architect's own words: "owner's whole-tier
-            # batch is better than my doubling: what's expensive is the
-            # CALL COUNT, not the over-spilled bytes"): ``spill_fn`` now
-            # decides, in ONE call, how many candidates to hand back —
-            # this rung just applies whatever it returns and retries.
-            # ``chat.compaction.spill_granularity`` (the caller's own
-            # config, this function stays agnostic to it) controls
-            # ``spill_fn``'s own batch size: ``tier`` (default) returns
-            # every eligible candidate sharing the SAME ``Spillability``
-            # tier in one shot (O(1) calls per overflow regardless of N —
-            # #5592's own simulation: candidates 1483, upper bound 2 calls
-            # for this face); ``turn`` reproduces the pre-#5592 one-
-            # candidate-at-a-time behavior exactly (O(N) calls) — a
-            # config escape hatch, explicitly documented as NOT the safe
-            # default (``docs/reference/config/reyn-yaml.md``).
-            #
-            # #5592 (owner ruling, correcting #9.6): the population for
-            # THIS spill attempt is ``raw_middle[:_attempt_len]`` — the
-            # SAME slice this iteration's own ``compact()`` call just
-            # sent and had rejected, not ``raw_middle`` in its entirety.
-            # These coincide on the very first attempt (``_attempt_len ==
-            # len(raw_middle)`` when ``_compact_attempt_len`` is still
-            # ``None``); they diverge only after rung② has halved at
-            # least once, and it is the SENT slice that must be offered
-            # to spill, not the untried remainder sitting past it.
-            if self._spill_batch_from_offered(self.raw_middle[:_attempt_len]) > 0:
+            # ADR-0044: rung① (spill) then rung② (halve_slice) -- see
+            # each method's own docstring for the full rationale.
+            if self._stage_spill():
                 return _LADDER_CONTINUE
-            # rung① exhausted (or no spill_fn at all) — only now fall to
-            # rung②: ``_compact_attempt_len``. #5531 §10 (architect/owner
-            # correction, 2026-08-30): "fail → halve, succeed → double"
-            # — a genuine binary search, not the old one-way ratchet. A
-            # SUCCESS's own doubling happens at the success site itself
-            # (below, right after ``raw_middle = raw_middle[_attempt_len:]``
-            # — the only place that knows "this attempt just succeeded"),
-            # never here; this branch only ever HALVES, because reaching
-            # it means the LAST attempt at the current ``_attempt_len``
-            # just failed.
-            _current_attempt = (
-                self._compact_attempt_len if self._compact_attempt_len is not None
-                else len(self.raw_middle)
-            )
-            if _current_attempt <= 1:
-                # Floor (a): a single turn offered alone still overflows,
-                # AND spilling it (just tried above) did not resolve it
-                # either — halving further cannot produce a smaller
-                # nonzero slice. #5531 §3 item 12: mode-independent now
-                # (the old byte-limit-only raise / non-byte "defer this
-                # turn to tail" fork is REMOVED — a floor is a floor
-                # regardless of which HTTP shape triggered the overflow;
-                # deferring used to let a non-byte cause dodge this floor
-                # by growing tail, which is exactly the kind of
-                # non-monotonic escape #4947 ③ closed for the OTHER
-                # branch of this same fork).
-                raise UnrecoveredError(
-                    (
-                        "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                        if self._last_recover_is_byte_limit
-                        else "retry_loop: shrinking "
-                    ) + "recurred compacting a single raw_middle turn "
-                    "alone — mid cannot be split any further (the "
-                    "turn-count floor), and spilling every available "
-                    "candidate in raw_middle did not resolve this "
-                    "either." + (
-                        _learned_byte_limit_clause(
-                            last_accepted_wire_bytes=self._last_accepted_wire_bytes,
-                            last_rejected_wire_bytes=self._last_rejected_wire_bytes,
-                        ) if self._last_recover_is_byte_limit else ""
-                    ),
-                    terminal=RetryLoopTerminal.MID_FLOOR,
-                    saw_byte_limit=self._last_recover_is_byte_limit,
-                )
-            self._compact_attempt_len = max(_current_attempt // 2, 1)
+            self._stage_halve_slice()
         elif self._stage_refill_phase1():
             pass
         elif self._stage_refill_phase2():
