@@ -8,9 +8,12 @@ Two forms:
   menu. This mirrors how ``/quit`` emits ``__quit__`` — the registry stays the
   single source of truth for slash dispatch while the App owns the TUI surface.
 
-- ``/rewind <N>``  → rewinds directly to WAL seq ``N`` via
-  ``AgentRegistry.rewind_to`` (scriptable + testable without the TUI). Invalid
-  / out-of-range targets surface a decision-enabling error.
+- ``/rewind <N>``  → goes directly to WAL seq ``N`` via the unified
+  ``AgentRegistry.checkout`` (scriptable + testable without the TUI) — undo for
+  a live-branch seq, fork-switch for a dead-branch one; see the call site's own
+  comment. Invalid / out-of-range targets surface a decision-enabling error.
+  (This line used to name ``rewind_to``; the call became ``checkout`` under
+  ADR-0038 D8 and the docstring had not followed.)
 """
 from __future__ import annotations
 
@@ -33,12 +36,30 @@ async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
     # consumed (a silent no-op before this).
     if not arg:
         registry = getattr(ctx.session, "_registry", None)
-        points = list(reversed(registry.list_rewind_points())) if registry is not None else []
+        # #3987 ②: abandoned branches are offered too, so a fork the operator
+        # left behind is reachable instead of merely existing. The rows keep
+        # their natural (ascending-seq) order here — the tree builder does its
+        # own DFS/active-first/newest-first ordering, and pre-reversing would
+        # fight it. The flat fallback below reverses for itself.
+        points = list(registry.list_rewind_points(include_abandoned=True)) if registry is not None else []
+        branches = [
+            {
+                "branch_id": b.branch_id, "fork_point_seq": b.fork_point_seq,
+                "head_seq": b.head_seq, "parent_branch_id": b.parent_branch_id,
+                "is_active": b.is_active,
+            }
+            # ``list_branches`` returns ``Branch`` dataclasses; the tree builder
+            # and the command-UI payload both speak plain dicts (the payload
+            # crosses a transport boundary). Converted here, at the one seam.
+            for b in (registry.list_branches() if registry is not None else [])
+        ]
         if not points:
             await reply(ctx, "/rewind: no earlier checkpoints to rewind to")
             return
         # Inline CUI: the region polls this and shows a ↑↓ selector.
-        ctx.session.set_pending_command_ui({"kind": "rewind", "points": points})
+        ctx.session.set_pending_command_ui(
+            {"kind": "rewind", "points": points, "branches": branches},
+        )
         # --cui fallback: a text list (the output loop renders this only on the
         # plain path; the inline path skips it since the region shows a selector).
         lines = ["rewind to a checkpoint with /rewind <seq>:"]
@@ -48,10 +69,18 @@ async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
         # fallback list tells --connect the same "where in the conversation"
         # hint (owner-hit: a candidate with only seq/kind gave no clue which
         # checkpoint to pick).
+        # #3987 ②: this fallback now receives abandoned checkpoints too, so it
+        # MARKS them. Without the marker the extra rows would look like ordinary
+        # candidates on a --connect client — new rows, no way to tell they sit
+        # on a fork the operator left. The TUI picker shows the same fact
+        # structurally (branch headers + indent); this surface has one column,
+        # so it says it in words.
+        _active_ids = {b["branch_id"] for b in branches if b["is_active"]}
         lines += [
             f"  seq {p.get('seq')} · {p.get('kind', '?')}"
             + (f" · 「{p['anchor']}」" if p.get("anchor") else "")
-            for p in points
+            + ("" if p.get("branch_id") in _active_ids else "  (abandoned)")
+            for p in reversed(points)
         ]
         ctx.transport.put_display(
             OutboxMessage(kind="__rewind_list__", text="\n".join(lines))
