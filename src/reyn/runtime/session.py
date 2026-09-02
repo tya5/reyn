@@ -419,6 +419,54 @@ def _format_ride_along_attribution(kind: str, name: str, text: str) -> str:
     return f"[{kind}:{name}] {text}"
 
 
+def _render_mid_turn_injection(kind: str, payload: dict) -> "dict[str, str]":
+    """#5677: the ONE place a mid-turn-injected item's ``kind`` becomes a
+    wire/history ``{"role": ..., "content": ...}`` pair — shared by
+    ``RouterLoop.run_loop``'s own wire splice (via
+    ``Session.peek_mid_turn_injections``) and
+    ``Session._commit_mid_turn_injection``'s history append, so the two
+    can never drift (the SAME discipline ``_format_ride_along_attribution``
+    already established for hook pushes — one formatter, two consumers).
+
+    Architect's own §0 finding on #5677: widening
+    ``MID_TURN_INJECTABLE`` past ``CLIENT_INPUT`` without ALSO widening
+    this rendering would silently reproduce #3595's own closed defect
+    class one layer down — a non-human producer's text made
+    indistinguishable from the operator's own, this time on the mid-turn
+    wire instead of the inbox kind. ``CLIENT_INPUT`` renders unchanged
+    (``role="user"``, bare text — the founding #3792 shape, byte-
+    identical); every OTHER member renders ``role="system"`` with the
+    SAME ``[<kind>:<name>] <text>`` attribution ``_handle_hook_message``'s
+    own wake=true push already uses, so this is not a new wire
+    vocabulary, just this feature's own producers reaching the one that
+    already existed.
+
+    Each ``MID_TURN_INJECTABLE`` member needs its OWN branch here because
+    a payload's TEXT field is not uniform across kinds (``CLIENT_INPUT``
+    carries ``text``; ``AGENT_REQUEST`` carries ``request`` — see
+    ``Session.submit_agent_request``) — raises loudly for a member this
+    function does not yet know how to render rather than silently
+    falling through to an empty/wrong string, so a FUTURE widening of
+    ``MID_TURN_INJECTABLE`` that forgets to add a branch here fails at
+    the first real injection, not by producing a blank message nobody
+    notices (see
+    ``tests/runtime/test_5677_mid_turn_injection_wire_rendering.py``'s
+    ``test_every_mid_turn_injectable_member_has_a_rendering`` for the
+    static coverage pin that catches this before runtime, too).
+    """
+    if kind == TurnOrigin.CLIENT_INPUT:
+        return {"role": "user", "content": payload.get("text") or ""}
+    if kind == TurnOrigin.AGENT_REQUEST:
+        name = payload.get("from_agent") or kind
+        text = payload.get("request") or ""
+        return {"role": "system", "content": _format_ride_along_attribution(kind, name, text)}
+    raise AssertionError(
+        f"#5677: MID_TURN_INJECTABLE contains {kind!r} but "
+        f"_render_mid_turn_injection has no rendering for it — add a "
+        f"branch here before adding the member to MID_TURN_INJECTABLE"
+    )
+
+
 # NOTE: `_PendingChain` lives in `reyn.runtime.services.chain_manager` (PR-refactor-session-1
 # wave 2). Kept import at top of file for backward-compat references.
 
@@ -5899,7 +5947,7 @@ class Session:
             put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
             # #3792: mid-turn CLIENT_INPUT injection.
-            peek_mid_turn_injection=self._inbox_arbiter.peek_mid_turn_injection,
+            peek_mid_turn_injection=self.peek_mid_turn_injections,
             commit_mid_turn_injection=self._commit_mid_turn_injection,
             # #4381 PR-2 stage ③: in-flight taint latch.
             mark_untrusted_in_flight=self._mark_untrusted_in_flight,
@@ -7257,6 +7305,32 @@ class Session:
         )
         return True
 
+    async def peek_mid_turn_injections(self) -> "list[dict]":
+        """#5677: the ``RouterHostAdapter``-wired ``peek_mid_turn_injection``
+        callback — was ``self._inbox_arbiter.peek_mid_turn_injection``
+        directly (a bare forwarder; #3978's own module docstring names
+        that shape). Now a thin WRAPPING layer instead, because
+        rendering (#5677 §0, architect) has to happen somewhere, and the
+        arbiter's own job is queue arbitration, not wire formatting —
+        the same separation ``HookDispatcher``/``_format_ride_along_
+        attribution`` already keep (a producer knows its OWN payload
+        shape; the render step is shared, one place).
+
+        Returns ``[{"msg_id": str, "wire": {"role": ..., "content":
+        ...}}, ...]`` — ``RouterLoop.run_loop`` appends each ``wire``
+        dict directly and commits each ``msg_id`` via
+        ``commit_mid_turn_injection``, never touching ``kind`` or
+        ``payload`` itself (those stay internal to this layer and
+        ``_commit_mid_turn_injection``, which re-derives the SAME
+        rendering for the history append from the ``kind``/``payload``
+        it already holds at commit time — see
+        ``_render_mid_turn_injection``)."""
+        items = await self._inbox_arbiter.peek_mid_turn_injection()
+        return [
+            {"msg_id": it["msg_id"], "wire": _render_mid_turn_injection(it["kind"], it["payload"])}
+            for it in items
+        ]
+
     async def _commit_mid_turn_injection(self, msg_id: str) -> None:
         """#3792: commit (pop) the item the most recent successful
         ``peek_mid_turn_injection()`` call returned.
@@ -7308,8 +7382,17 @@ class Session:
             return
         skipped_over = self._inbox_arbiter.skipped_over_before(msg_id)
         kind, payload = _held.pop(_idx)
+        # #5677: rendered from the SAME per-kind function the wire splice
+        # used (``_render_mid_turn_injection``) — re-derived here from
+        # ``kind``/``payload`` rather than threaded through from the peek,
+        # because ``RouterLoop`` never hands the kind back on commit (only
+        # ``msg_id``, see ``peek_mid_turn_injections``'s own docstring);
+        # re-deriving from the SAME function is what keeps history and wire
+        # byte-identical for the SAME item, never two independent renders
+        # that could drift.
+        _rendered = _render_mid_turn_injection(kind, payload)
         self._append_history(ChatMessage(
-            role="user", content=payload.get("text") or "", ts=_now_iso(),
+            role=_rendered["role"], content=_rendered["content"], ts=_now_iso(),
             meta=payload.get("meta") or {},
             # #5514 §4 (traced, still undecided): this item came off
             # ``self._inbox``, a generic multi-producer queue

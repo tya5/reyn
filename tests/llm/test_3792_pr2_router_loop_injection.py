@@ -23,16 +23,22 @@ _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 class _InjectingHost(FakeRouterHost):
     """A host with ONE eligible injection candidate queued, real 2-phase
     peek/commit (not PR1's always-None stub) — mirrors
-    ``Session._peek_mid_turn_injection`` / ``_commit_mid_turn_injection``'s
+    ``Session.peek_mid_turn_injections`` / ``_commit_mid_turn_injection``'s
     contract closely enough to witness the RouterLoop-side wiring, without
-    duplicating the full real Session machinery this file does not own."""
+    duplicating the full real Session machinery this file does not own.
+
+    #5677: ``peek_mid_turn_injection`` now returns ``list[dict]`` (was
+    ``dict | None``) — ``[]`` for "nothing queued", one ``{"msg_id":
+    ..., "wire": {"role": ..., "content": ...}}`` entry per eligible
+    item, already rendered per its own kind (``role="user"`` here since
+    this fake models a CLIENT_INPUT-shaped candidate — the SAME shape
+    ``Session._render_mid_turn_injection`` produces for that kind)."""
 
     def __init__(self, *, injection_text: str = "mid-turn note", arrives_after_round: int = 0) -> None:
         super().__init__()
-        self._queued: dict | None = {
-            "payload": {"text": injection_text, "chain_id": "inj-chain", "meta": {}},
-            "msg_id": "inj-1",
-        }
+        self._queued: "list[dict]" = [
+            {"msg_id": "inj-1", "wire": {"role": "user", "content": injection_text}},
+        ]
         self.committed_msg_ids: list[str] = []
         # Mirrors real production timing: the queue only has something for
         # peek to find once the client's mid-turn message actually arrives —
@@ -40,17 +46,17 @@ class _InjectingHost(FakeRouterHost):
         self._peeks_before_arrival = arrives_after_round
         self._peek_count = 0
 
-    async def peek_mid_turn_injection(self) -> dict | None:
+    async def peek_mid_turn_injection(self) -> "list[dict]":
         self.call_order.append("peek_mid_turn_injection")
         self._peek_count += 1
         if self._peek_count <= self._peeks_before_arrival:
-            return None
+            return []
         return self._queued
 
     async def commit_mid_turn_injection(self, msg_id: str) -> None:
         self.call_order.append("commit_mid_turn_injection")
         self.committed_msg_ids.append(msg_id)
-        self._queued = None
+        self._queued = []
 
 
 def _loop(host: FakeRouterHost, llm, max_iterations: int = 5) -> RouterLoop:
@@ -158,15 +164,15 @@ def _one_round_success_llm():
 
 @pytest.mark.asyncio
 async def test_no_injection_when_queue_is_empty() -> None:
-    """Tier 2: #3792 — a host whose peek legitimately returns ``None`` (no
+    """Tier 2: #3792 — a host whose peek legitimately returns ``[]`` (no
     queued candidate) never calls commit and never appends anything to
     ``messages`` — the ordinary, overwhelmingly common case stays
     byte-identical to PR1."""
 
     class _EmptyInjectingHost(_InjectingHost):
-        async def peek_mid_turn_injection(self) -> dict | None:
+        async def peek_mid_turn_injection(self) -> "list[dict]":
             self.call_order.append("peek_mid_turn_injection")
-            return None
+            return []
 
     host = _EmptyInjectingHost()
     seen_messages: list[list[dict]] = []
@@ -251,9 +257,12 @@ async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -
     peek_calls: list[None] = []
     commit_calls: list[str] = []
 
-    async def _real_peek() -> "dict | None":
+    async def _real_peek() -> "list[dict]":
         peek_calls.append(None)
-        return {"payload": {"text": "hi from real adapter"}, "msg_id": "real-1"}
+        return [{
+            "msg_id": "real-1",
+            "wire": {"role": "user", "content": "hi from real adapter"},
+        }]
 
     async def _real_commit(msg_id: str) -> None:
         commit_calls.append(msg_id)
@@ -269,7 +278,10 @@ async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -
         "— the exact name router_loop.py's getattr call reads"
     )
     result = await peek_fn()
-    assert result == {"payload": {"text": "hi from real adapter"}, "msg_id": "real-1"}
+    assert result == [{
+        "msg_id": "real-1",
+        "wire": {"role": "user", "content": "hi from real adapter"},
+    }]
     assert peek_calls == [None]
 
     commit_fn = getattr(adapter, attr_names["commit_mid_turn_injection"], None)

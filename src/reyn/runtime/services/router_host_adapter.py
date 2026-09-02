@@ -219,9 +219,11 @@ class RouterHostAdapter:
     append_history:
         Sync callback ``(ChatMessage) -> None``.
     peek_mid_turn_injection:
-        #3792. Async callback ``() -> dict | None`` —
-        ``Session.peek_mid_turn_injection``. ``None`` default: adapters built
-        without it behave like a host that never implemented the hook.
+        #3792/#5677. Async callback ``() -> list[dict]`` —
+        ``Session.peek_mid_turn_injections`` (plural; #5677 batches every
+        currently-eligible item into one call, not just the first).
+        ``None`` default: adapters built without it behave like a host
+        that never implemented the hook.
     commit_mid_turn_injection:
         #3792. Async callback ``(msg_id: str) -> None`` —
         ``Session.commit_mid_turn_injection``. Same ``None``-default contract
@@ -309,7 +311,7 @@ class RouterHostAdapter:
         # hand-built adapters (tests, other call sites) stay valid; RouterLoop
         # getattr-guards both, so an adapter that leaves them None behaves
         # exactly like a phase host (no-op seam).
-        peek_mid_turn_injection: "Callable[[], Awaitable[dict | None]] | None" = None,
+        peek_mid_turn_injection: "Callable[[], Awaitable[list[dict]]] | None" = None,
         commit_mid_turn_injection: "Callable[[str], Awaitable[None]] | None" = None,
         # #4381 PR-2 stage ③: sync callback () -> None — Session.
         # _mark_untrusted_in_flight. Bare, no shared-consumer partner (mirrors
@@ -2101,16 +2103,17 @@ class RouterHostAdapter:
         if self._mark_untrusted_in_flight_cb is not None:
             self._mark_untrusted_in_flight_cb()
 
-    async def peek_mid_turn_injection(self) -> "dict | None":
-        """#3792: forwards to ``Session.peek_mid_turn_injection`` when wired.
+    async def peek_mid_turn_injection(self) -> "list[dict]":
+        """#3792/#5677: forwards to ``Session.peek_mid_turn_injections``
+        when wired.
 
-        None-safe when this adapter was constructed without the
+        Empty-list-safe when this adapter was constructed without the
         ``peek_mid_turn_injection`` callback (pre-#3792 call sites, most
         test construction) — behaves exactly like a host that never
-        implemented the hook at all (RouterLoop's own getattr-guard treats
-        the two identically: no injection this round)."""
+        implemented the hook at all (RouterLoop's own truthiness check
+        treats the two identically: no injection this round)."""
         if self._peek_mid_turn_injection_cb is None:
-            return None
+            return []
         return await self._peek_mid_turn_injection_cb()
 
     async def commit_mid_turn_injection(self, msg_id: str) -> None:
