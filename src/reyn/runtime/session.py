@@ -1222,6 +1222,23 @@ class Session:
 
         # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2-recovery-wal-journal)
         self._session_id = session_id
+        # #5287: a producer-owned generation covering every input
+        # ``CapabilityVisibility._envelope_census`` reads that CAN change
+        # mid-session — bumped by THIS class at its own 3 real mutation
+        # sites: :meth:`refresh_mcp_servers` (the MCP roster —
+        # ``get_mcp_servers()``'s answer), :meth:`_reapply_skills` (``self.
+        # _available_skills``), and :meth:`rekey_session_id` (``self.
+        # _session_id`` — a re-keyed sid genuinely changes what
+        # ``resolved_profile_for(agent, sid=...)`` returns for THIS SAME
+        # session object; see that method's own docstring). Given to
+        # ``CapabilityVisibility`` as a live provider (the SAME "read
+        # through a getter, never a construction-time snapshot" idiom that
+        # class already uses for ``session_id_provider``/``available_
+        # skills_provider``) so the census can compare against it on every
+        # read instead of ``Session`` calling an explicit invalidation
+        # method at each of these sites — the #5279/#5284/#5287 lesson
+        # applied to the 3rd of this file's 3 reactive caches.
+        self._capability_inputs_generation = 0
         # #5184: session-owned child-process scratch lives outside the workspace
         # so sandbox write grants never widen recovery-core permissions. The
         # directory is created lazily by the first child launch; construction
@@ -1546,85 +1563,55 @@ class Session:
             self._on_audit_event_for_state_change,
         )
 
-        # #5276: mcp_subscription_state()'s reactive cache — invalidated
-        # (marked dirty, NOT recomputed here — #5279 review, see
-        # mcp_subscription_state's own docstring for why eager-inside-the-
-        # subscriber was rejected) only when one of the events that can
-        # actually change the subscription summary fires (subscribe/
-        # unsubscribe, a server being installed/removed, or a (re)connect —
-        # mcp_initialized/mcp_resource_updated, per #5277's own
-        # investigation that these two ALREADY cover a bare reconnect's
-        # mode/honored-set shift, so no new kind was needed).
-        #
-        # #5280: a 7th kind, ``mcp_reconnect_failed`` — found while
-        # answering architect's #5279 review question. The other 6 all
-        # fire on some SUCCESSFUL state change; none fire when a
-        # reconnect attempt ITSELF fails (``MCPConnectionService.
-        # _reconnect``, connection_service.py) — the server has already
-        # been popped from ``held_servers()`` by that point, but
-        # ``mcp_initialized`` only fires on a successful reopen. Without
-        # this kind, that one path left the cache stale until an
-        # unrelated event happened to invalidate it — unlike #5278 (a
-        # pre-existing gap this PR doesn't touch), this staleness was
-        # introduced by #5276/#5279 themselves (before them,
-        # ``subscription_summary()`` ran fresh every render frame).
-        # ``None`` means "needs a real recompute on the next read" — both
-        # at construction and right after any of these events — every OTHER
-        # read is a bare attribute return, matching ``turn_usage_fn``/
-        # ``ctx_compaction_status_fn``'s own "store, don't run on every
-        # render frame" shape.
-        self._cached_mcp_subscriptions: "list[dict] | None" = None
-        self._audit_events.add_subscriber(
-            self._invalidate_mcp_subscription_cache,
-            kinds=[
-                "mcp_resource_subscribed", "mcp_resource_unsubscribed",
-                "mcp_server_installed", "mcp_server_removed",
-                "mcp_initialized", "mcp_resource_updated",
-                "mcp_reconnect_failed",
-            ],
-        )
+        # #5287: mcp_subscription_state()'s reactive cache — PULL-based
+        # against MCPConnectionService.generation (see that class's own
+        # ``_bump_generation`` docstring for its enumerated mutation
+        # sites), replacing the pre-#5287 shape of subscribing to a
+        # hand-picked list of EventLog event KINDS. That list needed a 7th
+        # kind added after shipping (#5280, ``mcp_reconnect_failed`` — a
+        # failed reconnect changes ``held_servers()`` without firing any
+        # of the original 6 kinds) — the exact "site enumeration one layer
+        # removed from the real mutation" defect #5287 closes for all 3
+        # of this file's reactive caches. ``None`` means "needs a real
+        # recompute on the next read", same as before; the tuple's first
+        # element is the generation value the cached second element was
+        # computed AGAINST, compared on every read in
+        # :meth:`mcp_subscription_state` itself (no subscriber
+        # registration needed at all now — the connection service does
+        # not need to know this cache exists).
+        self._cached_mcp_subscriptions: "tuple[int, list[dict]] | None" = None
 
-        # #5276②: hook_state()'s reactive cache. Deliberately NOT invalidated
-        # via an EventLog subscriber (unlike mcp_subscription_state's cache
-        # above) — caught during implementation via a genuine, pre-existing
-        # test failure (test_hook_slash_disables_via_public_state):
-        # set_hook_enabled is a plain SYNCHRONOUS method, and a caller that
-        # toggles then reads hook_state() immediately, with no intervening
-        # await, has always gotten the fresh answer synchronously. But
-        # EventLog.emit() QUEUES subscriber dispatch onto a background
-        # consumer task whenever a loop is running (#4966) — so a
-        # subscriber-based invalidation would not have run YET by the time
-        # such a caller reads hook_state(), returning the STALE pre-toggle
-        # cache. mcp_subscription_state's own cache doesn't hit this because
-        # every real trigger there already crosses an async boundary (a
-        # network round-trip) before any caller could plausibly read the
-        # panel. Fix: invalidate this cache SYNCHRONOUSLY, directly at each
-        # mutation site (set_hook_enabled's applied path, _reapply_hooks,
-        # load_persisted_toggles) — see each site's own comment. No
-        # subscriber registration for this cache at all.
+        # #5287: hook_state()'s reactive cache — PULL-based against a
+        # 2-part generation: (``self._hook_dispatcher.generation``,
+        # ``self._hook_toggle_generation``). Replaces the pre-#5287 shape
+        # (#5276②/#5284) of Session calling an explicit
+        # ``self._cached_hook_items = None`` at each of 3 hand-enumerated
+        # mutation sites (set_hook_enabled, load_persisted_toggles,
+        # _reapply_hooks) — the SAME defect family #5287 closes for
+        # mcp_subscription_state's cache: a 4th such site added later has
+        # nothing to remind its author that a cache depends on the field
+        # it just mutated.
         #
-        # #5284 review (lead-coder BLOCK): the 3-site enumeration above is
-        # a claim about a search actually run, not an assumption — every
-        # write to the two things hook_state()'s answer is a pure function
-        # of (`self._disabled_hooks`, `self._hook_dispatcher`'s registry):
-        #   grep -n '_disabled_hooks\s*=\|_disabled_hooks\.add\|_disabled_hooks\.discard' session.py
-        #     → exactly 4 lines, all inside set_hook_enabled (2) and
-        #       load_persisted_toggles (2)
-        #   grep -rn '\.replace_registry\(' src/reyn/
-        #     → exactly 1 call site (session.py, inside _reapply_hooks);
-        #       HookDispatcher.replace_registry is the ONLY method that
-        #       reassigns HookDispatcher._registry after construction
-        #       (checked dispatcher.py directly — the constructor's own
-        #       assignment doesn't need an invalidation, since this cache
-        #       starts at None regardless)
-        # ⚠️ WHOEVER ADDS A NEW SITE THAT MUTATES EITHER OF THOSE TWO
-        # THINGS MUST ALSO CLEAR `self._cached_hook_items = None` THERE —
-        # nothing here will turn red on its own; a 4th such site added
-        # without this line means hook_state() silently starts returning a
-        # stale answer (the #5267 "breaking side" comment placement: on
-        # the field that breaks, not just the code path that uses it
-        # correctly today).
-        self._cached_hook_items: "list[dict] | None" = None
+        # ``self._hook_toggle_generation`` is Session's OWN generation for
+        # ``self._disabled_hooks`` (bumped directly, synchronously, inside
+        # :meth:`set_hook_enabled`/:meth:`load_persisted_toggles` — the
+        # only 2 methods that mutate it, same grep #5284's review already
+        # ran: `grep -n '_disabled_hooks\s*=\|_disabled_hooks\.add\|
+        # _disabled_hooks\.discard' session.py` → exactly 4 lines, all
+        # inside those 2 methods). ``self._hook_dispatcher.generation`` is
+        # ``HookDispatcher``'s OWN generation (bumped inside
+        # :meth:`~reyn.hooks.dispatcher.HookDispatcher.replace_registry`,
+        # its sole post-construction ``_registry`` reassignment site — see
+        # that method's own comment). Both bumps stay SYNCHRONOUS (no
+        # EventLog subscriber anywhere in this cache's path) for the same
+        # reason #5284 originally required it: a caller that toggles then
+        # reads hook_state() immediately, with no intervening ``await``,
+        # must see the fresh answer — ``EventLog.emit()`` queues
+        # subscriber dispatch onto a background consumer task whenever a
+        # loop is running (#4966), so a subscriber-based invalidation
+        # would not have run yet by the time such a caller reads this.
+        self._hook_toggle_generation = 0
+        self._cached_hook_items: "tuple[tuple[int, int], list[dict]] | None" = None
 
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
         self._budget = self._build_budget(
@@ -1688,6 +1675,8 @@ class Session:
             contextual_permission=contextual_permission,
             excluded_categories=excluded_categories,
             chat_tool_use_scheme=self._chat_tool_use_scheme,  # #3220: tool census matches the active scheme's composed payload
+            # #5287: live -- see self._capability_inputs_generation's own comment for the 3 sites this bumps at.
+            capability_inputs_generation_provider=lambda: self._capability_inputs_generation,
         )
 
         # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
@@ -1974,12 +1963,31 @@ class Session:
         snapshot, state dir).
 
         A live read, not the construction-time value: ``spawn_session_recorded``
-        re-keys a spawned session AFTER constructing it (``session._session_id =
-        new_sid``), so anything caching the constructor's ``session_id`` argument is
+        re-keys a spawned session AFTER constructing it (via :meth:`rekey_session_id`,
+        #5287 — a plain ``session._session_id = new_sid`` field write before then), so
+        anything caching the constructor's ``session_id`` argument is
         stale for exactly the sessions that were spawned programmatically. #3553
         added it because ``run_agent_step`` holds its invoker as a whole ``Session``
         and needs that key to look the invoker's own narrowing back up."""
         return self._session_id
+
+    def rekey_session_id(self, new_sid: str) -> None:
+        """#5287: re-key this session's own sid post-construction — the ONE
+        place ``self._session_id`` is reassigned after ``__init__`` (was a
+        bare ``session._session_id = new_sid`` field write reaching in from
+        ``registry.py``'s ``spawn_session_recorded``; converted to a method
+        so the accompanying generation bump lives with the write, matching
+        this file's established idiom — see e.g.
+        :meth:`~reyn.hooks.dispatcher.HookDispatcher.replace_registry`).
+
+        Bumps :attr:`_capability_inputs_generation` — a re-keyed sid
+        genuinely changes what ``resolved_profile_for(agent, sid=...)``
+        returns for THIS SAME session object, and that call is baked into
+        ``CapabilityVisibility``'s memoized envelope census (see that
+        class's own :meth:`~reyn.runtime.capability_visibility.
+        CapabilityVisibility._envelope_census` docstring)."""
+        self._session_id = new_sid
+        self._capability_inputs_generation += 1
 
     @property
     def model(self) -> str:
@@ -3417,15 +3425,15 @@ class Session:
         else:
             self._disabled_hooks.add(name)
         self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
-        # #5276②: invalidate hook_state()'s cache SYNCHRONOUSLY, right here
-        # — not via the audit-event below. A caller that toggles then reads
+        # #5287: bump hook_state()'s generation SYNCHRONOUSLY, right here —
+        # not via the audit-event below. A caller that toggles then reads
         # hook_state() immediately (no await in between, e.g. the existing
         # test_hook_slash_disables_via_public_state) must see the fresh
         # answer; EventLog.emit()'s subscriber dispatch is QUEUED whenever a
-        # loop is running (#4966), so relying on an emitted event to
-        # invalidate this cache would still be showing the stale pre-toggle
+        # loop is running (#4966), so relying on an emitted event to bump
+        # this generation would still be showing the stale pre-toggle
         # value by the time such a caller reads it.
-        self._cached_hook_items = None
+        self._hook_toggle_generation += 1
         self._audit_events.emit(
             "hook_changed", name=name, enabled=enabled, applied=True, origin=origin,
         )
@@ -3500,24 +3508,19 @@ class Session:
                     self._disabled_hooks = {str(n) for n in disabled}
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load hook disabled-set failed: %r", exc)
-        # #5276②: this method resets/repopulates self._disabled_hooks above
+        # #5287: this method resets/repopulates self._disabled_hooks above
         # (unconditionally, at both call sites this docstring names) —
-        # invalidate hook_state()'s cache synchronously here too, same
+        # bump hook_state()'s own generation synchronously here too, same
         # reasoning as set_hook_enabled's own comment.
-        self._cached_hook_items = None
-        # #5276/#5285 review (architect): this method's own module
-        # docstring (capability_visibility.py, top) already documents WHY
-        # `session_id_provider` is a live getter, not a snapshot — a
-        # session's own sid CAN be re-keyed post-construction (spawn
-        # fixup), and `load_persisted_toggles` is called AFTER that
-        # re-key. `_envelope_census()` bakes `resolved_profile_for(...,
-        # sid=...)` into its cache, so a re-keyed sid can genuinely change
-        # what that call returns for the SAME session object — the one
-        # scenario this PR's own earlier "envelope never changes
-        # mid-session" claim did not hold for. Invalidate here too,
-        # synchronously (same "no subscriber" reasoning as every other
-        # site — #5279/#5284).
-        self._capability_visibility.invalidate_envelope_census()
+        self._hook_toggle_generation += 1
+        # Nothing to do here for the envelope-census cache
+        # (``CapabilityVisibility._envelope_census``): its own generation
+        # provider reads ``self._capability_inputs_generation``, which
+        # :meth:`rekey_session_id` already bumps AT THE REAL MUTATION —
+        # by the time this method runs (always called AFTER a spawn-time
+        # re-key, per this method's own docstring), that bump has already
+        # happened, so the census cache is already correctly seen as
+        # stale on its next read with no separate call needed here.
         if loaded_visibility:
             self._capability_visibility.reapply_visibility_override()
         if loaded_skill_visibility:
@@ -3569,24 +3572,22 @@ class Session:
         ruling, #5230: a census of every surface reporting this state cannot be closed with
         confidence, so the fix collapses the predicate structurally instead).
 
-        #5276②: reactive cache — ``self._cached_hook_items`` is filled lazily
-        here, on the next real call after construction or after a mutation
-        site (``set_hook_enabled``'s applied path, ``_reapply_hooks``,
-        ``load_persisted_toggles``) directly clears it to ``None``.
-        Deliberately NOT invalidated via an ``EventLog`` subscriber (unlike
-        ``mcp_subscription_state``'s own cache) — see this field's own
-        comment in ``__init__`` for the genuine, pre-existing test failure
-        (a synchronous toggle-then-read caller) that direct, synchronous
-        invalidation was needed to fix, since subscriber dispatch is queued
-        (#4966) and would not have run yet by the time such a caller reads
-        this."""
-        if self._cached_hook_items is None:
+        #5287: reactive cache, PULL-based against a 2-part generation
+        (``self._hook_dispatcher.generation``, ``self._hook_toggle_
+        generation``) — see this field's own comment in ``__init__`` for
+        the full design and for the genuine, pre-existing test failure (a
+        synchronous toggle-then-read caller) that requires both bumps to
+        stay SYNCHRONOUS rather than routed through an ``EventLog``
+        subscriber (subscriber dispatch is queued, #4966, and would not
+        have run yet by the time such a caller reads this)."""
+        gen = (self._hook_dispatcher.generation, self._hook_toggle_generation)
+        if self._cached_hook_items is None or self._cached_hook_items[0] != gen:
             out: "list[dict]" = []
             for name, hook in self._hook_defs_by_name().items():
                 enabled = not self._hook_effectively_disabled(name, hook.origin)
                 out.append({"name": name, "scope": hook.origin, "enabled": enabled})
-            self._cached_hook_items = out
-        return self._cached_hook_items
+            self._cached_hook_items = (gen, out)
+        return self._cached_hook_items[1]
 
     def _hook_defs_by_name(self) -> "dict[str, HookDef]":
         """The merged registry's ``HookDef``s keyed by name, most-specific origin
@@ -4973,6 +4974,13 @@ class Session:
             fresh_roster = load_config(self._hot_reload_project_root()).mcp
             self._mcp_servers = fresh_roster
             self._router_host._mcp_servers = fresh_roster
+            # #5287: bumps ``capability_visibility_state()``'s memoized
+            # envelope census generation right at the real mutation —
+            # ``get_mcp_servers()`` (one of that census's own inputs)
+            # reads ``self._router_host._mcp_servers``, just reassigned
+            # above. See ``self._capability_inputs_generation``'s own
+            # comment for the other 2 sites sharing this counter.
+            self._capability_inputs_generation += 1
         except Exception as exc:  # noqa: BLE001 — roster re-read is best-effort
             logger.warning("refresh_mcp_servers: roster re-read failed: %r", exc)
 
@@ -6774,14 +6782,11 @@ class Session:
         propagates to every holder. The startup layer is never re-read (safety
         boundary). Always rebuilds (handles add / change / remove of either layer).
 
-        #5276②: invalidates ``hook_state()``'s cache synchronously right
-        after swapping the registry — same "direct at the mutation site,
-        no subscriber" reasoning as :meth:`set_hook_enabled`'s own comment
-        (an awaited caller reading ``hook_state()`` right after this
-        reload completes must see the fresh declaration set, not a value
-        an event subscriber hasn't gotten around to invalidating yet)."""
+        #5287: ``HookDispatcher.replace_registry`` bumps its own
+        ``generation`` (see that method's own comment), which
+        :meth:`hook_state`'s pull-based cache compares against on its
+        next read — nothing to invalidate here explicitly any more."""
         self._hook_dispatcher.replace_registry(self._build_hook_registry(in_set))
-        self._cached_hook_items = None
         return True
 
     def _hot_reload_project_root(self) -> "Path":
@@ -6822,13 +6827,13 @@ class Session:
         refresh chain (which reads the re-read .reyn/mcp.yaml). Returns whether the
         in-memory tool cache changed.
 
-        #5276: invalidates ``capability_visibility_state()``'s memoized
-        envelope census (`get_mcp_servers()`'s answer, one of the census's
-        own inputs, can change here) — synchronously, right after the
-        refresh, same "no subscriber" reasoning as ``hook_state()``'s own
-        cache (#5279/#5284)."""
+        #5287: ``refresh_mcp_servers`` bumps ``self._capability_inputs_
+        generation`` itself, right at its own roster reassignment — see
+        that method's own comment — so ``capability_visibility_state()``'s
+        memoized envelope census (whose own generation provider reads
+        that same counter) is already correctly seen as stale on its next
+        read once this returns; nothing to invalidate here explicitly."""
         result = await self.refresh_mcp_servers()
-        self._capability_visibility.invalidate_envelope_census()
         return bool(result.get("refreshed"))
 
     async def _reapply_skills(self, in_set: dict) -> bool:
@@ -6866,10 +6871,12 @@ class Session:
                 return False
         self._available_skills = new_skills or None
         self._capability_visibility.reapply_skill_visibility()
-        # #5276: invalidates the memoized envelope census (the skill roster
-        # just reassigned above is one of its own inputs) — synchronously,
-        # same reasoning as _reapply_mcp's own comment.
-        self._capability_visibility.invalidate_envelope_census()
+        # #5287: bumps the same generation ``refresh_mcp_servers``/
+        # ``rekey_session_id`` bump — the memoized envelope census (the
+        # skill roster just reassigned above is one of its own inputs)
+        # compares against this counter on its own next read; see
+        # ``self._capability_inputs_generation``'s own comment.
+        self._capability_inputs_generation += 1
         return True
 
     async def _reapply_pipelines(self, in_set: dict) -> bool:
@@ -10184,41 +10191,24 @@ class Session:
         Always ``[]`` for an ephemeral session (never populates the
         connection service — same condition ``mcp_held_servers`` documents).
 
-        #5276: reactive cache — ``self._cached_mcp_subscriptions`` is filled
-        lazily HERE, on the next real read after construction or after a
-        subscribe/unsubscribe/install/removed/(re)connect event marks it
-        dirty (see :meth:`_invalidate_mcp_subscription_cache` and the
-        subscriber registration in ``__init__``), so a render-frame caller
-        pays for the real recomputation only on the rare frame where
-        something actually changed AND something is actually reading it —
-        never on a frame nobody reads this, and never inside the event
-        dispatch itself.
-
-        #5280: the subscriber list also includes ``mcp_reconnect_failed`` —
-        a FAILED reconnect drops the server from ``held_servers()`` (it was
-        already popped before the reopen was attempted,
-        ``MCPConnectionService._reconnect``) without ever reaching the
-        success-only ``mcp_initialized`` emit, so this dedicated kind is
-        what invalidates the cache on that specific path.
-
-        #5279 review (architect BLOCK on an earlier draft that recomputed
-        EAGERLY inside the subscriber callback instead of merely marking
-        dirty): that shape had two real problems, both closed by moving
-        the recompute here instead. (1) ``EventLog``'s dispatch loop
-        isolates each subscriber with its own try/except (#4963/#4961 A) —
-        a raise from ``subscription_summary()`` inside the subscriber
-        would be silently swallowed, leaving the STALE cached value in
-        place with nobody aware a refresh failed (before #5276, every
-        read hit the real call directly, so a raise was never silently
-        absorbed this way). (2) recomputing on every qualifying EVENT ties
-        the actual compute cost to whatever paces those events — e.g.
-        ``mcp_resource_updated``'s cadence is controlled by the remote MCP
-        server, not by this session — so a headless run that never reads
-        this value went from 0 real computations (pre-#5276) to one per
-        event (the eager draft), with no bounding subject. Marking dirty
-        here instead bounds the cost to actual READS, exactly like every
-        other cache in this file, and a raise here propagates to THIS
-        call's own caller exactly as it always did.
+        #5287: reactive cache, PULL-based against
+        ``MCPConnectionService.generation`` — replaces the pre-#5287
+        shape (#5276/#5279/#5280) of subscribing to a hand-picked list of
+        EventLog event KINDS believed to cover every mutation that could
+        change this answer, which needed a 7th kind added after shipping
+        (``mcp_reconnect_failed`` — a failed reconnect changes
+        ``held_servers()`` without firing any of the original 6). Every
+        read compares the connection service's LIVE generation to the
+        one the cached value was computed against; a mismatch (or no
+        cache yet) triggers a real recompute, stored alongside the
+        generation it was computed at. No subscriber registration
+        exists for this cache at all now — see
+        ``MCPConnectionService._bump_generation``'s own docstring for
+        the exhaustive, colocated-with-the-real-mutation site list this
+        replaces the event-kind guesswork with. A raise from
+        ``subscription_summary()`` still propagates to THIS call's own
+        caller directly (nothing catches it on the way here, same as
+        before).
 
         Recomputation itself is still this SAME thin forwarder to
         ``MCPConnectionService.subscription_summary`` — see that method's
@@ -10226,21 +10216,10 @@ class Session:
         single-producer reasoning behind both this method and
         ``RouterHostAdapter.mcp_list_subscriptions`` reading the same
         source)."""
-        if self._cached_mcp_subscriptions is None:
-            self._cached_mcp_subscriptions = self._mcp_connection_service.subscription_summary()
-        return self._cached_mcp_subscriptions
-
-    def _invalidate_mcp_subscription_cache(self, _event: object) -> None:
-        """#5276: the subscriber callback wired to the events that can
-        actually change :meth:`mcp_subscription_state`'s answer — marks the
-        cache dirty (``None``) rather than recomputing here; the next real
-        call to :meth:`mcp_subscription_state` does the actual work,
-        lazily, on its own caller's stack (see that method's own #5279
-        review paragraph for why eager-inside-the-subscriber was rejected).
-        Takes the event only to match the ``Subscriber`` shape
-        (``Callable[[Event], None]``) — the event itself carries no
-        information this invalidation needs beyond "something happened"."""
-        self._cached_mcp_subscriptions = None
+        gen = self._mcp_connection_service.generation
+        if self._cached_mcp_subscriptions is None or self._cached_mcp_subscriptions[0] != gen:
+            self._cached_mcp_subscriptions = (gen, self._mcp_connection_service.subscription_summary())
+        return self._cached_mcp_subscriptions[1]
 
     async def aclose_background_tasks(self) -> None:
         """#4759 teardown: drain every background task this session (or a

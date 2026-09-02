@@ -1,6 +1,6 @@
-"""Tier 2: #5276 (visibility_items) — the EXPENSIVE, envelope-only half of
-``capability_visibility_state()`` (the tool/mcp/category/skill census
-against the agent envelope) is memoized; only the CHEAP overlay
+"""Tier 2: #5276/#5287 (visibility_items) — the EXPENSIVE, envelope-only
+half of ``capability_visibility_state()`` (the tool/mcp/category/skill
+census against the agent envelope) is memoized; only the CHEAP overlay
 (``/visibility`` override + per-turn ephemeral taint) recomputes every call.
 
 Root cause: ``capability_visibility_state()`` used to redo the ENTIRE
@@ -16,12 +16,23 @@ census causes no staleness there — EXCEPT one real edge the census's own
 ``sid=self._session_id_provider()`` argument exposes: a session's own sid
 CAN be re-keyed post-construction (spawn fixup — see
 ``capability_visibility.py``'s own module docstring), so a stale cache
-survives-then-lies for the SAME session object across a re-key. Caught
-during review (architect, #5285): invalidated at 3 sites, not 2 —
-``_reapply_mcp``/``_reapply_skills`` (the MCP roster / skill registry, WHICH
-capabilities exist to classify) AND ``load_persisted_toggles`` (called
-after a re-key completes, per that method's own docstring), all
-synchronously (the #5279/#5284 lesson: no ``EventLog`` subscriber).
+survives-then-lies for the SAME session object across a re-key.
+
+#5276/#5285: invalidated at 3 hand-enumerated sites (``_reapply_mcp``/
+``_reapply_skills``/``load_persisted_toggles``), each calling
+``invalidate_envelope_census()`` explicitly, no ``EventLog`` subscriber
+(the #5279/#5284 lesson).
+
+#5287: PULL-based instead, against ``Session``'s own producer-owned
+``self._capability_inputs_generation`` counter — bumped at the 3 REAL
+mutation sites (``refresh_mcp_servers``'s roster reassignment,
+``_reapply_skills``'s ``_available_skills`` reassignment, and the new
+``Session.rekey_session_id`` — the sid re-key itself, not the
+``load_persisted_toggles`` call that happens to follow it). The same
+defect family closed for this file's sibling reactive caches
+(``hook_state``/``mcp_subscription_state``): a hand-enumerated call-site
+list needs updating every time a NEW site is added; a generation bumped
+at the real mutation does not.
 
 Real ``AgentRegistry``/``Session`` (real envelope via
 ``spawn_session_recorded(narrowing=...)``) — no mocks, mirrors
@@ -244,13 +255,47 @@ async def test_skill_reload_invalidates_the_census(tmp_path, monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_load_persisted_toggles_invalidates_the_census(tmp_path, monkeypatch) -> None:
-    """Tier 2: acceptance — the 3rd invalidation site (architect B on
-    #5285, finding ①): ``load_persisted_toggles`` is called right after a
-    session re-key, and the census's own ``sid=self._session_id_provider()``
-    argument means a re-key CAN change what it should return for the SAME
-    session object. Calling ``load_persisted_toggles()`` must invalidate
-    the cache, so a subsequent read costs exactly 1 more real computation."""
+async def test_rekey_session_id_invalidates_the_census(tmp_path, monkeypatch) -> None:
+    """Tier 2: #5287 — the 3rd invalidation site (originally architect B on
+    #5285, finding ①, re-targeted at the REAL mutation by #5287): the
+    census's own ``sid=self._session_id_provider()`` argument means a
+    session re-key CAN change what it should return for the SAME session
+    object. ``Session.rekey_session_id`` — the one place ``self.
+    _session_id`` is reassigned post-construction (``registry.py``'s
+    ``spawn_session_recorded``, real production call site exercised via
+    the same registry-driven spawn every other test in this file uses) —
+    bumps ``self._capability_inputs_generation`` directly, so a
+    subsequent read costs exactly 1 more real computation."""
+    reg = _make_registry(tmp_path)
+    s = reg.get_session("alice", await reg.spawn_session_recorded(
+        "alice", presentation_consumer=None, intervention_bridge=None,
+    ))
+    call_count = _counting_wrapper(monkeypatch, s._capability_visibility)
+
+    s.capability_visibility_state()
+    assert call_count["n"] == 1
+
+    s.rekey_session_id("a-different-sid")
+    s.capability_visibility_state()
+
+    assert call_count["n"] == 2, (
+        f"expected exactly 1 more real census computation after "
+        f"rekey_session_id, got {call_count['n']} real calls total"
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_persisted_toggles_alone_does_not_trigger_a_recompute(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: #5287 — deliberate simplification, stated as a positive
+    assertion: ``load_persisted_toggles`` no longer invalidates the
+    census by itself (pre-#5287, it did so unconditionally, on the
+    reasoning that it always runs right after a re-key — but the
+    generation bump now lives at the re-key itself, so a
+    ``load_persisted_toggles`` call with NO re-key in between — e.g. the
+    construction/restore path this method's own docstring also names,
+    where the sid never changes — correctly costs nothing more)."""
     reg = _make_registry(tmp_path)
     s = reg.get_session("alice", await reg.spawn_session_recorded(
         "alice", presentation_consumer=None, intervention_bridge=None,
@@ -263,7 +308,8 @@ async def test_load_persisted_toggles_invalidates_the_census(tmp_path, monkeypat
     s.load_persisted_toggles()
     s.capability_visibility_state()
 
-    assert call_count["n"] == 2, (
-        f"expected exactly 1 more real census computation after "
-        f"load_persisted_toggles, got {call_count['n']} real calls total"
+    assert call_count["n"] == 1, (
+        f"load_persisted_toggles with no accompanying re-key must not "
+        f"trigger a real census recompute, got {call_count['n']} real "
+        f"calls total"
     )

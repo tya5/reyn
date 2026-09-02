@@ -300,6 +300,55 @@ class MCPConnectionService:
         # Per-server lock so two concurrent first-use get() calls for the SAME server
         # (e.g. two chat turns racing on session startup) don't both open a client.
         self._locks: dict[str, asyncio.Lock] = {}
+        # #5287: a producer-owned generation counter, bumped by THIS class at
+        # every one of its own real mutation sites for the 4 fields
+        # :meth:`subscription_summary` reads (``_clients`` / ``_subscriptions``
+        # / ``_subscription_adapters`` / ``_last_honored``) — see
+        # :meth:`_bump_generation`'s own docstring for the enumerated list and
+        # why this replaces the pre-#5287 "``Session`` subscribes to a
+        # hand-picked list of EventLog event KINDS" shape (#5279/#5280: that
+        # list needed a 7th kind added after shipping, because a new kind of
+        # subscription-relevant change is easy to add without remembering to
+        # also update a list one layer removed from where the change actually
+        # happens). A consumer compares this value, not any event, to its own
+        # last-seen generation — see ``Session.mcp_subscription_state``'s own
+        # docstring.
+        self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """See :meth:`_bump_generation`."""
+        return self._generation
+
+    def _bump_generation(self) -> None:
+        """#5287: bump :attr:`_generation` — called at every site in THIS
+        class (and, via :meth:`_set_last_honored`, the one site in the
+        nested :class:`_HeldConnection` that writes ``_last_honored``
+        directly) that mutates one of the 4 fields
+        :meth:`subscription_summary` composes from. Grep-confirmed
+        (#5287 investigation) call sites:
+
+          - :meth:`_ensure_open` — once, after the (re)connect completes
+            (covers ``_clients``/``_subscription_adapters``/``_last_honored``
+            all being freshly set for this server).
+          - :meth:`_reconnect` — once, right after popping the dead
+            client + adapter, UNCONDITIONALLY (including the failure
+            path: ``held_servers()`` already changed the moment the pop
+            happened, even if the reopen below then raises — #5280's own
+            finding for the event-kind design, structurally closed here
+            since there is no separate "did the reopen succeed" branch
+            to remember to cover).
+          - :meth:`aclose` — once, after ``_clients.clear()``.
+          - :meth:`_track_subscription` / :meth:`_untrack_subscription` —
+            each mutates ``_subscriptions``.
+          - :meth:`_set_last_honored` — the ``_last_honored`` write
+            ``_HeldConnection.subscribe_resource``/``unsubscribe_resource``
+            make for an INCREMENTAL add/remove on an already-open Listen
+            connection (previously a direct ``self._service._last_honored[
+            ...] = `` write reaching into this class's private dict; routed
+            through this one method instead so the bump lives with the
+            write, not scattered across two classes)."""
+        self._generation += 1
 
     def held_servers(self) -> list[str]:
         """Names of servers with a currently-open held connection. Read-only
@@ -342,6 +391,15 @@ class MCPConnectionService:
         if client is not None and not client.is_initialized():
             self._clients.pop(server, None)
             client = None
+            # #5287: this eviction is a real ``_clients`` mutation (a
+            # server that WAS in ``held_servers()`` is no longer, right
+            # up until the reopen below re-adds it) — bump here too, not
+            # only at the block's own end, so a caller reading in
+            # between (impossible today — this method never yields
+            # before reopening — but the bump costs nothing extra here
+            # and keeps this a colocated-with-every-mutation habit
+            # rather than one that has to be re-verified on trust).
+            self._bump_generation()
         if client is None:
             # #2597 P1: computed BEFORE this open completes — True iff a PRIOR open
             # for this server already succeeded in this service's lifetime, i.e.
@@ -490,6 +548,17 @@ class MCPConnectionService:
                     capabilities=client.advertised_capabilities(),
                     subscription_adapter=type(adapter).__name__,
                 )
+            # #5287: this branch is one of _bump_generation's own
+            # enumerated sites — see that method's docstring. Scoped to
+            # the ``if client is None:`` block (a genuine open/reopen),
+            # NOT the method as a whole — the common fast path (an
+            # already-live, already-initialized client) changes none of
+            # the 4 fields subscription_summary() reads, and this method
+            # runs on every ``get()`` call, so bumping unconditionally
+            # here would recompute the subscription cache on every MCP
+            # tool call regardless of whether anything about the
+            # subscription state actually changed.
+            self._bump_generation()
         return client
 
     async def _reconnect(
@@ -544,6 +613,14 @@ class MCPConnectionService:
                     "MCPConnectionService: teardown of dead subscription adapter for %r "
                     "contained an error", server, exc_info=True,
                 )
+        # #5287: this method is one of _bump_generation's own enumerated
+        # sites — the two pops above already changed ``held_servers()``/
+        # ``subscription_mode()``'s answer for this server, independent of
+        # whether the reopen below succeeds (see the ``except BaseException``
+        # branch's own comment for the failure case this covers; a success
+        # also bumps again inside _ensure_open's own open branch, which
+        # costs nothing extra a pull-based cache needs to care about).
+        self._bump_generation()
         try:
             return await self._ensure_open(server, config, agent_id=agent_id)
         except BaseException:
@@ -767,9 +844,22 @@ class MCPConnectionService:
 
     def _track_subscription(self, server: str, uri: str) -> None:
         self._subscriptions.setdefault(server, set()).add(uri)
+        self._bump_generation()  # #5287 — see _bump_generation's own docstring
 
     def _untrack_subscription(self, server: str, uri: str) -> None:
         self._subscriptions.get(server, set()).discard(uri)
+        self._bump_generation()  # #5287 — see _bump_generation's own docstring
+
+    def _set_last_honored(self, server: str, honored: "set[str] | None") -> None:
+        """#5287: the ONE place ``_last_honored`` is written from OUTSIDE
+        :meth:`_ensure_open` — ``_HeldConnection.subscribe_resource``/
+        ``unsubscribe_resource`` route their own incremental-add/remove
+        honored-set update through this method instead of writing
+        ``self._service._last_honored[...]`` directly, so the generation
+        bump lives with the write rather than needing a 3rd class to
+        remember it independently."""
+        self._last_honored[server] = honored
+        self._bump_generation()
 
     async def aclose(self) -> None:
         """Close every held connection. Idempotent — safe to call repeatedly (e.g. a
@@ -834,6 +924,10 @@ class MCPConnectionService:
         clients = list(self._clients.items())
         self._clients.clear()
         self._handles.clear()
+        # #5287: this method is one of _bump_generation's own enumerated
+        # sites — both ``_clients`` and ``_subscription_adapters`` (cleared
+        # above) are inputs to subscription_summary().
+        self._bump_generation()
         for name, client in clients:
             try:
                 await client.__aexit__(None, None, None)
@@ -964,7 +1058,7 @@ class _HeldConnection:
                 # ``unhonored_uris`` would read a STALE (pre-this-URI)
                 # honored set for every subscribe added to an
                 # already-open Listen connection.
-                self._service._last_honored[self._server] = await adapter.open(all_uris)
+                self._service._set_last_honored(self._server, await adapter.open(all_uris))
             else:
                 await c.subscribe_resource(uri)
 
@@ -978,7 +1072,7 @@ class _HeldConnection:
                 remaining = set(self._service._subscriptions.get(self._server, ())) - {uri}
                 # #4686: mirrors subscribe_resource's own honored-storage —
                 # see that method's comment.
-                self._service._last_honored[self._server] = await adapter.open(remaining)
+                self._service._set_last_honored(self._server, await adapter.open(remaining))
             else:
                 await c.unsubscribe_resource(uri)
 

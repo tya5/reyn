@@ -13,10 +13,14 @@ and an existing caller toggles then reads ``hook_state()`` immediately,
 with no intervening ``await`` — but ``EventLog.emit()`` QUEUES subscriber
 dispatch onto a background consumer task whenever a loop is running
 (#4966), so the invalidating subscriber would not have run yet by the time
-such a caller reads the (still-stale) cache. Fix: invalidate SYNCHRONOUSLY,
-directly at each mutation site (``set_hook_enabled``'s applied path,
-``_reapply_hooks``, ``load_persisted_toggles``) — no subscriber for this
-cache at all.
+such a caller reads the (still-stale) cache. Fix: bump a generation
+SYNCHRONOUSLY, directly at each mutation site (``set_hook_enabled``'s
+applied path, ``load_persisted_toggles`` — both bump ``Session``'s own
+``_hook_toggle_generation``; ``_reapply_hooks`` bumps ``HookDispatcher``'s
+own ``generation`` inside ``replace_registry`` — #5287) — no subscriber
+for this cache at all, and (#5287) no explicit invalidation CALL either:
+``hook_state()`` compares the live 2-part generation to its own
+last-seen value on every read instead.
 
 Real ``Session``/``HookDispatcher`` — no mocks, mirrors
 ``test_5222_hook_state_origin_aware.py``'s own real-seam pattern. Uses the
@@ -192,8 +196,9 @@ def test_load_persisted_toggles_invalidates_the_cache(tmp_path, monkeypatch) -> 
     restart-recovery shape ``load_persisted_toggles`` exists for), THEN
     calling ``load_persisted_toggles()`` must make the NEXT ``hook_state()``
     read reflect the persisted disable — proving this site's own
-    ``self._cached_hook_items = None`` line is load-bearing (removing it
-    reproduces this test going red with no other change)."""
+    ``self._hook_toggle_generation += 1`` line (#5287; was ``self.
+    _cached_hook_items = None``) is load-bearing (removing it reproduces
+    this test going red with no other change)."""
     import yaml
 
     _write_agent_hook(tmp_path, "myhook")

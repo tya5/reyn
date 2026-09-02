@@ -39,7 +39,8 @@ Ownership split:
   ``Session._session_id`` / ``Session._ephemeral`` LIVE — both are
   Session-owned state REASSIGNED post-construction by the owning
   ``AgentRegistry`` (``session_id``: spawn-time re-key, ``registry.py``
-  ``spawn_session_recorded``; ``ephemeral``: ``registry.py``
+  ``spawn_session_recorded`` via :meth:`Session.rekey_session_id` — #5287,
+  was a bare ``session._session_id = new_sid`` field write; ``ephemeral``: ``registry.py``
   ``spawn_session`` / ``pipeline_executor_driver.py`` set it True AFTER
   ``Session.__init__`` returns, via :meth:`Session.mark_ephemeral` — #5336,
   was a bare private-attribute write), so a snapshot copied once at
@@ -49,8 +50,8 @@ Ownership split:
   reads through a live getter rather than owning a second, staleable copy.
   ★ Ground correction vs the #3133 P3 firm comment (which specified plain
   ``session_id: str`` / ``ephemeral: bool``): both fields are mutated by
-  external assignment (``session._session_id = ...`` /
-  ``session.mark_ephemeral()``) after construction, so a plain constructor
+  external calls (``session.rekey_session_id(...)`` / ``session.
+  mark_ephemeral()``) after construction, so a plain constructor
   value would freeze the pre-mutation value forever — the same pattern
   #3129 already solved with a provider.
 """
