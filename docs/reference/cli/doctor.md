@@ -197,6 +197,32 @@ NOT build a `resolve_sandbox_policy()` call — that needs a caller-supplied
 must not invent a stand-in for. Only the declared `sandbox.policy` dict's own
 write-scope keys are shown, never a merged/resolved policy.
 
+### `external_transports:` — configured entries vs. the 2 real consumers
+
+```
+external_transports: — configured entries vs. the 2 real
+consumers (both web/AGUI-server-only; inert under `reyn chat`):
+  ⚠ 1 configured (broker) — this section is wired ONLY by interfaces/web/deps.py:411-412 (outbox interceptor) and interfaces/web/server.py:123 (cron-failure notifier), both reachable only through the web/AGUI server runner. `reyn chat` (the plain CLI) never reaches either — these entries have no effect there.
+  (doctor cannot tell whether you actually run via the web/AGUI server — if you do, these entries DO apply there; this is a static declaration check, D-2)
+```
+
+`config/loader.py`'s `_build_external_transports_config` accepts any
+transport name under `external_transports:` — but the only 2 real
+consumers of the parsed `ExternalTransportRouting` are
+`interfaces/web/deps.py`'s outbox-interceptor wiring and
+`interfaces/web/server.py`'s cron-job-failure notifier, both reachable
+only through the web/AGUI server runner. `reyn chat` (the plain CLI)
+never reaches either, so any `external_transports:` entry written for
+a `reyn chat`-only setup is inert — the SAME third-state shape
+`config.py`'s AgentProfile-unknown-key report already established
+("it is read, kept in no in-memory state, and does nothing"), applied
+here to a section that IS a recognized key.
+
+An UNCONFIGURED section prints `unconfigured` and names nothing — never
+a fabricated "0 configured" framed as a finding. Doctor cannot observe
+which runner the operator actually uses, so the line discloses that
+limit explicitly rather than asserting one mode or the other (D-2).
+
 ### MCP servers — last negotiated version/capabilities (C-3(b))
 
 ```

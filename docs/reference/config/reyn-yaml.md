@@ -127,7 +127,7 @@ aren't.
 | `agent_id` | string | project | restart | `reyn.yaml` | Agent **identity** — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
 | `auth` | map | project | restart | `reyn.yaml` | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | Scheduled skill executions. See below. |
-| `external_transports` | map | project | restart | `reyn.yaml` | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
+| `external_transports` | map | project | restart | `reyn.yaml` | Inbound transport → MCP tool routing, wired only via the web/AGUI server runner — inert under plain `reyn chat` (Slack / LINE / Discord etc.). See below. |
 | `multimodal` | map | project | restart | `reyn.yaml` | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
 | `permissions` | map | project · agent · session² | restart⁷ | `reyn.yaml` | Default permission policy. See below. |
 | `project_context_path` | string | project · agent³ | restart⁶ | `reyn.yaml` | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key. See note below. |
@@ -2643,29 +2643,48 @@ multimodal:
 
 ## `external_transports` block
 
-Inbound transport → MCP tool routing for chat. Maps an external transport name (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus an `args_template` describing how router output is shaped into the tool's arguments.
+Inbound transport → MCP tool routing, wired ONLY through the **web/AGUI
+server runner** (`interfaces/web/deps.py`'s outbox interceptor and
+`interfaces/web/server.py`'s cron-job-failure notifier — grep-confirmed,
+#4364) — **plain `reyn chat` never reaches either consumer**, so entries
+written here have no effect there. Maps an external transport name
+(Slack / LINE / Discord / ...) to the MCP tool that delivers replies,
+plus an `args_template` describing how router output is shaped into the
+tool's arguments.
+
+**Flat, no `transports:` wrapper** — the loader
+(`runtime/external_routing.py`'s `parse_external_transports`) treats
+EVERY top-level key of this block as a transport name directly; a
+wrapping `transports:` key (an earlier version of this example) is
+itself parsed as one malformed transport named `"transports"` (no
+`mcp_tool` of its own) and silently dropped — verified directly:
+`parse_external_transports({"transports": {"slack": {...}}})` returns
+zero configured transports.
 
 ```yaml
 external_transports:
-  transports:
-    slack:
-      mcp_tool: slack__post_message
-      args_template:
-        channel: "${TRANSPORT_DEST}"
-        text: "${ROUTER_REPLY}"
-    line:
-      mcp_tool: line__push_message
-      args_template:
-        to: "${TRANSPORT_DEST}"
-        messages:
-          - type: text
-            text: "${ROUTER_REPLY}"
+  slack:
+    mcp_tool: slack__post_message
+    args_template:
+      channel: "${TRANSPORT_DEST}"
+      text: "${ROUTER_REPLY}"
+  line:
+    mcp_tool: line__push_message
+    args_template:
+      to: "${TRANSPORT_DEST}"
+      messages:
+        - type: text
+          text: "${ROUTER_REPLY}"
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `transports.<name>.mcp_tool` | string | Fully-qualified MCP tool name (`<server>__<tool>`) that delivers the reply. |
-| `transports.<name>.args_template` | map | Shape passed to the MCP tool. `${TRANSPORT_DEST}` resolves to the per-message destination identifier (channel / user / room id), `${ROUTER_REPLY}` to the router's final text. Other `${VAR}` references resolve from `os.environ` per the standard interpolation rules. |
+| `<name>.mcp_tool` | string | Fully-qualified MCP tool name (`<server>__<tool>`) that delivers the reply. |
+| `<name>.args_template` | map | Shape passed to the MCP tool. `${TRANSPORT_DEST}` resolves to the per-message destination identifier (channel / user / room id), `${ROUTER_REPLY}` to the router's final text. Other `${VAR}` references resolve from `os.environ` per the standard interpolation rules. |
+
+`reyn doctor` reports any configured entry here as inert unless you run
+via the web/AGUI server — see `reference/cli/doctor.md`'s own
+`external_transports:` section.
 
 See `src/reyn/runtime/external_routing.py` for the per-transport contract and the full set of available template variables.
 

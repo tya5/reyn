@@ -217,6 +217,11 @@ _MEASURABLE_LEAF_KEYS: Final[tuple[str, ...]] = (
     "cost.per_agent_tokens.warn_ratio",
     "cost.rate_limit_warn_ratio",
     "output_language",
+    # #4364 (this slice, 2026-09-03): reads the LIVE parsed
+    # `.transports` dict and names the actual consumer call sites
+    # (`_print_external_transports_status`) — not merely re-reading
+    # the declared value back.
+    "external_transports",
 )
 _MEASURABILITY_CRITERION: Final[str] = (
     "a leaf counts as measurable here iff this module reads its LIVE EFFECT "
@@ -453,6 +458,13 @@ def run(args: argparse.Namespace) -> None:
     print("Agent-layer overrides — declared (project) vs. COMPOSED (after")
     print("each agent's own bounding:/preferences:), mismatches only:")
     _print_bounding_preference_composition(config, resolved_root)
+
+    # ── #4364 (this slice, 2026-09-03): external_transports — configured
+    # entries are inert unless reached via the web/AGUI server runner ──────
+    print()
+    print("external_transports: — configured entries vs. the 2 real")
+    print("consumers (both web/AGUI-server-only; inert under `reyn chat`):")
+    _print_external_transports_status(config)
 
     # ── C-3(b): MCP negotiated protocol version + capabilities (#4364) ─────
     print()
@@ -1263,6 +1275,62 @@ def _print_bounding_preference_composition(config: object, project_root: Path) -
     print(
         "  (session-layer overrides are never visible to doctor — a "
         "separate, one-shot process with no live session, D-2)",
+    )
+
+
+def _print_external_transports_status(config: object) -> None:
+    """#4364 (this slice, 2026-09-03, lead-coder assignment — @tui-coder's
+    candidate ①): report ``external_transports:`` entries as INERT for
+    the surface this ``doctor`` process is most likely run from —
+    ``reyn chat`` (the plain CLI).
+
+    Same third-state shape ``config.py``'s AgentProfile-unknown-key
+    report already established (verbatim: "it is read, kept in no
+    in-memory state, and does nothing") — applied here to a section
+    that IS a recognized key (unlike that report's case), but whose
+    only 2 real consumers are both reachable exclusively through the
+    web/AGUI server runner, never through ``reyn chat``'s own
+    run-loop. No new machinery: this reads the SAME
+    ``config.external_transports.transports`` dict the loader already
+    builds (D-1 — the live parsed value, not a re-parse of the raw
+    YAML), and names the 2 real consumer call sites by file:line
+    (grep-confirmed, #4364 investigation) rather than asserting the
+    inertness in the abstract:
+
+      - ``interfaces/web/deps.py:411-412`` — the outbox interceptor
+        wiring, gated on ``config.external_transports.transports``
+        being non-empty, itself only reached from the web app's own
+        session-construction path.
+      - ``interfaces/web/server.py:123`` — the cron-job-failure
+        notifier (``_failure_notifier``), part of the web server's own
+        background runner.
+
+    D-2: this is a static declaration check — doctor has no way to
+    tell whether the operator actually runs via the web/AGUI server
+    (where these entries DO apply) or plain ``reyn chat`` (where they
+    do not); the printed line discloses that limit explicitly rather
+    than asserting one mode or the other. D-3: an UNCONFIGURED section
+    prints "unconfigured", never a fabricated "0 configured" framed as
+    a finding — matching #5658/#5679's own "declare no data, don't
+    invent a zero" posture for an absent value."""
+    external_transports = getattr(config, "external_transports", None)
+    transports = getattr(external_transports, "transports", None) or {}
+    if not transports:
+        print("  unconfigured — no external_transports: entries in reyn.yaml")
+        return
+    names = sorted(transports)
+    print(
+        f"  ⚠ {len(names)} configured ({', '.join(names)}) — this section "
+        f"is wired ONLY by interfaces/web/deps.py:411-412 (outbox "
+        f"interceptor) and interfaces/web/server.py:123 (cron-failure "
+        f"notifier), both reachable only through the web/AGUI server "
+        f"runner. `reyn chat` (the plain CLI) never reaches either — "
+        f"these entries have no effect there.",
+    )
+    print(
+        "  (doctor cannot tell whether you actually run via the web/AGUI "
+        "server — if you do, these entries DO apply there; this is a "
+        "static declaration check, D-2)",
     )
 
 
