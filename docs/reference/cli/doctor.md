@@ -47,7 +47,7 @@ from the given path to find `reyn.yaml`).
   measurability criterion printed alongside the count — never a bare "N checks
   passed."
 
-## What this PR checks
+## Example output
 
 ```bash
 $ reyn doctor
@@ -103,6 +103,27 @@ None of these three has a retention policy yet ([#4478](https://github.com/tya5/
 itself is the finding: an unowned, unbounded resource made visible rather than silently
 absent from every report. Reuses `MediaStore.storage_stats()` and
 `aggregate_history_stats()`, the same functions [`reyn storage stats`](storage.md) reports.
+
+### Project-wide storage cap — declared vs. actual usage ([#5658](https://github.com/tya5/reyn/issues/5658))
+
+```
+Project-wide storage cap (storage.max_bytes/pin, #5366/#4478 —
+bounds media/ + tool-results/ TOGETHER, one operator number):
+  ✓ storage.max_bytes=500,000,000: 0 bytes currently used
+  storage.pin: alice
+```
+
+`storage.max_bytes`/`storage.pin` ([`StorageConfig`](../config/reyn-yaml.md), #5366) is the ONE
+project-wide, cross-session disk cap covering `.reyn/media/` + `.reyn/memory/history-content/`
+TOGETHER ([#4478](https://github.com/tya5/reyn/issues/4478) — one operator number, not two, so
+two individually-under-cap trees can't silently sum over it). The "actual" figure is the SAME
+`MediaStorageStats` snapshot the two disk-usage sections above already computed
+(`MediaStore.storage_stats()`, #5652's own recursive `<agent>/<session_id>/` counting) — not a
+second producer of that number.
+
+`storage.max_bytes: None` (the field's own documented "off" state) prints `unconfigured` — never
+a fabricated number, and never a bare "cap: none" that could misread as "0 bytes allowed" instead
+of "no cap at all."
 
 ### Hook launch probe (C-1)
 
@@ -196,6 +217,43 @@ NOT build a `resolve_sandbox_policy()` call — that needs a caller-supplied
 `write_paths` floor ("this op needs this directory") doctor cannot know and
 must not invent a stand-in for. Only the declared `sandbox.policy` dict's own
 write-scope keys are shown, never a merged/resolved policy.
+
+### Agent-layer overrides — declared vs. COMPOSED (#5679)
+
+```
+Agent-layer overrides — declared (project) vs. COMPOSED (after
+each agent's own bounding:/preferences:), mismatches only:
+  ⚠ [alice] llm.model (bounding.model): declared='standard', composed='light'
+  ⚠ [alice] output_language (preferences.output_language): declared='english', composed='japanese'
+  (session-layer overrides are never visible to doctor — a separate, one-shot process with no live session, D-2)
+```
+
+The general "declared ↔ effective" form (C-5 above) applied to
+[#4206](https://github.com/tya5/reyn/issues/4206)'s two agent-layer override axes instead of
+sandbox posture: axis ② (`BOUNDING_KEYS`, narrowest-wins) and axis ③ (`PREFERENCE_KEYS`,
+last-wins). The owner's own motivating incident for this section (issue #4364 body, verbatim):
+"会社で `llm.model` の設定効果なさそうな挙動を見た" — `llm.model` is exactly axis ②'s one member
+today.
+
+No new machinery: reads `config_axis.py`'s existing axis/`override_enabled` field metadata
+(`walk_config_schema()`), composes via the SAME `compose_model_ceiling`
+(`runtime/bounding.py`) / `resolve_preference` (`runtime/preferences.py`) a real agent spawn
+already calls, and loads each agent's `profile.yaml` via the SAME validated
+`AgentProfile.load()` a real session-spawn uses — never a second hand-parse. Reports a
+MISMATCH only: an agent with no override, or one that narrows to the exact SAME value the
+project already has, produces no line — silence here means "nothing to report," and the "no
+agent narrows/overrides these N key(s)" line makes that explicit rather than leaving true
+silence to be misread as "not checked."
+
+An agent whose `profile.yaml` fails to load (a `bounding:`/`preferences:` key #4206 doesn't
+recognize, or an out-of-range `bounding.model` value — the same validation a real session-spawn
+would hit) is named in a `failed to load` line, not silently skipped and not allowed to abort
+the whole command for every other agent.
+
+**Session-layer overrides are never visible to `reyn doctor`** — a separate, one-shot process
+with no live session to read one from, the same limitation C-2/C-3(b) already disclose for
+other session-scoped state. This line prints unconditionally (present in every run, agents or
+not) rather than only when it happens to matter.
 
 ### `external_transports:` — configured entries vs. the 2 real consumers
 
