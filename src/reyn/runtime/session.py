@@ -1013,6 +1013,15 @@ class Session:
         self._intervention_bridge = intervention_bridge
         # OS-authoritative provenance classification of the current turn, stamps entry["provenance"] (proposal 0060 Phase1 A7, see session-construction.md#safety-limits-interactive-mode)
         self._current_turn_origin: str = "auto_improvement"
+        # #5648: the RAW TurnOrigin value _stamp_execution_context saw, kept
+        # SEPARATELY from the 2-way _current_turn_origin collapse above —
+        # None means "never stamped this session" (a turn driven directly
+        # against _run_router_loop, bypassing _handle_inbox_text/_handle_
+        # hook_message entirely, e.g. a test double), which is NOT the same
+        # fact as "stamped, and it was a genuine machine turn". The rewind-
+        # anchor fallback (_last_confirmed_human_prompt's own call site)
+        # needs exactly that distinction — see its own comment.
+        self._current_turn_kind: "str | None" = None
         # Spawned EPHEMERAL flag, set post-construction via :meth:`mark_ephemeral`
         # (#5336: was a bare private write; the two real production callers — the
         # registry and PipelineExecutorDriver — needed a genuine public seam, not
@@ -7712,6 +7721,9 @@ class Session:
         self._current_turn_origin = (
             "user_directed" if kind == TurnOrigin.CLIENT_INPUT else "auto_improvement"
         )
+        # #5648: the raw kind, always — see this field's own comment
+        # (__init__) for why it is kept separately from the line above.
+        self._current_turn_kind = kind
 
     def _last_confirmed_human_prompt(self) -> str:
         """#5648 (owner-hit, issue #5648 point 5): the most recent role="user"
@@ -10607,16 +10619,31 @@ class Session:
                                 # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint.
                                 # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
                                 # #5648 point 5: ``user_text`` is only a genuine human
-                                # prompt when THIS turn's own origin is
-                                # "user_directed" — a hook/cron/external-message/
-                                # peer-session turn's own triggering text is not one
-                                # (see _last_confirmed_human_prompt's own docstring
-                                # for the real incident this closes). Everything else
-                                # about cut_generation is unchanged: an empty result
-                                # still degrades to "no anchor", same as always.
+                                # prompt when THIS turn's own RAW origin
+                                # (``_current_turn_kind`` — the closed TurnOrigin
+                                # value ``_stamp_execution_context`` saw, #3595)
+                                # is a KNOWN, stamped, non-CLIENT_INPUT kind
+                                # (hook/cron/external-message/peer-session/...)
+                                # — see _last_confirmed_human_prompt's own
+                                # docstring for the real incident this closes.
+                                # Deliberately NOT "``_current_turn_origin`` !=
+                                # 'user_directed'" (that 2-way collapse cannot
+                                # tell "genuinely stamped machine turn" apart
+                                # from "never stamped this session at all" —
+                                # e.g. a test driving ``_run_router_loop``
+                                # directly, bypassing ``_handle_inbox_text``/
+                                # ``_handle_hook_message`` entirely — lead-
+                                # coder's own real catch, PR #5649 CI red):
+                                # ``_current_turn_kind is None`` (unstamped)
+                                # falls through to the OLD default below,
+                                # same as a genuine CLIENT_INPUT turn.
+                                # Everything else about cut_generation is
+                                # unchanged: an empty result still degrades
+                                # to "no anchor", same as always.
                                 _anchor_source = (
                                     user_text
-                                    if self._current_turn_origin == "user_directed"
+                                    if self._current_turn_kind is None
+                                    or self._current_turn_kind == TurnOrigin.CLIENT_INPUT
                                     else self._last_confirmed_human_prompt()
                                 )
                                 await self._journal.cut_generation(
