@@ -24,6 +24,7 @@ This opens an interactive checkpoint picker in the TUI, listing the checkpoints 
 | seq | Global sequence number of the checkpoint |
 | time | Timestamp when the checkpoint was created |
 | kind | Boundary type: `turn` / `plan-step` |
+| anchor | The first line of the human prompt active at that checkpoint (truncated to 80 characters), when one is known — a hint for which checkpoint to pick, not the full conversation |
 
 Navigate with **↑ / ↓**, select with **Enter** — selecting a row does exactly what typing `/rewind <seq>` for that row does. Press **Esc** to close without rewinding.
 

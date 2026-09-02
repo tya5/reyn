@@ -245,6 +245,28 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
         measured_by=(),
     ),
+    ("reyn/runtime/session.py", "Session._run_router_loop"): _SiteDeclaration(
+        role="reads",
+        reason=(
+            "#5648: the rewind-timeline anchor's own source selection. "
+            "`_current_turn_kind` (the RAW value `_stamp_execution_context` "
+            "saw for THIS turn, kept separately from the 2-way "
+            "`_current_turn_origin` collapse) compared to CLIENT_INPUT "
+            "decides whether the anchor uses this turn's own `user_text` "
+            "(a genuine human prompt) or walks history backward for the "
+            "last one (a hook/cron/external-message/peer-session turn's "
+            "own triggering text is not a prompt anyone typed). Reads it "
+            "as a 3-way check (CLIENT_INPUT / a known other kind / never "
+            "stamped at all), never grants any permission — the checkpoint "
+            "cut this feeds is unconditional either way."
+        ),
+        measured_by=(
+            "tests/runtime/test_5648_rewind_anchor_prefers_human_prompt.py"
+            "::test_hook_driven_checkpoints_anchor_on_the_preceding_human_prompt",
+            "tests/runtime/test_web_rewind_attach_seam_2d.py"
+            "::test_web_path_session_records_anchor_for_picker",
+        ),
+    ),
     # (#5561, owner ruling, retired the #1800 slice-7 loop valve entirely —
     # this dict previously declared ("reyn/runtime/session.py",
     # "Session.run_one_iteration") here: the valve's reset-on-CLIENT_INPUT

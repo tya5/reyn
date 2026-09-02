@@ -42,7 +42,17 @@ async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
         # --cui fallback: a text list (the output loop renders this only on the
         # plain path; the inline path skips it since the region shows a selector).
         lines = ["rewind to a checkpoint with /rewind <seq>:"]
-        lines += [f"  seq {p.get('seq')} · {p.get('kind', '?')}" for p in points]
+        # #5648: the anchor (#1547, already truncated upstream by
+        # AnchorStore.truncate_anchor — never re-truncated here) — same 4th
+        # column the TUI picker's own rewind_row_text renders, so this
+        # fallback list tells --connect the same "where in the conversation"
+        # hint (owner-hit: a candidate with only seq/kind gave no clue which
+        # checkpoint to pick).
+        lines += [
+            f"  seq {p.get('seq')} · {p.get('kind', '?')}"
+            + (f" · 「{p['anchor']}」" if p.get("anchor") else "")
+            for p in points
+        ]
         ctx.transport.put_display(
             OutboxMessage(kind="__rewind_list__", text="\n".join(lines))
         )

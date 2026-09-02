@@ -48,12 +48,19 @@ _TS_MAX = 40
 def rewind_row_text(point: "dict") -> str:
     """The one-line label for one rewind point.
 
-    Carries the three columns the user guide documents for this picker
+    Carries the four columns the user guide documents for this picker
     (``docs/guide/for-users/time-travel.md``) in that order — ``seq`` (also what
-    the user would type as ``/rewind <seq>``), the checkpoint time, and the
-    OS-level boundary kind — off the keys ``AgentRegistry.list_rewind_points``
-    returns. A row missing ``ts`` simply omits that column rather than
-    fabricating one.
+    the user would type as ``/rewind <seq>``), the checkpoint time, the
+    OS-level boundary kind, and the anchor preview — off the keys
+    ``AgentRegistry.list_rewind_points`` returns. A row missing ``ts`` or
+    ``anchor`` simply omits that column rather than fabricating one.
+
+    #5648 (owner-hit): before this, the row carried no content hint at all —
+    just ``seq · ts · kind`` — so a candidate told the operator nothing
+    about WHERE in the conversation it sat. ``anchor`` (#1547) already
+    exists on every point (the truncated last human prompt at that
+    checkpoint, ``AnchorStore.truncate_anchor`` — already cut to 80 chars
+    upstream, never re-truncated here); this was purely a rendering gap.
 
     Pure and importable without Textual mounting anything, so the row content is
     testable on its own.
@@ -66,6 +73,9 @@ def rewind_row_text(point: "dict") -> str:
             ts = ts[: _TS_MAX - 1] + "…"
         bits.append(ts)
     bits.append(str(point.get("kind") or "?"))
+    anchor = point.get("anchor")
+    if anchor:
+        bits.append(f"「{anchor}」")
     return " · ".join(bits)
 
 
