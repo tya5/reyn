@@ -1,7 +1,9 @@
 """reyn.config.execution — execution config: Plan/TimeTravel/ToolUse. (#1682 #3 split)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from reyn.config_axis import Axis
 
 
 @dataclass
@@ -61,9 +63,9 @@ class ToolUseConfig:
     not as an oversight.
     """
 
-    scheme: str = "enumerate-all"
-    transport: str = "tool_calls"
-    universal_wrappers_enabled: bool = True
+    scheme: str = field(default="enumerate-all", metadata={"axis": Axis.PROJECT})
+    transport: str = field(default="tool_calls", metadata={"axis": Axis.PROJECT})
+    universal_wrappers_enabled: bool = field(default=True, metadata={"axis": Axis.PROJECT})
 
 
 def _build_tool_use_config(raw: object) -> ToolUseConfig:

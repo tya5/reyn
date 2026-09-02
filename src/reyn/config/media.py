@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from reyn._http_limits import MAX_DOWNLOAD_BYTES
+from reyn.config_axis import Axis
 
 
 @dataclass
@@ -23,21 +24,21 @@ class VoiceConfig:
     language and produce empty transcripts. Set `language: ""` (empty
     string) or `null` in YAML to opt back into auto-detect.
     """
-    enabled: bool = True              # set False to hard-disable F2 even if deps installed
-    model: str = "small"              # tiny | base | small | medium | large-v3
-    language: str | None = "ja"       # ISO code; "" or null in YAML = auto-detect
-    device: str = "cpu"               # cpu | cuda  (faster-whisper has no metal backend
+    enabled: bool = field(default=True, metadata={"axis": Axis.PROJECT})              # set False to hard-disable F2 even if deps installed
+    model: str = field(default="small", metadata={"axis": Axis.PROJECT})              # tiny | base | small | medium | large-v3
+    language: str | None = field(default="ja", metadata={"axis": Axis.PROJECT})       # ISO code; "" or null in YAML = auto-detect
+    device: str = field(default="cpu", metadata={"axis": Axis.PROJECT})               # cpu | cuda  (faster-whisper has no metal backend
                                       # — "auto" silently picks the wrong thing on
                                       # some Mac setups, so default to explicit cpu)
-    compute_type: str = "int8"        # int8 | float16 | float32
-    sample_rate: int = 16000          # Whisper expects 16 kHz mono
-    cpu_threads: int = 4              # 0 = OpenMP default (= os.cpu_count()); pinning
+    compute_type: str = field(default="int8", metadata={"axis": Axis.PROJECT})        # int8 | float16 | float32
+    sample_rate: int = field(default=16000, metadata={"axis": Axis.PROJECT})          # Whisper expects 16 kHz mono
+    cpu_threads: int = field(default=4, metadata={"axis": Axis.PROJECT})              # 0 = OpenMP default (= os.cpu_count()); pinning
                                       # to 4 on Mac avoids the OpenMP/Python-threading
                                       # deadlock seen with high core counts on Apple
                                       # Silicon. Override per-machine if needed.
-    num_workers: int = 1              # parallel transcribe streams; we only ever run
+    num_workers: int = field(default=1, metadata={"axis": Axis.PROJECT})              # parallel transcribe streams; we only ever run
                                       # one at a time, so 1 keeps memory + threads low
-    max_duration_s: float = 300.0     # auto-stop AND TRANSCRIBE (not cancel) a
+    max_duration_s: float = field(default=300.0, metadata={"axis": Axis.PROJECT})     # auto-stop AND TRANSCRIBE (not cancel) a
                                       # recording left open longer than this
 
 
@@ -86,10 +87,10 @@ class WebFetchConfig:
             SSRF-guard surfaces (the safe.http subprocess + registry clients)
             see the same opt-in.
     """
-    verify_ssl: bool | None = None
-    ca_bundle: str | None = None
-    max_download_bytes: int = MAX_DOWNLOAD_BYTES  # single-source (#1913 class)
-    allow_private_ips: bool = False  # #1956 SSRF: opt-in to private RFC1918/ULA
+    verify_ssl: bool | None = field(default=None, metadata={"axis": Axis.CAPABILITY})
+    ca_bundle: str | None = field(default=None, metadata={"axis": Axis.CAPABILITY})
+    max_download_bytes: int = field(default=MAX_DOWNLOAD_BYTES, metadata={"axis": Axis.BOUNDING})  # single-source (#1913 class)
+    allow_private_ips: bool = field(default=False, metadata={"axis": Axis.CAPABILITY})  # #1956 SSRF: opt-in to private RFC1918/ULA
 
 
 # Default WebSocket max frame size (bytes) for the `reyn web` gateway. Pins
@@ -112,10 +113,10 @@ class AuthConfig:
     the browser loopback surface unauthenticated). ``tls_certfile`` /
     ``tls_keyfile`` override the self-signed TOFU material for a T3 bind.
     """
-    token: str | None = None
-    require_token_on_loopback: bool = True
-    tls_certfile: str | None = None
-    tls_keyfile: str | None = None
+    token: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
+    require_token_on_loopback: bool = field(default=True, metadata={"axis": Axis.PROJECT})
+    tls_certfile: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
+    tls_keyfile: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -143,7 +144,7 @@ class SurfacesConfig:
             a2a: {enabled: true}    # opt in to A2A
             mcp: {enabled: true}    # opt in to MCP
     """
-    enabled: dict[str, bool] = field(default_factory=dict)
+    enabled: dict[str, bool] = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -167,10 +168,10 @@ class GatewayConfig:
     `reyn web` gateway's own setting, same category as the other three).
     Extend here when ``gateway.search`` gets its own knobs.
     """
-    ws_max_size: int = DEFAULT_WS_MAX_SIZE
+    ws_max_size: int = field(default=DEFAULT_WS_MAX_SIZE, metadata={"axis": Axis.PROJECT})
     auth: AuthConfig = field(default_factory=AuthConfig)
     surfaces: SurfacesConfig = field(default_factory=SurfacesConfig)
-    default_design: str | None = None
+    default_design: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
@@ -350,12 +351,12 @@ class MultimodalConfig:
     paths #365 (read_file binary) and #366 (user chat input image) reuse
     them. Issue #383 PR-C extends with the storage paths.
     """
-    max_bytes: int = 5_000_000
-    on_oversize: Literal["ask", "allow", "deny"] = "ask"
-    media_dir: str = ".reyn/media"
-    tool_results_dir: str = ".reyn/tool-results"
-    base_url: str | None = None
-    model_capability_overrides: "dict[str, dict[str, bool]]" = field(default_factory=dict)
+    max_bytes: int = field(default=5_000_000, metadata={"axis": Axis.BOUNDING})
+    on_oversize: Literal["ask", "allow", "deny"] = field(default="ask", metadata={"axis": Axis.BOUNDING})
+    media_dir: str = field(default=".reyn/media", metadata={"axis": Axis.PROJECT})
+    tool_results_dir: str = field(default=".reyn/tool-results", metadata={"axis": Axis.PROJECT})
+    base_url: str | None = field(default=None, metadata={"axis": Axis.PROJECT})
+    model_capability_overrides: "dict[str, dict[str, bool]]" = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
 
 
 def _build_multimodal_config(raw: object) -> MultimodalConfig:

@@ -14,6 +14,7 @@ from typing import Literal
 # inside function bodies — see e.g. its own register_freeform_leaf_*
 # call sites).
 from reyn.config.config_schema import FAILS_OPEN, FAILS_SAFE
+from reyn.config_axis import Axis
 from reyn.security.secrets.oauth import OAuthProviderConfig
 
 
@@ -77,7 +78,7 @@ class DelegationConfig:
     topology-bound agent are unchanged.
     """
 
-    capability_default: str = "inherit"
+    capability_default: str = field(default="inherit", metadata={"axis": Axis.CAPABILITY})
 
     def __post_init__(self) -> None:
         if self.capability_default not in ("inherit", "deny"):
@@ -125,24 +126,24 @@ class RouterConfig:
     (the ``ssl_verify`` → env → default idiom).
     """
 
-    use: bool = False
-    num_retries: int = 3
+    use: bool = field(default=False, metadata={"axis": Axis.PROJECT})
+    num_retries: int = field(default=3, metadata={"axis": Axis.PROJECT})
     # model_name → [fallback model_names]. Converted to litellm's
     # ``[{primary: [fallbacks]}]`` form when the Router is built. Empty → no
     # chain (single-deployment Router).
-    fallbacks: dict = field(default_factory=dict)
+    fallbacks: dict = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
     # seconds a deployment is cooled down after ``allowed_fails`` failures
     # (None → litellm default). Only meaningful with a fallback chain.
-    cooldown_time: float | None = None
+    cooldown_time: float | None = field(default=None, metadata={"axis": Axis.PROJECT})
     # failures before a deployment is cooled down (None → litellm default).
-    allowed_fails: int | None = None
+    allowed_fails: int | None = field(default=None, metadata={"axis": Axis.PROJECT})
     # per-exception-type retry counts (None → litellm defaults, i.e. no typed
     # policy). A mapping of RetryPolicy field names → counts; constructed into a
     # ``litellm.RetryPolicy`` at Router build time. Supported keys:
     #   RateLimitErrorRetries, TimeoutErrorRetries, BadRequestErrorRetries,
     #   AuthenticationErrorRetries, ContentPolicyViolationErrorRetries,
     #   InternalServerErrorRetries.
-    retry_policy: dict | None = None
+    retry_policy: dict | None = field(default=None, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -163,8 +164,8 @@ class RetryConfig:
       Lets the provider's guidance drive wait time on 429/503 responses.
     """
 
-    jitter: bool = True
-    respect_retry_after: bool = True
+    jitter: bool = field(default=True, metadata={"axis": Axis.PROJECT})
+    respect_retry_after: bool = field(default=True, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -186,16 +187,16 @@ class LLMConfig:
     # #1672 default model class used when a phase has no model_class.
     model: str = field(
         default="standard",
-        metadata={"desc": "Default model class used when a phase has no model_class."},
+        metadata={"axis": Axis.BOUNDING, "override_enabled": True, "override_key": "model", "desc": "Default model class used when a phase has no model_class."},
     )
     # Map of model class names to LiteLLM model strings.
     models: dict[str, "str | dict"] = field(
         default_factory=dict,
-        metadata={"desc": "Map of model class names to LiteLLM model strings."},
+        metadata={"axis": Axis.PROJECT, "desc": "Map of model class names to LiteLLM model strings."},
     )
     # #1672 per-purpose model-class override (router / control_ir / tool / judge).
     # Unset purpose -> `model` (see MODEL_CLASS_PURPOSES / ReynConfig.model_class_for).
-    model_class_by_purpose: dict[str, str] = field(default_factory=dict)
+    model_class_by_purpose: dict[str, str] = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
     # #4206 T1 (②bounding, ``model`` key): operator-declared CEILING on the
     # model class a call may use — restrict-only, reject-not-clamp (same
     # shape as #3903①'s ``SandboxPolicy.max_timeout_seconds``). ``None``
@@ -204,19 +205,19 @@ class LLMConfig:
     # call site, so a future call site cannot forget it.
     model_max_class: "str | None" = field(
         default=None,
-        metadata={"desc": "Ceiling on the model class calls may use (light/standard/strong). Unset = unbounded."},
+        metadata={"axis": Axis.PROJECT, "desc": "Ceiling on the model class calls may use (light/standard/strong). Unset = unbounded."},
     )
     # LiteLLM proxy: non-secret base URL only. API keys must be env vars
     # (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never stored in config files.
     api_base: str = field(
         default="",
-        metadata={"desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
+        metadata={"axis": Axis.PROJECT, "desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
     )
     # Attach Anthropic-style cache_control markers to the system prompt so
     # providers that support prompt caching (Anthropic, AWS Bedrock Claude) can
     # reuse the prefix across calls. Ignored by providers that don't recognize
     # cache_control (Gemini / OpenAI proxies pass-through).
-    prompt_cache_enabled: bool = True
+    prompt_cache_enabled: bool = field(default=True, metadata={"axis": Axis.PROJECT})
 
 
 # #1672: the logical purposes whose model class is configurable via
@@ -379,7 +380,7 @@ class AuthConfig:
     operator declares providers they want to authenticate against.
     """
 
-    providers: dict[str, "OAuthProviderConfig"] = field(default_factory=dict)
+    providers: dict[str, "OAuthProviderConfig"] = field(default_factory=dict, metadata={"axis": Axis.PROJECT})
 
 
 def _build_auth_config(raw: object) -> AuthConfig:
@@ -517,10 +518,10 @@ class AuditEventsConfig:
     OPPOSITE of what this field does — kept only as a historical note in
     case an old comment elsewhere still cites the rejected-0 behavior.
     """
-    max_bytes: int = 10 * 1024 * 1024     # 10 MB
-    max_age_seconds: int = 24 * 60 * 60   # 1 day
-    cleanup_period_days: int = 30
-    max_disk_usage_percent: float = 10.0
+    max_bytes: int = field(default=10 * 1024 * 1024, metadata={"axis": Axis.PROJECT})     # 10 MB
+    max_age_seconds: int = field(default=24 * 60 * 60, metadata={"axis": Axis.PROJECT})   # 1 day
+    cleanup_period_days: int = field(default=30, metadata={"axis": Axis.PROJECT})
+    max_disk_usage_percent: float = field(default=10.0, metadata={"axis": Axis.PROJECT})
     # #4496 PR-2: the WRITE-side backend. `local` (default) preserves
     # current behavior unchanged — audit-events land under `.reyn/events`
     # exactly as before this field existed. `discard` writes nothing
@@ -538,7 +539,7 @@ class AuditEventsConfig:
     # `.transport` stay plain `str` because THEIR domain is an open,
     # pluggable registry a literal type can't enumerate; this field's
     # domain is closed, so it belongs on the Literal side of that split.
-    backend: Literal["local", "discard"] = "local"
+    backend: Literal["local", "discard"] = field(default="local", metadata={"axis": Axis.PROJECT})
     # #4960 (architect ruling C): ``agent_delta`` (one audit-event per
     # streamed content chunk) is coalesced to one durable write-side
     # record per this many fragments, or `agent_delta_coalesce_interval_
@@ -548,8 +549,8 @@ class AuditEventsConfig:
     # real-run benchmark) these defaults are derived from. Live TUI/AG-UI
     # delivery is completely unaffected — this only throttles what
     # reaches disk.
-    agent_delta_coalesce_fragments: int = 100
-    agent_delta_coalesce_interval_ms: int = 2_000
+    agent_delta_coalesce_fragments: int = field(default=100, metadata={"axis": Axis.PROJECT})
+    agent_delta_coalesce_interval_ms: int = field(default=2_000, metadata={"axis": Axis.PROJECT})
     # #4666 (owner ruling): the streamed reply's own CONTENT
     # (`agent_delta`'s `text` field) is opt-in, default off, its OWN
     # knob — deliberately NOT unified with any other content opt-in
@@ -564,7 +565,7 @@ class AuditEventsConfig:
     # are always kept, so #4960's own reason for existing (cost
     # accountability for a call whose usage record never lands) survives
     # `text` being dropped.
-    agent_delta_include_text: bool = False
+    agent_delta_include_text: bool = field(default=False, metadata={"axis": Axis.PROJECT})
     # #4666②: the completed model→user text — the terminal reply, any
     # force-close/wrap-up text, tool_calls-round accompanying text (all via
     # `agent_response_committed`), and the `ask_user` question (via the
@@ -581,7 +582,7 @@ class AuditEventsConfig:
     # TUI/AG-UI subscriber delivery, and any opt-in OTEL subscriber, are
     # UNAFFECTED by this flag — same disclosure as `agent_delta_include_
     # text`'s own comment: this only throttles what reaches disk.
-    completed_response_include_text: bool = False
+    completed_response_include_text: bool = field(default=False, metadata={"axis": Axis.PROJECT})
     # #4666 item ③ (owner ruling): "user input" gets its OWN opt-in too —
     # deliberately separate from `agent_delta_include_text` AND
     # `completed_response_include_text` above (owner: each content opt-in
@@ -594,7 +595,7 @@ class AuditEventsConfig:
     # NOT close: ask_user's question/answer also reach the audit log via
     # `tool_called.args`/`tool_returned.result` (a separate emit path) —
     # see the same docstring.
-    user_input_include_text: bool = False
+    user_input_include_text: bool = field(default=False, metadata={"axis": Axis.PROJECT})
     # #4975 (architect ruling, issuecomment-5384508845, correcting an
     # earlier "messages" left-operand that named a knob which does not
     # exist): a provider's 4xx/5xx error response can echo BACK content
@@ -624,7 +625,7 @@ class AuditEventsConfig:
     # not shown" stays distinguishable from "there was none" — see
     # ``_emit_llm_request_error``'s own comment for exactly which fields
     # this flag gates.
-    provider_body_include_text: bool = False
+    provider_body_include_text: bool = field(default=False, metadata={"axis": Axis.PROJECT})
     # #4975: reyn cannot bound a provider's own error-body size — an
     # explicit, operator-adjustable cap (never a baseless embedded
     # constant, CLAUDE.md's own "no unjustified constants" rule) applied
@@ -632,7 +633,7 @@ class AuditEventsConfig:
     # ``provider_body_length`` above is unaffected (always the TRUE
     # length, truncation-independent, so a truncated body is still
     # honestly labeled).
-    provider_body_max_chars: int = 4000
+    provider_body_max_chars: int = field(default=4000, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -669,7 +670,7 @@ class ArtifactsConfig:
     Truncation is disclosed, never silent — see ``chrome.py``'s
     consolidated fallback-source disclosure text ("newest N of M")."""
 
-    remote_fallback_limit: int = 50
+    remote_fallback_limit: int = field(default=50, metadata={"axis": Axis.BOUNDING})
 
 
 @dataclass
@@ -733,10 +734,10 @@ class StorageConfig:
     # comment disclosed as NOT exhaustive). See `config_schema.FAILS_SAFE`
     # / `FAILS_OPEN`'s own docstring for what the two mean.
     max_bytes: "int | None" = field(
-        default=None, metadata={"fallback": FAILS_SAFE},
+        default=None, metadata={"axis": Axis.PROJECT, "fallback": FAILS_SAFE},
     )
     pin: "list[str]" = field(
-        default_factory=list, metadata={"fallback": FAILS_OPEN},
+        default_factory=list, metadata={"axis": Axis.PROJECT, "fallback": FAILS_OPEN},
     )
 
 
@@ -1343,10 +1344,10 @@ class SandboxConfig:
             an operator/run concern, not a per-phase one.
     """
 
-    backend: str = "auto"
-    on_unsupported: str = "warn"
-    mode: str = DEFAULT_SANDBOX_MODE
-    policy: dict | None = None
+    backend: str = field(default="auto", metadata={"axis": Axis.CAPABILITY})
+    on_unsupported: str = field(default="warn", metadata={"axis": Axis.CAPABILITY})
+    mode: str = field(default=DEFAULT_SANDBOX_MODE, metadata={"axis": Axis.CAPABILITY})
+    policy: dict | None = field(default=None, metadata={"axis": Axis.CAPABILITY})
     # #4935: opt-in capability requirement (D1 companion to `enforced_axes`
     # — see `reyn.security.sandbox.capability`'s own module docstring for
     # the design). Default EMPTY: declaring nothing here changes nothing —
@@ -1363,7 +1364,7 @@ class SandboxConfig:
     # governs the response — see
     # `reyn.security.sandbox.policy.unsupported_required_capabilities`
     # for the resolution-time consumer.
-    require_capabilities: "list[str]" = field(default_factory=list)
+    require_capabilities: "list[str]" = field(default_factory=list, metadata={"axis": Axis.CAPABILITY})
 
     def __post_init__(self) -> None:
         if self.backend not in _SANDBOX_BACKENDS:
@@ -1492,7 +1493,7 @@ class CronConfig:
     ``reyn cron run``).
     """
 
-    jobs: list[CronJobConfig] = field(default_factory=list)
+    jobs: list[CronJobConfig] = field(default_factory=list, metadata={"axis": Axis.PROJECT})
 
 
 def _build_cron_config(raw: object) -> CronConfig:
@@ -1616,8 +1617,8 @@ class FsWatchConfig:
     same class of concern as sandbox policy, hence the same OUT-set gate.
     """
 
-    paths: list[str] = field(default_factory=list)
-    debounce_seconds: float = 0.2
+    paths: list[str] = field(default_factory=list, metadata={"axis": Axis.PROJECT})
+    debounce_seconds: float = field(default=0.2, metadata={"axis": Axis.PROJECT})
 
 
 def _build_fs_watch_config(raw: object) -> FsWatchConfig:

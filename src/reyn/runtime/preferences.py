@@ -9,45 +9,66 @@ override (if present) -> session-layer override (if present); the LAST one
 present wins outright. There is no "child cannot widen past parent" check
 here — that's what makes this axis ③, not ②.
 
-## PREFERENCE_KEYS — a hand-maintained declaration, not derived
+## PREFERENCE_KEYS — DERIVED from field metadata (#4206, architect ruling
+## 2026-09-02T04:01)
 
-The set below is the ONE place this axis's key vocabulary is declared.
-Lead-coder ruling: a typed dataclass per key was rejected (breaks "the
-mechanism stays the same as ③ grows" — #4206's own explicit requirement),
-so this is a flat ``dict[str, object]`` keyed by dotted config-path string
-instead. That shape alone would reproduce the #4655 "silent no-op" defect
-class (a typo'd/renamed key silently doing nothing forever) — closed the
-same way #4655 closed it for config-schema dict-leaves: :func:`validate_preferences`
-raises LOUDLY on any key not in this set, rather than accepting and
-ignoring it.
+Was a hand-maintained declaration (9 keys, typed out by hand here); now
+derived from ``metadata={"axis": Axis.PREFERENCE, "override_enabled":
+True}`` on the owning ``ReynConfig`` leaf's own field declaration —
+:func:`~reyn.config.config_schema.walk_config_schema` is the SAME
+canonical enumeration ``reyn config fields``/``get``/``set`` already
+use, so this set can no longer drift from what the schema itself says
+(closing the #4655 "silent no-op" defect class one level up: a
+hand-typed SECOND copy of a fact the schema already declares).
 
-**Known, accepted tradeoff (lead-coder, explicit)**: this IS "one more
-declaration" to keep in sync as the ③ set grows — #4206's own classification
-of which config keys belong to which axis is not yet derivable from code
-(it lives in the issue's own prose), and making it derivable is a SEPARATE
-future task, deliberately not mixed into this slice.
+**The CONTENT is derived; the COMPOSITION MECHANISM is not** (architect,
+same ruling): a typed dataclass per key was rejected (breaks "the
+mechanism stays the same as ③ grows"), so :func:`validate_preferences`/
+:func:`compose_preferences` below are unchanged — only the SOURCE of
+this one set moved.
+
+**``override_enabled`` is a SEPARATE, narrower flag from the axis
+itself** — classifying a leaf ``Axis.PREFERENCE`` is not the same claim
+as "this leaf has a live ``preferences:`` override receptacle". Adding
+a new leaf's axis metadata does NOT put it in this set; only a field
+ALSO carrying ``"override_enabled": True`` is (see
+``reyn.config_axis.Axis``'s own module docstring for the full
+reasoning — the same distinction ``runtime/bounding.py`` makes for
+``BOUNDING_KEYS``). Today that is exactly the 9 pre-existing members
+this set already had by hand: ``output_language``,
+``chat.reasoning.display``, one ``warn_ratio`` per of the 6
+``CostLimitConfig`` dimensions (``runtime/budget/budget.py``), and
+``cost.rate_limit_warn_ratio`` — this migration changes WHERE that fact
+is declared, not WHICH leaves currently have a receptacle.
 """
 from __future__ import annotations
 
-#: The 9 keys #4206's confirmed classification places in axis ③ for this
-#: first slice: ``output_language``, ``chat.reasoning.display``, one
-#: ``warn_ratio`` per of the 6 ``CostLimitConfig`` dimensions
-#: (``runtime/budget/budget.py``'s ``CostConfig``), and
+
+def _derive_preference_keys() -> "frozenset[str]":
+    """Every ``ReynConfig`` leaf whose field declares BOTH
+    ``axis=Axis.PREFERENCE`` and ``override_enabled=True`` — see this
+    module's own docstring for why the axis classification alone is not
+    enough. Imports lazily (module-level import would pull
+    ``config_schema`` → ``ReynConfig`` at ``reyn.runtime.preferences``
+    import time — this module has no other reason to need the full
+    config tree that early)."""
+    from reyn.config.config_schema import walk_config_schema
+    from reyn.config_axis import Axis
+    return frozenset(
+        node.key for node in walk_config_schema()
+        if node.axis == Axis.PREFERENCE and node.override_enabled
+    )
+
+
+#: See :func:`_derive_preference_keys` — the 9 keys #4206's confirmed
+#: classification places in axis ③ with a live override receptacle:
+#: ``output_language``, ``chat.reasoning.display``, one ``warn_ratio``
+#: per of the 6 ``CostLimitConfig`` dimensions, and
 #: ``cost.rate_limit_warn_ratio``. Every entry is a dotted path matching
 #: the SAME key names ``reyn.yaml`` uses for the project-level default
 #: (``config/chat.py``'s own parsing), so an agent/session override reads
 #: as "the same setting, one layer down" — not a renamed shadow key.
-PREFERENCE_KEYS: "frozenset[str]" = frozenset({
-    "output_language",
-    "chat.reasoning.display",
-    "cost.per_agent_tokens.warn_ratio",
-    "cost.per_agent_cost_usd.warn_ratio",
-    "cost.daily_tokens.warn_ratio",
-    "cost.daily_cost_usd.warn_ratio",
-    "cost.monthly_tokens.warn_ratio",
-    "cost.monthly_cost_usd.warn_ratio",
-    "cost.rate_limit_warn_ratio",
-})
+PREFERENCE_KEYS: "frozenset[str]" = _derive_preference_keys()
 
 
 class UnknownPreferenceKeyError(ValueError):
