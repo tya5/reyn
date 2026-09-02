@@ -5295,7 +5295,8 @@ class Session:
             ),
             hook_cwd_for_origin=lambda origin: (
                 str(self._reyn_state_root.parent)
-                if origin in ("startup", "runtime") else (
+                if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+                else (
                     str(self._workspace_base_dir) if self._workspace_base_dir else None
                 )
             ),

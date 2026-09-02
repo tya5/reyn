@@ -23,6 +23,8 @@ real (non-mock) ``NoopBackend`` for the filesystem witness (③) — no mocks.
 """
 from __future__ import annotations
 
+import sys
+import tempfile
 from dataclasses import fields
 from pathlib import Path
 
@@ -30,6 +32,7 @@ import pytest
 
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.loader import load_hooks
+from reyn.hooks.schema import hook_origin_is_at_least_as_specific_as
 from reyn.hooks.shell_runner import HookProcessContext
 from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.noop_backend import NoopBackend
@@ -138,12 +141,93 @@ async def test_project_origin_uses_project_cwd_while_agent_origin_uses_agent_cwd
         sandbox_backend=backend,
         hook_cwd=lambda: "/workspace/agents/coder1",
         hook_cwd_for_origin=lambda origin: (
-            "/workspace" if origin == "runtime" else "/workspace/agents/coder1"
+            "/workspace" if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+            else "/workspace/agents/coder1"
         ),
     )
     await dispatcher.dispatch("turn_end", {})
     [(_argv, cwd, _ctx)] = backend.calls
     assert cwd == "/workspace"
+
+
+@pytest.mark.asyncio
+async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(tmp_path, monkeypatch):
+    """Tier 2: real sessions execute project and per-agent hooks in their declared trees."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp_root))
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    agent_tree = project / "repos" / "coder1"
+    agent_tree.mkdir(parents=True)
+    script = project / "record_cwd.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        "Path('cwd.txt').write_text(str(Path.cwd()))\n",
+        encoding="utf-8",
+    )
+    hook = {"on": "session_start", "exec": [sys.executable, str(script)]}
+    from reyn.runtime.session_params import ReactivityConfig
+    from tests._support.agent_session import make_session
+
+    runtime_hooks = project / ".reyn" / "config" / "hooks.yaml"
+    runtime_hooks.parent.mkdir(parents=True, exist_ok=True)
+    runtime_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable)
+        + ", " + repr(str(script)) + "]\n",
+        encoding="utf-8",
+    )
+    project_session = make_session(
+        agent_name="project-agent", workspace_state_dir=project / ".reyn",
+        workspace_base_dir=project, snapshot_path=project / ".reyn" / "project.json",
+        state_log=None, reactivity=ReactivityConfig(hooks_config=[hook]),
+    )
+    project_session._child_temp_dir.mkdir(parents=True)
+    await project_session.inbox.put(("shutdown", {}))
+    await project_session.run()
+    assert (project / "cwd.txt").read_text(encoding="utf-8") == str(project)
+
+    agent_hooks = project / ".reyn" / "agents" / "coder1" / "hooks.yaml"
+    agent_hooks.parent.mkdir(parents=True, exist_ok=True)
+    agent_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable)
+        + ", " + repr(str(script)) + "]\n",
+        encoding="utf-8",
+    )
+    agent_session = make_session(
+        agent_name="coder1", workspace_state_dir=project / ".reyn",
+        workspace_base_dir=agent_tree, snapshot_path=project / ".reyn" / "coder1.json",
+        state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
+    )
+    agent_session._child_temp_dir.mkdir(parents=True)
+    await agent_session.inbox.put(("shutdown", {}))
+    await agent_session.run()
+    assert (agent_tree / "cwd.txt").read_text(encoding="utf-8") == str(agent_tree)
+
+
+@pytest.mark.asyncio
+async def test_per_agent_origin_uses_agent_cwd(monkeypatch):
+    """Tier 2: a per-agent hook is handed the agent's own cwd."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    backend = _RecordingBackend()
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": ["echo", "agent"]}], origin="per-agent"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=backend,
+        hook_cwd=lambda: "/workspace/agents/coder1",
+        hook_cwd_for_origin=lambda origin: (
+            "/workspace" if not hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+            else "/workspace/agents/coder1"
+        ),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    [(_argv, cwd, _ctx)] = backend.calls
+    assert cwd == "/workspace/agents/coder1"
 
 
 @pytest.mark.asyncio
@@ -163,6 +247,28 @@ async def test_shell_audit_event_records_origin_and_cwd(tmp_path, monkeypatch):
     await dispatcher.dispatch("turn_end", {})
     shell_events = [data for event_type, data in events if event_type == "hook_shell_executed"]
     assert shell_events
+    assert shell_events[-1]["cwd"] == "/workspace"
+    assert shell_events[-1]["origin"] == "runtime"
+
+
+@pytest.mark.asyncio
+async def test_failed_shell_audit_event_records_origin_and_cwd(tmp_path, monkeypatch):
+    """Tier 2: failed shell hooks retain cwd and origin in their audit event."""
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    events: list[tuple[str, dict]] = []
+    dispatcher = HookDispatcher(
+        load_hooks([{"on": "turn_end", "exec": [sys.executable, "-c", "raise SystemExit(3)"]}], origin="runtime"),
+        put_inbox=lambda *a, **k: None,
+        stage_next_turn_context=lambda *a, **k: None,
+        sandbox_backend=NoopBackend(),
+        hook_cwd_for_origin=lambda origin: "/workspace" if origin == "runtime" else "/agent",
+        hook_temp_dir=lambda: str(tmp_path),
+        emit_event=lambda event_type, **data: events.append((event_type, data)),
+    )
+    await dispatcher.dispatch("turn_end", {})
+    shell_events = [data for event_type, data in events if event_type == "hook_shell_executed"]
+    assert shell_events
+    assert shell_events[-1]["returncode"] == -1
     assert shell_events[-1]["cwd"] == "/workspace"
     assert shell_events[-1]["origin"] == "runtime"
 
