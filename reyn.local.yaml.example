@@ -434,7 +434,7 @@
 #                                      # topic_arc (0 = raise immediately). #4951-B:
 #                                      # new_turn_seqs no longer gates this — the key
 #                                      # was removed from the schema/prompt entirely.
-#     recovery_policy: next_turn        # #5296: 413 recovery stop-line for
+#     fold_persist_policy: next_turn        # #5296: 413 recovery stop-line for
 #                                      # irreversible compaction only; spill is
 #                                      # triggered by the constraint itself.
 #     max_shrink_iterations: 8         # #4957: retry_loop's own safety cap — an

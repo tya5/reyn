@@ -299,6 +299,11 @@ _RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {
     # `max_age_seconds` / `cleanup_period_days` unchanged), only the
     # top-level key moved — so `destination` is set and `reyn config
     # migrate` auto-rewrites it.
+    "recovery_policy": RenamedKeyHint(
+        note="`recovery_policy:` was narrowed to fold persistence; use "
+             "`fold_persist_policy:` instead.",
+        destination="fold_persist_policy",
+    ),
     "events": RenamedKeyHint(
         note="`events:` moved to `audit_events:` (bare \"event\" is ambiguous "
              "— reyn's own \"event\" spans audit-event / WAL-event / "

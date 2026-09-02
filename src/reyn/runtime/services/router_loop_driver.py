@@ -678,7 +678,7 @@ class RouterLoopDriver:
         §1.6; corrected #5578): ``_run_with_shrink``'s OWN except block
         conditionally calls ``force_compact_now()`` — pre-#5578, ONLY when
         ``saw_byte_limit`` was True; #5578 dropped that axis gate, so it
-        now fires whenever ``recovery_policy == "next_turn"``, on EITHER
+        now fires whenever ``fold_persist_policy == "next_turn"``, on EITHER
         axis (see that except block's own comment for why the old
         byte-only gate's reason — #4885's proactive pre-trigger already
         handling the token axis — no longer holds; #5528 removed that
@@ -888,21 +888,21 @@ class RouterLoopDriver:
                 # call, no new irreversible step).
                 #
                 # Gated the SAME way the pre-existing terminal-failure
-                # compaction trigger below is (`recovery_policy ==
+                # compaction trigger below is (`fold_persist_policy ==
                 # "next_turn"`) — lead-coder's own catch (PR #5610 review):
                 # `next_turn` is `config/chat.py`'s own DEFAULT
-                # (`recovery_policy: Literal["never", "next_turn"] =
+                # (`fold_persist_policy: Literal["never", "next_turn"] =
                 # "next_turn"`), so this is opt-OUT, not opt-in — only a
-                # deployment that explicitly writes `recovery_policy:
+                # deployment that explicitly writes `fold_persist_policy:
                 # never` is exempt. #5578's own owner-facing UX-visible
                 # point (users see history replaced by a summary earlier
                 # than before) is therefore live on the SHIPPED default,
                 # for everyone, not only for someone who opted into a
-                # non-default setting. `recovery_policy == "never"` (the
+                # non-default setting. `fold_persist_policy == "never"` (the
                 # pre-existing #5498 self-test's own configuration) is the
                 # one deployment shape that takes NO new persistence
                 # action here — unaffected by this change.
-                if self._compaction.recovery_policy != "next_turn":
+                if self._compaction.fold_persist_policy != "next_turn":
                     return
                 # #5578: derive the REAL covers_through_seq from the
                 # decomposition's own seq_by_id — never trust
@@ -1186,7 +1186,7 @@ class RouterLoopDriver:
                     # re-runs the identical (LLM-call-costing) shrink from
                     # scratch (owner's own real-machine report, #5578: reyn-
                     # self history.jsonl files grew to 4.6-5.9MB over 5 days
-                    # with no persisted compaction). `recovery_policy`'s own
+                    # with no persisted compaction). `fold_persist_policy`'s own
                     # docstring (config/chat.py) never named an axis — it is
                     # declared as a stop-line on the "irreversible compaction
                     # step" itself, not on byte-specifically — so this widening
@@ -1208,7 +1208,7 @@ class RouterLoopDriver:
                     # no new call this PR adds, no new unbounded-repeat shape,
                     # only a gate this call already had to survive repeating
                     # under (the byte-axis case already exercised this).
-                    if self._compaction.recovery_policy == "next_turn":
+                    if self._compaction.fold_persist_policy == "next_turn":
                         await self._compaction_controller.force_compact_now()
                     raise
             return _shim.usage

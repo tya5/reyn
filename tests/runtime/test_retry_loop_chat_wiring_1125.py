@@ -340,11 +340,11 @@ def test_router_usage_shim_exposes_usage(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("recovery_policy", "compaction_expected"),
+    ("fold_persist_policy", "compaction_expected"),
     [("next_turn", True), ("never", False)],
 )
-def test_byte_limit_recovery_policy_controls_compaction(
-    tmp_path, monkeypatch, recovery_policy: str, compaction_expected: bool,
+def test_byte_limit_fold_persist_policy_controls_compaction(
+    tmp_path, monkeypatch, fold_persist_policy: str, compaction_expected: bool,
 ) -> None:
     """Tier 1: #5296 — the recovery stop-line changes real behavior.
 
@@ -369,7 +369,7 @@ def test_byte_limit_recovery_policy_controls_compaction(
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=3,
-        recovery_policy=recovery_policy,
+        fold_persist_policy=fold_persist_policy,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -399,21 +399,21 @@ def test_byte_limit_recovery_policy_controls_compaction(
     assert excinfo.value.saw_byte_limit is True
     checks = [e for e in events if e.type == "compaction_check"]
     assert bool(checks) is compaction_expected, (
-        f"recovery_policy={recovery_policy!r} expected compaction="
+        f"fold_persist_policy={fold_persist_policy!r} expected compaction="
         f"{compaction_expected}, observed: {[e.data for e in checks]!r}"
     )
 
 
 @pytest.mark.parametrize(
-    ("recovery_policy", "compaction_expected"),
+    ("fold_persist_policy", "compaction_expected"),
     [("next_turn", True), ("never", False)],
 )
-def test_token_axis_recovery_policy_controls_compaction(
-    tmp_path, monkeypatch, recovery_policy: str, compaction_expected: bool,
+def test_token_axis_fold_persist_policy_controls_compaction(
+    tmp_path, monkeypatch, fold_persist_policy: str, compaction_expected: bool,
 ) -> None:
     """Tier 1: #5578 — a token-axis (non-byte-limit) exhaustion now controls
     real compaction identically to the byte axis, mirroring
-    ``test_byte_limit_recovery_policy_controls_compaction`` immediately above.
+    ``test_byte_limit_fold_persist_policy_controls_compaction`` immediately above.
 
     Pre-#5578 this test (then named
     ``test_non_byte_limit_exhaustion_does_not_trigger_compaction``) asserted
@@ -435,7 +435,7 @@ def test_token_axis_recovery_policy_controls_compaction(
     test to pass" — the mechanism the old assertion depended on no longer
     exists; the correct assertion changed with it.
 
-    ``recovery_policy``'s own docstring (config/chat.py) never named an
+    ``fold_persist_policy``'s own docstring (config/chat.py) never named an
     axis — it is declared as a stop-line on the "irreversible compaction
     step" itself, not byte-specifically — so widening the call site to
     match is a correction to the config's own already-declared scope, not
@@ -448,7 +448,7 @@ def test_token_axis_recovery_policy_controls_compaction(
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=3,
-        recovery_policy=recovery_policy,
+        fold_persist_policy=fold_persist_policy,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -481,6 +481,6 @@ def test_token_axis_recovery_policy_controls_compaction(
     assert excinfo.value.saw_byte_limit is False
     checks = [e for e in events if e.type == "compaction_check"]
     assert bool(checks) is compaction_expected, (
-        f"recovery_policy={recovery_policy!r} expected compaction="
+        f"fold_persist_policy={fold_persist_policy!r} expected compaction="
         f"{compaction_expected}, observed: {[e.data for e in checks]!r}"
     )

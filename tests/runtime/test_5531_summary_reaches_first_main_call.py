@@ -79,7 +79,7 @@ def _push(session, role: str, text: str, **kw) -> None:
 
 
 def _make_session_t_max(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, t_max: int):
-    """Default recovery_policy/max_shrink_iterations (unlike the spill
+    """Default fold_persist_policy/max_shrink_iterations (unlike the spill
     witness's own builder) — compaction must actually be reachable and
     given enough attempts to succeed for this scenario."""
     monkeypatch.chdir(tmp_path)
