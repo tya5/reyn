@@ -521,6 +521,43 @@ class RouterHistoryBuffer:
         # (same no-op-if-absent convention ``media_store``/
         # ``project_dir_fn`` above already use).
         self._history_appender = history_appender
+        # #5628 (owner: "技術負債を後回しにしないで利子着く前に解消して") —
+        # ``_spill_supersede_map`` used to re-scan the WHOLE history on
+        # EVERY ``build_history``/``decompose_history_for_retry`` call
+        # (O(n) per call, history append-only and monotonically growing —
+        # owner's own real machine: 9M chars, thousands of turns).
+        #
+        # #5628/PR-review (lead-coder, real drive): a first version of
+        # this cache built once and only ever ADDED to (never
+        # invalidated) — a genuine drift hazard the review caught, not
+        # theoretical: a spill record is appended AFTER the turn it
+        # supersedes (chronologically later in history.jsonl); a rewind/
+        # fork whose cut lands BETWEEN the two makes the record invisible
+        # while the ORIGINAL turn stays visible — the never-invalidated
+        # cache would still supersede it, showing an offloaded preview
+        # for content the active branch never actually spilled. The SAME
+        # drift class #5612 itself replaced (``_spill_overlay``, owner
+        # ruling: history.jsonl is the only state).
+        #
+        # Fixed with a WATERMARK-based incremental scan (one mechanism,
+        # not two — the pre-review version ALSO updated this dict
+        # directly inside :meth:`spill_turn_content`; that second update
+        # path is gone, since the scan below picks up a newly-appended
+        # record on its own next call): remembers how many entries of
+        # ``history`` were scanned last time (``_spill_scan_count``) and
+        # the ``seq`` of the entry that sat at the boundary
+        # (``_spill_scan_boundary_seq``). Each call: if the CURRENT
+        # ``history`` is now shorter than that count, OR the entry at
+        # that same boundary index no longer carries that same ``seq``
+        # (either signal alone means the branch under us changed since
+        # last scan — a rewind/fork, not just growth) — the map is
+        # rebuilt from scratch; otherwise only the genuinely UNSCANNED
+        # TAIL (``history[_spill_scan_count:]``) is scanned and merged
+        # in. See :meth:`_spill_supersede_map`'s own docstring for the
+        # full contract.
+        self._spill_supersede_cache: "dict[str, str]" = {}
+        self._spill_scan_count: int = 0
+        self._spill_scan_boundary_seq: "int | None" = None
 
     @property
     def _model(self) -> str:
@@ -566,34 +603,75 @@ class RouterHistoryBuffer:
         return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
 
     def _spill_supersede_map(self, history: "list | None" = None) -> "dict[str, str]":
-        """#5612: content_hash -> offloaded preview text, derived FRESH
-        from a scan of ``history`` — the durable replacement for the
-        pre-#5612 ``_spill_overlay`` in-memory dict. Same shape
-        :meth:`_latest_summary` already uses for the compaction
-        watermark: never a separately-maintained cache, always re-derived
-        from the ONE durable source (owner ruling: history.jsonl is the
-        only state).
+        """#5612/#5628: content_hash -> offloaded preview text.
+
+        #5628 (owner: "技術負債を後回しにしないで利子着く前に解消して",
+        measured cost: a full O(n) scan of ``history`` on EVERY call —
+        2000 turns cost 0.008s/0.035s per ``build_history``/
+        ``decompose_history_for_retry`` call, #5617's own drive; history
+        is append-only and monotonically growing, owner's own real
+        machine measured in the thousands of turns): a WATERMARK-based
+        incremental scan, ONE mechanism (no separate update path
+        anywhere else — a new ``role="spill_record"`` entry is picked up
+        by this method's own NEXT call, never written into the cache
+        directly by :meth:`spill_turn_content`).
+
+        ``_spill_scan_count`` / ``_spill_scan_boundary_seq`` remember how
+        many entries of ``history`` were scanned last time, and the
+        ``seq`` of the entry that sat at that boundary index. Each call:
+
+        1. If the CURRENT ``history`` is now SHORTER than
+           ``_spill_scan_count``, OR the entry AT that same boundary
+           index no longer carries that remembered ``seq`` — the branch
+           under us changed since the last scan (a rewind/fork, not mere
+           growth) — the cache is rebuilt from a fresh full scan.
+        2. Otherwise only the genuinely UNSCANNED TAIL
+           (``history[_spill_scan_count:]``) is scanned and merged in —
+           O(new entries), never O(n) again once warm.
+
+        #5628/PR-review (lead-coder, real drive): an earlier version of
+        this cache built once and only ever ADDED to, never invalidated
+        — a genuine, non-theoretical drift hazard: a spill record is
+        appended AFTER the turn it supersedes (chronologically later in
+        history.jsonl); a rewind/fork whose cut lands BETWEEN the two
+        makes the record invisible while the ORIGINAL turn stays visible
+        — a never-invalidated cache would still supersede it, showing an
+        offloaded preview for content the active branch never actually
+        spilled. This is the SAME drift class #5612 itself already
+        replaced (``_spill_overlay``, owner ruling: history.jsonl is the
+        only state) — the watermark check above closes it: a rewind
+        shortens ``history`` (or changes what sits at the boundary),
+        both of which this method's own step 1 detects and rebuilds for.
 
         Every ``role="spill_record"`` entry supersedes the ORIGINAL turn
         whose content hashed to ``SPILL_TARGET_CONTENT_HASH_META_KEY`` —
         idempotent by construction (:meth:`spill_turn_content` never
         appends a second record for the same content_hash), so "keep the
         last one seen" here is defensive, not load-bearing.
-
-        ``history`` — same #2939 caller-must-pass-if-already-fetched
-        convention as ``_latest_summary``/``_compaction_watermark``
-        above (avoid a second, redundant ``self._history_fn()`` call on
-        the turn's hot path).
         """
-        out: "dict[str, str]" = {}
-        for m in self._history_fn() if history is None else history:
+        current = self._history_fn() if history is None else history
+
+        needs_rebuild = len(current) < self._spill_scan_count or (
+            self._spill_scan_count > 0
+            and current[self._spill_scan_count - 1].seq != self._spill_scan_boundary_seq
+        )
+        if needs_rebuild:
+            self._spill_supersede_cache = {}
+            scan_from = 0
+        else:
+            scan_from = self._spill_scan_count
+
+        for m in current[scan_from:]:
             if m.role != SPILL_RECORD_MESSAGE_ROLE:
                 continue
             target_hash = (m.meta or {}).get(SPILL_TARGET_CONTENT_HASH_META_KEY)
             if not target_hash or not isinstance(m.content, str):
                 continue
-            out[target_hash] = m.content
-        return out
+            self._spill_supersede_cache[target_hash] = m.content
+
+        self._spill_scan_count = len(current)
+        self._spill_scan_boundary_seq = current[-1].seq if current else None
+        return self._spill_supersede_cache
 
     def _serialise_turn(self, m: Any, spill_map: "dict[str, str] | None" = None) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
@@ -1251,6 +1329,14 @@ class RouterHistoryBuffer:
                     spillability=Spillability.NEVER,
                 )
                 self._history_appender(record)
+                # #5628/PR-review: no direct cache write here — the ONE
+                # mechanism is _spill_supersede_map's own watermark scan
+                # (its own docstring), which picks up this new record on
+                # its own next call (the newly-appended entry becomes
+                # part of the NEXT history_fn() result). A second,
+                # separate update path here previously existed and was a
+                # genuine drift hazard (see that method's own docstring)
+                # — never reintroduced.
         return replacement
 
     def build_system_prompt(self) -> str:
