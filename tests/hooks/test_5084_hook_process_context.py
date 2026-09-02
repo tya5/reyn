@@ -24,7 +24,6 @@ real (non-mock) ``NoopBackend`` for the filesystem witness (③) — no mocks.
 from __future__ import annotations
 
 import sys
-import tempfile
 from dataclasses import fields
 from pathlib import Path
 
@@ -156,14 +155,65 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
 ):
     """Tier 2: real sessions execute project and per-agent hooks in their declared trees.
 
+    #5637's own defect, restated: the shared/project ``.reyn/config/hooks.yaml``
+    layer is loaded by EVERY session regardless of ``agent_name`` (it is not
+    scoped to one agent) — so a repo agent's own session (base_dir =
+    ``repos/coder1``) ALSO dispatches the runtime-origin hook, and before this
+    fix that dispatch ran in the AGENT's own tree (``[Errno 2]`` — the file
+    ``.reyn/hooks/broker_drain.py`` the owner's real project.hooks.yaml names
+    does not exist under ``repos/coder1/``). An earlier revision of this test
+    injected each hook ALONE via ``HookDispatcher.replace_registry`` (private
+    reach, and each session only ever saw ONE hook) — that shape cannot
+    witness this defect at all, since the agent session never had a
+    runtime-origin hook to run in the first place (lead-coder BLOCKING,
+    head 2358e1bac).
+
+    Real 2-layer ``hooks.yaml`` on disk, loaded through the SAME path
+    production uses (``Session._build_hook_registry`` — the project layer via
+    ``_load_in_set``, the per-agent layer via ``_read_per_agent_hooks``), and
+    dispatched via a real ``session.run()`` (its own ``session_start`` hook
+    dispatch, the exact call site #5637 fixed) — no ``replace_registry``.
+    ``inbox.put(("shutdown", {}))`` beforehand makes ``run_one_iteration``
+    exit immediately after the ``session_start`` dispatch that already
+    happened at the top of ``run()``.
+
     The child only runs a cwd probe and does not import Reyn; the subprocess
     pin fixture still declares this file because it uses ``sys.executable``.
+    Markers write into a plain ``MARKER_DIR`` env var this test controls
+    directly (NOT reyn's own per-session ``$TMPDIR``/``_child_temp_dir`` —
+    ``Session.run()``'s own ``finally`` clause ``shutil.rmtree``s that
+    directory as part of ordinary teardown, which would silently wipe a
+    marker written during THIS SAME run before this test ever gets to read
+    it back; measured directly), distinguished by CONTENT (``Path.cwd()``)
+    and by FILENAME (``runtime_cwd.txt`` vs ``agent_cwd.txt``), never by
+    which directory a marker landed in.
+
+    ``sandbox_backend=NoopBackend()`` is passed explicitly, a real
+    (non-mock) backend — this file's own established convention (see the
+    module docstring) — NOT left to ``get_default_backend()``'s own
+    platform resolution, and disclosed here as a genuine, verified gap
+    rather than an unstated shortcut: measured directly (reverting this to
+    let ``get_default_backend()`` resolve normally, on a real macOS host
+    where ``sandbox-exec`` is available and enforcing) that a per-agent
+    (untrusted) hook's ``write_paths`` is UNCONDITIONALLY rejected as a
+    self-grant (#5356, ``hooks/loader.py``), and NO OTHER mechanism in
+    either real backend (``backends/seatbelt.py``, ``backends/
+    landlock.py`` — both grant writes ONLY via ``policy.write_paths``, no
+    exception for ``$TMPDIR``/``agent_state_dir``/the agent's own
+    ``base_dir``) grants a per-agent hook write access to ANY path. This
+    is a PRE-EXISTING fact (reproduced identically against this test's own
+    prior revision, before this fix), not introduced by this PR, and out
+    of #5637's own scope (cwd resolution, not sandbox write grants) —
+    reported to lead-coder as a disclosed remainder, not silently patched
+    over. CI itself never exercised this path (``ubuntu-latest`` runners
+    resolve Landlock only when the kernel/package are actually available,
+    Noop otherwise) — a bare macOS run is what surfaces it.
     """
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     monkeypatch.chdir(tmp_path)
-    temp_root = tmp_path / "tmp"
-    temp_root.mkdir()
-    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp_root))
+    markers_dir = tmp_path / "markers"
+    markers_dir.mkdir()
+    monkeypatch.setenv("MARKER_DIR", str(markers_dir))
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.chdir(project)
@@ -176,48 +226,74 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
     runtime_script.write_text(
         "import os\n"
         "from pathlib import Path\n"
-        "Path(os.environ['TMPDIR'], 'runtime_cwd.txt').write_text(str(Path.cwd()))\n",
+        "Path(os.environ['MARKER_DIR'], 'runtime_cwd.txt').write_text(str(Path.cwd()))\n",
         encoding="utf-8",
     )
     agent_script = project / "record_agent_cwd.py"
     agent_script.write_text(
         "import os\n"
         "from pathlib import Path\n"
-        "Path(os.environ['TMPDIR'], 'agent_cwd.txt').write_text(str(Path.cwd()))\n",
+        "Path(os.environ['MARKER_DIR'], 'agent_cwd.txt').write_text(str(Path.cwd()))\n",
         encoding="utf-8",
     )
-    from reyn.hooks.loader import load_hooks
-    from reyn.hooks.registry import HookRegistry
 
-    runtime_hook = {"on": "session_start", "exec": [sys.executable, str(runtime_script)]}
+    # Project layer (.reyn/config/hooks.yaml) — shared, read by EVERY
+    # session's own Session._build_hook_registry regardless of agent_name.
+    runtime_hooks = project / ".reyn" / "config" / "hooks.yaml"
+    runtime_hooks.parent.mkdir(parents=True, exist_ok=True)
+    runtime_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable) + ", " + repr(str(runtime_script)) + "]\n",
+        encoding="utf-8",
+    )
+
     project_session = make_session(
         agent_name="project-agent", workspace_state_dir=project / ".reyn",
         workspace_base_dir=project, snapshot_path=project / ".reyn" / "project.json",
         state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
+        sandbox_backend=NoopBackend(),
     )
-    project_session._hook_dispatcher.replace_registry(
-        HookRegistry(load_hooks([runtime_hook], origin="runtime").all_defs())
-    )
-    await project_session._hook_dispatcher.dispatch("session_start", {})
-    runtime_markers = list(tmp_path.parent.rglob("runtime_cwd.txt"))
-    assert runtime_markers
-    runtime_marker = runtime_markers[0]
-    assert runtime_marker.read_text(encoding="utf-8") == str(project)
-    runtime_marker.unlink()
+    await project_session.inbox.put(("shutdown", {}))
+    await project_session.run()
+    runtime_markers = list(markers_dir.rglob("runtime_cwd.txt"))
+    assert runtime_markers, "the runtime-origin hook must fire during a project session"
+    assert runtime_markers[0].read_text(encoding="utf-8") == str(project)
+    runtime_markers[0].unlink()
 
-    agent_hook = {"on": "session_start", "exec": [sys.executable, str(agent_script)]}
+    # Per-agent (untrusted) layer — ``.reyn/agents/coder1/hooks.yaml``, read
+    # ONLY by a session whose own agent_name is "coder1" (_read_per_agent_hooks).
+    agent_hooks = project / ".reyn" / "agents" / "coder1" / "hooks.yaml"
+    agent_hooks.parent.mkdir(parents=True, exist_ok=True)
+    agent_hooks.write_text(
+        "hooks:\n  - on: session_start\n    exec: ["
+        + repr(sys.executable) + ", " + repr(str(agent_script)) + "]\n",
+        encoding="utf-8",
+    )
     agent_session = make_session(
         agent_name="coder1", workspace_state_dir=project / ".reyn",
         workspace_base_dir=agent_tree, snapshot_path=project / ".reyn" / "coder1.json",
         state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
+        sandbox_backend=NoopBackend(),
     )
-    agent_session._hook_dispatcher.replace_registry(
-        HookRegistry(load_hooks([agent_hook], origin="per-agent").all_defs())
+    await agent_session.inbox.put(("shutdown", {}))
+    await agent_session.run()
+
+    # #5637's own defect scenario: the SAME project-wide runtime-origin hook
+    # dispatched from an AGENT session (base_dir = repos/coder1) must still
+    # resolve cwd to the PROJECT tree — never the agent's own base_dir. No
+    # earlier revision of this test drove this dispatch at all.
+    runtime_markers = list(markers_dir.rglob("runtime_cwd.txt"))
+    agent_markers = list(markers_dir.rglob("agent_cwd.txt"))
+    assert runtime_markers, (
+        "the runtime-origin hook must ALSO fire during the agent session — "
+        "it is a project-wide layer, loaded regardless of agent_name"
     )
-    await agent_session._hook_dispatcher.dispatch("session_start", {})
-    runtime_markers = list(temp_root.rglob("runtime_cwd.txt"))
-    agent_markers = list(temp_root.rglob("agent_cwd.txt"))
-    assert not runtime_markers
+    assert runtime_markers[0].read_text(encoding="utf-8") == str(project), (
+        "a runtime-origin hook dispatched from an agent session must resolve "
+        "cwd to the PROJECT tree, not the agent's own base_dir — this IS "
+        "#5637's own defect (a repo-agent session running the shared hook "
+        "in the wrong tree, [Errno 2] on the owner's real machine)"
+    )
     assert agent_markers
     assert agent_markers[0].read_text(encoding="utf-8") == str(agent_tree)
 
