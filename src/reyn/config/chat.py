@@ -812,7 +812,7 @@ class CompactionConfig:
     # constraint itself, not by this policy. `never` permits only reversible
     # reductions; `next_turn` (the default) preserves compaction for the
     # following turn.
-    recovery_policy: Literal["never", "next_turn"] = "next_turn"
+    fold_persist_policy: Literal["never", "next_turn"] = "next_turn"
     # #5592 (owner ruling, real-machine incident: 2469 spillable
     # raw_middle candidates -> 2469 compact() calls at ~6s each, ~4.1
     # hours, same shape independently possible on the main_call/head-tail
@@ -853,10 +853,10 @@ class CompactionConfig:
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
 
     def __post_init__(self) -> None:
-        if self.recovery_policy not in {"never", "next_turn"}:
+        if self.fold_persist_policy not in {"never", "next_turn"}:
             raise ValueError(
-                "chat.compaction.recovery_policy must be 'never' or 'next_turn'; "
-                f"got {self.recovery_policy!r}"
+                "chat.compaction.fold_persist_policy must be 'never' or 'next_turn'; "
+                f"got {self.fold_persist_policy!r}"
             )
         if self.spill_granularity not in {"tier", "turn"}:
             raise ValueError(
@@ -1157,6 +1157,15 @@ def _build_chat_config(raw: object) -> ChatConfig:
             "auto-compaction is window-relative. Remove these keys.",
             DeprecationWarning, stacklevel=2,
         )
+    # #5629: accept the old name for one version while warning operators to
+    # migrate to the precise fold-persistence name.
+    if "recovery_policy" in compaction_raw:
+        import warnings
+        warnings.warn(
+            "chat.compaction.recovery_policy is deprecated; use "
+            "fold_persist_policy instead.",
+            DeprecationWarning, stacklevel=2,
+        )
     # #5623: max_shrink_iterations is orphaned since #5531 PR-3 — unlike the
     # four keys above, the field itself is NOT removed yet (kept parsing for
     # ONE version, see the field's own comment on CompactionConfig), only
@@ -1233,8 +1242,11 @@ def _build_chat_config(raw: object) -> ChatConfig:
                 "max_schema_reprompt_attempts", defaults.max_schema_reprompt_attempts
             )
         ),
-        recovery_policy=str(
-            compaction_raw.get("recovery_policy", defaults.recovery_policy)
+        fold_persist_policy=str(
+            compaction_raw.get(
+                "fold_persist_policy",
+                compaction_raw.get("recovery_policy", defaults.fold_persist_policy),
+            )
         ),
         max_shrink_iterations=int(
             compaction_raw.get("max_shrink_iterations", defaults.max_shrink_iterations)

@@ -69,7 +69,7 @@ async def test_controller_summary_lands_in_history_but_retry_loop_summary_does_n
     retry_tmp.mkdir()
     retry_session = _make_spill_session(
         retry_tmp, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="never",
+        max_shrink_iterations=25, fold_persist_policy="never",
     )
     budgets = retry_session._compaction_controller._engine.budgets
     marker_text = "OVERSIZED_MARKER_5498"

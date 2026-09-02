@@ -46,10 +46,10 @@ itself need a witness that IT correctly detects vacuity, an infinite
 regress): with `_attempt_reactive_spill` monkeypatched to always report
 no progress, scenario ① correctly raises `UnrecoveredError` instead of
 succeeding; with `CompactionEngine.compact` monkeypatched to always raise
-(NOT `recovery_policy="never"` — measured directly: `retry_loop`'s own
-`if raw_middle:` compact call has no `recovery_policy` gate at all,
-`grep -n "recovery_policy" engine.py` finds zero hits in that module;
-`recovery_policy` only gates a DIFFERENT, driver-level side-effect
+(NOT `fold_persist_policy="never"` — measured directly: `retry_loop`'s own
+`if raw_middle:` compact call has no `fold_persist_policy` gate at all,
+`grep -n "fold_persist_policy" engine.py` finds zero hits in that module;
+`fold_persist_policy` only gates a DIFFERENT, driver-level side-effect
 compaction in `router_loop_driver.py`'s own except block, #4954(b) —
 setting it to `"never"` in a first draft of this strip-falsify did
 nothing, the test stayed green, which is exactly how a strip-falsify
@@ -117,7 +117,7 @@ def _make_session_t_max(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, t_max: 
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=1,
-        recovery_policy="never",  # isolate spill's own contribution
+        fold_persist_policy="never",  # isolate spill's own contribution
     )
     return make_session(
         agent_name="default",
@@ -198,7 +198,7 @@ def _make_session_t_max_compact_enabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, t_max: int,
 ):
     """Same shape as ``_make_session_t_max`` above, but with the default
-    ``recovery_policy`` (compaction enabled) instead of ``"never"`` — the
+    ``fold_persist_policy`` (compaction enabled) instead of ``"never"`` — the
     single-huge-tool-result witness above deliberately isolates spill;
     this scenario needs compaction itself reachable."""
     monkeypatch.chdir(tmp_path)

@@ -91,7 +91,7 @@ def test_successful_recovery_persists_summary_and_advances_watermark(
     comment warned would silently persist as 0 if this were wired wrong."""
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="next_turn",
+        max_shrink_iterations=25, fold_persist_policy="next_turn",
     )
     events = _drive_one_recovering_turn(session)
 
@@ -139,7 +139,7 @@ def test_successful_recovery_shrinks_the_next_turns_payload(
     the built payload is genuinely smaller than the raw pushed content."""
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="next_turn",
+        max_shrink_iterations=25, fold_persist_policy="next_turn",
     )
     _drive_one_recovering_turn(session)
     watermark = session._history_buffer.compaction_watermark()
@@ -183,7 +183,7 @@ def test_ordinary_turn_never_moves_the_watermark(
     Without this sibling, the accept side alone could pass in a world
     where the watermark moves unconditionally on every turn."""
     session = _make_spill_session(
-        tmp_path, monkeypatch, recovery_policy="next_turn",
+        tmp_path, monkeypatch, fold_persist_policy="next_turn",
     )
     _push(session, "user", "hello")
 
@@ -209,25 +209,25 @@ def test_ordinary_turn_never_moves_the_watermark(
     assert watermark == 0, "the watermark must not move for an ordinary turn"
 
 
-# ── recovery_policy="never" leaves the #5578 path untouched (pre-existing #5498 guard) ──
+# ── fold_persist_policy="never" leaves the #5578 path untouched (pre-existing #5498 guard) ──
 
 
-def test_recovery_policy_never_disables_the_persist_path_too(
+def test_fold_persist_policy_never_disables_the_persist_path_too(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: #5578 — gated the SAME way the pre-existing terminal-failure
-    force_compact_now call already is (recovery_policy == "next_turn").
+    force_compact_now call already is (fold_persist_policy == "next_turn").
     ``"never"`` is the pre-existing #5498 self-test's own configuration —
     this confirms the NEW persist path respects the same opt-out, not
     only the old force_compact_now call."""
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="never",
+        max_shrink_iterations=25, fold_persist_policy="never",
     )
     events = _drive_one_recovering_turn(session)
 
     assert not [e for e in events if e.type == "recovery_summary_persisted"], (
-        "recovery_policy='never' must suppress the #5578 persist path too"
+        "fold_persist_policy='never' must suppress the #5578 persist path too"
     )
     watermark = session._history_buffer.compaction_watermark()
     assert watermark == 0
@@ -253,7 +253,7 @@ def test_persisted_summary_survives_wal_truncation_past_its_own_event(
     """
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="next_turn",
+        max_shrink_iterations=25, fold_persist_policy="next_turn",
     )
     events = _drive_one_recovering_turn(session)
     persisted = [
@@ -298,7 +298,7 @@ def test_persisted_summary_survives_wal_truncation_past_its_own_event(
     # reuses the original session's in-memory state.
     fresh_session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500,
-        max_shrink_iterations=25, recovery_policy="next_turn",
+        max_shrink_iterations=25, fold_persist_policy="next_turn",
     )
     # #4387 Phase B ①: a Session's own __init__ does NOT hydrate history —
     # every real caller (chat.py, web/deps.py, registry_bootstrap.py, ...)

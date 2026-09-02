@@ -123,7 +123,7 @@ def _make_spill_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=1,
-        recovery_policy="next_turn",
+        fold_persist_policy="next_turn",
         spill_granularity="turn",
     )
     return make_session(

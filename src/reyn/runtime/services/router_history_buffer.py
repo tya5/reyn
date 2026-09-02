@@ -1221,17 +1221,17 @@ class RouterHistoryBuffer:
         # session-lived-only, matching every other optional-dependency
         # degrade in this class (``media_store``/``project_dir_fn``).
         #
-        # NEVER gated by ``recovery_policy`` (architect's own #5617 PR-
+        # NEVER gated by ``fold_persist_policy`` (architect's own #5617 PR-
         # review ruling, superseding an earlier #5612 design-doc sentence
         # that said otherwise): (1) the SAME artifact this method reuses
         # — the write-time cap's own ``SPILLED_META_KEY`` entry
         # (router_loop.py) — already persists unconditionally, with no
-        # ``recovery_policy`` reader at all; a reactive spill doing the
+        # ``fold_persist_policy`` reader at all; a reactive spill doing the
         # identical operation later must not make durability depend on
         # WHEN it happened. (2) spill is reversible for the agent — the
         # body lives in ``MediaStore``, the preview names the read-back
         # path (``tool_result_cap.py``'s own docstring) — while
-        # ``recovery_policy`` exists specifically to gate the
+        # ``fold_persist_policy`` exists specifically to gate the
         # IRREVERSIBLE fold (summary) step; that rationale never reaches
         # spill. The knob gates fold ONLY.
         if self._history_appender is not None and _offloaded_ref is not None:

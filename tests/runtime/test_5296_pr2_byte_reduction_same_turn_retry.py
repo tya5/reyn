@@ -4,7 +4,7 @@ token-axis terminal cause).
 
 Before #5296 PR-2, `RouterLoopDriver._run_with_shrink`'s own
 `UnrecoveredError` always ended the turn — #4954(b)'s own
-`recovery_policy="next_turn"` only advanced the watermark for a LATER turn
+`fold_persist_policy="next_turn"` only advanced the watermark for a LATER turn
 via a real `force_compact_now()`, but THIS turn still failed. #5296 PR-2's
 `_run_with_shrink_and_byte_reduction` (the new wrapper `run_turn` now calls
 instead of the bare `_run_with_shrink`) intervenes on exactly that failure
@@ -93,7 +93,7 @@ def _push(session, role: str, text: str, **kw) -> None:
 def _make_spill_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     max_shrink_iterations: int = 1, t_max: "int | None" = None,
-    recovery_policy: str = "next_turn", spill_granularity: str = "turn",
+    fold_persist_policy: str = "next_turn", spill_granularity: str = "turn",
 ):
     """A real Session with a real MediaStore (default ``make_session`` gives
     ``media_store=None`` — the spill mechanism needs a real one to have any
@@ -111,7 +111,7 @@ def _make_spill_session(
     (optionally ``raise_for="compaction", cause=...``) — see
     ``reyn.dev.testing.llm_stub``'s own module docstring.
 
-    ``recovery_policy`` — lead-coder review: default ``"next_turn"`` means
+    ``fold_persist_policy`` — lead-coder review: default ``"next_turn"`` means
     ``_run_with_shrink``'s own PRE-EXISTING #4954(b) side-effect ALSO
     compacts on every byte-limited failure, confounding a test that wants
     to isolate whether THIS PR's own ``_attempt_compaction_reduction`` is
@@ -139,7 +139,7 @@ def _make_spill_session(
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=max_shrink_iterations,
-        recovery_policy=recovery_policy,
+        fold_persist_policy=fold_persist_policy,
         spill_granularity=spill_granularity,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
@@ -290,7 +290,7 @@ def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     through two different events."""
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1, t_max=7_000,
-        # recovery_policy="next_turn" (default)
+        # fold_persist_policy="next_turn" (default)
     )
     budgets = session._compaction_controller._engine.budgets
     turn_text = "X" * 320
@@ -373,7 +373,7 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
     predicate: raise immediately, no generous extra attempts)."""
     session = _make_spill_session(
         tmp_path, monkeypatch, max_shrink_iterations=1,
-        # recovery_policy="next_turn" (default)
+        # fold_persist_policy="next_turn" (default)
     )
     # #5514 §7-1: NEVER, not merely non-"tool" — same reasoning as the
     # sibling test above.
@@ -406,11 +406,11 @@ def test_history_dominant_overflow_fails_fast_with_nothing_spillable(
 
 
 @pytest.mark.llm_stub
-def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
+def test_fold_persist_policy_never_leaves_the_watermark_alone_and_terminates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: #5296 PR-2 review (architect's own prescribed witness,
-    2nd finding) — with ``recovery_policy="never"``, an operator's
+    2nd finding) — with ``fold_persist_policy="never"``, an operator's
     "don't summarize my history" choice must hold even through THIS
     wrapper's own retry path: the SAME history-dominant, nothing-
     spillable scenario as the sibling test above, but with compaction
@@ -419,7 +419,7 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     side-effect, and not a resurrected wrapper-owned call) and (②)
     terminate cleanly (raise ``UnrecoveredError``, not hang or loop
     forever) rather than silently compacting anyway. ``@llm_stub`` is a
-    defensive safety net here too (``recovery_policy="never"`` disables
+    defensive safety net here too (``fold_persist_policy="never"`` disables
     compaction entirely regardless of candidate count — a real
     ``compact()`` call, if this ever regressed, should fail loudly rather
     than silently hitting network)."""
@@ -429,7 +429,7 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
     # accepts it; termination is now genuinely bounded by the T_max-
     # halving floor instead of this knob.
     session = _make_spill_session(
-        tmp_path, monkeypatch, max_shrink_iterations=1, recovery_policy="never",
+        tmp_path, monkeypatch, max_shrink_iterations=1, fold_persist_policy="never",
     )
     for _i in range(50):
         # #5514 §7-1: NEVER — this test's own "zero spillable candidates"
@@ -450,7 +450,7 @@ def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
 
     # ① watermark untouched.
     assert not [e for e in events if e.type == "compaction_completed"], (
-        "recovery_policy='never' must leave the watermark alone — no "
+        "fold_persist_policy='never' must leave the watermark alone — no "
         "compaction_completed event may fire, from either the pre-"
         "existing next_turn side-effect (disabled by this policy) or a "
         "wrapper-owned call (removed entirely)"
@@ -831,7 +831,7 @@ def test_run_with_shrink_wires_spill_fn_into_retry_loop(
 
     session = _make_spill_session(
         tmp_path, monkeypatch, t_max=2_500, max_shrink_iterations=25,
-        recovery_policy="never",
+        fold_persist_policy="never",
     )
     budgets = session._compaction_controller._engine.budgets
 
