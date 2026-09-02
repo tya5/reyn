@@ -381,7 +381,17 @@ class CompactionController:
         try:
             await self._run_compaction(candidates, latest)
         except Exception as exc:
-            self._events.emit("compaction_failed", error=str(exc))
+            # #5633: CompactionEngine.compact() now emits its OWN
+            # `compaction_failed` (the same "one real entry" argument
+            # #5475 already made for `compaction_started` — see
+            # compact()'s own docstring) and marks the exception it raises
+            # with `_reyn_compaction_failed_emitted` so this catch-all
+            # (which also covers failures in THIS method's own post-
+            # compact() work — `_append_history`/`_render_summary`, not
+            # reached by compact()'s own try) doesn't emit a second
+            # `compaction_failed` for the identical failure.
+            if not getattr(exc, "_reyn_compaction_failed_emitted", False):
+                self._events.emit("compaction_failed", error=str(exc))
         finally:
             self._compacting = False
 
