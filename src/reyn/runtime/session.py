@@ -453,6 +453,21 @@ def _render_mid_turn_injection(kind: str, payload: dict) -> "dict[str, str]":
     ``tests/runtime/test_5677_mid_turn_injection_wire_rendering.py``'s
     ``test_every_mid_turn_injectable_member_has_a_rendering`` for the
     static coverage pin that catches this before runtime, too).
+
+    #5677/#5678 disclosure — "byte-identical" (below, and in
+    ``_commit_mid_turn_injection``'s own comment) means the wire dict
+    THIS TURN and the history entry ``_commit_mid_turn_injection``
+    appends are the same shape, for the SAME item. It does NOT mean the
+    history entry stays visible in a LATER turn's projection.
+    ``role="system"`` is outside ``router_history_buffer.py``'s
+    ``build_history``/``decompose_history_for_retry`` role allowlists
+    (``router_history_buffer.py:895`` and ``:1154`` — neither includes
+    ``"system"``), so an ``AGENT_REQUEST`` injection's history entry
+    renders on turn N's wire but is silently excluded from every turn
+    N+1 and later projection. Closing this gap (so the injected text
+    stays visible across turns, not just the turn it arrived in) is
+    #5678's scope, not this function's — see #5678 for the tracked
+    defect.
     """
     if kind == TurnOrigin.CLIENT_INPUT:
         return {"role": "user", "content": payload.get("text") or ""}
@@ -7389,7 +7404,11 @@ class Session:
         # ``msg_id``, see ``peek_mid_turn_injections``'s own docstring);
         # re-deriving from the SAME function is what keeps history and wire
         # byte-identical for the SAME item, never two independent renders
-        # that could drift.
+        # that could drift. Byte-identical THIS TURN only — see
+        # _render_mid_turn_injection's own docstring, #5677/#5678
+        # disclosure: role="system" is outside build_history's role
+        # allowlist, so this entry vanishes from every LATER turn's
+        # projection (#5678, not this function's scope).
         _rendered = _render_mid_turn_injection(kind, payload)
         self._append_history(ChatMessage(
             role=_rendered["role"], content=_rendered["content"], ts=_now_iso(),
