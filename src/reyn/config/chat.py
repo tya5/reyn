@@ -826,6 +826,30 @@ class CompactionConfig:
     # still billed and its own size is not observable from inside reyn —
     # see docs/reference/config/reyn-yaml.md's own entry for this field).
     spill_granularity: Literal["tier", "turn"] = "tier"
+    # #5597 (owner real machine: a compaction LLM call with no per-request
+    # timeout hung 11+ minutes when the upstream stopped responding — the
+    # main-loop call already has `safety.timeout.llm_call_seconds`; this
+    # one had nothing). `recorded_acompletion` (the #1190 single funnel)
+    # now resolves an unset timeout for EVERY caller from that SAME
+    # `safety.timeout.llm_call_seconds` value (default 60s) — compaction
+    # already inherits it with NO config change (architect ruling: "新し
+    # い数を作らない。routerの値をそのまま使う" — the output compaction
+    # produces is `section_token_caps`-bounded, structurally SHORTER than
+    # main's own unbounded reply, so the SAME bound is generous, not
+    # tight, for compaction specifically).
+    #
+    # `None` (default) means exactly that: inherit `safety.timeout.
+    # llm_call_seconds`, no override. This field exists so a LATER,
+    # measured finding (a real compaction-call p95 that genuinely needs
+    # more time than main's own bound) can be corrected by an operator
+    # setting ONE value here — no code change at that point, the funnel
+    # already reads it (see `recorded_acompletion`'s own purpose=
+    # "compaction" branch) — never an unjustified constant invented now
+    # with no knob and no rationale (owner's own standing instruction).
+    # Unmeasured today (lead-coder's own real-machine incident had only 2
+    # data points, 18.7s and >4min-before-500) — the default stays
+    # inherited, not a new number, until a real p95 says otherwise.
+    llm_call_seconds: "float | None" = None
     # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
     # retry_loop's own `max_iterations` safety cap, previously a signature
     # default only (8) with no operator-facing knob: router_loop_driver.py
@@ -1253,6 +1277,11 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
         spill_granularity=str(
             compaction_raw.get("spill_granularity", defaults.spill_granularity)
+        ),
+        llm_call_seconds=(
+            float(compaction_raw["llm_call_seconds"])
+            if compaction_raw.get("llm_call_seconds") is not None
+            else defaults.llm_call_seconds
         ),
         section_token_caps=section,
     )

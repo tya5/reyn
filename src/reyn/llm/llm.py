@@ -897,6 +897,14 @@ class LLMCallLimitContext(NamedTuple):
     non_interactive: bool
     llm_call_timeout: "float | None" = None
     llm_max_retries: "int | None" = None
+    # #5597: a PURPOSE-scoped override for the generic ``llm_call_timeout``
+    # above — ``chat.compaction.llm_call_seconds``, ``None`` by default
+    # (inherit ``llm_call_timeout``, the SAME bound `main` already uses;
+    # architect ruling: "新しい数を作らない。routerの値をそのまま使う").
+    # Read ONLY by ``recorded_acompletion``'s own ``purpose == "compaction"``
+    # branch (see ``_resolve_llm_call_bounds``'s own docstring) — every
+    # other purpose is unaffected by this field's existence.
+    compaction_llm_call_timeout: "float | None" = None
 
 
 _llm_call_limit_context_var: "contextvars.ContextVar[LLMCallLimitContext | None]" = (
@@ -907,15 +915,19 @@ _llm_call_limit_context_var: "contextvars.ContextVar[LLMCallLimitContext | None]
 def set_llm_call_limit_context(
     bus: object, on_limit: object, run_id: object, non_interactive: bool = False,
     llm_call_timeout: "float | None" = None, llm_max_retries: "int | None" = None,
+    compaction_llm_call_timeout: "float | None" = None,
 ) -> "contextvars.Token":
-    """#1868/#2210: publish the per-LLM-call policy context (bus / on_limit / run_id /
-    non_interactive + the per-call timeout / retries). The cost gate (budget exceed) and
-    the timeout gate (persistent provider hang) both route through it; the router path
+    """#1868/#2210/#5597: publish the per-LLM-call policy context (bus / on_limit / run_id /
+    non_interactive + the per-call timeout / retries, + compaction's own
+    optional override). The cost gate (budget exceed) and the timeout gate
+    (persistent provider hang) both route through it; the router path
     also reads ``llm_call_timeout`` / ``llm_max_retries`` for its ``call_llm_tools`` call.
     Set by the runtime at construction; propagates into the run's tasks. Returns the token
     so a caller MAY reset for a nested scope."""
     return _llm_call_limit_context_var.set(LLMCallLimitContext(
-        bus, on_limit, run_id, non_interactive, llm_call_timeout, llm_max_retries))
+        bus, on_limit, run_id, non_interactive, llm_call_timeout, llm_max_retries,
+        compaction_llm_call_timeout,
+    ))
 
 
 class _UpstreamRecoveryCallCounter:
@@ -1047,18 +1059,36 @@ def _is_llm_timeout_exc(exc: BaseException) -> bool:
 
 
 def _resolve_llm_call_bounds(
-    timeout: "float | None", max_retries: int
+    timeout: "float | None", max_retries: int, *, purpose: "str | None" = None,
 ) -> "tuple[float | None, int]":
-    """#2210: resolve the per-call HTTP bounds for ``call_llm_tools``. An EXPLICIT
-    ``timeout`` (the kernel path threads it via the LLMCallRecorder) WINS — returned as-is,
-    so the kernel behaviour is unchanged (regression-impossible by construction). Only a
-    ``None`` timeout (the router path, which passes no timeout) falls back to the ambient
-    per-LLM-call policy context (same ``safety.timeout.*`` source). No context → stays
-    ``None`` (litellm default — the pre-#2210 behaviour, no worse)."""
+    """#2210/#5597: resolve the per-call HTTP bounds for a ``recorded_acompletion``
+    call. An EXPLICIT ``timeout`` (the kernel path threads it via the
+    LLMCallRecorder; ``call_llm_tools`` resolves + passes its own before
+    this is ever reached) WINS — returned as-is, so kernel/router
+    behaviour is unchanged (regression-impossible by construction). Only
+    a ``None`` timeout (a caller that never resolved one itself — #5597's
+    own gap: ``CompactionEngine._acompletion`` passed neither ``timeout``
+    nor ``num_retries`` at all, so an upstream hang blocked forever) falls
+    back to the ambient per-LLM-call policy context (same
+    ``safety.timeout.*`` source `call_llm_tools` already uses). No
+    context → stays ``None`` (litellm default — the pre-#2210 behaviour,
+    no worse).
+
+    ``purpose`` (#5597): when the resolved ambient context carries a
+    NON-``None`` ``compaction_llm_call_timeout`` (``chat.compaction.
+    llm_call_seconds``, an operator override) AND ``purpose ==
+    "compaction"``, that value wins over the generic ``llm_call_timeout``
+    — every other purpose is unaffected. ``purpose=None`` (the default —
+    every caller except ``CompactionEngine._acompletion``) never reads
+    this field at all, so a caller not yet passing ``purpose`` here
+    behaves byte-identically to before this parameter existed."""
     if timeout is None:
         ctx = _llm_call_limit_context_var.get()
         if ctx is not None:
-            timeout = ctx.llm_call_timeout
+            if purpose == "compaction" and ctx.compaction_llm_call_timeout is not None:
+                timeout = ctx.compaction_llm_call_timeout
+            else:
+                timeout = ctx.llm_call_timeout
             if ctx.llm_max_retries is not None:
                 max_retries = ctx.llm_max_retries
     return timeout, max_retries
@@ -2409,6 +2439,28 @@ async def recorded_acompletion(
     )
     base_kwargs = dict(extra_kwargs or {})
     base_kwargs.update(extra)  # Reyn routing/proxy kwargs win over caller-supplied ones
+
+    # #5597: this #1190 funnel resolves a per-call HTTP timeout/retry
+    # bound for ANY caller that never set one — `call_llm_tools` (the
+    # router path) already resolves + sets both via `extra_kwargs`
+    # before reaching here (its own `timeout`/`num_retries` keys are
+    # ALREADY present in `base_kwargs`, so this is a no-op for it,
+    # explicit-value-wins, #2210's own kernel contract unchanged).
+    # `CompactionEngine._acompletion` (engine.py) is the caller that
+    # never did — its own call site is UNCHANGED, still passing neither
+    # key — so an upstream hang on a compaction call used to block
+    # forever (#5597's own real-machine incident: an 11-minute stall,
+    # no timeout, no event). Resolving HERE (never at the call site)
+    # means the SAME fix covers every current AND future caller that
+    # forgets to set its own bound, by construction.
+    if "timeout" not in base_kwargs:
+        _resolved_timeout, _resolved_num_retries = _resolve_llm_call_bounds(
+            None, base_kwargs.get("num_retries", 1), purpose=purpose,
+        )
+        if _resolved_timeout is not None:
+            base_kwargs["timeout"] = _resolved_timeout
+        if "num_retries" not in base_kwargs:
+            base_kwargs["num_retries"] = _resolved_num_retries
 
     # #1650: when an operator sets ``reasoning_effort`` on a model, the proxy
     # path forces ``custom_llm_provider=openai`` (proxy_kwargs), under which
