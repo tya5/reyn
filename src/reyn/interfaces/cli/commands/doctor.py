@@ -220,6 +220,64 @@ def _events_dir_stats(root: Path) -> "tuple[int, int, date | None]":
     return count, total_bytes, oldest
 
 
+def _print_storage_cap_status(config: Any, media_stats: Any) -> None:
+    """part of #4364 (2026-09-02): ``storage.max_bytes``/``storage.pin``
+    (:class:`~reyn.config.infra.StorageConfig`, #5366) is the ONE
+    project-wide, cross-session disk cap covering ``.reyn/media/`` +
+    ``.reyn/memory/history-content/`` TOGETHER (#4478 — one operator
+    number, not two, so two individually-under-cap trees can't silently
+    sum over it). ``media_stats`` is the SAME
+    :class:`~reyn.data.workspace.media_store.MediaStorageStats` snapshot
+    ``run()`` already computed via ``store.storage_stats()`` (#5652's own
+    recursive ``_dir_stats_recursive`` — correctly counts a nested
+    ``<agent>/<session_id>/`` write) — this function is not a second
+    producer of that count (D-1/CLAUDE.md: one producer, or the two
+    silently drift); ``.tool_result_bytes`` measures
+    ``.reyn/memory/history-content/`` despite its own legacy field name
+    (see ``storage_stats``'s own docstring — tool-result writes moved
+    there under #5364).
+
+    D-3: ``max_bytes=None`` (the field's own documented "off" state,
+    never a second boolean) prints "unconfigured" — never a fabricated
+    number, and never silently omits the line the way a bare "cap: none"
+    might read as "0 bytes allowed" instead of "no cap at all".
+
+    Known gap (#5653, disclosed here per lead-coder's own #4364
+    assignment): the eviction PRE-CHECK
+    (:meth:`~reyn.data.workspace.media_store.MediaStore.
+    _evict_cross_session_over_cap`) runs only from ``save_tool_result`` —
+    ``save_media`` does not call it, so a media-only-heavy project's own
+    writes never self-trigger eviction; the cap is still only ever
+    CONSULTED when a tool-result write happens to occur. This line is
+    read-only visibility (D-2) — doctor never evicts anything itself."""
+    from reyn.config.infra import StorageConfig
+
+    storage_cfg = getattr(config, "storage", None) or StorageConfig()
+    used_bytes = media_stats.media_bytes + media_stats.tool_result_bytes
+
+    if storage_cfg.max_bytes is None:
+        print(
+            f"  storage.max_bytes: unconfigured (no project-wide cap — "
+            f"{used_bytes:,} bytes currently used, unbounded)",
+        )
+    else:
+        over = used_bytes > storage_cfg.max_bytes
+        mark = "⚠" if over else "✓"
+        suffix = " — OVER CAP" if over else ""
+        print(
+            f"  {mark} storage.max_bytes={storage_cfg.max_bytes:,}: "
+            f"{used_bytes:,} bytes currently used{suffix}",
+        )
+
+    pin_desc = ", ".join(storage_cfg.pin) if storage_cfg.pin else "none"
+    print(f"  storage.pin: {pin_desc}")
+    print(
+        "  ⚠ known gap (#5653): the cap pre-check runs only from a "
+        "tool-result write — a media-only-heavy project's own save_media "
+        "writes never self-trigger eviction on their own",
+    )
+
+
 def run(args: argparse.Namespace) -> None:
     from reyn.config.config_schema import walk_config_schema
     from reyn.config.loader import _find_project_root, load_config
@@ -281,10 +339,13 @@ def run(args: argparse.Namespace) -> None:
         else:
             print("  ✓ no file currently exceeds the declared policy")
 
-    # ── C-7: media/ / tool-results/ / history.jsonl — no declared retention
-    # policy exists for any of these yet (#4478/#4476 Phase 2 unimplemented)
-    # — the visibility itself IS the finding (#4480: "no one owns this
-    # resource" made visible, not asserted).
+    # ── C-7: media/ / tool-results/ / history.jsonl — no PER-RESOURCE
+    # declared retention policy for any of these (#4480: "no one owns this
+    # resource" made visible, not asserted). #4478 landed a project-wide
+    # CAP covering media/+tool-results/ jointly (storage.max_bytes/pin) —
+    # a separate, coarser knob than a per-resource policy; see the
+    # "Project-wide storage cap" block below this section for it. history.jsonl
+    # has no policy of any kind yet.
     print()
     print("Disk usage — no declared retention policy (visibility only):")
     # #5364: read-only here (storage_stats never writes) — session_id is
@@ -318,6 +379,12 @@ def run(args: argparse.Namespace) -> None:
     print(f"  total (media+tool-results+history): {total_bytes_all:,} bytes")
     if free_bytes is not None:
         print(f"  (filesystem free space: {free_bytes:,} bytes)")
+
+    # ── C-7 addendum: project-wide storage cap (part of #4364, 2026-09-02)──
+    print()
+    print("Project-wide storage cap (storage.max_bytes/pin, #5366/#4478 —")
+    print("bounds media/ + tool-results/ TOGETHER, one operator number):")
+    _print_storage_cap_status(config, media_stats)
 
     # ── C-1: hook argv[0] launch probe (#4364 PR-2, architect ruling) ──────
     print()
