@@ -293,6 +293,34 @@ def _warn_capability_unavailable_once(session_id: str, model: str) -> None:
 # be accepted and silently do nothing — the exact #5517 BLOCKING① shape
 # (remedy points the wrong direction), caught before it was written this
 # time.
+#
+# #5509 close (architect ruling, 2026-09-02): today's correctness — every
+# NON-image attachment (document/file/video/audio) degrades to a lossless
+# path-ref instead of being sent inline — is a SIDE EFFECT of this tuple
+# having exactly one entry, not a separate enforced rule anywhere else.
+# ADDING A LINE HERE SILENTLY MATERIALISES AN UNBOUNDED-COST TYPE: this
+# repo's own token accounting (`_MEDIA_REF_TOKEN_COST`/
+# `_MEDIA_INTRO_TOKEN_COST` below) is honest ONLY because every entry
+# here already carries a real per-item bound (image: `_MEDIA_IMAGE_
+# TOKEN_COST`, the same constant the compaction engine uses). A modality
+# whose cost is NOT a per-item constant (a PDF's tokens scale with page
+# count × per-page content, provider-dependent — verified: `litellm.
+# model_cost`'s 3,518 models declare only PRICE fields per modality
+# — `input_cost_per_image`/`annotation_cost_per_page`/`ocr_cost_per_page`
+# etc., all USD — never a token-count field; a provider reports "can it
+# take this" and "what does it cost", never "how many tokens will this
+# become") has NO bound this repo could add here without inventing one
+# — owner's own standing rule against ungrounded constants. Re-open only
+# once a real bound exists (see below), then add the line — never before.
+#
+# Re-opening this (design order, do in this sequence): ① gate on a real
+# capability query (`get_model_info(...).supports_pdf_input` — this DOES
+# exist) before ever considering materialising a new modality; ② obtain
+# the per-item bound from either a real measurement (send one known
+# document, read the `usage.prompt_tokens` delta) or an operator's own
+# declared number (a new `multimodal.*` per-type override) — never a
+# guessed constant; ③ only once ① and ② both hold for a real modality,
+# add its line here.
 _MEDIA_MIME_PREFIX_MODALITY: "tuple[tuple[str, str], ...]" = (
     ("image/", "image"),
 )
