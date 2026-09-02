@@ -194,20 +194,37 @@ declaring an empty deny-set.
 `external_source=true` (stamped by the content-fence seam at ingest). Two seams
 stamp it today: an external peer's `ask_user` answer (A2A / webhook), and the
 result of any tool declaring `returns_external_content` (e.g. web fetch) — both
-land in `self.history` meta, and the narrowing check (`metas_have_untrusted`)
-scans the logical ACTIVE window (every entry with `seq` above the compaction
-watermark) on every turn rather than caching the verdict — **resident-ness is
-a resource concern, not the decision criterion**: whether an entry currently
-happens to be resident in memory is orthogonal to whether it is still
-logically part of the active conversation, and the scan's job is the latter,
-never the former. So the very next dispatch after an external tool-result
-lands is already narrowed, and the narrowing self-clears once that entry
-**compacts out** — a semantic operation (its content is genuinely replaced by
-a summary and leaves the model's context) — never merely because it stopped
-being resident. Under `iteration` the engagement is additionally *latched*
-for the rest of the turn, so a compaction that evicts the tainted entry
-mid-turn cannot launder the taint away and recover the capability before the
-turn ends.
+land in `self.history` meta, and the narrowing check reads
+`Session._untrusted_taint_active` — **resident-ness is a resource concern,
+not the decision criterion**: whether an entry currently happens to be
+resident in memory is orthogonal to whether it is still logically part of
+the active conversation, and this state's job is the latter, never the
+former. So the very next dispatch after an external tool-result lands is
+already narrowed, and the narrowing self-clears once that entry **compacts
+out** — a semantic operation (its content is genuinely replaced by a summary
+and leaves the model's context) — never merely because it stopped being
+resident. Under `iteration` the engagement is additionally *latched* for the
+rest of the turn, so a compaction that evicts the tainted entry mid-turn
+cannot launder the taint away and recover the capability before the turn
+ends.
+
+**#5276: detection lives on the mutation side, not the read side.**
+`_untrusted_taint_active` is maintained incrementally by
+`Session._append_history` — the single mouth every history write funnels
+through — rather than re-derived by a full `metas_have_untrusted` scan on
+every read (owner-measured py-spy: ~60 reads/sec from the status panel, live
+gate and Tool tab combined, none of which change the state). An ordinary
+append only ever checks the ONE new entry (O(1)) and can only ever ADD
+taint; the bounded `metas_have_untrusted` scan over the logical ACTIVE
+window (every entry with `seq` above the compaction watermark) still runs,
+but only at the rare event that can retroactively RETRACT the taint — a
+compaction watermark advance (a `role="summary"` append) — plus at the two
+paths that replace `self.history` wholesale without going through
+`_append_history` at all (`load_history`, `restore_state`). Every READ still
+calls `Session._ephemeral_contextual_for_turn()` fresh, exactly as before —
+this is not a read-side cache with its own staleness window; it is the same
+always-fresh detector, just backed by an O(1) state read instead of an
+O(active-window) scan.
 
 **#4387/#4468: a second, independent latch closing a resource/semantic role
 crossing.** Session.history now also has a resident-BYTE cap (#4387) — a
@@ -252,10 +269,13 @@ denial, which reads `· denied by capability profile`, and different again from 
 three renderings.
 
 The tab derives the row from the live conversation at read time — the same
-`metas_have_untrusted` scan the gate runs, never a value latched at turn start —
-and the open pane is rebuilt on every frame, so a row disappears as soon as its
-cause does. That liveness is what makes showing a per-turn narrowing in a status
-surface honest rather than a stale claim wearing an authoritative face.
+`_ephemeral_contextual_for_turn()` call the gate makes, never a value latched
+at turn start (see #5276 above for how that read is now backed by O(1)
+mutation-side state rather than a per-read scan, without changing this
+freshness property at all) — and the open pane is rebuilt on every frame, so
+a row disappears as soon as its cause does. That liveness is what makes
+showing a per-turn narrowing in a status surface honest rather than a stale
+claim wearing an authoritative face.
 
 ## Default-deny delegation narrowing
 

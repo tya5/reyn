@@ -127,7 +127,7 @@ from reyn.runtime.tracked_tasks import TrackedTaskSet
 from reyn.runtime.turn_behavior_tally import TurnBehaviorTally
 from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
-from reyn.services.compaction.engine import CompactionEngine
+from reyn.services.compaction.engine import SUMMARY_MESSAGE_ROLE, CompactionEngine
 from reyn.user_intervention import (
     InterventionAnswer,
     UserIntervention,
@@ -1204,6 +1204,28 @@ class Session:
         # watermark advances past this seq — see _ephemeral_contextual_for_
         # turn's own comment on this field).
         self._max_evicted_untrusted_seq = 0
+        # #5276 (architect ruling): whether the ACTIVE (uncompacted, resident)
+        # portion of ``self.history`` carries the untrusted-content marker —
+        # the term ``_ephemeral_contextual_for_turn`` used to re-derive with
+        # a fresh ``metas_have_untrusted(m.meta for m in active)`` scan on
+        # EVERY call (status-panel poll, live gate, Tool tab — #5276's own
+        # owner-measured py-spy finding: ~60/sec). Detection moves to the
+        # MUTATION side (this field is maintained incrementally by
+        # :meth:`_append_history`, the single mouth every history write
+        # funnels through — including a hook's own wake=false ride-along)
+        # instead of being re-derived on every READ. The two OTHER OR-terms
+        # ``_ephemeral_contextual_for_turn`` composes this against
+        # (``_in_flight_untrusted_this_turn`` / ``_max_evicted_untrusted_seq
+        # > watermark``, both immediately above) are UNCHANGED — already O(1)
+        # latches, not touched by this field.
+        #
+        # Seeded fresh (never left at its ``False`` default) by
+        # :meth:`load_history` after startup hydration and by
+        # :meth:`restore_state` after a rewind — both populate/replace
+        # ``self.history`` through paths OTHER than ``_append_history``
+        # (direct ``.append``/prepend), so this field cannot assume either
+        # one kept it in sync; see each method's own comment.
+        self._untrusted_taint_active: bool = False
         # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
@@ -3929,28 +3951,25 @@ class Session:
 
         NOT a second notion of "what is narrowed": this IS the term
         ``_effective_contextual_for_turn`` composes, so the tab and the live gate
-        cannot drift. The taint is re-derived from ``self.history`` on every call
-        (never latched at turn start), so a status-bar read is as of NOW; only the
-        loaded profile is cached, and a profile file does not change mid-session.
+        cannot drift. The taint is read fresh on every call (never latched at turn
+        start), so a status-bar read is as of NOW; only the loaded profile is
+        cached, and a profile file does not change mid-session.
 
-        #4387 Phase A: the scan this re-derivation runs is bounded to the
-        UNCOMPACTED tail (``seq > self._compaction_watermark()``), not all
-        of ``self.history``. ``metas_have_untrusted``'s own docstring already
-        promises "the until-compaction scope for free" from being handed
-        only "the live, un-compacted entries" — this call site was actually
-        violating that contract (it passed the FULL unfiltered history,
-        so real deployments never got the promised self-clear-on-compaction
-        at all, only an O(session-length) scan on every turn once
-        narrowing was opted into, #3501). Bounding to the watermark fixes
-        both: the freshness/self-clearing property this method's own tests
-        pin (``test_turn_context_denial_self_clears_when_the_taint_leaves_
-        the_context``) becomes what actually happens in a compacting
-        session, not just an unenforced docstring claim, and the re-scan on
-        every turn is now proportional to the uncompacted tail rather than
-        total session length. Entries with ``seq == 0`` (pre-#3704 legacy
-        rows with no assigned coordinate) are always included — never
-        excluded from a taint check just because they predate seq
-        tracking.
+        #4387 Phase A / #5276: the taint term used to be a full re-derivation —
+        ``metas_have_untrusted(m.meta for m in active)`` scanning the UNCOMPACTED
+        tail (``seq > self._compaction_watermark()``) — run fresh on EVERY call
+        (status-panel poll, live gate, Tool tab: owner-measured py-spy, ~60/sec).
+        #5276 moves that derivation to the MUTATION side: ``self.
+        _untrusted_taint_active`` is maintained incrementally by
+        :meth:`_append_history` (see that method's own
+        ``_update_untrusted_taint_on_append`` helper) and re-derived in full only
+        at the rare event that can ever RETRACT it — a compaction watermark
+        advance — so this method's own per-call cost is now O(1) here. The other
+        two OR-terms below (the in-flight latch, the eviction latch) are
+        UNCHANGED — already O(1), not touched by this move. Entries with ``seq ==
+        0`` (pre-#3704 legacy rows with no assigned coordinate) are always
+        included in the mutation-side derivation — never excluded from a taint
+        check just because they predate seq tracking.
 
         #3501: OPT-IN. This returns ``None`` — no narrowing at all — unless the
         operator set ``safety.threat_scan.capability_narrowing`` to something other
@@ -3980,7 +3999,6 @@ class Session:
         from reyn.security.permissions.capability_profile import (
             UNTRUSTED_NARROWING_ORIGIN,
             load_untrusted_profile,
-            metas_have_untrusted,
             resolve_profile,
         )
 
@@ -3989,15 +4007,7 @@ class Session:
             self._note_ephemeral_narrowing_transition(False)
             return None
         watermark = self._compaction_watermark()
-        # #4954(2): this exact predicate (seq==0 is the #3704 "no
-        # coordinate" sentinel, never excluded) is duplicated in
-        # RouterHistoryBuffer.build_history() (router_history_buffer.py) —
-        # a lead-coder TESTS-READ finding there caught a divergence where
-        # the copy initially forgot the seq==0 case. If a 3rd copy
-        # appears, that is the point to factor this into one shared
-        # predicate function instead.
-        active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
-        # #4381 PR-2 stage ③: history scan OR the in-flight latch — the
+        # #4381 PR-2 stage ③: taint state OR the in-flight latch — the
         # latch covers a same-turn tool result whose history entry has not
         # landed yet (see the flag's own docstring in __init__ for why).
         # #4468 (lead-coder security review): OR a THIRD term —
@@ -4010,12 +4020,17 @@ class Session:
         # cap would silently decide a semantic question it has no business
         # deciding — CLAUDE.md's own "removing one layer regrants a denied
         # capability" shape. Keyed to the SAME extinction trigger as the
-        # resident scan above (the compaction watermark) — eviction can SET
+        # resident term above (the compaction watermark) — eviction can SET
         # this latch, only compaction can CLEAR it; clearing it on "no
         # longer resident" instead would just reproduce this exact bug on
         # the latch's own side.
+        # #5276: the first term reads the mutation-side state
+        # (``self._untrusted_taint_active``) instead of re-scanning
+        # ``self.history`` here — see the class attribute's own docstring
+        # and ``_update_untrusted_taint_on_append`` for where it is kept
+        # current.
         if not (
-            metas_have_untrusted(m.meta for m in active)
+            self._untrusted_taint_active
             or self._in_flight_untrusted_this_turn
             or self._max_evicted_untrusted_seq > watermark
         ):
@@ -4128,6 +4143,60 @@ class Session:
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
         self._evict_oldest_resident_entries()
+        self._update_untrusted_taint_on_append(msg)
+
+    def _update_untrusted_taint_on_append(self, msg: ChatMessage) -> None:
+        """#5276 (architect ruling): the single mutation-side update point
+        for :attr:`_untrusted_taint_active` — see that field's own
+        ``__init__`` comment for the full "detection moves to the
+        mutation side" rationale.
+
+        Two cases, both funnelled through THIS one caller
+        (:meth:`_append_history`, "single mouth"):
+
+        - ``msg.role == SUMMARY_MESSAGE_ROLE`` — a compaction fold just
+          landed, meaning the compaction watermark is ADVANCING (this
+          entry's own ``covers_through_seq`` IS the new watermark —
+          :meth:`_compaction_watermark` reads it straight off the latest
+          summary). Some currently-active entries may have just fallen
+          below it, which a bare "does this ONE new entry carry taint"
+          check cannot detect (appending can only ever ADD taint, never
+          retroactively remove it) — so this is the ONE case that still
+          pays the O(bounded-scan) cost, via the same pure
+          :func:`~reyn.security.permissions.capability_profile.
+          metas_have_untrusted` :meth:`_ephemeral_contextual_for_turn`
+          used to call on every READ — but now only on an actual
+          compaction fold, not ~60 times/sec.
+        - Any other role — O(1): does THIS entry's own meta carry the
+          untrusted marker? If so the state can only flip to ``True``
+          (an ordinary append can never UN-taint the active region —
+          only a watermark advance, the branch above, can).
+        """
+        from reyn.security.permissions.capability_profile import metas_have_untrusted
+
+        if msg.role == SUMMARY_MESSAGE_ROLE:
+            self._recompute_untrusted_taint_active()
+        elif not self._untrusted_taint_active and metas_have_untrusted([msg.meta]):
+            self._untrusted_taint_active = True
+
+    def _recompute_untrusted_taint_active(self) -> None:
+        """#5276: the O(bounded-scan) full re-derivation of
+        :attr:`_untrusted_taint_active` — the same bound
+        :meth:`_ephemeral_contextual_for_turn` used to apply on every READ
+        (``seq == 0 or seq > watermark``, #4387 Phase A), now run only at
+        the points that can retroactively CHANGE the answer: a compaction
+        watermark advance (:meth:`_update_untrusted_taint_on_append`'s own
+        summary-role branch), and the two paths below that replace
+        ``self.history`` wholesale WITHOUT going through
+        :meth:`_append_history` at all (:meth:`load_history`,
+        :meth:`restore_state`) — a bare re-append there cannot rely on the
+        incremental append-time check ever having run.
+        """
+        from reyn.security.permissions.capability_profile import metas_have_untrusted
+
+        watermark = self._compaction_watermark()
+        active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
+        self._untrusted_taint_active = metas_have_untrusted(m.meta for m in active)
 
     def _evict_oldest_resident_entries(self) -> int:
         """#4387 Phase B ③: cap ``self.history``'s in-memory footprint at
@@ -4909,6 +4978,11 @@ class Session:
             ):
                 self._append_parsed_history_line(line)
             self._next_seq = last_seq + 1
+            # #5276: this path populates self.history via a bare .append
+            # (_append_parsed_history_line), bypassing _append_history's
+            # own incremental taint hook — a fresh full re-derivation here
+            # is the only way self._untrusted_taint_active starts correct.
+            self._recompute_untrusted_taint_active()
             return
 
         # Fallback: full forward read, full scan — see docstring above.
@@ -4926,6 +5000,8 @@ class Session:
         # legitimately outranks a real assigned seq.
         max_seen = max((m.seq for m in self.history if m.seq), default=0)
         self._next_seq = max_seen + 1
+        # #5276: same bypass as the fast path above — re-derive fresh.
+        self._recompute_untrusted_taint_active()
 
     # ── inbox API ───────────────────────────────────────────────────────────────
 
@@ -7639,6 +7715,15 @@ class Session:
                 self._background_tasks.register(
                     _t, disposition="cancel_join", appends_wal=False,
                 )
+        # #5276 (architect acceptance criterion): after ANY full state
+        # restore, self._untrusted_taint_active must match a fresh
+        # from-scratch re-derivation — never assumed still-in-sync just
+        # because this method does not currently touch self.history
+        # itself. A no-op today (restore_state repopulates inbox/chains/
+        # interventions, not history); kept as a standing invariant so a
+        # future restore path that DOES touch self.history cannot silently
+        # skip this.
+        self._recompute_untrusted_taint_active()
         self._audit_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,

@@ -84,8 +84,12 @@ def _session(tmp_path: Path) -> Session:
 
 def _mark_untrusted(s: Session) -> None:
     """The #1862 marker the real producer stamps on an external peer answer —
-    the same ``external_source`` meta ``metas_have_untrusted`` scans for."""
-    s.history.append(
+    the same ``external_source`` meta ``metas_have_untrusted`` scans for.
+
+    #5276: goes through ``_append_history`` — the real mutation chokepoint
+    that maintains ``Session._untrusted_taint_active`` incrementally — not a
+    bare ``s.history.append``, which the incremental hook never observes."""
+    s._append_history(
         ChatMessage(role="user", content="<<<EXTERNAL>>> hi", meta={"external_source": True})
     )
 
@@ -144,8 +148,20 @@ def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
         s.capability_visibility_state(), "denied_by_turn_context"
     )
 
-    # the untrusted entry compacting out of the active context
-    s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
+    # #5276: the untrusted entry compacting out of the active context — a
+    # real compaction watermark advance via _append_history (same shape
+    # test_narrowing_self_clears_when_a_real_compaction_covers_the_taint
+    # below already uses), not a raw self.history reassignment the
+    # incremental taint hook never observes.
+    tainted_seq = next(
+        m.seq for m in s.history if (m.meta or {}).get("external_source")
+    )
+    s._append_history(
+        ChatMessage(
+            role="summary", content="summarised",
+            meta={"structured": {}, "covers_through_seq": tainted_seq},
+        )
+    )
 
     cleared = s.capability_visibility_state()
     assert not _tools(cleared, "denied_by_turn_context"), (
