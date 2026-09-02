@@ -496,18 +496,6 @@
     "code": "attr-defined"
   },
   {
-    "file": "src/reyn/llm/_litellm_compat_patches.py",
-    "code": "attr-defined"
-  },
-  {
-    "file": "src/reyn/llm/_litellm_compat_patches.py",
-    "code": "method-assign"
-  },
-  {
-    "file": "src/reyn/llm/_litellm_compat_patches.py",
-    "code": "union-attr"
-  },
-  {
     "file": "src/reyn/llm/llm.py",
     "code": "arg-type"
   },

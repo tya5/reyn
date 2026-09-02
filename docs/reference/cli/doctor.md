@@ -305,6 +305,16 @@ into anything read back after the fact.
 process should ever be reaped automatically is an owner-level judgment call
 explicitly out of this slice's scope until the count is visible at all.
 
+### litellm proxy patch ([#5620](https://github.com/tya5/reyn/issues/5620))
+
+Reads `~/.reyn/litellm-proxy-patch-status.json` — written by a SEPARATE
+process (the owner's own `junk/litellm` proxy, its own venv/litellm
+version, never imported by reyn) — and prints the same measured
+applied/reached state that process itself wrote. See `docs/reference/
+runtime/litellm-compat-patches.md`'s own proxy section for the patch
+itself, its own defect, and `scripts/litellm_proxy_patch/README.md` for
+install/uninstall.
+
 ## Not applicable, measured (not a later slice)
 
 C-6's "listen port declared-vs-effective" example does NOT apply to reyn's

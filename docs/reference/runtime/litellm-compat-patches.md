@@ -3,8 +3,8 @@
 Reyn works around real litellm defects in two places, split by which
 litellm install the defect lives in: reyn's own in-process litellm (this
 page's own "lib" section), and the owner's `junk/litellm` proxy (a
-separate installation, a separate version — see #5620's own proxy-side
-PR for that section, added alongside this one).
+separate installation, a separate version — this page's own "proxy"
+section).
 
 ## Lib side — retired (#5620)
 
@@ -43,3 +43,43 @@ failure classification, not litellm's bridge internals.
 
 No lib-side `reyn doctor` section or audit-event remains — there is
 nothing left to measure.
+
+## Proxy side (#5620)
+
+`scripts/litellm_proxy_patch/` — a standalone patch (no `reyn` import)
+for the owner's own `junk/litellm` proxy, a SEPARATE litellm
+installation (its own venv, python3.13, litellm 1.95.0 + the `proxy`
+extra) from reyn's own in-process litellm. Owner ruling (2026-08-30):
+"proxy はランタイムだけで良い" — the proxy venv never gets a reyn
+install.
+
+**The defect (D)**: a proxy client requesting `stream: false` on a
+`/v1/responses` call routed to the `chatgpt` provider still gets raw SSE
+pass-through (and, on a mid-stream upstream error, a trailing
+`data: {"error": {...}}` frame rather than a real HTTP 4xx/5xx) instead
+of the plain JSON a `stream: false` caller expects. Full traced chain:
+`scripts/litellm_proxy_patch/litellm_proxy_patch.py`'s own module
+docstring. Reached only when {caller stream=false, provider=chatgpt,
+litellm hands back a raw streaming iterator anyway} — every other shape
+falls through unchanged.
+
+**Install / verify / uninstall**: `scripts/litellm_proxy_patch/README.md`.
+Status file: `~/.reyn/litellm-proxy-patch-status.json` (path/schema:
+`src/reyn/llm/litellm_proxy_patch_status.py`) — written by the proxy
+process itself; `reyn doctor` reads the same file (a separate process
+this reyn process never imports or connects to).
+
+**Regression detection**: `tests/scaffold/test_5620_litellm_proxy_
+defects.py` reproduces the 3 upstream defects D's own chain depends on,
+pinned to litellm 1.95.0 (`importlib.metadata.version("litellm")`) — a
+different installed version skips with an explicit qualifier (not a bare
+skip), and CI carries a dedicated, path-conditional leg that installs
+`litellm[proxy]==1.95.0` in its own venv specifically to run this file
+un-skipped. RED there (the defect no longer reproduces) is GOOD NEWS —
+see that test file's own module docstring for the removal instructions
+when it fires. `tests/llm/test_5620_litellm_proxy_patch_d.py` exercises
+D's own patched behavior (real/broken SSE fixtures) and the path/schema
+parity gate between this page's 2 copies of the status-file literal.
+
+**When to remove**: `scripts/litellm_proxy_patch/README.md`'s own
+"When to remove this entirely" section.

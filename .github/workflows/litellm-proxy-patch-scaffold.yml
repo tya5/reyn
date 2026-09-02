@@ -1,0 +1,119 @@
+name: litellm-proxy-patch scaffold (1.95.0)
+
+# #5620 (architect ruling): scripts/litellm_proxy_patch/ targets the
+# owner's own proxy litellm install — litellm[proxy]==1.95.0, a
+# DIFFERENT pin than reyn's own main test matrix (which never installs
+# the `proxy` extra and, as of #5620's own lib-side retirement, has no
+# litellm-1.95.0-specific reason to). tests/scaffold/test_5620_litellm_
+# proxy_defects.py and tests/llm/test_5620_litellm_proxy_patch_d.py
+# both module-skip on any OTHER installed version (an explicit,
+# qualified skip, never bare) — this leg is the ONE place they actually
+# run un-skipped, in a dedicated, isolated venv carrying that exact pin.
+#
+# Path-conditional (#4239: CI spend is a decision separate from "review
+# this PR", same reasoning test.yml's own draft-PR guard states) — this
+# leg only fires when a PR actually touches the patch, its own tests,
+# or this workflow file itself.
+#
+# Vacuity guard (architect ruling): a skip firing HERE (this leg's own
+# dedicated 1.95.0 venv — not reyn's main matrix, where a skip is
+# correct and expected) means litellm[proxy]==1.95.0 failed to install,
+# or the version-pin check itself is broken — either way a green "0
+# ran, nothing failed" result here is worse than useless, so this leg
+# parses the JUnit report and fails if EITHER test count is 0 OR any
+# test was skipped, on top of pytest's own normal failure exit code.
+on:
+  pull_request:
+    paths:
+      - "scripts/litellm_proxy_patch/**"
+      - "tests/scaffold/test_5620_litellm_proxy_defects.py"
+      - "tests/llm/test_5620_litellm_proxy_patch_d.py"
+      - "tests/fixtures/litellm_proxy_patch/**"
+      - ".github/workflows/litellm-proxy-patch-scaffold.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/litellm_proxy_patch/**"
+      - "tests/scaffold/test_5620_litellm_proxy_defects.py"
+      - "tests/llm/test_5620_litellm_proxy_patch_d.py"
+      - "tests/fixtures/litellm_proxy_patch/**"
+      - ".github/workflows/litellm-proxy-patch-scaffold.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  litellm-proxy-patch-scaffold:
+    name: litellm[proxy]==1.95.0 scaffold + D behavior
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Deliberately ISOLATED from reyn's own dependency graph — the owner's
+      # proxy pin (2026-09-02). Owner ruling: "proxy はランタイムだけで良い"
+      # — this venv gets litellm[proxy] and pytest, nothing from reyn's own
+      # [dev]/[mcp]/[web] extras.
+      - name: Install litellm[proxy]==1.95.0 + pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'litellm[proxy]==1.95.0' pytest
+
+      - name: Run the version-pinned proxy patch tests
+        # -c /dev/null and --confcutdir=tests/llm: this isolated venv has
+        # NONE of reyn's own [dev] test dependencies (owner ruling: proxy
+        # is runtime-only) — reyn's own pyproject.toml pytest config and
+        # tests/conftest.py (env-identity/textual-flowview checks meant
+        # for reyn's own dev venv) must never be read here. Neither
+        # target file needs a conftest fixture (verified: no conftest.py
+        # exists under tests/llm/ or tests/scaffold/) or pytest-asyncio
+        # (both files drive async code via plain `asyncio.run()`, not
+        # `@pytest.mark.asyncio`) — this leg installs nothing beyond
+        # litellm[proxy] + pytest by design.
+        run: |
+          python -m pytest \
+            tests/scaffold/test_5620_litellm_proxy_defects.py \
+            tests/llm/test_5620_litellm_proxy_patch_d.py \
+            -v -c /dev/null --confcutdir=tests/llm \
+            --junit-xml=proxy-scaffold-report.xml
+        env:
+          # Reyn's own src/ (for `reyn.llm.litellm_proxy_patch_status`,
+          # test_5620_litellm_proxy_patch_d.py's own import — the ONE
+          # reyn import in this leg, a status-path constant, not litellm
+          # machinery) — never reyn's own dependency graph.
+          PYTHONPATH: ${{ github.workspace }}/src
+
+      - name: Vacuity guard — 0 collected or any skip is RED here
+        run: |
+          python - <<'PYEOF'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("proxy-scaffold-report.xml")
+          root = tree.getroot()
+          suites = root.findall("testsuite") or [root]
+          total = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          errors = sum(int(s.get("errors", 0)) for s in suites)
+
+          print(f"total={total} skipped={skipped} errors={errors}")
+          if total == 0:
+              print("VACUITY: 0 tests collected in the dedicated litellm[proxy]==1.95.0 venv", file=sys.stderr)
+              sys.exit(1)
+          if skipped > 0:
+              print(
+                  f"VACUITY: {skipped} test(s) skipped in the dedicated "
+                  "litellm[proxy]==1.95.0 venv -- the version pin should "
+                  "make every test in this leg run un-skipped; a skip "
+                  "here means the install did not resolve to 1.95.0 or "
+                  "the pin check itself is broken",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PYEOF

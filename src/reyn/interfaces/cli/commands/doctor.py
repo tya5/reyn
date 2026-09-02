@@ -363,6 +363,59 @@ def run(args: argparse.Namespace) -> None:
     print("override resolve_base_dir_candidate uses, not a restated declaration):")
     _print_hook_env_snapshot(resolved_root)
 
+    # ── #5620: proxy-side litellm patch status (a SEPARATE process/venv) ───
+    print()
+    print("litellm proxy patch (#5620) — status file written by the owner's")
+    print("own proxy process (scripts/litellm_proxy_patch/), a separate")
+    print("venv/version this process never imports:")
+    _print_litellm_proxy_patch_status()
+
+
+def _print_litellm_proxy_patch_status() -> None:
+    """#5620: reads ``~/.reyn/litellm-proxy-patch-status.json`` — written
+    by a COMPLETELY SEPARATE process (the owner's own `junk/litellm`
+    proxy, its own venv, its own litellm version) that this reyn process
+    never imports and has no live connection to. Unlike the lib-side
+    `_print_litellm_patch_status` above (which triggers a real import in
+    THIS process), there is nothing to trigger here — the file either
+    exists (the proxy has started at least once with the patch
+    installed) or it doesn't, and doctor only reads.
+
+    Path/schema come from `reyn.llm.litellm_proxy_patch_status` — the
+    ONE reyn-side place that constant lives (see that module's own
+    docstring for why the standalone patch file cannot share it via
+    import, and how a Tier 2 gate test keeps the two copies in sync)."""
+    import json
+
+    from reyn.llm.litellm_proxy_patch_status import litellm_proxy_patch_status_path
+
+    path = litellm_proxy_patch_status_path()
+    if not path.is_file():
+        print(f"  ? not installed or not started — no status file at {path}")
+        return
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — a malformed status file is reported, not fatal
+        print(f"  ✗ status file present but unreadable ({type(exc).__name__}: {exc}): {path}")
+        return
+
+    version = data.get("litellm_version", "?")
+    at = data.get("at", "?")
+    print(f"  litellm {version}, last written {at}, pid {data.get('pid', '?')}")
+    patched = data.get("patched") or {}
+    reached = data.get("reached") or {}
+    for name in sorted(patched):
+        label = "✓ applied" if patched[name] else "✗ NOT applied"
+        print(f"  {label}: {name} (reached {reached.get(name, '?')} time(s) this process)")
+    if data.get("legacy_present"):
+        print(
+            "  ⚠ the pre-#5620 legacy patch (litellm_patch.py / "
+            "zz_litellm_patch.pth) is still active in this venv — this "
+            "patch refused to double-wrap the same method; uninstall "
+            "the legacy install (see scripts/litellm_proxy_patch/README.md)"
+        )
+
 
 def _print_hook_env_snapshot(resolved_root: Path) -> None:
     """#5428: the operator-facing consumer this issue required — ``reyn
