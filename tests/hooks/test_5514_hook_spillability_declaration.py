@@ -43,10 +43,11 @@ def _entry(scheme: str = "template_push", **extra) -> dict:
 
 def test_undeclared_spillability_defaults_to_none_on_the_hookdef() -> None:
     """Tier 2: the LOADER leaves an undeclared spillability as ``None`` —
-    resolution to FIRST_CHOICE happens at the dispatch-time push site
-    (HookDispatcher._push_resolved), not here (see that test file's own
-    docstring for why: the resolution must reach BOTH consumer mouths from
-    ONE site, not be baked into the loader)."""
+    resolution to ``Spillability.default()`` (LAST_RESORT — #5689) happens
+    at the dispatch-time push site (HookDispatcher._push_resolved), not
+    here (see that test file's own docstring for why: the resolution must
+    reach BOTH consumer mouths from ONE site, not be baked into the
+    loader)."""
     (hook,) = load_hooks([_entry()], origin="startup").all_defs()
     assert hook.spillability is None
     assert hook.spillability_max_chars is None

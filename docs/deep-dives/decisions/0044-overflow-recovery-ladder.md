@@ -221,8 +221,10 @@ own invariant.
 
 `template_push` and `exec_capture` write history whose nature reyn cannot know — a template
 injecting the current git branch is material, one injecting a standing policy is frame. Both
-take a `spillability:` key (default `FIRST_CHOICE`, because unbounded hook pushes are the
-problem #5514 was filed for); `exec` takes none, because its output is ignored.
+take a `spillability:` key (default `LAST_RESORT`, `Spillability.default()` — #5689, owner
+ruling, 2026-09-02, superseding an earlier `FIRST_CHOICE` default: the spill mechanism
+existing at all answers #5514's own "unbounded hook pushes" concern, not which tier is the
+default); `exec` takes none, because its output is ignored.
 
 `spillability: NEVER` is rejected at the agent-writable layers (`per-agent` / `per-session`),
 reusing the existing self-grant boundary (#5356) — an agent declaring its own content

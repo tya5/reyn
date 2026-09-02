@@ -162,11 +162,24 @@ async def test_declared_spillability_reaches_the_wake_false_ride_along_payload()
 
 
 @pytest.mark.asyncio
-async def test_undeclared_spillability_resolves_to_first_choice_at_both_mouths():
-    """Tier 2: HookDef.spillability=None (undeclared) resolves to
-    FIRST_CHOICE at the push site — not LAST_RESORT (ChatMessage's own
-    general default) — see HookDef.spillability's own docstring for why.
-    Checked at BOTH mouths, not just one."""
+async def test_undeclared_spillability_resolves_to_the_general_default_at_both_mouths():
+    """Tier 2: #5689 (owner ruling: "規定は LAST の方が良い", overturning
+    this file's own PREVIOUS assertion that undeclared resolved to
+    FIRST_CHOICE) — HookDef.spillability=None (undeclared) resolves to
+    Spillability.default() (LAST_RESORT) at the push site, the SAME
+    general-purpose default ChatMessage's own construction path already
+    uses — no longer a hook-specific override. #5514's own opening
+    concern ("template_push has no cap and no offload") is answered by
+    the spill MECHANISM existing at all (LAST_RESORT still spills, only
+    after FIRST_CHOICE content is exhausted), not by which tier is the
+    default — see HookDef.spillability's own docstring for the full
+    correction. Checked at BOTH mouths, not just one.
+
+    Strip-falsify (executed): reverting dispatcher.py's
+    ``hook.spillability or Spillability.default()`` back to
+    ``hook.spillability or Spillability.FIRST_CHOICE`` makes both
+    assertions below go RED (``"first_choice"`` instead of
+    ``"last_resort"``)."""
     wake_true_hook = HookDef(
         name="a", on="turn_end",
         template_push=PushBlock(message="hi", wake=True),
@@ -180,7 +193,7 @@ async def test_undeclared_spillability_resolves_to_first_choice_at_both_mouths()
         [wake_true_hook], EventLog(), put_inbox=put_inbox, stage_next_turn_context=stage,
     )
     await disp.dispatch("turn_end", {})
-    assert put_inbox.calls[0][0][1]["spillability"] == "first_choice"
+    assert put_inbox.calls[0][0][1]["spillability"] == "last_resort"
 
     disp2 = _dispatcher(
         [wake_false_hook], EventLog(), put_inbox=put_inbox, stage_next_turn_context=stage,
@@ -189,7 +202,31 @@ async def test_undeclared_spillability_resolves_to_first_choice_at_both_mouths()
     (call2,) = stage.calls
     args, _kwargs = call2
     payload = args[1]  # _stage_next_turn_context(HOOK_STAGE_KIND, payload)
-    assert payload["spillability"] == "first_choice"
+    assert payload["spillability"] == "last_resort"
+
+
+@pytest.mark.asyncio
+async def test_declared_first_choice_still_wins_over_the_new_default():
+    """Tier 2: #5689 accept-side sibling to the deny-side default test
+    above — an EXPLICITLY declared ``spillability: first_choice`` must
+    still reach the push payload as FIRST_CHOICE, not be silently
+    replaced by the widened default. Without this pin, swapping the
+    fallback from a hardcoded FIRST_CHOICE literal to
+    ``Spillability.default()`` could accidentally widen the ``or`` check
+    itself (e.g. treating FIRST_CHOICE as falsy, or reading the wrong
+    attribute) and stay green — the deny-side test alone would not catch
+    a declaration silently getting clobbered by the new fallback."""
+    declared_hook = HookDef(
+        name="c", on="turn_end",
+        template_push=PushBlock(message="hi", wake=True),
+        spillability=Spillability.FIRST_CHOICE,
+    )
+    put_inbox = _Recorder()
+    disp = _dispatcher(
+        [declared_hook], EventLog(), put_inbox=put_inbox, stage_next_turn_context=_Recorder(),
+    )
+    await disp.dispatch("turn_end", {})
+    assert put_inbox.calls[0][0][1]["spillability"] == "first_choice"
 
 
 @pytest.mark.asyncio

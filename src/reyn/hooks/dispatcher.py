@@ -694,13 +694,20 @@ class HookDispatcher:
         # message``) and wake=false (``_handle_inbox_text``'s ride-along)
         # consumers read from — the ONE construction site #5514 §8 requires
         # so the declaration cannot reach one mouth and silently miss the
-        # other. ``None`` (undeclared) resolves to FIRST_CHOICE here, not
-        # deferred to a consumer default — see ``HookDef.spillability``'s
-        # own docstring for why FIRST_CHOICE, not ``Spillability.default()``.
+        # other. ``None`` (undeclared) resolves to ``Spillability.default()``
+        # (#5689, owner ruling: "規定は LAST の方が良い" — LAST_RESORT still
+        # spills, just after FIRST_CHOICE is exhausted, so #5514's own
+        # concern ("no cap and no offload") is answered by the MECHANISM
+        # existing at all, not by which tier is the default; a prior
+        # version of this comment cited FIRST_CHOICE as the owner's own
+        # ruling — it was this site's own prose, not owner-ratified, and
+        # #5689 corrected it) — a single call, not a hardcoded literal, so
+        # the default lives in ONE place (``Spillability.default()``
+        # itself) rather than being re-specified here.
         payload = {
             "name": hook.name or point,
             "text": resolved.message,
-            "spillability": (hook.spillability or Spillability.FIRST_CHOICE).value,
+            "spillability": (hook.spillability or Spillability.default()).value,
         }
         # #2072: cross-session push. A ``resolved.session`` naming a DIFFERENT session routes
         # to THAT session's inbox (the canonical wake-triple); ``wake`` rides in the payload
