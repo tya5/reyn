@@ -222,14 +222,37 @@ exception type** — this repo merged four diagnoses into one type once and
 renamed a correct diagnosis into a wrong one; a field survives that merge, a
 type does not.
 
-Termination without an iteration cap rests on two nested measures:
+Termination without an iteration cap (#5531 §10 — `max_iterations` abolished)
+rests on a lexicographic measure that strictly decreases on every pass that
+does not return or raise: `(T_max halvings remaining, total turn count,
+unspilled candidate count)`.
 
-- **within an episode** — un-spilled candidates strictly decrease (rung 1),
-  `len(head) + len(tail)` strictly decreases (rung 3), room halving is bounded
-  below by its own floor (rung 4).
-- **across episodes** — total turn count strictly decreases: reaching
-  `main_call` requires a successful `compact()`, and that absorbs at least one
-  turn into the summary permanently.
+- **`T_max halvings remaining`** — the room-halving override only ever
+  halves (never grows); terminal (b) fires the moment a candidate can no
+  longer fit `SP`/`new_msg`/the summary even with head+tail at zero, so this
+  component is finite by construction (`O(log T_max)` halvings).
+- **`total turn count`** — rung 3 (refill) each PERMANENTLY moves content
+  out of tail/head (never back), bounded by the initial turn count; a
+  successful `compact()` PERMANENTLY removes the compacted slice from
+  `mid`. Non-increasing across the whole call except for rung 3's own
+  bounded moves.
+- **`unspilled candidate count`** — rung 1's own population; each attempt
+  strictly reduces it by at least one candidate (never offered twice, no
+  persisted cursor — the set itself shrinks). Only once it is exhausted
+  does rung 2 (halving the slice) fire.
+
+**Episode boundary**: the slice size resets to "unknown" at the start of
+every NEW episode (never persisted across turns, matching "state that
+describes how hard this input was belongs to an episode and to nothing
+longer" above) — the binary search re-discovers its working size every
+time, an accepted cost, not a defect.
+
+**The same-cause-recover cap that used to backstop this loop is retired**:
+once the halving ladder's own two terminals ARE the exhaustion condition,
+a cap layered on top of them could only fire earlier, cutting the search
+off with headroom still remaining. The `compaction_shrink_recovered`
+audit-event still names the cause per iteration — pure telemetry now, no
+branch reads it to decide anything.
 
 Rung 1 is the one rung that does not move content between compartments, so it
 cannot borrow their monotonicity. Two obligations follow:
