@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.config.loader import load_trusted_per_agent_hooks
+from reyn.config.loader import load_trusted_per_agent_hooks, trusted_per_agent_hooks_path
 from reyn.core.events.state_log import StateLog
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema import HOOK_ORIGIN_ORDER, hook_origin_is_at_least_as_specific_as
@@ -81,6 +81,61 @@ async def _drain_texts(session: Session) -> set:
         _kind, payload = session.inbox.get_nowait()
         texts.add(payload.get("text"))
     return texts
+
+
+# ── the ONE path both real readers must agree on (lead-coder review, #5669) ──
+#
+# `config/loader.py`'s own load_trusted_per_agent_hooks (drop-and-report
+# contract: reyn config validate / reyn doctor) and Session's own
+# _trusted_per_agent_hooks_path (fail-loud contract: the live boot path)
+# used to each build ".reyn"/"config"/"agents"/<name>/"hooks.yaml" by hand
+# — a genuine "same fact in 2 places" risk this PR's own schema.py comment
+# names verbatim for a DIFFERENT fact (HOOK_ORIGIN_ORDER), but had not yet
+# been applied to this one. A drift here is invisible: either reader
+# landing on the wrong location degrades to [] (a normal-looking no-op
+# layer), never a red — so this must be checked structurally, not by
+# waiting for a symptom.
+
+
+def test_session_and_config_loader_agree_on_the_exact_same_path(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #5669 review — both real readers now delegate to the SAME
+    `trusted_per_agent_hooks_path()` function; this directly compares
+    Session's own private path accessor against config.loader's public
+    one, for the same (project_root, agent_name), rather than trusting
+    that "both call the same function" holds by inspection alone."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    from_config_loader = trusted_per_agent_hooks_path(tmp_path, _AGENT)
+    from_session = session._trusted_per_agent_hooks_path()  # noqa: SLF001
+    assert from_session == from_config_loader
+
+
+@pytest.mark.asyncio
+async def test_a_file_written_via_the_shared_path_function_is_seen_by_both_readers(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #5669 review — the behavioral form of the test above. A
+    hooks.yaml written at exactly the location
+    `trusted_per_agent_hooks_path()` computes (never the hardcoded
+    `_write_trusted_per_agent` helper this file's other tests use) is
+    picked up by BOTH `load_trusted_per_agent_hooks` (config.loader's own
+    reader) AND a real booted Session (the fail-loud reader) — proving
+    agreement behaviorally, not just as equal path strings."""
+    monkeypatch.chdir(tmp_path)
+    path = trusted_per_agent_hooks_path(tmp_path, _AGENT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_HOOK.format(msg="via_shared_path_fn"), encoding="utf-8")
+
+    # Reader 1: config.loader's own function.
+    hooks = load_trusted_per_agent_hooks(tmp_path, _AGENT)
+    assert [h.get("on", h.get(True)) for h in hooks] == ["turn_end"]
+
+    # Reader 2: a real booted Session (the fail-loud contract's own path).
+    session = _make_session(tmp_path, hooks_config=_STARTUP)
+    await session._hook_dispatcher.dispatch("turn_end", {})
+    assert await _drain_texts(session) == {"startup", "via_shared_path_fn"}
 
 
 # ── the loader (read directly, not via the top-level IN-set) ────────────────

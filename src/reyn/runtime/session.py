@@ -6628,17 +6628,24 @@ class Session:
 
     def _trusted_per_agent_hooks_path(self) -> Path:
         """#5505: ``.reyn/config/agents/<name>/hooks.yaml`` — the trusted
-        per-agent hooks layer's own path. Deliberately NOT added to
-        :meth:`_hooks_yaml_layers` (that registry is shared by BOTH the
-        ``hooks:`` and ``composers:`` readers — this layer carries ONLY
-        ``hooks:``, composers were never part of this issue's scope), so
-        it gets its own dedicated accessor rather than a 3rd tuple entry
-        that would silently also expose a ``composers:`` key nothing reads
-        from this path today."""
-        return (
-            self._hot_reload_project_root() / ".reyn" / "config" / "agents"
-            / self.agent_name / "hooks.yaml"
-        )
+        per-agent hooks layer's own path, delegated to
+        :func:`~reyn.config.loader.trusted_per_agent_hooks_path` (the
+        SAME single source :func:`~reyn.config.loader.
+        load_trusted_per_agent_hooks` — the OTHER real reader of this
+        layer, used by ``reyn config validate``/``reyn doctor`` — reads
+        the path from; lead-coder review, #5669: a 2nd hand-typed copy of
+        this specific fact drifts invisibly, since either reader landing
+        on the wrong location degrades to ``[]``, a normal-looking no-op
+        layer, never a red).
+
+        Deliberately NOT added to :meth:`_hooks_yaml_layers` (that
+        registry is shared by BOTH the ``hooks:`` and ``composers:``
+        readers — this layer carries ONLY ``hooks:``, composers were
+        never part of this issue's scope), so it gets its own dedicated
+        accessor rather than a 3rd tuple entry that would silently also
+        expose a ``composers:`` key nothing reads from this path today."""
+        from reyn.config.loader import trusted_per_agent_hooks_path
+        return trusted_per_agent_hooks_path(self._hot_reload_project_root(), self.agent_name)
 
     def _read_trusted_per_agent_hooks_raw(self) -> list:
         """#5505: read the trusted per-agent hooks layer's ``hooks:`` key —
