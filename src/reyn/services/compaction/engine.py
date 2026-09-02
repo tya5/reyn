@@ -3235,6 +3235,124 @@ class RecoveryLadder:
             )
         self._compact_attempt_len = max(_current_attempt // 2, 1)
 
+    def _stage_halve_room(self) -> None:
+        """ADR-0044 — halve the room. Reached once ``raw_middle`` is
+        empty and neither :meth:`_stage_refill_phase1` nor
+        :meth:`_stage_refill_phase2` had anything left to trim. #5531
+        PR-2 (owner ruling, §2/§3 item 7): token-only shrinking is
+        exhausted (head/tail already at or below their token minimums,
+        or hold nothing but a reserved summary) — applies REGARDLESS of
+        cause (token overflow or an HTTP 413 byte limit both reach
+        here).
+
+        Reservation redesign (owner, §1 invariant 5, replacing "halve
+        T_max whole" — §3 item 8): SP/new_msg/summary are RESERVED —
+        fixed deductions from the candidate ceiling, never apportioned
+        by weight. Only the REMAINDER (``room``) is apportioned, and
+        only between head/tail — body/new_msg play no part in this
+        ladder's own floor (new_msg is reserved, not apportioned; body
+        belongs to ``compact()``'s own budget, not ``main_call``'s).
+
+        Terminal (room floor): raises :class:`UnrecoveredError` when SP
+        + new_msg + the CURRENT summary (never shrunk by this ladder)
+        would not fit even at the halved candidate with head/tail at
+        zero — halving again cannot possibly succeed either.
+
+        On success, immediately re-checks tail/head against the NEW,
+        smaller minimums and shrinks in this SAME iteration via the SAME
+        :meth:`_stage_refill_phase1`/:meth:`_stage_refill_phase2` the
+        main escalation chain uses — without this, halving the ceiling
+        costs one iteration and shrinking content down to it costs a
+        second (``main_call`` retried with UNCHANGED content just
+        re-confirms the same overflow)."""
+        _summary_tokens_current = _summary_tokens_in(
+            self.head, self.tail, model=self._model, use_chars4=self._use_chars4,
+        )
+        _reserved = (
+            self._sp_tokens_floor + self._new_msg_tokens_floor + _summary_tokens_current
+        )
+        _t_max_for_candidate = (
+            self._t_max_override if self._t_max_override is not None
+            else self._get_max_input_tokens(self._model)
+        )
+        _candidate = _t_max_for_candidate // 2
+        if _candidate <= _reserved:
+            raise UnrecoveredError(
+                (
+                    "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
+                    if self._last_recover_is_byte_limit
+                    else "retry_loop: shrinking "
+                ) + "recurred even after binary-"
+                f"search-halving the in-turn token ceiling to "
+                f"{_candidate} tokens — SP ({self._sp_tokens_floor} "
+                f"tokens), the newest message "
+                f"({self._new_msg_tokens_floor} tokens), and the current "
+                f"summary ({_summary_tokens_current} tokens) alone no "
+                "longer fit, and none of the three is ever shrunk "
+                "here. Even reducing head/tail to zero would not "
+                "make this fit." + (
+                    _learned_byte_limit_clause(
+                        last_accepted_wire_bytes=self._last_accepted_wire_bytes,
+                        last_rejected_wire_bytes=self._last_rejected_wire_bytes,
+                    ) if self._last_recover_is_byte_limit else ""
+                ),
+                terminal=RetryLoopTerminal.ROOM_FLOOR,
+                saw_byte_limit=self._last_recover_is_byte_limit,
+            )
+        self._t_max_override = _candidate
+        _room = _candidate - _reserved
+        # head/tail apportion `room` by their own component_weights
+        # share, renormalised over just the two of them (body/new_msg
+        # excluded — see this method's own opening docstring). A
+        # missing/zero head+tail weight configuration falls back to
+        # an even split rather than raising here — a config validity
+        # question belongs to `assert_static_bounds` at startup, not
+        # a mid-turn recovery path.
+        _cw = self._cfg.component_weights
+        _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
+        if _head_tail_weight > 0:
+            self._head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
+            self._tail_min_tokens = _room - self._head_min_tokens
+        else:
+            self._head_min_tokens = _room // 2
+            self._tail_min_tokens = _room - self._head_min_tokens
+        # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
+        # the shipped config, not just inferable from a shrunk wire):
+        # this ladder just lowered the floor below what
+        # `component_weights` configured (`bg` here is still the
+        # UNCHANGED, entry-time budget — this method never reassigns
+        # it) — emit that fact rather than let it pass silently
+        # (previously true only of the byte-limit path; now true of
+        # both).
+        self._engine._events.emit(
+            "compaction_floor_lowered",
+            t_max_override=self._t_max_override,
+            head_min_tokens=self._head_min_tokens,
+            tail_min_tokens=self._tail_min_tokens,
+            configured_head_budget=self._bg.head_budget,
+            configured_tail_budget=self._bg.tail_budget,
+            saw_byte_limit=self._last_recover_is_byte_limit,
+        )
+        # Immediately re-check tail/head against the NEW, smaller
+        # minimums and shrink in this SAME iteration if either now
+        # exceeds them — without this, halving the ceiling costs one
+        # iteration and shrinking content down to it costs a second
+        # (main_call retried with UNCHANGED content just re-confirms
+        # the same overflow, wasting a turn of `max_iterations`),
+        # roughly halving how many halvings fit under the safety cap
+        # for no reason: the data needed to shrink (tail/head, already
+        # read above) is already in hand at this exact point.
+        if self._stage_refill_phase1():
+            pass
+        elif self._stage_refill_phase2():
+            pass
+        # If neither exceeds the new minimums either (head/tail were
+        # ALREADY below even the halved ceiling), there is nothing left
+        # to trim yet — still falls through without raising; the NEXT
+        # overflow (same content, same call) halves the ceiling again
+        # on its own next pass through this branch, continuing the
+        # search.
+
     async def run(self) -> Any:
         """Drive :meth:`_run_one_iteration` — the ladder's own former
         ``while True:`` loop body (#5631 candidate 1), unchanged control
@@ -3731,122 +3849,10 @@ class RecoveryLadder:
         elif self._stage_refill_phase2():
             pass
         else:
-            # #5531 PR-2 (owner ruling, §2/§3 item 7): token-only
-            # shrinking is exhausted (head/tail already at or below their
-            # token minimums, or hold nothing but a reserved summary) —
-            # applies REGARDLESS of cause now (token overflow or an HTTP
-            # 413 byte limit both reach here; the old `elif _last_recover_
-            # is_byte_limit:` gate only let the byte case through, so a
-            # token overflow that exhausted Phase 1/2 fell straight to an
-            # unconditional raise with no halving ladder at all — that
-            # raise is gone, folded into this branch's own floor).
-            #
-            # Reservation redesign (owner, §1 invariant 5, replacing
-            # "halve T_max whole" — §3 item 8): SP/new_msg/summary are
-            # RESERVED — fixed deductions from the candidate ceiling,
-            # never apportioned by weight. Only the REMAINDER (`room`) is
-            # apportioned, and only between head/tail — body/new_msg play
-            # no part in this ladder's own floor (new_msg is reserved,
-            # not apportioned; body belongs to compact()'s own budget,
-            # not main_call's).
-            _summary_tokens_current = _summary_tokens_in(
-                self.head, self.tail, model=self._model, use_chars4=self._use_chars4,
-            )
-            _reserved = (
-                self._sp_tokens_floor + self._new_msg_tokens_floor + _summary_tokens_current
-            )
-            _t_max_for_candidate = (
-                self._t_max_override if self._t_max_override is not None
-                else self._get_max_input_tokens(self._model)
-            )
-            _candidate = _t_max_for_candidate // 2
-            if _candidate <= _reserved:
-                # Floor (b): SP + new_msg + the CURRENT summary (never
-                # shrunk by this ladder) would not fit even at this
-                # candidate with head/tail at zero. Halving again cannot
-                # possibly succeed either (the candidate only shrinks
-                # further) — stop here. Under the reservation redesign
-                # this is the ONLY terminal case left (the OLD "we
-                # ourselves halved too aggressively" false floor-hit
-                # cannot happen any more — SP/new_msg/summary are never
-                # included in what gets halved): reaching this line means
-                # room genuinely cannot exist, not that this ladder cut
-                # itself short.
-                raise UnrecoveredError(
-                    (
-                        "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                        if self._last_recover_is_byte_limit
-                        else "retry_loop: shrinking "
-                    ) + "recurred even after binary-"
-                    f"search-halving the in-turn token ceiling to "
-                    f"{_candidate} tokens — SP ({self._sp_tokens_floor} "
-                    f"tokens), the newest message "
-                    f"({self._new_msg_tokens_floor} tokens), and the current "
-                    f"summary ({_summary_tokens_current} tokens) alone no "
-                    "longer fit, and none of the three is ever shrunk "
-                    "here. Even reducing head/tail to zero would not "
-                    "make this fit." + (
-                        _learned_byte_limit_clause(
-                            last_accepted_wire_bytes=self._last_accepted_wire_bytes,
-                            last_rejected_wire_bytes=self._last_rejected_wire_bytes,
-                        ) if self._last_recover_is_byte_limit else ""
-                    ),
-                    terminal=RetryLoopTerminal.ROOM_FLOOR,
-                    saw_byte_limit=self._last_recover_is_byte_limit,
-                )
-            self._t_max_override = _candidate
-            _room = _candidate - _reserved
-            # head/tail apportion `room` by their own component_weights
-            # share, renormalised over just the two of them (body/new_msg
-            # excluded — see this branch's own opening comment). A
-            # missing/zero head+tail weight configuration falls back to
-            # an even split rather than raising here — a config validity
-            # question belongs to `assert_static_bounds` at startup, not
-            # a mid-turn recovery path.
-            _cw = self._cfg.component_weights
-            _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
-            if _head_tail_weight > 0:
-                self._head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
-                self._tail_min_tokens = _room - self._head_min_tokens
-            else:
-                self._head_min_tokens = _room // 2
-                self._tail_min_tokens = _room - self._head_min_tokens
-            # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
-            # the shipped config, not just inferable from a shrunk wire):
-            # this ladder just lowered the floor below what
-            # `component_weights` configured (`bg` here is still the
-            # UNCHANGED, entry-time budget — this branch never reassigns
-            # it) — emit that fact rather than let it pass silently
-            # (previously true only of the byte-limit path; now true of
-            # both).
-            self._engine._events.emit(
-                "compaction_floor_lowered",
-                t_max_override=self._t_max_override,
-                head_min_tokens=self._head_min_tokens,
-                tail_min_tokens=self._tail_min_tokens,
-                configured_head_budget=self._bg.head_budget,
-                configured_tail_budget=self._bg.tail_budget,
-                saw_byte_limit=self._last_recover_is_byte_limit,
-            )
-            # Immediately re-check tail/head against the NEW, smaller
-            # minimums and shrink in this SAME iteration if either now
-            # exceeds them — without this, halving the ceiling costs one
-            # iteration and shrinking content down to it costs a second
-            # (main_call retried with UNCHANGED content just re-confirms
-            # the same overflow, wasting a turn of `max_iterations`),
-            # roughly halving how many halvings fit under the safety cap
-            # for no reason: the data needed to shrink (tail/head, already
-            # read above) is already in hand at this exact point.
-            if self._stage_refill_phase1():
-                pass
-            elif self._stage_refill_phase2():
-                pass
-            # If neither exceeds the new minimums either (head/tail were
-            # ALREADY below even the halved ceiling), there is nothing left
-            # to trim yet — still falls through without raising; the NEXT
-            # overflow (same content, same call) halves the ceiling again
-            # on its own next pass through this branch, continuing the
-            # search.
+            # ADR-0044 — halve the room; see _stage_halve_room's own
+            # docstring for the full rationale (reservation redesign,
+            # room-floor terminal, same-iteration refill re-check).
+            self._stage_halve_room()
         # #5531 §10: no code follows the loop body any more — every path
         # through it either returns (success), raises UnrecoveredError
         # (terminal (a) or (b), both inside the loop body above), or
