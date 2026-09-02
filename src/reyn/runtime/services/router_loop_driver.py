@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import dataclass
+from functools import partial as _partial
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import Spillability
@@ -111,6 +113,29 @@ def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:
     ``AttributeError`` instead of a silent ``False``."""
     return bool(safety.threat_scan.narrowing_per_iteration())
 
+
+@dataclass(frozen=True)
+class _RetryPayload:
+    """#5631: the single output of ``decompose_history_for_retry``, carried as
+    one value.
+
+    Not a bag assembled to shorten a signature — these five fields are produced
+    together by one call and consumed together by one ladder, and ``seq_by_id``
+    is only meaningful alongside the very turns it indexes (it maps
+    ``id(wire_dict)`` to a real seq for exactly the dicts in ``head`` +
+    ``raw_middle`` + ``tail``, #5498/#5578). Passing them flat costs 8
+    parameters at the one call site, past the point #5631 sets for reaching
+    for an object.
+
+    Frozen because the ladder re-offers slices of these across attempts and
+    must never be the thing that mutates them.
+    """
+
+    head: "list[dict]"
+    raw_middle: "list[dict]"
+    tail: "list[dict]"
+    new_msg: dict
+    seq_by_id: "dict[int, int]"
 
 
 class RouterLoopDriver:
@@ -791,59 +816,32 @@ class RouterLoopDriver:
         (``_attempt_reactive_spill``) already uses — no new store-path
         convention.
         """
-        from reyn.runtime.usage_shim import _RouterUsageShim
-        from reyn.services.compaction.engine import (
-            ContextOverflowError as _ContextOverflowError,
-        )
+        # #5577/#5593: both call sites (the one below and the one in
+        # ``_router_main_call_for_retry``, extracted out of this method by
+        # #5631) now classify through ``_is_shrinkable_overflow`` — see that
+        # helper's own docstring and each call site's own comment for what
+        # changed and why.
+        # #4954(b): `UnrecoveredError` IS caught below, but only to trigger a
+        # real compaction as a side effect — it is always re-raised unchanged,
+        # so it still propagates unwrapped to `run_turn`'s own widened except
+        # exactly as #4885 established. Not a reversion of that fix. (The
+        # `.saw_byte_limit` read this comment used to describe is gone: #5578
+        # made the trigger axis-agnostic.)
 
-        # #5577/#5593: both call sites in this method (below and in
-        # ``_router_main_call`` further down) now classify through
-        # ``_is_shrinkable_overflow`` — see that helper's own docstring
-        # and each call site's own comment for what changed and why.
-        from reyn.services.compaction.engine import (
-            UnrecoveredError as _UnrecoveredError,
-        )
-        # #4954 (b): `UnrecoveredError` IS caught here now, but only to
-        # read `.saw_byte_limit` and trigger a real compaction as a side
-        # effect (see the except block below) — it is always re-raised
-        # unchanged, so it still propagates unwrapped to `run_turn`'s own
-        # widened except exactly as #4885 established. This is not a
-        # reversion of that fix.
-
-        # #4995: dispatched to a worker thread rather than run inline on
-        # this coroutine's own turn — build_history() re-serialises every
-        # watermark-surviving turn (path-ref image materialise included,
-        # #3185's own measurement) every call, a cost proportional to
-        # session length that otherwise runs synchronously on the SAME
-        # event loop the TUI's own frame scheduling shares. `asyncio.
-        # to_thread` suspends THIS coroutine at the `await` (the GIL still
-        # time-slices with the default ~5ms `sys.getswitchinterval()`, so
-        # the loop gets scheduled while the thread runs) — same shape as
-        # this codebase's own existing `voice.py` precedent ("Inference is
-        # dispatched to asyncio.to_thread so the Textual event loop ...").
-        #
-        # #5367: `expected_owner` capture/threading (#4995/#5267) removed
-        # from this call — it existed solely to guard
-        # `RouterHistoryBuffer`'s own incremental elide-total CACHE against
-        # a stale/cancelled turn's background write corrupting a later
-        # turn's shared state (#5267's real incident). #5367 retired that
-        # whole cache along with `build_history`'s elide computation (owner
-        # ruling — see `RouterHistoryBuffer.build_history`'s own
-        # docstring); `build_history()` no longer mutates any shared
-        # cross-call state, so there is nothing left for a stale write to
-        # corrupt, and no ownership check is needed to guard it.
+        # #4995: dispatched to a worker thread, not run inline — build_history()
+        # re-serialises every watermark-surviving turn on every call, a cost
+        # proportional to session length, and it would otherwise run
+        # synchronously on the SAME event loop the TUI's frame scheduling
+        # shares. No ownership guard is threaded through any more: #5367
+        # retired the elide cache this used to protect, so `build_history()`
+        # mutates no shared cross-call state for a stale write to corrupt.
         history = await asyncio.to_thread(self._history_buffer.build_history)
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
-            # #5577/#5593: unified onto ``_is_shrinkable_overflow`` (this
-            # module's own helper — see its docstring for the full
-            # history: #5577 first unified onto classify_llm_failure
-            # alone, which fixed quota/FATAL/RETRYABLE misdiagnosis but
-            # introduced a real regression #5593 caught — an unrelated
-            # exception, neither FATAL/RETRYABLE nor a real overflow,
-            # fell through classify_llm_failure's own unconditional
-            # OVERFLOW default and entered the shrink ladder anyway).
+            # Classified through ``_is_shrinkable_overflow`` — see that
+            # helper's own docstring for why neither `classify_llm_failure`
+            # alone nor a keyword match is sufficient (#5577, #5593).
             #
             # Re-raising when NOT a shrinkable overflow (never wrapped in
             # ContextOverflowError/UnrecoveredError) means it propagates to
@@ -859,359 +857,345 @@ class RouterLoopDriver:
             self._events.emit(
                 "router_context_overflow_detected", error=repr(_exc)
             )
-            from reyn.services.compaction.engine import retry_loop as _retry_loop
-            engine = self._compaction_controller._engine
-            # #5531 PR-2: decompose's own return signature is unchanged
-            # (kept 5-tuple — see decompose_history_for_retry's own
-            # docstring); the summary value is simply unused here now,
-            # since it already sits inside `_head`/`_tail` themselves.
-            # #5578: the 5th element (`seq_by_id`, id(wire_dict) -> real
-            # seq for every turn in head+raw_middle+tail) is now READ —
-            # see `_on_recovery_summary_used` below for why: it is the
-            # ONLY way to derive a real `covers_through_seq` for whatever
-            # retry_loop's own internal fold produces (that ChatSummary's
-            # own field is structurally 0 on this path — wire dicts carry
-            # no `seq`, #5498).
+            # The summary element is unused here: it already sits inside
+            # `_head`/`_tail` themselves (#5531 PR-2).
+            # `seq_by_id` (id(wire_dict) -> real seq) is the ONLY way to
+            # derive a real `covers_through_seq` for whatever retry_loop's own
+            # fold produces — that ChatSummary's own field is structurally 0 on
+            # this path, because wire dicts carry no `seq` (#5498/#5578). See
+            # `_persist_recovery_fold`, which consumes it.
             _head, _raw_middle, _tail, _, _seq_by_id = (
                 self._history_buffer.decompose_history_for_retry()
             )
             _new_msg = {"role": "user", "content": user_text}
 
-            async def _on_recovery_summary_used(
-                chat_summary: "ChatSummary", folded_turns: "list[dict]",
-            ) -> None:
-                # #5578 (architect ruling) — a successful recovery's own
-                # fold is persisted here, NOT via force_compact_now (see
-                # CompactionController.persist_recovery_summary's own
-                # docstring for the full rationale: the fold already
-                # happened, this only records it — no new compaction LLM
-                # call, no new irreversible step).
-                #
-                # Gated the SAME way the pre-existing terminal-failure
-                # compaction trigger below is (`fold_persist_policy ==
-                # "next_turn"`) — lead-coder's own catch (PR #5610 review):
-                # `next_turn` is `config/chat.py`'s own DEFAULT
-                # (`fold_persist_policy: Literal["never", "next_turn"] =
-                # "next_turn"`), so this is opt-OUT, not opt-in — only a
-                # deployment that explicitly writes `fold_persist_policy:
-                # never` is exempt. #5578's own owner-facing UX-visible
-                # point (users see history replaced by a summary earlier
-                # than before) is therefore live on the SHIPPED default,
-                # for everyone, not only for someone who opted into a
-                # non-default setting. `fold_persist_policy == "never"` (the
-                # pre-existing #5498 self-test's own configuration) is the
-                # one deployment shape that takes NO new persistence
-                # action here — unaffected by this change.
-                if self._compaction.fold_persist_policy != "next_turn":
-                    return
-                # #5578: derive the REAL covers_through_seq from the
-                # decomposition's own seq_by_id — never trust
-                # chat_summary.covers_through_seq off this path (always 0,
-                # #5498). Only non-summary turns carry a "new" seq worth
-                # counting; a role=="summary" element folded alongside
-                # them (it can ride inside raw_middle, #5531) has no seq
-                # of its own to contribute here.
-                _real_seqs = [
-                    _seq_by_id[id(t)] for t in folded_turns
-                    if id(t) in _seq_by_id and t.get("role") != SUMMARY_MESSAGE_ROLE
-                ]
-                _covers_through_seq = max(_real_seqs, default=0)
-                await self._compaction_controller.persist_recovery_summary(
-                    chat_summary, covers_through_seq=_covers_through_seq,
-                )
-
-            def _spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
-                # #5531 §10 rung① / #9.6: injected into retry_loop, not
-                # imported by it — matches ``context_budget_advisor.py``'s
-                # own ``save_fn``-injection style for ``cap_tool_result_
-                # content``. ``candidates`` is the SLICE retry_loop is
-                # about to (re-)offer to ``compact()`` this attempt (#5592,
-                # correcting #9.6's own "never a slice" claim — see
-                # ``_spill_batch_from_offered``'s own docstring, engine.py)
-                # — never head/tail, a SEPARATE population this closure
-                # never sees (see ``_attempt_reactive_spill`` for that
-                # face; retry_loop only calls this when raw_middle is
-                # non-empty, which coincides exactly with a compact()-
-                # origin overflow).
-                #
-                # #5592 (owner ruling, "1 request = 面 × 同一
-                # Spillability"): returns a WHOLE BATCH now, not one
-                # candidate — every eligible member of the highest-
-                # priority non-empty tier (FIRST_CHOICE, else LAST_RESORT)
-                # that genuinely progresses, for ``spill_granularity ==
-                # "tier"`` (the default); exactly one, for ``== "turn"``
-                # (the pre-#5592 behavior, unchanged byte-for-byte — see
-                # ``_spill_batch_within_face``'s own docstring for why
-                # this is ONE algorithm with a step size, not two
-                # branches). engine.py stays Spillability-agnostic either
-                # way (never imports it) — this closure owns all
-                # ordering. #9.5's own no-cursor rule: re-scans
-                # ``candidates`` fresh on every call — no persisted
-                # position.
-                _edits = self._spill_batch_within_face(
-                    candidates, chain_id=chain_id,
-                    granularity=self._compaction.spill_granularity,
-                    # Pre-#5592 mid convention: the turn's own ``seq``
-                    # field, falling back to 1 — unchanged.
-                    seq_fn=lambda _idx, turn: turn.get("seq", 1),
-                )
-                if _edits:
-                    return _edits
-                # #5531 §9.6 (owner acceptance): "candidate 0" alone cannot
-                # tell "legitimately all-NEVER" apart from "the population
-                # got built wrong" — report the breakdown so a broken
-                # construction path can't silently masquerade as a normal
-                # exhaustion. Counted from `candidates` directly, so a
-                # candidate that fits NEITHER bucket (e.g. missing its
-                # `spillability` key, or non-str content) shows up as a
-                # gap between the sum and `population` — the exact signal
-                # this event exists for.
-                self._events.emit(
-                    "spill_candidate_population_exhausted",
-                    population=len(candidates),
-                    first_choice_count=sum(
-                        1 for t in candidates
-                        if t.get("spillability") == Spillability.FIRST_CHOICE.value
-                    ),
-                    last_resort_count=sum(
-                        1 for t in candidates
-                        if t.get("spillability") == Spillability.LAST_RESORT.value
-                    ),
-                    never_count=sum(
-                        1 for t in candidates
-                        if t.get("spillability") == Spillability.NEVER.value
-                    ),
-                )
-                return []
-
-            # #5531 PR-2 (lead-coder ruling, issuecomment-5463249759 — the
-            # fold-output-placement item deferred from PR-1): no
-            # `summary=` parameter and no `if summary:` decoration here
-            # any more — a summary element arrives ALREADY decorated
-            # (`wrap_summary_as_message`'s own `content` field, engine.py)
-            # wherever it naturally sits within `head`/`tail`: either
-            # from `decompose_history_for_retry`'s turns filter (PR-1,
-            # unchanged history) or from `retry_loop`'s own fold-success
-            # branch appending a fresh one to `head` (PR-2, engine.py).
-            # Nothing here decides whether or where a summary appears.
-            async def _router_main_call(*, SP, head, tail, new_msg):
-                # #5514 §7-3: `head`/`tail` came from `decompose_history_
-                # for_retry`, which annotates its OWN returned wire dicts
-                # with `spillability` for `_spill_candidates`'s own read
-                # (router_history_buffer.py's own comment on that
-                # annotation site). That key must never reach the REAL
-                # wire — strip it here, the one place `head`+`tail`
-                # actually become `loop.run`'s payload — rather than
-                # inside `_serialise_turn` (which stays the canonical,
-                # provider-identical quantity #2957 PR-B's own docstring
-                # requires).
-                #
-                # #5598 (owner's real machine): the SAME reasoning applies
-                # to `role` — `decompose_history_for_retry`'s own turns
-                # filter includes a `role == SUMMARY_MESSAGE_ROLE` element
-                # (#5531, unlike `build_history`'s own normal-turn path,
-                # which never reaches this bug — it attaches its summary
-                # via a SEPARATE, already-"assistant"-role synthetic
-                # bridge turn, never `wrap_summary_as_message`), and
-                # retry_loop's own fold-success branch (engine.py) appends
-                # a FRESH `wrap_summary_as_message` result straight into
-                # `head`, bypassing `_serialise_turn` entirely — this is
-                # THE one place both of those converge before becoming
-                # `loop.run`'s payload. `SUMMARY_MESSAGE_ROLE` ("summary")
-                # is reyn's own internal discriminator (watermark/trim/
-                # spill logic reads it), never a value a provider
-                # recognises as a chat role — left un-mapped, a provider
-                # that validates role names against a fixed enum 400s the
-                # request outright in ~2 seconds, before inference even
-                # starts, so no amount of shrinking can recover from it
-                # (see `wire_role`'s own docstring for the full incident).
-                #
-                # #5599 follow-up (lead-coder's own catch, same PR's own
-                # site re-read after #5598 landed): a DENY-list here
-                # (originally just `!= "spillability"`) misses every OTHER
-                # internal key, and one already existed —
-                # `wrap_summary_as_message` (engine.py) spreads `**summary`
-                # into the dict it returns, so retry_loop's fresh fold-
-                # success `head` entry carries `topic_arc`/`decisions`/
-                # `pending`/`session_user_facts`/`artifacts_referenced`/
-                # `covers_through_seq` — none of them a real chat-
-                # completions message field — straight onto the wire
-                # alongside the role fix. `_WIRE_MESSAGE_KEYS` (module
-                # level, this file) is the structural fix (CLAUDE.md:
-                # close the CLASS of hole, not the one instance) — an
-                # ALLOW-list cannot miss a FUTURE internal key the same
-                # way `spillability` alone already missed this one; a new
-                # internal annotation now has to be added there
-                # deliberately to reach the wire, not omitted from a
-                # strip-list to leak by default. See that constant's own
-                # docstring for where each key comes from.
-                _msgs = [
-                    {
-                        **{k: v for k, v in t.items() if k in _WIRE_MESSAGE_KEYS},
-                        "role": _wire_role(t.get("role", "")),
-                    }
-                    for t in list(head) + list(tail)
-                ]
-                try:
-                    _usage = await loop.run(user_text=user_text, history=_msgs)
-                except Exception as _call_exc:
-                    # #5577/#5593: unified onto ``_is_shrinkable_overflow``
-                    # — was is_context_overflow_error alone (#5577's own
-                    # pre-fix), with NO exclusion for a FATAL exception
-                    # (AttributeError/TypeError/KeyError) or a RETRYABLE
-                    # one (5xx/timeout/quota) whose message text happened
-                    # to contain an overflow keyword; both used to get
-                    # wrapped as ContextOverflowError and enter the shrink
-                    # ladder — burning real LLM calls chasing a cause no
-                    # amount of shrinking can fix, then reporting the
-                    # wrong diagnosis (#3783's own owner ruling, unreached
-                    # here until #5577). A genuine overflow (litellm's
-                    # typed ContextWindowExceededError, a 413, or an
-                    # overflow-keyword match — see the helper's own
-                    # docstring for #5593's own correction: an UNRECOGNIZED
-                    # exception shape now correctly does NOT enter, unlike
-                    # classify_llm_failure's own bare fallthrough) is
-                    # unaffected — still wrapped and still shrinks.
-                    if _is_shrinkable_overflow(_call_exc):
-                        raise _ContextOverflowError(str(_call_exc)) from _call_exc
-                    raise
-                return _RouterUsageShim(_usage)
-
-            # #4885 (architect finding, #4381's own late-stage remainder):
-            # this used to catch BOTH `_ContextOverflowError` (window too
-            # small) and `_UnrecoveredError` (shrinking recovered the SAME
-            # cause repeatedly without resolving it — a MISCLASSIFICATION,
-            # per retry_loop's own docstring) and re-raise both as a single
-            # `_ContextOverflowError("Router context overflow after bounded
-            # shrink: ...")`. That merge is the reported defect: it renamed
-            # `_UnrecoveredError`'s correct diagnosis ("shrink can't fix
-            # this cause") into the WRONG one ("the context window is too
-            # small") — an HTTP 413 (a request-BODY-BYTE limit) recovers
-            # via this exact path and got relabelled as a token-overflow.
-            # Let each propagate as itself; `run_turn`'s own except below
-            # widened to catch both (same audit event, same `repr(exc)`
-            # field — which now correctly names `UnrecoveredError` instead
-            # of always `ContextOverflowError`, no new event kind needed).
-            # #5592: retry_loop is the ONE production call site for the
-            # exact upstream-call counter (llm.py's own
-            # start_upstream_recovery_call_counter) — started here, reset
-            # in `finally` regardless of how retry_loop exits (return or
-            # raise), so a stale counter never leaks into a LATER, unrelated
-            # LLM call made after this turn's own recovery episode ends.
-            from reyn.llm.llm import (
-                reset_upstream_recovery_call_counter as _reset_upstream_recovery_call_counter,
+            return await self._drive_retry_ladder(
+                _RetryPayload(
+                    head=_head, raw_middle=_raw_middle, tail=_tail,
+                    new_msg=_new_msg, seq_by_id=_seq_by_id,
+                ),
+                loop=loop, user_text=user_text, chain_id=chain_id,
             )
-            from reyn.llm.llm import (
-                start_upstream_recovery_call_counter as _start_upstream_recovery_call_counter,
-            )
-            # #5618: this segment IS the ladder (rungs ①〜④) — entering the
-            # episode here is what finally lifts the progress row's gate on
-            # the path that actually runs during a real overflow recovery.
-            # Deliberately the same region the #5592 upstream-call counter
-            # already scopes: the numbers the row displays come from that
-            # counter, so the episode the row is gated on and the episode
-            # those numbers belong to are the same span by construction,
-            # not by two independently-maintained boundaries agreeing.
-            with self._recovery_episode_scope():
-                _upstream_counter_token = _start_upstream_recovery_call_counter()
+
+    async def _drive_retry_ladder(
+        self, payload: "_RetryPayload", *, loop: Any, user_text: str,
+        chain_id: str,
+    ) -> Any:
+        """Run the bounded-shrink ladder for one recovery episode.
+
+        Extracted from ``_run_with_shrink`` (#5631). It takes a
+        ``_RetryPayload`` rather than the five decomposition outputs
+        separately: passing them flat needs 8 parameters, past the 6 the
+        issue sets as the point where a Parameter Object is warranted, and
+        they are not five independent arguments — they are one function's
+        single output, which is what makes the object honest here rather
+        than a bag assembled to shorten a signature.
+        """
+        # Nothing here decides whether or where a summary appears: one
+        # arrives already decorated wherever it naturally sits in
+        # `head`/`tail` (#5531 PR-2).
+        #
+        # `_ContextOverflowError` (window too small) and
+        # `_UnrecoveredError` (shrinking cannot fix this cause) each
+        # propagate AS THEMSELVES — merging them renamed the second's
+        # correct diagnosis into the first's wrong one, which is the
+        # defect #4885 fixed. `run_turn`'s own except catches both.
+        #
+        # #5592: retry_loop is the ONE production call site for the
+        # upstream-call counter — started here and reset in `finally`
+        # however retry_loop exits, so a stale counter never leaks into a
+        # later, unrelated LLM call.
+        from reyn.llm.llm import (
+            reset_upstream_recovery_call_counter as _reset_upstream_recovery_call_counter,
+        )
+        from reyn.llm.llm import (
+            start_upstream_recovery_call_counter as _start_upstream_recovery_call_counter,
+        )
+        from reyn.services.compaction.engine import (
+            UnrecoveredError as _UnrecoveredError,
+        )
+        from reyn.services.compaction.engine import retry_loop as _retry_loop
+        # #5618: this segment IS the ladder (rungs ①〜④) — entering the
+        # episode here is what finally lifts the progress row's gate on
+        # the path that actually runs during a real overflow recovery.
+        # Deliberately the same region the #5592 upstream-call counter
+        # already scopes: the numbers the row displays come from that
+        # counter, so the episode the row is gated on and the episode
+        # those numbers belong to are the same span by construction,
+        # not by two independently-maintained boundaries agreeing.
+        with self._recovery_episode_scope():
+            _upstream_counter_token = _start_upstream_recovery_call_counter()
+            try:
                 try:
-                    try:
-                        _shim = await _retry_loop(
-                            SP=self._history_buffer.build_system_prompt(),
-                            head=_head,
-                            raw_middle=_raw_middle,
-                            tail=_tail,
-                            new_msg=_new_msg,
-                            cfg=self._compaction,
-                            model=self._effective_router_model_class(),
-                            engine=engine,
-                            learner=self._token_learner,
-                            main_call=_router_main_call,
-                            spill_fn=_spill_fn,
-                            on_summary_used=_on_recovery_summary_used,
-                            # #5531 §10: no `max_iterations=` any more —
-                            # retry_loop abolished its iteration-count bound
-                            # (see its own "Bounded termination proof"
-                            # docstring). #4957's `chat.compaction.
-                            # max_shrink_iterations` config knob is therefore
-                            # ORPHANED by this change (nothing reads it any
-                            # more) — disclosed, not silently left: removing
-                            # the knob itself (schema/validation/docs/the ~10
-                            # test fixtures that still pass it) is its own
-                            # scoped follow-up, not folded into this already-
-                            # large PR.
-                        )
-                    finally:
-                        _reset_upstream_recovery_call_counter(_upstream_counter_token)
-                except _UnrecoveredError:
-                    # #4954 (b), architect-ruled, WIDENED #5578: on ANY
-                    # UnrecoveredError exhaustion (byte-limit 413 OR a
-                    # non-byte, token-axis terminal cause — no longer gated on
-                    # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
-                    # here — in the driver's except block, not inside
-                    # retry_loop itself (retry_loop stays a pure TRANSPORT
-                    # operation; compaction is the SEMANTIC operation that
-                    # actually retires history entries, Session's own
-                    # docstring: "the only operation meant to retire an
-                    # entry"). Routed through `force_compact_now` — the SAME
-                    # durable-watermark path `ContextBudgetAdvisor`'s
-                    # pre-frame guard already uses
-                    # (`_durable_active_history_after`-backed, continuous from
-                    # the last real `covers_through_seq`) — deliberately NOT
-                    # `retry_loop`'s own compaction result: its `covers` can
-                    # cover only `raw_middle` while skipping `head` entirely,
-                    # which is not continuous from the previous watermark and
-                    # would silently mark the OLDEST unsummarized part of
-                    # history "covered" without ever summarizing it (exactly
-                    # owner's own real-machine shape).
-                    #
-                    # #5578: previously gated on `_unrecovered.saw_byte_limit`
-                    # — a token-cause exhaustion never reached this line at
-                    # all. That gate's OWN stated reason (this file's own,
-                    # now-removed docstring, quoting #4885/architect ruling
-                    # ④): "a token overflow reaching this point means #4885's
-                    # own pre-trigger estimate was wrong; the adaptive learner
-                    # fixes that, not a second compaction trigger here." That
-                    # pre-trigger (`ContextBudgetAdvisor.maybe_force_compact`,
-                    # estimate-based, proactive) no longer exists — #5528
-                    # (owner ruling, same family as #5367's elide removal)
-                    # removed it, verbatim: "a local token estimate cannot
-                    # know what the actual provider payload will look like, so
-                    # acting on it risked compacting a conversation that would
-                    # have fit fine" (compaction_controller.py's own module
-                    # docstring, which this PR also corrects — see its own
-                    # #5578 note). With no pre-trigger left, a token-cause
-                    # exhaustion has NO durable recovery path at all — every
-                    # turn re-starts from the same un-compacted history and
-                    # re-runs the identical (LLM-call-costing) shrink from
-                    # scratch (owner's own real-machine report, #5578: reyn-
-                    # self history.jsonl files grew to 4.6-5.9MB over 5 days
-                    # with no persisted compaction). `fold_persist_policy`'s own
-                    # docstring (config/chat.py) never named an axis — it is
-                    # declared as a stop-line on the "irreversible compaction
-                    # step" itself, not on byte-specifically — so this widening
-                    # corrects the call site to match the config's own already
-                    # axis-agnostic contract, not a new design decision.
-                    #
-                    # Repeat-bounding (band's own first question — who stops
-                    # this if it repeats): unchanged mechanism, now exercised
-                    # on both axes. `force_compact_now` already returns
-                    # immediately on `self._compacting` (a concurrent pass) or
-                    # zero candidates (nothing left to compact = terminal) —
-                    # #5364 §1.6's own note (right below, unchanged) already
-                    # established this except block CAN be reached more than
-                    # once per turn (`_run_with_shrink_and_byte_reduction`
-                    # retries on ANY `UnrecoveredError`); each such repeat
-                    # calls `force_compact_now()` again, but the SECOND call
-                    # onward finds the watermark already caught up to
-                    # everything durably available and returns immediately —
-                    # no new call this PR adds, no new unbounded-repeat shape,
-                    # only a gate this call already had to survive repeating
-                    # under (the byte-axis case already exercised this).
-                    if self._compaction.fold_persist_policy == "next_turn":
-                        await self._compaction_controller.force_compact_now()
-                    raise
-            return _shim.usage
+                    _shim = await _retry_loop(
+                        SP=self._history_buffer.build_system_prompt(),
+                        head=payload.head,
+                        raw_middle=payload.raw_middle,
+                        tail=payload.tail,
+                        new_msg=payload.new_msg,
+                        cfg=self._compaction,
+                        model=self._effective_router_model_class(),
+                        engine=self._compaction_controller._engine,
+                        learner=self._token_learner,
+                        main_call=_partial(
+                            self._router_main_call_for_retry,
+                            loop=loop, user_text=user_text,
+                        ),
+                        spill_fn=_partial(
+                            self._spill_batch_for_retry, chain_id=chain_id,
+                        ),
+                        on_summary_used=_partial(
+                            self._persist_recovery_fold, seq_by_id=payload.seq_by_id,
+                        ),
+                        # #5531 §10: no `max_iterations=` any more —
+                        # retry_loop abolished its iteration-count bound
+                        # (see its own "Bounded termination proof"
+                        # docstring). #4957's `chat.compaction.
+                        # max_shrink_iterations` config knob is therefore
+                        # ORPHANED by this change (nothing reads it any
+                        # more) — disclosed, not silently left: removing
+                        # the knob itself (schema/validation/docs/the ~10
+                        # test fixtures that still pass it) is its own
+                        # scoped follow-up, not folded into this already-
+                        # large PR.
+                    )
+                finally:
+                    _reset_upstream_recovery_call_counter(_upstream_counter_token)
+            except _UnrecoveredError:
+                # #4954 (b), architect-ruled, WIDENED #5578: on ANY
+                # UnrecoveredError exhaustion (byte-limit 413 OR a
+                # non-byte, token-axis terminal cause — no longer gated on
+                # `_unrecovered.saw_byte_limit`), trigger a REAL compaction
+                # here — in the driver's except block, not inside
+                # retry_loop itself (retry_loop stays a pure TRANSPORT
+                # operation; compaction is the SEMANTIC operation that
+                # actually retires history entries, Session's own
+                # docstring: "the only operation meant to retire an
+                # entry"). Routed through `force_compact_now` — the SAME
+                # durable-watermark path `ContextBudgetAdvisor`'s
+                # pre-frame guard already uses
+                # (`_durable_active_history_after`-backed, continuous from
+                # the last real `covers_through_seq`) — deliberately NOT
+                # `retry_loop`'s own compaction result: its `covers` can
+                # cover only `raw_middle` while skipping `head` entirely,
+                # which is not continuous from the previous watermark and
+                # would silently mark the OLDEST unsummarized part of
+                # history "covered" without ever summarizing it (exactly
+                # owner's own real-machine shape).
+                #
+                # Axis-agnostic since #5578 (was gated on
+                # `saw_byte_limit`, so a token-cause exhaustion never
+                # reached here and had no durable recovery path at all).
+                # `fold_persist_policy`'s own docstring declares a stop-line on
+                # the irreversible compaction STEP, never on an axis — the
+                # widening matched this call site to that contract rather
+                # than deciding something new. Full history and the
+                # measurement behind it: #5578, #5528.
+                #
+                # Repeat-bounding (band question 1 — who stops this if it
+                # repeats): this block CAN run more than once per turn
+                # (`_run_with_shrink_and_byte_reduction` retries on ANY
+                # `UnrecoveredError`, #5364 §1.6 below). `force_compact_now`
+                # bounds it: it returns immediately when a pass is already
+                # running, or when the watermark has caught up to
+                # everything durably available — so the second call onward
+                # is a no-op, not a repeated summarization.
+                if self._compaction.fold_persist_policy == "next_turn":
+                    await self._compaction_controller.force_compact_now()
+                raise
+        return _shim.usage
+
+    @staticmethod
+    def _mid_seq_of(_idx: int, turn: dict) -> int:
+        """Pre-#5592 mid convention: the turn's own ``seq``, else 1. A named
+        function rather than the lambda this used to be (#5631) — it captures
+        nothing, and the closure count is the gate."""
+        return turn.get("seq", 1)
+
+    async def _persist_recovery_fold(
+        self,
+        chat_summary: "ChatSummary",
+        folded_turns: "list[dict]",
+        *,
+        seq_by_id: "dict[int, int]",
+    ) -> None:
+        """#5578: persist a successful recovery's own fold. Was a closure in
+        ``_run_with_shrink``; ``seq_by_id`` is the one value it captured and is
+        now passed explicitly (#5631).
+        """
+        # #5578 (architect ruling) — a successful recovery's own
+        # fold is persisted here, NOT via force_compact_now (see
+        # CompactionController.persist_recovery_summary's own
+        # docstring for the full rationale: the fold already
+        # happened, this only records it — no new compaction LLM
+        # call, no new irreversible step).
+        #
+        # Gated the SAME way the pre-existing terminal-failure
+        # compaction trigger below is (`fold_persist_policy ==
+        # "next_turn"`) — lead-coder's own catch (PR #5610 review):
+        # `next_turn` is `config/chat.py`'s own DEFAULT
+        # (`fold_persist_policy: Literal["never", "next_turn"] =
+        # "next_turn"`), so this is opt-OUT, not opt-in — only a
+        # deployment that explicitly writes `fold_persist_policy:
+        # never` is exempt. #5578's own owner-facing UX-visible
+        # point (users see history replaced by a summary earlier
+        # than before) is therefore live on the SHIPPED default,
+        # for everyone, not only for someone who opted into a
+        # non-default setting. `fold_persist_policy == "never"` (the
+        # pre-existing #5498 self-test's own configuration) is the
+        # one deployment shape that takes NO new persistence
+        # action here — unaffected by this change.
+        if self._compaction.fold_persist_policy != "next_turn":
+            return
+        # #5578: derive the REAL covers_through_seq from the
+        # decomposition's own seq_by_id — never trust
+        # chat_summary.covers_through_seq off this path (always 0,
+        # #5498). Only non-summary turns carry a "new" seq worth
+        # counting; a role=="summary" element folded alongside
+        # them (it can ride inside raw_middle, #5531) has no seq
+        # of its own to contribute here.
+        _real_seqs = [
+            seq_by_id[id(t)] for t in folded_turns
+            if id(t) in seq_by_id and t.get("role") != SUMMARY_MESSAGE_ROLE
+        ]
+        _covers_through_seq = max(_real_seqs, default=0)
+        await self._compaction_controller.persist_recovery_summary(
+            chat_summary, covers_through_seq=_covers_through_seq,
+        )
+
+    def _spill_batch_for_retry(
+        self, candidates: "list[dict]", *, chain_id: str,
+    ) -> "list[tuple[int, dict]]":
+        """#5531 §10 rung①: the spill batch retry_loop is handed. Was a closure
+        in ``_run_with_shrink``; ``chain_id`` is the one value it captured and
+        is now passed explicitly (#5631).
+        """
+        # #5531 §10 rung① / #9.6: injected into retry_loop, not
+        # imported by it — matches ``context_budget_advisor.py``'s
+        # own ``save_fn``-injection style for ``cap_tool_result_
+        # content``. ``candidates`` is the SLICE retry_loop is
+        # about to (re-)offer to ``compact()`` this attempt (#5592,
+        # correcting #9.6's own "never a slice" claim — see
+        # ``_spill_batch_from_offered``'s own docstring, engine.py)
+        # — never head/tail, a SEPARATE population this closure
+        # never sees (see ``_attempt_reactive_spill`` for that
+        # face; retry_loop only calls this when raw_middle is
+        # non-empty, which coincides exactly with a compact()-
+        # origin overflow).
+        #
+        # #5592 (owner ruling, "1 request = 面 × 同一
+        # Spillability"): returns a WHOLE BATCH now, not one
+        # candidate — every eligible member of the highest-
+        # priority non-empty tier (FIRST_CHOICE, else LAST_RESORT)
+        # that genuinely progresses, for ``spill_granularity ==
+        # "tier"`` (the default); exactly one, for ``== "turn"``
+        # (the pre-#5592 behavior, unchanged byte-for-byte — see
+        # ``_spill_batch_within_face``'s own docstring for why
+        # this is ONE algorithm with a step size, not two
+        # branches). engine.py stays Spillability-agnostic either
+        # way (never imports it) — this method owns all ordering.
+        # #9.5's own no-cursor rule: re-scans ``candidates`` fresh
+        # on every call — no persisted position.
+        _edits = self._spill_batch_within_face(
+            candidates, chain_id=chain_id,
+            granularity=self._compaction.spill_granularity,
+            # Pre-#5592 mid convention: the turn's own ``seq``
+            # field, falling back to 1 — unchanged.
+            seq_fn=self._mid_seq_of,
+        )
+        if _edits:
+            return _edits
+        # #5531 §9.6 (owner acceptance): "candidate 0" alone cannot
+        # tell "legitimately all-NEVER" apart from "the population
+        # got built wrong" — report the breakdown so a broken
+        # construction path can't silently masquerade as a normal
+        # exhaustion. Counted from `candidates` directly, so a
+        # candidate that fits NEITHER bucket (e.g. missing its
+        # `spillability` key, or non-str content) shows up as a
+        # gap between the sum and `population` — the exact signal
+        # this event exists for.
+        self._events.emit(
+            "spill_candidate_population_exhausted",
+            population=len(candidates),
+            first_choice_count=sum(
+                1 for t in candidates
+                if t.get("spillability") == Spillability.FIRST_CHOICE.value
+            ),
+            last_resort_count=sum(
+                1 for t in candidates
+                if t.get("spillability") == Spillability.LAST_RESORT.value
+            ),
+            never_count=sum(
+                1 for t in candidates
+                if t.get("spillability") == Spillability.NEVER.value
+            ),
+        )
+        return []
+
+    async def _router_main_call_for_retry(
+        self, *, SP, head, tail, new_msg, loop, user_text,
+    ):
+        """The real router call retry_loop drives. Was a closure in
+        ``_run_with_shrink``; ``loop`` and ``user_text`` are the two values it
+        captured and are now passed explicitly (#5631). ``SP``/``new_msg`` are
+        part of retry_loop's own ``main_call`` contract and stay in the
+        signature even though this body does not read them.
+        """
+        from reyn.runtime.usage_shim import _RouterUsageShim
+        from reyn.services.compaction.engine import (
+            ContextOverflowError as _ContextOverflowError,
+        )
+        # This is THE one place `head`+`tail` become `loop.run`'s payload, and
+        # two kinds of internal annotation converge here: `spillability`
+        # (added by `decompose_history_for_retry` for `_spill_candidates`) and
+        # a `role == SUMMARY_MESSAGE_ROLE` element, which arrives either from
+        # that same turns filter or from retry_loop's fold-success branch
+        # appending a fresh `wrap_summary_as_message` result straight into
+        # `head`, bypassing `_serialise_turn`. Neither may reach the wire:
+        # "summary" is reyn's own discriminator, and a provider validating
+        # role names against a fixed enum 400s the request before inference
+        # starts, which no amount of shrinking can recover from (#5514 §7-3,
+        # #5598; `wire_role`'s own docstring has the incident).
+        #
+        # Stripped by an ALLOW-list (`_WIRE_MESSAGE_KEYS`, module level), not
+        # a deny-list: a deny-list has to name each internal key, and one
+        # already leaked past it (`wrap_summary_as_message` spreads `**summary`
+        # in, so `topic_arc`/`decisions`/`pending`/… rode along). An allow-list
+        # cannot miss a FUTURE key the same way — a new annotation has to be
+        # added there deliberately to reach the wire (#5599). See that
+        # constant's own docstring for where each key comes from.
+        _msgs = [
+            {
+                **{k: v for k, v in t.items() if k in _WIRE_MESSAGE_KEYS},
+                "role": _wire_role(t.get("role", "")),
+            }
+            for t in list(head) + list(tail)
+        ]
+        try:
+            _usage = await loop.run(user_text=user_text, history=_msgs)
+        except Exception as _call_exc:
+            # #5577/#5593: unified onto ``_is_shrinkable_overflow``
+            # — was is_context_overflow_error alone (#5577's own
+            # pre-fix), with NO exclusion for a FATAL exception
+            # (AttributeError/TypeError/KeyError) or a RETRYABLE
+            # one (5xx/timeout/quota) whose message text happened
+            # to contain an overflow keyword; both used to get
+            # wrapped as ContextOverflowError and enter the shrink
+            # ladder — burning real LLM calls chasing a cause no
+            # amount of shrinking can fix, then reporting the
+            # wrong diagnosis (#3783's own owner ruling, unreached
+            # here until #5577). A genuine overflow (litellm's
+            # typed ContextWindowExceededError, a 413, or an
+            # overflow-keyword match — see the helper's own
+            # docstring for #5593's own correction: an UNRECOGNIZED
+            # exception shape now correctly does NOT enter, unlike
+            # classify_llm_failure's own bare fallthrough) is
+            # unaffected — still wrapped and still shrinks.
+            if _is_shrinkable_overflow(_call_exc):
+                raise _ContextOverflowError(str(_call_exc)) from _call_exc
+            raise
+        return _RouterUsageShim(_usage)
+
 
     # ── Main turn entry point ─────────────────────────────────────────────────
 
