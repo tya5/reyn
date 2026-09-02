@@ -297,7 +297,12 @@ def test_the_reference_documents_the_shipped_defaults() -> None:
 
     table = Path("docs/reference/config/reyn-yaml.md").read_text(encoding="utf-8")
     for name, expected in _SHIPPED_DEFAULTS.items():
-        row = re.search(rf"\| `{re.escape(name)}` \| \w+ \| `([0-9.]+)` \|", table)
+        # 1+ plain-word columns (Axis, Type, ...) may sit between the Field
+        # cell and the backtick-quoted Default cell -- #4206 added an "Axis"
+        # column to this table, so the column count is no longer fixed at
+        # exactly one (Type). Match the Default cell positionally by its own
+        # shape (a backtick-quoted number) rather than pinning a column count.
+        row = re.search(rf"\| `{re.escape(name)}` \|(?:\s*\w+\s*\|)+\s*`([0-9.]+)`\s*\|", table)
         assert row is not None, f"{name} has no row in reyn-yaml.md's offload table"
         assert float(row.group(1)) == float(expected), (
             f"reyn-yaml.md documents {name}={row.group(1)}, code ships {expected}"

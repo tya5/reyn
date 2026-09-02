@@ -48,10 +48,24 @@ def _derive_preference_keys() -> "frozenset[str]":
     """Every ``ReynConfig`` leaf whose field declares BOTH
     ``axis=Axis.PREFERENCE`` and ``override_enabled=True`` — see this
     module's own docstring for why the axis classification alone is not
-    enough. Imports lazily (module-level import would pull
-    ``config_schema`` → ``ReynConfig`` at ``reyn.runtime.preferences``
-    import time — this module has no other reason to need the full
-    config tree that early)."""
+    enough.
+
+    Note on import timing (corrected, measured directly against the PR
+    head — the prior wording here was wrong): the full config tree
+    genuinely IS pulled in at THIS module's own import time — ``PREFERENCE_
+    KEYS`` below is evaluated at module scope, so ``config_schema`` (and the
+    whole ``ReynConfig`` tree behind it) loads then, whether the ``import``
+    statement sits inside this function body or at the top of the file;
+    moving it to module scope was verified not to reintroduce the
+    circular import this module was originally written to avoid. The
+    real cycle lived one hop over, in ``runtime/budget/budget.py`` (its
+    own module-scope ``_WARN_RATIO_PREFERENCE_KEYS`` needing
+    ``PREFERENCE_KEYS`` while ``budget.py`` was itself still
+    mid-initialization inside ``config/chat.py``'s import chain) and is
+    fixed there via a PEP 562 ``__getattr__`` deferral — see that
+    module's own comment. The lazy import kept here is not load-bearing
+    for that cycle; it stays only for symmetry with ``runtime/bounding.py``'s
+    identical helper."""
     from reyn.config.config_schema import walk_config_schema
     from reyn.config_axis import Axis
     return frozenset(

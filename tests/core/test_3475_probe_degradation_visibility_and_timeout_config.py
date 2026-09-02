@@ -283,6 +283,15 @@ def _is_float_literal_5(node: ast.expr | None, value: float = 5.0) -> bool:
 
 
 def _dataclass_field_default(tree: ast.Module, class_name: str, field_name: str) -> ast.expr | None:
+    """Return the AST expression this field's default actually evaluates to.
+
+    #4206 wrapped every `ReynConfig` leaf's declaration in
+    `field(default=..., metadata={...})` (axis metadata lives on the field, not
+    inferred) — so `stmt.value` is now an `ast.Call` to `field(...)`, not the
+    bare literal. Unwrap it to the `default=` keyword's own value, which is
+    what this test actually cares about (is the CANONICAL default a literal
+    5.0), not the declaration's outer shape.
+    """
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for stmt in node.body:
@@ -292,7 +301,17 @@ def _dataclass_field_default(tree: ast.Module, class_name: str, field_name: str)
                     and stmt.target.id == field_name
                     and stmt.value is not None
                 ):
-                    return stmt.value
+                    value = stmt.value
+                    if (
+                        isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Name)
+                        and value.func.id == "field"
+                    ):
+                        for kw in value.keywords:
+                            if kw.arg == "default":
+                                return kw.value
+                        return None  # default_factory or no default at all
+                    return value
     return None
 
 
