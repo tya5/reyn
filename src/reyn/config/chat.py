@@ -839,6 +839,16 @@ class CompactionConfig:
     # underlying cause never resolves (#4954's own persistent-compaction
     # fix, once landed, reduces how many shrink steps are needed per turn
     # in the first place — this knob does not substitute for that).
+    #
+    # #5623: ORPHANED since #5531 PR-3 — `retry_loop` no longer takes an
+    # iteration cap at all (termination is a proven lexicographic measure,
+    # not a count; see `retry_loop`'s own "Bounded termination proof"
+    # docstring), so nothing reads this field any more. Kept parsing (this
+    # field, no value validation — see `__post_init__`) for ONE version so
+    # an operator's existing `reyn.yaml` keeps loading; `_build_chat_config`
+    # warns once at load if the key is set. A follow-up PR removes the
+    # field/parsing entirely and registers the key in
+    # `check_retired_config_keys_denylist.py`'s denylist.
     max_shrink_iterations: int = 8
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
 
@@ -853,13 +863,9 @@ class CompactionConfig:
                 "chat.compaction.spill_granularity must be 'tier' or 'turn'; "
                 f"got {self.spill_granularity!r}"
             )
-        if self.max_shrink_iterations < 1:
-            raise ValueError(
-                "chat.compaction.max_shrink_iterations must be >= 1 (0 would "
-                "never run the shrink loop at all, immediately raising on "
-                "the first overflow); got "
-                f"{self.max_shrink_iterations!r}"
-            )
+        # #5623: no `>= 1` check any more — max_shrink_iterations is retired
+        # (orphaned since #5531 PR-3, see the field's own comment above); a
+        # retired key must not reject a config over a value nothing reads.
 
 
 @dataclass
@@ -1149,6 +1155,20 @@ def _build_chat_config(raw: object) -> ChatConfig:
             "min_compact_batch are deprecated and ignored — removed in #1128. "
             "head/tail sizing is now token-budget via component_weights, and "
             "auto-compaction is window-relative. Remove these keys.",
+            DeprecationWarning, stacklevel=2,
+        )
+    # #5623: max_shrink_iterations is orphaned since #5531 PR-3 — unlike the
+    # four keys above, the field itself is NOT removed yet (kept parsing for
+    # ONE version, see the field's own comment on CompactionConfig), only
+    # its value validation is dropped. Warn once so an operator who
+    # explicitly set it learns it has no effect, without breaking their load.
+    if "max_shrink_iterations" in compaction_raw:
+        import warnings
+        warnings.warn(
+            "chat.compaction.max_shrink_iterations is retired since #5531 "
+            "and has no effect — retry_loop's own iteration cap was "
+            "replaced by a proven termination measure, and nothing reads "
+            "this field any more. Remove it from reyn.yaml.",
             DeprecationWarning, stacklevel=2,
         )
     section_raw = compaction_raw.get("section_token_caps") or {}
