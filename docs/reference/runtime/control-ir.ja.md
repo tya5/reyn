@@ -228,6 +228,8 @@ Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KI
 
 発行イベント: `sandboxed_exec_started`、`sandboxed_exec_completed`（P6 監査証跡）。
 
+**`exec(collect="async")`**（#4733）は、この同じ op をバックグラウンドで実行します(インラインではなく): `session_api.run_exec_async`(`session_api.py:1349`)が自前で `SandboxedExecIROp` + `OpContext`(専用の `cancel_event`、ターンごとに共有されるものではない)を構築し、`run_sandboxed_exec` を直接呼び出します — 迂回するのはtool層のdispatchラッパーとop-dispatchのentry point `handle`(`exec.py:185`、`op_runtime/sandboxed_exec.py:15`/`:60`)のみで、op schemaもハンドラ本体(脅威スキャン、backend解決、policy/timeout解決、argv0解決、同じstarted/completedイベント)も迂回しません — 両経路の違いはstdout/stderrを蓄積しながらファイルへストリームするオプションの `sink` tee callback のみで、これは `describe_task` で読み戻せます。オペレーター向けの要約は [feature-map.md](../../feature-map.md) を参照。
+
 ## `web_search`
 
 DuckDuckGo を使って公開ウェブを検索し、構造化された結果を返します。**Tier 1** — デフォルト許可；Permission 宣言不要。`reyn.yaml` の `web.search: deny` でプロジェクト全体をブロックできます。

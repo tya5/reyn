@@ -408,6 +408,8 @@ Result fields: `returncode`, `stdout`, `stderr`, `truncated`, `backend`.
 
 Events emitted: `sandboxed_exec_started`, `sandboxed_exec_completed` (P6 audit trail).
 
+**`exec(collect="async")`** (#4733) runs this SAME op in the background instead of inline: `session_api.run_exec_async` (`session_api.py:1349`) builds its own `SandboxedExecIROp` + `OpContext` (a dedicated `cancel_event`, never the shared per-turn one) and calls `run_sandboxed_exec` directly — bypassing only the tool-layer dispatch wrapper and the op-dispatch entry point `handle` (`exec.py:185`, `op_runtime/sandboxed_exec.py:15`/`:60`), never the op schema or the handler body itself (threat scan, backend resolution, policy/timeout resolution, argv0 resolution, the same started/completed events) — the two paths differ only in an optional `sink` tee callback that streams stdout/stderr to a file as it accumulates, read back via `describe_task`. See [feature-map.md](../../feature-map.md) for the operator-facing summary.
+
 ## `web_search`
 
 Searches the public web using DuckDuckGo and returns structured results. **Tier 1** — default allow; no permission declaration required. Can be blocked project-wide with `web.search: deny` in `reyn.yaml`.
