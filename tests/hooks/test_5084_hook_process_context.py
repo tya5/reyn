@@ -156,8 +156,8 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
 ):
     """Tier 2: real sessions execute project and per-agent hooks in their declared trees.
 
-    The child only runs a cwd probe and does not import Reyn; its script path
-    is absolute, so the subprocess pin fixture is not needed here.
+    The child only runs a cwd probe and does not import Reyn; the subprocess
+    pin fixture still declares this file because it uses ``sys.executable``.
     """
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
     monkeypatch.chdir(tmp_path)
