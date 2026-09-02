@@ -502,6 +502,8 @@ def wire_role(role: str) -> str:
     ``RouterLoopDriver._router_main_call`` for the two such points."""
     if role in ("agent", SUMMARY_MESSAGE_ROLE):
         return "assistant"
+    if role not in ("user", "assistant", "tool", "system"):
+        raise ValueError(f"unknown wire role: {role!r}")
     return role
 
 
