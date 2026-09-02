@@ -328,10 +328,12 @@ def test_router_usage_shim_exposes_usage(tmp_path) -> None:
 # (see its own "Bounded termination proof" docstring), so
 # chat.compaction.max_shrink_iterations no longer reaches it; the config
 # knob itself is now orphaned (disclosed at its one remaining reference,
-# router_loop_driver.py's own call-site comment) — removing the knob's
-# schema/validation/docs/its own dedicated test file
-# (test_4957_max_shrink_iterations_config.py) is a separate, scoped
-# follow-up, not folded into this already-large PR.
+# router_loop_driver.py's own call-site comment). #5623 retired it: the
+# `>= 1` validation is dropped and setting the key now warns once at load
+# — its dedicated test file (test_4957_max_shrink_iterations_config.py)
+# carries that. Removing the field/schema itself (and registering the key
+# in check_retired_config_keys_denylist.py) is still a separate, scoped
+# follow-up.
 
 
 # ── #4954 (b): a byte-limit exhaustion triggers a real compaction ────────────
