@@ -1584,7 +1584,11 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
             if snap.get("ctx_compaction_reported", False)
             else "compaction   not reported on this connection"
         ),
-        _folded_line(snap.get("compaction_progress_raw")),
+        _folded_line(
+            snap.get("compaction_progress_raw")
+            if snap.get("compaction_progress_reported", True)
+            else None
+        ),
     ]
 
 

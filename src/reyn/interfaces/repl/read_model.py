@@ -318,6 +318,7 @@ class ChatReadModelCapabilities:
     # shape `hooks_reported` above closes for the Hook pane, not the
     # `_CLEARED_NON_FABRICATING_KEYS` shape its two siblings are.
     hooks_config_warnings_reported: bool
+    compaction_progress_reported: bool
 
 
 def reported_snapshot_keys(
@@ -374,6 +375,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
     hooks_config_warnings_reported=True,
+    compaction_progress_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
@@ -413,6 +415,7 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     # the server session's real hooks_config_warnings for a remote
     # client to read) -- False, not True; see the field's own docstring.
     hooks_config_warnings_reported=False,
+    compaction_progress_reported=False,
 )
 
 
@@ -922,6 +925,7 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # never has a genuine zero-trigger state, so "0%" here reads as
         # false reassurance, not as an honest empty state).
         "ctx_compaction_status_fn": None,
+        "compaction_progress_raw": None,
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
         # (the tracker's per-turn buckets are process-local, in-memory, and not
         # projected onto the AG-UI wire) → None for remote, and the right
