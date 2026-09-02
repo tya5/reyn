@@ -93,6 +93,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -235,6 +236,11 @@ class InterventionPanel(Vertical):
         self._key_by_pane: "dict[str, object]" = {}
         self._choice_ids: "dict[str, list[str]]" = {}
         self._choice_labels: "dict[str, list[str]]" = {}
+        # #4751: per-pane hotkey list, index-aligned with ``_choice_ids``/
+        # ``_choice_labels`` above (SAME zip source, ``choices`` in
+        # :meth:`add_pending` — one iteration, not a second lookup that
+        # could drift out of index-alignment with the other two).
+        self._choice_hotkeys: "dict[str, list[str]]" = {}
         self._prompts: "dict[str, str]" = {}
         self._answered: "set[str]" = set()
         self._next_pane_num = 0
@@ -287,6 +293,16 @@ class InterventionPanel(Vertical):
             # behavior and the #3299 bracket-eating bug this avoids.
             self._choice_labels[pane_id] = [
                 _neutralized_label(str(c.get("label", ""))) for c in choices
+            ]
+            # #4751: ``InterventionChoice.hotkey`` already rides the wire
+            # (every producer stamps it — ``session.py``/
+            # ``intervention_handler.py``/``status.py``/``app.py``'s own
+            # dict-normalization for the hydrated-head case) but this
+            # panel never READ it before now. An empty string for a choice
+            # with no hotkey (never emitted today, but not assumed) simply
+            # never matches any keypress in :meth:`on_key` below.
+            self._choice_hotkeys[pane_id] = [
+                str(c.get("hotkey", "")) for c in choices
             ]
             radio = RadioSet(
                 *(RadioButton(Content(label)) for label in self._choice_labels[pane_id])
@@ -343,8 +359,61 @@ class InterventionPanel(Vertical):
         self._key_by_pane.clear()
         self._choice_ids.clear()
         self._choice_labels.clear()
+        self._choice_hotkeys.clear()
         self._prompts.clear()
         self._answered.clear()
+
+    def on_key(self, event: events.Key) -> None:
+        """#4751 (owner ruling, issuecomment on the issue thread — "表示どお
+        りに配線する"): a bracketed choice hotkey (``[y]``/``[j]``/``[r]``/
+        ``[N]`` etc.) moves the RadioSet's selection to that choice —
+        SELECTS only, never confirms (arrow+Enter stays the sole way to
+        answer, unchanged). Case-sensitive, matching ``InterventionChoice``/
+        ``match_choice``'s own contract (``user_intervention.py``) — the
+        REPL/stdin path already treats ``n``/``N`` as two different
+        choices in the same set (one-shot deny vs. persistent deny), so a
+        case-insensitive match here would let this panel answer a question
+        the hotkey scheme was never asked.
+
+        Scoped to whichever tab is ACTIVE and matched against ONLY that
+        tab's own choices — never a global keymap. This is an ordinary
+        (non-``priority``) handler: Textual's normal focused-widget-outward
+        bubble already reaches this ancestor before the App (the same
+        mechanism the module docstring's keymap section documents for
+        ``Esc``), and a bare letter has no existing ``RadioSet``/``Input``
+        binding to out-race — unlike ``Left``/``Right`` above, nothing here
+        needs ``priority=True`` (architect's own #4751 analysis: a
+        priority binding would cross the focus boundary and reopen the
+        ``r``/``/rewind`` double-use architect flagged as a real risk;
+        this handler never does).
+
+        Deny side (#4751 acceptance): an unmatched character is left alone
+        — not consumed, not acted on. It does not reach the Composer
+        either (the Composer only receives key events while IT holds
+        focus, a mutually exclusive state from this panel holding it —
+        see the module docstring's own analysis of #3299's pinned test),
+        so the net effect for an unmatched key while a pane is focused is
+        unchanged from before this PR: silently dropped by ``RadioSet``'s
+        own handling, exactly as measured on the issue thread."""
+        pane_id = self.query_one(TabbedContent).active
+        if not pane_id or pane_id in self._answered:
+            return
+        character = event.character
+        if character is None:
+            return
+        hotkeys = self._choice_hotkeys.get(pane_id, [])
+        if character not in hotkeys:
+            return
+        index = hotkeys.index(character)
+        try:
+            pane = self.query_one(TabbedContent).get_pane(pane_id)
+        except Exception:
+            return
+        radios = list(pane.query(RadioSet))
+        if not radios:
+            return
+        event.stop()
+        radios[0]._selected = index
 
     def on_radio_set_changed(self, event: "RadioSet.Changed") -> None:
         pane = next(
