@@ -169,40 +169,47 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
     monkeypatch.chdir(project)
     agent_tree = project / "repos" / "coder1"
     agent_tree.mkdir(parents=True)
-    script = project / "record_cwd.py"
-    script.write_text(
-        "from pathlib import Path\n"
-        "Path('cwd.txt').write_text(str(Path.cwd()))\n",
-        encoding="utf-8",
-    )
-    hook = {"on": "session_start", "exec": [sys.executable, str(script)]}
     from reyn.runtime.session_params import ReactivityConfig
     from tests._support.agent_session import make_session
 
+    runtime_script = project / "record_runtime_cwd.py"
+    runtime_script.write_text(
+        "from pathlib import Path\n"
+        "Path('runtime_cwd.txt').write_text(str(Path.cwd()))\n",
+        encoding="utf-8",
+    )
+    agent_script = project / "record_agent_cwd.py"
+    agent_script.write_text(
+        "from pathlib import Path\n"
+        "Path('agent_cwd.txt').write_text(str(Path.cwd()))\n",
+        encoding="utf-8",
+    )
     runtime_hooks = project / ".reyn" / "config" / "hooks.yaml"
     runtime_hooks.parent.mkdir(parents=True, exist_ok=True)
     runtime_hooks.write_text(
-        "hooks:\n  - on: session_start\n    exec: ["
+        "hooks:\n  - on: session_start\n    write_paths: ["
+        + repr(str(project))
+        + "]\n    exec: ["
         + repr(sys.executable)
-        + ", " + repr(str(script)) + "]\n",
+        + ", " + repr(str(runtime_script)) + "]\n",
         encoding="utf-8",
     )
     project_session = make_session(
         agent_name="project-agent", workspace_state_dir=project / ".reyn",
         workspace_base_dir=project, snapshot_path=project / ".reyn" / "project.json",
-        state_log=None, reactivity=ReactivityConfig(hooks_config=[hook]),
+        state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
     )
-    project_session._child_temp_dir.mkdir(parents=True)
     await project_session.inbox.put(("shutdown", {}))
     await project_session.run()
-    assert (project / "cwd.txt").read_text(encoding="utf-8") == str(project)
+    assert (project / "runtime_cwd.txt").read_text(encoding="utf-8") == str(project)
+    (project / "runtime_cwd.txt").unlink()
 
     agent_hooks = project / ".reyn" / "agents" / "coder1" / "hooks.yaml"
     agent_hooks.parent.mkdir(parents=True, exist_ok=True)
     agent_hooks.write_text(
         "hooks:\n  - on: session_start\n    exec: ["
         + repr(sys.executable)
-        + ", " + repr(str(script)) + "]\n",
+        + ", " + repr(str(agent_script)) + "]\n",
         encoding="utf-8",
     )
     agent_session = make_session(
@@ -210,10 +217,11 @@ async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(
         workspace_base_dir=agent_tree, snapshot_path=project / ".reyn" / "coder1.json",
         state_log=None, reactivity=ReactivityConfig(hooks_config=[]),
     )
-    agent_session._child_temp_dir.mkdir(parents=True)
     await agent_session.inbox.put(("shutdown", {}))
     await agent_session.run()
-    assert (agent_tree / "cwd.txt").read_text(encoding="utf-8") == str(agent_tree)
+    assert (project / "runtime_cwd.txt").read_text(encoding="utf-8") == str(project)
+    assert (agent_tree / "agent_cwd.txt").read_text(encoding="utf-8") == str(agent_tree)
+    assert not (agent_tree / "runtime_cwd.txt").exists()
 
 
 @pytest.mark.asyncio
