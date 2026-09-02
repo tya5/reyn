@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -107,11 +107,16 @@ def _build_handler(
     *,
     agent_name: str = "specialist",
     router_actions: "list | None" = None,
-) -> "tuple[InterAgentMessaging, dict[str, Any]]":
+    dispatch_task_settled: "Callable[[str, dict], Any] | None" = None,
+) -> "tuple[InterAgentMessaging, dict[str, Any], ChainManager]":
     """Real InterAgentMessaging wired with plain stub callbacks — same
     pattern test_a2a_handler_invariants.py's own `_build_handler` uses.
     `state["current_task"]` mirrors Session.current_task via the same
-    get/set-callable injection Session itself uses in production."""
+    get/set-callable injection Session itself uses in production. Also
+    returns the real `ChainManager` (#5654 fix-forward's own tests need
+    it to `.register()`/`.mark_cancel_requested()` a real task-shaped
+    chain before driving `handle_agent_response`) — existing callers
+    ignore the third element."""
     state_log = StateLog(tmp_path / "state.wal")
     event_store = EventStore(tmp_path / "events")
     event_log = EventLog(subscribers=[event_store])
@@ -177,8 +182,9 @@ def _build_handler(
         set_router_loop_agent_replies=lambda v: None,
         get_current_task=lambda: state["current_task"],
         set_current_task=lambda v: state.update({"current_task": v}),
+        dispatch_task_settled=dispatch_task_settled,
     )
-    return handler, state
+    return handler, state, chain_manager
 
 
 @pytest.mark.asyncio
@@ -190,7 +196,7 @@ async def test_normal_completion_clears_current_task(tmp_path: Path) -> None:
     async def _final_answer(text, chain_id, state):
         state["outbox"].append(OutboxMessage(kind="agent", text="the real answer", meta={}))
 
-    handler, state = _build_handler(tmp_path, router_actions=[_final_answer])
+    handler, state, _chains = _build_handler(tmp_path, router_actions=[_final_answer])
     state["current_task"] = CurrentTask()  # simulates router_loop.py's prior SET
 
     await handler.handle_agent_response({
@@ -214,7 +220,7 @@ async def test_redelegation_during_settle_is_not_wiped(tmp_path: Path) -> None:
     async def _redelegates(text, chain_id, state):
         state["current_task"] = fresh_task  # mirrors host.mark_task_pending()
 
-    handler, state = _build_handler(tmp_path, router_actions=[_redelegates])
+    handler, state, _chains = _build_handler(tmp_path, router_actions=[_redelegates])
     state["current_task"] = CurrentTask()  # the task being settled
 
     await handler.handle_agent_response({
@@ -236,7 +242,7 @@ async def test_exception_during_settle_clears_current_task(tmp_path: Path) -> No
     async def _boom(text, chain_id, state):
         raise ValueError("simulated router failure")
 
-    handler, state = _build_handler(tmp_path, router_actions=[_boom])
+    handler, state, _chains = _build_handler(tmp_path, router_actions=[_boom])
     state["current_task"] = CurrentTask()
 
     await handler.handle_agent_response({
@@ -255,7 +261,7 @@ async def test_no_reply_marker_path_also_clears_current_task(tmp_path: Path) -> 
     current_task, not just the try/except's own two branches."""
     from reyn.runtime.services.inter_agent_messaging import _no_reply_marker
 
-    handler, state = _build_handler(tmp_path)
+    handler, state, _chains = _build_handler(tmp_path)
     state["current_task"] = CurrentTask()
 
     await handler.handle_agent_response({
@@ -321,3 +327,79 @@ async def test_rewind_clears_current_task_on_the_same_live_session(tmp_path: Pat
     session.restore_state(AgentSnapshot.empty("alpha"))
 
     assert session.current_task is None
+
+
+# ---------------------------------------------------------------------------
+# #5654 fix-forward (architect §1.6, lead-coder review on #5661): a
+# prompt-kind task_settled must report the REAL outcome, not a fixed "ok"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_settled_reports_cancelled_when_the_operator_cancelled_it(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: an operator-cancelled prompt task's task_settled must NOT
+    say "ok" — before this fix it always did, regardless of
+    `cancel_requested_at`, the same silent lie
+    task_verbs.py's own `_CANCEL_TASK_DESCRIPTION` disclaims for the
+    OPPOSITE direction ("cancelled while the task keeps running").
+    `mark_cancel_requested` is the REAL production method `/tasks
+    cancel`'s own `cancel_task` op calls (task_verbs.py) — no stand-in."""
+    settled: "list[dict]" = []
+
+    async def _dispatch_task_settled(kind: str, payload: dict) -> None:
+        settled.append(payload)
+
+    handler, state, chains = _build_handler(
+        tmp_path, dispatch_task_settled=_dispatch_task_settled,
+    )
+    from reyn.runtime.task_types import Requester
+    await chains.register(
+        chain_id="task-1", depth=1, original_text="please help",
+        sender="specialist", waiting_on={"peer"},
+        requester=Requester(agent_name="specialist", session_id="main"),
+        origin_depth=1, kind="prompt", cancel=lambda: None,
+    )
+    await chains.mark_cancel_requested("task-1")
+
+    await handler.handle_agent_response({
+        "from_agent": "peer", "response": "peer's reply", "depth": 1,
+        "chain_id": "task-1",
+    })
+
+    (payload,) = settled
+    assert payload["status"] == "cancelled", (
+        f"an operator-cancelled task must settle as cancelled, not "
+        f"{payload['status']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_settled_reports_ok_when_never_cancelled(tmp_path: Path) -> None:
+    """Tier 2: the accept-side sibling — an ordinary, never-cancelled
+    prompt task's task_settled still reports "ok" (this fix must not flip
+    the default)."""
+    settled: "list[dict]" = []
+
+    async def _dispatch_task_settled(kind: str, payload: dict) -> None:
+        settled.append(payload)
+
+    handler, state, chains = _build_handler(
+        tmp_path, dispatch_task_settled=_dispatch_task_settled,
+    )
+    from reyn.runtime.task_types import Requester
+    await chains.register(
+        chain_id="task-2", depth=1, original_text="please help",
+        sender="specialist", waiting_on={"peer"},
+        requester=Requester(agent_name="specialist", session_id="main"),
+        origin_depth=1, kind="prompt", cancel=lambda: None,
+    )
+
+    await handler.handle_agent_response({
+        "from_agent": "peer", "response": "peer's reply", "depth": 1,
+        "chain_id": "task-2",
+    })
+
+    (payload,) = settled
+    assert payload["status"] == "ok"

@@ -640,6 +640,20 @@ class InterAgentMessaging:
             # on_settle="drop" (a future caller could pass it) genuinely
             # means nothing is surfaced, not "surfaced anyway, plus
             # settle() also ran a no-op disposition."
+            # #5654 fix-forward (architect §1.6, lead-coder review on
+            # #5661): captured BEFORE settle() below — ``settle()`` deletes
+            # the chain record immediately (ADR-0040 D4, no terminal-status
+            # retention), so ``pending`` itself is gone by the time
+            # task_settled is dispatched. ``cancel_requested_at`` is
+            # ChainManager's own durable, request-time-independent record
+            # of "an operator asked to cancel this" (#5654's own
+            # ``mark_cancel_requested`` — set the moment the request lands,
+            # not when/whether the target's turn actually stops by then) —
+            # the correct ground truth here, unlike a live cancel-flag
+            # check, which would read the CALLER's own turn-cancel state
+            # (irrelevant: it's the TARGET's turn that was asked to stop).
+            _was_cancelled = pending.cancel_requested_at is not None
+
             async def _deliver() -> None:
                 self._append_history(
                     "user", injected_text, _now_iso(), history_meta,
@@ -661,11 +675,21 @@ class InterAgentMessaging:
             if self._dispatch_task_settled is not None:
                 from reyn.hooks.schema_registry import build_hook_payload
 
+                # #5654 fix-forward: before this fix, status was hard-coded
+                # "ok" regardless of ``_was_cancelled`` — the same silent
+                # lie ``task_verbs.py``'s own ``_CANCEL_TASK_DESCRIPTION``
+                # disclaims for the OPPOSITE direction ("cancelled while
+                # the task keeps running"): an operator-cancelled prompt
+                # task settling as "ok" is cancellation reported as
+                # success. The pipeline path (``PipelineExecutorDriver.
+                # _finish``) already passes its own real status
+                # ("ok"/"failed"/"cancelled") the same way — this closes
+                # the asymmetry.
                 await self._dispatch_task_settled(
                     "task_settled",
                     build_hook_payload(
                         "task_settled", task_id=chain_id, kind="prompt",
-                        status="ok",
+                        status="cancelled" if _was_cancelled else "ok",
                         session=self._session_id_fn() if self._session_id_fn else "main",
                         result=response,
                     ),
