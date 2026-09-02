@@ -195,12 +195,33 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             if ctx.media_store is None:
                 media_blocks.append(item)
                 continue
-            media_blocks.append(ctx.media_store.save_media(
-                raw_bytes, mime_type=mime,
-                chain_id=ctx.run_id or "",
-                tool=f"mcp_{op.server}_{op.tool}",
-                seq=idx,
-            ))
+            # #5653: MediaStore.save_media now runs the project-wide
+            # storage cap pre-check (_evict_cross_session_over_cap) and
+            # can raise MediaStoreWriteUnavailable — this loop processes
+            # potentially MANY images in one mcp result, so an unhandled
+            # raise here would abort the whole loop (losing every OTHER
+            # already-processed image too, not just this one) once it
+            # propagated to dispatch_tool's generic `except Exception`.
+            # Degrades exactly like the `ctx.media_store is None` branch
+            # just above (append the raw inline-base64 item unchanged,
+            # keep processing the rest of the batch) rather than the
+            # denial_notes/text-note shape used for a PermissionError
+            # above — that shape drops the image; this one keeps it.
+            from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+            try:
+                media_blocks.append(ctx.media_store.save_media(
+                    raw_bytes, mime_type=mime,
+                    chain_id=ctx.run_id or "",
+                    tool=f"mcp_{op.server}_{op.tool}",
+                    seq=idx,
+                ))
+            except MediaStoreWriteUnavailable:
+                ctx.events.emit(
+                    "mcp_media_write_unavailable",
+                    server=op.server, tool=op.tool,
+                    size_bytes=len(raw_bytes), mime_type=mime,
+                )
+                media_blocks.append(item)
         else:
             media_blocks.append(item)
     if denial_notes:

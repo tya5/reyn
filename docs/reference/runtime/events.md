@@ -89,6 +89,7 @@ exec_threat_blocked
 exec_threat_match
 file_changed
 file_read_media_denied
+file_read_media_write_unavailable
 force_close_triggered
 hook_changed
 hook_drain_task_died
@@ -128,6 +129,7 @@ mcp_install_probe_failed
 mcp_install_threat_blocked
 mcp_install_threat_match
 mcp_media_denied
+mcp_media_write_unavailable
 mcp_progress
 mcp_prompt_get
 mcp_prompt_get_cancelled
@@ -273,6 +275,7 @@ visibility_changed
 web_fetch_completed
 web_fetch_failed
 web_fetch_media_denied
+web_fetch_media_write_unavailable
 web_fetch_ssrf_blocked
 web_fetch_started
 web_fetch_too_large
@@ -407,6 +410,7 @@ Each Control IR op kind emits its own event:
 | `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `argv0_resolved`, `backend`; `completed`: `argv`, `argv0_resolved`, `backend`, `returncode`, `denial_class`. `argv0_resolved` (#2820) is the absolute path actually executed: a version-manager shim (`~/.pyenv/shims/python3`) is resolved to its real binary by reading the manager's on-disk layout (part A — filesystem-only, no subprocess) so the sandbox runs the real binary directly instead of the shim, whose launch-`fork()` would die under `(deny process-fork)`; equals the plain PATH resolution for a non-shim command, or the unchanged `argv[0]` when resolution is unavailable (fail-open). `denial_class` is `"fork_denied"` when the sandbox blocked `fork()` at a PATH launcher/shim (pyenv/asdf/mise/npx/uvx) under `(deny process-fork)`, `"network_denied"` when it blocked outbound `connect()` because the op's own `network` field is unset/false (#5244①), else `null` — an environment/config condition, not a tool failure |
 | `mcp_called`, `mcp_completed`, `mcp_failed`, `mcp_cancelled` | MCP tool ops — `mcp_cancelled` (#2813) fires instead of `mcp_completed`/`mcp_failed` when a Ctrl-C `cancel_event` interrupts an in-flight call before it completes |
 | `mcp_media_denied` | #4946 — an MCP tool response carried an image whose byte size the multi-modal gate (`require_media_load`, same shared gate as `file_read_media_denied`/`web_fetch_media_denied`) rejected under `multimodal.on_oversize=deny` (or an `ask` prompt the operator declined). Gated PER IMAGE, not per call — an MCP tool can return several images in one response, and one oversized image is dropped (replaced with a text denial note) without discarding the rest of the result. `server`, `tool`, `size_bytes`, `mime_type` |
+| `file_read_media_write_unavailable`, `mcp_media_write_unavailable`, `web_fetch_media_write_unavailable` | #5653 — `MediaStore.save_media` raised `MediaStoreWriteUnavailable` (the project-wide `storage.max_bytes` pre-check, `_evict_cross_session_over_cap`, refused this write) — a DIFFERENT gate than `*_media_denied` above (size cap vs. storage cap). Each site degrades to the SAME inline-base64 shape it already uses for "no MediaStore configured" (never a raw path-ref); `mcp`'s own version fires PER IMAGE inside its batch loop (mirrors `mcp_media_denied`'s own per-image gating) and keeps the image (unlike `mcp_media_denied`, which drops it) rather than aborting the rest of the result. `size_bytes`, `mime_type`, plus `path`/`url`/`server`+`tool` per site matching its own `*_media_denied` sibling's own identifying fields. |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
 | `mcp_install_cancelled`, `mcp_prompt_get_cancelled`, `mcp_resource_read_cancelled`, `mcp_resource_subscribe_cancelled`, `mcp_resource_unsubscribe_cancelled` | #2813 — a Ctrl-C `cancel_event` interrupted the corresponding op (install probe / get-prompt / read-resource / subscribe / unsubscribe) before it completed; the op returns `status:"cancelled"` and nothing is committed |
 | `plugin_install_started`, `plugin_install_copied`, `plugin_install_registered`, `plugin_install_completed` | `plugin_install` op's own main-flow milestones — `started`: `name`, `source_kind`; `copied`: `name`, `plugin_root`; `registered`: `name`, `registered` (the per-capability-kind registration result); `completed`: `name` |

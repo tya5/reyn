@@ -431,14 +431,39 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
         # available (= production path). Without a MediaStore (= direct
         # OpContext in tests / legacy callers) fall back to inline base64
         # so the pre-PR-C behaviour is preserved.
-        media_block: dict
+        #
+        # #5653: MediaStore.save_media now runs the project-wide storage
+        # cap pre-check (_evict_cross_session_over_cap) and can raise
+        # MediaStoreWriteUnavailable — an unhandled raise here would
+        # propagate past this function to dispatch_tool's own generic
+        # `except Exception` (core/dispatch/dispatcher.py), turning the
+        # WHOLE web_fetch call into a typed error result and discarding
+        # the page text this call already fetched, not just the image.
+        # Falling back to the SAME inline-base64 path this function
+        # already uses for "no MediaStore configured" is the smaller,
+        # idiom-matching degrade (#5364 §1.5's own "a permanently-failed
+        # write's turn keeps content inline" — the same choice
+        # cap_tool_result_content already makes for a tool-result write).
+        media_store_unavailable = False
+        media_block_ref: "dict | None" = None
         if ctx.media_store is not None:
-            media_block = ctx.media_store.save_media(
-                image_bytes, mime_type=content_type,
-                chain_id=ctx.run_id or "", tool="web_fetch", seq=1,
-            )
+            from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+            try:
+                media_block_ref = ctx.media_store.save_media(
+                    image_bytes, mime_type=content_type,
+                    chain_id=ctx.run_id or "", tool="web_fetch", seq=1,
+                )
+            except MediaStoreWriteUnavailable:
+                media_store_unavailable = True
+        if media_block_ref is not None:
+            media_block = media_block_ref
         else:
             import base64
+            if media_store_unavailable:
+                ctx.events.emit(
+                    "web_fetch_media_write_unavailable",
+                    url=op.url, size_bytes=len(image_bytes), mime_type=content_type,
+                )
             data_b64 = base64.b64encode(image_bytes).decode("ascii")
             media_block = {
                 "type": "image", "data": data_b64, "mimeType": content_type,
@@ -448,7 +473,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
             url=op.url, status_code=response.status_code,
             content_type=content_type, content_length=len(image_bytes),
             extractor="binary", media_block_count=1,
-            stored_as=("path_ref" if ctx.media_store is not None else "inline_b64"),
+            stored_as=("path_ref" if media_block_ref is not None else "inline_b64"),
         )
         return {
             "kind": "web_fetch", "url": op.url, "status": "ok",
