@@ -44,10 +44,12 @@ exec_ = ToolDescription(
         "operator-configured default, up to the operator's own configured "
         "maximum; a request above that maximum is rejected, and the "
         "rejection names the actual maximum. If you need longer than that, "
-        "run it in the background instead (spawn an ephemeral session, or "
-        "run_pipeline with collect=\"async\") — background work runs on a "
-        "separate budget from this foreground wall-clock cap, and you can "
-        "stop it with cancel_task."
+        "run it in the background instead — collect=\"async\" starts it and "
+        "returns a task_id immediately (result arrives later via "
+        "task_settled); poll progress with describe_task (a bounded tail of "
+        "stdout+stderr as it accumulates) and stop it with cancel_task — "
+        "background work runs on a separate budget from this foreground "
+        "wall-clock cap."
     ),
     ja=(
         "サンドボックス環境内でコマンドを実行する（FP-0017）。サンドボックス"
@@ -57,9 +59,11 @@ exec_ = ToolDescription(
         "timeout: 任意 — オペレーター設定の既定タイムアウトを、オペレーター"
         "自身が設定した上限まで延長できる。上限を超える要求は拒否され、"
         "拒否時に実際の上限値が示される。それ以上必要な場合はバックグラウン"
-        "ドで実行すること（一時セッションを生成する、または run_pipeline を"
-        "collect=\"async\" で使う）— バックグラウンドの作業はこの前景ウォー"
-        "ルクロック上限とは別の予算で動作し、cancel_task で停止できる。"
+        "ドで実行すること — collect=\"async\" を指定すると即座に task_id が"
+        "返り（結果は後で task_settled として届く）、describe_task で進捗"
+        "（蓄積中の stdout/stderr の末尾）を確認でき、cancel_task で停止でき"
+        "る — バックグラウンドの作業はこの前景ウォールクロック上限とは別の"
+        "予算で動作する。"
     ),
 )
 
@@ -111,6 +115,31 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "の既定値を延長する。オペレーター自身が設定した上限で頭打ち"
                 "になり、上限を超える要求は拒否され、拒否時に実際の上限値が"
                 "示される。"
+            ),
+        ),
+        # #4733: optional, one declared value ("async"). Omitting it keeps
+        # exec synchronous — byte-identical to before this parameter
+        # existed; there is no separate "attached" value to declare (sync
+        # IS what omission already means).
+        "collect": ParamDescription(
+            text=(
+                "Optional — pass \"async\" to run this command in the "
+                "background: returns {\"status\": \"started\", \"data\": "
+                "{\"task_id\": ...}} immediately instead of waiting for the "
+                "command to finish. The result (returncode + a ref to the "
+                "captured output) arrives later via task_settled. While it "
+                "runs, describe_task(task_id) returns a bounded tail of the "
+                "accumulated stdout+stderr; cancel_task(task_id) stops it. "
+                "Omit for the normal synchronous behaviour."
+            ),
+            ja=(
+                "任意 — \"async\" を指定するとバックグラウンド実行になる: "
+                "コマンドの完了を待たず即座に {\"status\": \"started\", "
+                "\"data\": {\"task_id\": ...}} を返す。結果（returncode と"
+                "出力への参照）は後で task_settled として届く。実行中は "
+                "describe_task(task_id) が蓄積中の stdout/stderr の末尾"
+                "（有界）を返し、cancel_task(task_id) で停止できる。省略時"
+                "は通常の同期動作。"
             ),
         ),
     },

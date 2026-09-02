@@ -69,12 +69,19 @@ def _sync_runner(
     stdin: bytes | None = None,
     timeout: int | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> SandboxResult:
     """Real sync runner: spawn argv via ``subprocess.Popen`` + the SAME capped
     reader every other sandbox backend uses (``communicate_capped``, #3822/
     #3837's own finding: Docker was the one launch route still doing a plain
     ``capture_output=True`` — unbounded — read, the exact shape #3837 fixed
-    for CodeAct). A flooding in-container process can no longer OOM the host."""
+    for CodeAct). A flooding in-container process can no longer OOM the host.
+
+    ``sink`` (#4733 §3-a): forwarded verbatim — this backend's own drain
+    uses the SAME ``communicate_capped`` every other backend does, so it
+    achieves the identical full-stream tee semantics, no degraded-parity
+    warning needed (unlike a hypothetical container transport that couldn't
+    reach a real ``communicate_capped`` call at all)."""
     try:
         proc = subprocess.Popen(
             argv,
@@ -86,7 +93,7 @@ def _sync_runner(
         return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
     try:
         stdout_b, stderr_b, truncated = communicate_capped(
-            proc, input=stdin, max_bytes=max_bytes, timeout=timeout,
+            proc, input=stdin, max_bytes=max_bytes, timeout=timeout, sink=sink,
         )
     except subprocess.TimeoutExpired as exc:
         proc.kill()
@@ -108,13 +115,16 @@ async def _async_runner(
     stdin: bytes | None = None,
     timeout: int | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> SandboxResult:
     """Real async runner for run() — mirrors ``_sync_runner`` above (and every
     other sandbox backend's own blocking-path pattern: a real ``Popen`` drained
     off the event loop via ``run_in_executor``, not ``asyncio.create_subprocess_exec``
     + plain ``communicate()``, so the SAME output cap applies here (#3822/#3837).
     ``cancel_event`` support is a separate, larger follow-up (#3822's own
-    measurement recorded this as a distinct gap) — this fix is output-cap only."""
+    measurement recorded this as a distinct gap) — this fix is output-cap only.
+
+    ``sink`` (#4733 §3-a): forwarded verbatim, same as ``_sync_runner``."""
     try:
         proc = subprocess.Popen(
             argv,
@@ -130,7 +140,7 @@ async def _async_runner(
     def _drain() -> SandboxResult:
         try:
             stdout_b, stderr_b, truncated = communicate_capped(
-                proc, input=stdin, max_bytes=max_bytes, timeout=timeout,
+                proc, input=stdin, max_bytes=max_bytes, timeout=timeout, sink=sink,
             )
         except subprocess.TimeoutExpired as exc:
             proc.kill()
@@ -636,6 +646,7 @@ class DockerEnvironmentBackend:
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
         cwd: str | None = None, cancel_event: "asyncio.Event | None" = None,
         hook_process_context: "HookProcessContext | None" = None,
+        sink: "Callable[[int, bytes], None] | None" = None,
     ) -> SandboxResult:
         """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
 
@@ -690,7 +701,7 @@ class DockerEnvironmentBackend:
             ]
             return await self._runner(
                 exec_argv, stdin=stdin, timeout=policy.timeout_seconds,
-                max_bytes=policy.max_output_bytes,
+                max_bytes=policy.max_output_bytes, sink=sink,
             )
 
         # #3862 cancel-aware path. Killing the HOST-side `docker exec` client
@@ -742,6 +753,7 @@ class DockerEnvironmentBackend:
             lambda: communicate_capped(
                 proc, max_bytes=policy.max_output_bytes,
                 timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
+                sink=sink,
             ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())

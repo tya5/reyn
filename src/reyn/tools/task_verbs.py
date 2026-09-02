@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES
 from reyn.core.offload.canonical import (
     cancel_task_to_canonical,
     describe_task_to_canonical,
@@ -47,9 +48,44 @@ def _inbox_depth(ctx: ToolContext) -> "int | None":
     return getattr(rs, "session_inbox_depth", None) if rs is not None else None
 
 
+def _exec_output_preview(output_path: "str | None") -> "dict[str, Any] | None":
+    """#4733 §3-a: for a ``kind="exec"`` task — read the tee'd output file
+    FRESH (no cursor — see ``session_api.run_exec_async``'s own docstring
+    for why) and return a bounded head/tail preview + the path ref, the
+    SAME shape (preview text + path + content_hash) the general tool-
+    result-cap offload path already uses (``tool_result_cap.py``), so a
+    reader already familiar with that shape recognizes this one. ``None``
+    when there is no path (a non-exec task, or the runner hasn't opened
+    the file yet) or the file cannot currently be read (race with the
+    runner's own open/close — treated as "nothing to show yet", not an
+    error: the NEXT describe_task call reads it once it exists)."""
+    if not output_path:
+        return None
+    import hashlib
+    from pathlib import Path
+
+    path = Path(output_path)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    content_hash = hashlib.sha256(data).hexdigest()
+    if len(data) <= MAX_CONTROL_IR_RESULT_INLINE_BYTES:
+        preview = data.decode("utf-8", errors="replace")
+    else:
+        half = MAX_CONTROL_IR_RESULT_INLINE_BYTES // 2
+        head = data[:half].decode("utf-8", errors="replace")
+        tail = data[-half:].decode("utf-8", errors="replace")
+        preview = (
+            f"{head}\n...[truncated: {len(data)} bytes total — "
+            f'full output: read_file(path="{output_path}")]...\n{tail}'
+        )
+    return {"preview": preview, "path": output_path, "content_hash": content_hash}
+
+
 def _describe(chain: Any, *, inbox_depth: "int | None" = None) -> dict[str, Any]:
     requester = chain.requester
-    return {
+    described = {
         "task_id": chain.chain_id,
         "kind": chain.kind,
         "status": chain.status.value,
@@ -67,6 +103,14 @@ def _describe(chain: Any, *, inbox_depth: "int | None" = None) -> dict[str, Any]
             "session_id": requester.session_id,
         },
     }
+    # #4733 §3-a: kind="exec" ONLY — bounded tail + path ref of the tee'd
+    # output file, read fresh every call (no cursor). Every other kind's
+    # shape is unaffected (chain.output_path is None for them).
+    if chain.kind == "exec":
+        output = _exec_output_preview(getattr(chain, "output_path", None))
+        if output is not None:
+            described["output"] = output
+    return described
 
 
 # ── describe_task ────────────────────────────────────────────────────────────
@@ -158,6 +202,13 @@ async def _handle_list_tasks(args: Mapping[str, Any], ctx: ToolContext) -> ToolR
             continue
         described = _describe(chain, inbox_depth=inbox_depth)
         del described["requester"]  # list view: {task_id, kind, status, session, session_inbox_depth}
+        # #4733 §3-a: the bounded-tail "output" preview _describe() adds for
+        # kind="exec" is describe_task-only — a listing enumerates possibly
+        # many tasks at once, and re-reading + previewing every exec task's
+        # output file on each list_tasks call would scale with task count,
+        # not with what the caller actually asked to inspect. Use
+        # describe_task(task_id) for that one task's output.
+        described.pop("output", None)
         tasks.append(described)
     return {"tasks": tasks}
 

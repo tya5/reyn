@@ -1797,6 +1797,29 @@ class RouterHostAdapter:
             prompt=prompt,
         )
 
+    async def run_exec_async(
+        self, *, argv: "list[str]", timeout_seconds: "int | None" = None,
+    ) -> dict:
+        """#4733 — ``exec(collect="async")``: thin wiring layer only, mirroring
+        ``run_prompt_async`` above — all the real logic (chain registration,
+        the background ``asyncio.Task``, the tee-to-file, settle+task_settled)
+        lives in ``session_api.run_exec_async``. This method's only job is to
+        supply the CALLER's own identity. Unlike ``run_prompt_async``/
+        ``run_prompt_result`` above, this needs no OTHER live session to
+        resolve — the task runs against THIS SAME session — so there is no
+        ``self._registry is None`` refusal here; ``session_api.run_exec_async``
+        raises its own ``RuntimeError`` if the caller session itself somehow
+        cannot be resolved (mis-wiring), which is refusal enough."""
+        from reyn.runtime.session_api import run_exec_async as _run_exec_async
+
+        return await _run_exec_async(
+            self._registry,
+            caller_agent=self._agent_name,
+            caller_sid=self.live_session_id or "main",
+            argv=argv,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def _spawn_limit_checkpoint(
         self, *, kind: str, prompt: str, detail: str,
         extension_amount: float, run_id: str,

@@ -149,7 +149,7 @@ def test_run_is_login_shell_docker_exec_no_bridge(tmp_path: Path) -> None:
     """
     calls: list[list[str]] = []
 
-    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None) -> SandboxResult:
+    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None, sink=None) -> SandboxResult:
         calls.append(argv)
         return SandboxResult(returncode=0, stdout=b"out", stderr=b"")
 
@@ -185,7 +185,7 @@ def test_run_adds_i_flag_only_when_stdin_provided(tmp_path: Path) -> None:
     """
     calls: list[list[str]] = []
 
-    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None) -> SandboxResult:
+    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None, sink=None) -> SandboxResult:
         calls.append(argv)
         return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
 
@@ -225,7 +225,7 @@ def test_run_argv_passed_as_positional_params_not_interpolated(tmp_path: Path) -
     """
     calls: list[list[str]] = []
 
-    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None) -> SandboxResult:
+    async def _record_runner(argv, *, stdin=None, timeout=None, max_bytes=None, sink=None) -> SandboxResult:
         calls.append(argv)
         return SandboxResult(returncode=0, stdout=b"", stderr=b"")
 

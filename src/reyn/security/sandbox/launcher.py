@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .denial import classify_denial
 
@@ -89,6 +89,7 @@ async def run_and_classify(
     stdin: bytes | None = None,
     cancel_event: "asyncio.Event | None" = None,
     hook_process_context: "HookProcessContext | None" = None,
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> LaunchResult:
     """Run *argv* under *policy* on the already-resolved *backend*, classify
     the result. The shared tail every agent-reachable launch route already
@@ -109,10 +110,15 @@ async def run_and_classify(
     this parameter existed). Passed straight through to ``backend.run()``,
     same as ``cwd``/``cancel_event`` — this function does not interpret it
     itself; each backend decides how (or whether) to translate it, per
-    that Protocol method's own docstring."""
+    that Protocol method's own docstring.
+
+    ``sink`` (#4733 §3-a, architect ruling 2026-09-02): forwarded
+    verbatim to ``backend.run()`` — see ``SandboxBackend.run``'s own
+    docstring for the full contract. ``None`` for every caller before
+    #4733 (byte-identical)."""
     result = await backend.run(
         argv, policy, cwd=cwd, stdin=stdin, cancel_event=cancel_event,
-        hook_process_context=hook_process_context,
+        hook_process_context=hook_process_context, sink=sink,
     )
     denial_class = classify_denial(result.returncode, result.stderr)
     return LaunchResult(result=result, denial_class=denial_class)

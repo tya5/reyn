@@ -76,6 +76,18 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             "type": "integer",
             "description": _execution_descriptions.PARAMS["exec"]["timeout"].text,
         },
+        # #4733: optional — omitted (the default) keeps exec fully
+        # synchronous, byte-identical to before this parameter existed.
+        # The ONLY declared value is "async" (unlike run_prompt's
+        # ["attached", "async"] pair): exec has no "attached"-vs-omitted
+        # distinction to make — sync IS what omitting collect already
+        # meant, so a redundant "attached" value would just be a second
+        # spelling of the default.
+        "collect": {
+            "type": "string",
+            "enum": ["async"],
+            "description": _execution_descriptions.PARAMS["exec"]["collect"].text,
+        },
     },
     "required": ["argv"],
 }
@@ -163,6 +175,25 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     stays ``sandboxed_exec`` (#3226 Phase 3 renamed only the tool/
     qualified-name surface, not the Control IR op).
     """
+    # #4733: collect="async" dispatches to RouterCallerState.
+    # sandboxed_exec_async_fn (bound by RouterLoop, mirrors run_prompt's own
+    # collect="async" branch in run_prompt.py) instead of building an
+    # OpContext here — the async path registers a chain + spawns a
+    # background asyncio.Task on the CALLING session (session_api.
+    # run_exec_async), it does not run inline through op_runtime the way
+    # the synchronous branch below does.
+    if args.get("collect") == "async":
+        rs = ctx.router_state
+        if rs is None or rs.sandboxed_exec_async_fn is None:
+            raise RuntimeError(
+                'exec(collect="async") handler requires '
+                "ctx.router_state.sandboxed_exec_async_fn to be populated "
+                "by the dispatcher (= RouterLoop)."
+            )
+        return await rs.sandboxed_exec_async_fn(
+            argv=args["argv"], timeout_seconds=args.get("timeout"),
+        )
+
     from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
 

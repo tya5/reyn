@@ -140,6 +140,16 @@ class RouterCallerState:
     # when the host doesn't support multi-session delivery.
     run_prompt_async_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # #4733 — exec(collect="async") dispatch: runs argv under THIS session's
+    # own sandbox policy as a background asyncio.Task on this SAME session's
+    # loop (no target session to resolve, unlike run_prompt_async_fn above)
+    # and returns a task_id IMMEDIATELY (session_api.run_exec_async); the
+    # result arrives later via task_settled. Bound by RouterLoop the same
+    # hasattr-gated way as run_prompt_async_fn — None only for a narrower
+    # test-double host that doesn't implement RouterHostAdapter's full
+    # surface (every real host does).
+    sandboxed_exec_async_fn: Callable[..., Awaitable[Any]] | None = None
+
     # Session-scoped chain identity (= for plan tool, delegate
     # tool, etc.)
     chain_id: str | None = None

@@ -351,7 +351,7 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `schemas/models.py`.
 | `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` (six fine-grained registry kinds) |
 | `ask_user` | Pause the run, collect the user's answer via the intervention bus |
 | `present` | Route bulk data + a declarative display template to the user surface without the data passing through LLM output tokens (Tier 0, fire-and-continue) |
-| `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend |
+| `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend. #4733: `exec(collect="async")` runs it as a background `asyncio.Task` on the caller's own session (no session spawned) — returns a `task_id` immediately, `describe_task` returns a bounded tail of stdout+stderr as it accumulates (tee'd to a file under the caller's `MediaStore.history_content_dir`, no cursor), and completion delivers `returncode` + the output ref (never the body) via `task_settled`; `cancel_task` stops only that one exec |
 | `web_search` | DuckDuckGo search — Tier 1, default-allow |
 | `web_fetch` | URL fetch + text extract — Tier 1, default-allow |
 | `mcp` | Call a configured MCP server tool by name |

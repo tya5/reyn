@@ -288,6 +288,7 @@ class SandboxBackend(Protocol):
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
+        sink: "Callable[[int, bytes], None] | None" = None,
     ) -> SandboxResult:
         """Execute argv under the given policy and return the result.
 
@@ -320,7 +321,27 @@ class SandboxBackend(Protocol):
         through unconditionally — it is a bare identity string, equally
         true on either side of that boundary; see the concrete backend's
         own docstring for which it does. ``None`` = no ``REYN_*`` env
-        additions at all — byte-identical to every pre-#5084 caller."""
+        additions at all — byte-identical to every pre-#5084 caller.
+
+        ``sink`` (#4733 §3-a, architect ruling 2026-09-02, revised after
+        this Protocol was initially believed backend-free — the 7 real
+        ``communicate_capped`` call sites across the 3 concrete backends
+        make an every-call-site forward unavoidable): an optional
+        ``(fd_kind, data) -> None`` callback, forwarded VERBATIM to every
+        internal ``communicate_capped`` call this implementation makes —
+        see that function's own docstring for the full contract
+        (``FD_STDOUT``/``FD_STDERR``, called before the in-memory cap,
+        exception-guarded). ``None`` (every pre-#4733 caller) is
+        byte-identical to before this parameter existed. Written by the
+        PARENT process (this backend's own drain loop) — a concrete
+        implementation passes ``sink`` straight through to
+        ``communicate_capped``; it does not itself interpret the bytes,
+        the same "thin forward, no interpretation" posture
+        ``hook_process_context`` above already documents. A backend that
+        cannot honor the SAME full-stream semantics as the others (a
+        container backend routing output through a different transport)
+        emits exactly ONE warning disclosing the gap rather than silently
+        under-delivering — see that backend's own docstring."""
         ...
 
 

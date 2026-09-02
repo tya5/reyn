@@ -10,11 +10,18 @@ threat scan below stay handler-local (not shared — see the launcher
 module's own docstring for why).
 
 Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
+
+`run_sandboxed_exec` (#4733 §3-a) is the real body, factored out of the
+op-dispatch entry point `handle` so `session_api.run_exec_async` (the
+background/async `exec` path) can reuse every line of it, differing only
+in the optional `sink` tee callback — see `run_sandboxed_exec`'s own
+docstring.
 """
 from __future__ import annotations
 
 import logging
 import os
+from typing import Callable
 
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy
@@ -36,6 +43,31 @@ async def handle(
     op: SandboxedExecIROp,
     ctx: OpContext,
 ) -> dict:
+    """The op-dispatch entry point (fixed ``(op, ctx)`` signature every
+    op-kind handler shares — see ``execute_op``). Thin wrapper over
+    :func:`run_sandboxed_exec` with ``sink=None`` — byte-identical to
+    before #4733."""
+    return await run_sandboxed_exec(op, ctx, sink=None)
+
+
+async def run_sandboxed_exec(
+    op: SandboxedExecIROp,
+    ctx: OpContext,
+    *,
+    sink: "Callable[[int, bytes], None] | None" = None,
+) -> dict:
+    """The real handler body, factored out of :func:`handle` (#4733 §3-a)
+    so ``session_api.run_exec_async`` can reuse EVERY line of this
+    handler's logic (threat scan, backend resolution, policy/timeout
+    resolution, argv0 resolution, the started/completed/cancelled audit-
+    events) for the background/async ``exec`` path, differing ONLY in
+    ``sink`` — the callback that tees stdout/stderr to the async runner's
+    own file handle as bytes arrive (see ``communicate_capped``'s own
+    docstring for the full contract). ``handle`` (the op-dispatch entry
+    point above) always passes ``sink=None``, so the SYNCHRONOUS ``exec``
+    tool call this handler was written for is completely unaffected by
+    this refactor — same behaviour, same return shape, sink simply never
+    fires for it."""
     # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
     # any exec. A block-severity hit denies via the permission-deny channel
     # (PermissionError → execute_op status="denied", decision-enabling); a warn
@@ -255,6 +287,7 @@ async def handle(
 
     launched = await run_and_classify(
         backend, effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
+        sink=sink,
     )
     result = launched.result
 

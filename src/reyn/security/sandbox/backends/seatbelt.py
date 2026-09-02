@@ -28,7 +28,7 @@ import signal
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from reyn.security.sandbox._derivation_cache import cached_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
@@ -440,6 +440,7 @@ class SeatbeltBackend:
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
+        sink: "Callable[[int, bytes], None] | None" = None,
     ) -> SandboxResult:
         """Execute *argv* under the SBPL policy derived from *policy*.
 
@@ -510,6 +511,7 @@ class SeatbeltBackend:
                             input=stdin,
                             max_bytes=policy.max_output_bytes,
                             timeout=policy.timeout_seconds,
+                            sink=sink,
                         )
                         return SandboxResult(
                             returncode=proc.returncode,
@@ -560,6 +562,7 @@ class SeatbeltBackend:
                 lambda: communicate_capped(
                     proc, max_bytes=policy.max_output_bytes,
                     timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
+                    sink=sink,
                 ),
             )
             cancel_task = asyncio.create_task(cancel_event.wait())

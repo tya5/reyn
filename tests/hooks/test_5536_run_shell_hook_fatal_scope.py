@@ -57,7 +57,7 @@ class _RaisingBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None):
         raise self._exc_factory()
 
 

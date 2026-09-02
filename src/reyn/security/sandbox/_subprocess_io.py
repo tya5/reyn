@@ -25,6 +25,7 @@ re-fixed per site.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import select as _select
 import selectors
@@ -33,6 +34,9 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Callable
+
+_logger = logging.getLogger(__name__)
 
 # 10 MiB — single source for the per-stream subprocess-output ceiling. Distinct
 # from the HTTP download ceiling (``reyn._http_limits.MAX_DOWNLOAD_BYTES``): this
@@ -43,6 +47,46 @@ _READ_CHUNK = 32768
 # Writing <= PIPE_BUF bytes to a ready pipe fd does not block (POSIX atomicity).
 _PIPE_BUF = getattr(_select, "PIPE_BUF", 512)
 
+# #4733 §3-a I/O ruling (architect, 2026-09-02): the ``fd_kind`` a ``sink``
+# callback receives alongside each chunk — the POSIX fd numbers a child's
+# stdout/stderr are conventionally attached to (1/2), reused here rather than
+# inventing a new small enum for a 2-value distinction. If a caller directs
+# both streams at ONE file, byte order between the two is NOT preserved
+# (each stream is drained independently as it becomes ready) — a caller that
+# cares about interleaving order must route stdout/stderr to separate sinks.
+FD_STDOUT = 1
+FD_STDERR = 2
+
+
+def _guarded_sink(
+    sink: "Callable[[int, bytes], None] | None",
+) -> "Callable[[int, bytes], None] | None":
+    """Wrap ``sink`` so ITS OWN exception cannot break the drain loop (#4733
+    §3-a): a caller's sink is typically a file write (the async-exec runner's
+    OWN file handle, per §3's MediaStore-has-no-append-API asymmetry) and a
+    disk-full / permission failure there must not cost the exec its
+    returncode or captured (capped) in-memory output. Drops the sink after
+    its FIRST failure (not one retry per chunk — a failing sink is assumed to
+    keep failing) and logs exactly ONE warning, not one per chunk."""
+    if sink is None:
+        return None
+    state = {"failed": False}
+
+    def _wrapped(fd_kind: int, data: bytes) -> None:
+        if state["failed"]:
+            return
+        try:
+            sink(fd_kind, data)
+        except Exception:
+            state["failed"] = True
+            _logger.warning(
+                "communicate_capped: sink raised — dropping it for the "
+                "remainder of this drain (returncode/capped output are "
+                "unaffected)", exc_info=True,
+            )
+
+    return _wrapped
+
 
 def communicate_capped(
     proc: subprocess.Popen,
@@ -50,10 +94,25 @@ def communicate_capped(
     input: bytes | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
     timeout: "float | None",
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> tuple[bytes, bytes, bool]:
     """Drain ``proc`` like ``proc.communicate(input, timeout)`` but cap stdout and
     stderr at ``max_bytes`` each (drain-and-discard the excess → bounded memory,
     preserved return code).
+
+    ``sink`` (#4733 §3-a, architect ruling 2026-09-02): an optional
+    ``(fd_kind, data) -> None`` callback invoked with EVERY chunk read from
+    stdout (``FD_STDOUT``) or stderr (``FD_STDERR``), called BEFORE the cap
+    check below — so a caller that wants the FULL stream (e.g. tee'd to a
+    file for a still-running background exec to read a growing tail from,
+    #4733's own async-exec) sees everything even past ``max_bytes``, while
+    the in-memory ``(stdout, stderr, truncated)`` this function returns stays
+    capped exactly as before. ``None`` (the default) is byte-identical to
+    every one of this function's 18 existing call sites — nothing changes
+    for a caller that doesn't pass it. A ``sink`` exception is caught and
+    logged once, then dropped for the rest of this call (see
+    :func:`_guarded_sink`) — this function's own contract (returncode +
+    capped output) never depends on the sink succeeding.
 
     Returns ``(stdout, stderr, truncated)``. Raises
     :class:`subprocess.TimeoutExpired` (carrying the partial captured output) if
@@ -87,10 +146,10 @@ def communicate_capped(
     """
     if sys.platform == "win32":
         return _communicate_capped_threads(
-            proc, input=input, max_bytes=max_bytes, timeout=timeout
+            proc, input=input, max_bytes=max_bytes, timeout=timeout, sink=sink,
         )
     return _communicate_capped_selectors(
-        proc, input=input, max_bytes=max_bytes, timeout=timeout
+        proc, input=input, max_bytes=max_bytes, timeout=timeout, sink=sink,
     )
 
 
@@ -100,6 +159,7 @@ def _communicate_capped_threads(
     input: bytes | None,
     max_bytes: int,
     timeout: float | None,
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> tuple[bytes, bytes, bool]:
     """Windows drain: one daemon thread per stream (``select()`` can't poll pipe fds on Windows).
 
@@ -118,12 +178,20 @@ def _communicate_capped_threads(
             proc.args, timeout, output=bytes(stdout_buf), stderr=bytes(stderr_buf)
         )
 
-    def _drain(stream, buf: bytearray) -> None:
+    _sink = _guarded_sink(sink)
+
+    def _drain(stream, buf: bytearray, fd_kind: int) -> None:
         try:
             while True:
                 data = stream.read1(_READ_CHUNK)
                 if not data:  # EOF
                     break
+                # #4733 §3-a: the sink sees every chunk, BEFORE the cap
+                # check below — the file gets the full stream even past
+                # max_bytes, the in-memory buf stays capped exactly as
+                # before.
+                if _sink is not None:
+                    _sink(fd_kind, data)
                 room = max_bytes - len(buf)
                 if room > 0:
                     buf += data[:room]
@@ -152,9 +220,13 @@ def _communicate_capped_threads(
 
     threads: list[threading.Thread] = []
     if proc.stdout is not None:
-        threads.append(threading.Thread(target=_drain, args=(proc.stdout, stdout_buf), daemon=True))
+        threads.append(
+            threading.Thread(target=_drain, args=(proc.stdout, stdout_buf, FD_STDOUT), daemon=True)
+        )
     if proc.stderr is not None:
-        threads.append(threading.Thread(target=_drain, args=(proc.stderr, stderr_buf), daemon=True))
+        threads.append(
+            threading.Thread(target=_drain, args=(proc.stderr, stderr_buf, FD_STDERR), daemon=True)
+        )
     if proc.stdin is not None:
         if input:
             threads.append(
@@ -185,6 +257,7 @@ def _communicate_capped_selectors(
     input: bytes | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
     timeout: "float | None",
+    sink: "Callable[[int, bytes], None] | None" = None,
 ) -> tuple[bytes, bytes, bool]:
     """POSIX drain via a selectors loop (3-way stdin/stdout/stderr concurrency), per-stream capped.
     The proven reference path (CPython POSIX ``Popen._communicate`` structure); see the public
@@ -192,6 +265,7 @@ def _communicate_capped_selectors(
     stdout_buf = bytearray()
     stderr_buf = bytearray()
     truncated = False
+    _sink = _guarded_sink(sink)
     input_view = memoryview(input) if input else None
     input_off = 0
     deadline = (time.monotonic() + timeout) if timeout is not None else None
@@ -238,7 +312,13 @@ def _communicate_capped_selectors(
                     sel.unregister(fobj)
                     fobj.close()
                     continue
-                buf = stdout_buf if fobj is proc.stdout else stderr_buf
+                is_stdout = fobj is proc.stdout
+                buf = stdout_buf if is_stdout else stderr_buf
+                # #4733 §3-a: sink sees every chunk, BEFORE the cap check
+                # below (see _communicate_capped_threads's own comment for
+                # the shared rationale).
+                if _sink is not None:
+                    _sink(FD_STDOUT if is_stdout else FD_STDERR, data)
                 room = max_bytes - len(buf)
                 if room > 0:
                     buf += data[:room]

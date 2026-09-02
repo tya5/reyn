@@ -1262,3 +1262,177 @@ async def run_prompt_async(
         to=target_agent, request=prompt, depth=1, chain_id=chain_id,
     )
     return {"status": "started", "data": {"task_id": chain_id}}
+
+
+async def run_exec_async(
+    registry: "AgentRegistry",
+    *,
+    caller_agent: str,
+    caller_sid: str,
+    argv: "list[str]",
+    timeout_seconds: "int | None" = None,
+) -> dict:
+    """#4733 — ``exec(collect="async")``: run *argv* under the CALLING
+    session's own sandbox policy as a plain ``asyncio.Task`` on that SAME
+    session's event loop. **No new session is spawned** — architect
+    ruling, #4733: the owner's own complexity-reduction measure ("do not
+    grow session-management machinery just for background exec") is met
+    by reusing the caller's EXISTING ``ChainManager`` as the handle and
+    the existing ``task_settled`` seam as delivery, mirroring
+    :func:`run_prompt_async` above in SHAPE (register-once, return a
+    ``task_id`` immediately) but differing in every place the two tasks'
+    own semantics differ:
+
+    - ``waiting_on=set()`` (empty), not ``{target_agent}`` — this is a
+      pipeline-shaped task (|waiting_on| == 0), not a prompt-shaped one
+      (see ``_PendingChain.kind``'s own cardinality-rule comment).
+    - No ``arm_timeout`` call — the sandbox policy this exec runs under
+      already carries its own fore/back timeout (#3903/#4193); arming a
+      SECOND, independent chain-watchdog on top would be two competing
+      deadlines for one exec, which architect's brief explicitly rejects.
+    - ``cancel`` sets a cancel_event DEDICATED to this ONE background
+      exec (never the caller's own per-turn cancel_event
+      ``make_router_op_context()`` would otherwise hand back) — the most
+      precise of this OS's 3 cancellation kinds: ``cancel_task`` on this
+      task_id stops ONLY this exec, never the caller's whole turn nor an
+      unrelated pipeline run.
+
+    Output (#4733 §3-a, architect ruling 2026-09-02 — REVISED TWICE from
+    the original brief's premise that reusing ``run_and_classify``
+    unchanged and a still-running task's tail growing were compatible;
+    they are not, since ``communicate_capped`` drain-and-discards past
+    ``max_bytes`` — see ``communicate_capped``'s own ``sink`` param):
+    stdout+stderr are teed, AS BYTES ARRIVE, into ONE file this function
+    opens and owns ITS OWN handle for. ``MediaStore.save_tool_result`` has
+    no append API (it takes a whole value, offload_value-shaped) — so
+    MediaStore is used here ONLY as the placement+GC AUTHORITY: the file
+    lives under ``MediaStore.history_content_dir`` (the SAME agent/session
+    -nested tree ``save_tool_result`` itself writes into, #4478/#5364),
+    which the SAME cross-session eviction that sweeps every other file
+    there sweeps too, since eviction walks the directory rather than
+    consulting a registry — a physically-present file gets GC'd whether
+    or not ``save_tool_result`` was the one that wrote it. Falls back to a
+    plain ``<workspace>/.reyn/tool-results/`` directory (still real,
+    on-disk, just without MediaStore's GC) when this session has no
+    MediaStore at all (``_media_store is None`` — a narrow/test session).
+    stdout and stderr are MIXED into the one file with NO ordering
+    guarantee between them (``communicate_capped``'s own documented
+    limit) — a caller that needs interleaving order is out of scope here.
+
+    ``describe_task``'s ``kind="exec"`` branch (``tools/task_verbs.py``)
+    re-reads this SAME file fresh on every call — no cursor (architect:
+    the file already holds the full text; a per-reader cursor would only
+    invent a "who clears it" question with no present need)."""
+    caller_session = registry.get_session(caller_agent, caller_sid)
+    if caller_session is None:
+        raise RuntimeError(
+            f'exec(collect="async") requires a live caller session '
+            f"({caller_agent!r}, {caller_sid!r}) — mis-wiring."
+        )
+
+    import asyncio
+    import dataclasses
+
+    from reyn.core.op_runtime.sandboxed_exec import run_sandboxed_exec
+    from reyn.schemas.models import SandboxedExecIROp
+
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=list(argv), timeout_seconds=timeout_seconds)
+    base_ctx = caller_session.router_host.make_router_op_context()
+    # #4733: a cancel_event DEDICATED to this one exec — NEVER the shared
+    # per-turn one make_router_op_context() hands back (see this
+    # function's own docstring on cancel precision).
+    cancel_event = asyncio.Event()
+    ctx = dataclasses.replace(base_ctx, cancel_event=cancel_event)
+
+    chain_id = new_chain_id()
+
+    media_store = getattr(caller_session, "_media_store", None)
+    output_dir = (
+        media_store.history_content_dir if media_store is not None
+        else caller_session.workspace_dir / ".reyn" / "tool-results"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"exec-{chain_id}.log"
+    # #4733 §3-a: the runner's OWN file handle — MediaStore has no append API.
+    output_fh = output_path.open("wb")
+
+    def _tee(fd_kind: int, data: bytes) -> None:  # noqa: ARG001 — fd_kind unused: streams are deliberately mixed (see docstring)
+        output_fh.write(data)
+        output_fh.flush()
+
+    async def _run() -> None:
+        try:
+            result = await run_sandboxed_exec(op, ctx, sink=_tee)
+        except Exception as exc:  # noqa: BLE001 — a background task's own crash must still settle (task_settled), never vanish silently
+            result = {
+                "kind": "sandboxed_exec", "status": "error",
+                "error": f'exec(collect="async") crashed: {exc}',
+                "returncode": -1, "stdout": "", "stderr": "", "truncated": False,
+            }
+        finally:
+            try:
+                output_fh.close()
+            except OSError:
+                pass
+
+        # #5662/#5654 status discipline: REAL status, never hardcoded —
+        # derived from the actual outcome, same as run_prompt_async's own
+        # settle path above.
+        settled_status = (
+            "cancelled" if cancel_event.is_set() else result.get("status", "error")
+        )
+
+        async def _drop() -> None:
+            return None
+
+        await caller_session.chains.settle(chain_id, on_settle="drop", deliver=_drop)
+
+        from reyn.hooks.schema_registry import build_hook_payload
+
+        # #4733: completion carries returncode + a ref (the output file's
+        # own path), NEVER the body — the same "never carry the body"
+        # discipline #4733's brief states for the settle path.
+        await caller_session.dispatch_external_event(
+            "task_settled",
+            build_hook_payload(
+                "task_settled", task_id=chain_id, kind="exec",
+                status=settled_status, session=caller_sid,
+                result={
+                    "returncode": result.get("returncode"),
+                    "output_path": str(output_path),
+                    "denial_class": result.get("denial_class"),
+                },
+            ),
+        )
+
+    task = asyncio.ensure_future(_run())
+    task.set_name(f"exec-async-{chain_id}")
+    # #4733 orphan-prevention: this session's own task funnel joins/cancels
+    # the background run at session teardown — same "cancel_join,
+    # appends_wal=False" shape run_prompt_async's cross-session
+    # cancel-forward already uses above (a one-shot, unrelated to
+    # rewind/WAL-quiesce semantics).
+    tracker = getattr(caller_session, "_background_tasks", None)
+    if tracker is not None:
+        tracker.register(task, disposition="cancel_join", appends_wal=False)
+
+    def _cancel_hook() -> None:
+        cancel_event.set()
+
+    await caller_session.chains.register(
+        chain_id=chain_id,
+        depth=0,
+        original_text=" ".join(argv),
+        sender=caller_agent,
+        waiting_on=set(),
+        requester=Requester(agent_name=caller_agent, session_id=caller_sid),
+        origin_depth=0,
+        kind="exec",
+        cancel=_cancel_hook,
+        output_path=str(output_path),
+    )
+    # No arm_timeout: see this function's own docstring — the sandbox
+    # policy already owns this exec's deadline, a second chain-watchdog
+    # would be a competing one.
+
+    return {"status": "started", "data": {"task_id": chain_id}}

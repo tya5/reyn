@@ -52,7 +52,7 @@ class _BackendStandIn:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None):
         return SandboxResult(returncode=0, stdout=b"ok\n", stderr=b"")
 
 
@@ -147,7 +147,7 @@ class _LandlockShapedBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None):
         return SandboxResult(returncode=0, stdout=b"ok\n", stderr=b"")
 
 
