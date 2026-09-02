@@ -152,8 +152,13 @@ async def test_project_origin_uses_project_cwd_while_agent_origin_uses_agent_cwd
 
 @pytest.mark.asyncio
 async def test_real_sessions_run_project_and_agent_hook_in_distinct_trees(tmp_path, monkeypatch):
-    """Tier 2: real sessions execute project and per-agent hooks in their declared trees."""
+    """Tier 2: real sessions execute project and per-agent hooks in their declared trees.
+
+    The child only runs a cwd probe and does not import Reyn; its script path
+    is absolute, so the subprocess pin fixture is not needed here.
+    """
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    monkeypatch.chdir(tmp_path)
     temp_root = tmp_path / "tmp"
     temp_root.mkdir()
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp_root))
