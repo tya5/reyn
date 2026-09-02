@@ -3574,7 +3574,7 @@ class AgentRegistry:
         # strictly later) — so there is NO "main"-tagged append window for the
         # spawned session. The journal is built eagerly in __init__ (set_session_id
         # propagates to the in-memory snapshot too).
-        session._session_id = new_sid
+        session.rekey_session_id(new_sid)  # #5287: was a bare field write; now bumps the capability-census generation too
         session._journal.set_session_id(new_sid)
         # FP-0043 Stage 5: re-key the spawned session's persistence to its OWN
         # per-session location so it does NOT collide with the agent's "main"

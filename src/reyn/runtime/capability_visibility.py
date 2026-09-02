@@ -207,6 +207,7 @@ class CapabilityVisibility:
         session_id_provider: "Callable[[], str | None]",
         agent_name: "str",
         available_skills_provider: "Callable[[], list[_SkillEntry] | None]",
+        capability_inputs_generation_provider: "Callable[[], int]",
         contextual_permission: "object | None" = None,
         excluded_categories: "frozenset[str] | None" = None,
         chat_tool_use_scheme: "str" = "enumerate-all",
@@ -215,6 +216,14 @@ class CapabilityVisibility:
         self._registry = registry
         self._router_host = router_host
         self._session_id_provider = session_id_provider
+        # #5287: live -- Session's own producer-owned generation covering
+        # every real mid-session input to _envelope_census (MCP roster,
+        # available skills, session_id re-key) — see Session.__init__'s
+        # own ``self._capability_inputs_generation`` comment for the 3
+        # sites this bumps at. Same live-provider idiom as
+        # session_id_provider/available_skills_provider above (never a
+        # construction-time snapshot).
+        self._capability_inputs_generation_provider = capability_inputs_generation_provider
         # Immutable for the session's lifetime (Agent is frozen), same stability class as
         # agent_name — needed by resolved_profile_for(agent_name, sid=...) in the two
         # envelope-resolving methods below.
@@ -244,14 +253,17 @@ class CapabilityVisibility:
         self._visibility_override: "dict[str, set[str]]" = {
             "tool": set(), "mcp": set(), "category": set(), "skill": set(),
         }
-        # #5276: the expensive envelope-only census's cache — see
-        # _envelope_census's own docstring. None = never computed / needs
-        # recompute; invalidated synchronously by invalidate_envelope_census
-        # — called from Session at 3 sites (grep-confirmed:
-        # `git grep invalidate_envelope_census -- src` → session.py's
-        # `_reapply_mcp`, `_reapply_skills`, `load_persisted_toggles`) —
-        # never via an EventLog subscriber, the #5279/#5284 lesson.
+        # #5287: the expensive envelope-only census's cache — see
+        # _envelope_census's own docstring. PULL-based against
+        # ``capability_inputs_generation_provider()`` — ``None`` = never
+        # computed. Replaces the pre-#5287 shape (#5276) of ``Session``
+        # calling ``invalidate_envelope_census()`` at 3 hand-enumerated
+        # mutation sites — the same defect family #5287 closes for
+        # ``hook_state``/``mcp_subscription_state``'s own caches: a 4th
+        # site added later to whatever Session field feeds this census
+        # has nothing to remind its author a cache depends on it.
         self._cached_envelope_census: "dict | None" = None
+        self._cached_envelope_generation: "int | None" = None
 
     @property
     def contextual_permission(self) -> "object | None":
@@ -685,20 +697,8 @@ class CapabilityVisibility:
             names = (names - wrapper_plumbing) | catalog_names
         return names
 
-    def invalidate_envelope_census(self) -> None:
-        """#5276: mark :attr:`_cached_envelope_census` dirty. Called
-        SYNCHRONOUSLY by ``Session`` at each of its 3 grep-confirmed
-        mutation sites (``_reapply_mcp``, ``_reapply_skills``,
-        ``load_persisted_toggles``) — NOT via an ``EventLog`` subscriber
-        (the #5279/#5284 lesson: subscriber dispatch is queued whenever a
-        loop is running, #4966, so it cannot reliably invalidate a cache
-        before a caller that mutates-then-reads-immediately observes it).
-        See :meth:`capability_visibility_state`'s own docstring for what
-        this census covers and why it is safe to memoize."""
-        self._cached_envelope_census = None
-
     def _envelope_census(self) -> dict:
-        """#5276: the EXPENSIVE, envelope-only half of
+        """#5276/#5287: the EXPENSIVE, envelope-only half of
         ``capability_visibility_state`` — memoized in
         :attr:`_cached_envelope_census`. Computes, for every reachable
         tool/mcp/category/skill, whether the AGENT ENVELOPE (topology ∩
@@ -709,6 +709,19 @@ class CapabilityVisibility:
         ``resolved_profile_for`` read, both genuinely non-trivial per-call
         costs this method exists to stop paying every render frame.
 
+        #5287: PULL-based against ``self._capability_inputs_generation_
+        provider()`` — Session's own producer-owned counter, bumped at
+        its 3 real mutation sites for this census's mid-session-mutable
+        inputs (the MCP roster, the available-skills list, and a spawn-
+        time sid re-key — see that provider's own comment on the Session
+        side for exactly where). Replaces the pre-#5287 shape (#5276) of
+        ``Session`` calling ``invalidate_envelope_census()`` explicitly at
+        3 hand-enumerated call sites — the same defect family #5287
+        closes for this file's sibling reactive caches
+        (``hook_state``/``mcp_subscription_state``): a 4th site added
+        later to whatever mutates one of these Session fields has nothing
+        to remind its author a cache depends on it.
+
         Grep-confirmed (#5276 investigation) invariant this memoization
         relies on: the ENVELOPE itself (topology bindings, the #2081
         delegate floor, #2103-S1a per-session config) is set at THIS
@@ -716,20 +729,15 @@ class CapabilityVisibility:
         live, in-session command — ``resolved_profile_for``'s answer for a
         GIVEN (agent, sid) does not change while that session keeps
         running EXCEPT for one edge the ``sid=`` argument itself exposes —
-        a session's own sid CAN be re-keyed post-construction (spawn
-        fixup; see this class's own module docstring), so ``load_persisted_
-        toggles`` (called right after a re-key) is this cache's 3rd
-        invalidation site, alongside the two below. What DOES change
-        mid-session otherwise, and this cache correctly tracks via
-        :meth:`invalidate_envelope_census`'s 3 call sites, is WHICH
-        capabilities exist to classify at all: the MCP server roster
-        (``_reapply_mcp``) and the skill registry (``_reapply_skills``)
-        can both change via hot-reload.
+        a session's own sid CAN be re-keyed post-construction
+        (``Session.rekey_session_id``, spawn fixup; see this class's own
+        module docstring), which is why that method is one of the 3 sites
+        bumping the shared generation this census now compares against.
 
         #5288 (filed, not fixed here): whether some OTHER input the active
         scheme's own ``build_presentation`` reads (e.g.
         ``list_available_agents()``, via ``_VisibilityProbeOps``) can
-        change mid-session independent of these 3 sites is not
+        change mid-session independent of the 3 tracked sites is not
         grep-verified.
 
         Returns a dict whose shape mirrors the ORIGINAL method's own 3
@@ -760,7 +768,8 @@ class CapabilityVisibility:
         )
         from reyn.tools.universal_catalog import CATEGORIES
 
-        if self._cached_envelope_census is not None:
+        gen = self._capability_inputs_generation_provider()
+        if self._cached_envelope_census is not None and self._cached_envelope_generation == gen:
             return self._cached_envelope_census
 
         base_ctx: "ContextualPermission | None" = None
@@ -816,6 +825,7 @@ class CapabilityVisibility:
             "final_unknown": final_unknown,
             "envelope_unknown": envelope_unknown,
         }
+        self._cached_envelope_generation = gen
         return self._cached_envelope_census
 
     def capability_visibility_state(

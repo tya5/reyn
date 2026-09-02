@@ -103,6 +103,16 @@ class HookDispatcher:
         resolve_exec_capture_output_cap: "Callable[[], tuple[int, str] | None] | None" = None,
     ) -> None:
         self._registry = registry
+        # #5287: a producer-owned generation counter — bumped by
+        # :meth:`replace_registry`, the sole method that reassigns
+        # ``self._registry`` after construction (grep-confirmed: `git
+        # grep 'self\._registry = ' src/reyn/hooks/dispatcher.py` finds
+        # exactly this line and the one inside ``replace_registry``).
+        # ``Session.hook_state()`` compares this against its own last-seen
+        # value to decide whether to recompute, instead of ``Session``
+        # calling an explicit invalidation method at each of ITS OWN
+        # known reload sites — see that method's own docstring.
+        self._generation = 0
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): the optional
         # per-Session Async Bus. None (the default — every pre-Phase-4a call
         # site, including every pre-Phase-4a test) keeps dispatch() byte-
@@ -177,6 +187,23 @@ class HookDispatcher:
         :meth:`replace_registry`'s live swap, same as ``dispatch()`` itself."""
         return self._registry
 
+    @property
+    def generation(self) -> int:
+        """#5287: bumped once per :meth:`replace_registry` call — a
+        producer-owned staleness token a consumer (``Session.hook_state``)
+        compares against its own last-seen value instead of this class
+        needing to know which caches exist downstream."""
+        return self._generation
+
+    def _bump_generation(self) -> None:
+        """#5287: bump :attr:`_generation` — the SAME single-purpose
+        helper shape ``MCPConnectionService`` uses for its own generation,
+        so a mechanical AST scan for "which methods bump this class's
+        generation" (a call to ``self._bump_generation()``) is uniform
+        across every #5287 producer, not a different marker pattern per
+        class."""
+        self._generation += 1
+
     def _consent_bus_now(self) -> Any:
         """The consent bus iff a live intervention listener is attached, else None.
 
@@ -213,6 +240,7 @@ class HookDispatcher:
         through the kernel/router seams. Used by the Session's hooks reapply seam to
         install ``startup ∪ re-read-runtime`` hooks at the turn boundary."""
         self._registry = registry
+        self._bump_generation()  # #5287 — see that method's own docstring
 
     async def dispatch(self, point: str, template_vars: dict) -> None:
         """Run every hook registered for ``point`` (registration order).
