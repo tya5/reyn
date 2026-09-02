@@ -419,6 +419,14 @@ These rules then keep multi-session work coherent:
    same as it always was; a green here means "some note names the exact
    tree about to merge," never "the tree was reviewed by the right people."
 
+9. **Arming auto-merge and merging are the reviewer's act (lead-coder in
+   this repo), never the implementer's — the implementer's turn ends at
+   push + report.** Real incident (#5662, 2026-09-02): an implementer saw
+   CI green and a TESTS-READ note already posted and armed/merged the PR
+   themselves, before the reviewer (who still raises new points
+   mid-review — three times the same night on #5661) had said the PR was
+   done; harmless only because nothing further was in fact raised.
+
 ## Bundling and the owner's veto unit
 
 A doc PR that exists to give the owner a veto opportunity should ship alone.
