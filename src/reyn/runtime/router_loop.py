@@ -3768,7 +3768,6 @@ class RouterLoop:
         from reyn.runtime.chat_message import (
             CONTENT_REF_META_KEY,
             LOST_REASON_META_KEY,
-            LOST_REASON_NEVER_PERSISTED,
             SKILL_SOURCE_PATH_META_KEY,
             SPILLED_META_KEY,
             TOKEN_MAP_META_KEY,
@@ -3776,6 +3775,7 @@ class RouterLoop:
             TOOL_ERROR_MESSAGE_META_KEY,
             TOOL_STATUS_ERROR,
             TOOL_STATUS_META_KEY,
+            LostReason,
         )
         for tc, r in zip(result.tool_calls, result.tool_results):
             # B41-NF-W7-1: _post_text → appended outside the body.
@@ -4054,11 +4054,11 @@ class RouterLoop:
             # #5364 §1.5: an offload was ATTEMPTED and refused — content
             # stayed inline (never a ref to a file that doesn't exist), but
             # the entry still records WHY (operator-actionable: check
-            # disk/permissions, distinct from LOST_REASON_GC's "check the
+            # disk/permissions, distinct from LostReason.GC's "check the
             # cap size" — #1.6, not yet wired). SPILLED_META_KEY stays
             # absent — no ref was ever minted for this entry.
             if _write_unavailable:
-                _tool_meta[LOST_REASON_META_KEY] = LOST_REASON_NEVER_PERSISTED
+                _tool_meta[LOST_REASON_META_KEY] = LostReason.NEVER_PERSISTED
             if _append_entry is not None:
                 _append_entry(
                     role="tool",

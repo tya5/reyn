@@ -136,19 +136,40 @@ SPILLED_META_KEY = "spilled"
 # #5364 §1.5: "A" is not "always" without exception — a write that is
 # known, in advance, not to land (MediaStoreWriteUnavailable) never
 # reaches this store at all; that turn's content stays inline and this
-# key is never set (see LOST_REASON_NEVER_PERSISTED below).
+# key is never set (see LostReason.NEVER_PERSISTED below).
 CONTENT_REF_META_KEY = "content_ref"
 # Set once `resolve()` (reyn.core.offload.history_content_resolve) has
 # actually observed the backing file missing — never guessed ahead of
 # that check. ABSENCE means "not (yet) known to be lost", never "present".
 LOST_META_KEY = "lost"
 LOST_REASON_META_KEY = "lost_reason"
-# #5364 §1.5: the two possible reasons, as constants (lead-coder review:
-# a bare "gc"/"never_persisted" string written at more than one call site
-# lets one side's typo pass silently — the same discipline
-# ``TOOL_STATUS_ERROR`` above already applies to its own value domain).
-LOST_REASON_GC = "gc"
-LOST_REASON_NEVER_PERSISTED = "never_persisted"
+
+
+class LostReason(StrEnum):
+    """#5364 §1.5 / #5438 (architect ruling): why a spilled entry's own
+    backing file is missing — carried as a TYPED value (``StrEnum``, same
+    discipline ``Spillability`` above documents — never a bare ``str``,
+    the exact "a callback that can't carry a reason" defect #5438 named:
+    "引数を運べない callback は『None が2つの事実を表す』の署名版").
+
+    ``NEVER_PERSISTED`` is WRITTEN, at persist time, by the write-time cap
+    (``router_loop.py``) when an offload was attempted and refused —
+    content stayed inline, but the entry still records why.
+
+    ``GC`` is NEVER written — #5438's own design ("compute, don't store"):
+    a spilled entry whose backing file is missing and whose own meta does
+    NOT carry ``NEVER_PERSISTED`` is derived as ``GC`` at READ time
+    (``router_history_buffer.py``'s own resolver), because eviction
+    (``media_store._evict_history_content_over_cap``) is reyn's ONLY
+    deleter of an already-persisted ref — no other src/ code path removes
+    an offload file. Disclosed, not claimed exhaustive: a file removed
+    OUTSIDE reyn (manual deletion, an external process) also reads as
+    ``GC`` — this repo keeps no separate record that would tell the two
+    apart, and #5438 explicitly rules out adding one (a ledger just
+    duplicates history.jsonl's own append-only truth)."""
+
+    GC = "gc"
+    NEVER_PERSISTED = "never_persisted"
 
 # #5612 (owner ruling — "永続化というのは llm に見える履歴が元に戻らない
 # ということ、history.jsonl に追記するということ"): the reactive
