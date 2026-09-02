@@ -78,9 +78,38 @@ def _session(tmp_path: Path) -> Session:
 
 
 def _mark_untrusted(s: Session) -> None:
-    """The #1862 marker the real producer stamps on an external peer answer."""
-    s.history.append(
+    """The #1862 marker the real producer stamps on an external peer answer.
+
+    #5276: goes through ``_append_history`` (the real mutation chokepoint
+    that maintains ``Session._untrusted_taint_active`` incrementally) —
+    NOT a bare ``s.history.append`` — so this exercises the actual
+    production path instead of a shape the new incremental-state hook
+    never sees.
+    """
+    s._append_history(
         ChatMessage(role="user", content="<<<EXTERNAL>>> hi", meta={"external_source": True})
+    )
+
+
+def _compact_out_untrusted(s: Session) -> None:
+    """Advance the compaction watermark past every entry currently in
+    ``s.history`` — the real "untrusted entry compacts out" mechanism.
+
+    #5276: a fold lands via a ``role="summary"`` entry whose
+    ``covers_through_seq`` meta IS the new watermark
+    (``Session._compaction_watermark``) — appended through
+    ``_append_history`` like any other entry, which is also what re-derives
+    ``_untrusted_taint_active`` in full on this branch (the ONE case that
+    can retroactively CLEAR the taint; see
+    ``_update_untrusted_taint_on_append``'s own docstring).
+    """
+    covers_through_seq = max((m.seq for m in s.history), default=0)
+    s._append_history(
+        ChatMessage(
+            role="summary",
+            content="<<<SUMMARY>>>",
+            meta={"structured": {}, "covers_through_seq": covers_through_seq},
+        )
     )
 
 
@@ -155,7 +184,7 @@ async def test_lift_fires_once_when_the_taint_leaves_the_context(tmp_path: Path)
     )
 
     # the untrusted entry compacting out of the active context
-    s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
+    _compact_out_untrusted(s)
 
     for _ in range(5):
         assert _UNTRUSTED_DENIED_TOOL not in _denied_by_turn_context(s)
@@ -190,7 +219,7 @@ async def test_engage_then_lift_then_engage_again_is_one_of_each_per_flip(
     for _ in range(2):
         _mark_untrusted(s)
         assert _UNTRUSTED_DENIED_TOOL in _denied_by_turn_context(s)
-        s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
+        _compact_out_untrusted(s)
         assert _UNTRUSTED_DENIED_TOOL not in _denied_by_turn_context(s)
     await settle(s)
 

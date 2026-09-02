@@ -44,6 +44,7 @@ import pytest
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
@@ -210,10 +211,24 @@ async def test_self_clears_after_tainted_entry_compacted_out(tmp_path, monkeypat
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)
 
-    # Simulate compaction evicting the tainted tool-result entry from active context.
-    session.history = [
-        m for m in session.history if not (m.meta or {}).get("external_source")
-    ]
+    # #5276: simulate compaction retiring the tainted tool-result entry via a
+    # real watermark advance (a role="summary" entry through
+    # session._append_history, the actual production mechanism — same shape
+    # test_3380_tool_tab_ephemeral_narrowing.py's own
+    # test_narrowing_self_clears_when_a_real_compaction_covers_the_taint
+    # uses), not a raw self.history reassignment: Session._untrusted_taint_
+    # active is maintained incrementally by _append_history and only
+    # re-derived in full on an actual watermark advance, so a raw
+    # reassignment bypasses that hook entirely and leaves the taint latched.
+    tainted_seq = max(
+        m.seq for m in session.history if (m.meta or {}).get("external_source")
+    )
+    session._append_history(
+        ChatMessage(
+            role="summary", content="summarised",
+            meta={"structured": {}, "covers_through_seq": tainted_seq},
+        )
+    )
 
     await session._handle_inbox_text("try again", chain_id="c3")
     (allowed_msg,) = [m for m in session.history if m.tool_call_id == "tc_allowed"]

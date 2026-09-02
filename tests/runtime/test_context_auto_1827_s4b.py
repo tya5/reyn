@@ -43,7 +43,13 @@ def _session(tmp_path: Path, *, contextual=None) -> Session:
 
 
 def _mark_untrusted(s: Session) -> None:
-    s.history.append(ChatMessage(role="user", content="<<<EXTERNAL>>> hi", meta={"external_source": True}))
+    """#5276: goes through ``_append_history`` — the real mutation
+    chokepoint that maintains ``Session._untrusted_taint_active``
+    incrementally — not a bare ``s.history.append``, which the
+    incremental hook never observes."""
+    s._append_history(
+        ChatMessage(role="user", content="<<<EXTERNAL>>> hi", meta={"external_source": True})
+    )
 
 
 def test_untainted_returns_static(tmp_path):
@@ -77,8 +83,22 @@ def test_self_clears_when_taint_removed(tmp_path):
     _mark_untrusted(s)
     eff = s._effective_contextual_for_turn()
     assert tool_contextually_denied(eff, "exec")
-    # simulate the untrusted entry compacting out of the active context
-    s.history = [m for m in s.history if not (m.meta or {}).get("external_source")]
+    # #5276: simulate the untrusted entry compacting out of the active
+    # context via a real compaction watermark advance (a role="summary"
+    # entry through _append_history, the actual production mechanism —
+    # see test_3380_tool_tab_ephemeral_narrowing.py's own
+    # test_narrowing_self_clears_when_a_real_compaction_covers_the_taint
+    # for the same shape), not a raw self.history reassignment the
+    # incremental taint hook never observes.
+    tainted_seq = next(
+        m.seq for m in s.history if (m.meta or {}).get("external_source")
+    )
+    s._append_history(
+        ChatMessage(
+            role="summary", content="summarised",
+            meta={"structured": {}, "covers_through_seq": tainted_seq},
+        )
+    )
     eff = s._effective_contextual_for_turn()
     assert eff is None  # back to static (none)
 
