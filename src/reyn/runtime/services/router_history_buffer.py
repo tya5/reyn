@@ -287,10 +287,10 @@ def _resolve_spilled_content(
             if seen_lost_refs is not None:
                 seen_lost_refs.add(ref)
             import hashlib
-            content_hash = "sha256:" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
+            ref_sha256 = "sha256:" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
             events.emit(
                 "offloaded_content_unavailable",
-                ref=ref, reason=str(reason), content_hash=content_hash,
+                ref=ref, reason=str(reason), ref_sha256=ref_sha256,
             )
         return (
             f"[content lost: the offloaded body at {ref!r} no longer exists "

@@ -93,11 +93,11 @@ def test_a_missing_ref_with_no_recorded_reason_derives_gc_and_emits_the_event(
         f"expected exactly one offloaded_content_unavailable event naming "
         f"gone.txt/gc — got {unavailable!r}"
     )
-    content_hash = next(
-        e.data["content_hash"] for e in events
+    ref_sha256 = next(
+        e.data["ref_sha256"] for e in events
         if e.type == "offloaded_content_unavailable"
     )
-    assert content_hash, "content_hash must be non-empty"
+    assert ref_sha256, "ref_sha256 must be non-empty"
 
 
 def test_a_missing_ref_recorded_never_persisted_is_never_reported_as_gc(

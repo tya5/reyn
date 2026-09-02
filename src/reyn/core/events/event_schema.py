@@ -149,11 +149,12 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # the offload outright), else `gc` (eviction is reyn's only deleter of
     # an already-persisted ref — a file missing for any other reason still
     # reads as `gc`, disclosed in the reader's own docstring, never a
-    # claim this event can tell the two apart). `content_hash` is a
-    # stable, ref-derived identifier (never a hash of the LOST content
-    # itself, which by definition isn't available to hash) so an operator
-    # can correlate repeated reads of the SAME missing file.
-    "offloaded_content_unavailable": frozenset({"ref", "reason", "content_hash"}),
+    # claim this event can tell the two apart). `ref_sha256` (architect
+    # review: not `content_hash` — that name reads as a hash of the LOST
+    # content itself, which by definition isn't available to hash) is a
+    # stable, ref-STRING-derived identifier so an operator can correlate
+    # repeated reads of the SAME missing file.
+    "offloaded_content_unavailable": frozenset({"ref", "reason", "ref_sha256"}),
     # #5514 §5/§8 (architect ruling, 2026-08-30): a spillability=never hook
     # push that exceeds its own declared spillability_max_chars is REJECTED
     # outright — never truncated (a partial frame is worse than no frame;
