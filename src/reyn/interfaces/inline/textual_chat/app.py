@@ -4693,7 +4693,14 @@ class TextualChatApp(App):
                     ),
                 ))
                 return
-            self._rewind_picker.show_points(list(points))
+            # #3987 ②: the request carries the branch tree alongside the
+            # points, so a fork the operator left behind is offered instead of
+            # merely existing. ``show_tree`` falls back to the flat list on its
+            # own when there is only one branch — the App does not decide which
+            # shape to draw, it hands over both facts.
+            self._rewind_picker.show_tree(
+                list((request or {}).get("branches") or []), list(points),
+            )
             try:
                 await self._transport.clear_pending_command_ui()
             except Exception:

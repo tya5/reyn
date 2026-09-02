@@ -7,6 +7,8 @@ kind and verbatim args land in the outbox.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from reyn.interfaces.slash.copy import copy_cmd
@@ -50,21 +52,46 @@ class _FakeSession:
         return [m.kind for m in self._outbox]
 
 
+@dataclass
+class _Branch:
+    """#3987 ②: the shape ``AgentRegistry.list_branches`` returns — a real
+    ``Branch`` dataclass in production. Mirrored here rather than imported so
+    this file keeps its no-heavy-import property."""
+
+    branch_id: int
+    fork_point_seq: int
+    head_seq: int
+    parent_branch_id: "int | None"
+    is_active: bool
+
+
 class _FakeRegistry:
     def __init__(
         self,
         *,
         points: list[dict] | None = None,
+        branches: list | None = None,
         checkout_result: dict | None = None,
         checkout_raises: Exception | None = None,
     ) -> None:
         self._points = points or []
+        # #3987 ②: the real registry has always taken ``include_abandoned`` and
+        # has always had ``list_branches``; this fake models both now that the
+        # bare-/rewind path reads them. Default = one active branch, which is
+        # the single-branch shape these tests were written for.
+        self._branches = branches if branches is not None else [
+            _Branch(branch_id=0, fork_point_seq=0, head_seq=99,
+                    parent_branch_id=None, is_active=True),
+        ]
         self._checkout_result = checkout_result
         self._checkout_raises = checkout_raises
         self.checkout_calls: list[int] = []
 
-    def list_rewind_points(self) -> list[dict]:
+    def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
         return self._points
+
+    def list_branches(self) -> list:
+        return self._branches
 
     async def checkout(self, target: int) -> dict:
         self.checkout_calls.append(target)

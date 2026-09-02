@@ -36,8 +36,10 @@ from textual.containers import Vertical
 from textual.content import Content
 from textual.message import Message
 from textual.widgets import OptionList, Static
+from textual.widgets.option_list import Option
 
 from reyn.interfaces import palette
+from reyn.interfaces.common.branch_tree import ROW_HEADER, build_branch_tree_rows
 
 #: Max characters of a point's ``ts`` shown in a row — the WAL timestamp is a
 #: free-form string read straight off the WAL entry, so it is truncated rather
@@ -126,7 +128,7 @@ class RewindPicker(Vertical):
         #: ``OptionList`` options so an ``option_index`` can never address a
         #: different checkpoint than the row the user highlighted (the same
         #: parallel-list discipline the drawer's ``_pane_commands`` uses).
-        self._seqs: "list[int]" = []
+        self._seqs: "list[int | None]" = []
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -140,7 +142,7 @@ class RewindPicker(Vertical):
 
     def has_points(self) -> bool:
         """Whether the picker is currently offering any checkpoint."""
-        return bool(self._seqs)
+        return any(s is not None for s in self._seqs)
 
     def show_points(self, points: "list[dict]") -> None:
         """Populate + reveal the picker from the command-UI request's points.
@@ -161,6 +163,61 @@ class RewindPicker(Vertical):
             return
         options.add_options(rows)
         options.highlighted = 0
+        self.display = True
+        options.focus()
+
+    def show_tree(self, branches: "list[dict]", points: "list[dict]") -> None:
+        """#3987 ②: populate from the branch TREE rather than a flat list.
+
+        Falls back to :meth:`show_points` when there is nothing to show a tree
+        about — a session with a single (active) branch renders exactly as it
+        did before, which is the deny half of this feature's acceptance: an
+        operator who never forked sees no new furniture.
+
+        Branch headers are added as DISABLED options. They occupy a row so the
+        tree reads as a tree, but they are not checkpoints and must not be
+        selectable. ``self._seqs`` keeps its index-parallel discipline with
+        ``None`` in the header slots, so an ``option_index`` still cannot
+        address a different checkpoint than the highlighted row — the invariant
+        that list has always carried, extended rather than special-cased.
+        """
+        if len([b for b in branches if b.get("branch_id") is not None]) <= 1:
+            # Newest-first, which is what this picker has always shown. The
+            # slash handler used to reverse before sending; it now sends
+            # ascending order because the tree builder does its own ordering,
+            # so the flat path restores it here. Getting this wrong would
+            # silently flip the row order for every operator who never forked
+            # — the exact case the deny criterion says must not change.
+            self.show_points(list(reversed(points)))
+            return
+
+        options = self.query_one("#rewind-picker-options", OptionList)
+        options.clear_options()
+        tree_rows = build_branch_tree_rows(branches, points)
+
+        seqs: "list[int | None]" = []
+        rendered: "list[Option]" = []
+        for row in tree_rows:
+            indent = "  " * int(row.get("depth") or 0)
+            if row.get("row") == ROW_HEADER:
+                mark = "" if row.get("is_active") else "  (abandoned)"
+                rendered.append(
+                    Option(Content(f"{indent}{row.get('label') or ''}{mark}"), disabled=True),
+                )
+                seqs.append(None)
+                continue
+            if row.get("seq") is None:
+                continue
+            rendered.append(Option(Content(f"{indent}  {rewind_row_text(row)}")))
+            seqs.append(int(row["seq"]))
+
+        if not any(s is not None for s in seqs):
+            self.hide()
+            return
+
+        self._seqs = seqs
+        options.add_options(rendered)
+        options.highlighted = next(i for i, s in enumerate(seqs) if s is not None)
         self.display = True
         options.focus()
 
@@ -203,6 +260,11 @@ class RewindPicker(Vertical):
         if not (0 <= index < len(self._seqs)):
             return
         seq = self._seqs[index]
+        if seq is None:
+            # #3987 ②: a branch header. Disabled options are not selectable, so
+            # this is belt-and-braces for a Textual build that lets one through
+            # — never post a PointSelected with no checkpoint behind it.
+            return
         self.hide()
         self.post_message(self.PointSelected(seq))
 

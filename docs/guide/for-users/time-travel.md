@@ -45,7 +45,7 @@ Rewinds directly to seq N without opening the picker. The agent's conversation s
 - A seq on the **current branch**: undo (rewinds the current branch).
 - A seq on an **inactive branch**: fork-switch (activates that branch).
 
-The picker itself lists **current-branch** checkpoints only, so reaching a seq on an abandoned branch means passing it to `/rewind <N>` directly.
+The picker (bare `/rewind`) shows abandoned branches too, when there are any — as a tree, each branch's checkpoints indented under its own header, an abandoned one marked. A session that has never forked still sees the plain current-branch list it always has.
 
 ## Web edit (Phase 2d)
 
@@ -56,7 +56,7 @@ When using Reyn through the web interface (AG-UI SSE / A2A), `/rewind` opens the
 | Feature | Status |
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
-| Branch **tree view** in the picker (checkpoints on abandoned branches, not just the current one) | ⏳ not yet wired — `/rewind <N>` already fork-switches to an inactive branch's seq |
+| Branch **tree view** in the picker (checkpoints on abandoned branches, not just the current one) | ✅ #3987 ②, wired — bare `/rewind` shows both branches as a tree (abandoned marked); `/rewind <N>` already fork-switches to an inactive branch's seq |
 | `Esc Esc` double-tap shortcut to open the picker | ⏳ not yet wired — open it with `/rewind` |
 | `/rewind` picker over AG-UI SSE / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
 
