@@ -3707,68 +3707,16 @@ class RecoveryLadder:
         # ``compaction_shrink_recovered`` event below — no branch
         # reads them to decide anything any more.
 
-    async def _apply_compact_call(self, input_chunk: "HistoryChunkToCompact", _offered: "list[dict]") -> "object | None":
-        """The actual ``compact()`` call and its success-path
-        application, split out of :meth:`_stage_fold` so its own
-        ``try`` block stays short. On success: persists the fold via
-        ``on_summary_used``, replaces any prior summary in ``head``
-        with the fresh one, advances ``raw_middle`` past the attempted
-        slice (doubling ``_compact_attempt_len`` for the remainder --
-        #5531 §10), and resets the same-cause streak (the one branch
-        where work is PERMANENTLY reduced). Returns
+    def _advance_state_after_fold(self, chat_summary: "ChatSummary") -> "object | None":
+        """Applies a successful ``compact()`` result -- replaces any
+        prior summary in ``head`` with the fresh one, advances
+        ``raw_middle`` past the attempted slice (doubling
+        ``_compact_attempt_len`` for the remainder), and resets the
+        same-cause streak. Split out of :meth:`_apply_compact_call`
+        purely structurally (#5631 candidate 1, 150-line gate) --
+        every rationale comment below is relocated VERBATIM. Returns
         :data:`_LADDER_CONTINUE` when a remainder stays in
-        ``raw_middle`` (spend the rest of this iteration folding it
-        rather than handing ``main_call`` an incomplete summary), else
-        ``None``. Raises whatever ``compact()``/``on_summary_used``
-        raise -- :meth:`_stage_fold`'s own ``except`` classifies it."""
-        # #5592: mark this attempt as the NEXT upstream call
-        # within the current recovery episode, exact and
-        # single-producer (see note_upstream_recovery_call_
-        # attempt's own docstring) — a no-op when no episode
-        # is active (e.g. this function's own test-only direct
-        # callers).
-        self._note_upstream_recovery_call_attempt()
-        # #5475: raw_middle's turns are wire dicts (no `seq` —
-        # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
-        # docstring) — a real seq is not available to this caller.
-        chat_summary = await self._engine.compact(
-            input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
-        )
-        # #5612 scope note: a "discard a fold that does not
-        # shrink" rule was drafted here and REMOVED outright
-        # (not deferred, no follow-up issue filed) — a literal
-        # size-only comparison (summary wire bytes vs offered
-        # turns' own wire bytes) broke 10 unrelated,
-        # pre-existing tests whose small/single-turn fixtures
-        # structurally can't beat a structured summary's own
-        # JSON overhead. The rule's own PREMISE was proven
-        # false, not merely its threshold: a persisted summary
-        # re-enters the population of the NEXT fold, so its
-        # framing overhead is absorbed there rather than fixed
-        # forever — architect confirmed the same inequality
-        # holds under the alternative "compare against the
-        # whole head" population too. This PR's own regression
-        # 1 is resolved WITHOUT this rule — see the
-        # `_compacted()` broadening in
-        # test_5296_pr2_byte_reduction_same_turn_retry.py.
-        # #5612 (owner ruling, verbatim: "そもそも compact
-        # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
-        # report EACH successful fold immediately, right here —
-        # not deferred until this whole retry_loop call's own
-        # eventual success/failure. A fold that already
-        # happened is durable-worthy on its own; whether the
-        # LATER main_call this episode is working toward
-        # succeeds, fails, or this episode folds AGAIN after
-        # this (raw_middle still non-empty, `continue` below)
-        # is a separate question this fold's own durability
-        # does not depend on — #5578's own irreversibility
-        # argument ("discarding a fold does not restore
-        # reversibility, it only guarantees paying again")
-        # applies identically whether or not main_call
-        # eventually succeeds. See on_summary_used's own
-        # docstring for the full contract.
-        if self._on_summary_used is not None:
-            await self._on_summary_used(chat_summary, _offered)
+        ``raw_middle``, else ``None``."""
         # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
         # 5463249759, deferred from PR-1 which reverted the
         # same line): the fold's result goes where the folded
@@ -3863,6 +3811,70 @@ class RecoveryLadder:
             # instead of calling main_call with an incomplete
             # summary.
             return _LADDER_CONTINUE
+
+    async def _apply_compact_call(self, input_chunk: "HistoryChunkToCompact", _offered: "list[dict]") -> "object | None":
+        """The actual ``compact()`` call and its success-path
+        application, split out of :meth:`_stage_fold` so its own
+        ``try`` block stays short. On success: persists the fold via
+        ``on_summary_used``, replaces any prior summary in ``head``
+        with the fresh one, advances ``raw_middle`` past the attempted
+        slice (doubling ``_compact_attempt_len`` for the remainder --
+        #5531 §10), and resets the same-cause streak (the one branch
+        where work is PERMANENTLY reduced). Returns
+        :data:`_LADDER_CONTINUE` when a remainder stays in
+        ``raw_middle`` (spend the rest of this iteration folding it
+        rather than handing ``main_call`` an incomplete summary), else
+        ``None``. Raises whatever ``compact()``/``on_summary_used``
+        raise -- :meth:`_stage_fold`'s own ``except`` classifies it."""
+        # #5592: mark this attempt as the NEXT upstream call
+        # within the current recovery episode, exact and
+        # single-producer (see note_upstream_recovery_call_
+        # attempt's own docstring) — a no-op when no episode
+        # is active (e.g. this function's own test-only direct
+        # callers).
+        self._note_upstream_recovery_call_attempt()
+        # #5475: raw_middle's turns are wire dicts (no `seq` —
+        # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
+        # docstring) — a real seq is not available to this caller.
+        chat_summary = await self._engine.compact(
+            input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
+        )
+        # #5612 scope note: a "discard a fold that does not
+        # shrink" rule was drafted here and REMOVED outright
+        # (not deferred, no follow-up issue filed) — a literal
+        # size-only comparison (summary wire bytes vs offered
+        # turns' own wire bytes) broke 10 unrelated,
+        # pre-existing tests whose small/single-turn fixtures
+        # structurally can't beat a structured summary's own
+        # JSON overhead. The rule's own PREMISE was proven
+        # false, not merely its threshold: a persisted summary
+        # re-enters the population of the NEXT fold, so its
+        # framing overhead is absorbed there rather than fixed
+        # forever — architect confirmed the same inequality
+        # holds under the alternative "compare against the
+        # whole head" population too. This PR's own regression
+        # 1 is resolved WITHOUT this rule — see the
+        # `_compacted()` broadening in
+        # test_5296_pr2_byte_reduction_same_turn_retry.py.
+        # #5612 (owner ruling, verbatim: "そもそも compact
+        # 成功してるのに 次回 元に戻るは あり得ないでしょ？"):
+        # report EACH successful fold immediately, right here —
+        # not deferred until this whole retry_loop call's own
+        # eventual success/failure. A fold that already
+        # happened is durable-worthy on its own; whether the
+        # LATER main_call this episode is working toward
+        # succeeds, fails, or this episode folds AGAIN after
+        # this (raw_middle still non-empty, `continue` below)
+        # is a separate question this fold's own durability
+        # does not depend on — #5578's own irreversibility
+        # argument ("discarding a fold does not restore
+        # reversibility, it only guarantees paying again")
+        # applies identically whether or not main_call
+        # eventually succeeds. See on_summary_used's own
+        # docstring for the full contract.
+        if self._on_summary_used is not None:
+            await self._on_summary_used(chat_summary, _offered)
+        return self._advance_state_after_fold(chat_summary)
 
     async def run(self) -> Any:
         """Drive :meth:`_run_one_iteration` — the ladder's own former
