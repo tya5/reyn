@@ -3638,6 +3638,208 @@ class RecoveryLadder:
             self._classify_and_wrap_compact_failure(exc)
         return None
 
+    async def _attempt_main_call(self) -> Any:
+        """Sends the router's own main call with the CURRENT head/tail/
+        new_msg (whichever summary element(s) belong on this wire
+        already sit inside them -- #5531 PR-2, no separate ``summary=``
+        param any more) and, on success, observes actual-vs-estimated
+        tokens for the learner and emits the wire-bytes-measured
+        telemetry event. Returns the response. Raises
+        :class:`CompactionOverflowError`/:class:`ContextOverflowError`
+        on overflow -- caught by :meth:`_run_one_iteration`'s own
+        ``except``, which calls :meth:`_record_overflow_classification`."""
+        # #5531 PR-2: `main_call` no longer takes a separate `summary=`
+        # — whichever summary element(s) belong on this wire already
+        # sit inside `head`/`tail` themselves.
+        self._this_iteration_called_main_call = True
+        # #5592: same single-producer mark as the compact() call site
+        # above — main_call is retry_loop's OTHER upstream call.
+        self._note_upstream_recovery_call_attempt()
+        response = await self._main_call(
+            SP=self._SP,
+            head=self.head,
+            tail=self.tail,
+            new_msg=self.new_msg,
+        )
+
+        # Success: observe actual vs estimated tokens for the learner.
+        content_type = self._detect_content_type(self.new_msg.get("content"))
+        sp_tokens = estimate_tokens(self._SP, self._model, use_chars4=self._use_chars4)
+        head_tokens = _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4)
+        tail_tokens = _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4)
+        new_msg_tokens = estimate_tokens_for_turn(self.new_msg, self._model, use_chars4=self._use_chars4)
+        # #5531 PR-2: no separate summary term here — head_tokens/
+        # tail_tokens already include it (a summary element is just
+        # one more entry in those lists now); adding it again would
+        # double-count.
+        estimate = sp_tokens + head_tokens + tail_tokens + new_msg_tokens
+
+        actual: int | None = None
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                actual = usage.prompt_tokens
+        except Exception:
+            pass
+
+        if actual and estimate > 0:
+            self._learner.observe(
+                model=self._model,
+                content_type=content_type,
+                estimate_tokens=estimate,
+                actual_tokens=actual,
+            )
+
+        # #4944①: measure-and-emit only (not consumed for any decision
+        # until #5316's terminal-message read-back below) — see
+        # estimate_wire_bytes's own docstring and this event's entry in
+        # docs/reference/runtime/events.md for what "wire_bytes" does
+        # and does not include. ``accepted=True``: this size was SENT
+        # and SUCCEEDED, so the real limit is >= this value (a lower
+        # bound). Paired with the ``accepted=False`` emission below
+        # (lead-coder's TESTS-READ finding on this PR's first version:
+        # a turn whose EVERY attempt 413s — owner's own real-machine
+        # shape — would emit this event zero times without that
+        # pairing, leaving no diagnostic trail at all for exactly the
+        # case #4944 exists to diagnose).
+        # #5316: the per-component breakdown (byte counts only — never
+        # content, company environment) — the field this event's own
+        # single ``wire_bytes`` total could never answer: WHICH of the
+        # 5 components dominated. ``_last_accepted_wire_bytes`` feeds
+        # the learned-limit read-back in the terminal message below.
+        # #5531 PR-2: summary=None — head/tail already include any
+        # summary element's own bytes; a separate value here would
+        # double-count it in `.total`.
+        _accepted_breakdown = estimate_wire_bytes_breakdown(
+            SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
+        )
+        self._last_accepted_wire_bytes = _accepted_breakdown.total
+        self._engine._events.emit(
+            "compaction_wire_bytes_measured",
+            wire_bytes=_accepted_breakdown.total,
+            accepted=True,
+            sp_bytes=_accepted_breakdown.sp_bytes,
+            head_bytes=_accepted_breakdown.head_bytes,
+            summary_bytes=_accepted_breakdown.summary_bytes,
+            tail_bytes=_accepted_breakdown.tail_bytes,
+            new_msg_bytes=_accepted_breakdown.new_msg_bytes,
+        )
+
+        # #5612: on_summary_used is no longer called HERE — #5578's own
+        # deferred-to-return call is superseded by the immediate,
+        # per-fold call above (owner ruling: each successful fold is
+        # durability-worthy the moment it happens, not only once the
+        # whole episode's own main_call succeeds).
+        return response
+
+    def _record_overflow_classification(self, _overflow_exc: Exception) -> None:
+        """Classify the overflow that reached :meth:`_run_one_iteration`'s
+        own ``except`` (from either :meth:`_stage_fold` or
+        :meth:`_attempt_main_call`), track the same-cause streak
+        (telemetry only -- #5531 §10 retired the T3 cap this used to
+        gate), and emit the ``compaction_wire_bytes_measured``
+        (rejected) and ``compaction_shrink_recovered`` events. #3783
+        stage 3: names the WRAPPED exception's own type, not the
+        wrapper's -- every compact()-call failure is wrapped as
+        ``CompactionOverflowError`` (see
+        ``_classify_and_wrap_compact_failure``'s own raise site), so
+        ``type(_overflow_exc).__name__`` would always read the same
+        constant string regardless of what actually failed."""
+        # Compaction call or main call overflowed — fall through to
+        # shrink. #3783 stage 2: name the cause + cap same-cause repeats.
+        # #3783 stage 3: name the WRAPPED exception's type, not the
+        # wrapper's — since stage 3, EVERY compact()-call failure is
+        # wrapped as ``CompactionOverflowError`` (see its raise site
+        # above), so ``type(_overflow_exc).__name__`` would always read
+        # the same constant string regardless of what actually failed,
+        # making two unrelated failures miscount as "the same cause
+        # twice" against the cap below. ``__cause__`` is always set (both
+        # wrap sites above raise ``... from exc``); the fallback to the
+        # wrapper's own type name only matters for a hypothetical future
+        # raise site that omits the chain.
+        _cause = (
+            type(_overflow_exc.__cause__).__name__
+            if _overflow_exc.__cause__ is not None
+            else type(_overflow_exc).__name__
+        )
+        if _cause == self._last_recover_cause:
+            self._consecutive_same_cause += 1
+        else:
+            self._last_recover_cause = _cause
+            self._consecutive_same_cause = 1
+        # #4885: same status_code check `is_context_overflow_error` uses
+        # (a real attribute litellm/openai set from the underlying HTTP
+        # response, not string-matched) — checked on the ROOT cause, the
+        # same one `_cause` above already names, so "413" and the cause
+        # name agree about what actually happened.
+        self._last_recover_is_byte_limit = (
+            getattr(_overflow_exc.__cause__, "status_code", None) == 413
+        )
+        if self._last_recover_is_byte_limit and self._this_iteration_called_main_call:
+            # #4944①: the size that WAS SENT and got REJECTED — the
+            # real limit is < this value (an upper bound), the pair to
+            # the ``accepted=True`` emission above. ``head``/``tail``/
+            # ``new_msg`` still hold exactly what this failed attempt
+            # sent — the shrink-escalation ladder below has not run
+            # yet this iteration. Guarded on
+            # ``_this_iteration_called_main_call``: a compact()-origin
+            # 413 raised from a DIFFERENT, unmeasured payload (see the
+            # flag's own comment above the loop).
+            # #5316: same breakdown as the accepted=True site; feeds
+            # the learned-limit read-back in the terminal message
+            # below. #5531 PR-2: summary=None — head/tail already
+            # include any summary element's own bytes; a separate
+            # value here would double-count it in `.total`.
+            _rejected_breakdown = estimate_wire_bytes_breakdown(
+                SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
+            )
+            self._last_rejected_wire_bytes = _rejected_breakdown.total
+            self._engine._events.emit(
+                "compaction_wire_bytes_measured",
+                wire_bytes=_rejected_breakdown.total,
+                accepted=False,
+                sp_bytes=_rejected_breakdown.sp_bytes,
+                head_bytes=_rejected_breakdown.head_bytes,
+                summary_bytes=_rejected_breakdown.summary_bytes,
+                tail_bytes=_rejected_breakdown.tail_bytes,
+                new_msg_bytes=_rejected_breakdown.new_msg_bytes,
+            )
+        self._engine._events.emit(
+            "compaction_shrink_recovered",
+            cause=_cause,
+            iteration=self._iteration,
+            consecutive=self._consecutive_same_cause,
+            t_max_override=self._t_max_override,
+            # #5592 (owner ruling): the absolute remaining/original
+            # candidate count ("5/2469" form, never a bar/percentage —
+            # a percentage hides the magnitude that was exactly the
+            # thing #5592's own incident could not see). Real, exact
+            # counts (len() on the live list and its captured original
+            # length) — not an estimate.
+            raw_middle_remaining=len(self.raw_middle),
+            raw_middle_total=self._raw_middle_total,
+        )
+        # #4885: this cap is skipped for a byte-limit cause. It exists to
+        # catch a TOKEN-shrink that keeps recovering the SAME cause
+        # without ever changing anything — evidence shrinking cannot fix
+        # THAT cause.
+        #
+        # #5531 §10 (settled (a), 2026-08-30): T3 (the same-cause
+        # cap) is RETIRED — "don't fire T3 until the halving ladder
+        # is exhausted" turned out to mean T3 never had anything
+        # left to catch: the halving ladder's own floors ((a) below
+        # and (b), the T_max-candidate floor) ARE the terminal
+        # condition once exhausted, so a cap layered on top of them
+        # could only ever fire EARLIER, cutting the search off with
+        # headroom still remaining (the #4947 ③ finding that first
+        # exempted the byte-limit cause from this cap, generalised:
+        # #5543's classify_llm_failure now keeps Fatal/Retryable
+        # OUT of this ladder entirely, closing the "genuinely stuck
+        # cause" case T3 used to exist to catch). ``_cause``/
+        # ``_consecutive_same_cause`` stay as pure telemetry on the
+        # ``compaction_shrink_recovered`` event below — no branch
+        # reads them to decide anything any more.
+
     async def run(self) -> Any:
         """Drive :meth:`_run_one_iteration` — the ladder's own former
         ``while True:`` loop body (#5631 candidate 1), unchanged control
@@ -3671,186 +3873,9 @@ class RecoveryLadder:
             outcome = await self._stage_fold()
             if outcome is not None:
                 return outcome
-
-            # #5531 PR-2: `main_call` no longer takes a separate `summary=`
-            # — whichever summary element(s) belong on this wire already
-            # sit inside `head`/`tail` themselves.
-            self._this_iteration_called_main_call = True
-            # #5592: same single-producer mark as the compact() call site
-            # above — main_call is retry_loop's OTHER upstream call.
-            self._note_upstream_recovery_call_attempt()
-            response = await self._main_call(
-                SP=self._SP,
-                head=self.head,
-                tail=self.tail,
-                new_msg=self.new_msg,
-            )
-
-            # Success: observe actual vs estimated tokens for the learner.
-            content_type = self._detect_content_type(self.new_msg.get("content"))
-            sp_tokens = estimate_tokens(self._SP, self._model, use_chars4=self._use_chars4)
-            head_tokens = _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4)
-            tail_tokens = _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4)
-            new_msg_tokens = estimate_tokens_for_turn(self.new_msg, self._model, use_chars4=self._use_chars4)
-            # #5531 PR-2: no separate summary term here — head_tokens/
-            # tail_tokens already include it (a summary element is just
-            # one more entry in those lists now); adding it again would
-            # double-count.
-            estimate = sp_tokens + head_tokens + tail_tokens + new_msg_tokens
-
-            actual: int | None = None
-            try:
-                usage = getattr(response, "usage", None)
-                if usage is not None:
-                    actual = usage.prompt_tokens
-            except Exception:
-                pass
-
-            if actual and estimate > 0:
-                self._learner.observe(
-                    model=self._model,
-                    content_type=content_type,
-                    estimate_tokens=estimate,
-                    actual_tokens=actual,
-                )
-
-            # #4944①: measure-and-emit only (not consumed for any decision
-            # until #5316's terminal-message read-back below) — see
-            # estimate_wire_bytes's own docstring and this event's entry in
-            # docs/reference/runtime/events.md for what "wire_bytes" does
-            # and does not include. ``accepted=True``: this size was SENT
-            # and SUCCEEDED, so the real limit is >= this value (a lower
-            # bound). Paired with the ``accepted=False`` emission below
-            # (lead-coder's TESTS-READ finding on this PR's first version:
-            # a turn whose EVERY attempt 413s — owner's own real-machine
-            # shape — would emit this event zero times without that
-            # pairing, leaving no diagnostic trail at all for exactly the
-            # case #4944 exists to diagnose).
-            # #5316: the per-component breakdown (byte counts only — never
-            # content, company environment) — the field this event's own
-            # single ``wire_bytes`` total could never answer: WHICH of the
-            # 5 components dominated. ``_last_accepted_wire_bytes`` feeds
-            # the learned-limit read-back in the terminal message below.
-            # #5531 PR-2: summary=None — head/tail already include any
-            # summary element's own bytes; a separate value here would
-            # double-count it in `.total`.
-            _accepted_breakdown = estimate_wire_bytes_breakdown(
-                SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
-            )
-            self._last_accepted_wire_bytes = _accepted_breakdown.total
-            self._engine._events.emit(
-                "compaction_wire_bytes_measured",
-                wire_bytes=_accepted_breakdown.total,
-                accepted=True,
-                sp_bytes=_accepted_breakdown.sp_bytes,
-                head_bytes=_accepted_breakdown.head_bytes,
-                summary_bytes=_accepted_breakdown.summary_bytes,
-                tail_bytes=_accepted_breakdown.tail_bytes,
-                new_msg_bytes=_accepted_breakdown.new_msg_bytes,
-            )
-
-            # #5612: on_summary_used is no longer called HERE — #5578's own
-            # deferred-to-return call is superseded by the immediate,
-            # per-fold call above (owner ruling: each successful fold is
-            # durability-worthy the moment it happens, not only once the
-            # whole episode's own main_call succeeds).
-            return response
-
+            return await self._attempt_main_call()
         except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:
-            # Compaction call or main call overflowed — fall through to
-            # shrink. #3783 stage 2: name the cause + cap same-cause repeats.
-            # #3783 stage 3: name the WRAPPED exception's type, not the
-            # wrapper's — since stage 3, EVERY compact()-call failure is
-            # wrapped as ``CompactionOverflowError`` (see its raise site
-            # above), so ``type(_overflow_exc).__name__`` would always read
-            # the same constant string regardless of what actually failed,
-            # making two unrelated failures miscount as "the same cause
-            # twice" against the cap below. ``__cause__`` is always set (both
-            # wrap sites above raise ``... from exc``); the fallback to the
-            # wrapper's own type name only matters for a hypothetical future
-            # raise site that omits the chain.
-            _cause = (
-                type(_overflow_exc.__cause__).__name__
-                if _overflow_exc.__cause__ is not None
-                else type(_overflow_exc).__name__
-            )
-            if _cause == self._last_recover_cause:
-                self._consecutive_same_cause += 1
-            else:
-                self._last_recover_cause = _cause
-                self._consecutive_same_cause = 1
-            # #4885: same status_code check `is_context_overflow_error` uses
-            # (a real attribute litellm/openai set from the underlying HTTP
-            # response, not string-matched) — checked on the ROOT cause, the
-            # same one `_cause` above already names, so "413" and the cause
-            # name agree about what actually happened.
-            self._last_recover_is_byte_limit = (
-                getattr(_overflow_exc.__cause__, "status_code", None) == 413
-            )
-            if self._last_recover_is_byte_limit and self._this_iteration_called_main_call:
-                # #4944①: the size that WAS SENT and got REJECTED — the
-                # real limit is < this value (an upper bound), the pair to
-                # the ``accepted=True`` emission above. ``head``/``tail``/
-                # ``new_msg`` still hold exactly what this failed attempt
-                # sent — the shrink-escalation ladder below has not run
-                # yet this iteration. Guarded on
-                # ``_this_iteration_called_main_call``: a compact()-origin
-                # 413 raised from a DIFFERENT, unmeasured payload (see the
-                # flag's own comment above the loop).
-                # #5316: same breakdown as the accepted=True site; feeds
-                # the learned-limit read-back in the terminal message
-                # below. #5531 PR-2: summary=None — head/tail already
-                # include any summary element's own bytes; a separate
-                # value here would double-count it in `.total`.
-                _rejected_breakdown = estimate_wire_bytes_breakdown(
-                    SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
-                )
-                self._last_rejected_wire_bytes = _rejected_breakdown.total
-                self._engine._events.emit(
-                    "compaction_wire_bytes_measured",
-                    wire_bytes=_rejected_breakdown.total,
-                    accepted=False,
-                    sp_bytes=_rejected_breakdown.sp_bytes,
-                    head_bytes=_rejected_breakdown.head_bytes,
-                    summary_bytes=_rejected_breakdown.summary_bytes,
-                    tail_bytes=_rejected_breakdown.tail_bytes,
-                    new_msg_bytes=_rejected_breakdown.new_msg_bytes,
-                )
-            self._engine._events.emit(
-                "compaction_shrink_recovered",
-                cause=_cause,
-                iteration=self._iteration,
-                consecutive=self._consecutive_same_cause,
-                t_max_override=self._t_max_override,
-                # #5592 (owner ruling): the absolute remaining/original
-                # candidate count ("5/2469" form, never a bar/percentage —
-                # a percentage hides the magnitude that was exactly the
-                # thing #5592's own incident could not see). Real, exact
-                # counts (len() on the live list and its captured original
-                # length) — not an estimate.
-                raw_middle_remaining=len(self.raw_middle),
-                raw_middle_total=self._raw_middle_total,
-            )
-            # #4885: this cap is skipped for a byte-limit cause. It exists to
-            # catch a TOKEN-shrink that keeps recovering the SAME cause
-            # without ever changing anything — evidence shrinking cannot fix
-            # THAT cause.
-            #
-            # #5531 §10 (settled (a), 2026-08-30): T3 (the same-cause
-            # cap) is RETIRED — "don't fire T3 until the halving ladder
-            # is exhausted" turned out to mean T3 never had anything
-            # left to catch: the halving ladder's own floors ((a) below
-            # and (b), the T_max-candidate floor) ARE the terminal
-            # condition once exhausted, so a cap layered on top of them
-            # could only ever fire EARLIER, cutting the search off with
-            # headroom still remaining (the #4947 ③ finding that first
-            # exempted the byte-limit cause from this cap, generalised:
-            # #5543's classify_llm_failure now keeps Fatal/Retryable
-            # OUT of this ladder entirely, closing the "genuinely stuck
-            # cause" case T3 used to exist to catch). ``_cause``/
-            # ``_consecutive_same_cause`` stay as pure telemetry on the
-            # ``compaction_shrink_recovered`` event below — no branch
-            # reads them to decide anything any more.
+            self._record_overflow_classification(_overflow_exc)
 
         # Shrink escalation: reduce context size monotonically.
         if self.raw_middle:
