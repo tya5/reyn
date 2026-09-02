@@ -122,6 +122,17 @@ Everything else is excluded, by one of four reasons:
 │                           migrated into this once, on first touch, then inert history.
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
 │   audit-trail/ tool-results/ media/
+│                           `media/` (#4478): flat `<file>` for a legacy
+│                           write with no agent identity, `<agent>/
+│                           <session_id>/<file>` for a real one (the
+│                           SAME nesting shape `history-content/` above
+│                           already uses, `MediaStore.media_content_dir_
+│                           for`) — counts toward the SAME project-wide
+│                           `storage.max_bytes`/`storage.pin` cap as
+│                           `history-content/`, not a separate one; a
+│                           flat (legacy) file is a pin-unprotected
+│                           eviction candidate, disclosed, never
+│                           migrated.
 ├── cache/                  DERIVED — rebuilt after restore. ⚠️ "rebuilt after
 │                           restore" describes what belongs in this tier, not a
 │                           blanket safety claim about deleting `cache/` itself:

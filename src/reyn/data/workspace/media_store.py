@@ -11,13 +11,20 @@ Two storage directories with parallel file naming convention:
                          per #385). PR-C lands the writer; PR-D wires
                          the consumer + preview generation.
 
-Filename convention (both dirs):
+Filename convention:
 
   <YYYYMMDDTHHMMSS>-<chain_short>-<tool>-<seq>.<ext>
 
-This sorts chronologically with ``ls -la``, groups by conversation chain
-when you grep for ``<chain_short>``, and is browseable as plain files —
-users can ``open``, ``ls``, or delete entries to manage disk usage.
+``.reyn/tool-results/`` (frozen, read-only, #5364) and a LEGACY (pre-
+#4478, ``agent_name``-less) ``.reyn/media/`` write both keep this flat,
+single level. A ``.reyn/media/`` write with a real ``agent_name`` (the
+common case) nests one level further, ``<agent>/<session_id>/…`` (#4478
+— the SAME shape history-content already used, see :func:`media_
+content_dir_for`) — the filename itself is unchanged either way. This
+sorts chronologically with ``ls -la`` (within a session's own
+directory), groups by conversation chain when you grep for
+``<chain_short>``, and is browseable as plain files — users can
+``open``, ``ls``, or delete entries to manage disk usage.
 
 ChatMessage carries **path-refs** (= ``{"type": "image", "path": ...,
 "mime_type": ..., "content_hash": ...}``) instead of inline base64. The
@@ -31,60 +38,61 @@ contract Phase 1 = "(a) Persistent until user delete"; #5364 §1.6 /
 #5366 have since landed a Phase-2 SLICE for history-content only — see
 the split below):
 
-  - **Media (``.reyn/media/``) — still no auto-GC.** Files written by
-    :meth:`save_media` remain on disk until a user / operator deletes
-    them out-of-band (= ``rm``, file explorer, cleanup script). No TTL,
-    max-N, or session-end cleanup exists for this directory today.
+  - **Media (``.reyn/media/``) — project-wide auto-GC (#4478, architect
+    ruling: "母集団を1つ広げるだけ").** No media-only cap, no TTL /
+    max-N / session-end policy (owner rejected all three — none of them
+    bound BYTES, the actual resource: a TTL still lets 3 large images
+    blow the cap before any age out; max-N treats 1000 tiny files the
+    same as 1000 huge ones). Instead, ``.reyn/media/`` counts against
+    the SAME ``storage.max_bytes`` / ``storage.pin`` project-wide cap
+    ``.reyn/memory/history-content/`` already used (#5366) — one
+    operator number for the whole project, not two that could
+    individually pass while their SUM doubles it. Per-session eviction
+    (below) still does not apply to media — only the project-wide layer
+    does.
   - **History-content (``.reyn/memory/history-content/``, #5364) — auto-GC
-    now EXISTS, in two layers, not yet enforced end-to-end.** Per-session:
-    every :meth:`save_tool_result` call runs
-    :meth:`_evict_history_content_over_cap`, deleting THIS session's own
-    oldest files (protecting only the write's own open turn) once its
-    directory exceeds ``history_content_max_bytes`` (#5364 §1.6 / #5388
-    — this layer is live in production). Project-wide: a
-    ``storage.max_bytes`` / ``storage.pin`` config
-    (#5366 1/N, ``ReynConfig.storage``) and a candidate-selection
-    function (:func:`cross_session_eviction_candidates`, #5366 2/N,
-    pin-only by design — no liveness filter; see that function's own
-    docstring for why) both exist, but nothing calls the candidate
-    function yet — the project-wide cap is configured and its eviction
-    ORDER is computed, with no delete pass wired to either. That wiring
-    is a later #5366 slice.
+    in two layers.** Per-session: every :meth:`save_tool_result` call
+    runs :meth:`_evict_history_content_over_cap`, deleting THIS
+    session's own oldest files (protecting only the write's own open
+    turn) once its directory exceeds ``history_content_max_bytes``
+    (#5364 §1.6 / #5388 — this layer is live in production).
+    Project-wide (#5366, wired end-to-end by #4478): every
+    :meth:`save_tool_result` call also runs :meth:`_evict_cross_
+    session_over_cap`, which measures BOTH trees' combined bytes
+    against ``storage.max_bytes`` and evicts the oldest non-pinned
+    candidate from EITHER tree (:func:`cross_session_eviction_
+    candidates`, one merged oldest-first order, :func:`_merge_oldest_
+    first`) until back under cap, or refuses the new write
+    (``MediaStoreWriteUnavailable``) if it cannot. Media's OWN writes
+    (:meth:`save_media`) do not themselves trigger this pre-check today
+    — a disclosed gap (#4478), see that method's own docstring.
   - **Cross-turn / cross-session re-access supported.** A path-ref
     minted in user turn 1 remains valid in user turn 2 / next chat
     session / a forwarded A2A peer's expand — the file is still there,
     for any file eviction above hasn't reached.
     (See Q1 of the frozen contract: ``agent_id = agent name`` durable
     identity, not per-turn ``chain_id``.)
-  - **Media disk usage still grows unboundedly.** Documented operational
-    caveat — operators are expected to ``ls -la .reyn/media/`` and clean
-    up periodically. The browsable filename convention makes manual
-    audit straightforward. :meth:`MediaStore.storage_stats` (#4478
-    Phase 1) gives a scripted read of this instead of a manual ``ls``:
-    file counts + byte totals per directory, policy-independent.
-  - **Phase 2 reservation (media only).** When measurement surfaces a
-    real disk pressure or stale-handle problem for ``.reyn/media/``
-    specifically, a config-driven policy (TTL / LRU / session-end /
-    mixed) would need its own reyn.yaml insertion point — the
-    ``multimodal:`` block is the natural one; no schema reservation
-    made today (= YAGNI). History-content already has its own separate
-    ``storage:`` block (#5366 1/N) instead of sharing this one.
+  - **Media disk usage grows unboundedly only when ``storage.max_bytes``
+    is unset** (``None``, the default — a fail-safe operators are
+    expected to rarely need, owner's own framing). Once set, the
+    project-wide layer above bounds media the same way it bounds
+    history-content. :meth:`MediaStore.storage_stats` (#4478 Phase 1)
+    gives a scripted read of the current footprint (file counts + byte
+    totals per directory, policy-independent) whether or not a cap is
+    configured — useful for deciding WHAT to set ``max_bytes`` to, not
+    just for confirming eviction fired.
+  - **Owner-scoped UX caveat (#4478):** a rewind/scrollback replay can
+    now show an image as missing (the SAME ``lost`` vocabulary #5364-B
+    already uses for a missing tool-result body) once eviction has
+    actually run — owner's own explicit acceptance: "過去を遡ったとき、
+    画像が消えていることを許容する".
 
 Out of scope (= future work):
-  - Wiring :func:`cross_session_eviction_candidates` (#5366 2/N) to an
-    actual delete pass honoring ``storage.max_bytes`` — the project-wide
-    GC's own acceptance criteria MUST cover the user-visible side, not
-    just "no consumer crashes": every read consumer already tolerates a
-    missing file (404 / ``None`` / a silently dropped content block —
-    #4478's own consumer sweep confirmed this), but a silently dropped
-    block is a scrollback image or tool-result the USER sees vanish
-    with no explanation, not a safe no-op. "Does this crash" is not
-    "is this a good experience" — that wiring needs to answer the
-    second question too, not just the first.
-  - Media (``.reyn/media/``) Phase 2 cleanup policy (= TTL / max-N /
-    session boundary) — trigger is measurement evidence, not
-    hypothesis; #4478 lands the measurement (``storage_stats``) without
-    the policy.
+  - Wiring the project-wide pre-check into :meth:`save_media` itself
+    (today it only runs from :meth:`save_tool_result` — see
+    :meth:`_evict_cross_session_over_cap`'s own docstring for why this
+    was left for a follow-up: 4 real call sites whose own
+    ``MediaStoreWriteUnavailable`` handling is unaudited).
   - Cross-host RPC dispatcher for ``resource_uri`` (= #385 β core
     impl sub-task 3, pending scheme arbitration).
 """
@@ -362,9 +370,16 @@ class MediaStorageStats:
 
 
 def _dir_stats(directory: Path) -> tuple[int, int]:
-    """(file_count, total_bytes) for the flat, single-level layout both
-    storage dirs use (see the module docstring's filename convention —
-    neither dir nests subdirectories). Missing directory → ``(0, 0)``,
+    """(file_count, total_bytes) for a FLAT, single-level directory —
+    the legacy ``.reyn/tool-results/`` tree (frozen, #5364), and a
+    pre-#4478 ``.reyn/media/`` write with no ``agent_name`` (the
+    legacy-construction fallback :meth:`MediaStore.save_media` still
+    uses — see that method's own docstring). NOT ``.reyn/media/`` as a
+    whole any more: a post-#4478 write nests under
+    ``<agent>/<session_id>/`` (:func:`media_content_dir_for`), so a
+    caller measuring the WHOLE media tree needs
+    :func:`_dir_stats_recursive` instead (:meth:`MediaStore.storage_
+    stats`'s own call site, #4478). Missing directory → ``(0, 0)``,
     same as "nothing written yet" rather than an error; a file that
     disappears mid-scan (a concurrent delete, raising
     ``FileNotFoundError``) is skipped rather than propagating, since this
@@ -441,6 +456,38 @@ def _eviction_order(directory: Path) -> list[Path]:
             continue
     entries.sort(key=lambda pair: pair[0])
     return [path for _, path in entries]
+
+
+def _merge_oldest_first(*candidate_lists: list[Path]) -> list[Path]:
+    """#4478: merge N already-mtime-sorted candidate lists (each the
+    output of :func:`_eviction_order`, possibly pin-filtered by
+    :func:`cross_session_eviction_candidates`) into ONE globally
+    oldest-first order — architect's own design (issue #4478, "母集団
+    を1つ広げるだけ"): the project-wide cap has always been ONE number
+    against ONE ``_eviction_order``, and adding a second tree
+    (``.reyn/media/``) must not silently become "evict this tree first,
+    then that one" — a directory-scoped bias `_eviction_order` itself
+    was never designed to have (see its own docstring: "which one goes
+    first" is oldest-mtime, period, not oldest-per-directory).
+
+    Re-stats every candidate (cheap — eviction is not a hot path, and
+    ``_eviction_order``'s own output already discards the mtime it
+    computed) rather than threading mtimes through every caller's own
+    return type. A candidate that vanishes between listing and this
+    re-stat (a concurrent delete) sorts to the END (``float("inf")``)
+    rather than raising — harmless: :meth:`MediaStore._evict_cross_
+    session_over_cap`'s own delete loop already tolerates a vanished
+    candidate (best-effort, logged, skipped), so a mis-ordered-last
+    ghost entry costs nothing."""
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except FileNotFoundError:
+            return float("inf")
+
+    merged = [p for candidates in candidate_lists for p in candidates]
+    merged.sort(key=_mtime)
+    return merged
 
 
 # #385 β core impl sub-task 1: cross-host capable resource URI scheme.
@@ -553,6 +600,34 @@ def history_content_dir_for(
     already does for the state dir)."""
     cfg = config or MediaStoreConfig()
     root = (project_root / cfg.history_content_dir).resolve()
+    return root / _safe_token(agent_name) / _safe_token(session_id)
+
+
+def media_content_dir_for(
+    project_root: Path, agent_name: str, session_id: str,
+    config: "MediaStoreConfig | None" = None,
+) -> Path:
+    """#4478 (architect ruling — "新しい概念0"): the SAME
+    ``<agent>/<session_id>/`` nesting shape :func:`history_content_dir_for`
+    already establishes for ``.reyn/memory/history-content/``, applied
+    to ``.reyn/media/`` — not a new concept, the same one reused so
+    :func:`cross_session_eviction_candidates`'s own pin match
+    (``path.relative_to(root).parts[0]`` against a pinned agent name)
+    has an agent segment to read for a NEW media write, closing the
+    asymmetry a flat ``.reyn/media/`` layout had against pin protection
+    (#4478's own real finding: a flat file's ``parts[0]`` is its own
+    filename, which can never match a pinned agent name — enumerated as
+    a candidate, never excluded).
+
+    Unlike :func:`history_content_dir_for` (which RAISES when
+    ``agent_name`` is empty — that caller, :meth:`MediaStore.save_tool_
+    result`, always has a real one), :meth:`MediaStore.save_media`'s own
+    call site keeps the pre-#4478 FLAT fallback when it has none (a
+    legacy/read-only construction, #4478's own scope: "既存の
+    agent_name省略の legacy 呼び口は flat") — this function itself never
+    decides that; its own caller branches before calling it."""
+    cfg = config or MediaStoreConfig()
+    root = (project_root / cfg.media_dir).resolve()
     return root / _safe_token(agent_name) / _safe_token(session_id)
 
 
@@ -940,13 +1015,38 @@ class MediaStore:
         SHA-256 of ``data`` (= verifies the path-ref hasn't drifted
         from the original content; used by the history builder when
         materialising back to a data URL).
+
+        #4478 (architect ruling): nested under ``<agent>/<session_id>/``
+        (:func:`media_content_dir_for`, the SAME shape #5364's own
+        ``history_content_dir_for`` already uses) when this store has a
+        real ``agent_name`` — the precondition
+        :func:`cross_session_eviction_candidates`'s own pin filter needs
+        to protect a pinned agent's media (#4478's own real finding: a
+        FLAT file's own filename sits where the filter reads an agent
+        name, so it can never match a pin — enumerated as a candidate,
+        never excluded). A legacy/read-only construction with no
+        ``agent_name`` (4 of the 5 production ``MediaStore`` call sites
+        per :meth:`_history_content_dir`'s own docstring) stays FLAT,
+        unchanged — the pre-#4478 contract. Existing flat files are
+        NEVER migrated (no migration script — #4478's own owner-scoped
+        ruling: reyn-self carries 0 such files today; elsewhere, a
+        pre-#4478 file simply remains a pin-unprotected eviction
+        candidate, disclosed in :func:`cross_session_eviction_
+        candidates`'s own call site, never silently claimed safe).
         """
-        self._media_dir.mkdir(parents=True, exist_ok=True)
+        media_dir = (
+            media_content_dir_for(
+                self._project_root, self._agent_name, self._session_id, self._config,
+            )
+            if self._agent_name
+            else self._media_dir
+        )
+        media_dir.mkdir(parents=True, exist_ok=True)
         chain_short = _safe_token(chain_id)[:6] if chain_id else ""
         tool_token = _safe_token(tool) or "tool"
         ext = _ext_for_mime(mime_type)
         filename = f"{_timestamp()}-{chain_short}-{tool_token}-{seq}{ext}"
-        path = self._media_dir / filename
+        path = media_dir / filename
         path.write_bytes(data)
         block: dict = {
             "type": "image",
@@ -1290,21 +1390,47 @@ class MediaStore:
     def _evict_cross_session_over_cap(self) -> None:
         """#5366 §3 (architect design, final ruling — issuecomment-
         5451564768 / lead-coder confirmation issuecomment-5451700-ish):
-        bound the PROJECT-wide (cross-session) history-content footprint
-        against ``StorageConfig.max_bytes`` — a DIFFERENT number than
+        bound the PROJECT-wide (cross-session) footprint against
+        ``StorageConfig.max_bytes`` — a DIFFERENT number than
         :attr:`MediaStoreConfig.history_content_max_bytes` (this store's
         own per-session backstop, see that field's docstring for why the
         two are deliberately never the same). No-op when ``max_bytes``
         is unset (``None`` — the field's own default means "off", not
         "check anyway").
 
-        Candidates come from :func:`cross_session_eviction_candidates`
-        against the project-wide root (:func:`history_content_root_for`)
-        minus pinned agents — deliberately no liveness filter (see that
-        function's own docstring for why: #5388's per-session cap
-        already evicts a LIVE session's own old files, so a liveness
-        filter here would protect cross-session GC MORE than per-session
-        GC protects itself, for the same resource).
+        #4478 (architect ruling — "母集団を1つ広げるだけ。新しい概念は
+        1つも要りません"): ``.reyn/media/`` counts against this SAME
+        cap, alongside ``.reyn/memory/history-content/`` — one operator
+        number, not two (owner ruling, #5366's own design pass: an
+        operator declares ONE "how many bytes this project may use";
+        two separate caps could both individually pass while their SUM
+        doubles it). Total is the SUM of both trees'
+        :func:`_dir_stats_recursive`; candidates from BOTH are merged
+        into ONE globally oldest-first order (:func:`_merge_oldest_first`
+        — never "drain tree A, then tree B", which `_eviction_order`
+        was never designed to mean either way).
+
+        ⚠️ Pin protects a media file only when it was written AFTER
+        #4478 (:meth:`save_media`'s own ``<agent>/<session_id>/``
+        nesting, :func:`media_content_dir_for` — architect ruling, same
+        shape history-content already uses, so the SAME
+        :func:`cross_session_eviction_candidates` pin match just works).
+        A pre-#4478 FLAT file's own filename sits where the filter reads
+        an agent name, so it never matches a pin — enumerated as a
+        candidate, never excluded (disclosed, never migrated — #4478's
+        own owner-scoped ruling: reyn-self carries 0 such files today).
+
+        ⚠️ Also disclosed: this pre-check runs from :meth:`save_tool_
+        result` only (unchanged from #5366) — a media-only-heavy
+        project does not self-trigger eviction from :meth:`save_media`
+        itself; the population widened here still only gets CONSULTED
+        on a tool-result write. Wiring the same pre-check into
+        :meth:`save_media` touches 4 real call sites
+        (``web.py``/``file.py``/``mcp.py``/``router_loop.py``) whose own
+        ``MediaStoreWriteUnavailable`` handling is unaudited — out of
+        this PR's own authorized scope (witnesses 1/3/4/5 only,
+        lead-coder), named here as a real follow-up, not silently
+        assumed solved.
 
         Runs BEFORE the write this call is guarding (a pre-check, same
         shape as the ``durability_failed`` check right above its own
@@ -1331,13 +1457,24 @@ class MediaStore:
         max_bytes = self._storage.max_bytes
         if max_bytes is None:
             return
-        root = history_content_root_for(self._project_root, self._config)
-        _, total = _dir_stats_recursive(root)
+        history_content_root = history_content_root_for(self._project_root, self._config)
+        _, history_content_total = _dir_stats_recursive(history_content_root)
+        _, media_total = _dir_stats_recursive(self._media_dir)
+        total = history_content_total + media_total
         if total <= max_bytes:
             return
-        candidates = cross_session_eviction_candidates(
-            root, pin=self._storage.pin,
+        history_content_candidates = cross_session_eviction_candidates(
+            history_content_root, pin=self._storage.pin,
         )
+        # #4478: a NEW (post-#4478) nested media write's own pin match
+        # works exactly like history-content's; a pre-#4478 flat file's
+        # own filename sits where the filter reads an agent name, so it
+        # never matches a pin — enumerated as a candidate, never
+        # excluded (disclosed, not silently claimed protected).
+        media_candidates = cross_session_eviction_candidates(
+            self._media_dir, pin=self._storage.pin,
+        )
+        candidates = _merge_oldest_first(history_content_candidates, media_candidates)
         for path in candidates:
             if total <= max_bytes:
                 return
@@ -1373,17 +1510,25 @@ class MediaStore:
         mirroring :func:`cross_session_eviction_candidates`'s own "no
         pin → return everything ``_eviction_order`` finds" shape: an
         empty result here always means "nothing to evict", never
-        "couldn't compute")."""
+        "couldn't compute"). #4478: the population and merge order are
+        the SAME widened ones :meth:`_evict_cross_session_over_cap`
+        computes — see that method's own docstring."""
         max_bytes = self._storage.max_bytes
         if max_bytes is None:
             return []
-        root = history_content_root_for(self._project_root, self._config)
-        _, total = _dir_stats_recursive(root)
+        history_content_root = history_content_root_for(self._project_root, self._config)
+        _, history_content_total = _dir_stats_recursive(history_content_root)
+        _, media_total = _dir_stats_recursive(self._media_dir)
+        total = history_content_total + media_total
         if total <= max_bytes:
             return []
-        candidates = cross_session_eviction_candidates(
-            root, pin=self._storage.pin,
+        history_content_candidates = cross_session_eviction_candidates(
+            history_content_root, pin=self._storage.pin,
         )
+        media_candidates = cross_session_eviction_candidates(
+            self._media_dir, pin=self._storage.pin,
+        )
+        candidates = _merge_oldest_first(history_content_candidates, media_candidates)
         preview: list[Path] = []
         for path in candidates:
             if total <= max_bytes:
@@ -1687,8 +1832,16 @@ class MediaStore:
         session-end policy ("trigger is measurement evidence, not
         hypothesis"). Mirrors the chat presenter's own public
         ``image_cache_size_bytes``-style snapshot-read pattern (#4376),
-        applied here to on-disk rather than in-memory storage."""
-        media_count, media_bytes = _dir_stats(self._media_dir)
+        applied here to on-disk rather than in-memory storage.
+
+        #4478: ``_dir_stats_recursive``, not ``_dir_stats`` — a
+        post-#4478 write nests under ``<agent>/<session_id>/``
+        (:func:`media_content_dir_for`), so the flat, one-level
+        ``_dir_stats`` this used to call would silently undercount every
+        such file (a real regression this file's own docstring update
+        closes, caught by the pre-existing CLI/API stats tests going
+        genuinely red under the nesting change)."""
+        media_count, media_bytes = _dir_stats_recursive(self._media_dir)
         # #5364: tool-result writes moved to history_content_root (nested
         # per session) — tool_result_file_count/bytes measure the CURRENT
         # write location, same field name/meaning as before the move
