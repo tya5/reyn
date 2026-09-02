@@ -157,6 +157,7 @@ nav:
       - Runtime:
           - reference/runtime/control-ir.md
           - reference/runtime/events.md
+          - reference/runtime/litellm-compat-patches.md
           - reference/runtime/pipeline-dsl.md
           - reference/runtime/agui-transport.md
       - Config:

@@ -559,20 +559,23 @@ def ensure_litellm_ready(
                     # own submodule import statement outside the seam.
                     import litellm.litellm_core_utils.logging_worker  # noqa: F401
 
-                    # #5603: reyn's own local litellm patches, applied ONCE
-                    # inside this same seam (never a `site-packages`-direct
-                    # `.pth` file — see `_litellm_compat_patches`'s own
-                    # module docstring for the incident that replaces). The
-                    # correctness-critical patch (A) is UNCAUGHT here — its
-                    # own failure falls into the SAME `except Exception:
-                    # result = None` this `import litellm` failure already
-                    # uses, so a no-fallback caller sees "litellm unusable"
-                    # rather than silently running with a known-broken
-                    # bridge; the diagnostic-only patch (B) catches its own
-                    # failures internally and only warns (see
-                    # `_litellm_compat_patches.apply_all`'s own docstring).
-                    from reyn.llm._litellm_compat_patches import apply_all as _apply_litellm_patches
-                    _apply_litellm_patches(events)
+                    # #5603 (removed by #5620): reyn's own local litellm
+                    # patches (`_litellm_compat_patches.py`) used to be
+                    # applied here. Both patches are gone — B's own target
+                    # class (`ChatGPTResponsesAPIConfig`) is never on
+                    # reyn's real call path (reyn uses
+                    # `OpenAIResponsesAPIConfig`, #5568), and A's own
+                    # target branch (`_collect_response_from_stream_
+                    # async`) is structurally unreachable via reyn's real
+                    # call shape under litellm 1.96.2 — verified directly
+                    # (a real `httpx.MockTransport`-driven call through
+                    # `litellm.acompletion()`, 5 caller-shape combinations,
+                    # 0 reached; the caller-level `stream` flag and the
+                    # bridge's internal HTTP-level `stream` flag are
+                    # always identical, so the "caller says stream=False
+                    # but the bridge got a streaming object anyway" state
+                    # this patch existed for cannot occur — see #5620's
+                    # own issue comment for the full trace).
                     result = litellm
                 except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
                     result = None

@@ -305,33 +305,6 @@ into anything read back after the fact.
 process should ever be reaped automatically is an owner-level judgment call
 explicitly out of this slice's scope until the count is visible at all.
 
-### litellm compat patches ([#5603](https://github.com/tya5/reyn/issues/5603))
-
-```
-litellm compat patches (#5603) — measured class-attribute state,
-not a restated declaration that the patch module exists:
-  ✓ applied: stream_chunk_recovery (A)
-  ✓ applied: overflow_diagnosis (B)
-```
-
-Reads the ACTUAL applied-state flag reyn's own `src/reyn/llm/
-_litellm_compat_patches.py` sets on the real litellm class objects after
-triggering the real `ensure_litellm_ready()` chokepoint — never a
-restatement that the patch module merely imports successfully. This
-distinction is the whole point (#5603's own motivating incident, #5568): a
-previous hand-placed `site-packages` patch could fail silently on a litellm
-version bump (`ModuleNotFoundError` inside a `.pth` file — the process still
-starts, the patch is simply not applied, nothing says so anywhere). D-1: a
-`✗ NOT applied` line here is a real, measured gap, not a declaration that
-should be true.
-
-`stream_chunk_recovery` (A) is correctness-critical — see
-`_litellm_compat_patches.py`'s own module docstring for why its own failure
-to apply makes `ensure_litellm_ready()` itself return unusable rather than
-silently degrading. `overflow_diagnosis` (B) is diagnostic-only; its own
-failure to apply only means a genuinely-failed call surfaces a worse
-diagnosis, never a wrong DATA result.
-
 ## Not applicable, measured (not a later slice)
 
 C-6's "listen port declared-vs-effective" example does NOT apply to reyn's

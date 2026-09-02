@@ -45,38 +45,6 @@ handle a broken/still-warming environment.
   seam is not a production litellm-touching one, #4415's own "dev-only, 6
   sites" bucket). Scanning them would fail this gate on infrastructure
   built to intercept litellm, not to bypass it.
-- ``llm/_litellm_compat_patches.py`` (#5603, lead-coder's own seam-gate
-  review) — this exemption is FILE-scoped (this gate has no per-function
-  granularity), and covers 3 functions with 2 DIFFERENT reasons, both
-  disclosed here rather than assumed by proximity:
-  - ``apply_all()`` (and the ``apply_stream_chunk_recovery``/
-    ``apply_overflow_diagnosis`` it calls) is invoked from EXACTLY ONE
-    place: inside ``ensure_litellm_ready()``'s own success path, AFTER
-    ``import litellm`` has already completed inside that SAME chokepoint
-    — never called from anywhere else. So these functions' own litellm
-    imports execute only at a point where litellm is provably already
-    warm, the same relationship ``litellm_bootstrap.py``'s own internal
-    helpers already have to ``ensure_litellm_ready()`` — a second part
-    of the seam's own body, not a bypass of it.
-  - ``report_applied_state()`` carries NO such structural guarantee (its
-    own docstring says so explicitly — the caller must warm litellm
-    first, this function does not) because it is a general-purpose
-    READER any future caller may reach for. It is safe anyway for a
-    DIFFERENT reason: every litellm touch inside it is wrapped in its
-    own ``try/except Exception`` that degrades to a "could not measure"
-    string rather than raising — called cold (litellm never
-    successfully imported), it cannot crash the caller, it can only
-    under-report. This is the intentional design this function's own
-    docstring already states ("this function does not [call
-    ensure_litellm_ready] — matching this module's own 'no side effect'
-    contract"), not an oversight papered over by the exemption.
-  This is narrower than ``litellm_bootstrap.py``'s own exemption (that
-  whole file is presumed trusted, #4450's own disclosed limit above) —
-  it covers exactly these 3 functions' own reasoning, stated here so the
-  next person adding a 4th function to this file has to ask which of the
-  two shapes above (or neither) it fits, rather than inheriting the
-  exemption by simply landing in an already-excluded file.
-
 **Known limit** (mirrors #4410's own framing): this gate can only ever see
 reyn's OWN import statements — a third-party library that touches litellm
 internally, or code that reaches litellm via ``sys.modules`` lookup /
@@ -133,26 +101,25 @@ def _seam_scan_root_and_exclusions():
     src = root / "src" / "reyn"
     seam_file = (src / "llm" / "litellm_bootstrap.py").resolve()
     dev_testing_dir = (src / "dev" / "testing").resolve()
-    # #5603 — see module docstring's own "Excluded within src/reyn" entry
-    # for the exact reasoning (2 different shapes, one per function, both
-    # disclosed there rather than inherited by merely landing in this file).
-    compat_patches_file = (src / "llm" / "_litellm_compat_patches.py").resolve()
-    return root, src, seam_file, dev_testing_dir, compat_patches_file
+    return root, src, seam_file, dev_testing_dir
 
 
 def test_no_litellm_import_outside_the_seam() -> None:
-    """Tier 1: no file under src/reyn (outside litellm_bootstrap.py,
-    dev/testing/, and _litellm_compat_patches.py) imports litellm in any
-    form. See module docstring for the contract, scope decision, and
-    this gate's own limit."""
-    root, src, seam_file, dev_testing_dir, compat_patches_file = _seam_scan_root_and_exclusions()
+    """Tier 1: no file under src/reyn (outside litellm_bootstrap.py and
+    dev/testing/) imports litellm in any form. See module docstring for
+    the contract, scope decision, and this gate's own limit.
+
+    #5620: the ``_litellm_compat_patches.py`` exemption (#5603) is
+    removed here — that file itself is gone (its own 2 patches, both
+    verified 0-reached on reyn's real call path, see the removing PR's
+    own body). This restores the gate to its pre-#5603 shape (2
+    exclusions, not 3)."""
+    root, src, seam_file, dev_testing_dir = _seam_scan_root_and_exclusions()
 
     offenders: list[str] = []
     for py in src.rglob("*.py"):
         resolved = py.resolve()
         if resolved == seam_file:
-            continue
-        if resolved == compat_patches_file:
             continue
         if resolved == dev_testing_dir or dev_testing_dir in resolved.parents:
             continue
@@ -216,9 +183,7 @@ def test_the_seam_file_itself_is_excluded_not_silently_unreachable() -> None:
     the scan's exclusion list is doing real work (skipping a file that
     would otherwise fail the gate), not merely pointing at a path that
     happens not to exist or not to import litellm at all."""
-    _root, _src, seam_file, _dev_testing_dir, _compat_patches_file = (
-        _seam_scan_root_and_exclusions()
-    )
+    _root, _src, seam_file, _dev_testing_dir = _seam_scan_root_and_exclusions()
     assert seam_file.is_file(), "the seam file path itself must exist"
     tree = ast.parse(seam_file.read_text(encoding="utf-8"))
     found_any = any(_imports_litellm(node) for node in ast.walk(tree))
@@ -226,26 +191,4 @@ def test_the_seam_file_itself_is_excluded_not_silently_unreachable() -> None:
         "litellm_bootstrap.py no longer contains any litellm import — the "
         "exclusion in the main gate test is not actually exercised; if "
         "this fires, either the seam moved or the detector itself broke"
-    )
-
-
-def test_the_compat_patches_file_is_excluded_not_silently_unreachable() -> None:
-    """Tier 1: #5603 accept-side for the ``_litellm_compat_patches.py``
-    exclusion — same shape as the seam-file's own twin above: this file
-    genuinely DOES import litellm (that's the whole point of
-    ``apply_stream_chunk_recovery``/``apply_overflow_diagnosis``/
-    ``report_applied_state``); this confirms the exclusion is doing real
-    work, not pointing at a path that happens not to exist or not to
-    import litellm at all."""
-    _root, _src, _seam_file, _dev_testing_dir, compat_patches_file = (
-        _seam_scan_root_and_exclusions()
-    )
-    assert compat_patches_file.is_file(), "the compat-patches file path itself must exist"
-    tree = ast.parse(compat_patches_file.read_text(encoding="utf-8"))
-    found_any = any(_imports_litellm(node) for node in ast.walk(tree))
-    assert found_any, (
-        "_litellm_compat_patches.py no longer contains any litellm import "
-        "— the exclusion in the main gate test is not actually exercised; "
-        "if this fires, either the file moved/changed or the detector "
-        "itself broke"
     )
