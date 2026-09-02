@@ -319,6 +319,10 @@ class ChatReadModelCapabilities:
     # `_CLEARED_NON_FABRICATING_KEYS` shape its two siblings are.
     hooks_config_warnings_reported: bool
     compaction_progress_reported: bool
+    # #5654: covers the `tasks` snapshot key (attached session's own
+    # currently-RUNNING task rows) — REMOTE/AG-UI does not put this on the
+    # wire, same shape every other *_reported field here closes.
+    tasks_reported: bool
 
 
 def reported_snapshot_keys(
@@ -376,6 +380,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     mcp_subscriptions_reported=True,
     hooks_config_warnings_reported=True,
     compaction_progress_reported=True,
+    tasks_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
@@ -416,6 +421,7 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     # client to read) -- False, not True; see the field's own docstring.
     hooks_config_warnings_reported=False,
     compaction_progress_reported=False,
+    tasks_reported=False,
 )
 
 
@@ -1016,6 +1022,11 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # `unknown_config_keys` just above, which name the CLIENT's own
         # reyn.yaml and are structurally absent on a remote connection.
         "hooks_config_warnings": [],
+        # `[]` below is correct (task substrate is session-local, never on
+        # the wire); gated by ``tasks_reported`` above so the Task pane
+        # renders "not reported" instead of a `[]` that would be
+        # byte-identical to a genuinely task-free LOCAL session.
+        "tasks": [],
     }
 
 

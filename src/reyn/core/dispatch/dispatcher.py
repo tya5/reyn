@@ -33,8 +33,12 @@ class DispatchContext:
     """Per-call context passed into dispatch_tool.
 
     Attributes:
-        caller_kind: Always "router" — the chat agent main loop.
-            Used in event taxonomy for filtering.
+        caller_kind: "router" (the chat agent main loop) or "operator"
+            (#5654 — a slash command driving an op directly, with no LLM
+            tool_calls round behind it, e.g. /tasks). Used in event
+            taxonomy for filtering, and load-bearing for who a `tool_called`
+            audit event says did something (a slash-driven cancel must not
+            be misattributed to the router).
         caller_id: agent_name. Identifies the audit subject.
         chain_id: optional chain id for multi-hop tracing (PR14).
         tool_catalog: dict[str, dict] mapping tool name → tool definition
@@ -67,7 +71,7 @@ class DispatchContext:
             above.
     """
 
-    caller_kind: Literal["router"]
+    caller_kind: Literal["router", "operator"]
     caller_id: str
     chain_id: str | None
     tool_catalog: dict[str, dict]

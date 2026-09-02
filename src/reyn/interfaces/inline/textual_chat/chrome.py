@@ -73,6 +73,7 @@ always-loaded module.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -408,6 +409,14 @@ _MENU_TABS: "list[tuple[str, str]]" = [
     ("pipe", "Pipe"),
     ("hook", "Hook"),
     ("cron", "Cron"),
+    # #5654: operator-facing /tasks wrapper — list/cancel this session's own
+    # currently-running tasks. Read-only where Tool/MCP/Skill/Hook are
+    # toggles, but still ACTIONABLE (a row's cancel command), so it sits in
+    # `_LIST_PANES` alongside them rather than with Pipe/Cron. Measured
+    # (issue #5654 comment): the tab row already WRAPS at any width since
+    # #3338/#3326 — adding a 15th tab does not overflow it, it wraps to a
+    # second line, so no label-shrink or drop was needed.
+    ("task", "Task"),
     # #4542 (owner ruling): compact glyphs, not "Menu"/"Help" full words —
     # same flat arrow-navigable tab, same Enter-opens-drawer mechanism as
     # every other entry above; only the visible label shrinks. Distinct
@@ -437,6 +446,7 @@ _MENU_TABS: "list[tuple[str, str]]" = [
 #: are immune to the rendering quirk.
 _LIST_PANES = frozenset({
     "model", "agent", "history", "artifacts", "menu", "tool", "mcp", "skill", "hook",
+    "task",
 })
 
 # ── the Help pane's key tables ───────────────────────────────────────────────
@@ -1022,6 +1032,94 @@ def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
     return [DrawerRow(label=label).as_entry() for label in labels] or [
         DrawerRow(label="(none)").as_entry()
     ]
+
+
+def _elapsed_text(registered_at: "str | None", now: "datetime | None") -> "str | None":
+    """``経過`` — how long a task has been running, or ``None`` when either
+    input is unknown. Never fabricates a duration: no ``registered_at``
+    (pre-#5654 journal entry) or no ``now`` (test/production caller that
+    genuinely has no clock at hand yet) both degrade to the row omitting
+    this segment entirely, not a ``0s`` that would misread as fresh."""
+    if registered_at is None or now is None:
+        return None
+    try:
+        registered = datetime.fromisoformat(registered_at)
+    except ValueError:
+        return None
+    seconds = max(0, int((now - registered).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+def task_pane_entries(
+    snap: "dict | None", *, now: "datetime | None" = None,
+) -> "list[tuple[str, str]]":
+    """``(row, slash)`` for this session's own currently-RUNNING tasks
+    (#5654) — an operator-facing wrapper over the SAME ``list_tasks``/
+    ``cancel_task`` ops the LLM uses (``slash/tasks.py``, ``tools/
+    task_verbs.py``), never a second count of "what's running."
+
+    Gated by ``tasks_reported`` the same shape every other degradable-read
+    pane closes (#5009/#5034): a remote connection's ``tasks`` key is
+    always ``[]``, indistinguishable on its own from a genuinely task-free
+    LOCAL session — the declaration is what tells them apart.
+
+    Per #3978/ADR-0040 D4, only RUNNING tasks exist at all — a settled task
+    (completed/failed/cancelled) has no handle to list, so it is simply
+    absent, never shown with a terminal status this pane cannot honestly
+    know (there is no ``status`` column here for the same reason: the
+    substrate has nothing but RUNNING to report).
+
+    ``target`` (architect correction, 2026-09-02: an EARLIER design draft
+    asked for the target's session id too, which nothing in the substrate
+    persists) is kind-dependent: a ``prompt`` task's sole ``waiting_on``
+    member (the peer AGENT it is waiting on), or a ``pipeline`` task's own
+    ``original_request`` (already the pipeline's name at registration).
+    Neither is fabricated when absent — a row with no resolvable target
+    reads ``?``, never a guessed name.
+
+    Cancellation: a row's command is ``/tasks cancel <task_id>`` when
+    ``cancellable`` (the SAME field ``cancel_task`` itself gates on —
+    ``chain.cancel is not None``), else ``None`` — a crash-recovered
+    handle offers no cancel affordance to select, rather than one that
+    would silently no-op."""
+    if not (snap or {}).get("tasks_reported", False):
+        return [DrawerRow(label="not reported on this connection").as_entry()]
+    tasks = (snap or {}).get("tasks") or []
+    if not tasks:
+        # #5654 (deny side, deliberate): a text row, not zero rows — an
+        # EMPTY pane and a NOT-REPORTED pane must render as visibly
+        # different things, the same distinction #5009's whole pass
+        # exists to keep askable.
+        return [DrawerRow(label="実行中の task はありません", command=None).as_entry()]
+    rows = []
+    for task in tasks:
+        target = task.get("target") or "?"
+        label = f"{task.get('kind') or '?'} → {target}"
+        bits = [label]
+        elapsed = _elapsed_text(task.get("registered_at"), now)
+        if elapsed is not None:
+            bits.append(elapsed)
+        cancellable = bool(task.get("cancellable"))
+        if not cancellable:
+            note = "中断不可"
+        elif task.get("cancel_requested_at"):
+            note = "中断要求済"
+        else:
+            note = None
+        task_id = str(task.get("task_id") or "")
+        command = f"/tasks cancel {task_id}" if cancellable and task_id else None
+        rows.append(
+            DrawerRow(
+                label=" · ".join(bits), note=note, command=command,
+            ).as_entry()
+        )
+    return rows
 
 
 def pipe_pane_lines(snap: "dict | None") -> list[str]:
@@ -1677,6 +1775,7 @@ def pane_commands(
     *,
     artifacts: "Sequence[ArtifactRow]" = (),
     artifact_source: str = "live",
+    now: "datetime | None" = None,
 ) -> list[str]:
     """The slash command parallel to each row of ``tab_id``'s pane — index-aligned
     with :func:`pane_payload`'s rows for the same ``snapshot``, ``[]`` for a pane
@@ -1688,9 +1787,16 @@ def pane_commands(
     ``/session switch`` / ``/visibility`` / ``/hook`` / ``/open`` (#4482) and
     submits it through the same transport seam a typed slash uses.
 
-    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C)."""
+    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C).
+    ``now`` — #5654: threaded to :func:`task_pane_entries`, which is not in
+    :data:`_PANE_ENTRY_BUILDERS` (a single-``snap``-arg map) for this exact
+    reason — an elapsed-time column needs an injectable clock, the same
+    ``history``/``artifacts`` exception this function already makes for
+    parameters :data:`_PANE_ENTRY_BUILDERS` cannot carry."""
     if tab_id == "artifacts":
         return artifact_pane_commands(artifacts, source=artifact_source)
+    if tab_id == "task":
+        return [cmd for _row, cmd in task_pane_entries(snapshot, now=now)]
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is None:
         return []
@@ -1707,6 +1813,7 @@ def pane_payload(
     artifact_source: str = "live",
     artifact_fallback_total: int = 0,
     app_bindings: "Iterable[tuple[str, str]]" = (),
+    now: "datetime | None" = None,
 ) -> list[str]:
     """The display rows for ``tab_id``'s drawer pane, derived from canonical reyn
     sources. For a list pane (:func:`pane_is_list`) the rows are OptionList
@@ -1716,8 +1823,11 @@ def pane_payload(
 
     ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C).
     ``artifact_fallback_total`` — the #4601 pre-cap count, only meaningful
-    when ``artifact_source == "ref_table_fallback"``."""
+    when ``artifact_source == "ref_table_fallback"``.
+    ``now`` — #5654: see :func:`pane_commands`'s own matching parameter."""
     snap = snapshot or {}
+    if tab_id == "task":
+        return [row for row, _cmd in task_pane_entries(snap, now=now)]
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is not None:
         return [row for row, _cmd in builder(snap)]  # type: ignore[operator]

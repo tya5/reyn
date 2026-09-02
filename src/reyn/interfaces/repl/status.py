@@ -764,4 +764,61 @@ def _snapshot_for_session(registry, s, config=None):
         # (``chrome.status_line_text``) and threaded onto the wire for remote
         # parity (``agui.state.project_status``, #5098).
         "halted_reason": s.halted_reason,
+        # #5654: this session's own currently-RUNNING tasks (attached
+        # session only, owner scope decision — no cross-session listing).
+        # Derived from Session.chains the SAME way list_tasks does
+        # (kind=None relay chains excluded, #3978) — one母数, not a second
+        # count of "what's running" that could drift from the LLM-facing
+        # answer.
+        "tasks": _task_rows(s),
     }
+
+
+def _task_rows(s) -> "list[dict]":
+    """#5654: one row per RUNNING task on ``s``'s own ``ChainManager``,
+    ``{task_id, kind, target, registered_at, cancel_requested_at,
+    cancellable}`` — the SAME fields ``/tasks`` and the TUI Task tab both
+    render from, so there is exactly one place this shape is derived.
+
+    ``target`` (owner/architect correction, 2026-09-02: the design's first
+    draft asked for ``target{agent, session}``, which nothing in
+    ``_PendingChain`` persists) is kind-dependent and never fabricated:
+    ``prompt``'s sole ``waiting_on`` member (the invariant
+    ``|waiting_on| == 1`` for a prompt task, #3978), or ``pipeline``'s own
+    ``original_request`` (already the pipeline's name — see
+    ``session_api.py``'s ``original_text=pipeline_name`` at registration).
+    Anything else (an empty/multi-member ``waiting_on``, e.g. an ``exec``
+    kind or a malformed chain) reads ``None`` — unknown, never guessed.
+
+    ``registered_at``/``cancel_requested_at`` are ISO strings (already the
+    wire shape ``_PendingChain`` persists) or ``None``; ``cancellable`` is
+    ``chain.cancel is not None`` (``False`` for a crash-recovered handle,
+    #3978's own witness requirement)."""
+    chains = getattr(s, "chains", None)
+    if chains is None:
+        return []
+    rows = []
+    for chain_id in chains.all_chain_ids():
+        chain = chains.get(chain_id)
+        if chain is None or chain.kind is None:
+            continue
+        if chain.kind == "prompt":
+            target = next(iter(chain.waiting_on)) if len(chain.waiting_on) == 1 else None
+        elif chain.kind == "pipeline":
+            target = chain.original_request or None
+        else:
+            target = None
+        rows.append({
+            "task_id": chain.chain_id,
+            "kind": chain.kind,
+            "target": target,
+            "registered_at": (
+                chain.registered_at.isoformat() if chain.registered_at else None
+            ),
+            "cancel_requested_at": (
+                chain.cancel_requested_at.isoformat()
+                if chain.cancel_requested_at else None
+            ),
+            "cancellable": chain.cancel is not None,
+        })
+    return rows

@@ -117,6 +117,16 @@ class _PendingChain:
     # behavior exactly rather than guessing a deadline that was never
     # recorded).
     arm_at: "datetime | None" = None
+    # #5654: the wall-clock moment this task was registered, and (once
+    # requested) the moment a cancel was requested for it. Persisted in
+    # register()'s own fields / restored explicitly in restore() (same
+    # pattern as arm_at above) — a task's "経過" (elapsed) is COMPUTED as
+    # ``now - registered_at`` at render time, never stored, so nothing
+    # here needs periodic updating; ``cancel_requested_at`` is set once,
+    # via update(), the same call site that already exists for every other
+    # post-register mutation.
+    registered_at: "datetime | None" = None
+    cancel_requested_at: "datetime | None" = None
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -311,6 +321,9 @@ class ChainManager:
         resolved_requester = requester or Requester(
             agent_name=sender or "", session_id="main"
         )
+        # #5654: the injected clock (same one arm_timeout/restore already
+        # use) — never datetime.now() directly, so a test can control it.
+        registered_at = self._clock()
         chain = _PendingChain(
             chain_id=chain_id,
             requester=resolved_requester,
@@ -319,6 +332,7 @@ class ChainManager:
             waiting_on=set(waiting_on or []),
             kind=kind,
             cancel=cancel,
+            registered_at=registered_at,
         )
         self._chains[chain_id] = chain
 
@@ -342,6 +356,9 @@ class ChainManager:
             # the WAL EVENT type positional (e.g. "chain_register"); a
             # "kind" entry inside **fields collides with it.
             "task_kind": chain.kind,  # #3978 P4
+            # #5654: ISO-8601 on the wire, same round-trip shape arm_at
+            # already uses (JSON has no datetime type).
+            "registered_at": registered_at.isoformat(),
         }
         await self._journal.record_chain_register(chain_id=chain_id, fields=fields)
         return chain
@@ -370,6 +387,30 @@ class ChainManager:
             await self._journal.record_chain_update(
                 chain_id=chain_id, fields=journal_fields
             )
+
+    async def mark_cancel_requested(self, chain_id: str) -> None:
+        """#5654: record that cancellation was REQUESTED for ``chain_id``, at
+        the injected clock's current moment — same shape as ``arm_timeout``'s
+        own ``arm_at`` write (real ``datetime`` kept in-memory on the chain,
+        ISO string persisted). No-op if the chain is unknown (already
+        settled, or never existed) — mirrors ``update()``'s own tolerance.
+
+        Called by ``cancel_task``'s handler (``tools/task_verbs.py``)
+        alongside ``chain.cancel()`` — deliberately a SEPARATE call rather
+        than folded into the generic ``update()``, so ``update()``'s existing
+        contract (every field passed through byte-for-byte, no type-specific
+        handling beyond ``waiting_on``) stays exactly what its many other
+        callers already depend on.
+        """
+        chain = self._chains.get(chain_id)
+        if chain is None:
+            return
+        requested_at = self._clock()
+        chain.cancel_requested_at = requested_at
+        await self._journal.record_chain_update(
+            chain_id=chain_id,
+            fields={"cancel_requested_at": requested_at.isoformat()},
+        )
 
     async def resolve(self, chain_id: str) -> _PendingChain | None:
         """Remove and return the pending chain, persist resolve, cancel timer.
@@ -709,6 +750,19 @@ class ChainManager:
             # output exactly (both sides of this pair are this module).
             arm_at_raw = chain_dict.get("arm_at")
             arm_at = datetime.fromisoformat(arm_at_raw) if arm_at_raw else None
+            # #5654: same optional-ISO-string shape as arm_at above — absent
+            # on a pre-#5654 journal entry, which is exactly the "unknown,
+            # never fabricated" case the render layer already has to handle
+            # for a restored chain (cancel=None) regardless.
+            registered_at_raw = chain_dict.get("registered_at")
+            registered_at = (
+                datetime.fromisoformat(registered_at_raw) if registered_at_raw else None
+            )
+            cancel_requested_at_raw = chain_dict.get("cancel_requested_at")
+            cancel_requested_at = (
+                datetime.fromisoformat(cancel_requested_at_raw)
+                if cancel_requested_at_raw else None
+            )
             self._chains[cid] = _PendingChain(
                 chain_id=chain_dict["chain_id"],
                 requester=requester,
@@ -717,6 +771,8 @@ class ChainManager:
                 waiting_on=set(chain_dict.get("waiting_on", [])),
                 kind=chain_dict.get("task_kind"),  # #3978 P4 (None for pre-P4 entries)
                 arm_at=arm_at,
+                registered_at=registered_at,
+                cancel_requested_at=cancel_requested_at,
             )
             if self._chain_timeout_seconds <= 0:
                 continue

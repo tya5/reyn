@@ -568,13 +568,15 @@ def _build_run_tool_context(
         ``write_file``, …) calls real methods on it (``read_file_bytes`` etc.),
         so a synthetic ``base_dir``-only stand-in (fine for ``pipeline_install``,
         which never dispatches an arbitrary tool) is not enough here.
-      - ``caller_kind="router"``: the type's ONLY literal value — an audit
-        taxonomy label forwarded verbatim into ``tool_called``/
-        ``tool_returned`` events (``core/dispatch/dispatcher.py``), not a
-        claim that a live router loop is driving this call. Every existing
-        caller (including the non-interactive pipeline driver-session,
+      - ``caller_kind="router"``: an audit taxonomy label forwarded verbatim
+        into ``tool_called``/``tool_returned`` events
+        (``core/dispatch/dispatcher.py``), not a claim that a live router
+        loop is driving this call. Every existing caller (including the
+        non-interactive pipeline driver-session,
         ``services/pipeline_executor_driver.py``) already sets this same
-        literal.
+        literal. (#5654 added a second value, ``"operator"``, for a slash
+        command driving an op with no LLM tool_calls round behind it —
+        this call site is unaffected, still ``"router"``.)
       - ``router_state``: the caller-supplied ``RouterCallerState`` (built via
         ``reyn.tools.types.build_resource_caller_state`` from a real Session's
         ``RouterHostAdapter`` — see ``run_run``) so ``mcp``/``agents``/

@@ -216,6 +216,11 @@ async def _handle_cancel_task(args: Mapping[str, Any], ctx: ToolContext) -> Tool
             ),
         }
     chain.cancel()
+    # #5654: record the request itself, independent of the target's cancel
+    # hook actually landing — the fact "an operator asked" survives even if
+    # the target's turn takes a moment to actually stop (or, for a pipeline
+    # kind, until the next step boundary).
+    await chains.mark_cancel_requested(task_id)
     return {"task_id": task_id, "status": "cancel_requested"}
 
 

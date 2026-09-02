@@ -142,6 +142,7 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         mcp_subscriptions_reported=True,
         hooks_config_warnings_reported=True,
         compaction_progress_reported=True,
+        tasks_reported=True,
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
@@ -203,6 +204,7 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
         "mcp_subscriptions_reported",
         "hooks_config_warnings_reported",
         "compaction_progress_reported",
+        "tasks_reported",
     }
 
 

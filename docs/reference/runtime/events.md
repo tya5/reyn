@@ -588,8 +588,16 @@ threshold, or the pipeline launch itself failed) — a DIFFERENT state from
 ## Tool dispatch
 
 Emitted by `dispatch_tool` (`src/reyn/core/dispatch/dispatcher.py`) around every
-router-dispatched tool call. `tool_returned` and `tool_failed` are mutually
-exclusive per call.
+call it wraps. `tool_returned` and `tool_failed` are mutually exclusive per
+call.
+
+`caller_kind` is `"router"` (the chat agent main loop — every pre-#5654
+caller) or `"operator"` (#5654: a slash command driving an op directly, with
+no LLM `tool_calls` round behind it — e.g. `/tasks cancel`, via
+`slash/tasks.py`'s own `dispatch_tool` call). Load-bearing for who a
+`tool_called` event says did something: a slash-driven cancel reaching
+`chains.get(id).cancel()` directly instead of through `dispatch_tool` would
+silently drop this attribution — #5654's own reviewer strip.
 
 | Kind | When | Key payload |
 |------|------|-------------|

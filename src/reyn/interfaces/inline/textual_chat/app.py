@@ -2157,6 +2157,8 @@ class TextualChatApp(App):
         the live conversation (history), the live artifact list (#4482), and the
         app BINDINGS (help). Pass ``snap`` to reuse an already-read snapshot
         (keeps the rows and the selection ids derived from ONE snapshot)."""
+        from datetime import datetime, timezone
+
         from reyn.interfaces.slash import REGISTRY  # noqa: PLC0415 — TTY-local
         snapshot = self._snapshot() if snap is _UNSET else snap
         return pane_payload(
@@ -2168,6 +2170,11 @@ class TextualChatApp(App):
             artifact_source=self._artifact_rows_source,
             artifact_fallback_total=self._artifact_rows_fallback_total,
             app_bindings=self._app_binding_help(),
+            # #5654: the Task pane's own elapsed column — the one real
+            # clock read this whole render layer makes, injected here
+            # rather than inside chrome.py so the pure function stays
+            # testable with a fixed `now`.
+            now=datetime.now(timezone.utc),
         )
 
     def _attach_state(self) -> "str | None":
@@ -3536,9 +3543,12 @@ class TextualChatApp(App):
         # would double that work for no reason.
         artifact_rows = self._artifact_rows()
         self._artifact_rows_cache = artifact_rows
+        from datetime import datetime, timezone
+
         self._pane_commands[tab_id] = pane_commands(  # type: ignore[arg-type]
             tab_id, snapshot, artifacts=artifact_rows,
             artifact_source=self._artifact_rows_source,
+            now=datetime.now(timezone.utc),
         )
         child = self.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
