@@ -169,7 +169,31 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
 ) -> None:
     """Tier 2: contract acceptance ② — a single oversized tool result is
     the ONLY large thing in history. Spill alone must fix it (watermark
-    unchanged — no `compaction_check`/`compaction_completed` event)."""
+    unchanged — no `compaction_check`/`compaction_completed` event).
+
+    #5622 (PR review, real-execution finding): without a stub, this
+    test's own genuinely-unpinned real-network reach (`compact()`
+    reaching real, live `litellm`) would fail with SOME exception —
+    and `retry_loop`'s own internal compact()-call except clause
+    classifies anything neither FATAL nor RETRYABLE as OVERFLOW by
+    design (#3783's own owner-ratified default for THIS call site,
+    unconditional on the exception's own real cause — see that call
+    site's own comment for the full trace). Without a stub, that
+    silent absorption is exactly what let this test pass even while
+    genuinely reaching the network — the real defect the review
+    caught: the test's own "spill resolves it, not compact()" claim
+    was riding on an unpinned, undisclosed side channel, never on the
+    scenario it names. ``LLMStub(raise_for=..., cause="byte_limit")``
+    closes that gap directly: it forces retry_loop's own compact() to
+    keep failing with a real, DETERMINISTIC byte-limited shape while
+    ANY candidate remains un-spilled — matching #5615's own
+    established pattern for isolating "spill resolves it, not
+    compact()", never letting compact() opportunistically fold the
+    huge result into a summary (a bare, unconditionally-succeeding
+    stub does exactly that instead — measured directly, breaking this
+    test's own "spill, not compaction" claim)."""
+    from reyn.dev.testing.llm_stub import LLMStub
+
     session = _make_spill_session(tmp_path, monkeypatch)
     _push(session, "user", "look something up")
     huge = "Y" * 50_000
@@ -182,11 +206,16 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
         lambda history, user_text: _has_content(history, huge)
     )
 
-    result = asyncio.run(
-        session._loop_driver._run_with_shrink_and_byte_reduction(
-            loop, "continue please", chain_id="c1",
+    stub = LLMStub(raise_for=lambda messages: True, cause="byte_limit")
+    stub.install()
+    try:
+        result = asyncio.run(
+            session._loop_driver._run_with_shrink_and_byte_reduction(
+                loop, "continue please", chain_id="c1",
+            )
         )
-    )
+    finally:
+        stub.restore()
     assert result is None  # the fake loop's own successful return
 
     # `_run_with_shrink`'s own PRE-EXISTING #4954(b) next_turn side-effect
@@ -521,7 +550,27 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     the spilled form on turn 2's very first attempt. Witnessed via the
     fake loop's own call count for turn 2 (== 1, no 413 at all) AND via
     the real on-disk manifest (the spill is not merely an in-memory
-    claim)."""
+    claim).
+
+    #5622 (PR review, real-execution finding): turn 1's own recovery
+    must go through retry_loop's own internal compact() call at least
+    once (a real 413 enters `_run_with_shrink`'s ladder, which invokes
+    retry_loop regardless of `recovery_policy`) — with no stub, that
+    call reaches real, unpinned litellm; `retry_loop`'s own except
+    clause classifies anything neither FATAL nor RETRYABLE as OVERFLOW
+    by design (#3783's own owner-ratified default for this call site),
+    so an unpinned network failure there is silently absorbed as a
+    fake OVERFLOW instead of surfacing — exactly the undisclosed side
+    channel this test's own "spill recovers turn 1" claim was
+    accidentally riding on. `LLMStub(raise_for=..., cause="byte_limit")`,
+    scoped to turn 1's own drive, forces a real, DETERMINISTIC
+    byte-limited compact() failure instead — matching #5615's own
+    established pattern — so spill (not an opportunistic compact()
+    success, nor an unpinned network reach absorbed as OVERFLOW) is
+    genuinely what recovers turn 1, unchanged from what this test
+    already asserts."""
+    from reyn.dev.testing.llm_stub import LLMStub
+
     session = _make_spill_session(tmp_path, monkeypatch)
     _push(session, "user", "look something up")
     huge = "Q" * 50_000
@@ -531,9 +580,14 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     loop1 = _ContentDrivenLoop(lambda history, user_text: _has_content(history, huge))
 
     async def _turn1() -> None:
-        await session._loop_driver._run_with_shrink_and_byte_reduction(
-            loop1, "continue please", chain_id="c1",
-        )
+        stub = LLMStub(raise_for=lambda messages: True, cause="byte_limit")
+        stub.install()
+        try:
+            await session._loop_driver._run_with_shrink_and_byte_reduction(
+                loop1, "continue please", chain_id="c1",
+            )
+        finally:
+            stub.restore()
         # #5364 §1.4: the manifest append is now off-loop (fire-and-forget,
         # chained after the content write on save_tool_result's own
         # worker — see media_store.py's own comment on that ordering). A
