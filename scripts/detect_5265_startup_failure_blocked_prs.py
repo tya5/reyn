@@ -59,6 +59,7 @@ import argparse
 import json
 import subprocess
 import sys
+from typing import Callable
 
 _REPO = "tya5/reyn"
 
@@ -129,30 +130,64 @@ def _fetch_head_sha_for_pr(pr_number: str) -> str:
     return data["headRefOid"]
 
 
-def _fetch_runs_for_head(head_sha: str) -> "list[dict]":
+def _fetch_runs_for_head(
+    head_sha: str, *, gh_json_fn: "Callable[[list[str]], object]" = _gh_json,
+) -> "list[dict]":
     """Every workflow run GitHub has recorded for *head_sha*, normalized
-    to this script's own ``{"conclusion", "jobs_count"}`` shape. ``gh run
-    list`` has no ``--head-sha`` filter, so this fetches recent runs and
-    filters client-side (mirrors the issue thread's own recursive-bisect
-    workaround for the same ``gh run list`` pagination ceiling, at a much
-    smaller scale here — one head sha's worth of recent activity, not a
-    7-day sweep). ``jobs_count`` is only fetched (a second `gh` call, per
-    run) for a run whose conclusion is ``startup_failure`` — every other
+    to this script's own ``{"conclusion", "jobs_count"}`` shape.
+
+    ``gh_json_fn`` (#5665): the ONE ``gh`` call-out point, injectable —
+    ``_gh_json`` for real, or a test's own Fake that returns canned
+    ``gh api`` payloads and lets a regression test assert on the exact
+    ARGV this function builds (proving the fix targets the QUERY itself,
+    not just its interpretation — see ``tests/scripts/test_detect_5265_
+    startup_failure_blocked_prs.py``'s own head_sha-outside-the-old-
+    window fixture, built from PR #5640's real shape).
+
+    #5665 (lead-coder's own real-machine finding, PR #5640): ``gh run
+    list`` has no server-side head-sha filter, so an earlier revision of
+    this function fetched the repo's own most-recent ``--limit 200`` runs
+    and filtered client-side — a WINDOW, not a complete read. A busy repo
+    day (20 PRs merged) shrank that window to ~70 minutes of coverage;
+    any head older than that produced an EMPTY ``matching`` list
+    indistinguishable from "GitHub never recorded a run at all" —
+    :func:`is_permanently_blocked`'s own ``if not runs: return True``
+    then fired on a query that never reached the real data, not on a
+    genuine #5265 incident. "Increase 200" would only widen the same
+    window, not remove it — the SAME false-RED shape recurs on a busier
+    day or an older head.
+
+    The REST endpoint ``GET /repos/{repo}/actions/runs?head_sha=<sha>``
+    (unlike ``gh run list``) filters server-side and returns
+    ``{"total_count", "workflow_runs": [...]}`` — the ``head_sha`` query
+    parameter must be embedded in the URL itself, not passed via ``gh
+    api -f`` (``-f``/``-F`` switch ``gh api``'s own default method from
+    GET to POST, which this read-only endpoint rejects with a 404 —
+    verified by direct execution, not assumed). ``--paginate`` makes the
+    read provably complete regardless of how many runs exist for this
+    ONE head sha (architect's own #5265 structural requirement: a "0"
+    used as detection evidence must be a 0 over the FULL population, not
+    a page's own emptiness) — costs nothing extra when everything already
+    fits on one page, which every real head sha does in practice, but
+    removes the same window-shaped bug this function existed to fix
+    rather than only patching today's specific instance of it.
+
+    ``jobs_count`` is only fetched (a second `gh api` call, per run) for
+    a run whose conclusion is ``startup_failure`` — every other
     conclusion already proves the run is not dead, per
     :func:`is_permanently_blocked`'s own logic, so job count is
     irrelevant to it."""
-    all_runs = _gh_json([
-        "run", "list", "--repo", _REPO, "--limit", "200",
-        "--json", "headSha,conclusion,status,databaseId",
+    data = gh_json_fn([
+        "api", f"repos/{_REPO}/actions/runs?head_sha={head_sha}", "--paginate",
     ])
-    matching = [r for r in all_runs if r.get("headSha") == head_sha]
+    matching = data.get("workflow_runs", [])
     runs: "list[dict]" = []
     for r in matching:
         conclusion = r.get("conclusion") or None
         jobs_count = None
         if conclusion == "startup_failure":
-            jobs = _gh_json([
-                "run", "view", str(r["databaseId"]), "--repo", _REPO, "--json", "jobs",
+            jobs = gh_json_fn([
+                "api", f"repos/{_REPO}/actions/runs/{r['id']}/jobs", "--paginate",
             ])
             jobs_count = len(jobs.get("jobs", []))
         runs.append({"conclusion": conclusion, "jobs_count": jobs_count})
