@@ -28,6 +28,7 @@ from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearne
 from reyn.services.compaction.engine import (
     ChatSummary,
     ComputedBudgets,
+    RetryPayload,
     _estimate_bytes_list,
     estimate_turn_bytes,
     estimate_wire_bytes,
@@ -250,8 +251,11 @@ def test_retry_loop_success_emits_compaction_wire_bytes_measured() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP=SP, head=head, raw_middle=[],
-        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        SP=SP, payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_success_call,
@@ -297,10 +301,11 @@ def test_retry_loop_never_emits_compaction_wire_bytes_measured_for_a_non_byte_ov
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=[{"role": "user", "content": "h", "seq": 1}],
-            raw_middle=[],
-            tail=[{"role": "user", "content": "t", "seq": 2}],
-            new_msg={"role": "user", "content": "q", "seq": 3},
+            SP="sp", payload=RetryPayload(
+            head=[{"role": "user", "content": "h", "seq": 1}], raw_middle=[],
+            tail=[{"role": "user", "content": "t", "seq": 2}], new_msg={"role": "user", "content": "q", "seq": 3},
+            seq_by_id={},
+        ),
             cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
@@ -342,9 +347,11 @@ def test_retry_loop_success_event_carries_accepted_true() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP="sp", head=[{"role": "user", "content": "h", "seq": 1}],
-        raw_middle=[], tail=[{"role": "user", "content": "t", "seq": 2}],
-        new_msg={"role": "user", "content": "q", "seq": 3},
+        SP="sp", payload=RetryPayload(
+            head=[{"role": "user", "content": "h", "seq": 1}], raw_middle=[],
+            tail=[{"role": "user", "content": "t", "seq": 2}], new_msg={"role": "user", "content": "q", "seq": 3},
+            seq_by_id={},
+        ),
         cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner, main_call=_success_call,
@@ -403,8 +410,11 @@ def test_retry_loop_that_only_413s_still_emits_wire_bytes_with_accepted_false() 
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=[], tail=tail,
-            new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner, main_call=_always_413,
         ))
@@ -507,7 +517,11 @@ def test_retry_loop_success_event_carries_the_breakdown_fields() -> None:
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP=SP, head=head, raw_middle=[], tail=tail, new_msg=new_msg,
+        SP=SP, payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
         learner=learner, main_call=_success_call,
     ))
@@ -616,8 +630,11 @@ def test_retry_loop_that_only_413s_names_the_learned_limit_in_the_terminal_messa
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=[], tail=tail,
-            new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner, main_call=_always_413,
         ))
@@ -668,9 +685,11 @@ def test_compaction_wire_bytes_measured_carries_only_byte_counts_never_content()
     engine._events.add_subscriber(lambda e: seen.append(e))
 
     asyncio.run(retry_loop(
-        SP="system prompt with secrets", head=[{"role": "user", "content": "sensitive", "seq": 1}],
-        raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
-        new_msg={"role": "user", "content": "and this too", "seq": 3},
+        SP="system prompt with secrets", payload=RetryPayload(
+            head=[{"role": "user", "content": "sensitive", "seq": 1}], raw_middle=[],
+            tail=[{"role": "user", "content": "also sensitive", "seq": 2}], new_msg={"role": "user", "content": "and this too", "seq": 3},
+            seq_by_id={},
+        ),
         cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
         learner=learner, main_call=_success_call,
     ))

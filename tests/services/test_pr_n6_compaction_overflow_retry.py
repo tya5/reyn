@@ -43,6 +43,7 @@ from reyn.services.compaction.engine import (
     ContextOverflowError,
     HistoryChunkToCompact,
     RetryLoopTerminal,
+    RetryPayload,
     UnrecoveredError,
     _estimate_tokens_list,
     assert_static_bounds,
@@ -488,10 +489,11 @@ def test_retry_loop_shrinks_tail_on_overflow(tmp_path) -> None:
 
     result = asyncio.run(retry_loop(
         SP="system",
-        head=head,
-        raw_middle=raw_middle,
-        tail=tail,
-        new_msg=new_msg,
+        payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
         cfg=cfg,
         model="test-model",
         engine=engine,  # type: ignore[arg-type]
@@ -536,10 +538,11 @@ def test_retry_loop_raises_unrecovered_when_all_at_min(tmp_path) -> None:
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
             SP="sp",
-            head=head,
-            raw_middle=raw_middle,
-            tail=tail,
-            new_msg=new_msg,
+            payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
             cfg=cfg,
             model="test-model",
             engine=engine,  # type: ignore[arg-type]
@@ -584,10 +587,11 @@ def test_retry_loop_success_calls_learner_observe(tmp_path) -> None:
 
     asyncio.run(retry_loop(
         SP="system-prompt",
-        head=head,
-        raw_middle=[],
-        tail=tail,
-        new_msg=new_msg,
+        payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
         cfg=cfg,
         model=model,
         engine=engine,  # type: ignore[arg-type]
@@ -648,8 +652,11 @@ def test_retry_loop_emits_compaction_shrink_recovered_with_cause(tmp_path) -> No
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     asyncio.run(retry_loop(
-        SP="sp", head=head, raw_middle=[],
-        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_fail_once_then_succeed,
@@ -759,8 +766,11 @@ def test_413_recovery_does_not_claim_exceeds_t_max(tmp_path) -> None:
     # silently re-introduce a timing-shaped dependency here.
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
@@ -800,8 +810,11 @@ def test_413_recovery_emits_t_max_override_in_the_audit_event(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
@@ -939,8 +952,11 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough(tmp_path) 
     # The pass-line: retry_loop must return WITHOUT raising — this is the
     # side none of the 3 existing 413 tests ever reach.
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, raw_middle=raw_middle,
-        tail=tail, new_msg=new_msg, cfg=cfg, model=model,
+        SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model=model,
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=main_call,
@@ -1108,8 +1124,11 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state(tmp_p
     _max_iterations = 20
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
@@ -1219,8 +1238,11 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=[], raw_middle=raw_middle,
-        tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_main_call,
@@ -1274,8 +1296,11 @@ def test_terminal_distinguishes_mid_floor_from_room_floor(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError) as mid_floor_excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=[], raw_middle=raw_middle,
-            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=mid_floor_engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413_main_call,
@@ -1293,8 +1318,11 @@ def test_terminal_distinguishes_mid_floor_from_room_floor(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError) as room_floor_excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=[],
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=[],
             tail=tail, new_msg={"role": "user", "content": "q", "seq": 3},
+            seq_by_id={},
+        ),
             cfg=cfg, model="test-model",
             engine=room_floor_engine,  # type: ignore[arg-type]
             learner=learner,
@@ -1325,8 +1353,11 @@ def test_5367_3_spill_unavailable_still_raises_with_accurate_message(tmp_path) -
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=[], raw_middle=raw_middle,
-            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_always_413,
@@ -1395,8 +1426,11 @@ def test_4947_stage1_success_resets_same_cause_streak(tmp_path) -> None:
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, raw_middle=raw_middle,
-        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_succeeds,
@@ -1449,8 +1483,11 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure(t
         return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=head, raw_middle=raw_middle,
-        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_succeeds,
@@ -1514,8 +1551,11 @@ def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit(tmp_path) -> None:
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=raw_middle,
-            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_unreachable,
@@ -1600,10 +1640,11 @@ def test_5531_no_interleaving_tail_condition_stays_false_once_exhausted(tmp_path
     with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
             SP="system",
-            head=head,
-            raw_middle=raw_middle,
-            tail=tail,
-            new_msg=new_msg,
+            payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
             cfg=cfg,
             model="test-model",
             engine=engine,  # type: ignore[arg-type]
@@ -1699,10 +1740,11 @@ def test_5531_at_most_one_summary_element_in_messages(tmp_path) -> None:
     with pytest.raises(UnrecoveredError):
         asyncio.run(retry_loop(
             SP="system",
-            head=head,
-            raw_middle=raw_middle,
-            tail=tail,
-            new_msg=new_msg,
+            payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
             cfg=cfg,
             model="test-model",
             engine=engine,  # type: ignore[arg-type]
@@ -1780,7 +1822,11 @@ def test_5531_pr2_all_summary_head_and_tail_reaches_reservation_floor(tmp_path) 
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
-            SP="sp", head=head, raw_middle=[], tail=tail, new_msg=new_msg,
+            SP="sp", payload=RetryPayload(
+            head=head, raw_middle=[],
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
             cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,

@@ -76,6 +76,7 @@ from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearne
 from reyn.services.compaction.engine import (
     ChatSummary,
     RetryLoopTerminal,
+    RetryPayload,
     UnrecoveredError,
     retry_loop,
 )
@@ -207,8 +208,11 @@ def test_tier_batch_consumes_15_candidates_in_2_compact_calls() -> None:
     new_msg = {"role": "user", "content": "q", "seq": 999}
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=[], raw_middle=raw_middle,
-        tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_main_call,
@@ -237,8 +241,11 @@ def test_single_candidate_still_resolves_in_the_minimum_call_count() -> None:
     new_msg = {"role": "user", "content": "q", "seq": 999}
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=[], raw_middle=raw_middle,
-        tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_main_call,
@@ -278,8 +285,11 @@ def test_when_spill_alone_cannot_resolve_it_mid_floor_is_still_reached() -> None
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=[], raw_middle=raw_middle,
-            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_main_call,
@@ -309,8 +319,11 @@ def test_spill_fn_returning_empty_list_falls_through_to_halving() -> None:
 
     try:
         asyncio.run(retry_loop(
-            SP="sp", head=[], raw_middle=raw_middle,
-            tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+            SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
             engine=engine,  # type: ignore[arg-type]
             learner=learner,
             main_call=_main_call,
@@ -337,8 +350,11 @@ def test_spill_granularity_turn_reproduces_one_candidate_per_call() -> None:
     new_msg = {"role": "user", "content": "q", "seq": 999}
 
     result = asyncio.run(retry_loop(
-        SP="sp", head=[], raw_middle=raw_middle,
-        tail=[], new_msg=new_msg, cfg=cfg, model="test-model",
+        SP="sp", payload=RetryPayload(
+            head=[], raw_middle=raw_middle,
+            tail=[], new_msg=new_msg,
+            seq_by_id={},
+        ), cfg=cfg, model="test-model",
         engine=engine,  # type: ignore[arg-type]
         learner=learner,
         main_call=_main_call,

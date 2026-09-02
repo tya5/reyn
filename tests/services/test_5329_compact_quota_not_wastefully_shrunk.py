@@ -39,6 +39,7 @@ from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearne
 from reyn.services.compaction.engine import (
     CompactionOverflowError,
     ComputedBudgets,
+    RetryPayload,
     UnrecoveredError,
     retry_loop,
 )
@@ -137,9 +138,11 @@ def test_quota_exhausted_compact_terminates_on_first_occurrence_bare() -> None:
     async def _drive():
         try:
             await retry_loop(
-                SP="sp", head=[],
-                raw_middle=[{"role": "user", "content": "x", "seq": 1}],
-                tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
+                SP="sp", payload=RetryPayload(
+            head=[], raw_middle=[{"role": "user", "content": "x", "seq": 1}],
+            tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
+            seq_by_id={},
+        ),
                 cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
                 learner=_learner(), main_call=_never_called_main_call,
             )
@@ -192,9 +195,11 @@ def test_transient_rate_limit_also_terminates_bare_on_first_occurrence() -> None
     async def _drive():
         try:
             await retry_loop(
-                SP="sp", head=[],
-                raw_middle=[{"role": "user", "content": "x", "seq": 1}],
-                tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
+                SP="sp", payload=RetryPayload(
+            head=[], raw_middle=[{"role": "user", "content": "x", "seq": 1}],
+            tail=[], new_msg={"role": "user", "content": "q", "seq": 2},
+            seq_by_id={},
+        ),
                 cfg=_cfg(), model="test-model", engine=engine,  # type: ignore[arg-type]
                 learner=_learner(), main_call=_never_called_main_call,
             )

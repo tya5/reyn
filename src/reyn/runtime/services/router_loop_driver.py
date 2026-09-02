@@ -861,10 +861,7 @@ class RouterLoopDriver:
                 try:
                     _shim = await _retry_loop(
                         SP=self._history_buffer.build_system_prompt(),
-                        head=payload.head,
-                        raw_middle=payload.raw_middle,
-                        tail=payload.tail,
-                        new_msg=payload.new_msg,
+                        payload=payload,
                         cfg=self._compaction,
                         model=self._effective_router_model_class(),
                         engine=self._compaction_controller._engine,

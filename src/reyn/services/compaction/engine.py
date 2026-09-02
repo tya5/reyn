@@ -2644,10 +2644,7 @@ class RetryPayload:
 async def retry_loop(
     *,
     SP: str,
-    head: list[dict],
-    raw_middle: list[dict],
-    tail: list[dict],
-    new_msg: dict,
+    payload: "RetryPayload",
     cfg: "CompactionConfig",
     model: str,
     engine: "CompactionEngine",
@@ -2658,8 +2655,65 @@ async def retry_loop(
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
 
-    On success (normal path or after shrink), calls ``learner.observe`` with
-    the actual vs estimated token count so the adaptive estimator learns.
+    #5631 candidate 1 (Fowler, Replace Function with Command — architect
+    ruling, issue #5631 §1): this is now a thin entry point. The ladder's
+    own 18 loop-carried locals live as :class:`RecoveryLadder` fields
+    instead of function-local reassigned variables, and each rung /
+    phase / floor is a named method instead of one 1,018-line body.
+    ``head``/``raw_middle``/``tail``/``new_msg`` fold into ``payload``
+    (:class:`RetryPayload`, reused from #5631 candidate 2 rather than a
+    second Parameter Object for the same data clump) — ``model`` stays
+    its own explicit param: it is the ROUTER purpose class
+    (``ModelResolver.class_for_purpose("router")``), a DIFFERENT axis
+    from ``engine.model`` (the compaction engine's own model, which per
+    #3785 always follows ``Session.model`` directly and never the
+    per-purpose map) — the two can genuinely diverge whenever an
+    operator configures ``llm.model_class_by_purpose.router``, so
+    deriving one from the other would be a real bug, not a simplification
+    (verified before this refactor, per #5631 §1's own required
+    precondition check; architect confirmed and revised the gate from
+    "flat params ≤ 8" to "≤ 9" accordingly).
+
+    Zero behavior change from before this refactor: same control flow,
+    same branches, same events, same exceptions — see
+    :class:`RecoveryLadder`'s own docstring for the full "Bounded
+    termination proof," per-stage rationale, and parameter semantics,
+    all relocated from here unchanged. Verified against the full
+    behavior-invariance witness suite #5631 §1 names (#5592/#5612/#5296
+    PR-2/#3783/PR-N6, all unchanged and green).
+    """
+    ladder = RecoveryLadder(
+        SP=SP, payload=payload, cfg=cfg, model=model, engine=engine,
+        learner=learner, main_call=main_call, spill_fn=spill_fn,
+        on_summary_used=on_summary_used,
+    )
+    return await ladder.run()
+
+
+# #5631 candidate 1: the sentinel `_run_one_iteration` returns wherever the
+# former `retry_loop` body said a bare `continue` — a helper method cannot
+# `continue` an outer loop directly, so `run()`'s own `while True:` reads
+# this sentinel back to know "loop again" from "return this as the result."
+# A module-level `object()` (not `None`/`False`) so it can never collide
+# with a genuine recovered response value.
+_LADDER_CONTINUE = object()
+
+
+class RecoveryLadder:
+    """The bounded shrink ladder for ONE context-overflow recovery episode
+    (#5631 candidate 1 — Fowler's Replace Function with Command, applied
+    to the former ``retry_loop`` module function).
+
+    Constructed once per episode by :func:`retry_loop` (the public entry
+    point, unchanged shape for the one production caller,
+    ``router_loop_driver.py``); :meth:`run` is the former function's own
+    ``while True:`` loop, now calling this class's own named stage
+    methods instead of inlining ~1,000 lines of branching. Each rung /
+    phase / floor keeps its OWN original comment, relocated verbatim —
+    this is a STRUCTURAL commit only (Fowler: move ≠ edit); no branch,
+    event, exception, or ordering changed. On success (normal path or
+    after shrink), calls ``learner.observe`` with the actual vs
+    estimated token count so the adaptive estimator learns.
 
     Bounded termination proof (#5531 §10 — ``max_iterations`` abolished)
     ----------------------------------------------------------------
@@ -2784,18 +2838,18 @@ async def retry_loop(
     ----------
     SP:
         Current system prompt text (used only for token estimation).
-    head:
-        HEAD turn list (oldest turns). May include one or more
-        ``role==SUMMARY_MESSAGE_ROLE`` elements — #5531 PR-2: there is no
-        separate ``summary`` parameter any more (removed; see
-        ``_summary_tokens_in``) — a summary lives wherever it naturally
-        sits in ``head``/``tail``, exactly like any other turn.
-    raw_middle:
-        Middle turns not yet compacted.
-    tail:
-        TAIL turn list (most recent turns, verbatim).
-    new_msg:
-        Incoming user message turn dict.
+    payload:
+        :class:`RetryPayload` — ``head`` (HEAD turn list, oldest turns;
+        may include one or more ``role==SUMMARY_MESSAGE_ROLE`` elements
+        — #5531 PR-2: there is no separate ``summary`` parameter any
+        more, removed; see ``_summary_tokens_in`` — a summary lives
+        wherever it naturally sits in ``head``/``tail``, exactly like
+        any other turn), ``raw_middle`` (middle turns not yet
+        compacted), ``tail`` (TAIL turn list, most recent turns,
+        verbatim), ``new_msg`` (incoming user message turn dict), and
+        ``seq_by_id`` (opaque to this class — never read here; the
+        CALLER's own ``id(wire_dict) -> seq`` map, threaded through
+        unexamined for ``on_summary_used`` to resolve).
     cfg:
         CompactionConfig (component_weights used for min budget derivation).
     model:
@@ -2837,19 +2891,51 @@ async def retry_loop(
         path would silently persist 0 (#5498's own load-bearing warning,
         re-confirmed by this change).
     """
-    from reyn.llm.llm import note_upstream_recovery_call_attempt
-    from reyn.llm.model_budget import get_max_input_tokens
-    from reyn.runtime.services.token_multiplier_learner import detect_content_type
 
-    bg = engine.budgets
-    head_min_tokens = bg.head_budget
-    tail_min_tokens = bg.tail_budget
-    use_chars4 = cfg.use_chars4_estimate
+    def __init__(
+        self,
+        *,
+        SP: str,
+        payload: "RetryPayload",
+        cfg: "CompactionConfig",
+        model: str,
+        engine: "CompactionEngine",
+        learner: "TokenMultiplierLearner",
+        main_call: Callable[..., Awaitable[Any]],
+        spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
+        on_summary_used: "Callable[[ChatSummary, list[dict]], Awaitable[None]] | None" = None,
+    ) -> None:
+        self._SP = SP
+        self.head = payload.head
+        self.raw_middle = payload.raw_middle
+        self.tail = payload.tail
+        self.new_msg = payload.new_msg
+        self._cfg = cfg
+        self._model = model
+        self._engine = engine
+        self._learner = learner
+        self._main_call = main_call
+        self._spill_fn = spill_fn
+        self._on_summary_used = on_summary_used
 
-    _last_recover_cause: str | None = None
-    _consecutive_same_cause = 0
+        from reyn.llm.llm import note_upstream_recovery_call_attempt
+        from reyn.llm.model_budget import get_max_input_tokens
+        from reyn.runtime.services.token_multiplier_learner import detect_content_type
 
-    # #4885/#5531 PR-2 (owner proposal, evaluated by lead-coder, redesigned
+        self._note_upstream_recovery_call_attempt = note_upstream_recovery_call_attempt
+        self._get_max_input_tokens = get_max_input_tokens
+        self._detect_content_type = detect_content_type
+
+        bg = engine.budgets
+        self._bg = bg
+        self._head_min_tokens = bg.head_budget
+        self._tail_min_tokens = bg.tail_budget
+        self._use_chars4 = cfg.use_chars4_estimate
+
+        self._last_recover_cause: str | None = None
+        self._consecutive_same_cause = 0
+
+        # #4885/#5531 PR-2 (owner proposal, evaluated by lead-coder, redesigned
     # by owner — issue #5531 §2/§4): an HTTP 413 is a request-BODY-BYTE
     # limit — a different axis entirely from the token budgets this whole
     # ladder is built from (see this function's own "Bounded termination
@@ -2913,42 +2999,44 @@ async def retry_loop(
     # not-yet-built measure as what makes the fold-output-placement
     # change below safe; the real reason is Phase 1/2's own summary-skip,
     # see that comment for the actual argument).
-    _last_recover_is_byte_limit = False
-    # #5316: the learned ceiling — read back (not re-measured, per issue
-    # #5316's own "新しい測定は要りません") into the terminal message below
-    # when this loop ends on a byte limit. ``None`` until this loop's own
-    # accepted=True/False pair has been observed at least once each; a
-    # turn whose FIRST attempt already 413s carries no accepted bound yet
-    # (the terminal message degrades gracefully — see its own comment).
-    _last_accepted_wire_bytes: int | None = None
-    _last_rejected_wire_bytes: int | None = None
-    _t_max_override: int | None = None
-    # #4947 ③ (architect-ruled): how many of ``raw_middle``'s turns the NEXT
-    # ``compact()`` attempt should offer — ``None`` means "all of it" (the
-    # normal, first-attempt case). Halved on each ``compact()`` failure,
-    # reset to ``None`` on each success (a smaller *remainder* is then
-    # attempted in full next time). This is the state that must actually
-    # decrease for the split to terminate — see the shrink-escalation
-    # comment below for why re-slicing the SAME ``raw_middle`` on every
-    # iteration without persisting this would just recreate the old cycle.
-    _compact_attempt_len: int | None = None
-    # #5592 (owner ruling): the ORIGINAL raw_middle length this call
-    # started with — captured once, never re-derived, so
-    # ``compaction_shrink_recovered``'s own remaining-count field below is
-    # always "N left out of the SAME original total" rather than a moving
-    # denominator. This is the single producer for this count — #5588's
-    # own ``levers_left`` (a separate, TUI-facing surface for the same
-    # question) should read the SAME ``len(raw_middle)`` expression this
-    # function already computes, not recompute it independently (lead-
-    # coder/architect: "producer が1か所で数える、2か所で数えるとズレる").
-    _raw_middle_total = len(raw_middle)
-    # SP/new_msg never shrink (see the floor comment above) and never
-    # change across iterations (both are fixed parameters) — computed once,
-    # not on every floor check.
-    _sp_tokens_floor = estimate_tokens(SP, model, use_chars4=use_chars4)
-    _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
+        self._last_recover_is_byte_limit = False
+        # #5316: the learned ceiling — read back (not re-measured, per issue
+        # #5316's own "新しい測定は要りません") into the terminal message below
+        # when this loop ends on a byte limit. ``None`` until this loop's own
+        # accepted=True/False pair has been observed at least once each; a
+        # turn whose FIRST attempt already 413s carries no accepted bound yet
+        # (the terminal message degrades gracefully — see its own comment).
+        self._last_accepted_wire_bytes: "int | None" = None
+        self._last_rejected_wire_bytes: "int | None" = None
+        self._t_max_override: "int | None" = None
+        # #4947 ③ (architect-ruled): how many of ``raw_middle``'s turns the NEXT
+        # ``compact()`` attempt should offer — ``None`` means "all of it" (the
+        # normal, first-attempt case). Halved on each ``compact()`` failure,
+        # reset to ``None`` on each success (a smaller *remainder* is then
+        # attempted in full next time). This is the state that must actually
+        # decrease for the split to terminate — see the shrink-escalation
+        # comment below for why re-slicing the SAME ``raw_middle`` on every
+        # iteration without persisting this would just recreate the old cycle.
+        self._compact_attempt_len: "int | None" = None
+        # #5592 (owner ruling): the ORIGINAL raw_middle length this call
+        # started with — captured once, never re-derived, so
+        # ``compaction_shrink_recovered``'s own remaining-count field below is
+        # always "N left out of the SAME original total" rather than a moving
+        # denominator. This is the single producer for this count — #5588's
+        # own ``levers_left`` (a separate, TUI-facing surface for the same
+        # question) should read the SAME ``len(raw_middle)`` expression this
+        # function already computes, not recompute it independently (lead-
+        # coder/architect: "producer が1か所で数える、2か所で数えるとズレる").
+        self._raw_middle_total = len(self.raw_middle)
+        # SP/new_msg never shrink (see the floor comment above) and never
+        # change across iterations (both are fixed parameters) — computed once,
+        # not on every floor check.
+        self._sp_tokens_floor = estimate_tokens(SP, model, use_chars4=self._use_chars4)
+        self._new_msg_tokens_floor = estimate_tokens_for_turn(
+            self.new_msg, model, use_chars4=self._use_chars4,
+        )
 
-    def _spill_batch_from_offered(offered: "list[dict]") -> int:
+    def _spill_batch_from_offered(self, offered: "list[dict]") -> int:
         """#5592 (owner ruling, superseding the withdrawn #5531 §10 "one
         candidate at a time" AND this PR's own withdrawn doubling-batch
         draft) — rung①: spill as many candidates from *offered* as
@@ -2980,19 +3068,104 @@ async def retry_loop(
         elided out of ``estimate_wire_bytes``; reading bytes here would
         discard every mid spill outright) — progress is "how many edits
         did ``spill_fn`` return," full stop."""
-        if spill_fn is None or not offered:
+        if self._spill_fn is None or not offered:
             return 0
-        edits = spill_fn(offered)
+        edits = self._spill_fn(offered)
         for idx, replacement in edits:
-            raw_middle[idx] = replacement
+            self.raw_middle[idx] = replacement
         return len(edits)
 
-    # 0-indexed, matching the pre-#5531-§10 ``for _iteration in
-    # range(max_iterations)`` numbering exactly (existing telemetry
-    # consumers read the first pass as iteration 0).
-    _iteration = -1
-    while True:
-        _iteration += 1
+    def _stage_refill_phase1(self) -> bool:
+        """ADR-0044 refill, Phase 1: if ``tail`` still holds non-summary
+        content above ``_tail_min_tokens``, trim half of it (skipping any
+        reserved summary element) into ``raw_middle`` and return ``True``.
+        Returns ``False`` (no mutation) when the predicate does not hold —
+        this fuses the former bare ``elif`` condition and its body into
+        one call so :meth:`_run_one_iteration`'s own escalation chain AND
+        :meth:`_stage_halve_room`'s own same-iteration re-check can share
+        this exact mutation rather than duplicate it (#5631 candidate 1;
+        the duplication itself pre-dates this PR — see the re-check's own
+        comment, unchanged)."""
+        if not (
+            _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4) > self._tail_min_tokens
+            and _has_non_summary(self.tail)
+        ):
+            return False
+        # Phase 1: trim tail half → raw_middle. #5531 PR-2 (owner
+        # ruling, issuecomment-5465590083): skip any summary element
+        # (reserved — see _split_off_non_summary's own docstring)
+        # rather than pulling from tail's raw front. The
+        # `_has_non_summary` guard is load-bearing, not decorative:
+        # once tail is ALL summary, the token check alone stays True
+        # forever with zero progress possible — without this guard
+        # Phase 1 "handles" the overflow every iteration while moving
+        # nothing, starving the reservation ladder's own floor-check
+        # (below) of ever being reached.
+        _non_summary_tail_count = sum(
+            1 for t in self.tail
+            if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+        )
+        chunk = max(_non_summary_tail_count // 2, 1)
+        _removed, self.tail = _split_off_non_summary(self.tail, chunk, from_end=False)
+        self.raw_middle.extend(_removed)
+        return True
+
+    def _stage_refill_phase2(self) -> bool:
+        """ADR-0044 refill, Phase 2: same as :meth:`_stage_refill_phase1`
+        for ``head`` (prepends into ``raw_middle`` and resets
+        ``_compact_attempt_len`` — see the reset's own comment below)."""
+        if not (
+            _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4) > self._head_min_tokens
+            and _has_non_summary(self.head)
+        ):
+            return False
+        # Phase 2: trim head half → raw_middle. #5531 PR-2: same skip
+        # and same `_has_non_summary` guard as Phase 1's own branch.
+        _non_summary_head_count = sum(
+            1 for t in self.head
+            if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
+        )
+        chunk = max(_non_summary_head_count // 2, 1)
+        _removed, self.head = _split_off_non_summary(self.head, chunk, from_end=True)
+        self.raw_middle = _removed + self.raw_middle
+        # #5531 §10 (table #14's own asymmetry, corrected): Phase 2
+        # PREPENDS to raw_middle — a stale ``_compact_attempt_len``
+        # ("the first N turns failed") would now name a DIFFERENT
+        # prefix than the one that fact was ever true of. Phase 1
+        # (below-this-branch's sibling, APPENDS to the end) does NOT
+        # reset — the prefix stays unchanged there, so the knowledge
+        # stays valid.
+        self._compact_attempt_len = None
+        return True
+
+    async def run(self) -> Any:
+        """Drive :meth:`_run_one_iteration` — the ladder's own former
+        ``while True:`` loop body (#5631 candidate 1), unchanged control
+        flow, branching, events, and exceptions — until it returns
+        something other than ``_LADDER_CONTINUE`` (the former bare
+        ``continue`` statements' own new signal, since a helper method
+        cannot ``continue`` an outer loop directly) or raises."""
+        # 0-indexed, matching the pre-#5531-§10 ``for _iteration in
+        # range(max_iterations)`` numbering exactly (existing telemetry
+        # consumers read the first pass as iteration 0).
+        self._iteration = -1
+        while True:
+            self._iteration += 1
+            outcome = await self._run_one_iteration()
+            if outcome is not _LADDER_CONTINUE:
+                return outcome
+
+    async def _run_one_iteration(self) -> Any:
+        """One pass of the ladder's own former ``while True:`` body
+        (#5631 candidate 1) — returns the recovered response on success,
+        :data:`_LADDER_CONTINUE` where the former body said bare
+        ``continue`` (both call sites unchanged), or falls off the end
+        (also treated as continue) exactly where the former body did
+        neither — i.e. fell through the whole shrink-escalation section
+        without hitting any of its own ``continue``s, letting the outer
+        ``while True:`` simply loop again. Raises exactly where the
+        former body did (``UnrecoveredError``, or a re-raised FATAL/
+        RETRYABLE exception)."""
         # #4944①: tracks whether THIS iteration reached main_call — a
         # compact() call that overflows raises from a DIFFERENT payload
         # (raw_middle + section_caps, not head/summary/tail/new_msg) that
@@ -3001,10 +3174,10 @@ async def retry_loop(
         # resembling this was sent" as a rejected byte count.
         _this_iteration_called_main_call = False
         try:
-            if raw_middle:
+            if self.raw_middle:
                 # Compact raw_middle into the running summary.
                 # Build section_token_caps from budgets.section_caps.
-                section_caps = bg.section_caps if bg.section_caps else {
+                section_caps = self._bg.section_caps if self._bg.section_caps else {
                     "topic_arc": 200, "decisions": 400, "pending": 400,
                     "session_user_facts": 200, "artifacts_referenced": 300,
                 }
@@ -3013,8 +3186,8 @@ async def retry_loop(
                 # ``None`` (no prior failure yet) offers all of it, the
                 # same as before this change.
                 _attempt_len = (
-                    _compact_attempt_len if _compact_attempt_len is not None
-                    else len(raw_middle)
+                    self._compact_attempt_len if self._compact_attempt_len is not None
+                    else len(self.raw_middle)
                 )
                 # #5531 (lead-coder ruling, issuecomment-5463182279): the
                 # input to THIS compact() call is simply "the span being
@@ -3032,7 +3205,7 @@ async def retry_loop(
                 # head/tail, plus a fresh one this fold produces) — see
                 # `HistoryChunkToCompact`'s own docstring for the
                 # consequence swept for callers assuming exactly one.
-                _offered = raw_middle[:_attempt_len]
+                _offered = self.raw_middle[:_attempt_len]
                 _messages = _offered
                 input_chunk = HistoryChunkToCompact(
                     messages=_messages,
@@ -3045,11 +3218,11 @@ async def retry_loop(
                     # attempt's own docstring) — a no-op when no episode
                     # is active (e.g. this function's own test-only direct
                     # callers).
-                    note_upstream_recovery_call_attempt()
+                    self._note_upstream_recovery_call_attempt()
                     # #5475: raw_middle's turns are wire dicts (no `seq` —
                     # see `SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ`'s own
                     # docstring) — a real seq is not available to this caller.
-                    chat_summary = await engine.compact(
+                    chat_summary = await self._engine.compact(
                         input_chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ,
                     )
                     # #5612 scope note: a "discard a fold that does not
@@ -3085,8 +3258,8 @@ async def retry_loop(
                     # applies identically whether or not main_call
                     # eventually succeeds. See on_summary_used's own
                     # docstring for the full contract.
-                    if on_summary_used is not None:
-                        await on_summary_used(chat_summary, _offered)
+                    if self._on_summary_used is not None:
+                        await self._on_summary_used(chat_summary, _offered)
                     # #5531 PR-2 (owner ruling, §3 item 3, issuecomment-
                     # 5463249759, deferred from PR-1 which reverted the
                     # same line): the fold's result goes where the folded
@@ -3117,8 +3290,8 @@ async def retry_loop(
                     # this is now ALSO covered by the lexicographic
                     # measure this function's own docstring proves —
                     # ``max_iterations`` no longer exists as a backstop.)
-                    head = [
-                        t for t in head if t.get("role") != SUMMARY_MESSAGE_ROLE
+                    self.head = [
+                        t for t in self.head if t.get("role") != SUMMARY_MESSAGE_ROLE
                     ] + [wrap_summary_as_message(chat_summary.to_dict())]
                     # Only the ATTEMPTED slice is compacted — a smaller
                     # remainder (if any) stays in raw_middle for a later
@@ -3146,9 +3319,9 @@ async def retry_loop(
                     # shapes). Any slice that turns out too large for the
                     # new, smaller raw_middle just clips naturally at the
                     # slice below; no explicit clamping needed there.
-                    raw_middle = raw_middle[_attempt_len:]
-                    if raw_middle:
-                        _compact_attempt_len = min(_attempt_len * 2, len(raw_middle))
+                    self.raw_middle = self.raw_middle[_attempt_len:]
+                    if self.raw_middle:
+                        self._compact_attempt_len = min(_attempt_len * 2, len(self.raw_middle))
                     # #4947 ③ (CI red on #4950, architect-ruled): reset the
                     # same-cause streak here, and ONLY here — not on any
                     # other escalation branch. The cap's own words below
@@ -3169,9 +3342,9 @@ async def retry_loop(
                     # iteration). Both fields reset together — resetting
                     # only one leaves the other's next failure starting
                     # from "recover #2" instead of "#1".
-                    _last_recover_cause = None
-                    _consecutive_same_cause = 0
-                    if raw_middle:
+                    self._last_recover_cause = None
+                    self._consecutive_same_cause = 0
+                    if self.raw_middle:
                         # #4947 ③: ``main_call`` never receives ``raw_middle``
                         # directly (only ``head``/``tail``/``new_msg``) —
                         # calling it now would silently drop this still-
@@ -3180,7 +3353,7 @@ async def retry_loop(
                         # iteration's budget compacting the remainder
                         # instead of calling main_call with an incomplete
                         # summary.
-                        continue
+                        return _LADDER_CONTINUE
                 except Exception as exc:
                     # #5543 / #5531 §10 (owner precondition for abolishing
                     # `max_iterations`, landed in this SAME PR — see this
@@ -3275,20 +3448,20 @@ async def retry_loop(
             _this_iteration_called_main_call = True
             # #5592: same single-producer mark as the compact() call site
             # above — main_call is retry_loop's OTHER upstream call.
-            note_upstream_recovery_call_attempt()
-            response = await main_call(
-                SP=SP,
-                head=head,
-                tail=tail,
-                new_msg=new_msg,
+            self._note_upstream_recovery_call_attempt()
+            response = await self._main_call(
+                SP=self._SP,
+                head=self.head,
+                tail=self.tail,
+                new_msg=self.new_msg,
             )
 
             # Success: observe actual vs estimated tokens for the learner.
-            content_type = detect_content_type(new_msg.get("content"))
-            sp_tokens = estimate_tokens(SP, model, use_chars4=use_chars4)
-            head_tokens = _estimate_tokens_list(head, model, use_chars4=use_chars4)
-            tail_tokens = _estimate_tokens_list(tail, model, use_chars4=use_chars4)
-            new_msg_tokens = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
+            content_type = self._detect_content_type(self.new_msg.get("content"))
+            sp_tokens = estimate_tokens(self._SP, self._model, use_chars4=self._use_chars4)
+            head_tokens = _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4)
+            tail_tokens = _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4)
+            new_msg_tokens = estimate_tokens_for_turn(self.new_msg, self._model, use_chars4=self._use_chars4)
             # #5531 PR-2: no separate summary term here — head_tokens/
             # tail_tokens already include it (a summary element is just
             # one more entry in those lists now); adding it again would
@@ -3304,8 +3477,8 @@ async def retry_loop(
                 pass
 
             if actual and estimate > 0:
-                learner.observe(
-                    model=model,
+                self._learner.observe(
+                    model=self._model,
                     content_type=content_type,
                     estimate_tokens=estimate,
                     actual_tokens=actual,
@@ -3332,10 +3505,10 @@ async def retry_loop(
             # summary element's own bytes; a separate value here would
             # double-count it in `.total`.
             _accepted_breakdown = estimate_wire_bytes_breakdown(
-                SP=SP, head=head, summary=None, tail=tail, new_msg=new_msg,
+                SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
             )
-            _last_accepted_wire_bytes = _accepted_breakdown.total
-            engine._events.emit(
+            self._last_accepted_wire_bytes = _accepted_breakdown.total
+            self._engine._events.emit(
                 "compaction_wire_bytes_measured",
                 wire_bytes=_accepted_breakdown.total,
                 accepted=True,
@@ -3371,20 +3544,20 @@ async def retry_loop(
                 if _overflow_exc.__cause__ is not None
                 else type(_overflow_exc).__name__
             )
-            if _cause == _last_recover_cause:
-                _consecutive_same_cause += 1
+            if _cause == self._last_recover_cause:
+                self._consecutive_same_cause += 1
             else:
-                _last_recover_cause = _cause
-                _consecutive_same_cause = 1
+                self._last_recover_cause = _cause
+                self._consecutive_same_cause = 1
             # #4885: same status_code check `is_context_overflow_error` uses
             # (a real attribute litellm/openai set from the underlying HTTP
             # response, not string-matched) — checked on the ROOT cause, the
             # same one `_cause` above already names, so "413" and the cause
             # name agree about what actually happened.
-            _last_recover_is_byte_limit = (
+            self._last_recover_is_byte_limit = (
                 getattr(_overflow_exc.__cause__, "status_code", None) == 413
             )
-            if _last_recover_is_byte_limit and _this_iteration_called_main_call:
+            if self._last_recover_is_byte_limit and _this_iteration_called_main_call:
                 # #4944①: the size that WAS SENT and got REJECTED — the
                 # real limit is < this value (an upper bound), the pair to
                 # the ``accepted=True`` emission above. ``head``/``tail``/
@@ -3400,10 +3573,10 @@ async def retry_loop(
                 # include any summary element's own bytes; a separate
                 # value here would double-count it in `.total`.
                 _rejected_breakdown = estimate_wire_bytes_breakdown(
-                    SP=SP, head=head, summary=None, tail=tail, new_msg=new_msg,
+                    SP=self._SP, head=self.head, summary=None, tail=self.tail, new_msg=self.new_msg,
                 )
-                _last_rejected_wire_bytes = _rejected_breakdown.total
-                engine._events.emit(
+                self._last_rejected_wire_bytes = _rejected_breakdown.total
+                self._engine._events.emit(
                     "compaction_wire_bytes_measured",
                     wire_bytes=_rejected_breakdown.total,
                     accepted=False,
@@ -3413,20 +3586,20 @@ async def retry_loop(
                     tail_bytes=_rejected_breakdown.tail_bytes,
                     new_msg_bytes=_rejected_breakdown.new_msg_bytes,
                 )
-            engine._events.emit(
+            self._engine._events.emit(
                 "compaction_shrink_recovered",
                 cause=_cause,
-                iteration=_iteration,
-                consecutive=_consecutive_same_cause,
-                t_max_override=_t_max_override,
+                iteration=self._iteration,
+                consecutive=self._consecutive_same_cause,
+                t_max_override=self._t_max_override,
                 # #5592 (owner ruling): the absolute remaining/original
                 # candidate count ("5/2469" form, never a bar/percentage —
                 # a percentage hides the magnitude that was exactly the
                 # thing #5592's own incident could not see). Real, exact
                 # counts (len() on the live list and its captured original
                 # length) — not an estimate.
-                raw_middle_remaining=len(raw_middle),
-                raw_middle_total=_raw_middle_total,
+                raw_middle_remaining=len(self.raw_middle),
+                raw_middle_total=self._raw_middle_total,
             )
             # #4885: this cap is skipped for a byte-limit cause. It exists to
             # catch a TOKEN-shrink that keeps recovering the SAME cause
@@ -3450,7 +3623,7 @@ async def retry_loop(
             # reads them to decide anything any more.
 
         # Shrink escalation: reduce context size monotonically.
-        if raw_middle:
+        if self.raw_middle:
             # #5531 §10 rung① (owner ruling, "spill is the ladder's first
             # rung"): try spilling before touching ``_compact_attempt_len``
             # at all. Looping via ``continue`` re-runs ``compact()`` on
@@ -3488,8 +3661,8 @@ async def retry_loop(
             # ``None``); they diverge only after rung② has halved at
             # least once, and it is the SENT slice that must be offered
             # to spill, not the untried remainder sitting past it.
-            if _spill_batch_from_offered(raw_middle[:_attempt_len]) > 0:
-                continue
+            if self._spill_batch_from_offered(self.raw_middle[:_attempt_len]) > 0:
+                return _LADDER_CONTINUE
             # rung① exhausted (or no spill_fn at all) — only now fall to
             # rung②: ``_compact_attempt_len``. #5531 §10 (architect/owner
             # correction, 2026-08-30): "fail → halve, succeed → double"
@@ -3501,8 +3674,8 @@ async def retry_loop(
             # it means the LAST attempt at the current ``_attempt_len``
             # just failed.
             _current_attempt = (
-                _compact_attempt_len if _compact_attempt_len is not None
-                else len(raw_middle)
+                self._compact_attempt_len if self._compact_attempt_len is not None
+                else len(self.raw_middle)
             )
             if _current_attempt <= 1:
                 # Floor (a): a single turn offered alone still overflows,
@@ -3519,7 +3692,7 @@ async def retry_loop(
                 raise UnrecoveredError(
                     (
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                        if _last_recover_is_byte_limit
+                        if self._last_recover_is_byte_limit
                         else "retry_loop: shrinking "
                     ) + "recurred compacting a single raw_middle turn "
                     "alone — mid cannot be split any further (the "
@@ -3527,56 +3700,18 @@ async def retry_loop(
                     "candidate in raw_middle did not resolve this "
                     "either." + (
                         _learned_byte_limit_clause(
-                            last_accepted_wire_bytes=_last_accepted_wire_bytes,
-                            last_rejected_wire_bytes=_last_rejected_wire_bytes,
-                        ) if _last_recover_is_byte_limit else ""
+                            last_accepted_wire_bytes=self._last_accepted_wire_bytes,
+                            last_rejected_wire_bytes=self._last_rejected_wire_bytes,
+                        ) if self._last_recover_is_byte_limit else ""
                     ),
                     terminal=RetryLoopTerminal.MID_FLOOR,
-                    saw_byte_limit=_last_recover_is_byte_limit,
+                    saw_byte_limit=self._last_recover_is_byte_limit,
                 )
-            _compact_attempt_len = max(_current_attempt // 2, 1)
-        elif (
-            _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens
-            and _has_non_summary(tail)
-        ):
-            # Phase 1: trim tail half → raw_middle. #5531 PR-2 (owner
-            # ruling, issuecomment-5465590083): skip any summary element
-            # (reserved — see _split_off_non_summary's own docstring)
-            # rather than pulling from tail's raw front. The
-            # `_has_non_summary` guard is load-bearing, not decorative:
-            # once tail is ALL summary, the token check alone stays True
-            # forever with zero progress possible — without this guard
-            # Phase 1 "handles" the overflow every iteration while moving
-            # nothing, starving the reservation ladder's own floor-check
-            # (below) of ever being reached.
-            _non_summary_tail_count = sum(
-                1 for t in tail
-                if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
-            )
-            chunk = max(_non_summary_tail_count // 2, 1)
-            _removed, tail = _split_off_non_summary(tail, chunk, from_end=False)
-            raw_middle.extend(_removed)
-        elif (
-            _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens
-            and _has_non_summary(head)
-        ):
-            # Phase 2: trim head half → raw_middle. #5531 PR-2: same skip
-            # and same `_has_non_summary` guard as Phase 1's own branch.
-            _non_summary_head_count = sum(
-                1 for t in head
-                if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
-            )
-            chunk = max(_non_summary_head_count // 2, 1)
-            _removed, head = _split_off_non_summary(head, chunk, from_end=True)
-            raw_middle = _removed + raw_middle
-            # #5531 §10 (table #14's own asymmetry, corrected): Phase 2
-            # PREPENDS to raw_middle — a stale ``_compact_attempt_len``
-            # ("the first N turns failed") would now name a DIFFERENT
-            # prefix than the one that fact was ever true of. Phase 1
-            # (below-this-branch's sibling, APPENDS to the end) does NOT
-            # reset — the prefix stays unchanged there, so the knowledge
-            # stays valid.
-            _compact_attempt_len = None
+            self._compact_attempt_len = max(_current_attempt // 2, 1)
+        elif self._stage_refill_phase1():
+            pass
+        elif self._stage_refill_phase2():
+            pass
         else:
             # #5531 PR-2 (owner ruling, §2/§3 item 7): token-only
             # shrinking is exhausted (head/tail already at or below their
@@ -3597,14 +3732,14 @@ async def retry_loop(
             # not apportioned; body belongs to compact()'s own budget,
             # not main_call's).
             _summary_tokens_current = _summary_tokens_in(
-                head, tail, model=model, use_chars4=use_chars4,
+                self.head, self.tail, model=self._model, use_chars4=self._use_chars4,
             )
             _reserved = (
-                _sp_tokens_floor + _new_msg_tokens_floor + _summary_tokens_current
+                self._sp_tokens_floor + self._new_msg_tokens_floor + _summary_tokens_current
             )
             _t_max_for_candidate = (
-                _t_max_override if _t_max_override is not None
-                else get_max_input_tokens(model)
+                self._t_max_override if self._t_max_override is not None
+                else self._get_max_input_tokens(self._model)
             )
             _candidate = _t_max_for_candidate // 2
             if _candidate <= _reserved:
@@ -3622,26 +3757,26 @@ async def retry_loop(
                 raise UnrecoveredError(
                     (
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                        if _last_recover_is_byte_limit
+                        if self._last_recover_is_byte_limit
                         else "retry_loop: shrinking "
                     ) + "recurred even after binary-"
                     f"search-halving the in-turn token ceiling to "
-                    f"{_candidate} tokens — SP ({_sp_tokens_floor} "
+                    f"{_candidate} tokens — SP ({self._sp_tokens_floor} "
                     f"tokens), the newest message "
-                    f"({_new_msg_tokens_floor} tokens), and the current "
+                    f"({self._new_msg_tokens_floor} tokens), and the current "
                     f"summary ({_summary_tokens_current} tokens) alone no "
                     "longer fit, and none of the three is ever shrunk "
                     "here. Even reducing head/tail to zero would not "
                     "make this fit." + (
                         _learned_byte_limit_clause(
-                            last_accepted_wire_bytes=_last_accepted_wire_bytes,
-                            last_rejected_wire_bytes=_last_rejected_wire_bytes,
-                        ) if _last_recover_is_byte_limit else ""
+                            last_accepted_wire_bytes=self._last_accepted_wire_bytes,
+                            last_rejected_wire_bytes=self._last_rejected_wire_bytes,
+                        ) if self._last_recover_is_byte_limit else ""
                     ),
                     terminal=RetryLoopTerminal.ROOM_FLOOR,
-                    saw_byte_limit=_last_recover_is_byte_limit,
+                    saw_byte_limit=self._last_recover_is_byte_limit,
                 )
-            _t_max_override = _candidate
+            self._t_max_override = _candidate
             _room = _candidate - _reserved
             # head/tail apportion `room` by their own component_weights
             # share, renormalised over just the two of them (body/new_msg
@@ -3650,14 +3785,14 @@ async def retry_loop(
             # an even split rather than raising here — a config validity
             # question belongs to `assert_static_bounds` at startup, not
             # a mid-turn recovery path.
-            _cw = cfg.component_weights
+            _cw = self._cfg.component_weights
             _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
             if _head_tail_weight > 0:
-                head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
-                tail_min_tokens = _room - head_min_tokens
+                self._head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
+                self._tail_min_tokens = _room - self._head_min_tokens
             else:
-                head_min_tokens = _room // 2
-                tail_min_tokens = _room - head_min_tokens
+                self._head_min_tokens = _room // 2
+                self._tail_min_tokens = _room - self._head_min_tokens
             # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
             # the shipped config, not just inferable from a shrunk wire):
             # this ladder just lowered the floor below what
@@ -3666,14 +3801,14 @@ async def retry_loop(
             # it) — emit that fact rather than let it pass silently
             # (previously true only of the byte-limit path; now true of
             # both).
-            engine._events.emit(
+            self._engine._events.emit(
                 "compaction_floor_lowered",
-                t_max_override=_t_max_override,
-                head_min_tokens=head_min_tokens,
-                tail_min_tokens=tail_min_tokens,
-                configured_head_budget=bg.head_budget,
-                configured_tail_budget=bg.tail_budget,
-                saw_byte_limit=_last_recover_is_byte_limit,
+                t_max_override=self._t_max_override,
+                head_min_tokens=self._head_min_tokens,
+                tail_min_tokens=self._tail_min_tokens,
+                configured_head_budget=self._bg.head_budget,
+                configured_tail_budget=self._bg.tail_budget,
+                saw_byte_limit=self._last_recover_is_byte_limit,
             )
             # Immediately re-check tail/head against the NEW, smaller
             # minimums and shrink in this SAME iteration if either now
@@ -3684,35 +3819,10 @@ async def retry_loop(
             # roughly halving how many halvings fit under the safety cap
             # for no reason: the data needed to shrink (tail/head, already
             # read above) is already in hand at this exact point.
-            if (
-                _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens
-                and _has_non_summary(tail)
-            ):
-                # #5531 PR-2: same summary-skip + no-progress guard as
-                # Phase 1's own branch above.
-                _non_summary_tail_count = sum(
-                    1 for t in tail
-                    if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
-                )
-                chunk = max(_non_summary_tail_count // 2, 1)
-                _removed, tail = _split_off_non_summary(tail, chunk, from_end=False)
-                raw_middle.extend(_removed)
-            elif (
-                _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens
-                and _has_non_summary(head)
-            ):
-                # #5531 PR-2: same summary-skip + no-progress guard as
-                # Phase 2's own branch above.
-                _non_summary_head_count = sum(
-                    1 for t in head
-                    if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
-                )
-                chunk = max(_non_summary_head_count // 2, 1)
-                _removed, head = _split_off_non_summary(head, chunk, from_end=True)
-                raw_middle = _removed + raw_middle
-                # #5531 §10: same Phase-2-prepends-so-reset reasoning as
-                # this branch's own sibling above.
-                _compact_attempt_len = None
+            if self._stage_refill_phase1():
+                pass
+            elif self._stage_refill_phase2():
+                pass
             # If neither exceeds the new minimums either (head/tail were
             # ALREADY below even the halved ceiling), there is nothing left
             # to trim yet — still falls through without raising; the NEXT
@@ -3722,10 +3832,15 @@ async def retry_loop(
         # #5531 §10: no code follows the loop body any more — every path
         # through it either returns (success), raises UnrecoveredError
         # (terminal (a) or (b), both inside the loop body above), or
-        # falls through to `while True`'s own next pass. `max_iterations`
-        # used to bound this loop from the OUTSIDE and its exhaustion
-        # message lived here; both are gone (this function's own docstring
-        # "Bounded termination proof" section is the replacement).
+        # falls through to `run`'s own next pass (#5631: via the
+        # `_LADDER_CONTINUE` sentinel below, since a helper method
+        # cannot `continue` an outer loop directly — same fall-through
+        # meaning as the pre-#5631 bare `continue` this replaces).
+        # `max_iterations` used to bound this loop from the OUTSIDE and
+        # its exhaustion message lived here; both are gone (this
+        # class's own docstring "Bounded termination proof" section is
+        # the replacement).
+        return _LADDER_CONTINUE
 
 
 # Keep TokenMultiplierLearner importable from this module for convenience.
