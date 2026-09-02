@@ -116,7 +116,7 @@ class _FlakyProbe:
         return [dict(t) for t in _TOOLS]
 
 
-def _make_adapter(*, tmp_path: Path, state_dir: Path, probe) -> RouterHostAdapter:
+def _make_adapter(*, tmp_path: Path, state_dir: Path, probe, clock=None) -> RouterHostAdapter:
     events = EventLog(subscribers=[])
     workspace = tmp_path / "agents" / "test-agent"
     memory = MemoryService(
@@ -152,6 +152,7 @@ def _make_adapter(*, tmp_path: Path, state_dir: Path, probe) -> RouterHostAdapte
         ),
         state_dir=state_dir,
         universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
+        clock=clock,
     )
     # #3447 / existing convention in this suite: mcp_list_tools is a real
     # RouterHostAdapter method, so the probe is wired by shadowing that one
@@ -200,7 +201,10 @@ async def test_payload_regains_the_mcp_tool_enum_after_a_probe_that_timed_out(
     """
     state_dir = tmp_path / "state"
     probe = _FlakyProbe()
-    adapter = _make_adapter(tmp_path=tmp_path, state_dir=state_dir, probe=probe)
+    now = [0.0]
+    adapter = _make_adapter(
+        tmp_path=tmp_path, state_dir=state_dir, probe=probe, clock=lambda: now[0],
+    )
 
     # Turn 1 — the server is too slow for the deadline.
     await adapter.ensure_mcp_tools_cached(per_server_timeout=0.05)
@@ -208,8 +212,10 @@ async def test_payload_regains_the_mcp_tool_enum_after_a_probe_that_timed_out(
         "a probe that did not answer cannot contribute tools to the enum"
     )
 
-    # Turn 2 — the same server, now healthy. The model must be told.
+    # Turn 2 — the same server, now healthy. Simulate the retry window
+    # elapsing without sleeping; the next call must re-probe.
     probe.healthy = True
+    now[0] = 61.0
     await adapter.ensure_mcp_tools_cached(per_server_timeout=5.0)
     enum = _mcp_tool_enum(adapter)
     assert enum is not None and f"{_SERVER}.{_TOOL}" in enum, (
@@ -250,6 +256,21 @@ async def test_an_answered_catalog_is_not_reprobed_on_later_turns(
 # ---------------------------------------------------------------------------
 # 2. On-disk surface — an unknown must not survive a restart
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_persistent_probe_failure_is_backed_off_until_retry_window(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: a persistent probe failure is not retried on the next turn."""
+    state_dir = tmp_path / "state"
+    probe = _FlakyProbe()
+    adapter = _make_adapter(tmp_path=tmp_path, state_dir=state_dir, probe=probe)
+
+    await adapter.ensure_mcp_tools_cached(per_server_timeout=0.05)
+    assert probe.calls == [_SERVER]
+    await adapter.ensure_mcp_tools_cached(per_server_timeout=0.05)
+    assert probe.calls == [_SERVER]
 
 
 @pytest.mark.asyncio
