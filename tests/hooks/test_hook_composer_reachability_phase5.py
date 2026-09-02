@@ -176,7 +176,18 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
             "file_changed",
             build_hook_payload("file_changed", path="/repo/x.py", event_type="modified"),
         )
-        await _wait_until(lambda: "composed fired!" in ran)
+        # #5686/#5687: the pushed text now lands ATTRIBUTED
+        # ("[hook:<name>] composed fired!"), not bare — the correct
+        # tightening of this test's own claim ("the pushed text lands as
+        # a real router turn"), not a weakening: _handle_hook_message's
+        # turn seed matches its history entry / outbox announcement now,
+        # instead of drifting from them (a #3595-class misattribution
+        # this PR closed). A membership/equality check against the bare
+        # string would wait forever for a value that never arrives again
+        # — partial-match (`in`) on the composed text is what survives a
+        # future attribution-prefix change without re-encoding the exact
+        # prefix shape here.
+        await _wait_until(lambda: any("composed fired!" in r for r in ran))
     finally:
         await session.shutdown()
         try:
@@ -184,7 +195,15 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
         except asyncio.TimeoutError:
             run_task.cancel()
 
-    assert ran == ["composed fired!"]
+    (only_turn,) = ran  # exactly one hook-driven turn — a 2nd or 0 fails to unpack
+    assert "composed fired!" in only_turn, (
+        f"expected the one hook-driven turn's text to contain "
+        f"'composed fired!' (attributed, per #5686) — got {only_turn!r}"
+    )
+    assert only_turn.startswith("[hook:"), (
+        f"the hook-driven turn's own seed must carry the [hook:<name>] "
+        f"attribution prefix (#5686) — got {only_turn!r}"
+    )
 
 
 @pytest.mark.asyncio
