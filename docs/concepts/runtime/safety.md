@@ -45,6 +45,8 @@ the current configured value, and which config key to change.
 Rows marked ✅ flow through `handle_limit_exceeded`.
 Rows marked ❌ have autonomous behaviour that does not require operator input.
 
+Since #5597, the compaction LLM call inherits the "LLM call timeout" row's own value too (resolved by the same `recorded_acompletion` funnel), unless overridden separately via `chat.compaction.llm_call_seconds`.
+
 ---
 
 ## Intervention flow

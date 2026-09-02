@@ -218,18 +218,18 @@ def test_funnel_resolved_timeout_genuinely_reaches_litellm_acompletion(
     )
 
 
-def test_a_real_timeout_exception_never_enters_the_shrink_ladder() -> None:
-    """Tier 2: #5597 deny — when the newly-added per-call timeout
-    actually fires (a genuine `litellm.Timeout`, the exact exception
+def test_a_real_timeout_exception_classifies_retryable_not_overflow() -> None:
+    """Tier 1: reyn's own classification contract (`classify_llm_
+    failure`, #5593) — a real `litellm.Timeout` (the exact exception
     type a hung upstream provider now produces instead of blocking
-    forever), `classify_llm_failure` reads it RETRYABLE (the pre-
-    existing `"Timeout" in name` branch, #5593) — never OVERFLOW. Every
-    call site that gates entry to the shrink ladder (`router_loop_
-    driver.py`'s own 2 sites, and `engine.py`'s own retry_loop except
-    clause) excludes FATAL/RETRYABLE before ever wrapping an exception
-    as a shrinkable overflow — a RETRYABLE classification alone is
-    therefore sufficient to prove this exception can never enter any of
-    them, regardless of which exact predicate a given call site uses."""
+    forever, since #5597 gives the compaction call a per-request
+    timeout to fire in the first place) classifies RETRYABLE, never
+    OVERFLOW. Relevant to #5597 because every call site that gates
+    entry to the shrink ladder excludes FATAL/RETRYABLE before ever
+    wrapping an exception as a shrinkable overflow — but that routing
+    is a separate, already-tested contract of its own (#5577/#5593/
+    #5622's own suites); this test pins only the classification
+    itself, directly."""
     import litellm
 
     from reyn.services.compaction.engine import LLMFailureClass, classify_llm_failure

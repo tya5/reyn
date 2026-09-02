@@ -1206,6 +1206,7 @@ chat:
     use_chars4_estimate: false        # true = len(text)//4（レイテンシ opt-out）
     body_token_cap: 1500               # サマリー body トークン上限（post-truncation）
     resummarize_passes: 1              # hard_truncate 前の LLM 再圧縮パス数
+    llm_call_seconds: null             # #5597: compaction の LLM 呼びごとの timeout。null（デフォルト）は safety.timeout.llm_call_seconds を継承
     # body 内のセクション配分の重み、起動時に正規化。
     section_weights:
       topic_arc:            5
@@ -1231,6 +1232,7 @@ chat:
 | `body_token_cap` | int | `1500` | post-truncation 後のサマリー body トークン上限。 |
 | `resummarize_passes` | int | `1` | `topic_arc` が body バジェットを超えた場合の最大 LLM 再圧縮パス数（`hard_truncate` floor 適用前）。`0` = 再圧縮なし（straight to floor）。 |
 | `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（大規模デプロイ向けレイテンシ opt-out）。 |
+| `llm_call_seconds` | float（秒）\| `null` | `null` | #5597: compaction の LLM 呼び（`CompactionEngine._acompletion`、`recorded_acompletion` funnel 経由）ごとの timeout。`null`（デフォルト）は `safety.timeout.llm_call_seconds` を継承 — router の main 呼びと同じ値で、新しい数値は作らない（owner 裁定: 「新しい数を作らない。routerの値をそのまま使う」）。オペレーターが上書きした場合は compaction 呼びにのみ適用され、router 側の timeout は変わらない。`num_retries` には影響しない（既存の `LLMCallLimitContext` で別途解決）。 |
 
 ### `chat.compaction.section_token_caps` フィールド
 
