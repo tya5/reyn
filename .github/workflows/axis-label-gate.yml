@@ -1,12 +1,12 @@
 name: Axis label gate
 
-# #5499 — an issue with no priority-axis label gets `needs-axis`; an
+# #5499/#5519 — an issue with no priority-axis label gets `needs-axis`; an
 # issue that gains one has it removed. See scripts/axis_label_gate.py's
-# own module docstring for the vocabulary design, why it is one small
-# hand-written pattern reconciled against the live repo label list every
-# run (not a hand-enumerated list of every current axis label, and not
-# derivable from label description/color — both measured and rejected),
-# and why both directions (add / remove) are required.
+# own module docstring for the vocabulary design: every axis label's own
+# GitHub description carries a marker (#5519), reconciled against the
+# live repo label list every run — no hand-enumerated list of axis label
+# names lives in this script at all — and why both directions (add /
+# remove) are required.
 #
 # Trigger: opened AND labeled/unlabeled (not opened-only) — architect's
 # own accept criterion is explicitly BOTH directions ("ラベル無しで
