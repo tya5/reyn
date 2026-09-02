@@ -234,17 +234,18 @@ def _retry_loop_with(raw_middle_turn: dict):
 
     from reyn.config import CompactionConfig
     from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
-    from reyn.services.compaction.engine import retry_loop
+    from reyn.services.compaction.engine import RetryPayload, retry_loop
 
     learner = TokenMultiplierLearner(
         storage_path=Path(tempfile.mkdtemp()) / "m.json"
     )
     return asyncio.run(retry_loop(
         SP="system",
-        head=[],
-        raw_middle=[raw_middle_turn],
-        tail=[],
-        new_msg={"role": "user", "content": "hi", "seq": 99},
+        payload=RetryPayload(
+            head=[], raw_middle=[raw_middle_turn],
+            tail=[], new_msg={"role": "user", "content": "hi", "seq": 99},
+            seq_by_id={},
+        ),
         cfg=CompactionConfig(),
         model=_MODEL,
         engine=_BMGatedEngine(_budgets()),  # type: ignore[arg-type]

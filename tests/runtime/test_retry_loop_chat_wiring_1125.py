@@ -37,7 +37,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from reyn.runtime.usage_shim import _RouterUsageShim
-from reyn.services.compaction.engine import retry_loop
+from reyn.services.compaction.engine import RetryPayload, retry_loop
 from tests._support.agent_session import make_session
 
 
@@ -295,10 +295,11 @@ def test_session_decomposition_feeds_retry_loop(tmp_path, monkeypatch) -> None:
 
     shim = asyncio.run(retry_loop(
         SP=session._history_buffer.build_system_prompt(),
-        head=head,
-        raw_middle=raw_middle,
-        tail=tail,
-        new_msg=new_msg,
+        payload=RetryPayload(
+            head=head, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg,
+            seq_by_id={},
+        ),
         cfg=session._compaction,
         model=session.model,
         engine=engine,
