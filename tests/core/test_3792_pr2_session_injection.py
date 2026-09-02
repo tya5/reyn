@@ -66,7 +66,6 @@ _INELIGIBLE_KWARGS: dict[TurnOrigin, dict] = {
     TurnOrigin.AGENT_RESPONSE: {"from_agent": "a", "response": "r", "depth": 1, "chain_id": "c1"},
     TurnOrigin.PIPELINE_RESULT: {"run_id": "run1", "pipeline_name": "p", "status": "ok", "text": "t"},
     TurnOrigin.AGENT_STEP: {"seq": 1},
-    TurnOrigin.EXTERNAL_MESSAGE: {"text": "hi", "source": "slack"},
     TurnOrigin.CRON: {"job": "nightly"},
     TurnOrigin.HOOK: {"name": "on_idle"},
     TurnOrigin.PIPELINE_NUDGE: {"run_id": "run1"},
@@ -104,6 +103,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     eligible_kwargs = {
         TurnOrigin.CLIENT_INPUT: {"text": "hello"},
         TurnOrigin.AGENT_REQUEST: {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
+        TurnOrigin.EXTERNAL_MESSAGE: {"text": "hi", "sender": "slack:U456"},
     }
     # Vacuity guard: if TurnOrigin grew, shrank, or the enumeration came back
     # empty, this set-equality against the explicit expected membership
@@ -149,6 +149,21 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     assert only2["payload"]["request"] == "corrected instruction"
     assert only2["kind"] == TurnOrigin.AGENT_REQUEST
     await state_log2.aclose()
+
+    # Accept side: EXTERNAL_MESSAGE — owner ruling (2026-09-02), overriding
+    # architect/lead-coder's own recommendation to exclude it — is ALSO
+    # eligible.
+    session3, state_log3 = _make_session(
+        tmp_path / "external_message.wal", tmp_path / "external_message.json",
+    )
+    await session3._put_inbox(
+        TurnOrigin.EXTERNAL_MESSAGE, {"text": "urgent update", "sender": "slack:U456"},
+    )
+    result3 = await session3._inbox_arbiter.peek_mid_turn_injection()
+    (only3,) = result3
+    assert only3["payload"]["text"] == "urgent update"
+    assert only3["kind"] == TurnOrigin.EXTERNAL_MESSAGE
+    await state_log3.aclose()
 
 
 # ---------------------------------------------------------------------------

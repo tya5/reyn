@@ -214,13 +214,24 @@ MID_TURN_INJECTABLE: "frozenset[TurnOrigin]" = frozenset({
     # so the wrong first step already ran). Origin is inside the trust
     # boundary (the operator's own workspace spawned the peer session,
     # #2103/#3556 narrowing already applies) — unlike EXTERNAL_MESSAGE,
-    # this is not a remote third party steering the turn. Architect's
-    # own recommendation (co-vet on #5677); EXTERNAL_MESSAGE stays OUT
-    # pending an explicit owner ruling (the one open question #5677
-    # itself named — architect and lead-coder's recommendation agrees
-    # on excluding it, so this PR does not pre-empt that decision by
-    # including it and then needing to walk it back).
+    # this is not a remote third party steering the turn.
     TurnOrigin.AGENT_REQUEST,
+    # Text arrived over an external transport (a chat webhook peer, an
+    # MCP/A2A peer — see EXTERNAL_MESSAGE's own docstring for why one
+    # member covers both). Owner ruling (2026-09-02, verbatim: "入れ
+    # る"), OVERRIDING architect and lead-coder's own recommendation to
+    # exclude it — the owner's call is the higher authority here. Does
+    # NOT reopen #3595's own closed class: slash dispatch only ever
+    # reacts to TurnOrigin.CLIENT_INPUT (session.py's own turn-body
+    # dispatch), so an injected EXTERNAL_MESSAGE never reaches it; and
+    # _render_mid_turn_injection renders every non-CLIENT_INPUT member
+    # (this one included) as role="system" with attribution, never as
+    # role="user" — so it is not mistakable for the operator's own
+    # words on the wire either. A member with no rendering branch is a
+    # hard raise (see that function's own fail-loud fallback), so this
+    # addition could not land without also widening the rendering in
+    # the SAME commit.
+    TurnOrigin.EXTERNAL_MESSAGE,
 })
 
 
