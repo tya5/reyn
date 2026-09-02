@@ -118,31 +118,98 @@ def format_notification(pr_number: "str | int", head_sha: str, runs: "list[dict]
 # ---------------------------------------------------------------------------
 
 
-def _gh_json(args: "list[str]") -> object:
+def _parse_paginated_json(stdout: str) -> "list[dict]":
+    """Split ``gh api``'s own stdout into its individual page objects.
+
+    #5666 (lead-coder's own direct-execution finding, reviewing #5665):
+    for an OBJECT-shaped REST response (this script's own endpoints —
+    ``{"total_count", "workflow_runs": [...]}`` / ``{"total_count",
+    "jobs": [...]}``), ``gh api --paginate`` does NOT wrap multi-page
+    output in a JSON array — it concatenates one complete JSON object
+    per page back-to-back on stdout. A bare ``json.loads(stdout)`` only
+    survives while everything fits on ONE page; past that it raises
+    ``JSONDecodeError: Extra data`` (verified: 3 pages, confirmed by
+    lead-coder running it directly) — and #5665's own broker-plugin
+    caller demotes a non-0/1 return code to a logged warning and
+    returns ``None``, so this crash is SILENT to every reader, not
+    merely noisy: exactly the "detector goes quiet exactly when needed"
+    failure this script's own module docstring already names as the
+    reason it lives outside Actions. Splitting the concatenated stream
+    with ``json.JSONDecoder.raw_decode`` in a loop reads every page
+    whether there is 1 or N of them, with no assumption about which."""
+    decoder = json.JSONDecoder()
+    stdout = stdout.strip()
+    pages: "list[dict]" = []
+    idx = 0
+    while idx < len(stdout):
+        obj, end = decoder.raw_decode(stdout, idx)
+        pages.append(obj)
+        idx = end
+        while idx < len(stdout) and stdout[idx].isspace():
+            idx += 1
+    return pages
+
+
+def _merge_paginated_pages(pages: "list[dict]", array_key: str) -> dict:
+    """Merge *pages* (each page repeating the same non-array keys, e.g.
+    ``total_count``) into one dict whose *array_key* concatenates every
+    page's own slice — and PROVE completeness by cross-checking the
+    server's own ``total_count`` against the merged length, rather than
+    trusting ``--paginate`` finished (its own side effect is not
+    completeness evidence — #5666 accept ②). A genuinely-short read
+    (a page silently dropped, an interrupted fetch) raises here instead
+    of handing back a short list that :func:`is_permanently_blocked`
+    would misread as "few real runs"."""
+    merged: "list[dict]" = []
+    total_count = None
+    for page in pages:
+        merged.extend(page.get(array_key, []))
+        if "total_count" in page:
+            total_count = page["total_count"]
+    if total_count is not None and total_count != len(merged):
+        raise ValueError(
+            f"gh api --paginate returned {len(merged)} {array_key!r} "
+            f"entries but total_count={total_count} — incomplete merge, "
+            "refusing to treat this as the full population (#5666)"
+        )
+    result = dict(pages[0]) if pages else {}
+    result[array_key] = merged
+    if total_count is not None:
+        result["total_count"] = total_count
+    return result
+
+
+def _gh_json(args: "list[str]") -> "list[dict]":
+    """Every page ``gh`` produced for *args*, split via
+    :func:`_parse_paginated_json` — a single-page call (no
+    ``--paginate``, or a ``--paginate`` call whose result fits on one
+    page) still comes back as a 1-element list; callers merge via
+    :func:`_merge_paginated_pages` rather than assuming page count."""
     result = subprocess.run(["gh", *args], capture_output=True, text=True, check=True)
-    return json.loads(result.stdout)
+    return _parse_paginated_json(result.stdout)
 
 
 def _fetch_head_sha_for_pr(pr_number: str) -> str:
-    data = _gh_json([
+    pages = _gh_json([
         "pr", "view", pr_number, "--repo", _REPO, "--json", "headRefOid",
     ])
-    return data["headRefOid"]
+    return pages[0]["headRefOid"]
 
 
 def _fetch_runs_for_head(
-    head_sha: str, *, gh_json_fn: "Callable[[list[str]], object]" = _gh_json,
+    head_sha: str, *, gh_json_fn: "Callable[[list[str]], list[dict]]" = _gh_json,
 ) -> "list[dict]":
     """Every workflow run GitHub has recorded for *head_sha*, normalized
     to this script's own ``{"conclusion", "jobs_count"}`` shape.
 
     ``gh_json_fn`` (#5665): the ONE ``gh`` call-out point, injectable —
-    ``_gh_json`` for real, or a test's own Fake that returns canned
-    ``gh api`` payloads and lets a regression test assert on the exact
+    ``_gh_json`` for real, or a test's own Fake that returns a list of
+    canned page dicts and lets a regression test assert on the exact
     ARGV this function builds (proving the fix targets the QUERY itself,
     not just its interpretation — see ``tests/scripts/test_detect_5265_
     startup_failure_blocked_prs.py``'s own head_sha-outside-the-old-
-    window fixture, built from PR #5640's real shape).
+    window fixture, built from PR #5640's real shape) AND on a genuine
+    multi-page fixture (#5666).
 
     #5665 (lead-coder's own real-machine finding, PR #5640): ``gh run
     list`` has no server-side head-sha filter, so an earlier revision of
@@ -163,33 +230,33 @@ def _fetch_runs_for_head(
     parameter must be embedded in the URL itself, not passed via ``gh
     api -f`` (``-f``/``-F`` switch ``gh api``'s own default method from
     GET to POST, which this read-only endpoint rejects with a 404 —
-    verified by direct execution, not assumed). ``--paginate`` makes the
-    read provably complete regardless of how many runs exist for this
-    ONE head sha (architect's own #5265 structural requirement: a "0"
-    used as detection evidence must be a 0 over the FULL population, not
-    a page's own emptiness) — costs nothing extra when everything already
-    fits on one page, which every real head sha does in practice, but
-    removes the same window-shaped bug this function existed to fix
-    rather than only patching today's specific instance of it.
+    verified by direct execution, not assumed). ``--paginate`` alone is
+    NOT completeness proof (#5666) — lead-coder's own measurement found
+    real heads already at 27 of the 30-per-page default, 3 runs of
+    margin from a silent multi-page crash (see
+    :func:`_parse_paginated_json`) — so every ``gh_json_fn`` result here
+    is merged via :func:`_merge_paginated_pages`, which cross-checks the
+    server's own ``total_count`` against what was actually read.
 
     ``jobs_count`` is only fetched (a second `gh api` call, per run) for
     a run whose conclusion is ``startup_failure`` — every other
     conclusion already proves the run is not dead, per
     :func:`is_permanently_blocked`'s own logic, so job count is
-    irrelevant to it."""
-    data = gh_json_fn([
+    irrelevant to it — and that call is merged the same paginated way,
+    since a dead run's own job count can itself exceed one page."""
+    pages = gh_json_fn([
         "api", f"repos/{_REPO}/actions/runs?head_sha={head_sha}", "--paginate",
     ])
-    matching = data.get("workflow_runs", [])
+    matching = _merge_paginated_pages(pages, "workflow_runs")["workflow_runs"]
     runs: "list[dict]" = []
     for r in matching:
         conclusion = r.get("conclusion") or None
         jobs_count = None
         if conclusion == "startup_failure":
-            jobs = gh_json_fn([
+            job_pages = gh_json_fn([
                 "api", f"repos/{_REPO}/actions/runs/{r['id']}/jobs", "--paginate",
             ])
-            jobs_count = len(jobs.get("jobs", []))
+            jobs_count = len(_merge_paginated_pages(job_pages, "jobs")["jobs"])
         runs.append({"conclusion": conclusion, "jobs_count": jobs_count})
     return runs
 
