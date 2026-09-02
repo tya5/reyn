@@ -43,6 +43,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -112,6 +113,21 @@ async def test_registers_exec_task_with_no_waiting_on_and_no_watchdog_armed(tmp_
     await _yield_until(lambda: not caller.chains.has(task_id), description="settle")
 
 
+def _describe_ctx(caller: Session) -> Any:
+    """A minimal ``ToolContext``-shaped stand-in exposing exactly what
+    ``_derive_exec_output_path`` reads (``ctx.router_state.
+    op_context_factory``) — the SAME public seam a real router turn's
+    ``RouterCallerState`` carries (``build_resource_caller_state``), not a
+    private Session attribute."""
+    import types
+
+    return types.SimpleNamespace(
+        router_state=types.SimpleNamespace(
+            op_context_factory=caller.router_host.make_router_op_context,
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_describe_task_tail_grows_while_the_process_is_still_running(tmp_path):
     """Tier 2: the core §3-a witness — the tee mechanism
@@ -119,12 +135,19 @@ async def test_describe_task_tail_grows_while_the_process_is_still_running(tmp_p
     grow WHILE the process is still alive, not only after it exits. A FIFO
     gates the child's second write on this test's own explicit signal (an
     unbounded blocking read, never a sleep) so the two reads below are
-    deterministically ordered around a real "still running" moment."""
-    from reyn.tools.task_verbs import _exec_output_preview
+    deterministically ordered around a real "still running" moment.
+
+    The path is DERIVED (``_derive_exec_output_path``, BLOCKING fix,
+    lead-coder review 2026-09-02) from ``task_id`` + this session's own
+    media_store-or-fallback choice — it is never read off the chain
+    itself (that field was removed for exactly the silent-loss-on-restart
+    defect this fix closes)."""
+    from reyn.tools.task_verbs import _derive_exec_output_path, _exec_output_preview
 
     reg = _make_registry(tmp_path)
     _seed(tmp_path, "alpha")
     caller = reg.get_or_load("alpha")
+    describe_ctx = _describe_ctx(caller)
 
     fifo_path = tmp_path / "gate.fifo"
     os.mkfifo(fifo_path)
@@ -141,17 +164,17 @@ async def test_describe_task_tail_grows_while_the_process_is_still_running(tmp_p
     )
     task_id = result["data"]["task_id"]
     chain = caller.chains.get(task_id)
-    output_path = chain.output_path
+    output_path = _derive_exec_output_path(describe_ctx, chain)
+    assert output_path is not None
 
     # First read: only "first\n" can possibly have landed — the child is
     # blocked on the FIFO open/read, so this is a real "still running" read,
     # not a race with completion.
     await _yield_until(
-        lambda: (p := _exec_output_preview(chain.output_path)) is not None and b"first" in p["preview"].encode(),
+        lambda: "first" in _exec_output_preview(output_path).get("preview", ""),
         description="first chunk visible",
     )
-    first_preview = _exec_output_preview(chain.output_path)
-    assert first_preview is not None
+    first_preview = _exec_output_preview(output_path)
     assert "first" in first_preview["preview"]
     assert "second" not in first_preview["preview"], (
         "the child is still blocked on the FIFO — a premature 'second' here "
@@ -164,12 +187,61 @@ async def test_describe_task_tail_grows_while_the_process_is_still_running(tmp_p
 
     await _yield_until(lambda: not caller.chains.has(task_id), description="settle")
     # Durability pin: still readable, in FULL, after the task has settled
-    # (the chain record — and with it chain.output_path — is already gone;
-    # this reads the path captured above, before settle).
+    # (the chain record is gone; the path is RE-DERIVED, the same way a
+    # real post-restart describe_task call would, from task_id alone).
     final_text = Path(output_path).read_text()
     assert "first" in final_text and "second" in final_text, (
         "the tail must have GROWN — both chunks present after completion"
     )
+
+
+@pytest.mark.asyncio
+async def test_output_survives_a_simulated_restart_because_the_path_is_derived_not_stored(tmp_path):
+    """Tier 2: BLOCKING fix pin (lead-coder review, 2026-09-02) — the exact
+    defect the review caught: a task's output must still be describable
+    after the task's own in-process record is gone and a FRESH
+    ``_PendingChain`` (mirroring what ``ChainManager.restore()`` builds
+    from a crash-recovered WAL entry — no ``cancel`` hook, since the live
+    callable belonged to the dead process) is registered for the SAME
+    ``chain_id``/``requester``. If ``output_path`` were still a stored
+    field, this fresh chain would carry ``output_path=None`` and the file
+    would read as lost even though it is sitting right there on disk —
+    the exact silent-loss BLOCKING flagged."""
+    from reyn.runtime.task_types import Requester
+    from reyn.tools.task_verbs import _derive_exec_output_path, _exec_output_preview
+
+    reg = _make_registry(tmp_path)
+    _seed(tmp_path, "alpha")
+    caller = reg.get_or_load("alpha")
+    describe_ctx = _describe_ctx(caller)
+
+    marker = "survives-a-restart-4733"
+    result = await run_exec_async(
+        reg, caller_agent="alpha", caller_sid="main",
+        argv=[sys.executable, "-c", f"print({marker!r})"],
+    )
+    task_id = result["data"]["task_id"]
+    await _yield_until(lambda: not caller.chains.has(task_id), description="settle")
+
+    # Simulate a crash-recovered handle for the SAME task_id — no `cancel`
+    # (restore() never gets one back; the live callable belonged to the
+    # dead process), same shape task_verbs.py's own module docstring
+    # already documents for a recovered handle.
+    recovered = await caller.chains.register(
+        chain_id=task_id, depth=0, original_text=" ".join([sys.executable]),
+        sender="alpha", waiting_on=set(),
+        requester=Requester(agent_name="alpha", session_id="main"),
+        origin_depth=0, kind="exec", cancel=None,
+    )
+    assert recovered.cancel is None, "a recovered handle carries no live cancel hook"
+
+    derived_path = _derive_exec_output_path(describe_ctx, recovered)
+    assert derived_path is not None
+    preview = _exec_output_preview(derived_path)
+    assert "lost" not in preview, (
+        f"the output must still be readable after a simulated restart, got {preview!r}"
+    )
+    assert marker in preview["preview"]
 
 
 @pytest.mark.asyncio

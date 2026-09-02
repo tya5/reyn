@@ -127,18 +127,6 @@ class _PendingChain:
     # post-register mutation.
     registered_at: "datetime | None" = None
     cancel_requested_at: "datetime | None" = None
-    # #4733 §3-a: for a ``kind="exec"`` task ONLY — the absolute path of the
-    # file the async-exec runner tees stdout/stderr to as its OWN file
-    # handle (MediaStore has no append API — see
-    # ``session_api.run_exec_async``'s own docstring for the full
-    # asymmetry). VOLATILE, like ``cancel`` above — never persisted (a
-    # crash-recovered handle has no live runner still writing to whatever
-    # this named, so re-deriving a "readable path" from it would be a
-    # false claim; ``describe_task``'s ``kind="exec"`` branch is therefore
-    # only ever reachable for a task registered in THIS process's own
-    # lifetime, same restriction ``cancel is None`` already enforces for
-    # cancel_task on a recovered handle). ``None`` for every other kind.
-    output_path: "str | None" = field(default=None, compare=False, repr=False)
 
 
 # ── Journal protocol ──────────────────────────────────────────────────────────
@@ -286,7 +274,6 @@ class ChainManager:
         origin_depth: int = 0,
         kind: "str | None" = None,
         cancel: "Callable[[], None] | None" = None,
-        output_path: "str | None" = None,
     ) -> _PendingChain:
         """Register a new pending chain and persist it via the journal.
 
@@ -330,10 +317,6 @@ class ChainManager:
             (argument-zero), or ``None`` if this task cannot be cancelled
             (e.g. a legacy delegate-relay chain). VOLATILE — never
             persisted (see ``_PendingChain.cancel``'s own docstring).
-        output_path:
-            #4733 §3-a: for ``kind="exec"`` only — see
-            ``_PendingChain.output_path``'s own docstring. VOLATILE, same
-            non-persistence as ``cancel`` above.
         """
         resolved_requester = requester or Requester(
             agent_name=sender or "", session_id="main"
@@ -350,7 +333,6 @@ class ChainManager:
             kind=kind,
             cancel=cancel,
             registered_at=registered_at,
-            output_path=output_path,
         )
         self._chains[chain_id] = chain
 

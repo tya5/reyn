@@ -80,8 +80,12 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
 
 
 def test_tool_schema_is_argv_and_timeout_only():
-    """Tier 2: #1339 — the exec TOOL exposes only argv (+ timeout, #3903①) —
-    the LLM cannot set network / fs scope (those stay operator-or-default).
+    """Tier 2: #1339 — the exec TOOL exposes only argv (+ timeout, #3903①;
+    + collect, #4733) — the LLM cannot set network / fs scope (those stay
+    operator-or-default). The pin this test actually protects is THAT
+    boundary (no sandbox-policy axis ever reaches the schema), not "the
+    key set never grows" — a new key belongs in the EXPECTED set the
+    moment it adds a non-axis capability, same as `timeout` did below.
 
     #3962 dropped `timeout_seconds` from this schema too — same defect
     class as the other removed fields (LLM-advertised, silently ignored on
@@ -89,11 +93,19 @@ def test_tool_schema_is_argv_and_timeout_only():
     isn't a permission axis. #3903① (2026-08-11) brought it back as
     `timeout` — deliberately, with a real reader this time
     (op_runtime/sandboxed_exec.py) — so it belongs in the EXPECTED set now,
-    not the removed one; every other axis stays removed."""
+    not the removed one; every other axis stays removed.
+
+    #4733: `collect` (enum `["async"]`) selects DISPATCH MODE (sync vs.
+    background asyncio.Task on the caller's own session) — orthogonal to
+    every axis this test's `removed` loop guards (it sets no network/fs/
+    subprocess policy field, and the async path resolves the SAME
+    operator-or-default `ctx.default_sandbox_policy` the sync path
+    already does, unchanged). It belongs in the EXPECTED set for the same
+    reason `timeout` does."""
     from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
     props = set(_EXEC_PARAMETERS["properties"])
-    assert props == {"argv", "timeout"}
+    assert props == {"argv", "timeout", "collect"}
     for removed in (
         "network", "write_paths", "allow_subprocess", "deny_subprocess",
         "env_deny_names", "read_deny_paths", "write_deny_paths",

@@ -1314,7 +1314,7 @@ async def run_exec_async(
     or not ``save_tool_result`` was the one that wrote it. Falls back to a
     plain ``<workspace>/.reyn/tool-results/`` directory (still real,
     on-disk, just without MediaStore's GC) when this session has no
-    MediaStore at all (``_media_store is None`` — a narrow/test session).
+    MediaStore at all (``ctx.media_store is None`` — a narrow/test session).
     stdout and stderr are MIXED into the one file with NO ordering
     guarantee between them (``communicate_capped``'s own documented
     limit) — a caller that needs interleaving order is out of scope here.
@@ -1322,7 +1322,17 @@ async def run_exec_async(
     ``describe_task``'s ``kind="exec"`` branch (``tools/task_verbs.py``)
     re-reads this SAME file fresh on every call — no cursor (architect:
     the file already holds the full text; a per-reader cursor would only
-    invent a "who clears it" question with no present need)."""
+    invent a "who clears it" question with no present need). The path
+    itself is NEVER stored on the chain (BLOCKING fix, lead-coder review
+    2026-09-02 — an earlier revision persisted it as a volatile
+    ``_PendingChain`` field, which silently lost it across a restart even
+    though the file itself survived): ``tools/task_verbs.py``'s
+    ``_derive_exec_output_path`` reconstructs this SAME path from
+    ``chain_id`` + THIS session's own media_store-or-fallback choice —
+    the exact formula below, read via ``ctx.media_store``/
+    ``ctx.workspace.base_dir`` rather than reaching into the Session
+    directly, so the writer and the (possibly post-restart) reader derive
+    from the SAME public surface and cannot silently drift apart."""
     caller_session = registry.get_session(caller_agent, caller_sid)
     if caller_session is None:
         raise RuntimeError(
@@ -1346,10 +1356,14 @@ async def run_exec_async(
 
     chain_id = new_chain_id()
 
-    media_store = getattr(caller_session, "_media_store", None)
+    # Same public surface `_derive_exec_output_path` reads (ctx.media_store
+    # / ctx.workspace.base_dir), not a private Session attribute — see this
+    # function's own docstring on why writer and reader must share one
+    # formula.
+    media_store = getattr(ctx, "media_store", None)
     output_dir = (
         media_store.history_content_dir if media_store is not None
-        else caller_session.workspace_dir / ".reyn" / "tool-results"
+        else ctx.workspace.base_dir / ".reyn" / "tool-results"
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"exec-{chain_id}.log"
@@ -1429,7 +1443,6 @@ async def run_exec_async(
         origin_depth=0,
         kind="exec",
         cancel=_cancel_hook,
-        output_path=str(output_path),
     )
     # No arm_timeout: see this function's own docstring — the sandbox
     # policy already owns this exec's deadline, a second chain-watchdog
