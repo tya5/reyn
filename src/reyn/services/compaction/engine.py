@@ -2935,6 +2935,14 @@ class RecoveryLadder:
         self._last_recover_cause: str | None = None
         self._consecutive_same_cause = 0
 
+        self._init_recovery_scratch_state()
+
+    def _init_recovery_scratch_state(self) -> None:
+        """The recovery-ladder's own per-episode scratch fields --
+        split out of :meth:`__init__` (#5631 candidate 1, 150-line
+        gate) purely structurally: every rationale comment below is
+        relocated VERBATIM, none slimmed (comment-slimming is
+        candidate 3, out of scope for this structural PR)."""
         # #4885/#5531 PR-2 (owner proposal, evaluated by lead-coder, redesigned
         # by owner — issue #5531 §2/§4): an HTTP 413 is a request-BODY-BYTE
         # limit — a different axis entirely from the token budgets this whole
@@ -3046,9 +3054,9 @@ class RecoveryLadder:
         # SP/new_msg never shrink (see the floor comment above) and never
         # change across iterations (both are fixed parameters) — computed once,
         # not on every floor check.
-        self._sp_tokens_floor = estimate_tokens(SP, model, use_chars4=self._use_chars4)
+        self._sp_tokens_floor = estimate_tokens(self._SP, self._model, use_chars4=self._use_chars4)
         self._new_msg_tokens_floor = estimate_tokens_for_turn(
-            self.new_msg, model, use_chars4=self._use_chars4,
+            self.new_msg, self._model, use_chars4=self._use_chars4,
         )
 
     def _spill_batch_from_offered(self, offered: "list[dict]") -> int:
