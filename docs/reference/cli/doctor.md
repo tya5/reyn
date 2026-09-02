@@ -111,7 +111,6 @@ Project-wide storage cap (storage.max_bytes/pin, #5366/#4478 —
 bounds media/ + tool-results/ TOGETHER, one operator number):
   ✓ storage.max_bytes=500,000,000: 0 bytes currently used
   storage.pin: alice
-  ⚠ known gap (#5653): the cap pre-check runs only from a tool-result write — a media-only-heavy project's own save_media writes never self-trigger eviction on their own
 ```
 
 `storage.max_bytes`/`storage.pin` ([`StorageConfig`](../config/reyn-yaml.md), #5366) is the ONE
@@ -125,12 +124,6 @@ second producer of that number.
 `storage.max_bytes: None` (the field's own documented "off" state) prints `unconfigured` — never
 a fabricated number, and never a bare "cap: none" that could misread as "0 bytes allowed" instead
 of "no cap at all."
-
-**Known gap, disclosed unconditionally** ([#5653](https://github.com/tya5/reyn/issues/5653)):
-the eviction pre-check (`MediaStore._evict_cross_session_over_cap`) runs only from
-`save_tool_result` — `save_media` does not call it, so a media-only-heavy project's own writes
-never self-trigger eviction; the cap is only ever CONSULTED when a tool-result write happens to
-occur. This line is read-only visibility (D-2) — `reyn doctor` never evicts anything itself.
 
 ### Hook launch probe (C-1)
 

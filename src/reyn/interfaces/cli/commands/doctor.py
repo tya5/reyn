@@ -288,14 +288,16 @@ def _print_storage_cap_status(config: Any, media_stats: Any) -> None:
     number, and never silently omits the line the way a bare "cap: none"
     might read as "0 bytes allowed" instead of "no cap at all".
 
-    Known gap (#5653, disclosed here per lead-coder's own #4364
-    assignment): the eviction PRE-CHECK
-    (:meth:`~reyn.data.workspace.media_store.MediaStore.
-    _evict_cross_session_over_cap`) runs only from ``save_tool_result`` —
-    ``save_media`` does not call it, so a media-only-heavy project's own
-    writes never self-trigger eviction; the cap is still only ever
-    CONSULTED when a tool-result write happens to occur. This line is
-    read-only visibility (D-2) — doctor never evicts anything itself."""
+    #5653 (the eviction pre-check running only from ``save_tool_result``,
+    never ``save_media``) was fixed by #5667 — ``save_media`` now calls
+    :meth:`~reyn.data.workspace.media_store.MediaStore.
+    _evict_cross_session_over_cap` too (verified directly,
+    ``media_store.py``'s own ``save_media``). This function's own former
+    "known gap" disclosure named a gap that no longer exists; removed
+    here rather than left to mislead an operator about a mechanism that
+    was already fixed (#5682's own BLOCKING finding — landed the same
+    night #5658 disclosed it and #5667 closed it, with nobody sweeping
+    the disclosure)."""
     from reyn.config.infra import StorageConfig
 
     storage_cfg = getattr(config, "storage", None) or StorageConfig()
@@ -317,11 +319,6 @@ def _print_storage_cap_status(config: Any, media_stats: Any) -> None:
 
     pin_desc = ", ".join(storage_cfg.pin) if storage_cfg.pin else "none"
     print(f"  storage.pin: {pin_desc}")
-    print(
-        "  ⚠ known gap (#5653): the cap pre-check runs only from a "
-        "tool-result write — a media-only-heavy project's own save_media "
-        "writes never self-trigger eviction on their own",
-    )
 
 
 def run(args: argparse.Namespace) -> None:

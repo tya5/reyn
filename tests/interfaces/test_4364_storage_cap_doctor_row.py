@@ -1,6 +1,20 @@
 """Tier 2: #4364 (lead-coder assignment, part of #4364) — ``reyn doctor``
 gains a project-wide storage cap row (``storage.max_bytes``/``storage.pin``,
-#5366/#4478) plus the #5653 known-gap disclosure.
+#5366/#4478).
+
+#5682 BLOCKING (2026-09-02): this file used to also assert an unconditional
+"known gap (#5653)" disclosure line — #5653 (``save_media`` never
+self-triggering the eviction pre-check) was fixed by #5667 the same night
+#5658 landed the disclosure, and nobody swept it; the assertion was
+protecting a now-false claim from being removed. Dropped along with the
+disclosure itself (``doctor.py``'s own ``_print_storage_cap_status``). The
+"disclosure disappearing flips a test red" design intent (#5658's own,
+same rule ``test_4364_bounding_preference_doctor_row.py`` follows for its
+OWN still-true session-layer-invisibility line) now has nothing left to
+guard IN THIS FILE — the remaining assertions below (configured vs.
+unconfigured differ; "unconfigured" never fabricates a number) are a
+different kind of witness (a real behavioral branch, not a disclosure
+line) and were never at risk from this same defect class.
 
 No mocks — drives the real ``run`` against a real :class:`MediaStore` write
 under ``tmp_path``, matching this command family's own established shape
@@ -72,10 +86,6 @@ def test_storage_cap_row_reflects_declared_max_bytes_and_differs_when_unset(
 
     assert configured_line != unconfigured_line
     assert "unconfigured" in unconfigured_line
-
-    # #5653 known-gap disclosure — present in both runs, unconditionally.
-    assert "known gap (#5653)" in configured_out
-    assert "known gap (#5653)" in unconfigured_out
 
 
 def test_storage_cap_row_when_unconfigured_never_fabricates_a_number(
