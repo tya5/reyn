@@ -2064,6 +2064,10 @@ class RouterHostAdapter:
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
+        # #5678: required (raises) when role="system" — see
+        # ``Disclosure``'s own docstring. Irrelevant (ignored) for
+        # every other role, same as ``ChatMessage.__init__`` itself.
+        disclosure: "object | None" = None,
     ) -> None:
         """E-full PR-E (issue #383): persist a single ChatMessage entry
         without an outbox side-effect.
@@ -2075,6 +2079,11 @@ class RouterHostAdapter:
         text reply via ``put_outbox(kind="agent")``; this method closes
         the gap so the next ``_build_history_for_router`` rebuild
         replays the full LLM message sequence.
+
+        #5678: also the seam ``RouterLoop.run_loop``'s own #3694
+        cooperative-cancel terminal (``role="system"``) goes through —
+        ``disclosure`` is forwarded straight to ``ChatMessage.__init__``,
+        which raises if it is omitted for a ``role="system"`` call.
         """
         from reyn.runtime.chat_message import ChatMessage, _now_iso
         self._append_history_cb(ChatMessage(
@@ -2085,6 +2094,7 @@ class RouterHostAdapter:
             tool_calls=tool_calls,
             tool_call_id=tool_call_id,
             name=name,
+            disclosure=disclosure,
         ))
 
     def mark_untrusted_in_flight(self) -> None:

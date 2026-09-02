@@ -72,6 +72,7 @@ from reyn.runtime.budget.budget import (
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     ChatMessage,
+    Disclosure,
     Spillability,
     _migrate_legacy_chat_message,
     _now_iso,
@@ -4400,10 +4401,20 @@ class Session:
         ``state_change`` history entry (= #398 v4 emitter wiring,
         #352 in-context-learning refusal trap mitigation).
 
-        The LLM reading the next turn's prompt sees this as a
-        ``role="system"`` entry containing "Permission for '<key>' was
+        Intent: the LLM reading the next turn's prompt should see this as
+        a ``role="system"`` entry containing "Permission for '<key>' was
         granted." (or revoked) — breaking out of the prior-refusal
-        learning pattern by surfacing the world-state change.
+        learning pattern by surfacing the world-state change. **Not yet
+        true** (#5678 census, corrected from an earlier version of this
+        docstring that stated it as current fact): ``role="system"`` is
+        outside ``RouterHistoryBuffer``'s allowlist, so this entry is
+        currently excluded from every LLM-facing turn list —
+        ``notify_state_change`` declares ``disclosure=Disclosure.
+        INTERNAL`` (#5678), matching this unchanged, pre-existing
+        behavior rather than the docstring's aspirational claim.
+        Whether it SHOULD become model-visible is a separate, deferred
+        question (architect ruling on #5678: kept INTERNAL for THIS
+        migration, behavior-preserving).
 
         Phrasing uses single quotes around the key so the human-
         readable summary stays unambiguous when the key contains
@@ -4483,6 +4494,17 @@ class Session:
             # docstring on why this signal exists at all — the #352
             # refusal-trap pattern).
             spillability=Spillability.NEVER,
+            # #5678 (architect ruling): INTERNAL, unchanged behavior for
+            # THIS migration — this method's own docstring above HAS
+            # claimed LLM-visibility since #398, which #5678's census
+            # found is currently false (excluded from build_history's
+            # allowlist same as every other role="system" entry). Kept
+            # INTERNAL rather than silently "fixed" to MODEL here: that
+            # would be a behavior change riding along on a migration PR,
+            # and whether state_change SHOULD reach the model is a
+            # separate, still-open design question (see the docstring
+            # note above).
+            disclosure=Disclosure.INTERNAL,
         )
         self._append_history(msg)
         # Observability event for measurement / debugging (= sub-task 6
@@ -4552,6 +4574,13 @@ class Session:
             # #5514 §4b: a FACT (small — an id + a state), not a
             # deliverable. See §4.1's own "fact vs artifact" split.
             spillability=Spillability.NEVER,
+            # #5678: a UI acknowledgement of an operator-initiated cancel,
+            # not conversational content — must NOT reach the model's own
+            # projection (the model should not carry this forward as if
+            # the turn had happened normally), but MUST reach TUI restore
+            # (so the operator sees why there was no reply, #3694) —
+            # OPERATOR, the one producer this rung exists for.
+            disclosure=Disclosure.OPERATOR,
         ))
 
     def _append_history_for_handler(
@@ -7420,6 +7449,13 @@ class Session:
             # to a single deterministic origin. Default LAST_RESORT per
             # lead-coder's own instruction for an untraceable site.
             spillability=Spillability.LAST_RESORT,
+            # #5678: harmless (ignored) when ``_rendered["role"]`` is
+            # "user" (CLIENT_INPUT — ``_normalize_disclosure`` returns
+            # ``None`` for any non-"system" role); the ONE other
+            # ``MID_TURN_INJECTABLE`` member, AGENT_REQUEST, renders
+            # role="system" and is exactly the #5678 census's 6th
+            # producer (#5684) — content meant for the model, MODEL.
+            disclosure=Disclosure.MODEL,
         ))
         await self._journal.consume_inbox(msg_id=msg_id)
         self._audit_events.emit(
@@ -8023,7 +8059,19 @@ class Session:
         silent mutation of an existing one) using the shared
         ``_format_ride_along_attribution`` helper (``kind="hook"`` at this call
         site, always — a hook push by construction) so C and E cannot drift —
-        then a single router turn runs."""
+        then a single router turn runs.
+
+        #5678/#5686: record IS delivery now — the appended entry (declared
+        ``Disclosure.MODEL``) is what the model actually sees, via the
+        widened ``build_history`` projection, not a SEPARATE text seed
+        passed to ``_run_router_loop`` (which would double-deliver it —
+        see that call site's own comment). This closes two defects at
+        once: E's content used to vanish from every turn AFTER the one it
+        arrived in (excluded from every subsequent projection), and its
+        turn-seed used to reach the model unattributed as a bare
+        ``role="user"`` line (#5686 — RouterLoop.run's own fallback guard
+        fired every time, since a role="system" tail was never
+        recognised as "already delivered")."""
         name = payload.get("name", "hook")
         text = payload.get("text", "")
         chain_id = payload.get("chain_id") or new_chain_id()
@@ -8057,6 +8105,13 @@ class Session:
                 if "spillability" in payload
                 else Spillability.FIRST_CHOICE
             ),
+            # #5678: a hook push is producer-authored content meant for
+            # the model (this method's own reason for existing) — MODEL,
+            # not INTERNAL. This entry now reaches the model's NEXT-turn
+            # projection too (router_history_buffer.py's allowlist
+            # widening, same PR) — see the run_router_loop call below for
+            # the matching stop-the-double-send half (#5686).
+            disclosure=Disclosure.MODEL,
         ))
         await self._put_outbox(OutboxMessage(
             kind="system",
@@ -8064,24 +8119,20 @@ class Session:
             meta={"chain_id": chain_id},
         ))
         try:
-            # #5686: attributed, not raw text — RouterLoop.run's own
-            # fallback (router_loop.py's messages.append({"role":"user",
-            # ...}) guard) fires for this call every time today (E's
-            # own history entry is role="system", excluded from
-            # build_history's allowlist, so history[-1] is never
-            # "user"), delivering the hook's bare, unattributed text as
-            # a #3595-class misattributed operator turn. Using
-            # `attributed` here restores the SAME [hook:<name>] prefix
-            # already used for history/outbox above, at the ONE
-            # remaining mouth that had drifted from it (comment
-            # `:8021-8025` above already claims all three agree — this
-            # was the one that didn't). Deliberately NOT the #5678 fix
-            # (this stays role="user" until #5678's own allowlist
-            # widening + RouterLoop.run(user_text=None) bridge land
-            # together) — safe standalone today because that guard's
-            # fallback still fires exactly as before, just with
-            # attributed content instead of raw.
-            await self._run_router_loop(attributed, chain_id)
+            # #5678/#5686: None, not a text seed — this entry is now
+            # MODEL-disclosed and reaches the model via the (widened)
+            # build_history projection itself, at the tail. Passing
+            # `attributed` (or raw `text`) here would DOUBLE-deliver it:
+            # once as this "seed", once as the projected history entry
+            # just appended above. `None` tells run_loop's own guard
+            # "this turn's content is already history's tail" instead of
+            # asking it to infer that from a role check a widened
+            # allowlist can now falsify (architect-ruled fix, #5686 —
+            # the guard's own comment carries the full rationale).
+            # (#5686 landed its own standalone `attributed` fix first,
+            # #5687; #5678 supersedes it here — `None` makes the seed
+            # question moot rather than answering it differently.)
+            await self._run_router_loop(None, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(
                 exc, chain_id=chain_id, user_text=text,
@@ -8356,6 +8407,13 @@ class Session:
                         if entry_kind == TurnOrigin.HOOK and "spillability" in payload_data
                         else Spillability.LAST_RESORT
                     ),
+                    # #5678: a wake=false ride-along is producer-authored
+                    # content meant for the model (the whole point of
+                    # staging it as next-turn context) — MODEL, not
+                    # INTERNAL. This is #5678's own founding motivation
+                    # (C never reached the model at all, per #5678's
+                    # census on reyn-self history).
+                    disclosure=Disclosure.MODEL,
                 ))
             self._inbox_arbiter.next_turn_context.clear()
             await self._journal.record_next_turn_context_cleared()
@@ -10699,10 +10757,16 @@ class Session:
 
     async def _run_router_loop(
         self,
-        user_text: str,
+        user_text: "str | None",
         chain_id: str,
     ) -> None:
         """Forwarding → RouterLoopDriver.run_turn (PR-3).
+
+        ``user_text=None`` (#5678/#5686): this turn's content is already
+        the tail of the built history, so no separate wire seed is
+        appended — see ``RouterLoop.run``'s own docstring for the full
+        rationale. Every OTHER caller keeps passing its own text
+        unchanged.
 
         #3339: this is the seam where the turn's ``chain_id`` becomes the
         AMBIENT turn identity for everything the turn does — every LLM call

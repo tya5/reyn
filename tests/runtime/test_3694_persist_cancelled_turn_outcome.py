@@ -26,7 +26,14 @@ Witnesses:
 (d) restore rescue — the entry is NOT silently dropped by
     ``restore.py``'s ``_SKIP_ROLES``, while an ordinary ``state_change``
     system entry (a DIFFERENT ``meta.kind``) still IS — the rescue is
-    keyed on ``meta.kind``, not on role.
+    keyed on ``meta.kind``, not on role. #5678 (architect ruling, #5678
+    §3): the KEY changed from ``meta.get("kind") == "turn_cancelled"``
+    to ``msg.disclosure >= Disclosure.OPERATOR`` — this test's own
+    assertions are unchanged (``notify_turn_cancelled``/
+    ``notify_state_change`` declare the right ``Disclosure`` internally
+    now), proving the mechanism swap is behavior-preserving for THIS
+    producer. (h) below is the #5678-specific structural proof the
+    OLD mechanism is actually gone, not left dead in place.
 (e) cooperative-cancel wiring (① — ``RouterLoop.run_loop``'s own terminal)
     driven through the REAL ``RouterLoop`` (no Session), via the same
     ``FakeRouterHost``/``arm_cancel_after`` seam ``test_turn_cancel_1468.py``
@@ -58,11 +65,12 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import ChatMessage, Disclosure
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from tests._support.agent_session import make_session as _make_hard_cancel_session
 from tests._support.events import settle
+from tests._support.paths import REPO_ROOT
 from tests._support.router_loop import FakeRouterHost, text_result
 from tests._support.router_loop import ScriptedLLM as _ScriptedLLM
 from tests._support.session import make_session as _make_session
@@ -173,6 +181,62 @@ def test_cancelled_marker_is_rescued_by_restore_but_state_change_is_not(tmp_path
     assert not any(
         "installed" in t for _, t in kinds_and_texts
     ), f"a state_change entry must stay skipped (not rescued); got {kinds_and_texts!r}"
+
+
+def test_the_meta_kind_rescue_is_structurally_gone_from_restore(tmp_path, monkeypatch):
+    """Tier 2: #5678's own central acceptance criterion — architect
+    ruling, verbatim: "#3694 が restore.py に入れた例外
+    (meta.get("kind") == "turn_cancelled") を削除できること。削除できな
+    ければ軸が誤りです". A behavioral witness alone (arm (d) above) is not
+    sufficient — it would stay green even if the OLD mechanism were left
+    in place ALONGSIDE the new one (dead code, not a real replacement).
+    This reads restore.py's OWN source and asserts the OLD string is
+    gone.
+
+    Strip-falsifier: restoring the old `meta.get("kind") ==
+    "turn_cancelled"` line (even leaving the new disclosure check in
+    place too) makes this test go RED."""
+    src = (
+        REPO_ROOT / "src" / "reyn" / "interfaces" / "inline"
+        / "textual_chat" / "restore.py"
+    ).read_text(encoding="utf-8")
+    assert 'meta.get("kind") == "turn_cancelled"' not in src, (
+        "restore.py must no longer check meta.kind directly for "
+        "turn_cancelled — #5678's own Disclosure ladder is the sole "
+        "mechanism now (architect's own acceptance criterion)"
+    )
+    # Sanity: the NEW mechanism really is present (a vacuous pass — the
+    # string simply renamed rather than replaced — would satisfy the
+    # assert above too).
+    assert "Disclosure.OPERATOR" in src
+
+
+def test_a_model_disclosed_system_entry_also_restores_now(tmp_path, monkeypatch):
+    """Tier 2: #5678 §3's own structural consequence, and the acceptance
+    criterion added for the owner's ORIGINAL complaint (hook content not
+    reappearing in TUI restore after a restart) — a role="system" entry
+    declared MODEL (E, C, mid-turn AGENT_REQUEST injection) restores too,
+    not just OPERATOR (turn_cancelled). The ladder rule (MODEL implies
+    OPERATOR-visible) is what makes ONE check in restore.py cover both,
+    rather than needing a second membership set that could drift."""
+    session = _make_session(tmp_path, monkeypatch=monkeypatch)
+    session._append_history(ChatMessage(
+        role="system", content="[hook:on_idle] status update",
+        ts="t1", disclosure=Disclosure.MODEL,
+    ))
+    session._append_history(ChatMessage(
+        role="system", content="internal chrome", ts="t2",
+        disclosure=Disclosure.INTERNAL,
+    ))
+
+    frames = project_restored_frames(session.history)
+    texts = [f.text for f in frames]
+    assert any("status update" in t for t in texts), (
+        f"a MODEL-disclosed system entry must restore — got {texts!r}"
+    )
+    assert not any("internal chrome" in t for t in texts), (
+        f"an INTERNAL entry must still stay skipped — got {texts!r}"
+    )
 
 
 # ── (e) cooperative-cancel wiring (①), driven through the REAL RouterLoop ──

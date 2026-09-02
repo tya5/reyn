@@ -243,12 +243,17 @@ class BudgetGateway:
         self._router_invocations_this_turn = 0
         self._router_last_reason = ""
 
-    def check_and_increment_router_cap(self, user_text: str) -> None:
+    def check_and_increment_router_cap(self, user_text: "str | None") -> None:
         """Increment the per-turn router invocation counter and enforce the cap.
 
         Raises RouterCapExceeded after the ``cap``-th invocation and emits a
         ``router_retry_exhausted`` event with count + last_reason. cap<=0
         disables the check.
+
+        ``user_text=None`` (#5678/#5686: this turn's content is already
+        history's own tail, no separate seed) degrades the event's
+        ``user_message`` preview to ``""`` rather than raising — the cap
+        check itself never depended on the text.
         """
         # Import here to avoid circular import at module load time.
         from reyn.runtime.errors import RouterCapExceeded
@@ -259,7 +264,7 @@ class BudgetGateway:
             count = self._router_invocations_this_turn
             self._events.emit(
                 "router_retry_exhausted",
-                user_message=user_text[:200],
+                user_message=(user_text or "")[:200],
                 count=count,
                 cap=self._router_cap,
                 last_reason=self._router_last_reason,

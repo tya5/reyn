@@ -241,13 +241,18 @@ class FakeRouterHost:
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
+        # #5678: accepted and recorded, not enforced — this fake mirrors
+        # the real adapter's SIGNATURE (so a caller passing it doesn't
+        # TypeError), not ChatMessage.__init__'s own required-for-system
+        # raise (this fake never constructs a real ChatMessage).
+        disclosure: "object | None" = None,
     ) -> None:
         """#3633: mirrors RouterHostAdapter.append_history_entry (issue #383)
         — the no-outbox-side-effect persist path ``RouterLoop.feedback()``
         uses for the canonical tool-call turn record."""
         self.history.append({
             "role": role, "content": content, "meta": meta or {},
-            "tool_calls": tool_calls,
+            "tool_calls": tool_calls, "disclosure": disclosure,
         })
 
     # --- File callbacks (the memory capability's, not the host's) ---
