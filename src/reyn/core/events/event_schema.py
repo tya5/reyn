@@ -418,7 +418,6 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "intervention_denied",
     "intervention_routed",
     "limit_denied",
-    "litellm_compat_patch_applied",
     "llm_call_retry",
     "llm_call_retry_exhausted",
     "llm_called",

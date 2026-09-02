@@ -363,59 +363,6 @@ def run(args: argparse.Namespace) -> None:
     print("override resolve_base_dir_candidate uses, not a restated declaration):")
     _print_hook_env_snapshot(resolved_root)
 
-    # ── #5603: litellm compat-patch applied state ───────────────────────────
-    print()
-    print("litellm compat patches (#5603) — measured class-attribute state,")
-    print("not a restated declaration that the patch module exists:")
-    _print_litellm_patch_status()
-
-
-def _print_litellm_patch_status() -> None:
-    """#5603 (architect fail-safe ②, D-1): reads the ACTUAL applied-state
-    flag reyn's own patch functions set on the real litellm class objects
-    — never a restatement of "the patch module is present" (which would
-    be true even if the patch silently failed to apply, the exact #5568
-    incident this whole issue exists to prevent recurring). Triggers the
-    real ``ensure_litellm_ready()`` chokepoint (the same one-time ``import
-    litellm`` every real call pays) so the measurement reflects what THIS
-    process's own real usage would actually get — a doctor run that
-    skipped the import could only ever report "not yet imported", which
-    answers nothing about whether the patch itself still applies.
-
-    #4421 seam-gate review (lead-coder): this function itself never
-    imports ``litellm`` — the applied-state READ lives in
-    ``_litellm_compat_patches.report_applied_state()`` (the seam's own
-    module, already exempted from the gate with its own documented
-    reason), so this file's own litellm touch is exactly the ONE call to
-    ``ensure_litellm_ready()`` every other doctor check already routes
-    through. Folding the read into this file too would have meant a
-    SECOND file the gate has to trust "already warmed" without a
-    structural guarantee — the exact drift #4421 exists to prevent."""
-    from reyn.llm._litellm_compat_patches import report_applied_state
-    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-
-    mod = ensure_litellm_ready()
-    if mod is None:
-        print("  ? not checked — litellm itself failed to import (see the")
-        print("    warning above, if any); nothing to measure")
-        return
-
-    state = report_applied_state()
-
-    applied_a = state["stream_chunk_recovery"]
-    if isinstance(applied_a, bool):
-        label = "✓ applied" if applied_a else "✗ NOT applied — correctness-critical, see #5603"
-        print(f"  {label}: stream_chunk_recovery (A)")
-    else:
-        print(f"  ✗ stream_chunk_recovery (A): {applied_a}")
-
-    applied_b = state["overflow_diagnosis"]
-    if isinstance(applied_b, bool):
-        label = "✓ applied" if applied_b else "⚠ NOT applied — diagnostic-only, see #5603"
-        print(f"  {label}: overflow_diagnosis (B)")
-    else:
-        print(f"  ✗ overflow_diagnosis (B): {applied_b}")
-
 
 def _print_hook_env_snapshot(resolved_root: Path) -> None:
     """#5428: the operator-facing consumer this issue required — ``reyn
