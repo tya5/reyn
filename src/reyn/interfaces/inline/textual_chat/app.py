@@ -6787,7 +6787,11 @@ class TextualChatApp(App):
         except Exception:
             return  # not yet mounted
         snapshot = self._snapshot() if snap is _UNSET else snap
-        raw = (snapshot or {}).get("compaction_progress_raw") or {}
+        snapshot = snapshot or {}
+        if not snapshot.get("compaction_progress_reported", True):
+            row.lines = ["compaction progress not reported on this connection"]
+            return
+        raw = snapshot.get("compaction_progress_raw") or {}
         row.lines = compaction_progress_lines(
             CompactionProgressSnapshot(
                 is_compacting=raw.get("is_compacting", False),

@@ -123,6 +123,9 @@ _GROUPED_AXIS_KEYS = {
     # ctx_compaction_reported" per project_remote_snapshot's own inline
     # comment at this key -- the axis name differs from the dict key name.
     "ctx_compaction_status_fn": "ctx_compaction_reported",
+    # #5605: compaction progress is reported through the same capability axis
+    # as its remote placeholder; the explicit flag distinguishes no fold yet.
+    "compaction_progress_raw": "compaction_progress_reported",
     # #4996/#5050: this key predates the *_reported convention (named
     # "intervention_head" on the capabilities class, not
     # "pending_intervention_head_reported") — the METHOD-axis field, not a
