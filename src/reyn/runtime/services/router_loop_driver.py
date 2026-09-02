@@ -818,6 +818,21 @@ class RouterLoopDriver:
             # `history` (that's the whole point of user_text=None), so
             # decompose_history_for_retry's head/raw_middle/tail already
             # carries it; a non-empty new_msg here would double-count it.
+            #
+            # #5689 (architect co-vet finding on #5678, filed for owner
+            # judgment — not a bug, not blocking): this is also a
+            # PROTECTION consequence, not just an accounting one.
+            # ADR-0044's "room floor" (SP + the newest message) is
+            # reserved, never spilled — a CLIENT_INPUT turn sits there and
+            # cannot be evicted. With user_text=None this "" placeholder
+            # occupies that floor slot instead, so E's own turn becomes
+            # just an ordinary tail entry — and session.py:8096's own
+            # comment ("Undeclared … still falls back to FIRST_CHOICE")
+            # means an overflow now spills E's trigger FIRST, before
+            # anything else. Reversible (spill keeps a path reference,
+            # nothing is lost) — the asymmetry vs CLIENT_INPUT (which
+            # never spills) is the open question #5689 hands to the
+            # owner, not something this PR silently decided.
             _new_msg = {"role": "user", "content": user_text or ""}
 
             return await self._drive_retry_ladder(
