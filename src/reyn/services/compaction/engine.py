@@ -988,13 +988,17 @@ class LLMErrorSignal:
     genuinely different questions into one value is "今週3度潰した形" —
     the #3082 god-object shape). :func:`is_context_overflow_error`
     ("is this overflow"), :func:`classify_llm_failure` ("fatal / retryable
-    / overflow") and :func:`is_shrinkable_overflow` ("should the shrink
-    ladder be entered") each still ask their OWN question against this
-    SAME material — none of them re-derives ``status_code``/``.code``/
-    ``type(exc).__name__``/``str(exc)`` from ``exc`` a second time, so a
-    stronger-signal-available gap fixed once (#5699's own ``.code`` gap)
-    cannot silently persist at a sibling predicate that still reads the
-    raw exception its own way.
+    / overflow"), :func:`is_shrinkable_overflow` ("should the shrink
+    ladder be entered") and its own ``_is_fatal_auth_error`` helper
+    each still ask their OWN question against this SAME material — none
+    of them re-derives ``status_code``/``.code``/``type(exc).__name__``/
+    ``str(exc)`` from ``exc`` a second time, so a stronger-signal-available
+    gap fixed once (#5699's own ``.code`` gap) cannot silently persist at
+    a sibling predicate that still reads the raw exception its own way
+    (lead-coder review, #5700: ``_is_fatal_auth_error`` was initially
+    missed — it ran BEFORE ``classify_llm_failure``'s own signal build,
+    reading ``exc`` directly; fixed by moving the signal build to the top
+    of that function, ahead of every check).
 
     Fields are ordered by STRENGTH, matching how every consumer below
     checks them — ``status_code``/``code``/the litellm type first, the
@@ -1203,16 +1207,25 @@ class LLMFailureClass(enum.Enum):
 FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
 
 
-def _is_fatal_auth_error(exc: BaseException) -> bool:
+def _is_fatal_auth_error(signal: LLMErrorSignal) -> bool:
     """True for a credential/permission failure — the auth bucket
     ``reyn.runtime.error_format._bucket_for`` already names (kept as a
     separate, narrower check here rather than importing that function
     directly: this module intentionally does not depend on the
     user-facing formatter, only on the SAME underlying signal it reads
-    — class name substring or a 401/403 status code)."""
-    name = type(exc).__name__
-    code = getattr(exc, "status_code", None)
-    return "Authentication" in name or "PermissionDenied" in name or code in (401, 403)
+    — class name substring or a 401/403 status code).
+
+    #5699 (lead-coder review): reads the already-materialized
+    :class:`LLMErrorSignal` rather than re-deriving ``type(exc).__name__``/
+    ``status_code`` from the raw exception a second time — the same
+    material :func:`classify_llm_failure`'s other checks read, closing the
+    one spot that predicate's own docstring claimed but did not yet
+    apply."""
+    return (
+        "Authentication" in signal.class_name
+        or "PermissionDenied" in signal.class_name
+        or signal.status_code in (401, 403)
+    )
 
 
 def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
@@ -1320,13 +1333,15 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     (that would make the proxy's own defect permanently invisible, the
     exact Q3 "does the repair destroy the evidence" band violation).
     """
-    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
+    # #5699: built once, at the top, so EVERY check below (including
+    # ``_is_fatal_auth_error``) reads this SAME material instead of
+    # re-deriving its own copy from ``exc`` — see :class:`LLMErrorSignal`'s
+    # own docstring.
+    signal = build_llm_error_signal(exc)
+    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(signal):
         return LLMFailureClass.FATAL
     if is_quota_exhausted_error(exc):
         return LLMFailureClass.RETRYABLE
-    # #5699: same extraction ``is_context_overflow_error`` reads — see
-    # :class:`LLMErrorSignal`'s own docstring.
-    signal = build_llm_error_signal(exc)
     name = signal.class_name
     code = signal.status_code
     if "RateLimit" in name or code == 429:

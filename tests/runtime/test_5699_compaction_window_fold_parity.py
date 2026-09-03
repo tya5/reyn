@@ -141,7 +141,18 @@ def test_window_and_fold_agree_on_which_entries_are_model_visible(tmp_path, monk
     every role/disclosure combination and checking both filters agree via
     the SAME shared predicate, rather than by re-deriving the condition
     text a second time in this test (which would just be a transcription,
-    testing nothing about whether the two SOURCES actually agree)."""
+    testing nothing about whether the two SOURCES actually agree).
+
+    lead-coder review finding (#5700 BLOCKING, six-questions ④): the first
+    version of this test built ``window_contents`` from ``raw_middle``
+    ALONE — with this small a fixture, everything this budget's tiny
+    ``T_max`` could still fit landed in ``head`` instead (measured:
+    ``raw_middle`` was empty), so the loop's own ``if in_window:`` body
+    never ran and ``assert in_fold`` was never evaluated — green over an
+    empty set. ``decompose_history_for_retry`` returns THREE regions
+    (``head``/``raw_middle``/``tail``), all of which are "the window";
+    the fix reads all three, and the sanity assertion below makes the
+    fixture's own bite explicit rather than merely hoped for."""
     s = _make_session(tmp_path, monkeypatch)
     entries = [
         ChatMessage(role="user", content="u", ts=_now()),
@@ -154,8 +165,21 @@ def test_window_and_fold_agree_on_which_entries_are_model_visible(tmp_path, monk
     for m in entries:
         s._append_history(m)
 
-    _, raw_middle, _, _, _ = s._history_buffer.decompose_history_for_retry()
-    window_contents = {(m["role"], m.get("content")) for m in raw_middle}
+    head, raw_middle, tail, _, _ = s._history_buffer.decompose_history_for_retry()
+    window_contents = {
+        (m["role"], m.get("content")) for m in (*head, *raw_middle, *tail)
+    }
+
+    # Sanity: the fixture must genuinely exercise the property under
+    # test, or every assertion below passes vacuously (six-questions ④).
+    assert window_contents, "sanity: the window must not be empty"
+    assert ("system", "model-visible") in window_contents, (
+        "sanity: the MODEL-visible entry — the one thing this test exists "
+        "to check — must actually reach the window, or the deny-side "
+        "assertion below never fires on the case it's meant to guard"
+    )
+    assert ("system", "internal") not in window_contents
+    assert ("system", "operator") not in window_contents
 
     # The SAME production predicate compaction_controller.py's own
     # candidate filter calls (chat_message.is_compaction_eligible) —
@@ -165,15 +189,18 @@ def test_window_and_fold_agree_on_which_entries_are_model_visible(tmp_path, monk
         (m.role, m.content) for m in s.history if is_compaction_eligible(m)
     }
 
+    checked_at_least_one = False
     for m in entries:
         in_window = (m.role, m.content) in window_contents
         in_fold = (m.role, m.content) in fold_eligible
         if in_window:
+            checked_at_least_one = True
             assert in_fold, (
                 f"role={m.role!r} disclosure={getattr(m, 'disclosure', None)!r} "
                 "reached the window but is not fold-eligible — an entry the "
                 "model can see but /compact can never retire"
             )
+    assert checked_at_least_one, "sanity: the deny-side loop must check something"
 
 
 # ---------------------------------------------------------------------------
