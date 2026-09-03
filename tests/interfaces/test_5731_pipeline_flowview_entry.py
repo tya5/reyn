@@ -13,6 +13,7 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat._meta_keys import RUNNING_SINCE_KEY
 from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -101,3 +102,6 @@ async def test_pipeline_frame_creates_one_flow_entry() -> None:
         entry for entry in entries if entry.item.meta.get("run_id") == "run-5731"
     )
     assert entry.item.meta["step_index"] == 0
+    assert entry.item.meta.get(RUNNING_SINCE_KEY) is not None, (
+        "expected the pipeline row animation to be running"
+    )
