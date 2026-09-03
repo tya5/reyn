@@ -166,3 +166,7 @@ jobs:
       - name: cancel-swallow
         if: ${{ !cancelled() }}
         run: python scripts/check_cancel_swallow.py
+
+      - name: no-hardcoded-compaction-role-tuple
+        if: ${{ !cancelled() }}
+        run: python scripts/check_no_hardcoded_compaction_role_tuple.py
