@@ -75,7 +75,7 @@ async def test_controller_path_carries_a_real_seq(tmp_path, monkeypatch):
             session._append_history(
                 _msg(f"filler turn {i} " * 40, seq=i + 1),
             )
-        await session._compaction_controller.force_compact_now()
+        await session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: [])
         await settle(session)
     finally:
         stub.restore()

@@ -78,7 +78,7 @@ def test_summary_leads_with_reference_only_preamble():
     """Tier 2: the rendered summary leads with the reference-only preamble carrying
     the source-of-truth + discard-pending-on-reverse-signal directives."""
     ctrl, hist = _make_controller(_history(7))
-    asyncio.run(ctrl.force_compact_now())
+    asyncio.run(ctrl.force_compact_now(spill_fn=lambda _candidates: []))
     summaries = [m for m in hist if m.role == "summary"]
     assert summaries, "force_compact_now must append a summary"
     text = summaries[-1].text
@@ -91,7 +91,7 @@ def test_preamble_is_prepended_not_replacing_summary():
     """Tier 2: (non-regression) the preamble is PREPENDED — the original rendered
     summary content still follows it (the summary is not replaced)."""
     ctrl, hist = _make_controller(_history(7))
-    asyncio.run(ctrl.force_compact_now())
+    asyncio.run(ctrl.force_compact_now(spill_fn=lambda _candidates: []))
     text = [m for m in hist if m.role == "summary"][-1].text
     assert "--- summary follows ---" in text, "delimiter between preamble and summary"
     assert "STUB_ARC" in text, "the original rendered summary content must survive the prepend"

@@ -10838,7 +10838,34 @@ class Session:
 
         effective_trigger, before = self._budget_advisor._free_window_now()
         prev_cover = _cover()
-        compaction_outcome = await self._compaction_controller.force_compact_now()
+        # #5712 (owner ruling, "operator の compact 要求は spill 含む縮小
+        # フローだから"): `force_compact_now` now requires a real spill_fn
+        # — reuses `RouterLoopDriver._spill_batch_for_retry` (the SAME
+        # concrete implementation the reactive retry_loop path already
+        # calls, via `RouterLoopDriver`'s own `spill_fn=` wiring for
+        # `retry_loop`) rather than a second copy for this on-demand
+        # path. `chain_id="manual-compact"` (never a real turn's chain —
+        # `/compact` is not attached to any in-flight turn) is a plain
+        # manifest/audit label with a documented empty-string default
+        # (`RouterHistoryBuffer.spill_turn_content`); using a descriptive
+        # literal instead of leaving it blank distinguishes an on-demand
+        # spill from a reactive one in the spill audit trail for free.
+        from functools import partial as _partial
+        # `_spill_batch_for_retry` is `RouterLoopDriver`-specific, not
+        # part of the `ExecutionDriver` Protocol every driver satisfies
+        # (`execution_driver.py`) — a test/alternate driver that omits it
+        # degrades to a genuine no-op spill (never a crash), the same
+        # graceful-absence shape `force_compact_now`'s own REQUIRED
+        # spill_fn contract still honors: "nothing real to spill" is a
+        # valid answer, "None entirely" is not (#5712 acceptance ②).
+        _spill_impl = getattr(self._loop_driver, "_spill_batch_for_retry", None)
+        _spill_fn = (
+            _partial(_spill_impl, chain_id="manual-compact")
+            if _spill_impl is not None else (lambda _candidates: [])
+        )
+        compaction_outcome = await self._compaction_controller.force_compact_now(
+            spill_fn=_spill_fn,
+        )
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()
 

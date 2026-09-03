@@ -34,7 +34,10 @@ from reyn.core.events.events import EventLog
 from reyn.runtime.chat_message import is_compaction_eligible
 from reyn.services.compaction.engine import (
     CompactionEngine,
+    CompactionOverflowError,
     HistoryChunkToCompact,
+    classify_compact_overflow,
+    shrink_pool_after_overflow,
     trim_head,
     trim_tail,
     wrap_summary_as_message,
@@ -338,8 +341,20 @@ class CompactionController:
             and t.seq > prev_cover
         ]
 
-    async def force_compact_now(self) -> ForceCompactResult:
+    async def force_compact_now(
+        self, *, spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+    ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
+
+        #5712 (owner ruling, "operator の compact 要求は spill 含む縮小
+        フローだから"): ``spill_fn`` is now REQUIRED — no path through
+        this method may run the mid-side shrink ladder without rung①
+        (spill) genuinely available (acceptance ②: no ``None`` left at
+        this boundary). Both real callers (``Session._compact_now_for_
+        op``, ``RouterLoopDriver``'s own post-``retry_loop``-exhaustion
+        fallback) pass the SAME concrete spill implementation
+        (``RouterLoopDriver._spill_batch_for_retry``) — one real
+        implementation, reused, never a second copy for this path.
 
         #5528: the pre-frame guard that used to call this proactively, on
         an ESTIMATE, is gone — this is now reached only reactively (a real
@@ -447,7 +462,7 @@ class CompactionController:
         self._compacting = True
         failed = False
         try:
-            await self._run_compaction(candidates, latest)
+            await self._run_compaction(candidates, latest, spill_fn=spill_fn)
         except Exception:
             # #5633 (lead-coder review): NOT re-raised, and NOT re-emitted
             # here — whatever `_run_compaction` raises has already had its
@@ -543,6 +558,8 @@ class CompactionController:
         self,
         candidates: list[ChatMessage],
         previous_summary: ChatMessage | None,
+        *,
+        spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
@@ -607,7 +624,6 @@ class CompactionController:
             self._events.emit("compaction_failed", error=str(exc))
             raise
 
-        new_turn_count = len(candidates)
         # #5475 (architect ruling): compaction_started now emits at
         # CompactionEngine.compact()'s own entry — the one real entry both
         # of its callers (this method, and retry_loop's own internal
@@ -617,20 +633,105 @@ class CompactionController:
         # rejected). This caller's own real `seq` (`candidates[-1].seq` —
         # unlike retry_loop's wire-dict turns, `_turn_to_compactor_input`
         # keeps `seq` per turn) is passed through explicitly.
-        # #5633 (lead-coder review): deliberately OUTSIDE any try/except in
-        # THIS method — a compact() failure is already fully handled at its
-        # own origin (CompactionEngine.compact()'s own except emits
-        # `compaction_failed` and re-raises; see its own docstring). Nothing
-        # here may also catch it: which side emits for a given failure is
-        # decided STRUCTURALLY, by which try/except block the failure
-        # physically raises inside, never by a caller re-inspecting the
-        # exception for a marker.
-        chat_summary = await self._engine.compact(
-            input_chunk, covers_through=candidates[-1].seq,
+        # #5712 (owner ruling, "operator の compact 要求は spill 含む縮小
+        # フローだから"): #5633's own "deliberately OUTSIDE any try/except"
+        # structure below is UNCHANGED in spirit — a compact() failure is
+        # still fully handled at its own origin (CompactionEngine.
+        # compact()'s own except emits `compaction_failed` and re-raises)
+        # — this loop only adds the SAME rung①(spill)+rung②(halve) shrink
+        # retry `RecoveryLadder` already runs on a compact()-origin
+        # OVERFLOW (`engine.classify_compact_overflow`/`shrink_pool_
+        # after_overflow`, #5712 — the ONE shared implementation, not a
+        # second copy). A FATAL/RETRYABLE classification still propagates
+        # bare, immediately, exactly as it always did (`classify_compact_
+        # overflow`'s own `raise exc` for those, uncaught here). Only a
+        # genuinely shrinkable OVERFLOW gets a shrink-and-retry; the loop
+        # itself never swallows or re-emits anything `compact()`'s own
+        # `except` did not already emit.
+        #
+        # `pool` is the FULL wire-dict list `input_chunk` already built
+        # (summary-then-candidates, #5531 condition③'s own ordering,
+        # unchanged) — the shared function mutates it in place via spill.
+        # `_n_summary` messages never shrink via halving (this caller's
+        # own candidate selection already excluded head/tail; the prior
+        # summary, if any, is the one thing NOT drawn from `candidates`)
+        # — attempt_len only ever trims from the CANDIDATE side, matching
+        # `covers_through`'s own derivation below.
+        pool = input_chunk.messages
+        _n_summary = len(_summary_messages)
+        attempt_len = len(pool)
+        _last_saw_byte_limit = False
+        # #5712 (found while wiring this in, not assumed): `_turn_to_
+        # compactor_input`'s own wire shape (`text`, no `spillability`)
+        # is a DIFFERENT convention from the one `spill_fn`'s real
+        # implementation (`RouterLoopDriver._spill_batch_for_retry` ->
+        # `_spill_batch_within_face`) expects (`content` + `spillability`
+        # — retry_loop's own wire-dict turns already carry both, via
+        # `decompose_history_for_retry`). Passing this caller's own
+        # `text`-shaped dicts to it directly would make EVERY candidate
+        # look ineligible (`t.get("content")` always `None`) — spill
+        # would silently never fire, the exact silent-half-fix #5712
+        # itself is about. `_turn_to_compactor_input`'s own output shape
+        # stays UNCHANGED (existing tests assert exact dict equality on
+        # it, `test_compaction_controller_tool_aware.py`) — this adapter
+        # translates at the boundary instead: builds a `content`+
+        # `spillability`-shaped VIEW for the real spill_fn, then
+        # translates any returned edit back into this caller's own
+        # `text` field before `shrink_pool_after_overflow` applies it to
+        # `pool`.
+        _spillability_by_index = (
+            [""] * _n_summary + [c.spillability.value for c in candidates]
         )
+
+        def _spill_fn_adapted(offered: "list[dict]") -> "list[tuple[int, dict]]":
+            content_shaped = [
+                {**item, "content": item.get("text", ""), "spillability": _spillability_by_index[i]}
+                for i, item in enumerate(offered)
+            ]
+            edits = spill_fn(content_shaped)
+            return [
+                (idx, {**offered[idx], "text": replacement.get("content", offered[idx].get("text", ""))})
+                for idx, replacement in edits
+            ]
+        while True:
+            offered = pool[:attempt_len]
+            _offered_chunk = HistoryChunkToCompact(
+                messages=offered, section_token_caps=input_chunk.section_token_caps,
+            )
+            # `covers_through` names the LAST candidate actually offered
+            # this attempt — never `candidates[-1].seq` unconditionally
+            # (#5531 condition③'s own contract holds only for a full,
+            # un-shrunk attempt; a shrunk one covers a genuine PREFIX,
+            # same shape `RecoveryLadder`'s own partial-fold-then-continue
+            # already has for the reactive path — a later `/compact` call
+            # covers the remainder, this method staying "single pass").
+            _n_candidates_offered = max(attempt_len - _n_summary, 0)
+            _covers_through = (
+                candidates[_n_candidates_offered - 1].seq
+                if _n_candidates_offered > 0 else candidates[0].seq
+            )
+            try:
+                chat_summary = await self._engine.compact(
+                    _offered_chunk, covers_through=_covers_through,
+                )
+                break
+            except Exception as exc:
+                try:
+                    classify_compact_overflow(exc)
+                except CompactionOverflowError as _overflow_exc:
+                    _last_saw_byte_limit = (
+                        getattr(_overflow_exc.__cause__, "status_code", None) == 413
+                    )
+                    attempt_len = shrink_pool_after_overflow(
+                        pool, offered, attempt_len,
+                        spill_fn=_spill_fn_adapted, saw_byte_limit=_last_saw_byte_limit,
+                    )
+                    continue
+                raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
+        new_turn_count = _n_candidates_offered
         try:
             structured = chat_summary.to_dict()
-            covers = chat_summary.covers_through_seq or candidates[-1].seq
+            covers = chat_summary.covers_through_seq or _covers_through
             # #1820 Part1: frame the rendered summary with a static reference-only
             # preamble (Hermes SUMMARY_PREFIX analog) so the model treats the summary as
             # history — NOT a fresh instruction — and does not re-execute `pending` work

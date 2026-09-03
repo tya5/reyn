@@ -242,7 +242,7 @@ def test_raise_does_not_confirm_covered_range(monkeypatch) -> None:
         monkeypatch, scripted_responses=["{}"], history=_history(30),
     )
 
-    asyncio.run(ctrl.force_compact_now())  # must not raise to the caller
+    asyncio.run(ctrl.force_compact_now(spill_fn=lambda _candidates: []))  # must not raise to the caller
 
     assert [e for e in collected if e.type == "compaction_failed"], (
         "engine exhaustion must surface as compaction_failed, not swallowed silently"
@@ -265,7 +265,7 @@ def test_raise_does_not_confirm_covered_range(monkeypatch) -> None:
     ctrl2, collected2, _ = _controller_with_real_engine(
         monkeypatch, scripted_responses=["{}"], history=list(hist),
     )
-    asyncio.run(ctrl2.force_compact_now())
+    asyncio.run(ctrl2.force_compact_now(spill_fn=lambda _candidates: []))
     started = [e for e in collected2 if e.type == "compaction_started"]
     assert started, "the retried candidates must still be seen as compactable"
     assert started[0].data.get("covers_through_seq") == 21, (

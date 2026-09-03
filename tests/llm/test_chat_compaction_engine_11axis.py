@@ -854,7 +854,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
         render_summary=lambda s: str(s),
     )
 
-    asyncio.run(ctrl.force_compact_now())
+    asyncio.run(ctrl.force_compact_now(spill_fn=lambda _candidates: []))
 
     assert engine.compact_call_count == 1, (
         f"force_compact_now must run exactly one pass, got {engine.compact_call_count}"
