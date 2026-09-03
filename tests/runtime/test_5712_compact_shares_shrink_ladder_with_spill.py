@@ -273,6 +273,45 @@ async def test_mid_floor_records_that_spill_was_offered():
     assert excinfo.value.spill_was_offered is True
 
 
+def test_mid_floor_records_spill_was_offered_false_when_no_capability_exists():
+    """Tier 2: #5717 (lead-coder BLOCKING review of #5712/PR #5716) —
+    ``spill_was_offered=True`` unconditionally at MID_FLOOR was a real bug:
+    a driver with NO spill mechanism at all (``spill_capability_present=
+    False`` — ``PipelineExecutorDriver``'s own real shape, it carries no
+    ``RouterHistoryBuffer``) would still record "spill was offered" even
+    though ``spill_fn`` was never genuinely callable. "tried, found
+    nothing eligible" and "there is no capability to try" are different
+    facts — collapsing both onto ``spill_was_offered=True`` misrepresents
+    the second case; #5717 forbids flattening them onto a bare ``False``
+    fallback too (that would just move the conflation, #5699's rejected
+    shape), so this test also proves ``spill_fn`` is never even CALLED
+    when the capability is genuinely absent — not called-and-ignored."""
+    from reyn.services.compaction.engine import shrink_pool_after_overflow
+
+    calls: "list[list[dict]]" = []
+
+    def _would_have_spilled_everything(offered: "list[dict]") -> "list[tuple[int, dict]]":
+        calls.append(offered)
+        return [(0, {**offered[0], "content": "[spilled]"})]  # never reached
+
+    pool = [{"content": "x", "spillability": "first_choice"}]
+    with pytest.raises(UnrecoveredError) as excinfo:
+        shrink_pool_after_overflow(
+            pool, pool, 1,
+            spill_fn=_would_have_spilled_everything, saw_byte_limit=False,
+            spill_capability_present=False,
+        )
+    assert excinfo.value.terminal is RetryLoopTerminal.MID_FLOOR
+    assert excinfo.value.spill_was_offered is False, (
+        "no spill capability existed — this MUST NOT read as "
+        "'rung① was offered and failed'"
+    )
+    assert not calls, (
+        "spill_fn must never be invoked when spill_capability_present is "
+        "False — a real driver would have nothing to answer to"
+    )
+
+
 @pytest.mark.asyncio
 async def test_falls_through_to_halving_when_nothing_is_spillable():
     """Tier 2: falsify pair (deny side) for the spill-alone test above —

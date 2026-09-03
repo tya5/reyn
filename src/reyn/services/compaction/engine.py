@@ -2892,6 +2892,7 @@ def shrink_pool_after_overflow(
     *,
     spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
     saw_byte_limit: bool,
+    spill_capability_present: bool = True,
 ) -> int:
     """ADR-0044's mid-side ladder — rung① (spill) then rung② (halve) — as
     ONE shared unit (#5712, owner ruling: "operator の compact 要求は
@@ -2911,18 +2912,33 @@ def shrink_pool_after_overflow(
     nothing real to spill passes a no-op ``lambda offered: []``, so rung①
     always genuinely runs, even when it can never make progress).
 
-    Rung① (spill) always runs BEFORE rung② (halve) — #5712 acceptance ①.
-    If spilling *offered* returns any edit, applies them all and returns
-    *attempt_len* UNCHANGED (the caller retries the SAME length against
-    the now-smaller pool next attempt). Otherwise halves *attempt_len*
-    (floor 1) and returns the new value — UNLESS *attempt_len* was
-    already 1, in which case spilling a single candidate alone still not
-    resolving the overflow IS the mid floor: raises
-    :class:`UnrecoveredError` with ``terminal=RetryLoopTerminal.MID_FLOOR``
-    and ``spill_was_offered=True`` (#5712 acceptance ③ — this raise is
-    reached ONLY after rung① was tried on this exact candidate, on the
-    SAME line that computed ``edits``, so the record is structural, not
-    inferred).
+    ``spill_capability_present`` (#5717, lead-coder review of #5712/PR
+    #5716) is a DIFFERENT fact from "``spill_fn`` returned no edits" —
+    default ``True`` (:class:`RecoveryLadder`'s own call site never
+    passes it, unaffected, zero behavior change): a real driver-backed
+    ``spill_fn`` was genuinely invoked and genuinely found nothing this
+    round. ``False`` (``CompactionController``'s path, when the attached
+    driver has no spill mechanism at all — e.g. ``PipelineExecutorDriver``
+    carries no ``RouterHistoryBuffer``) means rung① has NO mechanism to
+    try, so ``spill_fn`` is never even called — "there is no capability to
+    offer" is not the same fact as "it was offered and found nothing", and
+    collapsing both onto one bool is exactly the "one value, two facts"
+    shape #5699 already rejected (owner). ``spill_was_offered`` on the
+    eventual MID_FLOOR raise below carries this same boolean UNCHANGED —
+    it is only ever ``True`` when rung① was genuinely invoked.
+
+    Rung① (spill) always runs BEFORE rung② (halve) — #5712 acceptance ①
+    — whenever a capability exists. If spilling *offered* returns any
+    edit, applies them all and returns *attempt_len* UNCHANGED (the
+    caller retries the SAME length against the now-smaller pool next
+    attempt). Otherwise halves *attempt_len* (floor 1) and returns the
+    new value — UNLESS *attempt_len* was already 1, in which case the mid
+    floor is reached: raises :class:`UnrecoveredError` with
+    ``terminal=RetryLoopTerminal.MID_FLOOR`` and ``spill_was_offered``
+    set to *spill_capability_present* (#5712 acceptance ③ / #5717 — this
+    raise is reached ONLY after rung① was tried, whenever a capability
+    existed to try it with, on the SAME line that computed ``edits``, so
+    the record is structural, not inferred).
 
     This is the ONLY terminal this function can ever raise —
     ``ROOM_FLOOR`` needs ``main_call``/``SP``/``new_msg``/``head``/
@@ -2930,7 +2946,7 @@ def shrink_pool_after_overflow(
     room-side ladder (``/compact``) cannot reach it BY CONSTRUCTION, not
     by a runtime check that could be forgotten.
     """
-    edits = spill_fn(offered) if offered else []
+    edits = spill_fn(offered) if (offered and spill_capability_present) else []
     if edits:
         for idx, replacement in edits:
             pool[idx] = replacement
@@ -2942,11 +2958,14 @@ def shrink_pool_after_overflow(
                 if saw_byte_limit
                 else "shrinking recurred "
             ) + "compacting a single candidate alone — mid cannot be "
-            "split any further (the turn-count floor), and spilling it "
-            "did not resolve this either.",
+            "split any further (the turn-count floor), and " + (
+                "spilling it did not resolve this either."
+                if spill_capability_present
+                else "no spill capability is available to try on this path."
+            ),
             terminal=RetryLoopTerminal.MID_FLOOR,
             saw_byte_limit=saw_byte_limit,
-            spill_was_offered=True,
+            spill_was_offered=spill_capability_present,
         )
     return max(attempt_len // 2, 1)
 

@@ -10893,6 +10893,13 @@ class Session:
         )
         compaction_outcome = await self._compaction_controller.force_compact_now(
             spill_fn=_spill_fn,
+            # #5717 (lead-coder review): "no capability" and "tried, found
+            # nothing eligible" are different facts — this bool is the
+            # ONE thing that tells shrink_pool_after_overflow's eventual
+            # MID_FLOOR raise which one happened, so its own
+            # `spill_was_offered` field never claims rung① ran when there
+            # was no mechanism to run it with.
+            spill_capability_present=_spill_impl is not None,
         )
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()

@@ -342,7 +342,9 @@ class CompactionController:
         ]
 
     async def force_compact_now(
-        self, *, spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+        self, *,
+        spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+        spill_capability_present: bool = True,
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
@@ -355,6 +357,17 @@ class CompactionController:
         fallback) pass the SAME concrete spill implementation
         (``RouterLoopDriver._spill_batch_for_retry``) — one real
         implementation, reused, never a second copy for this path.
+
+        ``spill_capability_present`` (#5717): default ``True`` — the
+        caller genuinely has a driver-backed ``spill_fn``. ``Session.
+        _compact_now_for_op`` passes ``False`` when the attached driver
+        has no spill mechanism at all (e.g. ``PipelineExecutorDriver``)
+        — the ``spill_fn`` it passes in that case is still a real,
+        required, non-``None`` no-op lambda (acceptance ②, unaffected),
+        but ``shrink_pool_after_overflow`` must not call it and must not
+        record a MID_FLOOR raise as "spill was offered" when there was
+        no capability to offer it with. See that function's own
+        docstring for the full "one value, two facts" reasoning.
 
         #5528: the pre-frame guard that used to call this proactively, on
         an ESTIMATE, is gone — this is now reached only reactively (a real
@@ -462,7 +475,10 @@ class CompactionController:
         self._compacting = True
         failed = False
         try:
-            await self._run_compaction(candidates, latest, spill_fn=spill_fn)
+            await self._run_compaction(
+                candidates, latest, spill_fn=spill_fn,
+                spill_capability_present=spill_capability_present,
+            )
         except Exception:
             # #5633 (lead-coder review): NOT re-raised, and NOT re-emitted
             # here — whatever `_run_compaction` raises has already had its
@@ -560,6 +576,7 @@ class CompactionController:
         previous_summary: ChatMessage | None,
         *,
         spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+        spill_capability_present: bool = True,
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
@@ -725,6 +742,7 @@ class CompactionController:
                     attempt_len = shrink_pool_after_overflow(
                         pool, offered, attempt_len,
                         spill_fn=_spill_fn_adapted, saw_byte_limit=_last_saw_byte_limit,
+                        spill_capability_present=spill_capability_present,
                     )
                     continue
                 raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
