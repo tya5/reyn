@@ -210,13 +210,19 @@ def _history(n: int) -> "list[ChatMessage]":
     # Large enough (count × per-turn size) that, at the real
     # CompactionEngine's token budgets (head_budget/tail_budget computed
     # against the real model catalog, not a synthetic stub), a middle band
-    # of candidates survives head/tail trimming — the sibling
-    # controller-invariants suite uses a stub engine with tiny synthetic
-    # budgets instead; this test needs the REAL engine (to exercise the
-    # real compact() loop), so it sizes the history up instead of shrinking
-    # budgets down. n=30 turns of ~2000 tokens each leaves seq 1..21 as the
-    # middle candidate band at this model's fallback 128K-token budgets
-    # (verified directly against ComputedBudgets, not assumed).
+    # SURVIVES head/tail trimming AND exceeds main_M_room by enough to
+    # force a genuine shortfall-driven fold (#5719 — head/tail no longer
+    # doubles as the fold selector; the sibling controller-invariants
+    # suite uses a stub engine with tiny synthetic budgets instead; this
+    # test needs the REAL engine, to exercise the real compact() loop, so
+    # it sizes the history up instead of shrinking budgets down). n=90
+    # turns of ~2000 tokens each leaves seq 7..40 as the SELECTED
+    # (oldest-first, shortfall-covering) candidate band at this model's
+    # fallback 128K-token budgets (head_budget=12800/tail_budget=19200/
+    # main_M_room=83200 — verified directly against ComputedBudgets, not
+    # assumed; the full unprotected middle is seq 7..81, but only its
+    # oldest ~34 turns are needed to close the shortfall against
+    # main_M_room, so seq 41..81 stays un-folded).
     return [
         ChatMessage(
             role="user" if i % 2 == 1 else "assistant", content="x " * 4000, seq=i,
@@ -239,7 +245,7 @@ def test_raise_does_not_confirm_covered_range(monkeypatch) -> None:
     compaction attempt.
     """
     ctrl, collected, hist = _controller_with_real_engine(
-        monkeypatch, scripted_responses=["{}"], history=_history(30),
+        monkeypatch, scripted_responses=["{}"], history=_history(90),
     )
 
     asyncio.run(ctrl.force_compact_now(spill_fn=lambda _candidates: []))  # must not raise to the caller
@@ -268,7 +274,7 @@ def test_raise_does_not_confirm_covered_range(monkeypatch) -> None:
     asyncio.run(ctrl2.force_compact_now(spill_fn=lambda _candidates: []))
     started = [e for e in collected2 if e.type == "compaction_started"]
     assert started, "the retried candidates must still be seen as compactable"
-    assert started[0].data.get("covers_through_seq") == 21, (
+    assert started[0].data.get("covers_through_seq") == 40, (
         "the same original candidate range must still be up for compaction — "
         "the failed attempt must not have narrowed or consumed it"
     )

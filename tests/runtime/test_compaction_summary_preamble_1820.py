@@ -25,9 +25,14 @@ from reyn.services.compaction.engine import (
     HistoryChunkToCompact,
 )
 
+# #5719: main_M_room=0 — this file's own tests are about the rendered
+# preamble, not the shortfall-selection algorithm itself (that has its own
+# dedicated tests), so main_M_room always produces a shortfall for any
+# nonempty middle, matching this file's pre-#5719 "everything between
+# head/tail is a candidate" fixture shape.
 _STUB_BUDGETS = ComputedBudgets(
     main_pool=100_000, head_budget=50, body_budget=5_000, tail_budget=50,
-    new_msg_budget=10_000, B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
+    new_msg_budget=10_000, B_M=80_000, main_M_room=0, effective_trigger=0,
 )
 
 

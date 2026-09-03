@@ -37,6 +37,8 @@ from reyn.services.compaction.engine import (
     CompactionOverflowError,
     HistoryChunkToCompact,
     classify_compact_overflow,
+    estimate_tokens_for_any_turn,
+    select_fold_candidates_for_shortfall,
     shrink_pool_after_overflow,
     trim_head,
     trim_tail,
@@ -308,16 +310,34 @@ class CompactionController:
         turns: "list[ChatMessage]",
         prev_cover: int,
     ) -> "list[ChatMessage]":
-        """Select compaction candidates using token-budget-derived HEAD/TAIL boundaries.
+        """Select compaction candidates: token-budget HEAD/TAIL protect,
+        the SHORTFALL against ``main_M_room`` selects.
 
-        #1128 step 3: replaces the old seq-arithmetic on cfg.head_size/tail_size
-        with token-budget trimming via the engine's ComputedBudgets.  Candidates
-        are the turns strictly between the head (trim_head) and tail (trim_tail)
-        slices that also have seq > prev_cover (= not yet covered by the latest
-        summary).
+        #5719 (architect ruling, real-machine incident: #5712's own fix
+        compacted 1.6M raw_middle chars to a ~3K summary against a 950K
+        window — needing only a ~650K reduction, 600x less than what
+        actually folded). head/tail (unchanged since #1128 step 3 —
+        token-budget trimming via the engine's ``ComputedBudgets``)
+        answer ONE question: is this turn protected. Everything strictly
+        between them, with ``seq > prev_cover`` (not yet covered by the
+        latest summary), used to become a fold CANDIDATE unconditionally
+        — collapsing "not protected" and "must be folded" onto one
+        predicate (architect's own naming of the defect). They are now
+        two separate steps: the unprotected-and-uncovered set is
+        computed exactly as before, then :func:`select_fold_candidates_
+        for_shortfall` selects only as much of it (oldest first, group-
+        aware) as is needed to bring the REMAINING unprotected middle
+        back under ``main_M_room`` — never "all of it" by default. See
+        that function's own docstring for the selection algorithm and
+        why no slack constant is added here.
 
-        Falls back to a quarter of get_max_input_tokens when budgets are None
-        (engine not yet initialised — highly unlikely in production but safe).
+        Falls back to a quarter of get_max_input_tokens when budgets are
+        None (engine not yet initialised — highly unlikely in
+        production but safe); ``main_M_room`` has no real formula to
+        fall back to in that branch (it needs T_SP/new_msg_budget, which
+        this fallback never had), so it re-derives the same "room after
+        head+tail" shape the real formula uses, from values already in
+        scope here.
         """
         budgets = getattr(self._engine, "budgets", None)
         model = getattr(self._engine, "_model", "")
@@ -325,21 +345,30 @@ class CompactionController:
         if budgets is not None:
             head_budget = budgets.head_budget
             tail_budget = budgets.tail_budget
+            main_M_room = budgets.main_M_room
         else:
             from reyn.llm.model_budget import get_max_input_tokens
             fallback = get_max_input_tokens(model) if model else 100_000
             head_budget = tail_budget = fallback // 4
+            main_M_room = fallback - head_budget - tail_budget
 
         head_turns = trim_head(turns, head_budget, model, use_chars4=use_chars4)
         tail_turns = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
         head_id_set = {id(t) for t in head_turns}
         tail_id_set = {id(t) for t in tail_turns}
-        return [
+        unprotected = [
             t for t in turns
             if id(t) not in head_id_set
             and id(t) not in tail_id_set
             and t.seq > prev_cover
         ]
+        unprotected_tokens = sum(
+            estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in unprotected
+        )
+        shortfall = unprotected_tokens - main_M_room
+        return select_fold_candidates_for_shortfall(
+            unprotected, shortfall, model, use_chars4=use_chars4,
+        )
 
     async def force_compact_now(
         self, *, spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",

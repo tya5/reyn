@@ -76,10 +76,19 @@ def test_assistant_and_tool_turns_are_not_excluded_from_compaction_candidates(
     # slices — the actual "candidate" zone _select_candidates filters by
     # seq. With the large default t_max, 3 tiny turns fit entirely inside
     # head+tail and nothing is ever a "middle" candidate regardless of seq.
+    #
+    # #5719: candidate selection is no longer "everything outside head/
+    # tail" — it is only as much of that unprotected middle as is needed
+    # to close the shortfall against main_M_room (measured directly:
+    # main_M_room=13000 at this t_max). 200 turns (vs. the pre-#5719 40)
+    # ensures the unprotected middle genuinely EXCEEDS main_M_room after
+    # head/tail's own ~38-turn carve-out, so this test's actual subject —
+    # whether assistant/tool turns reach the SELECTED set at all — stays
+    # exercised regardless of how much of the middle needs to fold.
     session = _make_session(tmp_path, monkeypatch=monkeypatch, t_max=20_000)
 
     filler = "middle turn padding text " * 20
-    for i in range(40):
+    for i in range(200):
         role = "user" if i % 3 == 0 else ("assistant" if i % 3 == 1 else "tool")
         session._append_history(
             ChatMessage(role=role, content=f"{filler} #{i}", ts=f"t{i}")
