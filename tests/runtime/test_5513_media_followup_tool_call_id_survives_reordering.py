@@ -102,7 +102,7 @@ def test_tool_call_id_disambiguates_two_same_tool_followups_after_a_real_compact
     _push(session, "user", _followup_text("tc2"))
     _push(session, "assistant", "both done")
 
-    asyncio.run(session._compaction_controller.force_compact_now())
+    asyncio.run(session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: []))
 
     history = session._history_buffer.build_history()
     texts = [str(m.get("content", "")) for m in history]

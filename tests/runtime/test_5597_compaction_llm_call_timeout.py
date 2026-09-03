@@ -96,7 +96,7 @@ def test_compaction_call_inherits_mains_own_timeout(
     stub = LLMStub()
     stub.install()
     try:
-        asyncio.run(session._compaction_controller.force_compact_now())
+        asyncio.run(session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: []))
         asyncio.run(settle(session))
     finally:
         stub.restore()
@@ -129,7 +129,7 @@ def test_compaction_llm_call_seconds_override_wins_when_set(
     stub = LLMStub()
     stub.install()
     try:
-        asyncio.run(session._compaction_controller.force_compact_now())
+        asyncio.run(session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: []))
         asyncio.run(settle(session))
     finally:
         stub.restore()
@@ -205,7 +205,7 @@ def test_funnel_resolved_timeout_genuinely_reaches_litellm_acompletion(
             return await _orig(*args, **kwargs)
 
         monkeypatch.setattr(litellm, "acompletion", _spy)
-        asyncio.run(session._compaction_controller.force_compact_now())
+        asyncio.run(session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: []))
         asyncio.run(settle(session))
     finally:
         stub.restore()

@@ -195,7 +195,7 @@ def test_force_compact_no_candidates_emits_forced_sync_no_started():
     """
     ctrl, collected, _, events = _make_controller(history=_history(2), engine_factory=_AbortingEngine)
 
-    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(spill_fn=lambda _candidates: []), events))
 
     emitted = collected
     forced = [e for e in emitted if e.type == "compaction_check"
@@ -217,7 +217,7 @@ def test_force_compact_with_candidates_appends_summary():
     """
     ctrl, collected, hist, events = _make_controller(history=_history(7), engine_factory=_SucceedingEngine)
 
-    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(spill_fn=lambda _candidates: []), events))
 
     emitted = collected
     assert [e for e in emitted if e.type == "compaction_started"], "expected compaction_started"
@@ -237,7 +237,7 @@ def test_force_compact_engine_failure_emits_failed():
     rather than propagating it to the caller)."""
     ctrl, collected, _, events = _make_controller(history=_history(7), engine_factory=_AbortingEngine)
 
-    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))  # must not raise
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(spill_fn=lambda _candidates: []), events))  # must not raise
 
     assert [e for e in collected if e.type == "compaction_failed"], (
         "engine failure during force_compact_now must emit compaction_failed"
@@ -277,7 +277,7 @@ def test_force_compact_pre_compact_setup_failure_emits_failed():
     ]
     ctrl, collected, _, events = _make_controller(history=history, engine_factory=_SucceedingEngine)
 
-    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))  # must not raise
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(spill_fn=lambda _candidates: []), events))  # must not raise
 
     kinds = [e.type for e in collected]
     assert "compaction_started" not in kinds, (
@@ -336,7 +336,7 @@ def test_is_compacting_true_only_during_a_pass():
 
     assert ctrl.is_compacting is False, "must read False before any pass starts"
 
-    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(spill_fn=lambda _candidates: []), events))
 
     (engine,) = engine_box
     assert engine.observed_during_compact is True, (

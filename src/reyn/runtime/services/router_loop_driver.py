@@ -964,7 +964,16 @@ class RouterLoopDriver:
                 # everything durably available — so the second call onward
                 # is a no-op, not a repeated summarization.
                 if self._compaction.fold_persist_policy == "next_turn":
-                    await self._compaction_controller.force_compact_now()
+                    # #5712: `force_compact_now` now requires a real
+                    # spill_fn — reuse the SAME `chain_id` this method's
+                    # own retry_loop call above already used (this
+                    # fallback pass is still semantically part of
+                    # recovering THIS turn's overflow).
+                    await self._compaction_controller.force_compact_now(
+                        spill_fn=_partial(
+                            self._spill_batch_for_retry, chain_id=chain_id,
+                        ),
+                    )
                 raise
         return _shim.usage
 

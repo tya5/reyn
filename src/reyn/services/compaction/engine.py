@@ -1433,10 +1433,12 @@ def is_shrinkable_overflow(exc: BaseException) -> bool:
 class CompactionOverflowError(Exception):
     """The compaction LLM call itself exceeded its B_M budget.
 
-    Raised when the compaction call (= the inner ``engine.compact()`` call
-    inside retry_loop) returns a context-length error.  Triggers the same
-    escalation path as ContextOverflowError: shrink raw_middle/tail/head and
-    retry.
+    Raised when the compaction call (= the inner ``engine.compact()`` call)
+    returns a context-length error — from either of its two callers:
+    ``RecoveryLadder``'s reactive ``retry_loop`` path, or
+    ``CompactionController``'s on-demand ``/compact`` path (#5712).  Both
+    route this through ``shrink_pool_after_overflow`` to shrink the offered
+    pool (spill, then halve) and retry.
     """
 
 
@@ -1530,10 +1532,21 @@ class UnrecoveredError(Exception):
 
     def __init__(
         self, reason: str, *, terminal: RetryLoopTerminal, saw_byte_limit: bool = False,
+        spill_was_offered: bool = False,
     ) -> None:
         self.reason = reason
         self.terminal = terminal
         self.saw_byte_limit = saw_byte_limit
+        # #5712 acceptance ③: whether spill (rung①) was actually given a
+        # chance at the content before this MID_FLOOR raise — a real
+        # record that the shared shrink loop tried the FIRST rung, not an
+        # inference from `terminal` alone (MID_FLOOR is defined in terms
+        # of "spilling it did not resolve the overflow either", ADR-0044
+        # §4 — this field is what makes that clause checkable). Default
+        # `False` so a pre-#5712 raise site that never threads this
+        # through (there should be none left, but the field must not
+        # silently claim spill ran when nobody asked it to).
+        self.spill_was_offered = spill_was_offered
         super().__init__(reason)
 
 
@@ -2852,6 +2865,92 @@ async def retry_loop(
 _LADDER_CONTINUE = object()
 
 
+def classify_compact_overflow(exc: Exception) -> "None":
+    """#5712: the ONE classification site every ``compact()``-call failure
+    goes through, shared by :class:`RecoveryLadder` (reactive) and
+    :class:`~reyn.runtime.services.compaction_controller.CompactionController`
+    (on-demand, ``/compact``) — moved out of
+    :class:`RecoveryLadder`'s own (already fully stateless) ``_classify_
+    and_wrap_compact_failure`` body verbatim; that method now delegates
+    here instead of owning a private copy. See the original method's own
+    (still-current) docstring, preserved on :class:`RecoveryLadder` for
+    the FATAL/RETRYABLE/OVERFLOW rationale — nothing about the
+    classification logic itself changed, only where it lives.
+
+    Always raises — never returns normally. FATAL/RETRYABLE re-raise
+    *exc* bare; OVERFLOW wraps it as :class:`CompactionOverflowError`.
+    """
+    if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
+        raise exc
+    raise CompactionOverflowError(str(exc)) from exc
+
+
+def shrink_pool_after_overflow(
+    pool: "list[dict]",
+    offered: "list[dict]",
+    attempt_len: int,
+    *,
+    spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+    saw_byte_limit: bool,
+) -> int:
+    """ADR-0044's mid-side ladder — rung① (spill) then rung② (halve) — as
+    ONE shared unit (#5712, owner ruling: "operator の compact 要求は
+    spill 含む縮小フローだから"). :class:`RecoveryLadder` (reactive) and
+    :class:`CompactionController` (on-demand, ``/compact``) both reach
+    this SAME function after a single failed ``compact()`` attempt at
+    *attempt_len* over *pool* — this is the ONE place either rung's
+    arithmetic exists; neither caller keeps a private copy.
+
+    *pool* is mutated IN PLACE via ``spill_fn``'s returned ``(index,
+    replacement)`` edits — the caller's own list (``RecoveryLadder.
+    raw_middle`` for the reactive path), so a caller tracking that list
+    sees spill's effect directly, no second copy step.
+
+    ``spill_fn`` is REQUIRED here, never optional (#5712 acceptance ②:
+    no path at this shared boundary may pass ``None`` — a caller with
+    nothing real to spill passes a no-op ``lambda offered: []``, so rung①
+    always genuinely runs, even when it can never make progress).
+
+    Rung① (spill) always runs BEFORE rung② (halve) — #5712 acceptance ①.
+    If spilling *offered* returns any edit, applies them all and returns
+    *attempt_len* UNCHANGED (the caller retries the SAME length against
+    the now-smaller pool next attempt). Otherwise halves *attempt_len*
+    (floor 1) and returns the new value — UNLESS *attempt_len* was
+    already 1, in which case spilling a single candidate alone still not
+    resolving the overflow IS the mid floor: raises
+    :class:`UnrecoveredError` with ``terminal=RetryLoopTerminal.MID_FLOOR``
+    and ``spill_was_offered=True`` (#5712 acceptance ③ — this raise is
+    reached ONLY after rung① was tried on this exact candidate, on the
+    SAME line that computed ``edits``, so the record is structural, not
+    inferred).
+
+    This is the ONLY terminal this function can ever raise —
+    ``ROOM_FLOOR`` needs ``main_call``/``SP``/``new_msg``/``head``/
+    ``tail``, none of which this function is given; a caller with no
+    room-side ladder (``/compact``) cannot reach it BY CONSTRUCTION, not
+    by a runtime check that could be forgotten.
+    """
+    edits = spill_fn(offered) if offered else []
+    if edits:
+        for idx, replacement in edits:
+            pool[idx] = replacement
+        return attempt_len
+    if attempt_len <= 1:
+        raise UnrecoveredError(
+            (
+                "HTTP 413 (a request-BODY-BYTE limit) recurred "
+                if saw_byte_limit
+                else "shrinking recurred "
+            ) + "compacting a single candidate alone — mid cannot be "
+            "split any further (the turn-count floor), and spilling it "
+            "did not resolve this either.",
+            terminal=RetryLoopTerminal.MID_FLOOR,
+            saw_byte_limit=saw_byte_limit,
+            spill_was_offered=True,
+        )
+    return max(attempt_len // 2, 1)
+
+
 class RecoveryLadder:
     """The bounded shrink ladder for ONE context-overflow recovery episode
     (#5631 candidate 1 — Fowler's Replace Function with Command, applied
@@ -3068,45 +3167,6 @@ class RecoveryLadder:
             self.new_msg, self._model, use_chars4=self._use_chars4,
         )
 
-    def _spill_batch_from_offered(self, offered: "list[dict]") -> int:
-        """#5592 (owner ruling, superseding the withdrawn #5531 §10 "one
-        candidate at a time" AND this PR's own withdrawn doubling-batch
-        draft) — rung①: spill as many candidates from *offered* as
-        ``spill_fn`` decides to hand back in ONE call, apply them all,
-        return the count applied.
-
-        ``offered`` — #5592 (owner ruling, correcting #9.6's own "never a
-        slice" claim): the population is "the range THIS request is about
-        to send" — ``raw_middle[:_attempt_len]`` at the call site below,
-        which coincides with ``raw_middle`` entirely on the first attempt
-        (``_compact_attempt_len is None``) and is the OFFERED SLICE only
-        once rung② has halved at least once. #9.6's docstring text is
-        stale as of this change; see the call site's own comment.
-
-        ``spill_fn`` now returns ``list[tuple[int, dict]]`` (was
-        ``tuple[int, dict] | None``) — a whole BATCH to apply this call,
-        not one candidate. This function stays Spillability-agnostic
-        either way (``spill_fn`` owns all tier/order/granularity
-        decisions — this module never imports ``Spillability``, matching
-        ``tool_result_cap.cap_tool_result_content``'s own ``save_fn``-
-        injection style).
-
-        #9.5's own "no cursor" rule still holds: every call re-scans the
-        CURRENT ``offered`` fresh via ``spill_fn(offered)`` — no persisted
-        position on this side either.
-
-        Never reads wire bytes to decide progress (#5364 §1.6: a
-        ``raw_middle`` spill cannot move wire bytes by construction,
-        elided out of ``estimate_wire_bytes``; reading bytes here would
-        discard every mid spill outright) — progress is "how many edits
-        did ``spill_fn`` return," full stop."""
-        if self._spill_fn is None or not offered:
-            return 0
-        edits = self._spill_fn(offered)
-        for idx, replacement in edits:
-            self.raw_middle[idx] = replacement
-        return len(edits)
-
     def _stage_refill_phase1(self) -> bool:
         """ADR-0044 refill, Phase 1: if ``tail`` still holds non-summary
         content above ``_tail_min_tokens``, trim half of it (skipping any
@@ -3169,91 +3229,6 @@ class RecoveryLadder:
         # stays valid.
         self._compact_attempt_len = None
         return True
-
-    def _stage_spill(self) -> bool:
-        """ADR-0044 rung① — spill. #5531 §10 (owner ruling, "spill is the
-        ladder's first rung"): try spilling before touching
-        ``_compact_attempt_len`` at all. Looping via ``_LADDER_CONTINUE``
-        (was bare ``continue``) re-runs ``compact()`` on the SAME
-        ``_attempt_len`` slice (unchanged by a spill — only the CONTENT
-        of the spilled candidates shrank) — #9.5's own no-cursor rule:
-        each call re-scans fresh, so this naturally keeps consuming
-        candidates until either the overflow resolves or the population
-        is exhausted.
-
-        #5592 (owner ruling, superseding this PR's own withdrawn
-        doubling-batch draft — real-machine incident: 2469 raw_middle
-        candidates meant 2469 compact() calls at ~6s each, ~4.1 hours;
-        see issue #5592 for the full incident trace): ``spill_fn`` now
-        decides, in ONE call, how many candidates to hand back — this
-        rung just applies whatever it returns and retries.
-        ``chat.compaction.spill_granularity`` (the caller's own config,
-        this function stays agnostic to it) controls ``spill_fn``'s own
-        batch size: ``tier`` (default) returns every eligible candidate
-        sharing the SAME ``Spillability`` tier in one shot (O(1) calls
-        per overflow regardless of N); ``turn`` reproduces the
-        pre-#5592 one-candidate-at-a-time behavior exactly (O(N) calls)
-        — a config escape hatch, explicitly documented as NOT the safe
-        default (``docs/reference/config/reyn-yaml.md``).
-
-        #5592 (owner ruling, correcting #9.6): the population for THIS
-        spill attempt is ``raw_middle[:_attempt_len]`` — the SAME slice
-        this iteration's own ``compact()`` call just sent and had
-        rejected, not ``raw_middle`` in its entirety. These coincide on
-        the very first attempt (``_attempt_len == len(raw_middle)`` when
-        ``_compact_attempt_len`` is still ``None``); they diverge only
-        after rung② has halved at least once, and it is the SENT slice
-        that must be offered to spill, not the untried remainder sitting
-        past it.
-
-        Returns whether any candidate was actually spilled — the caller
-        (:meth:`_run_one_iteration`) returns :data:`_LADDER_CONTINUE`
-        when it does (rung① exhausted, or no ``spill_fn`` at all, falls
-        through to :meth:`_stage_halve_slice`)."""
-        return self._spill_batch_from_offered(self.raw_middle[:self._attempt_len]) > 0
-
-    def _stage_halve_slice(self) -> None:
-        """ADR-0044 rung② — halve the slice. Only reached once rung①
-        (:meth:`_stage_spill`) is exhausted (or no ``spill_fn`` at all).
-        #5531 §10 (architect/owner correction, 2026-08-30): "fail →
-        halve, succeed → double" — a genuine binary search, not the old
-        one-way ratchet. A SUCCESS's own doubling happens at the success
-        site itself (inside :meth:`_stage_fold`, right after
-        ``raw_middle = raw_middle[_attempt_len:]`` — the only place that
-        knows "this attempt just succeeded"), never here; this method
-        only ever HALVES, because reaching it means the LAST attempt at
-        the current ``_attempt_len`` just failed.
-
-        Terminal (mid floor): raises :class:`UnrecoveredError` when a
-        single turn offered alone still overflows AND spilling it (just
-        tried by the caller) did not resolve it either — halving further
-        cannot produce a smaller nonzero slice. #5531 §3 item 12:
-        mode-independent (a floor is a floor regardless of which HTTP
-        shape triggered the overflow)."""
-        _current_attempt = (
-            self._compact_attempt_len if self._compact_attempt_len is not None
-            else len(self.raw_middle)
-        )
-        if _current_attempt <= 1:
-            raise UnrecoveredError(
-                (
-                    "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
-                    if self._last_recover_is_byte_limit
-                    else "retry_loop: shrinking "
-                ) + "recurred compacting a single raw_middle turn "
-                "alone — mid cannot be split any further (the "
-                "turn-count floor), and spilling every available "
-                "candidate in raw_middle did not resolve this "
-                "either." + (
-                    _learned_byte_limit_clause(
-                        last_accepted_wire_bytes=self._last_accepted_wire_bytes,
-                        last_rejected_wire_bytes=self._last_rejected_wire_bytes,
-                    ) if self._last_recover_is_byte_limit else ""
-                ),
-                terminal=RetryLoopTerminal.MID_FLOOR,
-                saw_byte_limit=self._last_recover_is_byte_limit,
-            )
-        self._compact_attempt_len = max(_current_attempt // 2, 1)
 
     def _stage_halve_room(self) -> None:
         """ADR-0044 — halve the room. Reached once ``raw_middle`` is
@@ -3425,10 +3400,17 @@ class RecoveryLadder:
         own 2 sites import it from here unchanged. Only the 3rd site's
         OWN discriminator stays the bare ``classify_llm_failure`` check
         it always was — 2 deliberately different discriminators for 2
-        deliberately different blast radii, not a drift."""
-        if classify_llm_failure(exc) is not LLMFailureClass.OVERFLOW:
-            raise
-        raise CompactionOverflowError(str(exc)) from exc
+        deliberately different blast radii, not a drift.
+
+        #5712: the body itself moved to the module-level
+        :func:`classify_compact_overflow` (verbatim — this method was
+        already fully stateless, reading only *exc*) so
+        :class:`~reyn.runtime.services.compaction_controller.
+        CompactionController`'s own on-demand path shares the SAME
+        classification instead of a private copy. This method stays as
+        the documented call site for :meth:`_stage_fold`'s own
+        ``except``; only the implementation is now shared."""
+        classify_compact_overflow(exc)
 
     async def _stage_fold(self) -> "object | None":
         """ADR-0044 -- fold. Compacts ``raw_middle`` (or the first
@@ -3907,11 +3889,53 @@ class RecoveryLadder:
 
         # Shrink escalation: reduce context size monotonically.
         if self.raw_middle:
-            # ADR-0044: rung① (spill) then rung② (halve_slice) -- see
-            # each method's own docstring for the full rationale.
-            if self._stage_spill():
-                return _LADDER_CONTINUE
-            self._stage_halve_slice()
+            # ADR-0044: rung① (spill) then rung② (halve) -- #5712, both
+            # now the SAME shared function `/compact` also calls (see
+            # its own docstring for the full rationale and the MID_FLOOR
+            # terminal). `_last_recover_is_byte_limit`'s own #4954(b)
+            # wire-bytes-clause augmentation stays HERE (RecoveryLadder-
+            # only: needs SP/head/tail/new_msg, which the shared
+            # function is never given) -- the shared function's own
+            # raise carries the base message; this catches ONLY that
+            # one raise shape and re-raises with the extra clause
+            # appended, never swallowing or altering anything else.
+            _current_attempt = (
+                self._compact_attempt_len if self._compact_attempt_len is not None
+                else len(self.raw_middle)
+            )
+            _offered_for_shrink = self.raw_middle[:_current_attempt]
+            try:
+                self._compact_attempt_len = shrink_pool_after_overflow(
+                    self.raw_middle, _offered_for_shrink, _current_attempt,
+                    spill_fn=self._spill_fn or (lambda _offered: []),
+                    saw_byte_limit=self._last_recover_is_byte_limit,
+                )
+            except UnrecoveredError as _mid_floor_exc:
+                # #5712: the shared function's own message says "a single
+                # candidate alone" (caller-neutral wording); RecoveryLadder
+                # keeps its OWN pre-#5712 wording ("raw_middle turn") byte-
+                # identical here — existing tests pin that exact substring
+                # (test_4947_stage1_floor_names_413_when_it_is_a_byte_limit)
+                # — plus the byte-limit wire-bytes clause this class alone
+                # can compute (needs SP/head/tail/new_msg).
+                raise UnrecoveredError(
+                    (
+                        "HTTP 413 (a request-BODY-BYTE limit) recurred "
+                        if self._last_recover_is_byte_limit
+                        else "shrinking recurred "
+                    ) + "compacting a single raw_middle turn alone — mid "
+                    "cannot be split any further (the turn-count floor), "
+                    "and spilling every available candidate in raw_middle "
+                    "did not resolve this either." + (
+                        _learned_byte_limit_clause(
+                            last_accepted_wire_bytes=self._last_accepted_wire_bytes,
+                            last_rejected_wire_bytes=self._last_rejected_wire_bytes,
+                        ) if self._last_recover_is_byte_limit else ""
+                    ),
+                    terminal=_mid_floor_exc.terminal,
+                    saw_byte_limit=_mid_floor_exc.saw_byte_limit,
+                    spill_was_offered=_mid_floor_exc.spill_was_offered,
+                ) from None
         elif self._stage_refill_phase1():
             pass
         elif self._stage_refill_phase2():

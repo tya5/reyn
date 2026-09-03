@@ -148,7 +148,7 @@ def test_compaction_completed_event_carries_the_usage_end_to_end(monkeypatch) ->
     ctrl, collected, _, events = _make_controller(history=_history(7), engine_factory=_build_engine)
 
     async def _run() -> None:
-        await ctrl.force_compact_now()
+        await ctrl.force_compact_now(spill_fn=lambda _candidates: [])
         await settle(events)
 
     asyncio.run(_run())

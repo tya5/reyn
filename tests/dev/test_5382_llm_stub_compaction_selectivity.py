@@ -79,7 +79,7 @@ def test_raise_for_compaction_leaves_the_main_router_call_untouched_end_to_end(
     session.subscribe_audit_events(events.append)
 
     async def _drive() -> bool:
-        await session._compaction_controller.force_compact_now()
+        await session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: [])
         # #4961 C: dispatch to `events` runs on a background consumer
         # task — settle() before the synchronous read below, right at
         # the spot that depends on delivery having already happened.

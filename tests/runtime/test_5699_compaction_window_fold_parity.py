@@ -122,7 +122,7 @@ async def test_force_compact_now_folds_a_model_visible_backlog(tmp_path, monkeyp
 
     s._audit_events.emit = _capture
 
-    await s._compaction_controller.force_compact_now()
+    await s._compaction_controller.force_compact_now(spill_fn=lambda _candidates: [])
 
     (check,) = [kw for kind, kw in events if kind == "compaction_check"]
     assert check["outcome"] == "forced_sync"

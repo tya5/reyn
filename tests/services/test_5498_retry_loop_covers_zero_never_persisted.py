@@ -47,7 +47,7 @@ async def test_controller_summary_lands_in_history_but_retry_loop_summary_does_n
     stub = LLMStub()
     stub.install()
     try:
-        await ctrl_session._compaction_controller.force_compact_now()
+        await ctrl_session._compaction_controller.force_compact_now(spill_fn=lambda _candidates: [])
         await settle(ctrl_session)
     finally:
         stub.restore()
