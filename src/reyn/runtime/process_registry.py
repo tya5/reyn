@@ -104,15 +104,19 @@ WHAT THIS MODULE DOES NOT DO
 """
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
 import os
 import time
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Awaitable, Callable, Final
 
 from reyn.data.index.build_lock import pid_alive
+
+if TYPE_CHECKING:
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +176,12 @@ def register_process(subcommand: "str | None") -> None:
         # startup, before Session construction).
         "agent_name": None,
         "broker_session_id": None,
+        # #5709: absent (never guessed) until this process's own turn
+        # loop actually starts running and arms ProcessLoopBeatDriver —
+        # see that class's own docstring. A marker that never gains this
+        # field is honest: it means a process that registered but whose
+        # loop never started (or never reached the arming seam).
+        "last_loop_beat_at": None,
     }
     try:
         PROCESSES_DIR.mkdir(parents=True, exist_ok=True)
@@ -409,3 +419,208 @@ def live_processes() -> "list[dict]":
             continue
         result.append(data)
     return result
+
+
+def read_process_markers() -> "list[dict]":
+    """#5709 R3: the NON-DESTRUCTIVE sibling of :func:`live_processes` —
+    every currently-present marker, dead-PID ones included, never
+    reaping as a side effect.
+
+    Why this exists (architect ruling, #5709, charter Q3 — "does the
+    repair destroy the evidence"): :func:`live_processes` was always
+    correct for what it answers ("who is alive right now" — reaping a
+    confirmed-dead marker is part of THAT contract, not a defect). But
+    once a marker can carry ``last_loop_beat_at`` (this same PR), a
+    dead-but-not-yet-reaped marker becomes real EVIDENCE — the window
+    between its last beat and whenever someone reads it. Two readers
+    exist (``reyn doctor``, a broker health poll) and a marker can only
+    be reaped once: whichever reads first would destroy the evidence
+    the SECOND reader came to see. This function is what both now use —
+    :func:`live_processes` itself is UNCHANGED (R3-1: reaping stays part
+    of its own "who's alive" contract; this repo does not have a caller
+    left that actually needs the reap side effect combined with a
+    passive display read, so none is migrated onto this function against
+    its will — see ``doctor.py``'s own updated ``_print_process_registry``
+    for the one caller this PR does migrate).
+
+    Includes dead-PID markers UNFILTERED (never checks
+    :func:`~reyn.data.index.build_lock.pid_alive` at all) — a caller that
+    wants only the alive subset re-derives it itself (this function
+    never GUESSES liveness either way, matching this module's own
+    "never fabricate" posture throughout). Skips a malformed/unreadable
+    marker file the same way :func:`live_processes` does (best-effort,
+    never raises over one bad file)."""
+    if not PROCESSES_DIR.is_dir():
+        return []
+    result: "list[dict]" = []
+    for path in sorted(PROCESSES_DIR.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        result.append(data)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# #5709: process-scoped loop-beat — "is this process's own turn loop still
+# running", not merely "does the OS process still exist". See the module
+# docstring's own WHY THIS EXISTS section for the narrower window this
+# closes (started_at alone leaves a multi-hour death window, #5694).
+# ---------------------------------------------------------------------------
+
+#: The beat's own polling resolution — derivation, not a guess: the
+#: longest "normal silence" a healthy turn can produce is one LLM call's
+#: own bound (``chat.py``'s ``llm_call_seconds = 60.0``,
+#: ``src/reyn/interfaces/cli/commands/chat.py``). 10s keeps the death
+#: window well inside that bound without being so fine-grained the writes
+#: themselves become a cost. Not a config key (architect ruling, #5709
+#: R4): no operator has a reason to change it today — the day one does,
+#: that need is the re-open trigger, not a guess made now.
+_LOOP_BEAT_INTERVAL_S: Final[float] = 10.0
+
+
+def record_loop_beat(
+    *, pid: "int | None" = None, clock: "Callable[[], float] | None" = None,
+) -> None:
+    """The ONE write for ``last_loop_beat_at`` — called ONLY from
+    :meth:`ProcessLoopBeatDriver.check`'s own tick, never from turn-path
+    code (#5709 R2's own accept criterion: ``git grep 'record_loop_beat('
+    -- src/`` must show no turn-path file as a caller).
+
+    #5709 R6: read-modify-write with NO ``await`` between the read and
+    the atomic replace — the same hazard :func:`record_process_identity`
+    already avoids, named explicitly here because a beat tick racing an
+    identity write (or vice versa) over the SAME marker file must never
+    let one clobber the other's fields. Both are synchronous functions
+    for exactly this reason; do not make either ``async``.
+
+    Best-effort, matching this module's posture throughout: no marker
+    (write failed, or this process never called :func:`register_process`)
+    degrades to a silent no-op — a missed beat write must never raise
+    into the driver's own tick loop.
+    """
+    if pid is None:
+        pid = os.getpid()
+    now = (clock or time.time)()
+    marker_path = _marker_path(pid)
+    try:
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    data["last_loop_beat_at"] = now
+    try:
+        tmp_path = _tmp_marker_path(pid)
+        tmp_path.write_text(json.dumps(data), encoding="utf-8")
+        tmp_path.replace(marker_path)
+    except OSError:
+        logger.warning(
+            "process_registry: failed to record loop beat for pid %d "
+            "(diagnostic-only, does not block the caller)", pid, exc_info=True,
+        )
+
+
+class ProcessLoopBeatDriver:
+    """#5709: the periodic driver behind ``last_loop_beat_at`` — a
+    process-scoped singleton (never one per :class:`~reyn.runtime.
+    session.Session`; see :func:`arm_process_loop_beat`, its own caller).
+
+    ``clock``/``sleep`` are both injectable (CLAUDE.md: "a collaborator
+    triggered only by its own timer may neither be faked nor waited for
+    — give it an external drive"). Production uses real
+    ``time.time``/``asyncio.sleep`` (the default for both); a test
+    constructs this with a fake clock it advances directly and calls
+    :meth:`check` itself — never a real sleep, and no wall-clock floor
+    the test's own assertion depends on.
+    """
+
+    def __init__(
+        self,
+        *,
+        interval_s: float = _LOOP_BEAT_INTERVAL_S,
+        pid: "int | None" = None,
+        clock: "Callable[[], float] | None" = None,
+        sleep: "Callable[[float], Awaitable[None]] | None" = None,
+    ) -> None:
+        self._interval_s = interval_s
+        self._pid = pid
+        self._clock = clock or time.time
+        self._sleep = sleep or asyncio.sleep
+
+    def check(self) -> None:
+        """One beat, right now — the externally-callable seam #5709 R2
+        requires: a test (or, in production, this driver's own
+        :meth:`run_forever` tick) calls this directly. No ``await``
+        inside — see :func:`record_loop_beat`'s own R6 note."""
+        record_loop_beat(pid=self._pid, clock=self._clock)
+
+    async def run_forever(self) -> None:
+        """The ONLY production caller of :meth:`check` — runs until
+        cancelled (:class:`~reyn.runtime.tracked_tasks.TrackedTaskSet`'s
+        own ``cancel_join`` disposition, via :func:`arm_process_loop_beat`).
+
+        #5709 R2's own inversion trap: this must NOT be gated on "a turn
+        is running" — the whole point is a beat that keeps landing
+        WHILE a long turn is in flight (concurrent asyncio tasks; a
+        healthy turn's own awaits give this task real scheduler
+        opportunities without any special integration on the turn's own
+        side), and BEFORE any turn has ever run at all (armed at the
+        top of :meth:`Session.run`, before its own ``while
+        run_one_iteration()`` loop starts)."""
+        while True:
+            await self._sleep(self._interval_s)
+            self.check()
+
+
+#: #5709 R5: a SEPARATE, process-scoped ``TrackedTaskSet`` — never a
+#: ``Session``'s own ``self._background_tasks`` (that set's own
+#: ``aclose()`` runs on THIS session's quiesce/rewind/shutdown, and a
+#: beat tied to it would stop the moment ONE session in a
+#: multi-session process ends, wrongly reporting every OTHER still-live
+#: session's process as beat-less). Lazily constructed so importing this
+#: module never requires a running event loop.
+_beat_task_set: "TrackedTaskSet | None" = None
+_beat_armed = False
+
+
+def arm_process_loop_beat() -> None:
+    """#5709: arm this process's own :class:`ProcessLoopBeatDriver`
+    exactly once, no matter how many times — or from how many
+    :class:`~reyn.runtime.session.Session` instances in this SAME
+    process — this is called (R5's own accept criterion: 1 process + 2
+    Sessions = 1 beater).
+
+    Called from the top of :meth:`Session.run`, the earliest point THIS
+    process's own turn loop actually starts running — later than
+    :func:`register_process` (CLI startup, before any event loop
+    exists) by necessity, not by choice; see this function's own
+    call site for the disclosed seam choice.
+
+    Idempotent and best-effort, matching this module's posture
+    throughout: never raises into its caller over a diagnostic aid.
+    """
+    global _beat_task_set, _beat_armed
+    if _beat_armed:
+        return
+    _beat_armed = True
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
+
+    if _beat_task_set is None:
+        _beat_task_set = TrackedTaskSet()
+    driver = ProcessLoopBeatDriver()
+    _beat_task_set.spawn(
+        driver.run_forever(),
+        name="process_loop_beat",
+        disposition="cancel_join",
+        appends_wal=False,
+    )
+
+
+def armed_beat_task_count() -> int:
+    """#5709: the PUBLIC snapshot read for :func:`arm_process_loop_beat`'s
+    own idempotency (R5's own accept criterion: 1 process + N Sessions =
+    1 beater) — a test asserts through this, never the private
+    ``_beat_task_set`` module global directly (this repo's own "a test
+    must not depend on private state" policy). ``0`` before the first
+    :func:`arm_process_loop_beat` call in this process."""
+    return len(_beat_task_set) if _beat_task_set is not None else 0

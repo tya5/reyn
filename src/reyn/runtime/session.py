@@ -8249,6 +8249,17 @@ class Session:
             )
 
     async def run(self) -> None:
+        # #5709: arm this PROCESS's own loop-beat driver — the earliest
+        # point this process's own turn loop actually starts running
+        # (register_process(), interfaces/cli/__init__.py, runs at CLI
+        # startup, before any event loop exists — see
+        # process_registry.arm_process_loop_beat's own docstring for why
+        # arming had to move here). Idempotent: a second Session's own
+        # run() in this SAME process is a no-op (process_registry's own
+        # R5 accept criterion — 1 process, N Sessions, 1 beater), and
+        # never stopped by any ONE Session ending.
+        from reyn.runtime.process_registry import arm_process_loop_beat
+        arm_process_loop_beat()
         self._audit_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
         # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
         # chat_started; marks the boundary of the session's resource scope so
