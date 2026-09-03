@@ -311,7 +311,7 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
     ),
     # #5677: the ("reyn/runtime/inbox_arbiter.py",
-    # "InboxArbiter.peek_mid_turn_injection") entry that used to live here
+    # "InboxArbiter.peek_mid_turn_injections") entry that used to live here
     # is GONE, not forgotten — verified directly (`git grep
     # 'TurnOrigin.CLIENT_INPUT' -- src/reyn/runtime/inbox_arbiter.py`
     # finds nothing). That method no longer names CLIENT_INPUT at all: its

@@ -27,7 +27,7 @@ class _InjectingHost(FakeRouterHost):
     contract closely enough to witness the RouterLoop-side wiring, without
     duplicating the full real Session machinery this file does not own.
 
-    #5677: ``peek_mid_turn_injection`` now returns ``list[dict]`` (was
+    #5677: ``peek_mid_turn_injections`` now returns ``list[dict]`` (was
     ``dict | None``) — ``[]`` for "nothing queued", one ``{"msg_id":
     ..., "wire": {"role": ..., "content": ...}}`` entry per eligible
     item, already rendered per its own kind (``role="user"`` here since
@@ -46,8 +46,8 @@ class _InjectingHost(FakeRouterHost):
         self._peeks_before_arrival = arrives_after_round
         self._peek_count = 0
 
-    async def peek_mid_turn_injection(self) -> "list[dict]":
-        self.call_order.append("peek_mid_turn_injection")
+    async def peek_mid_turn_injections(self) -> "list[dict]":
+        self.call_order.append("peek_mid_turn_injections")
         self._peek_count += 1
         if self._peek_count <= self._peeks_before_arrival:
             return []
@@ -125,7 +125,7 @@ async def test_injected_message_lands_at_the_tail_after_a_completed_round() -> N
 @pytest.mark.asyncio
 async def test_commit_receives_the_peeked_items_own_msg_id() -> None:
     """Tier 2: #3792 — ``commit_mid_turn_injection`` is called with the
-    SAME ``msg_id`` the triggering ``peek_mid_turn_injection()`` call
+    SAME ``msg_id`` the triggering ``peek_mid_turn_injections()`` call
     returned, after (not before) the append + wire-position assert have
     both already happened in the same code path (structural — an
     ``AssertionError`` raised by the assert would propagate straight out of
@@ -170,8 +170,8 @@ async def test_no_injection_when_queue_is_empty() -> None:
     byte-identical to PR1."""
 
     class _EmptyInjectingHost(_InjectingHost):
-        async def peek_mid_turn_injection(self) -> "list[dict]":
-            self.call_order.append("peek_mid_turn_injection")
+        async def peek_mid_turn_injections(self) -> "list[dict]":
+            self.call_order.append("peek_mid_turn_injections")
             return []
 
     host = _EmptyInjectingHost()
@@ -195,8 +195,8 @@ async def test_no_injection_when_queue_is_empty() -> None:
 #
 # lead-coder's blocking review comment on PR1 (#3802) / restated for PR2:
 # ``_InjectingHost`` above is a fake this SAME file defines; renaming
-# ``RouterHostAdapter.peek_mid_turn_injection`` to anything else leaves every
-# test above green (the seam's ``getattr(host, "peek_mid_turn_injection",
+# ``RouterHostAdapter.peek_mid_turn_injections`` to anything else leaves every
+# test above green (the seam's ``getattr(host, "peek_mid_turn_injections",
 # None)`` would silently resolve to ``None`` against a real production host
 # and go permanently inert, but the fake's own identically-named method still
 # answers). A test that only exercises a fake with a name it chose to match
@@ -230,9 +230,9 @@ def _extract_mid_turn_injection_attr_names() -> "dict[str, str]":
         _ROUTER_LOOP_SRC, re.DOTALL,
     )
     by_role = {n: n for n in names}
-    assert "peek_mid_turn_injection" in by_role.values(), (
+    assert "peek_mid_turn_injections" in by_role.values(), (
         "sanity: router_loop.py's own source must still name a "
-        "peek_mid_turn_injection getattr — if this fails, the extraction "
+        "peek_mid_turn_injections getattr — if this fails, the extraction "
         "regex itself broke, not the production code"
     )
     assert "commit_mid_turn_injection" in by_role.values()
@@ -247,7 +247,7 @@ async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -
     really forward to the callbacks the adapter was constructed with.
 
     Falsification (performed during review): renaming
-    ``RouterHostAdapter.peek_mid_turn_injection`` (the PRODUCTION method, in
+    ``RouterHostAdapter.peek_mid_turn_injections`` (the PRODUCTION method, in
     ``router_host_adapter.py`` — not the test's own fake) to any other name
     makes this test go RED with ``AttributeError`` — while every OTHER test
     in this file (built on ``_InjectingHost``, this file's own fake) stays
@@ -268,13 +268,13 @@ async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -
         commit_calls.append(msg_id)
 
     adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
-        peek_mid_turn_injection=_real_peek,
+        peek_mid_turn_injections=_real_peek,
         commit_mid_turn_injection=_real_commit,
     )
 
-    peek_fn = getattr(adapter, attr_names["peek_mid_turn_injection"], None)
+    peek_fn = getattr(adapter, attr_names["peek_mid_turn_injections"], None)
     assert peek_fn is not None, (
-        f"RouterHostAdapter has no attribute {attr_names['peek_mid_turn_injection']!r} "
+        f"RouterHostAdapter has no attribute {attr_names['peek_mid_turn_injections']!r} "
         "— the exact name router_loop.py's getattr call reads"
     )
     result = await peek_fn()

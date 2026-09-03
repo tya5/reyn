@@ -6087,7 +6087,7 @@ class Session:
             put_outbox_inputs=_put_outbox_inputs,  # #3482
             append_history=self._append_history,
             # #3792: mid-turn CLIENT_INPUT injection.
-            peek_mid_turn_injection=self.peek_mid_turn_injections,
+            peek_mid_turn_injections=self.peek_mid_turn_injections,
             commit_mid_turn_injection=self._commit_mid_turn_injection,
             # #4381 PR-2 stage ③: in-flight taint latch.
             mark_untrusted_in_flight=self._mark_untrusted_in_flight,
@@ -7446,8 +7446,8 @@ class Session:
         return True
 
     async def peek_mid_turn_injections(self) -> "list[dict]":
-        """#5677: the ``RouterHostAdapter``-wired ``peek_mid_turn_injection``
-        callback — was ``self._inbox_arbiter.peek_mid_turn_injection``
+        """#5677: the ``RouterHostAdapter``-wired ``peek_mid_turn_injections``
+        callback — was ``self._inbox_arbiter.peek_mid_turn_injections``
         directly (a bare forwarder; #3978's own module docstring names
         that shape). Now a thin WRAPPING layer instead, because
         rendering (#5677 §0, architect) has to happen somewhere, and the
@@ -7465,7 +7465,7 @@ class Session:
         rendering for the history append from the ``kind``/``payload``
         it already holds at commit time — see
         ``_render_mid_turn_injection``)."""
-        items = await self._inbox_arbiter.peek_mid_turn_injection()
+        items = await self._inbox_arbiter.peek_mid_turn_injections()
         return [
             {"msg_id": it["msg_id"], "wire": _render_mid_turn_injection(it["kind"], it["payload"])}
             for it in items
@@ -7473,7 +7473,7 @@ class Session:
 
     async def _commit_mid_turn_injection(self, msg_id: str) -> None:
         """#3792: commit (pop) the item the most recent successful
-        ``peek_mid_turn_injection()`` call returned.
+        ``peek_mid_turn_injections()`` call returned.
 
         The atomic unit architect's design calls unbreakable — history
         append, journal consume (SSoT prune + WAL tombstone), and the
@@ -7540,7 +7540,7 @@ class Session:
             meta=payload.get("meta") or {},
             # #5514 §4 (traced, still undecided): this item came off
             # ``self._inbox``, a generic multi-producer queue
-            # (``InboxArbiter.peek_mid_turn_injection`` → ``self._inbox.
+            # (``InboxArbiter.peek_mid_turn_injections`` → ``self._inbox.
             # get_nowait()``) — the producer is not traceable from here
             # to a single deterministic origin. Default LAST_RESORT per
             # lead-coder's own instruction for an untraceable site.

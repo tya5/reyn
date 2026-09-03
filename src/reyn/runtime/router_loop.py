@@ -2292,7 +2292,7 @@ class RouterLoop:
             # untouched). getattr-guarded → hosts that don't implement the
             # hook (phase hosts; production chat host implements it via
             # ``RouterHostAdapter``, PR2 #3792) are a no-op.
-            _peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)
+            _peek_injection_fn = getattr(host, "peek_mid_turn_injections", None)
             if _peek_injection_fn is not None and not _force_close_now:
                 _injections = await _peek_injection_fn()
                 if _injections:

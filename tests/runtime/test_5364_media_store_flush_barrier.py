@@ -187,7 +187,7 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
     No await happens anywhere in ``run_loop`` between the top of its
     per-iteration loop and its flush call site for a bare
     ``FakeRouterHost`` (no ``should_force_close`` /
-    ``peek_mid_turn_injection`` implemented — both getattr-guarded, both
+    ``peek_mid_turn_injections`` implemented — both getattr-guarded, both
     short-circuit BEFORE their own ``await``, never reaching it). This is
     an invariant about the CODE PATH (guard-then-await, in that order,
     both gated on a host attribute this fixture never implements), never
@@ -220,10 +220,10 @@ async def test_router_loop_flushes_pending_writes_before_the_llm_call(tmp_path: 
         "above before trusting this test (#5384 ①)"
     )
     assert (
-        '_peek_injection_fn = getattr(host, "peek_mid_turn_injection", None)'
+        '_peek_injection_fn = getattr(host, "peek_mid_turn_injections", None)'
         in _run_loop_source
     ), (
-        "run_loop's peek_mid_turn_injection guard no longer reads "
+        "run_loop's peek_mid_turn_injections guard no longer reads "
         "verbatim as this test's docstring claims — re-verify the "
         "ordering claim above before trusting this test (#5384 ①)"
     )

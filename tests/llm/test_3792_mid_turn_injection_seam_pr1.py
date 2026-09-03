@@ -5,7 +5,7 @@ architect's design (issue #3792) splits the feature into two PRs because a
 half-landed 2-phase peek/pop breaks in BOTH directions (peek-only re-triggers
 the same utterance; pop-only loses an utterance on an abnormal exit). PR1
 lands only the seam's call site in ``RouterLoop.run_loop`` — a getattr-guarded
-host hook, ``peek_mid_turn_injection``, called once per iteration, after the
+host hook, ``peek_mid_turn_injections``, called once per iteration, after the
 cancel checkpoint and immediately before whichever send that iteration makes
 (force-close or normal). No host implements it for real yet (PR2 wires the
 real 2-phase peek/pop); this PR's own production behaviour is a no-op.
@@ -35,7 +35,7 @@ _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
 class _OrderRecordingLLM:
     """Real callable (not a mock): scripts responses AND appends "send" to
-    the same ``host.call_order`` log the fake's ``peek_mid_turn_injection``
+    the same ``host.call_order`` log the fake's ``peek_mid_turn_injections``
     writes to, so a test can assert the two interleave in the right order."""
 
     def __init__(self, host: FakeRouterHost, script: list[LLMToolCallResult]) -> None:
@@ -111,7 +111,7 @@ async def test_seam_fires_before_the_send_each_round() -> None:
 
     Falsification (performed during review): moving the seam call to AFTER
     the ``_llm(...)`` call in ``run_loop`` makes this test go RED —
-    ``host.call_order`` would read ["send", "peek_mid_turn_injection", ...]
+    ``host.call_order`` would read ["send", "peek_mid_turn_injections", ...]
     instead.
     """
     host = FakeRouterHost()
@@ -124,6 +124,6 @@ async def test_seam_fires_before_the_send_each_round() -> None:
         messages=[{"role": "user", "content": "hi"}], tools=[], _univ_enabled=False,
     )
     assert host.call_order == [
-        "peek_mid_turn_injection", "send",
-        "peek_mid_turn_injection", "send",
+        "peek_mid_turn_injections", "send",
+        "peek_mid_turn_injections", "send",
     ]

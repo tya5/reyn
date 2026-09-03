@@ -123,7 +123,7 @@ def make_adapter(
     on_limit: object = None,  # #2175: OnLimitConfig for the spawn-limit checkpoint (None → no checkpoint = unattended reject)
     safety_extensions: "dict | None" = None,  # #2175: shared per-run extension dict
     intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
-    peek_mid_turn_injection: "object | None" = None,  # #3792
+    peek_mid_turn_injections: "object | None" = None,  # #3792
     commit_mid_turn_injection: "object | None" = None,  # #3792
     # #4159 (remainder recorded on the issue, closed out here): this test
     # builder used to keep its OWN False default one layer above
@@ -238,7 +238,7 @@ def make_adapter(
             (lambda: turn_budget_engine) if turn_budget_engine is not None else None
         ),
         environment_backend=environment_backend,
-        peek_mid_turn_injection=peek_mid_turn_injection,  # #3792
+        peek_mid_turn_injections=peek_mid_turn_injections,  # #3792
         commit_mid_turn_injection=commit_mid_turn_injection,  # #3792
         universal_wrappers_enabled=universal_wrappers_enabled,  # #4159
     )
