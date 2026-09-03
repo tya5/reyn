@@ -1548,7 +1548,18 @@ def _print_process_registry() -> None:
         # raw age isn't enough (a real re-open trigger, not a guess made
         # here).
         beat_desc = _age_desc(entry.get("last_loop_beat_at"), now)
+        # #5709 R9: a process's own RECORDED identity (record_process_
+        # identity, #5350) — never derived from cwd (the #5350-named
+        # incident: an unrelated process sharing a directory is not the
+        # same identity). Absent until Session construction resolves it
+        # (register_process runs at CLI startup, before that), so a
+        # process that died before then genuinely has no identity to
+        # show — printed blank, not guessed.
+        agent_name = entry.get("agent_name") or ""
+        broker_session_id = entry.get("broker_session_id") or ""
         print(f"    pid={pid} ppid={ppid} started {started_desc}")
-        print(f"      cwd:        {cwd}")
+        print(f"      cwd: {cwd}")
         print(f"      subcommand: {subcommand}")
-        print(f"      loop beat:  {beat_desc}")
+        print(f"      loop beat: {beat_desc}")
+        print(f"      agent_name: {agent_name}")
+        print(f"      broker_session_id: {broker_session_id}")

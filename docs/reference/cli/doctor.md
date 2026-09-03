@@ -363,13 +363,17 @@ Reyn process registry (~/.reyn/processes/) — every reyn CLI
 process currently alive on this machine, across every workspace:
   2 process(es) currently alive:
     pid=41213 ppid=1 started 2h 14m ago
-      cwd:        /Users/alice/proj-a
+      cwd: /Users/alice/proj-a
       subcommand: chat
-      loop beat:  0m ago
+      loop beat: 0m ago
+      agent_name: coder-blue
+      broker_session_id: coder-blue
     pid=52098 ppid=41022 started 11d 3h ago
-      cwd:        /Users/alice/proj-b
+      cwd: /Users/alice/proj-b
       subcommand: chat
-      loop beat:  never
+      loop beat: never
+      agent_name:
+      broker_session_id:
 ```
 
 A NEW category, not another declared-vs-effective pair: before this, reyn had no
@@ -384,9 +388,10 @@ ITSELF at startup (`interfaces/cli/__init__.py:main()`, the same hook
 `set_process_title` uses), filtered locally to the alive subset (never a
 process-table scan of its own — that's the OS's job, per lead-coder's own
 ruling). Prints only the fields the marker itself carries — pid/ppid/cwd/
-subcommand/age/loop-beat-age — never full argv or any path beyond cwd,
-mirroring `reyn.runtime.proctitle`'s own stance against leaking more than
-the minimum into anything read back after the fact.
+subcommand/age/loop-beat-age/agent_name/broker_session_id — never full argv
+or any path beyond cwd, mirroring `reyn.runtime.proctitle`'s own stance
+against leaking more than the minimum into anything read back after the
+fact.
 
 **#5709: `read_process_markers()`, not the reaping `live_processes()`.**
 `reyn doctor` is not the only reader of this directory (a broker health
@@ -406,6 +411,16 @@ still exists (a wedged loop with a live PID would otherwise report
 loop never started (or hasn't reached the arming point yet) — printed as
 a bare age number, never a judgement word ("stale"/"dead"/"alive"): that
 would be a threshold, and no operator has asked for one yet.
+
+**`agent_name` / `broker_session_id`** ([#5709](https://github.com/tya5/reyn/issues/5709)
+R9): the process's own RECORDED identity — `record_process_identity()`
+(#5350), never derived from `cwd` or `comm` (the #5350-named incident: an
+operator script that joined identity on `cwd` SIGTERM'd unrelated processes
+sharing a directory with a registered agent). Absent until `Session`
+construction resolves it (`register_process()` runs earlier, at CLI
+startup), so a process that died before then genuinely has no identity to
+show — printed blank, never guessed. This is the field #5694 needed
+("which session disappeared") and the reason this section exists at all.
 
 **Report-only, D-2 unchanged**: no kill, no TTL expiry. Whether an abandoned
 process should ever be reaped automatically is an owner-level judgment call

@@ -145,13 +145,17 @@ def test_no_check_call_leaves_the_field_absent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_beat_advances_more_than_once_during_a_simulated_long_turn() -> None:
+async def test_beat_advances_two_or_more_times_during_a_simulated_long_turn() -> None:
     """Tier 2: R2's own named inversion trap — "beat stops during a
     turn" is the OPPOSITE of the point (a beat is most needed WHILE a
     long turn is in flight). Pinned as a real concurrency property: a
     background ``run_forever()`` task ticks independently while a
     SEPARATE, concurrently-running coroutine (standing in for "a long
-    turn") never calls :meth:`check` itself.
+    turn") never calls :meth:`check` itself. One tick alone does not
+    witness this — a single beat landing BEFORE the simulated turn even
+    starts, followed by the driver genuinely stalling DURING the turn,
+    would still satisfy "at least one" while being exactly the
+    inversion R2 names. The bar is therefore 2 or more.
 
     Deliberate, disclosed exception to the no-sleep-in-tests rule
     (CLAUDE.md's own Floor clause, and #5709's own architect ruling
@@ -159,22 +163,36 @@ async def test_beat_advances_more_than_once_during_a_simulated_long_turn() -> No
     background task actually gets CPU time while another coroutine
     runs — which no injected clock can stand in for (a fake clock only
     proves the WRITE logic, pinned above; it cannot prove concurrent
-    scheduling actually happened). Kept to a small, fixed, short
-    duration (0.01s driver interval, ~0.2s total) — the assertion is
-    "2 or more ticks landed", never a duration the test waits OUT to a
-    precise count."""
+    scheduling actually happened). That need for real scheduling does
+    NOT license a fixed wait duration, though (BLOCKING review on
+    #5713: a `range(N)`-wrapped `sleep` is the same Ceiling+Floor
+    violation #5705 put on main red the same night, just with the unit
+    changed to "count"). So the "long turn" here is an UNBOUNDED
+    condition-wait on the driver's own real tick count — mirroring
+    `_settle_until` (#5707) — never a fixed count or duration of our
+    own; pytest's/CI's own ``--timeout=120`` is the only ceiling."""
     process_registry.register_process("chat")
     try:
         pid = os.getpid()
-        marker_path = process_registry.PROCESSES_DIR / f"{pid}.json"
+        tick_count = 0
+
+        def _counting_check() -> None:
+            nonlocal tick_count
+            process_registry.record_loop_beat(pid=pid)
+            tick_count += 1
+
         driver = process_registry.ProcessLoopBeatDriver(pid=pid, interval_s=0.01)
+        driver.check = _counting_check  # type: ignore[method-assign]
         task = asyncio.create_task(driver.run_forever())
         try:
             # Stand-in for "a long turn in flight" — a separate coroutine
             # that itself never calls check(), just holds the event loop
-            # busy-but-yielding for a short, fixed span.
-            for _ in range(20):
-                await asyncio.sleep(0.01)
+            # while the background driver ticks on its own schedule.
+            # Unbounded condition-wait (Ceiling rule): no attempt count,
+            # no sleep the assertion depends on — only the real tick
+            # counter the driver itself advances.
+            while tick_count < 2:
+                await asyncio.sleep(0)
         finally:
             task.cancel()
             try:
@@ -182,10 +200,9 @@ async def test_beat_advances_more_than_once_during_a_simulated_long_turn() -> No
             except asyncio.CancelledError:
                 pass
 
-        data = json.loads(marker_path.read_text())
-        assert data["last_loop_beat_at"] is not None, (
-            "the beat must have landed at least once during the "
-            "simulated long turn — 0 beats is R2's own named inversion"
+        assert tick_count >= 2, (
+            "#5709 REGRESSION: fewer than 2 beats landed during the "
+            "simulated long turn — R2's own named inversion"
         )
     finally:
         process_registry.unregister_process(os.getpid())
