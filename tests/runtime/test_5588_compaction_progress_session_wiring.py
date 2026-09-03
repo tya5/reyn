@@ -156,3 +156,78 @@ def test_no_covers_through_seq_outcome_does_not_move_the_watermark(tmp_path):
         covers_through_seq=0,
     )
     assert session.compaction_progress_raw()["persisted_covers_through_seq"] is None
+
+
+# ── #5588: the TRUE end-of-episode failure (terminal/terminal_seq) ─────────
+
+
+def test_terminal_caches_the_real_retry_loop_terminal_value(tmp_path):
+    """Tier 2: a real router_context_overflow_unrecovered event's own
+    ``terminal`` field (already a plain str — RetryLoopTerminal's own
+    ``.value``, see router_loop_driver.py's own emit) lands in the cache
+    verbatim, and terminal_seq starts counting from 1."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "router_context_overflow_unrecovered",
+        error="UnrecoveredError(...)", terminal="mid_floor",
+    )
+    raw = session.compaction_progress_raw()
+    assert raw["terminal"] == "mid_floor"
+    assert raw["terminal_seq"] == 1
+
+
+def test_terminal_seq_is_monotonic_and_never_resets(tmp_path):
+    """Tier 2: acceptance ③'s own load-bearing property — a caller (the
+    TUI's flowview entry) tells "a NEW failure fired since I started
+    watching" apart from "this is an old cached value" by comparing
+    terminal_seq against its own remembered baseline. That comparison
+    only works if the counter never resets and always increments,
+    regardless of whether the SAME terminal value repeats across two
+    separate episodes (two MID_FLOOR failures in a row must still bump
+    the counter, or the second failure would look like a stale read)."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "router_context_overflow_unrecovered", error="e1", terminal="mid_floor",
+    )
+    session._audit_events.emit(
+        "router_context_overflow_unrecovered", error="e2", terminal="mid_floor",
+    )
+    raw = session.compaction_progress_raw()
+    assert raw["terminal_seq"] == 2, "the SAME terminal value twice must still bump the counter"
+
+
+def test_terminal_without_a_terminal_field_does_not_cache_or_bump(tmp_path):
+    """Tier 2: deny side — a plain ContextOverflowError (no ladder-terminal
+    distinction, never fabricated — router_loop_driver.py's own comment:
+    "omitted... for a plain ContextOverflowError") must not be cached as
+    a real terminal, and must not bump the counter (a caller comparing
+    against terminal_seq must never see progress that did not happen)."""
+    session = _make_session(tmp_path)
+    session._audit_events.emit(
+        "router_context_overflow_unrecovered", error="ContextOverflowError(...)",
+    )
+    raw = session.compaction_progress_raw()
+    assert raw.get("terminal") is None
+    assert raw.get("terminal_seq") is None
+
+
+def test_terminal_is_never_episode_joined(tmp_path):
+    """Tier 2: unlike raw_middle_remaining/raw_middle_total/upstream_
+    recovery_call_count (_IN_FLIGHT_PROGRESS_KEYS, episode-joined),
+    terminal/terminal_seq stay readable with no live recovery episode —
+    the same durable-cache shape persisted_covers_through_seq already
+    has, and for the same reason: a genuine failure IS the moment the
+    episode ends, so an episode-joined field would be wiped on the very
+    next read before any caller could ever observe it."""
+    session = _make_session(tmp_path)
+    # Public-surface witness that no real ladder is running in this test
+    # (never session._recovery_episode() — private state): is_compacting
+    # is the OR of the controller flag and the episode check, so a False
+    # read here proves both are inactive.
+    assert session.is_compacting is False, "arrange: no real ladder ran in this test"
+    session._audit_events.emit(
+        "router_context_overflow_unrecovered", error="e", terminal="room_floor",
+    )
+    raw = session.compaction_progress_raw()
+    assert raw["terminal"] == "room_floor"
+    assert raw["terminal_seq"] == 1

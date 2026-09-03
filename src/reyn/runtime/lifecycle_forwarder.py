@@ -190,23 +190,28 @@ class ChatLifecycleForwarder:
         finding names: the event was emitted (``engine.py``'s
         ``compact()``), nothing in ``src/reyn/interfaces/`` ever consumed it.
 
-        Deliberately independent of #5618/#5630's `is_compacting`/
-        `recovery_episode` progress-row gate — that is STATE a polling
-        consumer reads each frame; this is an EDGE, a one-line transcript
-        marker for the moment compaction begins, the same shape
-        ``on_compaction_completed``/``on_compaction_failed`` already use for
-        their own edges. Neither replaces the other: the progress row answers
-        "is it running right now", this marker answers "something just
-        started" for a reader who was not watching the row at that instant.
+        #5588 correction: this marker is no longer independent of #5618/
+        #5630's `is_compacting`/`recovery_episode` state — owner's own
+        "開始〜終了は単一 flowview entry or group にして" ruled that a
+        `compact()` call inside an already-running shrink-flow episode
+        (#5719's own shrink-retry ladder can call `compact()` more than
+        once per episode) must NOT scatter its own edge marker into the
+        conv pane as a separate line. This handler still ALWAYS emits —
+        ``meta["compaction_episode_marker"]`` is what lets ``app.py``'s
+        ``_ingest_frame`` ABSORB the frame into the single open episode
+        entry (TUI-local; the frame still reaches the outbox unchanged,
+        so a surface with no episode-entry mechanism of its own, e.g.
+        AG-UI, still gets this marker exactly as before).
 
         ``new_turn_count`` mirrors ``on_compaction_completed``'s own field
         name for the same count (this pass's target, not its result) —
         absent degrades to a generic marker, never a fabricated count."""
         count = data.get("new_turn_count")
+        meta = {"compaction_episode_marker": True}
         if isinstance(count, int) and count > 0:
-            self._enqueue(f"[⟳ compacting {count} turn{'s' if count != 1 else ''}]")
+            self._enqueue(f"[⟳ compacting {count} turn{'s' if count != 1 else ''}]", meta=meta)
         else:
-            self._enqueue("[⟳ compacting history]")
+            self._enqueue("[⟳ compacting history]", meta=meta)
 
     def on_compaction_failed(self, data: dict) -> None:
         """Surface a ``[✗ compaction failed: <reason>]`` error marker.
@@ -218,7 +223,42 @@ class ChatLifecycleForwarder:
         context pressure continues unrelieved.
         """
         reason = str(data.get("error") or "unknown error")
-        self._enqueue(f"[✗ compaction failed: {reason}]")
+        self._enqueue(
+            f"[✗ compaction failed: {reason}]",
+            meta={"compaction_episode_marker": True},
+        )
+
+    def on_router_context_overflow_unrecovered(self, data: dict) -> None:
+        """Surface a ``[✗ shrink flow failed: <impossibility>]`` marker —
+        the TRUE end-of-episode failure, distinct from :meth:`on_compaction_
+        failed` above (a single ``compact()`` call raising, which #5719's
+        own shrink-retry ladder may still recover from within the SAME
+        episode — this event fires only once the whole ladder is
+        exhausted).
+
+        Names WHICH impossibility fired via the ``RetryLoopTerminal``
+        member itself (#5588 architect ruling: "reason 文字列を解析しない
+        こと") — never a parse of ``error``'s own ``repr()`` text. A plain
+        ``ContextOverflowError`` (the window itself is too small — no
+        ladder-terminal distinction at all) carries no ``terminal`` field
+        (never fabricated) and degrades to a generic marker.
+
+        The 2-line mapping is a SMALL, deliberate duplicate of
+        ``compaction_progress.py``'s own ``compaction_failure_text`` —
+        that module is INTERFACES-layer (imports ``textual``); this one is
+        RUNTIME-layer, so importing it here would invert the dependency
+        direction (same reasoning this module's own ``_compact_token_
+        count`` docstring already gives for not importing ``gutter.py``).
+        """
+        terminal = data.get("terminal")
+        text = {
+            "mid_floor": "1つのやり取りが単独で大きすぎます",
+            "room_floor": "最新のメッセージだけで窓に入りません",
+        }.get(str(terminal))
+        if text is not None:
+            self._enqueue(f"[✗ shrink flow failed: {text}]")
+        else:
+            self._enqueue("[✗ shrink flow failed]")
 
     def on_summary_resummarize_failed(self, data: dict) -> None:
         """Surface a ``[✗ summary re-compress failed: <reason>]`` error marker.
@@ -267,7 +307,12 @@ class ChatLifecycleForwarder:
         if isinstance(cost, (int, float)):
             text += f" · ${cost:.2f}"
         text += "]"
-        self._enqueue(text)
+        # #5588: same absorption tag as on_compaction_started/failed above
+        # — a shrink-flow episode can call compact() more than once (#5719's
+        # own shrink-retry ladder), so this must not scatter either, even
+        # though its OWN text is architect's explicitly-unchanged success
+        # format (still built exactly as before this PR).
+        self._enqueue(text, meta={"compaction_episode_marker": True})
 
     # ── Router cap / iteration limit ─────────────────────────────────────
     # Two distinct ``limit_denied`` sources:
@@ -401,10 +446,20 @@ class ChatLifecycleForwarder:
         # Fire-and-forget: lifecycle markers are advisory, never block the
         # session loop. Uses ``kind="system"`` so the conv pane's
         # ``_render_system_message`` path styles it as a dim marker line.
-        # ``meta`` (#4380): optional — carries ``lifecycle_bundle_key`` for
-        # the ONE marker kind (``permission_denied``) the conv pane
-        # coalesces consecutive repeats of; every other caller omits it
-        # (``None`` -> ``{}``, byte-identical to every pre-#4380 marker).
+        # ``meta`` (#4380): optional — ``on_permission_denied`` (below)
+        # still stamps ``lifecycle_bundle_key`` on every call. #5588
+        # correction: the conv-pane consumer that once coalesced consecutive
+        # repeats keyed on it was ITSELF removed as unreachable (``fix
+        # (#4380): remove the unreachable permission_denied ×N bundling`` —
+        # re-measured, no live trigger ever produced two adjacent
+        # occurrences). The write here is now INERT — no reader consumes
+        # this key anywhere in the tree (verified: `git grep
+        # lifecycle_bundle_key` finds only this write site) — kept
+        # (not removed) because whether to also drop it is a separate,
+        # out-of-scope decision from the one #5588 needed to make (CLAUDE.md:
+        # a doc/comment goes stale the moment the mechanism it describes
+        # changes; fixed here in the same PR that found it, per that rule —
+        # the writer itself is untouched).
         try:
             self.outbox.put_nowait(OutboxMessage(kind="system", text=text, meta=meta or {}))
         except asyncio.QueueFull:

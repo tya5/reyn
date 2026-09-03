@@ -86,7 +86,25 @@ ELAPSED_SECS_KEY = "_elapsed_secs"
 #: state instead of the latest frame's text.
 PIPELINE_RUN_KEY = "_pipeline_run_id"
 
+#: #5588: marks a row as the ONE shrink-flow (compaction/overflow-recovery)
+#: progress entry for the attached session's CURRENT recovery episode —
+#: mirrors :data:`PIPELINE_RUN_KEY`'s own shape exactly (a presence-only
+#: marker the presenter dispatches on, never a run/episode identity value
+#: itself; the entry is looked up by ``app.py``'s own single
+#: ``self._compaction_progress_entry`` reference, not by a keyed dict, since
+#: only ONE shrink flow can be in flight for an attached session at a time).
+#: :data:`RUNNING_SINCE_KEY`/:data:`ELAPSED_SECS_KEY` (above) drive this
+#: row's own spinner/settled-elapsed exactly as they already do for a tool
+#: call — no new spinner vocabulary. The progress FIGURES themselves
+#: (spill_done/spill_total/call_count/is_compacting/terminal) live under
+#: this SAME row's other, integer/bool/str-only meta keys — see
+#: ``presenter.py``'s own render function for the exact set: "the numbers
+#: are what the row is actually about" (:data:`PIPELINE_RUN_KEY`'s own
+#: docstring precedent — never parsed back out of rendered text).
+COMPACTION_PROGRESS_KEY = "_compaction_progress"
+
 __all__ = [
+    "COMPACTION_PROGRESS_KEY",
     "ELAPSED_SECS_KEY",
     "PIPELINE_RUN_KEY",
     "ORPHANED_RESULT_KIND",

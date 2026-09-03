@@ -1,6 +1,16 @@
 """Shrink-flow (compaction/overflow-recovery) progress display — pure render
 layer (#5588).
 
+#5588 owner follow-up (real-machine: "スピナーになってないね"／"進捗も見え
+ない"／"開始〜終了までスピナー対応して...開始〜進捗〜終了は単一 flowview
+entry or group にして"): this module went from feeding a standalone chrome
+row (``CompactionProgressRow``, now REMOVED) to feeding ONE flowview entry
+spanning the whole shrink-flow episode (created/updated/settled by
+``app.py``'s own entry-lifecycle methods, rendered by ``presenter.py``'s
+``_compaction_progress_body``). Still a pure render layer — every function
+here takes a snapshot/enum member and returns text, no ``Session``/registry
+reach of its own.
+
 Two readers, one display, three layered lines (architect design, #5588
 issue thread — quoted verbatim in this module's own docstrings below):
 
@@ -50,9 +60,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-from textual.reactive import reactive
-from textual.widgets import Static
 
 if TYPE_CHECKING:
     from reyn.services.compaction.engine import RetryLoopTerminal
@@ -177,6 +184,65 @@ def compaction_progress_lines(snap: CompactionProgressSnapshot) -> "list[str]":
     return lines
 
 
+def compaction_progress_entry_lines(
+    snap: CompactionProgressSnapshot, *, terminal_text: "str | None" = None,
+) -> "list[str]":
+    """#5588 (owner: "開始〜進捗〜終了は単一 flowview entry or group にして") —
+    like :func:`compaction_progress_lines`, but for the ONE flowview entry
+    that spans a whole shrink-flow episode start-to-finish, never just
+    ``[]`` the instant ``is_compacting`` goes False: a settled entry still
+    shows its last-known progress (the same "still there after settling"
+    contract a completed tool-call row already has), plus, only once, the
+    reason it stopped.
+
+    *terminal_text* (from :func:`compaction_failure_text`, or ``None`` on
+    success — architect: success keeps the EXISTING ``[↑ N turns
+    compacted]`` marker unchanged, this line never duplicates that text)
+    is appended as its own line ONLY when given; never fabricated from
+    ``snap`` itself.
+    """
+    lines = (
+        ["⟳ 文脈を縮めています（自動で終わります）"] if snap.is_compacting
+        else ["文脈を縮めました" if terminal_text is None else "✗ 文脈を縮められませんでした"]
+    )
+
+    if snap.waiting_for is not None:
+        target = {"summary": "要約", "main_call": "本文"}.get(snap.waiting_for, snap.waiting_for)
+        elapsed = ""
+        if snap.waiting_elapsed_s is not None:
+            elapsed = f" {int(snap.waiting_elapsed_s)}秒"
+        lines.append(f"  {target}の応答を待っています{elapsed}")
+
+    rung_parts = []
+    if snap.spill_done is not None and snap.spill_total is not None:
+        call_suffix = "" if snap.call_count is None else f"  呼び出し {snap.call_count}"
+        rung_parts.append(f"① 退避 {snap.spill_done}/{snap.spill_total}{call_suffix}")
+    if snap.slice_len is not None:
+        rung_parts.append(f"② 分割 {snap.slice_len}")
+    if snap.head_available is not None or snap.tail_available is not None:
+        avail = []
+        if snap.head_available:
+            avail.append("head")
+        if snap.tail_available:
+            avail.append("tail")
+        rung_parts.append(f"③ 補充 {'/'.join(avail) if avail else '—'}")
+    if snap.budget_halvings_done is not None and snap.budget_halvings_max is not None:
+        rung_parts.append(f"④ 予算 {snap.budget_halvings_done}/{snap.budget_halvings_max}")
+
+    if rung_parts:
+        line3 = "  " + "  ".join(rung_parts)
+        if snap.lap is not None:
+            line3 += f"  · 周回 {snap.lap}"
+        if snap.active_rung is not None and snap.active_rung in _RUNG_LABELS:
+            line3 += f"     ← 今 {_RUNG_LABELS[snap.active_rung]}"
+        lines.append(line3)
+
+    if terminal_text is not None:
+        lines.append(f"  {terminal_text}")
+
+    return lines
+
+
 #: architect's own exact wording (#5588 issue thread) — never derived from
 #: RetryLoopTerminal's own member NAME/value string (that would be the same
 #: "parse the reason text" pattern this design explicitly forbids elsewhere;
@@ -193,38 +259,3 @@ def compaction_failure_text(terminal: "RetryLoopTerminal") -> str:
         _T.MID_FLOOR: "1つのやり取りが単独で大きすぎます",
         _T.ROOM_FLOOR: "最新のメッセージだけで窓に入りません",
     }[terminal]
-
-
-class CompactionProgressRow(Static):
-    """The chrome widget half of #5588 — a plain top-level sibling of
-    ``MenuBar`` in the app's compose order (same placement family as
-    :class:`~.chrome.ConfigWarningLine`), rendering whatever
-    :func:`compaction_progress_lines` returns.
-
-    #5131 "down" discipline: the App writes :attr:`lines` (a ``reactive``
-    attribute) from its own periodic snapshot read — this widget never
-    queries ``Session``/the registry itself (Gate A: this module does not,
-    and must not, import ``reyn.interfaces.transport``/``reyn.runtime.
-    registry``). :meth:`watch_lines` is the ONE place that reacts, matching
-    ``ActivityRow``'s own established shape for a conditionally-visible
-    chrome row: absent (``display = False``) whenever there is nothing to
-    show, never an empty visible row occupying the layout slot."""
-
-    DEFAULT_CSS = """
-    CompactionProgressRow {
-        height: auto;
-        padding: 0 1;
-    }
-    """
-
-    can_focus = False
-
-    lines: "reactive[list[str]]" = reactive(list, always_update=True)
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__("", **kwargs)
-        self.display = False
-
-    def watch_lines(self, new_lines: "list[str]") -> None:
-        self.display = bool(new_lines)
-        self.update("\n".join(new_lines))
