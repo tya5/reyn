@@ -87,8 +87,18 @@ def _yes_no_choices() -> list[InterventionChoice]:
     across permission gates and limit gates.
     """
     return [
-        InterventionChoice(id="yes", label="[Y]es, continue", hotkey="y"),
-        InterventionChoice(id="no", label="[N]o, abort", hotkey="n"),
+        # #4751/#5698 co-vet (lead-coder): the bracketed letter and the
+        # `hotkey` field are independent, hand-written strings — a real
+        # mismatch (label said `[Y]`/`[N]`, `hotkey` was the lowercase
+        # `y`/`n`) sat here until now, live-caught by
+        # test_intervention_choice_bracket_matches_hotkey_5698. Lowercased
+        # to match the ACTUAL working key (`hotkey`, what the panel now
+        # wires per #4751) rather than raising the hotkey to uppercase —
+        # this pair carries no persist/one-shot distinction (unlike
+        # generic_yn_choices' own `n`/`N` pair), so there is no reason for
+        # either option to claim the shifted key.
+        InterventionChoice(id="yes", label="[y]es, continue", hotkey="y"),
+        InterventionChoice(id="no", label="[n]o, abort", hotkey="n"),
     ]
 
 
