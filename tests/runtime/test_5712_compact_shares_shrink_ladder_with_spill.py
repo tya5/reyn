@@ -30,12 +30,19 @@ the testing policy's `LLMReplay`-or-real-instance rule; no ``MagicMock``/
 """
 from __future__ import annotations
 
+import asyncio
+import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Callable
 
+import litellm
 import pytest
 
-from reyn.config import CompactionConfig
+from reyn.config import CompactionConfig, MultimodalConfig
 from reyn.core.events.events import EventLog
+from reyn.core.events.state_log import StateLog
+from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.compaction_controller import CompactionController
 from reyn.services.compaction.engine import (
@@ -48,6 +55,7 @@ from reyn.services.compaction.engine import (
     RetryLoopTerminal,
     UnrecoveredError,
 )
+from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
 
 # #5719: main_M_room=0 — this file's own tests are about the shrink-retry
@@ -271,6 +279,45 @@ async def test_mid_floor_records_that_spill_was_offered():
     assert excinfo.value.spill_was_offered is True
 
 
+def test_mid_floor_records_spill_was_offered_false_when_no_capability_exists():
+    """Tier 2: #5717 (lead-coder BLOCKING review of #5712/PR #5716) —
+    ``spill_was_offered=True`` unconditionally at MID_FLOOR was a real bug:
+    a driver with NO spill mechanism at all (``spill_capability_present=
+    False`` — ``PipelineExecutorDriver``'s own real shape, it carries no
+    ``RouterHistoryBuffer``) would still record "spill was offered" even
+    though ``spill_fn`` was never genuinely callable. "tried, found
+    nothing eligible" and "there is no capability to try" are different
+    facts — collapsing both onto ``spill_was_offered=True`` misrepresents
+    the second case; #5717 forbids flattening them onto a bare ``False``
+    fallback too (that would just move the conflation, #5699's rejected
+    shape), so this test also proves ``spill_fn`` is never even CALLED
+    when the capability is genuinely absent — not called-and-ignored."""
+    from reyn.services.compaction.engine import shrink_pool_after_overflow
+
+    calls: "list[list[dict]]" = []
+
+    def _would_have_spilled_everything(offered: "list[dict]") -> "list[tuple[int, dict]]":
+        calls.append(offered)
+        return [(0, {**offered[0], "content": "[spilled]"})]  # never reached
+
+    pool = [{"content": "x", "spillability": "first_choice"}]
+    with pytest.raises(UnrecoveredError) as excinfo:
+        shrink_pool_after_overflow(
+            pool, pool, 1,
+            spill_fn=_would_have_spilled_everything, saw_byte_limit=False,
+            spill_capability_present=False,
+        )
+    assert excinfo.value.terminal is RetryLoopTerminal.MID_FLOOR
+    assert excinfo.value.spill_was_offered is False, (
+        "no spill capability existed — this MUST NOT read as "
+        "'rung① was offered and failed'"
+    )
+    assert not calls, (
+        "spill_fn must never be invoked when spill_capability_present is "
+        "False — a real driver would have nothing to answer to"
+    )
+
+
 @pytest.mark.asyncio
 async def test_falls_through_to_halving_when_nothing_is_spillable():
     """Tier 2: falsify pair (deny side) for the spill-alone test above —
@@ -325,4 +372,178 @@ async def test_on_demand_compaction_never_touches_recovery_episode():
         "recovery_episode concept present at all — the on-demand path "
         "does not depend on it, so it cannot silently share it with the "
         "reactive path either"
+    )
+
+
+# ---------------------------------------------------------------------------
+# session.py's REAL wiring, driven end-to-end (lead-coder review, PR #5716):
+# every test above calls ``ctrl.force_compact_now(spill_fn=<hand-rolled
+# fake>)`` directly — none of them drive ``Session._compact_now_for_op``'s
+# own ``_spill_fn`` construction (the ``getattr(self._loop_driver, "_spill_
+# batch_for_retry", None)`` + ``functools.partial`` line), so the wire-shape
+# adapter this PR added (``_spill_fn_adapted`` in compaction_controller.py)
+# was never checked against the REAL ``RouterLoopDriver._spill_batch_for_
+# retry`` it is meant to sit in front of. This section closes that gap with
+# a real ``Session`` (real ``RouterLoopDriver``, real ``RouterHistoryBuffer``,
+# real ``MediaStore`` — only ``litellm.acompletion`` is monkeypatched, same
+# collaborator every other real-engine compaction test in this repo fakes at
+# that exact boundary, e.g. ``test_slash_compact_191.py``).
+# ---------------------------------------------------------------------------
+
+_SUMMARY_JSON = json.dumps({
+    "topic_arc": "compacted summary of older turns",
+    "decisions": [], "pending": [],
+    "session_user_facts": [], "artifacts_referenced": [],
+    "new_turn_seqs": [3, 4, 5, 6],
+})
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _make_real_session(tmp_path, monkeypatch):
+    """A real ``Session`` with a real ``RouterLoopDriver`` and a real
+    ``MediaStore`` (``multimodal_config=MultimodalConfig()`` — the default
+    ``None`` in ``test_slash_compact_191.py``'s own ``_make_session`` never
+    builds one, so ``spill_turn_content`` would silently no-op there; this
+    test needs the genuine write). Small ``T_max`` (same technique as
+    ``test_slash_compact_191.py``) so 8 large turns produce real middle
+    candidates."""
+    import reyn.llm.model_budget as _mb
+    monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: 2800)
+    return make_session(
+        agent_name="default",
+        budget_tracker=BudgetTracker(CostConfig()),
+        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+        compaction_config=CompactionConfig(
+            use_chars4_estimate=True, section_caps_spec_tokens=0,
+        ),
+        multimodal_config=MultimodalConfig(),
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
+
+
+def _populate_real(session) -> None:
+    for _ in range(8):
+        session._append_history(ChatMessage(role="user", content="x" * 4000, ts=_now()))
+
+
+def _script_overflow_until_spilled(monkeypatch, *, fits_at_or_below_chars: int) -> "list[int]":
+    """Real ``litellm.acompletion`` stand-in (same boundary ``test_slash_
+    compact_191.py``'s own ``_script_compaction_llm`` fakes): overflows
+    while the total wire content it is handed is still full-size, succeeds
+    once genuine spill (via the real ``RouterLoopDriver._spill_batch_for_
+    retry`` → real ``RouterHistoryBuffer.spill_turn_content`` → real
+    ``MediaStore``) has shrunk it. Records each call's total content chars
+    (``call_sizes``) so the test can assert the SAME size repeated (spill
+    shrinks content, never candidate count — same reasoning as
+    ``_OverflowsUntilFewEnoughEngine`` above) rather than a halving
+    signature."""
+    call_sizes: "list[int]" = []
+
+    async def _fake_acompletion(model, messages, **kw):
+        total = sum(len(str(m.get("content", ""))) for m in messages)
+        call_sizes.append(total)
+        if total > fits_at_or_below_chars:
+            raise _ContextLengthExceeded("context_length_exceeded")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=_SUMMARY_JSON))]
+        )
+
+    monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
+    return call_sizes
+
+
+def test_session_wiring_drives_the_real_router_loop_driver_spill_implementation(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: ``Session._compact_now_for_op``'s own ``_spill_fn`` — built
+    from the REAL ``self._loop_driver._spill_batch_for_retry`` via
+    ``functools.partial(..., chain_id="manual-compact")``, exactly as
+    ``session.py`` wires it — genuinely resolves a compaction-call overflow
+    through real spill (not a fake standing in for it), proving this PR's
+    ``_spill_fn_adapted`` translation adapter's shape is actually compatible
+    with what ``RouterLoopDriver._spill_batch_for_retry`` expects/returns."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_real_session(tmp_path, monkeypatch)
+    _populate_real(session)
+    # Full-size middle overflows (raw "x"*4000 turns); once real spill has
+    # offloaded them to tiny path-ref previews (cap_tokens=1 forces this —
+    # see spill_turn_content's own docstring), the retry fits comfortably.
+    call_sizes = _script_overflow_until_spilled(monkeypatch, fits_at_or_below_chars=5_000)
+
+    result = asyncio.run(session._compact_now_for_op())
+
+    assert call_sizes[0] > 5_000, "the fixture's own first attempt must genuinely overflow"
+    assert call_sizes[-1] <= 5_000, "the final attempt must have fit — compaction did not succeed"
+    assert result["summarized_turns"] > 0
+    assert any(m.role == "summary" for m in session.history)
+    # The real, load-bearing evidence spill genuinely ran through the
+    # PRODUCTION implementation (not just "eventually fit somehow" — e.g.
+    # halving would also eventually shrink `call_sizes`, but halving on
+    # `CompactionController`'s path only ever shrinks candidate COUNT,
+    # never a single call's own per-turn content) — a real spill record
+    # was durably appended, proving ``RouterHistoryBuffer.spill_turn_
+    # content`` → ``MediaStore.save_tool_result`` actually executed.
+    assert any(m.role == "spill_record" for m in session.history), (
+        "expected a genuine spill_record entry from the real "
+        "RouterLoopDriver._spill_batch_for_retry implementation — its "
+        "absence would mean this PR's adapter silently fell through to "
+        "halving instead of driving real spill"
+    )
+
+
+def test_session_emits_an_audit_event_when_the_loop_driver_has_no_spill_capability(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: lead-coder review (#5712, PR #5716) — a real
+    ``PipelineExecutorDriver`` (production's OTHER ``ExecutionDriver``,
+    ``registry.py``'s own ``compact`` op reaches it exactly like a chat
+    session's) has no ``RouterHistoryBuffer`` and so never defines
+    ``_spill_batch_for_retry`` at all. ``getattr(..., None)`` degrading to a
+    no-op ``spill_fn`` for this case must never be SILENT — "the driver
+    structurally lacks spill" is a different fact from "spill ran and found
+    nothing eligible", and only an audit event lets a later reader tell a
+    MID_FLOOR raised on THIS session apart from one where rung① genuinely
+    ran. Compaction itself must still complete (via halving alone) — a
+    missing spill capability degrades, it never blocks voluntary
+    compaction."""
+    from reyn.core.pipeline.work_order import PipelineWorkOrder
+    from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
+
+    monkeypatch.chdir(tmp_path)
+    session = _make_real_session(tmp_path, monkeypatch)
+    _populate_real(session)
+    assert not hasattr(PipelineExecutorDriver, "_spill_batch_for_retry"), (
+        "this test's own premise — PipelineExecutorDriver never carries a "
+        "RouterHistoryBuffer, so it structurally cannot implement rung①"
+    )
+    work_order = PipelineWorkOrder(
+        run_id="r1", pipeline_name="p", pipeline={"steps": []}, input=None,
+        reply_to_agent="default", reply_to_sid="main",
+        driver_agent="default", driver_sid="main",
+    )
+    session.set_loop_driver(
+        PipelineExecutorDriver(work_order, registry=None, state_log=session._state_log)
+    )
+    collected = collect_events(session._audit_events)
+    # No spill available at all -> only halving can shrink this; a lower
+    # cap than the spill-alone test above (halving only ever reduces
+    # candidate COUNT, so the floor is one turn's own raw content, not a
+    # tiny offloaded preview).
+    call_sizes = _script_overflow_until_spilled(monkeypatch, fits_at_or_below_chars=6_500)
+
+    result = asyncio.run(session._compact_now_for_op())
+    asyncio.run(settle(session._audit_events))
+
+    assert result["summarized_turns"] > 0, "halving alone must still resolve the overflow"
+    absent_events = [e for e in collected if e.type == "compact_now_spill_capability_absent"]
+    assert absent_events, (
+        f"expected a compact_now_spill_capability_absent audit event — "
+        f"got {[e.type for e in collected]!r}"
+    )
+    assert absent_events[0].data["driver_type"] == "PipelineExecutorDriver"
+    assert not any(m.role == "spill_record" for m in session.history), (
+        "a driver with no spill capability must never produce a spill_record"
     )

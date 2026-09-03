@@ -10869,18 +10869,42 @@ class Session:
         from functools import partial as _partial
         # `_spill_batch_for_retry` is `RouterLoopDriver`-specific, not
         # part of the `ExecutionDriver` Protocol every driver satisfies
-        # (`execution_driver.py`) — a test/alternate driver that omits it
-        # degrades to a genuine no-op spill (never a crash), the same
-        # graceful-absence shape `force_compact_now`'s own REQUIRED
-        # spill_fn contract still honors: "nothing real to spill" is a
-        # valid answer, "None entirely" is not (#5712 acceptance ②).
+        # (`execution_driver.py`) — e.g. `PipelineExecutorDriver` never
+        # carries a `RouterHistoryBuffer` at all, so it has none. A
+        # driver missing it degrades to a genuine no-op spill (never a
+        # crash), the same graceful-absence shape `force_compact_now`'s
+        # own REQUIRED spill_fn contract still honors: "nothing real to
+        # spill" is a valid answer, "None entirely" is not (#5712
+        # acceptance ②).
+        #
+        # lead-coder review (#5712, PR #5716): this degrade must never be
+        # SILENT — "the driver structurally has no spill capability" is a
+        # different fact from "spill ran and found nothing eligible this
+        # round", and only the audit trail can tell a later reader which
+        # one happened at a given MID_FLOOR. `compact_op` (any agent,
+        # chat or pipeline — `ctx.compact_now` is wired unconditionally
+        # in every `OpContext`) can genuinely reach this on a
+        # `PipelineExecutorDriver`-backed session, so this is real
+        # production surface, not a hypothetical.
         _spill_impl = getattr(self._loop_driver, "_spill_batch_for_retry", None)
+        if _spill_impl is None:
+            self._audit_events.emit(
+                "compact_now_spill_capability_absent",
+                driver_type=type(self._loop_driver).__name__,
+            )
         _spill_fn = (
             _partial(_spill_impl, chain_id="manual-compact")
             if _spill_impl is not None else (lambda _candidates: [])
         )
         compaction_outcome = await self._compaction_controller.force_compact_now(
             spill_fn=_spill_fn,
+            # #5717 (lead-coder review): "no capability" and "tried, found
+            # nothing eligible" are different facts — this bool is the
+            # ONE thing that tells shrink_pool_after_overflow's eventual
+            # MID_FLOOR raise which one happened, so its own
+            # `spill_was_offered` field never claims rung① ran when there
+            # was no mechanism to run it with.
+            spill_capability_present=_spill_impl is not None,
         )
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()

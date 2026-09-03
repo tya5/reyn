@@ -392,6 +392,14 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "client_attached",
     "client_detached",
     "client_seized",
+    # #5717 (lead-coder review of #5712/PR #5716): fires from
+    # Session._compact_now_for_op when the attached ExecutionDriver has no
+    # spill mechanism at all (e.g. PipelineExecutorDriver — it carries no
+    # RouterHistoryBuffer) — distinguishes "no spill capability exists"
+    # from "spill ran and found nothing eligible" in the audit trail, the
+    # same distinction shrink_pool_after_overflow's own
+    # spill_capability_present kwarg carries into UnrecoveredError.
+    "compact_now_spill_capability_absent",
     "compact_op_completed",
     "compact_op_failed",
     "compact_op_requested",
