@@ -38,6 +38,7 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 
+from ._meta_keys import COMPACTION_PROGRESS_KEY as _COMPACTION_PROGRESS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
 from ._meta_keys import ORPHANED_RESULT_KIND as _ORPHANED_RESULT_KIND
 from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
@@ -219,6 +220,48 @@ def _pipeline_row(meta: dict) -> "RenderableType":
         Text(kind, style=_CC_DIM),
     )
     return row
+
+
+def _compaction_progress_body(meta: dict, *, spinner_frame: "str | None") -> "RenderableType":
+    """#5588: the ONE shrink-flow-episode entry's body — built from the
+    INTEGER/bool/str figures in ``meta`` (never parsed back out of a
+    forwarder's own composed sentence — same discipline :func:`_pipeline_row`
+    already established: "the numbers are what the row is actually about").
+
+    Reconstructs a ``CompactionProgressSnapshot`` from ``meta`` and renders
+    it via :func:`~.compaction_progress.compaction_progress_entry_lines` —
+    the ONE place that line-building logic lives, so this presenter and any
+    other future reader never drift apart on wording.
+
+    *spinner_frame* (the current braille glyph, or ``None`` when settled)
+    replaces line 1's static "⟳" — the SAME advance-rate/character set the
+    RUNNING tool-call row already uses (:data:`_SPINNER`/:data:`_SPINNER_
+    SPEED`), so "is this animating" reads identically across every live row
+    in the flow, no new visual vocabulary.
+    """
+    from .compaction_progress import CompactionProgressSnapshot, compaction_progress_entry_lines
+
+    snap = CompactionProgressSnapshot(
+        is_compacting=bool(meta.get("is_compacting")),
+        waiting_for=meta.get("waiting_for"),
+        waiting_elapsed_s=meta.get("waiting_elapsed_s"),
+        spill_done=meta.get("spill_done"),
+        spill_total=meta.get("spill_total"),
+        slice_len=meta.get("slice_len"),
+        head_available=meta.get("head_available"),
+        tail_available=meta.get("tail_available"),
+        budget_halvings_done=meta.get("budget_halvings_done"),
+        budget_halvings_max=meta.get("budget_halvings_max"),
+        active_rung=meta.get("active_rung"),
+        lap=meta.get("lap"),
+        call_count=meta.get("call_count"),
+    )
+    terminal_text = meta.get("terminal_text")
+    lines = compaction_progress_entry_lines(snap, terminal_text=terminal_text)
+    if spinner_frame is not None and lines:
+        lines[0] = f"{spinner_frame}{lines[0][1:]}" if lines[0].startswith("⟳") else lines[0]
+    style = _CC_ERR if terminal_text is not None and not snap.is_compacting else _CC_TEXT
+    return Text("\n".join(lines), style=style)
 
 
 def _tool_head(msg: "OutboxMessage") -> Text:
@@ -551,6 +594,11 @@ def _body_and_background(
         return body, None
     if meta.get(_PIPELINE_RUN_KEY) is not None:
         return _pipeline_row(meta), None
+    if meta.get(_COMPACTION_PROGRESS_KEY) is not None:
+        frame = None
+        if meta.get(_RUNNING_SINCE_KEY) is not None and now is not None:
+            frame = _SPINNER[int(now * _SPINNER_SPEED) % len(_SPINNER)]
+        return _compaction_progress_body(meta, spinner_frame=frame), None
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
     # (the pending/resolved placeholder — #3299 P1), so it never reaches here.
     if kind == "tool_call_started":

@@ -10771,6 +10771,29 @@ class Session:
                 # ended, which is exactly when the Ctx pane's "folded" row
                 # (#5619) shows it. Episode-joining it would blank a fact that
                 # is still correct — the opposite of what the join is for.
+        elif event.type == "router_context_overflow_unrecovered":
+            # #5588: deliberately NOT episode-joined, same reasoning as
+            # ``persisted_covers_through_seq`` above — a genuine failure IS
+            # the moment ``is_compacting``/``recovery_episode`` flip back to
+            # "not running", so an episode-joined field would be wiped on
+            # the very next read (episode is None -> the join clears every
+            # IN_FLIGHT key), before any reader could ever observe it. A
+            # DURABLE cache alone would still leak a stale old failure into
+            # a LATER successful episode's own read, so ``terminal_seq``
+            # (a plain, always-incrementing counter — never cleared, never
+            # reset) is what a caller actually compares against: "did a NEW
+            # unrecovered failure fire since I started watching" is a
+            # question a monotonic counter answers correctly regardless of
+            # whether ``terminal``'s own VALUE happens to repeat (e.g. two
+            # separate episodes both ending in MID_FLOOR) — the caller's own
+            # baseline-vs-current comparison, not this cache, is what tells
+            # "new" apart from "stale".
+            terminal = event.data.get("terminal")
+            if terminal is not None:
+                self._compaction_progress_state["terminal"] = terminal
+                self._compaction_progress_state["terminal_seq"] = (
+                    self._compaction_progress_state.get("terminal_seq") or 0
+                ) + 1
 
     def compaction_progress_raw(self) -> dict:
         """#5588: ``is_compacting`` plus the latest #5592 observability
@@ -10796,7 +10819,15 @@ class Session:
         watermark is a durable fact about a fold that happened, still true —
         and still displayed by the Ctx pane's "folded" row (#5619) — long after
         the episode that produced it ended. Blanking it between episodes would
-        hide a correct answer, which is the opposite of the join's purpose."""
+        hide a correct answer, which is the opposite of the join's purpose.
+
+        ``terminal``/``terminal_seq`` are likewise NOT joined, for the same
+        reason plus one more (see :meth:`_on_compaction_progress_event`'s
+        own comment): a genuine failure IS the moment the episode ends, so
+        joining would erase the field before any reader could see it. The
+        caller compares ``terminal_seq`` against its own remembered
+        baseline to tell "a NEW failure fired" apart from "this is an old
+        cached value" — this method never makes that call itself."""
         figures = dict(self._compaction_progress_state)
         episode = self._recovery_episode()
         if episode is None or episode != self._compaction_progress_episode:

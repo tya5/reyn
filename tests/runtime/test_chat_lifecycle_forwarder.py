@@ -471,6 +471,94 @@ def test_compaction_failed_missing_error_uses_fallback() -> None:
     assert "unknown error" in only.text
 
 
+# ── #5588: started/completed/failed carry the episode-marker absorption tag ──
+
+
+def test_compaction_started_carries_the_episode_marker_meta() -> None:
+    """Tier 2: #5588 — app.py's own single shrink-flow-episode entry absorbs
+    this marker (TUI-local) via ``meta["compaction_episode_marker"]``; the
+    frame itself is UNCHANGED for a surface with no absorption mechanism
+    (e.g. AG-UI)."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_started", data={"new_turn_count": 3}))
+    (only,) = _drain(q)
+    assert only.meta.get("compaction_episode_marker") is True
+    assert only.text == "[⟳ compacting 3 turns]", "the marker text itself is unchanged"
+
+
+def test_compaction_completed_carries_the_episode_marker_meta() -> None:
+    """Tier 2: same tag on the success marker — architect's own "existing
+    [↑ N turns compacted] text unchanged" ruling means only meta is added,
+    never the text."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_completed", data={"new_turn_count": 5}))
+    (only,) = _drain(q)
+    assert only.meta.get("compaction_episode_marker") is True
+    assert only.text == "[↑ 5 turns compacted]"
+
+
+def test_compaction_failed_carries_the_episode_marker_meta() -> None:
+    """Tier 2: same tag on the (per-compact()-call) failure marker — a
+    single failed attempt inside an active episode may still be recovered
+    by #5719's own shrink-retry ladder, so it absorbs into the episode
+    entry too rather than scattering its own line."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_failed", data={"error": "boom"}))
+    (only,) = _drain(q)
+    assert only.meta.get("compaction_episode_marker") is True
+
+
+# ── #5588: router_context_overflow_unrecovered (the TRUE end-of-episode failure) ──
+
+
+def test_router_context_overflow_unrecovered_names_mid_floor() -> None:
+    """Tier 2: #5588 architect ruling — the true end-of-ladder failure is
+    named via the RetryLoopTerminal member itself, never a parse of
+    error's own repr() text."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="router_context_overflow_unrecovered",
+        data={"error": "UnrecoveredError(...)", "terminal": "mid_floor"},
+    ))
+    (only,) = _drain(q)
+    assert only.kind == "system"
+    assert "1つのやり取りが単独で大きすぎます" in only.text
+    assert "shrink flow failed" in only.text
+
+
+def test_router_context_overflow_unrecovered_names_room_floor() -> None:
+    """Tier 2: the OTHER RetryLoopTerminal member gets its own distinct
+    text — the two are never collapsed into one."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="router_context_overflow_unrecovered",
+        data={"error": "ContextOverflowError(...)", "terminal": "room_floor"},
+    ))
+    (only,) = _drain(q)
+    assert "最新のメッセージだけで窓に入りません" in only.text
+
+
+def test_router_context_overflow_unrecovered_without_terminal_degrades_gracefully() -> None:
+    """Tier 2: a plain ContextOverflowError (no ladder-terminal distinction
+    at all — never fabricated) still emits a marker, generic rather than
+    naming an impossibility it was never told."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="router_context_overflow_unrecovered",
+        data={"error": "ContextOverflowError(...)"},
+    ))
+    (only,) = _drain(q)
+    assert only.text == "[✗ shrink flow failed]"
+    # Never absorbed — this is the ONE terminal signal, always its own line.
+    assert only.meta.get("compaction_episode_marker") is None
+
+
 # ── limit_denied (router cap) ────────────────────────────────────────────────
 
 

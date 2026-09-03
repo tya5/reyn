@@ -93,11 +93,7 @@ from .chrome import (
     status_line_text,
 )
 from .compact import compact_caps
-from .compaction_progress import (
-    CompactionProgressRow,
-    CompactionProgressSnapshot,
-    compaction_progress_lines,
-)
+from .compaction_progress import compaction_failure_text
 from .completion import CompletionPopup, CompletionState, compute_completion
 from .gutter import (
     _RUNNING_FRAME_PERIOD,
@@ -108,6 +104,7 @@ from .gutter import (
 from .intervention_panel import InterventionPanel
 from .loop_probe import LoopTripwire
 from .presenter import (
+    _COMPACTION_PROGRESS_KEY,
     _RESULT_KIND_KEY,
     _RESULT_META_KEY,
     _RUNNING_SINCE_KEY,
@@ -1498,6 +1495,22 @@ class TextualChatApp(App):
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
+        #: #5588: the ONE row for the attached session's current shrink-flow
+        #: episode — a plain reference, not a dict keyed by episode number
+        #: (:meth:`_coalesce_pipeline_step`'s own precedent), since only one
+        #: episode can be in flight for an attached session at a time.
+        #: ``None`` whenever no episode is running (mirrors ``_pipeline_
+        #: runs`` NOT holding a settled run's entry any more).
+        self._compaction_progress_entry: "Entry[OutboxMessage] | None" = None
+        #: The session's own ``compaction_progress_raw()["terminal_seq"]``
+        #: value at the moment :attr:`_compaction_progress_entry` was
+        #: created — read again at settle time to tell "a NEW unrecovered
+        #: failure fired during THIS entry's lifetime" apart from "the
+        #: field still holds an older episode's stale value" (the counter
+        #: is durable/never episode-joined in ``session.py``, precisely so
+        #: it survives long enough to be read here; see that field's own
+        #: docstring).
+        self._compaction_progress_terminal_baseline: int = 0
         # ALL pending interventions' flow entries (#3299 P2 — was single-slot
         # in P1, overwritten by a second concurrent pending intervention, an
         # architect self-review finding: ``outstanding_interventions`` is a
@@ -1955,12 +1968,12 @@ class TextualChatApp(App):
             )
             if config_warning is not None:
                 yield ConfigWarningLine(config_warning, id="config-warning")
-            # #5588: always composed (matching ActivityRow's own "created
-            # hidden, shown/hidden live via a reactive attribute" shape) —
-            # never conditionally yielded like ConfigWarningLine above,
-            # since whether compaction is running can change many times
-            # within one session, unlike a config-key count fixed at boot.
-            yield CompactionProgressRow(id="compaction-progress")
+            # #5588: shrink-flow progress no longer lives in a standalone
+            # chrome row here (owner: "今の表示だと分からん... 開始〜終了は
+            # 単一 flowview entry or group にして") — it is now ONE flowview
+            # entry (:meth:`_refresh_compaction_progress`,
+            # ``self._compaction_progress_entry``), same family as a
+            # RUNNING tool-call row, not a chrome sibling of MenuBar.
             # Bottom chrome: a focusable menu row that also carries the slim
             # status-values segment (#3326: MenuBar owns placing StatusLine on
             # whichever row has room, collapsing the two previously-separate rows
@@ -4945,6 +4958,18 @@ class TextualChatApp(App):
         if kind == "status" and meta.get("source") == "pipeline":
             if self._coalesce_pipeline_step(msg):
                 return
+        # #5588: a shrink-flow episode's own started/completed/failed
+        # markers (``lifecycle_forwarder``'s own ``compaction_episode_
+        # marker`` tag) absorb into the SAME single flowview entry the
+        # episode's progress lives on, TUI-local — the source emission is
+        # UNCHANGED (other surfaces with no episode-entry mechanism, e.g.
+        # AG-UI, still receive these frames exactly as before). Absorbed
+        # only while an entry is actually open; a marker arriving with no
+        # open entry (a REMOTE reconnect mid-episode, or the entry already
+        # settled) falls through and appends as its own row rather than
+        # being silently dropped.
+        if meta.get("compaction_episode_marker") and self._compaction_progress_entry is not None:
+            return
         op_id = meta.get("op_id")
         if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
             started = self._running_tools.pop(op_id, None)
@@ -6812,36 +6837,148 @@ class TextualChatApp(App):
         menubar.update_status(self._status_text(snap))
 
     def _refresh_compaction_progress(self, snap: "dict | None | object" = _UNSET) -> None:
-        """#5588: re-render the shrink-flow progress chrome row from a fresh
-        snapshot (or the already-read ``snap``) — the "down" trigger for
-        :class:`CompactionProgressRow`'s own ``reactive`` ``lines``
-        attribute, matching :meth:`_refresh_status`'s own shape exactly.
+        """#5588 (owner: "今の表示だと分からん... 開始〜終了は単一 flowview
+        entry or group にして"): create/update/settle the ONE flowview
+        entry for the attached session's CURRENT shrink-flow episode, from
+        a fresh snapshot (or the already-read ``snap``) — matches
+        :meth:`_refresh_status`'s own per-frame, event-driven trigger (see
+        ``_refresh_live_chrome``'s own docstring: this runs on every
+        arriving frame, DISPLAY or audit-EVENT alike, never a fixed-
+        interval poll).
+
+        Mirrors :meth:`_coalesce_pipeline_step`/:meth:`_settle_pipeline_
+        run`'s own "one row folds a whole multi-event episode" shape
+        exactly (the precedent lead-coder's #5588 review pointed at,
+        rather than a new mechanism) — :meth:`_ensure_compaction_progress_
+        entry` creates the row once and starts its spinner
+        (:meth:`_begin_running_indicator`'s own live-spinner convention,
+        never a new visual vocabulary), each call while running re-derives
+        the row's body from the CURRENT snapshot's numbers (never text —
+        see ``presenter.py``'s own ``_compaction_progress_body``), and
+        :meth:`_settle_compaction_progress` stops the spinner and gives the
+        row a terminal state exactly once (success or failure, never
+        zero — owner's own real-machine report that ``compaction_failed``
+        firing is something they rely on seeing).
+
         Absent snapshot key (a REMOTE connection, which does not report
         this yet — see ``status.py``'s own #5588 comment) degrades to
-        ``is_compacting=False``, never a fabricated value."""
-        try:
-            row = self.query_one(CompactionProgressRow)
-        except Exception:
-            return  # not yet mounted
+        ``is_compacting=False`` and settles any open entry as SUCCESS
+        (never a fabricated failure) — never a spinner left running for a
+        fact this connection cannot see.
+        """
         snapshot = self._snapshot() if snap is _UNSET else snap
         snapshot = snapshot or {}
         if not snapshot.get("compaction_progress_reported", True):
-            row.lines = ["compaction progress not reported on this connection"]
+            self._settle_compaction_progress(terminal_text=None)
             return
         raw = snapshot.get("compaction_progress_raw") or {}
-        row.lines = compaction_progress_lines(
-            CompactionProgressSnapshot(
-                is_compacting=raw.get("is_compacting", False),
-                spill_done=(
-                    raw["raw_middle_total"] - raw["raw_middle_remaining"]
-                    if raw.get("raw_middle_total") is not None
-                    and raw.get("raw_middle_remaining") is not None
-                    else None
-                ),
-                spill_total=raw.get("raw_middle_total"),
-                call_count=raw.get("upstream_recovery_call_count"),
-            )
+        is_compacting = bool(raw.get("is_compacting", False))
+        meta = {
+            "is_compacting": is_compacting,
+            "spill_done": (
+                raw["raw_middle_total"] - raw["raw_middle_remaining"]
+                if raw.get("raw_middle_total") is not None
+                and raw.get("raw_middle_remaining") is not None
+                else None
+            ),
+            "spill_total": raw.get("raw_middle_total"),
+            "call_count": raw.get("upstream_recovery_call_count"),
+        }
+        if is_compacting:
+            self._ensure_compaction_progress_entry(raw)
+            entry = self._compaction_progress_entry
+            if entry is None:
+                return
+            try:
+                entry.set_item(replace(entry.item, meta={**entry.item.meta, **meta}))
+            except Exception:
+                logger.exception("textual chat: could not update compaction progress row")
+            return
+        # #5588 acceptance ③: a NEW terminal_seq since this entry was
+        # created is the ONLY thing that makes this an ERROR settle — a
+        # stale (already-baselined) terminal value from an EARLIER episode
+        # must never re-fail a episode that actually just succeeded.
+        terminal_text = None
+        terminal_seq = raw.get("terminal_seq")
+        terminal = raw.get("terminal")
+        if (
+            isinstance(terminal_seq, int)
+            and terminal_seq > self._compaction_progress_terminal_baseline
+            and terminal is not None
+        ):
+            try:
+                from reyn.services.compaction.engine import RetryLoopTerminal as _RLT
+                terminal_text = compaction_failure_text(_RLT(terminal))
+            except Exception:
+                logger.exception("textual chat: could not resolve compaction terminal text")
+        self._settle_compaction_progress(terminal_text=terminal_text, meta=meta)
+
+    def _ensure_compaction_progress_entry(self, raw: dict) -> None:
+        """#5588: create the shrink-flow-episode row ONCE (idempotent — a
+        no-op while :attr:`_compaction_progress_entry` is already set) and
+        start its spinner, mirroring :meth:`_begin_running_indicator`'s own
+        two-step shape (stamp :data:`_RUNNING_SINCE_KEY`, register the
+        per-entry ``animate_entry`` timer) rather than
+        :meth:`_coalesce_pipeline_step`'s own ``start_entry_animation``
+        call — that method does not exist on the installed
+        ``textual_flowview`` (confirmed: its own ``try``/``except`` swallows
+        the ``AttributeError`` every time, so a pipeline run's row never
+        actually spins today — a real, pre-existing, OUT-OF-SCOPE bug for
+        THIS issue, disclosed rather than silently copied into new code)."""
+        if self._compaction_progress_entry is not None:
+            return
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+        item = OutboxMessage(
+            kind="system",
+            text="",  # #5588: body is meta-driven (_compaction_progress_body)
+            meta={
+                _COMPACTION_PROGRESS_KEY: True,
+                _RUNNING_SINCE_KEY: self._clock(),
+                "is_compacting": True,
+            },
         )
+        try:
+            entry = self.conversation.append(item)
+            entry.set_state(EntryState.RUNNING)
+            self._flow.animate_entry(entry, 1.0 / self.RUNNING_BODY_FPS, lambda e: e.update())
+        except Exception:
+            logger.exception("textual chat: could not start compaction progress row")
+            return
+        self._compaction_progress_entry = entry
+        self._compaction_progress_terminal_baseline = raw.get("terminal_seq") or 0
+
+    def _settle_compaction_progress(
+        self, *, terminal_text: "str | None", meta: "dict | None" = None,
+    ) -> None:
+        """#5588 acceptance ③: stop the spinner and give the row a terminal
+        state EXACTLY ONCE — a no-op when no entry is open (already
+        settled, or never started), so a caller may call this
+        unconditionally every refresh cycle while ``is_compacting`` reads
+        False. *terminal_text* is ``None`` for a success settle (architect:
+        keep the EXISTING ``[↑ N turns compacted]`` marker as the success
+        text elsewhere — this row's own text never duplicates it, only its
+        gutter state flips to SUCCESS) or the resolved ``RetryLoopTerminal``
+        sentence for a genuine unrecovered failure."""
+        entry = self._compaction_progress_entry
+        if entry is None:
+            return
+        try:
+            self._flow.stop_entry_animation(entry)
+        except Exception:
+            logger.exception("textual chat: could not stop compaction progress indicator")
+        merged = {k: v for k, v in entry.item.meta.items() if k != _RUNNING_SINCE_KEY}
+        if meta:
+            merged.update(meta)
+        merged["is_compacting"] = False
+        if terminal_text is not None:
+            merged["terminal_text"] = terminal_text
+        try:
+            entry.set_item(replace(entry.item, meta=merged))
+        except Exception:
+            logger.exception("textual chat: could not settle compaction progress row")
+        entry.set_state(EntryState.ERROR if terminal_text is not None else EntryState.SUCCESS)
+        self._compaction_progress_entry = None
 
     def watch__destination(self, old_value: "_Destination", new_value: "_Destination") -> None:
         """#5131: the App is now showing a DIFFERENT agent (init or a real
