@@ -56,44 +56,109 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     # number for chat regardless: how many older turns were summarised and
     # the raw->bridge token compression.
     n = result.get("summarized_turns", 0)
-    if n <= 0:
-        free_after = result.get("free_window_after")
-        # #5579 (owner's real machine, 2026-08-30): ``summarized_turns == 0``
-        # has THREE possible causes — genuinely nothing to fold, an attempt
-        # that folded nothing, or a watermark that failed to advance — and
-        # this function has no way to tell them apart (``force_compact_now``
-        # returns nothing; see session.py's own ``_compact_now_for_op``).
-        # The PREVIOUS wording asserted "already fits the window"
-        # unconditionally on ``n <= 0`` — true only for the first cause. The
-        # owner's own machine showed the contradiction directly: "already
-        # fits the window. Free window: ~0 tokens." in the SAME line.
-        # ``free_window_after`` (``max(0, effective_trigger - after)``,
-        # already computed, no new threshold needed) is the one number that
-        # actually says whether the window fits: `> 0` means room remains,
-        # `== 0` means it does not — regardless of why ``n`` came back 0.
-        if free_after is not None and free_after <= 0:
-            await reply(
-                ctx,
-                "Nothing was compacted this pass, and the window is still "
-                "full (~0 tokens free) — /compact did not free any room. "
-                "This may mean there was nothing eligible to fold, or an "
-                "attempt folded nothing; either way, running /compact "
-                "again right now is unlikely to help further.",
-            )
-            return
-        tail = f" Free window: ~{free_after} tokens." if free_after is not None else ""
+    free_after = result.get("free_window_after")
+    free_tail = f" Free window: ~{free_after} tokens." if free_after is not None else ""
+
+    if n > 0:
+        compressed = result.get("compressed_tokens", 0)
+        bridge = result.get("bridge_tokens", 0)
+        word = "turn" if n == 1 else "turns"
         await reply(
             ctx,
-            "✓ Nothing to compact right now — recent history already fits the "
-            "window." + tail,
+            f"✓ Compacted — summarised {n} older {word} (~{compressed} tokens) into a "
+            f"~{bridge}-token summary bridge.",
         )
         return
 
-    compressed = result.get("compressed_tokens", 0)
-    bridge = result.get("bridge_tokens", 0)
-    word = "turn" if n == 1 else "turns"
+    # #5708 (owner real-machine incident, #5579's own follow-up): `n == 0`
+    # used to collapse THREE distinct causes into one hedged sentence — the
+    # owner's own machine showed the contradiction directly ("already fits
+    # the window. Free window: ~0 tokens." in the same line). `force_compact_
+    # now` (via `Session._compact_now_for_op`) now RETURNS which of its 4
+    # outcomes actually fired, so each gets its own, non-hedged wording —
+    # never "may mean X or Y". `free_window`/`free_after` is an ORTHOGONAL
+    # fact (#5708 acceptance ③): appended where it adds information, never
+    # used to infer WHY nothing was summarised.
+    outcome = result.get("compaction_outcome")
+    candidate_count = result.get("compaction_candidate_count", 0)
+
+    if outcome == "already_running":
+        await reply(
+            ctx,
+            "Another compaction pass is already running — try /compact "
+            "again once it finishes." + free_tail,
+        )
+        return
+
+    if outcome == "compaction_input_gap_invariant_violated":
+        # A defensive invariant, not a routine outcome (compaction_
+        # controller.py's own comment on this branch) — an operator seeing
+        # this has hit something unexpected, not "nothing to do".
+        await reply_error(
+            ctx,
+            "compaction could not run: an internal consistency check "
+            "failed (compaction_input_gap_invariant_violated). This is "
+            "unexpected — please report it.",
+        )
+        return
+
+    if outcome == "forced_sync" and candidate_count > 0:
+        # #5708 acceptance ②: distinguishes THIS case (candidates were
+        # selected, an attempt ran) from `forced_sync_no_turns`/
+        # `candidate_count == 0` below (nothing was ever selected) — the
+        # exact distinction `summarized_turns == 0` alone could not make.
+        count_word = f"{candidate_count} candidate{'s' if candidate_count != 1 else ''}"
+        if result.get("compaction_failed"):
+            # #5708 acceptance ④: `_run_compaction` raised (swallowed,
+            # #5633 — the exception itself never reaches this caller,
+            # only the fact that it happened does). State it plainly —
+            # no "may indicate", the caller asked for a fact, not a
+            # guess.
+            await reply_error(
+                ctx,
+                f"Compaction failed while processing {count_word} — no "
+                "summary was persisted. Check the audit log for "
+                "compaction_failed for details.",
+            )
+            return
+        # No exception, but the watermark still did not advance — a
+        # genuinely unresolved case (this IS the honest limit of what
+        # `force_compact_now` currently reports back); the hedge stays
+        # here, narrowed to only this one residual unknown rather than
+        # spread across every `n <= 0` result the way it used to be.
+        await reply(
+            ctx,
+            f"An attempt to compact ran ({count_word}), but it did not "
+            "advance — no summary was persisted, though no failure was "
+            "recorded either. Check the audit log for compaction_check/"
+            "recovery_summary_persisted for detail." + free_tail,
+        )
+        return
+
+    # outcome in {"forced_sync_no_turns", "forced_sync" with candidate_
+    # count == 0} (or an old-shaped result with no `compaction_outcome` at
+    # all — a legacy caller) — genuinely nothing eligible to fold (no
+    # candidates were ever selected), the one case the pre-#5708 wording
+    # was actually correct for.
+    #
+    # #5579 (acceptance ③, kept unchanged): `free_window_after` is an
+    # ORTHOGONAL fact from WHY nothing was selected — a genuinely-empty
+    # candidate set can still coincide with a window that has NOT
+    # recovered any room (`free_after <= 0`, the owner's own observed
+    # contradiction: "already fits the window. Free window: ~0 tokens."
+    # in the same line). Keep the two wordings distinct here, exactly as
+    # #5579 fixed them — this branch only decides "nothing was eligible",
+    # never "the window has room".
+    if free_after is not None and free_after <= 0:
+        await reply(
+            ctx,
+            "Nothing was compacted this pass, and the window is still "
+            "full (~0 tokens free) — /compact did not free any room. "
+            "There was nothing eligible to fold.",
+        )
+        return
     await reply(
         ctx,
-        f"✓ Compacted — summarised {n} older {word} (~{compressed} tokens) into a "
-        f"~{bridge}-token summary bridge.",
+        "✓ Nothing to compact right now — recent history already fits the "
+        "window." + free_tail,
     )
