@@ -187,7 +187,13 @@ def _spilling_one_content_shaped_candidate_at_a_time(
     were OFFERED on each call (``spill_calls``), so a test can assert on
     call count without pinning an internal iteration count."""
 
-    def _spill_fn(offered: "list[dict]") -> "list[tuple[int, dict]]":
+    def _spill_fn(
+        offered: "list[dict]", *, seq_by_id: "dict[int, int] | None" = None,
+    ) -> "list[tuple[int, dict]]":
+        # #5726: force_compact_now's own real spill_fn contract now also
+        # passes seq_by_id (compaction_controller.py's own _spill_fn_
+        # adapted always supplies one) — accepted and ignored here, this
+        # fixture's own subject is spill engagement, not provenance.
         spill_calls.append(len(offered))
         for idx, item in enumerate(offered):
             if item.get("spillability") == "never":
@@ -258,7 +264,11 @@ async def test_mid_floor_records_that_spill_was_offered():
     engine = _OverflowsUntilFewEnoughEngine(events, fits_at_or_below_chars=0)
     ctrl, _collected, _hist = _make_controller(history=history, engine=engine, events=events)
 
-    def _never_spillable(_offered: "list[dict]") -> "list[tuple[int, dict]]":
+    def _never_spillable(
+        _offered: "list[dict]", *, seq_by_id: "dict[int, int] | None" = None,
+    ) -> "list[tuple[int, dict]]":
+        # #5726: accepted and ignored -- see _spilling_one_content_shaped_
+        # candidate_at_a_time's own comment for why.
         return []  # every real spill_fn answer is "nothing eligible"
 
     result = await ctrl.force_compact_now(spill_fn=_never_spillable)
@@ -330,7 +340,11 @@ async def test_falls_through_to_halving_when_nothing_is_spillable():
     engine = _OverflowsUntilFewEnoughEngine(events, fits_at_or_below_chars=810)
     ctrl, _collected, hist = _make_controller(history=history, engine=engine, events=events)
 
-    def _never_spillable(_offered: "list[dict]") -> "list[tuple[int, dict]]":
+    def _never_spillable(
+        _offered: "list[dict]", *, seq_by_id: "dict[int, int] | None" = None,
+    ) -> "list[tuple[int, dict]]":
+        # #5726: accepted and ignored -- see _spilling_one_content_shaped_
+        # candidate_at_a_time's own comment for why.
         return []
 
     result = await ctrl.force_compact_now(spill_fn=_never_spillable)

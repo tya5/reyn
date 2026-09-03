@@ -976,10 +976,27 @@ class RouterLoopDriver:
                     # own retry_loop call above already used (this
                     # fallback pass is still semantically part of
                     # recovering THIS turn's overflow).
+                    #
+                    # #5726: `seq_by_id` is deliberately NOT bound here
+                    # (unlike the retry_loop call above, this call site's
+                    # own `payload.seq_by_id` would be STALE for what
+                    # `force_compact_now` actually offers — a fresh
+                    # `_run_compaction` candidate read from disk, not
+                    # `payload`'s own wire dicts). `compaction_controller.
+                    # py`'s own `_spill_fn_adapted` now computes a fresh,
+                    # correct `seq_by_id` from the wire dicts it actually
+                    # builds and calls this partial with it explicitly —
+                    # binding one here too would collide (`got multiple
+                    # values for keyword argument 'seq_by_id'`), the exact
+                    # class of bug #5725 introduced for the OTHER
+                    # force_compact_now caller (session.py, unwired
+                    # entirely) — this caller was wired, just to a value
+                    # that would now double-bind rather than one that
+                    # would ever have matched `_run_compaction`'s own
+                    # fresh candidates in the first place.
                     await self._compaction_controller.force_compact_now(
                         spill_fn=_partial(
-                            self._spill_batch_for_retry,
-                            chain_id=chain_id, seq_by_id=payload.seq_by_id,
+                            self._spill_batch_for_retry, chain_id=chain_id,
                         ),
                     )
                 raise
