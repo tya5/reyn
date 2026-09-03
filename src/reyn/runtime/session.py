@@ -10810,6 +10810,14 @@ class Session:
         kept for the op contract shared with the phase axis (where it is
         the real control_ir shrink); callers front the compression numbers
         for chat regardless of what ``freed_tokens`` reads.
+
+        #5708: also carries ``compaction_outcome``/``compaction_candidate_
+        count``, threaded straight from ``force_compact_now``'s own
+        ``ForceCompactResult`` (never re-derived from the before/after
+        ``covers_through_seq`` delta, which cannot distinguish WHY
+        ``summarized_turns`` came back 0). ``/compact`` reads these to
+        name the actual cause instead of hedging between causes it used
+        to have no way to tell apart.
         """
         import json as _json
 
@@ -10830,7 +10838,7 @@ class Session:
 
         effective_trigger, before = self._budget_advisor._free_window_now()
         prev_cover = _cover()
-        await self._compaction_controller.force_compact_now()
+        compaction_outcome = await self._compaction_controller.force_compact_now()
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()
 
@@ -10858,6 +10866,19 @@ class Session:
             "summarized_turns": len(middle),
             "compressed_tokens": sum(_est(m.text) for m in middle),
             "bridge_tokens": _est(bridge_text) if summary is not None else 0,
+            # #5708: threaded through from `force_compact_now`'s own
+            # `ForceCompactResult` — see that class's docstring. Lets a
+            # caller (``/compact``) distinguish "genuinely nothing
+            # eligible" from "an attempt ran but folded/advanced nothing"
+            # from "already running" from "internal invariant violated",
+            # all of which otherwise looked identical (``summarized_turns
+            # == 0``) from this dict alone.
+            "compaction_outcome": compaction_outcome.outcome,
+            "compaction_candidate_count": compaction_outcome.candidate_count,
+            # #5708 acceptance ④: the one bit `_run_compaction` raising
+            # left with no way to reach this caller — the exception itself
+            # stays swallowed (intentional, #5633), only the FACT survives.
+            "compaction_failed": compaction_outcome.failed,
         }
 
     def reasoning_continuity_section(self) -> str:

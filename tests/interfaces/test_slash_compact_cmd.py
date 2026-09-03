@@ -2,7 +2,18 @@
 
 `compact_cmd` has four distinct paths based on whether the compaction engine
 is wired, whether it raises, and the `summarized_turns` value in its result.
-"""
+
+#5708 (owner real-machine incident): before this, EVERY `summarized_turns
+<= 0` result rendered as one of two hedged messages regardless of WHY
+nothing was summarised — `force_compact_now` had no way to tell the caller
+"already_running" apart from "genuinely nothing eligible" apart from "an
+attempt ran but did not advance" apart from "an internal invariant was
+violated", so `/compact` could not either (its own comment, verbatim,
+named the defect: "this function has no way to tell them apart"). The 4
+tests below (`test_compact_*_outcome_*`) pin that each of the `compaction_
+outcome` values `Session._compact_now_for_op` now threads through from
+`CompactionController.ForceCompactResult` produces its OWN, non-hedged
+wording — the acceptance-item-① witness."""
 from __future__ import annotations
 
 import pytest
@@ -156,3 +167,119 @@ async def test_compact_success_plural_turns_word() -> None:
     await compact_cmd(_ctx(session), "")
     text = session.reply_text()
     assert "turns" in text, f"plural not used; got: {text!r}"
+
+
+# --- #5708: outcome-specific wording (the acceptance-① witness) -----------
+
+
+@pytest.mark.asyncio
+async def test_compact_outcome_already_running_names_the_cause() -> None:
+    """Tier 2: `already_running` gets its own wording — "try again", not
+    "nothing to compact" (a DIFFERENT actionable next step)."""
+    async def _running():
+        return {"summarized_turns": 0, "compaction_outcome": "already_running"}
+
+    session = _FakeSession(compact_now=_running)
+    await compact_cmd(_ctx(session), "")
+    text = session.reply_text()
+    assert "already running" in text.lower(), f"got: {text!r}"
+    assert "already fits" not in text.lower()
+    assert not session.error_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_outcome_invariant_violated_is_an_error_not_a_hedge() -> None:
+    """Tier 2: `compaction_input_gap_invariant_violated` is a genuine
+    internal anomaly (compaction_controller.py's own comment: "a defensive
+    invariant, not a routine outcome") — must surface as an error, not a
+    quiet "nothing to compact"."""
+    async def _violated():
+        return {
+            "summarized_turns": 0,
+            "compaction_outcome": "compaction_input_gap_invariant_violated",
+        }
+
+    session = _FakeSession(compact_now=_violated)
+    await compact_cmd(_ctx(session), "")
+    assert session.error_text(), "expected an error reply for an invariant violation"
+    assert "invariant" in session.error_text().lower()
+    assert not session.reply_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_outcome_forced_sync_with_candidates_but_no_progress() -> None:
+    """Tier 2: acceptance ② — `forced_sync` WITH candidates selected but
+    `summarized_turns == 0` (the watermark never advanced) must read
+    DIFFERENTLY from `forced_sync_no_turns`/`candidate_count == 0` below —
+    an attempt genuinely ran and did not complete, not "nothing eligible"."""
+    async def _stalled():
+        return {
+            "summarized_turns": 0,
+            "compaction_outcome": "forced_sync",
+            "compaction_candidate_count": 7,
+        }
+
+    session = _FakeSession(compact_now=_stalled)
+    await compact_cmd(_ctx(session), "")
+    text = session.reply_text()
+    assert "7" in text, f"candidate count not surfaced; got: {text!r}"
+    assert "did not complete" in text.lower() or "attempt" in text.lower(), (
+        f"got: {text!r}"
+    )
+    assert "already fits" not in text.lower(), (
+        "must not be conflated with the genuinely-nothing-eligible case"
+    )
+    assert "nothing eligible" not in text.lower(), (
+        "must not be conflated with the genuinely-nothing-eligible case"
+    )
+    assert not session.error_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_outcome_forced_sync_failed_says_so_plainly() -> None:
+    """Tier 2: acceptance ④ — `compaction_failed=True` (an exception the
+    swallow in `force_compact_now` caught) must state the fact PLAINLY, as
+    an error, not hedge with "may indicate a compaction failure" the way
+    the unconfirmed-stall case does. (423 here is an arbitrary test value,
+    not a claim about any specific real-machine incident.)"""
+    async def _failed():
+        return {
+            "summarized_turns": 0,
+            "compaction_outcome": "forced_sync",
+            "compaction_candidate_count": 423,
+            "compaction_failed": True,
+        }
+
+    session = _FakeSession(compact_now=_failed)
+    await compact_cmd(_ctx(session), "")
+    err = session.error_text()
+    assert err, f"expected an error reply for a confirmed failure, got reply: {session.reply_text()!r}"
+    assert "423" in err, f"candidate count not surfaced; got: {err!r}"
+    assert "failed" in err.lower()
+    assert "may indicate" not in err.lower(), (
+        "a CONFIRMED failure must not be hedged the same way the "
+        "unconfirmed-stall case is"
+    )
+    assert not session.reply_text()
+
+
+@pytest.mark.asyncio
+async def test_compact_outcome_forced_sync_no_turns_still_says_nothing_eligible() -> None:
+    """Tier 2: acceptance ② deny side — `forced_sync_no_turns` (or
+    `forced_sync` with `candidate_count == 0`) is the ONE case the
+    pre-#5708 "already fits" wording was correct for; it must stay
+    distinct from the stalled-attempt case above (same `summarized_turns
+    == 0`, different `compaction_outcome`)."""
+    async def _no_turns():
+        return {
+            "summarized_turns": 0,
+            "compaction_outcome": "forced_sync_no_turns",
+            "free_window_after": 12000,
+        }
+
+    session = _FakeSession(compact_now=_no_turns)
+    await compact_cmd(_ctx(session), "")
+    text = session.reply_text()
+    assert "already fits" in text.lower(), f"got: {text!r}"
+    assert "did not complete" not in text.lower()
+    assert not session.error_text()

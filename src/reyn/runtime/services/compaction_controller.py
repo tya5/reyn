@@ -26,6 +26,7 @@ delegates via :meth:`force_compact_now` (P3).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 from reyn.config import CompactionConfig
@@ -60,6 +61,52 @@ if TYPE_CHECKING:
     from reyn.services.compaction.engine import ChatSummary
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ForceCompactResult:
+    """#5708 (owner real-machine incident): what :meth:`CompactionController.
+    force_compact_now` actually did — the SAME ``outcome`` the ``compaction_
+    check`` audit-event already carries at each of its 4 exit points, now
+    also RETURNED instead of discarded. Before this, the caller
+    (``Session._compact_now_for_op``) had no way to tell "genuinely nothing
+    eligible" apart from "an attempt ran but folded nothing" apart from "a
+    watermark that failed to advance" — all three produced the identical
+    ``summarized_turns == 0`` (derived from a before/after ``covers_
+    through_seq`` delta, the only signal it had), and ``/compact``'s own
+    message had to hedge between causes it could not distinguish (the exact
+    defect this closes).
+
+    ``outcome`` is one of the 4 literal strings ``force_compact_now``'s own
+    ``self._events.emit("compaction_check", outcome=...)`` calls use —
+    passed through the SAME variable at each call site (see that method's
+    body), never re-typed, so this type and the audit trail cannot drift
+    apart. Deliberately NOT a single boolean (architect's #5699 ruling,
+    cited again for this issue): the caller's possible questions differ —
+    "should I retry now" (``already_running``), "is there really nothing
+    to fold" (``forced_sync_no_turns``), "did the internal invariant hold"
+    (``compaction_input_gap_invariant_violated``), "did an attempt run,
+    and if so on how many candidates" (``forced_sync`` + ``candidate_
+    count``) — collapsing them into one true/false would re-lose exactly
+    the distinction this type exists to carry.
+
+    ``failed`` (#5708 acceptance ④, added mid-fix on lead-coder review):
+    ``_run_compaction`` raising is
+    deliberately still swallowed here (#5633 — its own ``compaction_
+    failed`` audit event already fired at its origin, and re-raising
+    would propagate an exception past this method's own established
+    no-throw contract). But "the event was emitted" is not "the caller
+    was told" — audit is the observability plane, a return value is the
+    control plane, and this field is what closes THAT gap: the CALLER
+    (``/compact``) gets the fact "an attempt genuinely failed", never the
+    exception itself, so it can say so instead of the pre-#5708 "Nothing
+    was compacted this pass" a swallowed failure used to render as.
+    """
+
+    outcome: str
+    candidate_count: int = 0
+    batch_truncated: bool = False
+    failed: bool = False
 
 
 def _estimate_tokens(text: str) -> int:
@@ -291,7 +338,7 @@ class CompactionController:
             and t.seq > prev_cover
         ]
 
-    async def force_compact_now(self) -> None:
+    async def force_compact_now(self) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
         #5528: the pre-frame guard that used to call this proactively, on
@@ -300,6 +347,13 @@ class CompactionController:
         ``router_loop_driver.py``'s byte-limit recovery path) or on-demand
         (``/compact`` / the ``compact`` op). Emits ``compaction_check``
         with ``outcome="forced_sync"``.
+
+        #5708: RETURNS a :class:`ForceCompactResult` naming which of the 4
+        outcomes fired, instead of ``None`` — every exit point below both
+        emits the audit event AND returns the matching result from the
+        SAME outcome literal (never two separately-typed copies of the
+        same fact). See that class's own docstring for why the caller
+        needs the full outcome, not a collapsed boolean.
 
         #1128 PR-c: collapsed from the former Option-B race-recovery loop
         (``max_passes`` re-measure + ``ForceCompactRaceUnrecoveredError``) to a
@@ -318,8 +372,9 @@ class CompactionController:
         Cross-driver turn serialization is the shared per-agent lock's job (PR-b).
         """
         if self._compacting:
-            self._events.emit("compaction_check", outcome="already_running")
-            return
+            outcome = "already_running"
+            self._events.emit("compaction_check", outcome=outcome)
+            return ForceCompactResult(outcome=outcome)
 
         latest = self._latest_summary()
         prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
@@ -356,8 +411,9 @@ class CompactionController:
         # rather than re-derived, so this can never drift from them again.
         turns = [m for m in history if is_compaction_eligible(m)]
         if not turns:
-            self._events.emit("compaction_check", outcome="forced_sync_no_turns")
-            return
+            outcome = "forced_sync_no_turns"
+            self._events.emit("compaction_check", outcome=outcome)
+            return ForceCompactResult(outcome=outcome)
         # #4472 architect review, point ③: NOT a normal branch — a defensive
         # invariant, not a routine outcome. The durable read always starts
         # its batch immediately after `prev_cover` (only the END of the
@@ -372,37 +428,48 @@ class CompactionController:
         # itself was.
         resident_seqs = [t.seq for t in turns if t.seq > 0]
         if resident_seqs and min(resident_seqs) > prev_cover + 1:
-            self._events.emit(
-                "compaction_check", outcome="compaction_input_gap_invariant_violated",
-            )
-            return
+            outcome = "compaction_input_gap_invariant_violated"
+            self._events.emit("compaction_check", outcome=outcome)
+            return ForceCompactResult(outcome=outcome)
         candidates = self._select_candidates(turns, prev_cover)
 
+        outcome = "forced_sync"
         self._events.emit(
-            "compaction_check", outcome="forced_sync",
+            "compaction_check", outcome=outcome,
             batch_truncated=batch_truncated,
             candidate_count=len(candidates),
         )
         if not candidates:
-            return
+            return ForceCompactResult(
+                outcome=outcome, candidate_count=0, batch_truncated=batch_truncated,
+            )
 
         self._compacting = True
+        failed = False
         try:
             await self._run_compaction(candidates, latest)
         except Exception:
-            # #5633 (lead-coder review): NOT re-emitted here. Whatever
-            # `_run_compaction` raises has already had its own
-            # `compaction_failed` emitted at its own origin —
-            # `CompactionEngine.compact()`'s own except for a compact()
+            # #5633 (lead-coder review): NOT re-raised, and NOT re-emitted
+            # here — whatever `_run_compaction` raises has already had its
+            # own `compaction_failed` emitted at its own origin
+            # (`CompactionEngine.compact()`'s own except for a compact()
             # failure, or `_run_compaction`'s own post-processing
-            # `try`/`except` for anything after `compact()` returns (see
+            # `try`/`except` for anything after `compact()` returns; see
             # `_run_compaction`'s own comment for why those two `try`
-            # blocks never overlap). This bare catch exists only so a
-            # compaction failure never propagates past `force_compact_now`
-            # to ITS OWN caller.
-            pass
+            # blocks never overlap). Swallowing the exception itself
+            # stays correct (`force_compact_now`'s own no-throw contract
+            # is intentional, #5633) — #5708's own finding is narrower:
+            # "the event was emitted" is not "the caller was told", so
+            # `failed` below carries the ONE bit of fact the caller
+            # actually needs (an attempt genuinely failed) without
+            # propagating the exception object itself.
+            failed = True
         finally:
             self._compacting = False
+        return ForceCompactResult(
+            outcome=outcome, candidate_count=len(candidates),
+            batch_truncated=batch_truncated, failed=failed,
+        )
 
     async def persist_recovery_summary(
         self, chat_summary: "ChatSummary", *, covers_through_seq: int,
