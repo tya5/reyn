@@ -3901,7 +3901,7 @@ class AgentRegistry:
         session = self.get_or_load(name)
         key = (name, sid)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = self._spawn_session_run(name, sid, session.run())
+            self._ensure_session_run(name, sid, session)
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         return session
@@ -3922,7 +3922,7 @@ class AgentRegistry:
             return None
         key = (name, sid)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = self._spawn_session_run(name, sid, session.run())
+            self._ensure_session_run(name, sid, session)
         return session
 
     def bind_focus_listeners(
@@ -4103,9 +4103,8 @@ class AgentRegistry:
         Old agent stays in `self._tasks` (background).
 
         ``start_runner`` (#4113, architect ruling 2026-08-10): False skips
-        ONLY the ``self._spawn_session_run(name, sid, new_session.run())``
-        line below —
-        load happens regardless (``get_or_load`` a few lines down), and
+        ONLY the ``self._ensure_session_run(name, sid, new_session)`` line
+        below — load happens regardless (``get_or_load`` a few lines down), and
         every other side effect (forwarder, focus-listener wiring,
         connection switch, announce, pending-intervention replay) is
         UNCHANGED. Exists for ``reyn run-once``: fixing the "violating
@@ -4150,7 +4149,7 @@ class AgentRegistry:
         # Boot session.run() + forwarder on first attach. Keep them alive
         # across detach/re-attach cycles — shutdown drains via `running_tasks()`.
         if start_runner and (key not in self._tasks or self._tasks[key].done()):
-            self._tasks[key] = self._spawn_session_run(name, sid, new_session.run())
+            self._ensure_session_run(name, sid, new_session)
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(
                 self._forwarder(name, sid)
@@ -4191,7 +4190,7 @@ class AgentRegistry:
         if old != key:
             self._wire_focus_listeners(target)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = self._spawn_session_run(name, sid, target.run())
+            self._ensure_session_run(name, sid, target)
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         self._connection.switch(key)
@@ -4314,8 +4313,8 @@ class AgentRegistry:
         hold under real OS threads). Whichever path's `pop` returns
         non-`None` first is the sole owner for that entry; the other finds
         `None` and skips. Separately, `attach()`/`ensure_running()` ALSO each
-        independently guard their own `self._spawn_session_run(name, sid,
-        session.run())` call against re-creation (`if key not in self._tasks or
+        independently guard their own `self._ensure_session_run(name, sid,
+        session)` call against re-creation (`if key not in self._tasks or
         self._tasks[key].done(): ...`), so even a session already restored
         by one path never gets a second run-task from the other.
         """
@@ -4350,11 +4349,14 @@ class AgentRegistry:
         self, name: str, sid: str, coro: "Coroutine[Any, Any, Any]",
     ) -> asyncio.Task:
         """#5694 stage 2 (architect ruling): the ONE creation site for a
-        ``(name, sid)`` background ``session.run()`` task — every one of
-        this file's 4 pre-existing ``asyncio.create_task(<session>.run())``
+        ``(name, sid)`` background ``session.run()`` task. Originally
+        (this method's own first PR) called directly from each of this
+        file's 4 pre-existing ``asyncio.create_task(<session>.run())``
         call sites (``ensure_running``, ``ensure_session_running``,
-        ``attach``, ``attach_session``) now routes through this method
-        instead of calling ``asyncio.create_task`` directly.
+        ``attach``, ``attach_session``); a later same-issue PR added
+        :meth:`_ensure_session_run` between them and this method (see
+        that method's own docstring) — all 4 sites now route through
+        THAT method, which is this method's own sole caller.
 
         Root cause this closes: measured directly (``git grep -c
         'create_task(' registry.py`` before this change) — 4 creation
@@ -4491,6 +4493,109 @@ class AgentRegistry:
             logger.warning(
                 "registry: failed to emit session_run_task_finished for "
                 "(%r, %r) (diagnostic-only, does not block anything)",
+                name, sid, exc_info=True,
+            )
+
+    def _ensure_session_run(self, name: str, sid: str, session: "object") -> asyncio.Task:
+        """#5694 stage 2 disposition (architect ruling): the ONE place that
+        decides "reuse the existing `(name, sid)` run-task, or spawn a
+        fresh one" — folds the `if key not in self._tasks or self._tasks
+        [key].done(): self._tasks[key] = self._spawn_session_run(...)`
+        pattern this file's 4 call sites (`ensure_running`,
+        `ensure_session_running`, `attach`, `attach_session`) each
+        duplicated, the direct continuation of #5715's own
+        `_spawn_session_run` consolidation.
+
+        Architect's own framing: the disposition for #5694 is NOT a new
+        automatic restart policy — a request-driven restart (this exact
+        guard) was ALREADY happening, silently. "新しい自動動作を足しません
+        … 問いは『再起動するか』ではありません。もう しています。問いは
+        『それが記録されているか』で、答えはされていません。" Verified
+        before implementing (not merely inherited from the ruling's own
+        structural argument): every production caller of the 4 methods
+        this guard lives in (`ensure_running`/`ensure_session_running`/
+        `attach`/`attach_session`) is itself triggered by a real request —
+        an HTTP/SSE endpoint handling an inbound connection or submit, a
+        CLI command's own startup, a cron/webhook ingress adapter firing
+        on a real external event, an agent-to-agent message delivery
+        (`wake=True` only), or a pipeline step's own settle-time delivery
+        — never a bare periodic poll of registry state with no request
+        behind it. This confirms (does not merely assume) the "the
+        request side already IS the backstop, no separate crash-loop
+        guard is needed" premise the ruling's own charter-Q1 answer rests
+        on.
+
+        This method emits ONE additional fact `_on_session_run_task_done`
+        does not: not "a task finished" (already recorded there, at the
+        moment it happened) but "THIS caller, right now, discovered a
+        PRIOR task was already done and is replacing it" — the moment
+        #5694's own incident showed gets silently consumed as a mere
+        restart trigger, with no record anywhere that it happened.
+        Fires ONLY when a task already existed for `key` AND it was
+        done — never on a genuine first boot (`key` absent), which is
+        not a rediscovery of anything.
+
+        Emitted kind is named `session_run_task_rediscovered_dead`, not
+        e.g. `session_run_task_restarted` — architect's own requirement:
+        "発見の時刻は死亡時刻ではありません（上界です — process_marker_
+        reaped と同じ性質）。『restarted』だけだと死亡時刻と読まれます."
+        The event's own envelope timestamp is when THIS caller happened
+        to notice, which can lag the task's real completion by an
+        arbitrary amount (nothing polls for this — it is only ever
+        discovered the next time some real request needs this
+        `(name, sid)` again).
+
+        Deliberately NOT a policy decision of any kind: no retry count,
+        no backoff, no threshold, no push notification — the ruling's own
+        explicit "落とすもの（全部）" list. The read side is `reyn doctor`
+        and fleet visibility (reyn-broker#31 / #5709's own series), same
+        as `session_run_task_finished` above.
+
+        Self-contained idempotency (a still-running task is REUSED, never
+        replaced): every one of the 4 call sites already re-derives this
+        same `not done()` check as its own outer guard before calling
+        here, so a caller never reaches this method with a live task in
+        practice — but the method does not lean on that; it re-checks
+        and returns the existing task rather than trusting the caller,
+        the same "don't trust the caller's own guard, still be correct
+        standalone" property #5709 R5's own idempotent `arm_process_
+        loop_beat` has. Caught directly by this file's own test suite,
+        driving this method past its outer guards: the first draft
+        unconditionally spawned a fresh task even when `existing` was
+        still alive, quietly doubling the run-loop for one `(name, sid)`
+        — fixed to the current early-return shape before this PR
+        landed."""
+        key = (name, sid)
+        existing = self._tasks.get(key)
+        if existing is not None:
+            if not existing.done():
+                return existing
+            self._emit_session_run_task_rediscovered_dead(name, sid)
+        task = self._spawn_session_run(name, sid, session.run())
+        self._tasks[key] = task
+        return task
+
+    def _emit_session_run_task_rediscovered_dead(self, name: str, sid: str) -> None:
+        """The one emit site for `_ensure_session_run`'s own rediscovery
+        fact — split out from that method for the same reason
+        `_on_session_run_task_done` is its own method: an audit-emit
+        failure here must never block the real restart it is only ever
+        a diagnostic record of. Best-effort, mirroring that method's own
+        try/except shape."""
+        try:
+            from reyn.core.events.events import emit_direct_event
+
+            emit_direct_event(
+                "session_run_task_rediscovered_dead",
+                surface="registry",
+                reyn_root=self._project_root / ".reyn",
+                name=name,
+                sid=sid,
+            )
+        except Exception:
+            logger.warning(
+                "registry: failed to emit session_run_task_rediscovered_dead "
+                "for (%r, %r) (diagnostic-only, does not block the restart)",
                 name, sid, exc_info=True,
             )
 

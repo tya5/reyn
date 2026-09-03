@@ -571,6 +571,17 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     # where a session dying was consumed by nothing more specific than
     # Python's own generic unhandled-exception path, with no (name, sid).
     "session_run_task_finished",
+    # #5694 stage 2 disposition (architect ruling): a request-driven caller
+    # (ensure_running/ensure_session_running/attach/attach_session) found
+    # a PRIOR (name, sid) run-task already done and is replacing it — the
+    # moment a session's death used to be silently consumed as a mere
+    # restart trigger. NOT a new restart policy (the restart already
+    # happened, request-driven, before this event existed) — only makes
+    # it recorded. Named "rediscovered_dead", not "restarted": the
+    # event's own timestamp is an upper bound on when the task actually
+    # died (same property as process_marker_reaped's own observed_at),
+    # never asserted as the death time itself.
+    "session_run_task_rediscovered_dead",
     "session_started",
     "skill_body_loaded",
     "skill_body_threat_blocked",
