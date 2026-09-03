@@ -365,9 +365,11 @@ process currently alive on this machine, across every workspace:
     pid=41213 ppid=1 started 2h 14m ago
       cwd:        /Users/alice/proj-a
       subcommand: chat
+      loop beat:  0m ago
     pid=52098 ppid=41022 started 11d 3h ago
       cwd:        /Users/alice/proj-b
       subcommand: chat
+      loop beat:  never
 ```
 
 A NEW category, not another declared-vs-effective pair: before this, reyn had no
@@ -376,14 +378,34 @@ manually reconstructing it via `ps`+`lsof -d cwd` — the motivating case (lead-
 coder's own real machine, #5226) found 12 `reyn`/`reyn:chat` processes, 11 of
 them abandoned, the oldest 11 days old.
 
-Reads `reyn.runtime.process_registry.live_processes()` — a live read of PID-
-keyed markers each reyn CLI process writes about ITSELF at startup
-(`interfaces/cli/__init__.py:main()`, the same hook `set_process_title` uses),
-never a process-table scan of its own (that's the OS's job, per lead-coder's
-own ruling). Prints only the fields the marker itself carries — pid/ppid/cwd/
-subcommand/age — never full argv or any path beyond cwd, mirroring
-`reyn.runtime.proctitle`'s own stance against leaking more than the minimum
-into anything read back after the fact.
+Reads `reyn.runtime.process_registry.read_process_markers()` — a NON-
+DESTRUCTIVE read of PID-keyed markers each reyn CLI process writes about
+ITSELF at startup (`interfaces/cli/__init__.py:main()`, the same hook
+`set_process_title` uses), filtered locally to the alive subset (never a
+process-table scan of its own — that's the OS's job, per lead-coder's own
+ruling). Prints only the fields the marker itself carries — pid/ppid/cwd/
+subcommand/age/loop-beat-age — never full argv or any path beyond cwd,
+mirroring `reyn.runtime.proctitle`'s own stance against leaking more than
+the minimum into anything read back after the fact.
+
+**#5709: `read_process_markers()`, not the reaping `live_processes()`.**
+`reyn doctor` is not the only reader of this directory (a broker health
+poll is the other, and running `reyn doctor` twice is itself two reads) —
+`live_processes()` reaps a confirmed-dead marker as a side effect of
+reading it, which is correct for "who is alive right now" but would let
+whichever reader runs first destroy the evidence (`last_loop_beat_at`,
+below) the second reader came to see. `live_processes()` itself is
+unchanged; this call site moved to the read that cannot destroy anything.
+
+**`loop beat`** ([#5709](https://github.com/tya5/reyn/issues/5709)): how
+long ago this process's own turn loop last proved it was still pumping —
+a periodic write (every 10s, armed the moment `Session.run()` starts,
+never per-turn) proving the LOOP is alive, not merely that the OS process
+still exists (a wedged loop with a live PID would otherwise report
+"alive" forever). `never` means this process registered but its own turn
+loop never started (or hasn't reached the arming point yet) — printed as
+a bare age number, never a judgement word ("stale"/"dead"/"alive"): that
+would be a threshold, and no operator has asked for one yet.
 
 **Report-only, D-2 unchanged**: no kill, no TTL expiry. Whether an abandoned
 process should ever be reaped automatically is an owner-level judgment call

@@ -1502,12 +1502,37 @@ def _print_process_registry() -> None:
     more than the minimum into anything read back after the fact)."""
     import time
 
-    from reyn.runtime.process_registry import live_processes
+    from reyn.data.index.build_lock import pid_alive
+    from reyn.runtime.process_registry import read_process_markers
 
-    processes = live_processes()
+    # #5709 R3: read_process_markers() (non-destructive) instead of
+    # live_processes() — this call must never reap a dead-PID marker as
+    # a side effect. reyn doctor is not the only reader (a broker health
+    # poll is the other); whichever reads first must not destroy the
+    # evidence the SECOND reader came to see. The "currently alive"
+    # framing below is unchanged — filtered locally via pid_alive(),
+    # same population as before, just without the destructive read.
+    all_markers = read_process_markers()
+    processes = [
+        entry for entry in all_markers
+        if isinstance(entry.get("pid"), int) and pid_alive(entry["pid"])
+    ]
     if not processes:
         print("  no reyn process markers found (none registered, or none still alive)")
         return
+
+    def _age_desc(epoch: "float | None", now: float) -> str:
+        if not isinstance(epoch, (int, float)):
+            return "never"
+        age_seconds = max(0, int(now - epoch))
+        days, rem = divmod(age_seconds, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes = rem // 60
+        if days:
+            return f"{days}d {hours}h ago"
+        if hours:
+            return f"{hours}h {minutes}m ago"
+        return f"{minutes}m ago"
 
     now = time.time()
     print(f"  {len(processes)} process(es) currently alive:")
@@ -1516,19 +1541,14 @@ def _print_process_registry() -> None:
         ppid = entry.get("ppid")
         cwd = entry.get("cwd", "?")
         subcommand = entry.get("subcommand") or "(no subcommand)"
-        started_at = entry.get("started_at")
-        age_desc = "unknown age"
-        if isinstance(started_at, (int, float)):
-            age_seconds = max(0, int(now - started_at))
-            days, rem = divmod(age_seconds, 86400)
-            hours, rem = divmod(rem, 3600)
-            minutes = rem // 60
-            if days:
-                age_desc = f"{days}d {hours}h ago"
-            elif hours:
-                age_desc = f"{hours}h {minutes}m ago"
-            else:
-                age_desc = f"{minutes}m ago"
-        print(f"    pid={pid} ppid={ppid} started {age_desc}")
+        started_desc = _age_desc(entry.get("started_at"), now)
+        # #5709 R8: numbers only, no judgement word ("stale"/"alive"/
+        # "dead") — that would be a threshold, and this issue explicitly
+        # defers threshold design to whenever an operator first says a
+        # raw age isn't enough (a real re-open trigger, not a guess made
+        # here).
+        beat_desc = _age_desc(entry.get("last_loop_beat_at"), now)
+        print(f"    pid={pid} ppid={ppid} started {started_desc}")
         print(f"      cwd:        {cwd}")
         print(f"      subcommand: {subcommand}")
+        print(f"      loop beat:  {beat_desc}")

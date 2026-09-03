@@ -714,13 +714,19 @@ intervention flow and force-close wrap-up.
 ## Process registry
 
 `.reyn/processes/<pid>.json` (#5226) is a machine-wide, per-PID liveness
-marker — not per-project like every other event source in this doc. A
-reader (`reyn doctor`, `reyn.runtime.process_registry.live_processes`)
-reaps any marker whose PID is confirmed dead as a side effect of reading.
+marker — not per-project like every other event source in this doc.
+`reyn.runtime.process_registry.live_processes` reaps any marker whose PID
+is confirmed dead as a side effect of reading — its own contract ("who is
+alive right now"), unchanged. #5709: `reyn doctor` and a broker health
+poll both read via the NON-destructive sibling,
+`reyn.runtime.process_registry.read_process_markers`, instead — reaping
+is not part of a passive display's own contract, and whichever of two
+readers ran `live_processes` first would otherwise destroy the evidence
+(`last_loop_beat_at`, below) the second reader came to see.
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `process_marker_reaped` | #5358: a confirmed-dead PID's marker is about to be reaped (unlinked) — the marker was the ONLY record that PID ever ran, since the process itself never got to say it was stopping (a graceful exit's own `atexit` handler would have already removed it). Emitted from the reading CALLER's process, but under the DEAD process's OWN project (`reyn_root` resolved by walking up from the marker's own `cwd` field, never the caller's cwd — a `reyn doctor` run from project A must not misattribute a reap for a process that ran in project B). Best-effort: an emit failure (no `.reyn/` reachable from the marker's cwd, or any other error) logs a warning and never blocks the reap itself. Detection, not diagnosis — carries no information about WHY the process stopped (crash / SIGKILL / power loss / OOM are indistinguishable from here). | `marker` (the dead process's own full recorded content: `pid`/`ppid`/`cwd`/`subcommand`/`started_at`), `observed_at` (an UPPER BOUND on the stop time — the real stop happened sometime between the marker's `started_at` and this timestamp, never asserted as the exact moment) |
+| `process_marker_reaped` | #5358: a confirmed-dead PID's marker is about to be reaped (unlinked) — the marker was the ONLY record that PID ever ran, since the process itself never got to say it was stopping (a graceful exit's own `atexit` handler would have already removed it). Emitted from the reading CALLER's process, but under the DEAD process's OWN project (`reyn_root` resolved by walking up from the marker's own `cwd` field, never the caller's cwd — a `reyn doctor` run from project A must not misattribute a reap for a process that ran in project B). Best-effort: an emit failure (no `.reyn/` reachable from the marker's cwd, or any other error) logs a warning and never blocks the reap itself. Detection, not diagnosis — carries no information about WHY the process stopped (crash / SIGKILL / power loss / OOM are indistinguishable from here). #5709: `marker` now also carries `last_loop_beat_at` (absent/`None` if the process's own turn loop never armed the beat driver, e.g. it died before `Session.run()` ever started) — together with `observed_at` this is the ONE place `[last_loop_beat_at, observed_at]` — the tightened death window #5709 exists to produce — is readable, and it lands in the dead session's own `.reyn/events`, the same place a post-mortem reader already looks. | `marker` (the dead process's own full recorded content: `pid`/`ppid`/`cwd`/`subcommand`/`started_at`/`agent_name`/`broker_session_id`/`last_loop_beat_at`), `observed_at` (an UPPER BOUND on the stop time — the real stop happened sometime between the marker's `last_loop_beat_at` (or `started_at`, if the beat never armed) and this timestamp, never asserted as the exact moment) |
 
 ## Replay
 
