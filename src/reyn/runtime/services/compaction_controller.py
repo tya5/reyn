@@ -372,7 +372,17 @@ class CompactionController:
 
     async def force_compact_now(
         self, *,
-        spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+        # #5726: widened from Callable[[list[dict]], ...] -- the real
+        # production spill_fn (RouterLoopDriver._spill_batch_for_retry,
+        # bound via functools.partial(..., chain_id=...)) requires a
+        # seq_by_id kwarg _spill_fn_adapted (below) now always supplies,
+        # freshly computed per shrink attempt (see that function's own
+        # comment for why it cannot be pre-bound the way chain_id is).
+        # `...` (not a stricter Protocol) matches this file's own existing
+        # understated-type precedent for this parameter (chain_id was
+        # ALREADY invisible to the declared type, bound via partial,
+        # before this widening).
+        spill_fn: "Callable[..., list[tuple[int, dict]]]",
         spill_capability_present: bool = True,
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
@@ -604,7 +614,9 @@ class CompactionController:
         candidates: list[ChatMessage],
         previous_summary: ChatMessage | None,
         *,
-        spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]]",
+        # #5726: widened -- see force_compact_now's own comment on this
+        # same parameter name above.
+        spill_fn: "Callable[..., list[tuple[int, dict]]]",
         spill_capability_present: bool = True,
     ) -> None:
         """Call the compaction engine and persist the resulting summary entry."""
@@ -734,7 +746,29 @@ class CompactionController:
                 {**item, "content": item.get("text", ""), "spillability": _spillability_by_index[i]}
                 for i, item in enumerate(offered)
             ]
-            edits = spill_fn(content_shaped)
+            # #5720/#5725 -> #5726: RouterLoopDriver._spill_batch_for_retry
+            # (spill_fn's real production implementation, bound via
+            # functools.partial(..., chain_id="manual-compact") in
+            # session.py's own _compact_now_for_op) made seq_by_id a
+            # REQUIRED kwarg — #5725 wired it for retry_loop's own
+            # reactive spill_fn partial (built with the real seq_by_id
+            # already in hand at THAT construction time), but left this
+            # (operator-driven /compact) call site unwired -> TypeError,
+            # the 5th instance of #5712's own "reactive protected /
+            # operator-driven bare" asymmetry this arc keeps finding.
+            #
+            # Unlike the reactive path, seq_by_id cannot be baked into
+            # session.py's own partial at construction time — content_
+            # shaped is rebuilt fresh, per shrink attempt, only here.
+            # But `_turn_to_compactor_input` (the wire-shape builder that
+            # produced `item` before this adapter ever saw it) already
+            # stamps a real `"seq"` field on every turn (this repo's own
+            # `new_turns` shape, `{role, text, seq, ...}`) — no side
+            # channel is needed the way the reactive path's own decompose
+            # step required one; the real seq is already sitting on each
+            # dict, unlike `decompose_history_for_retry`'s wire dicts.
+            seq_by_id = {id(d): d["seq"] for d in content_shaped}
+            edits = spill_fn(content_shaped, seq_by_id=seq_by_id)
             return [
                 (idx, {**offered[idx], "text": replacement.get("content", offered[idx].get("text", ""))})
                 for idx, replacement in edits
