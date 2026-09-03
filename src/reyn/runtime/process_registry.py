@@ -169,13 +169,23 @@ def register_process(subcommand: "str | None") -> None:
         "cwd": os.getcwd(),
         "subcommand": subcommand,
         "started_at": time.time(),
-        # #5350: absent (never guessed) until a later, more-informed call
-        # to :func:`record_process_identity` sets one or both — this
-        # process's own agent_name/broker_session_id are usually not yet
-        # resolved at THIS call site (register_process runs at CLI
-        # startup, before Session construction).
-        "agent_name": None,
-        "broker_session_id": None,
+        # #5714 (architect ruling): a process can host N Sessions (#5694
+        # confirmed 1 process : N Session — AgentRegistry.ensure_running
+        # runs every agent's own session.run() as an asyncio task in the
+        # SAME process, never a separate OS process per agent). A
+        # SINGULAR agent_name/broker_session_id field here was the wrong
+        # SHAPE for that fact — the second Session constructed in one
+        # process silently overwrote the first's identity, and
+        # process_for_agent(first_agent) started returning [] while that
+        # Session was still alive (#5714's own reproduced incident).
+        # Empty at registration (register_process runs at CLI startup,
+        # before any Session is constructed) — grows one entry per
+        # (agent_name, sid) via :func:`record_process_identity`, keyed so
+        # a Session rebuilt under the SAME key overwrites its own entry
+        # rather than accumulating a duplicate (bounded by "how many
+        # DISTINCT (agent_name, sid) keys this process has ever hosted" —
+        # charter Q1's own answer, per the ruling).
+        "sessions": [],
         # #5709: absent (never guessed) until this process's own turn
         # loop actually starts running and arms ProcessLoopBeatDriver —
         # see that class's own docstring. A marker that never gains this
@@ -241,27 +251,60 @@ def unregister_process(pid: "int | None" = None) -> None:
     atexit.unregister(_cleanup)
 
 
+# #5714: the sid default when a caller doesn't have one to hand —
+# duplicates registry.py's own ``_DEFAULT_SID = "main"`` literal rather
+# than importing it: process_registry.py sits BELOW registry.py in this
+# repo's own layering (registry.py — the higher-level AgentRegistry — is
+# what calls into this module for process-marker facts, never the other
+# way around), so importing registry.py here risks the exact import-
+# cycle this module has stayed free of throughout. "main" is the one
+# well-known sid literal every caller (registry.py, Session's own
+# ``session_id`` param default) already agrees on.
+_DEFAULT_SID = "main"
+
+
 def record_process_identity(
     *,
     agent_name: "str | None" = None,
+    sid: str = _DEFAULT_SID,
     broker_session_id: "str | None" = None,
     pid: "int | None" = None,
 ) -> None:
-    """#5350 — a process records its OWN identity onto its already-written
-    marker, once it actually knows it (``register_process`` runs at CLI
-    startup, before that is usually resolved). Never a guess: the caller
-    is always the process itself (or code acting on its behalf) stating
-    a fact it already has — never a lookup, never derived from ``cwd``.
+    """#5350, reshaped by #5714 (architect ruling) — a process records
+    ONE Session's own identity onto its already-written marker, once it
+    actually knows it (``register_process`` runs at CLI startup, before
+    that is usually resolved). Never a guess: the caller is always the
+    process itself (or code acting on its behalf) stating a fact it
+    already has — never a lookup, never derived from ``cwd``.
 
-    Only fields the caller actually passes are updated (``None`` here
-    means "nothing new to say", not "clear the existing value" — a
-    second caller that only knows ``broker_session_id`` must not erase
-    an ``agent_name`` a first caller already recorded). Best-effort,
-    matching this module's own posture throughout: no marker (the
-    process never called :func:`register_process`, or its write failed)
-    degrades to a silent no-op, never an exception that could interrupt
-    the caller's own real work over a diagnostic aid.
+    #5714: the marker's own identity field changed SHAPE from a single
+    ``agent_name``/``broker_session_id`` pair to a collection of
+    ``sessions`` entries keyed by ``(agent_name, sid)`` — #5694 confirmed
+    a process can host N Sessions as N concurrent asyncio tasks, so a
+    singular field was the wrong grain for the fact it recorded (the
+    SECOND Session constructed in a process silently overwrote the
+    FIRST's identity; ``process_for_agent`` on the first agent then
+    returned ``[]`` while that Session was still alive — #5714's own
+    reproduced incident). This function is now an UPSERT into that
+    collection: an existing entry for the SAME ``(agent_name, sid)`` is
+    updated in place (the ruling's own "同じ key の session が作り直さ
+    れたら上書き" — a Session genuinely rebuilt under the same key
+    reuses its own entry, never accumulates a duplicate); no matching
+    entry appends a new one.
+
+    Only fields the caller actually passes are applied to that entry
+    (``None`` here means "nothing new to say about broker_session_id",
+    not "clear it" — mirrors the pre-#5714 single-field semantics, now
+    scoped to one entry instead of the whole marker). ``agent_name`` and
+    ``broker_session_id`` both absent (``None``) is a pure no-op — there
+    is no entry to key by. Best-effort, matching this module's own
+    posture throughout: no marker (the process never called
+    :func:`register_process`, or its write failed) degrades to a silent
+    no-op, never an exception that could interrupt the caller's own real
+    work over a diagnostic aid.
     """
+    if agent_name is None and broker_session_id is None:
+        return
     if pid is None:
         pid = os.getpid()
     marker_path = _marker_path(pid)
@@ -269,10 +312,24 @@ def record_process_identity(
         data = json.loads(marker_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
+    sessions = data.setdefault("sessions", [])
+    entry = next(
+        (
+            e for e in sessions
+            if e.get("agent_name") == agent_name and e.get("sid") == sid
+        ),
+        None,
+    )
+    if entry is None:
+        entry = {
+            "agent_name": agent_name, "sid": sid,
+            "broker_session_id": None, "ended_at": None,
+        }
+        sessions.append(entry)
     if agent_name is not None:
-        data["agent_name"] = agent_name
+        entry["agent_name"] = agent_name
     if broker_session_id is not None:
-        data["broker_session_id"] = broker_session_id
+        entry["broker_session_id"] = broker_session_id
     try:
         tmp_path = _tmp_marker_path(pid)
         tmp_path.write_text(json.dumps(data), encoding="utf-8")
@@ -284,25 +341,90 @@ def record_process_identity(
         )
 
 
+def record_session_ended(
+    *, agent_name: str, sid: str = _DEFAULT_SID, pid: "int | None" = None,
+) -> None:
+    """#5714 (architect ruling, point ③): the SAME callback #5694 already
+    wired (``AgentRegistry._on_session_run_task_done``, the one
+    done-callback for every ``(name, sid)`` background ``session.run()``
+    task) also presses THIS — not a second lifecycle mechanism. Sets
+    ``ended_at`` on the ONE matching ``sessions`` entry for
+    ``(agent_name, sid)`` — every OTHER entry this process hosts is
+    untouched. Necessary once the marker's identity became a collection
+    (#5714): without this, a Session whose task genuinely ended would
+    keep showing as "hosted" forever, a new lie in the SHAPE this issue
+    exists to fix (a collection with no way to mark an entry stale is
+    exactly as dishonest as the single overwritten field it replaces).
+
+    A no-op — never an error — when no matching entry exists (the
+    Session's own identity was never recorded via
+    :func:`record_process_identity`, e.g. it died before ``Session.
+    __init__`` reached that call): there is nothing to mark ended, and
+    fabricating an entry here would invent an identity this module never
+    actually observed. Best-effort, matching every other write in this
+    module: an OSError on the write-back is logged and swallowed, never
+    propagated into the caller's own real teardown work."""
+    if pid is None:
+        pid = os.getpid()
+    marker_path = _marker_path(pid)
+    try:
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    sessions = data.get("sessions") or []
+    entry = next(
+        (
+            e for e in sessions
+            if e.get("agent_name") == agent_name and e.get("sid") == sid
+        ),
+        None,
+    )
+    if entry is None:
+        return
+    entry["ended_at"] = time.time()
+    try:
+        tmp_path = _tmp_marker_path(pid)
+        tmp_path.write_text(json.dumps(data), encoding="utf-8")
+        tmp_path.replace(marker_path)
+    except OSError:
+        logger.warning(
+            "process_registry: failed to record session end for pid %d "
+            "(agent_name=%r, sid=%r) (diagnostic-only, does not block "
+            "the caller)", pid, agent_name, sid, exc_info=True,
+        )
+
+
 def process_for_agent(agent_name: str) -> "list[dict]":
-    """#5350 — every currently-alive process whose OWN recorded
-    ``agent_name`` matches *agent_name* (via :func:`live_processes`,
-    which already reaps dead-PID markers as it reads). NEVER matched by
-    ``cwd`` — the architect-named incident this exists to prevent: an
-    unrelated process (a shell, an editor) sharing a directory with a
-    reyn agent is not that agent, and must never be returned here.
-    Ordinarily a list of 0 or 1 — more than one means two processes
-    both recorded the SAME ``agent_name`` (a caller error upstream, not
-    something this function corrects or hides)."""
-    return [m for m in live_processes() if m.get("agent_name") == agent_name]
+    """#5350, reshaped by #5714 — every currently-alive process that has
+    RECORDED (via :func:`record_process_identity`) at least one
+    ``sessions`` entry whose own ``agent_name`` matches *agent_name*
+    (via :func:`live_processes`, which already reaps dead-PID markers as
+    it reads). NEVER matched by ``cwd`` — the architect-named incident
+    this exists to prevent: an unrelated process (a shell, an editor)
+    sharing a directory with a reyn agent is not that agent, and must
+    never be returned here. #5714: a process hosting SEVERAL agents now
+    correctly matches a query for ANY of them (the pre-#5714 defect this
+    issue closes — a singular field could only ever answer for whichever
+    agent was constructed MOST RECENTLY in that process). Ordinarily a
+    list of 0 or 1 — more than one means two SEPARATE processes both
+    recorded a session under the SAME ``agent_name`` (a caller error
+    upstream, not something this function corrects or hides)."""
+    return [
+        m for m in live_processes()
+        if any(e.get("agent_name") == agent_name for e in m.get("sessions", []))
+    ]
 
 
 def process_for_broker_session(broker_session_id: str) -> "list[dict]":
-    """#5350 — the ``broker_session_id``-keyed sibling of
-    :func:`process_for_agent`, identical contract (never matched by
-    ``cwd``)."""
+    """#5350, reshaped by #5714 — the ``broker_session_id``-keyed sibling
+    of :func:`process_for_agent`, identical contract (never matched by
+    ``cwd``, matches across every ``sessions`` entry a process hosts)."""
     return [
-        m for m in live_processes() if m.get("broker_session_id") == broker_session_id
+        m for m in live_processes()
+        if any(
+            e.get("broker_session_id") == broker_session_id
+            for e in m.get("sessions", [])
+        )
     ]
 
 
