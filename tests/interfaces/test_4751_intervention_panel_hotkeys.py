@@ -34,12 +34,57 @@ policy.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import RadioButton, RadioSet, TabbedContent
 
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.intervention_choices import file_access_choices, generic_yn_choices
+
+
+async def _settle_until(pilot, until) -> None:
+    """Pump until ``until()`` is true (#3748: unbounded, owner policy) —
+    duplicated from ``test_textual_chat_intervention_panel_3299.py``'s own
+    helper of the same name (not shared via ``tests/_support`` today; this
+    is the second call site).
+
+    #5705 (owner real-machine incident, root cause): ``radio.has_focus``
+    lands via a TWO-STAGE deferral — ``add_pending`` posts a
+    ``TabbedContent.TabActivated`` message, whose handler
+    (``InterventionPanel.on_tabbed_content_tab_activated``) then calls
+    ``self.call_after_refresh(radios[0].focus)``, a SECOND deferred step.
+    A single ``pilot.pause()`` (this test's own pre-fix shape) relies on
+    ``Pilot.pause()``'s ``wait_for_idle`` — a wall-clock/CPU-time heuristic
+    ("has this process stopped actively working") — to happen to flush
+    both stages before returning. Under real CPU contention (measured:
+    the full suite's own ``-n auto`` xdist run, and directly reproduced
+    locally by running ONLY this one test alongside unrelated CPU-bound
+    background load — 1 failure in 8 runs) the heuristic can be fooled by
+    scheduler PREEMPTION into reporting "idle" before the second deferred
+    stage has actually run — not a version-specific bug (reproduced under
+    contention on 3.11; #5705's own CI evidence showed 3.12 fail too), not
+    an ordering dependency on another test's state (this repro used no
+    other test at all), and not the ``RuntimeError: Event loop is closed``
+    #5705 also observed nearby in one CI log (a separate test's own
+    concurrent symptom under the same contention — this repro reproduced
+    the ``has_focus`` failure with NO other test running, so that error
+    is not this failure's cause).
+
+    Fixed with an UNBOUNDED condition-wait, never a fixed pump COUNT
+    (e.g. two ``pilot.pause()`` calls) — a count is a duration floor
+    wearing a different unit (#5705 review, lead-coder: "回数の見積もり
+    ... CLAUDE.md が禁じる duration の floor と同じ"): a fixed count
+    happens to cover today's two-stage chain but reintroduces the exact
+    same class of failure the day a third deferral stage is added. The
+    ceiling is CI's own ``--timeout=120`` (pytest-timeout), never a
+    marker or sleep written into this test."""
+    while True:
+        await pilot.pause()
+        if until():
+            return
+        await asyncio.sleep(0.01)
 
 
 class _PanelOnlyApp(App):
@@ -94,8 +139,17 @@ async def test_pressing_a_displayed_hotkey_selects_but_does_not_confirm():
                 for c in generic_yn_choices()
             ],
         )
-        await pilot.pause()
+        # #5705: unbounded settles, not a fixed pump count — see
+        # _settle_until's own docstring for the two-stage deferral this
+        # waits out. Stage 1: the tab itself must have activated
+        # (`tabs.active` non-empty) before `_active_pane` can resolve it
+        # at all.
+        tabs = panel.query_one(TabbedContent)
+        await _settle_until(pilot, lambda: tabs.active != "")
         radio = _active_pane(panel).query_one(RadioSet)
+        # Stage 2: the deferred focus call (`call_after_refresh`, fired
+        # from stage 1's own message handler).
+        await _settle_until(pilot, lambda: radio.has_focus)
         assert radio.has_focus
         assert _selected_label(panel) == "[y]es", "pre-highlight must start on the first option"
 
