@@ -565,6 +565,12 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "session_completed",
     "session_halted",
     "session_restored",
+    # #5694 stage 2 (architect ruling): the registry's own single
+    # done-callback funnel for every (name, sid) session.run() background
+    # task (AgentRegistry._on_session_run_task_done) — closes the gap
+    # where a session dying was consumed by nothing more specific than
+    # Python's own generic unhandled-exception path, with no (name, sid).
+    "session_run_task_finished",
     "session_started",
     "skill_body_loaded",
     "skill_body_threat_blocked",

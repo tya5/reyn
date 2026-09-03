@@ -23,14 +23,16 @@ contract is:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import re
 import threading
 import time
+from collections.abc import Coroutine
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 from urllib.parse import quote, unquote
 from uuid import uuid4
 
@@ -3899,7 +3901,7 @@ class AgentRegistry:
         session = self.get_or_load(name)
         key = (name, sid)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = asyncio.create_task(session.run())
+            self._tasks[key] = self._spawn_session_run(name, sid, session.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         return session
@@ -3920,7 +3922,7 @@ class AgentRegistry:
             return None
         key = (name, sid)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = asyncio.create_task(session.run())
+            self._tasks[key] = self._spawn_session_run(name, sid, session.run())
         return session
 
     def bind_focus_listeners(
@@ -4101,7 +4103,8 @@ class AgentRegistry:
         Old agent stays in `self._tasks` (background).
 
         ``start_runner`` (#4113, architect ruling 2026-08-10): False skips
-        ONLY the ``asyncio.create_task(new_session.run())`` line below —
+        ONLY the ``self._spawn_session_run(name, sid, new_session.run())``
+        line below —
         load happens regardless (``get_or_load`` a few lines down), and
         every other side effect (forwarder, focus-listener wiring,
         connection switch, announce, pending-intervention replay) is
@@ -4147,7 +4150,7 @@ class AgentRegistry:
         # Boot session.run() + forwarder on first attach. Keep them alive
         # across detach/re-attach cycles — shutdown drains via `running_tasks()`.
         if start_runner and (key not in self._tasks or self._tasks[key].done()):
-            self._tasks[key] = asyncio.create_task(new_session.run())
+            self._tasks[key] = self._spawn_session_run(name, sid, new_session.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(
                 self._forwarder(name, sid)
@@ -4188,7 +4191,7 @@ class AgentRegistry:
         if old != key:
             self._wire_focus_listeners(target)
         if key not in self._tasks or self._tasks[key].done():
-            self._tasks[key] = asyncio.create_task(target.run())
+            self._tasks[key] = self._spawn_session_run(name, sid, target.run())
         if key not in self._forward_tasks or self._forward_tasks[key].done():
             self._forward_tasks[key] = asyncio.create_task(self._forwarder(name, sid))
         self._connection.switch(key)
@@ -4311,8 +4314,8 @@ class AgentRegistry:
         hold under real OS threads). Whichever path's `pop` returns
         non-`None` first is the sole owner for that entry; the other finds
         `None` and skips. Separately, `attach()`/`ensure_running()` ALSO each
-        independently guard their own `asyncio.create_task(session.run())`
-        against re-creation (`if key not in self._tasks or
+        independently guard their own `self._spawn_session_run(name, sid,
+        session.run())` call against re-creation (`if key not in self._tasks or
         self._tasks[key].done(): ...`), so even a session already restored
         by one path never gets a second run-task from the other.
         """
@@ -4342,6 +4345,154 @@ class AgentRegistry:
             # SEPARATE task) to actually get scheduled in between.
             await asyncio.sleep(0)
         return resumed
+
+    def _spawn_session_run(
+        self, name: str, sid: str, coro: "Coroutine[Any, Any, Any]",
+    ) -> asyncio.Task:
+        """#5694 stage 2 (architect ruling): the ONE creation site for a
+        ``(name, sid)`` background ``session.run()`` task — every one of
+        this file's 4 pre-existing ``asyncio.create_task(<session>.run())``
+        call sites (``ensure_running``, ``ensure_session_running``,
+        ``attach``, ``attach_session``) now routes through this method
+        instead of calling ``asyncio.create_task`` directly.
+
+        Root cause this closes: measured directly (``git grep -c
+        'create_task(' registry.py`` before this change) — 4 creation
+        sites, 0 ``add_done_callback`` registrations anywhere in this
+        file, and every ``.done()`` read on these tasks was ONLY ever the
+        pre-existing "should I restart this?" guard
+        (``key not in self._tasks or self._tasks[key].done()``), never a
+        read of *why* it finished. A ``session.run()`` task that raises is
+        therefore consumed by nothing more specific than Python's own
+        generic "Task exception was never retrieved" unhandled-exception
+        path (``asyncio_diagnostics.py``'s global handler) — which never
+        even learns *which* ``(name, sid)`` died, because none of these 4
+        call sites passed ``name=`` to ``create_task`` either. #5694's own
+        incident (a specific agent's Session vanishing while a sibling
+        agent kept answering fine, in the SAME process) is exactly the
+        shape this silence hides: the death was real, but nothing recorded
+        it as an event distinguishable from "the whole process is fine."
+
+        Named (``session.run:<name>:<sid>``) so the generic handler above
+        also gets a real diagnostic if it ever fires for one of these
+        specifically. ``coro`` (not the ``Session`` object) is the
+        parameter — this method has no opinion on what it's running,
+        only on funnelling every outcome through one done-callback; the 4
+        real call sites pass ``<session>.run()``, tests exercising the
+        3-way outcome dispatch below can pass any coroutine.
+
+        NOT folded into ``runtime.tracked_tasks.TrackedTaskSet`` (#4759):
+        that module's own docstring declares "every producer calls
+        ``TrackedTaskSet.spawn`` (never ``asyncio.create_task``
+        directly)", and on its face this looks like exactly such a
+        producer. It isn't, for two independent reasons, checked directly
+        against ``TrackedTaskSet``'s own contract (``tracked_tasks.py``)
+        rather than assumed:
+
+        1. **Different owner, different lifetime.** Every existing
+           ``TrackedTaskSet`` instance is a ``Session``'s own
+           ``_background_tasks`` — its ``aclose()`` is called from that
+           SAME session's own teardown/quiesce (``await_quiescent``,
+           ``aclose_background_tasks``). A ``(name, sid)`` run-task's
+           lifetime is NOT scoped to any one session's teardown — it
+           already outlives a `/detach`, and this registry (not the
+           ``Session`` being run) is what starts, restarts and finally
+           cancels it (``shutdown()``, ``remove_session()``). Session-
+           scoping this task inside the very ``Session`` object it drives
+           would reproduce the #5709 R5 hazard that issue's own review
+           named for a structurally identical question ("a SEPARATE
+           ``TrackedTaskSet``, never a Session's own ``_background_
+           tasks``") — one level up: THIS task is the thing that RUNS
+           ``Session.run()``, not a helper a running session spawns
+           for itself.
+        2. **The restart-guard needs keyed lookup; ``TrackedTaskSet``
+           doesn't offer one.** ``TrackedTaskSet`` is a set (``__iter__``/
+           ``__len__``/``pending()`` — no ``__getitem__``, no key
+           parameter anywhere in its public surface); every one of this
+           file's 4 call sites needs `` self._tasks[key].done()`` to
+           decide "restart or reuse" BEFORE creating a task, which a
+           set-shaped funnel cannot answer without this file keeping a
+           SEPARATE ``dict`` alongside it anyway — the very duplication
+           ``TrackedTaskSet`` exists to remove for its own producers. The
+           existing ``self._tasks: dict[(name, sid), asyncio.Task]`` IS
+           this file's own funnel (enumerable via ``running_tasks()``,
+           drained in ``shutdown()``); this method makes its CREATION
+           side single, the same shape ``TrackedTaskSet.spawn`` gives its
+           own producers, without discarding the keyed lookup none of
+           the 4 call sites can do without.
+        """
+        task = asyncio.create_task(coro, name=f"session.run:{name}:{sid}")
+        task.add_done_callback(functools.partial(self._on_session_run_task_done, name, sid))
+        return task
+
+    def _on_session_run_task_done(self, name: str, sid: str, task: asyncio.Task) -> None:
+        """The one done-callback #5694 stage 2 prescribes — reads exactly
+        3 mutually-exclusive outcomes and durably records which one, with
+        the ``(name, sid)`` this task was for.
+
+        ``task.exception()`` is called UNCONDITIONALLY on a non-cancelled
+        task (never merely `` task.cancelled()``-then-skip) — this is not
+        optional: asyncio only suppresses its own "Task exception was
+        never retrieved" console warning once something has actually
+        RETRIEVED the exception via ``.exception()``/``.result()``; a
+        callback that only checked ``.cancelled()`` and returned early on
+        a normal-looking task would leave a raised-but-unread exception on
+        the table for asyncio's own generic (unnamed, (name, sid)-blind)
+        handler to complain about later — the exact silence this issue
+        exists to close, reintroduced one line away from the fix.
+        ``task.cancelled()`` is read FIRST because ``.exception()`` itself
+        raises ``CancelledError`` on a cancelled task (checking would
+        crash this callback, not record cancellation).
+
+        Emits via ``emit_direct_event`` with an EXPLICIT ``reyn_root=
+        self._project_root / ".reyn"`` — never ``emit_cli_event`` (which
+        derives the root from ``Path.cwd()``): that function's own
+        docstring names exactly this process shape as the case it is
+        wrong for ("a long-lived server process's cwd is not reliably its
+        project root"), and ``AgentRegistry`` is exactly that — one
+        instance, one resolved ``self._project_root``, living for the
+        whole ``reyn web``/``reyn chat`` process. ``track_audit_seq``
+        is left at its default (``True``): unlike a one-shot CLI
+        diagnostic, this registry can emit this kind many times over its
+        own lifetime (every agent restart, every session end) — a real
+        series, per ``emit_direct_event``'s own docstring.
+
+        Best-effort, mirroring ``process_registry.py``'s own
+        ``process_marker_reaped`` emit (#5358): an audit-emit failure here
+        must never propagate into asyncio's own done-callback machinery
+        (an exception raised from a done-callback is itself reported via
+        the SAME generic unhandled-exception path this method exists to
+        give a more specific answer than) — logged, swallowed.
+        """
+        if task.cancelled():
+            status, exception_type, exception_message = "cancelled", "", ""
+        else:
+            exc = task.exception()
+            if exc is not None:
+                status = "exception"
+                exception_type = type(exc).__name__
+                exception_message = str(exc)
+            else:
+                status, exception_type, exception_message = "completed", "", ""
+        try:
+            from reyn.core.events.events import emit_direct_event
+
+            emit_direct_event(
+                "session_run_task_finished",
+                surface="registry",
+                reyn_root=self._project_root / ".reyn",
+                name=name,
+                sid=sid,
+                status=status,
+                exception_type=exception_type,
+                exception_message=exception_message,
+            )
+        except Exception:
+            logger.warning(
+                "registry: failed to emit session_run_task_finished for "
+                "(%r, %r) (diagnostic-only, does not block anything)",
+                name, sid, exc_info=True,
+            )
 
     def running_tasks(self) -> list[asyncio.Task]:
         """All non-completed tasks (session.run + forwarders) for shutdown drain."""
