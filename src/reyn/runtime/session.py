@@ -1067,8 +1067,13 @@ class Session:
         # (register_process() already ran at CLI startup, before this name
         # was resolvable). Best-effort, matching that module's own
         # posture throughout — never blocks Session construction.
+        # #5714: also passes `sid=` — the LOCAL `session_id` constructor
+        # param (not `self._session_id`, which is not assigned until
+        # later in this same method) — since the marker's own identity
+        # field is now keyed by (agent_name, sid), not agent_name alone
+        # (a process can host N Sessions, #5694/#5714).
         from reyn.runtime.process_registry import record_process_identity
-        record_process_identity(agent_name=self._agent.agent_name)
+        record_process_identity(agent_name=self._agent.agent_name, sid=session_id)
         self._resolver = resolver or ModelResolver({})
         # Per-session runtime model override set by /model <class>; None -> Agent identity default, in-memory only
         self._model_override: str | None = None

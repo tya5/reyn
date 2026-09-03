@@ -366,14 +366,14 @@ process currently alive on this machine, across every workspace:
       cwd: /Users/alice/proj-a
       subcommand: chat
       loop beat: 0m ago
-      agent_name: coder-blue
-      broker_session_id: coder-blue
+      sessions:
+        agent_name=coder-blue sid=main broker_session_id=coder-blue ended=no
+        agent_name=coder-green sid=main broker_session_id= ended=yes, 4m ago
     pid=52098 ppid=41022 started 11d 3h ago
       cwd: /Users/alice/proj-b
       subcommand: chat
       loop beat: never
-      agent_name:
-      broker_session_id:
+      sessions: (none recorded)
 ```
 
 A NEW category, not another declared-vs-effective pair: before this, reyn had no
@@ -388,8 +388,8 @@ ITSELF at startup (`interfaces/cli/__init__.py:main()`, the same hook
 `set_process_title` uses), filtered locally to the alive subset (never a
 process-table scan of its own — that's the OS's job, per lead-coder's own
 ruling). Prints only the fields the marker itself carries — pid/ppid/cwd/
-subcommand/age/loop-beat-age/agent_name/broker_session_id — never full argv
-or any path beyond cwd, mirroring `reyn.runtime.proctitle`'s own stance
+subcommand/age/loop-beat-age/each hosted session's own identity — never full
+argv or any path beyond cwd, mirroring `reyn.runtime.proctitle`'s own stance
 against leaking more than the minimum into anything read back after the
 fact.
 
@@ -412,15 +412,28 @@ loop never started (or hasn't reached the arming point yet) — printed as
 a bare age number, never a judgement word ("stale"/"dead"/"alive"): that
 would be a threshold, and no operator has asked for one yet.
 
-**`agent_name` / `broker_session_id`** ([#5709](https://github.com/tya5/reyn/issues/5709)
-R9): the process's own RECORDED identity — `record_process_identity()`
-(#5350), never derived from `cwd` or `comm` (the #5350-named incident: an
-operator script that joined identity on `cwd` SIGTERM'd unrelated processes
-sharing a directory with a registered agent). Absent until `Session`
-construction resolves it (`register_process()` runs earlier, at CLI
-startup), so a process that died before then genuinely has no identity to
-show — printed blank, never guessed. This is the field #5694 needed
-("which session disappeared") and the reason this section exists at all.
+**`sessions`** ([#5709](https://github.com/tya5/reyn/issues/5709) R9,
+reshaped by [#5714](https://github.com/tya5/reyn/issues/5714)): the
+process's own RECORDED identity — `record_process_identity()` (#5350),
+never derived from `cwd` or `comm` (the #5350-named incident: an operator
+script that joined identity on `cwd` SIGTERM'd unrelated processes sharing
+a directory with a registered agent). A COLLECTION, keyed by
+`(agent_name, sid)` — #5694 confirmed a process can host N Sessions as N
+concurrent asyncio tasks, so the original single `agent_name` /
+`broker_session_id` pair (#5709 R9) was the wrong shape: the SECOND
+Session constructed in a process silently overwrote the first's identity,
+and `process_for_agent` on the first agent then returned nothing while
+that Session was still alive (#5714's own reproduced incident). Every
+hosted session's own entry prints — never a representative ("空欄は正直、
+他人の名前は嘘" applies per-entry now). `(none recorded)` when no
+Session has resolved its identity yet (`register_process()` runs earlier,
+at CLI startup, before any Session is constructed) — printed blank, never
+guessed. `ended=` marks a session whose background task has finished
+(the SAME done-callback #5694 wired, #5714's own second effect of it) —
+`no` for one still running, `yes, <age>` otherwise; the ended entry stays
+listed (report-only, never dropped). This is the field #5694/#5714
+together needed ("which session disappeared") and the reason this section
+exists at all.
 
 **Report-only, D-2 unchanged**: no kill, no TTL expiry. Whether an abandoned
 process should ever be reaped automatically is an owner-level judgment call

@@ -1521,11 +1521,21 @@ def _print_process_registry() -> None:
     reads first must not destroy what the next one still needs.
 
     Deliberately prints only the fields the marker itself carries — pid/
-    ppid/cwd/subcommand/age/loop-beat-age/agent_name/broker_session_id —
-    never full argv or any path beyond cwd (see ``process_registry.py``'s
-    own module docstring for why: it mirrors
+    ppid/cwd/subcommand/age/loop-beat-age/each hosted session's own
+    identity — never full argv or any path beyond cwd (see
+    ``process_registry.py``'s own module docstring for why: it mirrors
     ``reyn.runtime.proctitle``'s explicit stance against leaking more
-    than the minimum into anything read back after the fact)."""
+    than the minimum into anything read back after the fact).
+
+    #5714 (architect ruling): a process's own identity field is a
+    COLLECTION now (#5694 confirmed 1 process : N Session) — this
+    prints EVERY hosted-session entry, never picking a representative
+    (the ruling's own words, reused here verbatim: "空欄は正直、他人の
+    名前は嘘" — a representative would be exactly that lie, one level
+    up from the single-overwritten-field defect #5714 fixes). An ended
+    session's own entry still prints (``ended_at`` set) rather than
+    being dropped — D-2/report-only: this command shows what happened,
+    it does not curate."""
     import time
 
     from reyn.data.index.build_lock import pid_alive
@@ -1574,18 +1584,34 @@ def _print_process_registry() -> None:
         # raw age isn't enough (a real re-open trigger, not a guess made
         # here).
         beat_desc = _age_desc(entry.get("last_loop_beat_at"), now)
-        # #5709 R9: a process's own RECORDED identity (record_process_
-        # identity, #5350) — never derived from cwd (the #5350-named
-        # incident: an unrelated process sharing a directory is not the
-        # same identity). Absent until Session construction resolves it
-        # (register_process runs at CLI startup, before that), so a
-        # process that died before then genuinely has no identity to
-        # show — printed blank, not guessed.
-        agent_name = entry.get("agent_name") or ""
-        broker_session_id = entry.get("broker_session_id") or ""
         print(f"    pid={pid} ppid={ppid} started {started_desc}")
         print(f"      cwd: {cwd}")
         print(f"      subcommand: {subcommand}")
         print(f"      loop beat: {beat_desc}")
-        print(f"      agent_name: {agent_name}")
-        print(f"      broker_session_id: {broker_session_id}")
+        # #5709 R9 / #5714: a process's own RECORDED identity
+        # (record_process_identity, #5350) — never derived from cwd (the
+        # #5350-named incident: an unrelated process sharing a directory
+        # is not the same identity). #5714: this is now a COLLECTION —
+        # #5694 confirmed a process can host N Sessions as N concurrent
+        # asyncio tasks, so a singular field silently showed only
+        # whichever agent was constructed MOST RECENTLY. Every hosted
+        # session's own entry prints (never a representative — "空欄は
+        # 正直、他人の名前は嘘" applies per-entry now, not just to the
+        # marker as a whole); an entry with no name/sid recorded yet
+        # cannot happen (record_process_identity never appends an entry
+        # with both absent) so this never needs a blank-entry fallback.
+        sessions = entry.get("sessions") or []
+        if not sessions:
+            print("      sessions: (none recorded)")
+        else:
+            print("      sessions:")
+            for sess in sessions:
+                sess_agent = sess.get("agent_name") or ""
+                sess_sid = sess.get("sid") or ""
+                sess_broker = sess.get("broker_session_id") or ""
+                ended_desc = _age_desc(sess.get("ended_at"), now)
+                ended_desc = "no" if ended_desc == "never" else f"yes, {ended_desc}"
+                print(
+                    f"        agent_name={sess_agent} sid={sess_sid} "
+                    f"broker_session_id={sess_broker} ended={ended_desc}"
+                )

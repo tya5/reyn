@@ -4465,7 +4465,21 @@ class AgentRegistry:
         (an exception raised from a done-callback is itself reported via
         the SAME generic unhandled-exception path this method exists to
         give a more specific answer than) — logged, swallowed.
-        """
+
+        #5714 (architect ruling, point ③): ALSO presses
+        ``process_registry.record_session_ended`` here — not a second
+        lifecycle mechanism, the ruling's own explicit instruction is
+        that THIS callback is the one and only push site (verified by
+        this PR's own structural test: ``record_session_ended(`` has
+        exactly one production call site, here). #5714 reshaped the
+        marker's own identity field into a collection of ``sessions``
+        entries — once a process can host N Sessions, an entry with no
+        way to mark itself ended would show a genuinely-finished session
+        as "hosted" forever, the same class of lie #5714 as a whole
+        exists to close, one level down. Fires unconditionally (every
+        status — completed/exception/cancelled all mean the task
+        ENDED), same as the audit-event emit above; best-effort,
+        identical failure posture."""
         if task.cancelled():
             status, exception_type, exception_message = "cancelled", "", ""
         else:
@@ -4494,6 +4508,16 @@ class AgentRegistry:
                 "registry: failed to emit session_run_task_finished for "
                 "(%r, %r) (diagnostic-only, does not block anything)",
                 name, sid, exc_info=True,
+            )
+        try:
+            from reyn.runtime.process_registry import record_session_ended
+
+            record_session_ended(agent_name=name, sid=sid)
+        except Exception:
+            logger.warning(
+                "registry: failed to record session end in the process "
+                "registry for (%r, %r) (diagnostic-only, does not block "
+                "anything)", name, sid, exc_info=True,
             )
 
     def _ensure_session_run(self, name: str, sid: str, session: "object") -> asyncio.Task:
