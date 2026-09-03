@@ -904,8 +904,15 @@ class RouterLoopDriver:
                             self._router_main_call_for_retry,
                             loop=loop, user_text=user_text,
                         ),
+                        # #5720 ②: the fold callback (below) already
+                        # receives seq_by_id — the spill callback did not,
+                        # so mid's own seq_fn (_mid_seq_of) silently fell
+                        # back to a default instead of the turn's real
+                        # provenance (architect ruling: "provenance is not
+                        # structurally absent, only unwired").
                         spill_fn=_partial(
-                            self._spill_batch_for_retry, chain_id=chain_id,
+                            self._spill_batch_for_retry,
+                            chain_id=chain_id, seq_by_id=payload.seq_by_id,
                         ),
                         on_summary_used=_partial(
                             self._persist_recovery_fold, seq_by_id=payload.seq_by_id,
@@ -971,18 +978,44 @@ class RouterLoopDriver:
                     # recovering THIS turn's overflow).
                     await self._compaction_controller.force_compact_now(
                         spill_fn=_partial(
-                            self._spill_batch_for_retry, chain_id=chain_id,
+                            self._spill_batch_for_retry,
+                            chain_id=chain_id, seq_by_id=payload.seq_by_id,
                         ),
                     )
                 raise
         return _shim.usage
 
     @staticmethod
-    def _mid_seq_of(_idx: int, turn: dict) -> int:
-        """Pre-#5592 mid convention: the turn's own ``seq``, else 1. A named
-        function rather than the lambda this used to be (#5631) — it captures
-        nothing, and the closure count is the gate."""
-        return turn.get("seq", 1)
+    def _mid_seq_of(_idx: int, turn: dict, *, seq_by_id: "dict[int, int]") -> int:
+        """#5720 ② (architect ruling): mid's own wire dicts carry no ``seq``
+        field at all (``SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ``) — the
+        pre-#5720 ``turn.get("seq", 1)`` therefore ALWAYS fell to the
+        default, silently. The real per-turn seq was never structurally
+        absent: it already sits one keyword away, in ``on_summary_used``'s
+        own ``seq_by_id`` (``_persist_recovery_fold``'s own param, same
+        ``decompose_history_for_retry``-derived ``id(wire_dict) -> real
+        seq`` map) — the spill callback simply never received it. Passed
+        explicitly here (#5631's own discipline: no closures) rather than
+        threaded through a new instance attribute.
+
+        ``.get(id(turn), 1)`` keeps the SAME 1-fallback the old code had —
+        this is genuinely defensive now (every candidate handed to spill
+        originates from the SAME decomposition ``seq_by_id`` was built
+        from, so a miss should not occur in practice), not a silent
+        "provenance unresolved, looks resolved" default the way the
+        pre-#5720 unconditional fallback was.
+
+        This value feeds `save_tool_result`'s own `seq=` — that field is
+        the store's naming ORDINAL (head/tail's `idx + 1` genuinely is
+        just position, unaffected, unchanged by this fix) and, via
+        `spill_turn_content`'s own `SPILL_TARGET_SEQ_META_KEY`, the spill
+        record's own PROVENANCE (which real history turn this offload
+        target was) — for mid specifically these were always meant to be
+        the SAME value (the turn's real seq), never two competing facts
+        sharing one field; the pre-#5720 bug was that the shared value was
+        wrong for mid, not that mid needed a second, parallel field.
+        """
+        return seq_by_id.get(id(turn), 1)
 
     async def _persist_recovery_fold(
         self,
@@ -1036,11 +1069,18 @@ class RouterLoopDriver:
         )
 
     def _spill_batch_for_retry(
-        self, candidates: "list[dict]", *, chain_id: str,
+        self, candidates: "list[dict]", *,
+        chain_id: str, seq_by_id: "dict[int, int]",
     ) -> "list[tuple[int, dict]]":
         """#5531 §10 rung①: the spill batch retry_loop is handed. Was a closure
         in ``_run_with_shrink``; ``chain_id`` is the one value it captured and
         is now passed explicitly (#5631).
+
+        ``seq_by_id`` (#5720 ②): the SAME ``decompose_history_for_retry``-
+        derived ``id(wire_dict) -> real seq`` map ``on_summary_used``'s own
+        ``_persist_recovery_fold`` already receives from this method's own
+        callers — threaded through to :meth:`_mid_seq_of` (see its own
+        docstring for why this was previously silently unwired).
         """
         # #5531 §10 rung① / #9.6: injected into retry_loop, not
         # imported by it — matches ``context_budget_advisor.py``'s
@@ -1071,9 +1111,10 @@ class RouterLoopDriver:
         _edits = self._spill_batch_within_face(
             candidates, chain_id=chain_id,
             granularity=self._compaction.spill_granularity,
-            # Pre-#5592 mid convention: the turn's own ``seq``
-            # field, falling back to 1 — unchanged.
-            seq_fn=self._mid_seq_of,
+            # #5720 ②: the turn's own REAL seq, resolved via seq_by_id —
+            # see _mid_seq_of's own docstring for why the pre-#5720
+            # `turn.get("seq", 1)` always fell to the fallback.
+            seq_fn=_partial(self._mid_seq_of, seq_by_id=seq_by_id),
         )
         if _edits:
             return _edits
