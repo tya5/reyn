@@ -50,10 +50,16 @@ from reyn.services.compaction.engine import (
 )
 from tests._support.events import collect_events, settle
 
+# #5719: main_M_room=0 — this file's own tests are about the shrink-retry
+# ladder (spill/halving) downstream of candidate selection, not the #5719
+# shortfall-selection algorithm itself (that has its own dedicated tests
+# in test_5719_..._shortfall_selection.py), so main_M_room always produces
+# a shortfall for any nonempty middle, matching this file's pre-#5719
+# "everything between head/tail is initially offered" fixture shape.
 _STUB_BUDGETS = ComputedBudgets(
     main_pool=100_000, head_budget=50, body_budget=5_000,
     tail_budget=50, new_msg_budget=10_000,
-    B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
+    B_M=80_000, main_M_room=0, effective_trigger=0,
 )
 
 

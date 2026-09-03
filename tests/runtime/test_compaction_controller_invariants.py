@@ -45,10 +45,15 @@ async def _run_and_settle(coro, log):
 
 # Synthetic budgets: head/tail each fit ~one 50-token turn ("x"*200 via chars4),
 # so a 7-turn history yields head=[t1], tail=[t7], middle=[t2..t6] = candidates.
+# #5719: main_M_room=0 — these tests are about is_compacting/failure/summary-
+# append behavior, not the shortfall-selection algorithm itself (that has its
+# own dedicated tests), so main_M_room is set to always produce a shortfall
+# for any nonempty middle, matching the pre-#5719 "select everything between
+# head and tail" shape byte-for-byte for this file's own fixtures.
 _STUB_BUDGETS = ComputedBudgets(
     main_pool=100_000, head_budget=50, body_budget=5_000,
     tail_budget=50, new_msg_budget=10_000,
-    B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
+    B_M=80_000, main_M_room=0, effective_trigger=0,
 )
 
 

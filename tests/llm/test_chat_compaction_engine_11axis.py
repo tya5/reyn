@@ -786,10 +786,15 @@ class _CountingEngine(CompactionEngine):
         self._use_chars4 = True
         self._T_comp_SP = 10
         self._system_prompt_provider = None
+        # #5719: main_M_room=0 — this test is about single-pass/no-race-
+        # recovery behavior, not the shortfall-selection algorithm (that
+        # has its own dedicated tests), so main_M_room always produces a
+        # shortfall for any nonempty middle, matching this test's
+        # pre-#5719 "the whole middle is a candidate" fixture shape.
         self._budgets = ComputedBudgets(
             main_pool=100_000, head_budget=10_000, body_budget=5_000,
             tail_budget=15_000, new_msg_budget=10_000,
-            B_M=80_000, main_M_room=65_000, effective_trigger=50_000,
+            B_M=80_000, main_M_room=0, effective_trigger=0,
         )
         self.compact_call_count = 0
 

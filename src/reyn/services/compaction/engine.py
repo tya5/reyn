@@ -1856,6 +1856,60 @@ def trim_tail(
     return [t for group in reversed(kept_reversed) for t in group]
 
 
+def select_fold_candidates_for_shortfall(
+    turns: list,
+    shortfall_tokens: int,
+    model: str = "",
+    *,
+    use_chars4: bool = False,
+) -> list:
+    """#5719 (architect ruling, real-machine incident: #5712's own fix
+    compacted 1.6M raw_middle chars down to a ~3K summary against a 950K
+    window — 600x more than the ~650K shortfall actually needed).
+
+    ``CompactionController._select_candidates`` used to treat
+    head/tail's OWN boundary as the fold selector too: "everything
+    strictly between head and tail" became "everything to fold",
+    collapsing "is this turn protected" and "does this turn need
+    folding" onto one predicate. head/tail stay exactly what they always
+    were — the protection boundary, computed by the caller before this
+    function ever runs. This function answers the SEPARATE question:
+    of the turns head/tail leave unprotected, how many actually need to
+    fold to close *shortfall_tokens* — never "all of them" by default.
+
+    ``shortfall_tokens <= 0`` (the unprotected middle already fits the
+    window) returns ``[]`` — folding zero turns is a valid, common
+    answer this function did not have before #5719; the caller (#4472's
+    own contract) already treats an empty candidate list as "nothing to
+    compact" correctly, no new outcome needed.
+
+    Oldest-first (``turns`` is already chronological — the caller reads
+    straight from ``history.jsonl``), group-aware (:func:`_group_tool_
+    cycles` — same discipline :func:`trim_head`/:func:`trim_tail` use;
+    a tool_call and its results never split across the fold boundary),
+    accumulating until the running total reaches *shortfall_tokens* —
+    the LAST group that crosses the threshold is folded WHOLE (never
+    split), so the actual amount folded can overshoot the shortfall by
+    at most one group's own size, never by design margin. No "fold a
+    bit extra just in case" constant here (owner ruling, relayed via
+    lead-coder: invent it later as a RE-OPEN TRIGGER if a real machine
+    ever shows repeated near-immediate re-compaction after a
+    shortfall-sized fold — not preemptively, unmeasured, today).
+    """
+    if shortfall_tokens <= 0:
+        return []
+    selected: list = []
+    total = 0
+    for group in _group_tool_cycles(turns):
+        if total >= shortfall_tokens:
+            break
+        selected.extend(group)
+        total += sum(
+            estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in group
+        )
+    return selected
+
+
 def hard_truncate_summary(
     summary_text: str,
     body_budget: int,
