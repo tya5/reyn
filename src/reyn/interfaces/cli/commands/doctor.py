@@ -134,13 +134,26 @@ slice.
 not declared-vs-effective, but "reyn cannot currently answer how many
 of ITSELF are alive, or whose, without an operator manually shelling
 out to ``ps``+``lsof``". :func:`_print_process_registry` reads
-:func:`~reyn.runtime.process_registry.live_processes` — a live read of
-PID-keyed markers each reyn CLI process writes about ITSELF at startup
-(``interfaces/cli/__init__.py:main()``, the same hook
-``set_process_title`` uses), never a process-table scan of its own
-(that is the OS's job, per lead-coder's own ruling). D-2 unchanged:
-report-only — no kill, no TTL expiry; that judgment call is explicitly
-out of #5226's own scope until the count is visible at all.
+:func:`~reyn.runtime.process_registry.read_process_markers` — a live,
+NON-DESTRUCTIVE read of PID-keyed markers each reyn CLI process writes
+about ITSELF at startup (``interfaces/cli/__init__.py:main()``, the
+same hook ``set_process_title`` uses), never a process-table scan of
+its own (that is the OS's job, per lead-coder's own ruling). D-2
+unchanged: report-only — no kill, no TTL expiry; that judgment call is
+explicitly out of #5226's own scope until the count is visible at all.
+
+#5709 R3: NOT :func:`~reyn.runtime.process_registry.live_processes` —
+that function REAPS (deletes) a confirmed-dead marker as a side effect
+of reading it, correct for its own "who is alive right now" contract
+but wrong for a post-mortem reader. Once a marker can carry
+``last_loop_beat_at`` (below), a dead-but-unread marker is EVIDENCE a
+second reader (a broker health poll, or a second ``reyn doctor`` run)
+may still need to see — whichever of the two reads first must not
+destroy it for the other. ``read_process_markers()`` is the
+non-destructive sibling that exists for exactly this: doctor migrated
+onto it; ``live_processes()`` itself is unchanged and still the right
+call for a caller that actually wants reaping (e.g. a live agent
+process's own periodic self-cleanup).
 
 #4364 (this slice, 2026-09-02, lead-coder assignment — issue-comment
 candidate ②, chosen because it directly matches the owner's own
@@ -1490,16 +1503,29 @@ def _print_process_registry() -> None:
     days) found there was no way for reyn ITSELF to answer "how many of
     me are alive, and whose" — only a manual ``ps``+``lsof -d cwd``
     reconstruction. This section is that read seam, D-1/D-2 unchanged
-    (a live read of :func:`~reyn.runtime.process_registry.live_processes`,
-    never a restatement of config; report-only, no kill/TTL — that
-    judgment is explicitly out of THIS issue's scope, an owner-level call
-    once the count is visible at all).
+    (a live read of
+    :func:`~reyn.runtime.process_registry.read_process_markers`, never a
+    restatement of config; report-only, no kill/TTL — that judgment is
+    explicitly out of THIS issue's scope, an owner-level call once the
+    count is visible at all).
+
+    #5709 R3: ``read_process_markers()``, the NON-DESTRUCTIVE reader —
+    deliberately NOT :func:`~reyn.runtime.process_registry.live_processes`,
+    which REAPS (deletes) a confirmed-dead marker as a side effect of
+    reading it. That is correct for ``live_processes()``'s own "who is
+    alive right now" contract, but doctor is a post-mortem reader too (a
+    dead process's own ``last_loop_beat_at`` is exactly the evidence an
+    operator runs ``reyn doctor`` to see) — and doctor is not the only
+    reader of this directory (a broker health poll is another, and
+    running ``reyn doctor`` twice is itself two reads), so whichever
+    reads first must not destroy what the next one still needs.
 
     Deliberately prints only the fields the marker itself carries — pid/
-    ppid/cwd/subcommand/age — never full argv or any path beyond cwd
-    (see ``process_registry.py``'s own module docstring for why: it
-    mirrors ``reyn.runtime.proctitle``'s explicit stance against leaking
-    more than the minimum into anything read back after the fact)."""
+    ppid/cwd/subcommand/age/loop-beat-age/agent_name/broker_session_id —
+    never full argv or any path beyond cwd (see ``process_registry.py``'s
+    own module docstring for why: it mirrors
+    ``reyn.runtime.proctitle``'s explicit stance against leaking more
+    than the minimum into anything read back after the fact)."""
     import time
 
     from reyn.data.index.build_lock import pid_alive
