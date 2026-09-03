@@ -118,11 +118,12 @@ _ALLOWLIST = {
     ),
     "compute_memo_key": (
         "src/reyn/core/kernel/sub_loop_memo_key.py's own module docstring — "
-        "\"used by the phase memo path (...`PhaseRouterHost.compute_memo_"
-        "key`) and as the chat-router fallback when the host provides no "
-        "`compute_memo_key`\" (explicitly documented as an optional "
-        "phase-host-only seam; this pure-function module IS the "
-        "documented fallback for hosts that omit it)."
+        "\"used as the chat-router fallback when the host provides no "
+        "`compute_memo_key`\" (#5703: the docstring used to also name the "
+        "phase-axis consumer, deleted by #2434/#2438 along with the rest of "
+        "the phase engine — corrected there, not a live implementer; this "
+        "pure-function module IS the documented fallback for a host that "
+        "omits the seam, which is every host in this repo today)."
     ),
 }
 
