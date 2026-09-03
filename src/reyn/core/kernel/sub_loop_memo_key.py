@@ -1,10 +1,20 @@
 """Sub-loop LLM-call memo-key computation (ADR-0025).
 
-The stable args-hash that keys ``RouterLoop`` sub-loop memoization — used by the
-phase memo path (``LLMCallRecorder.make_phase_memo_provider`` +
-``PhaseRouterHost.compute_memo_key``) and as the chat-router fallback when the host
-provides no ``compute_memo_key``. A pure function over the inputs that drive
-deterministic LLM output; no I/O, no persistence.
+The stable args-hash that keys ``RouterLoop`` sub-loop memoization — used as
+the chat-router fallback when the host provides no ``compute_memo_key``
+(``router_loop.py``'s own ``getattr(self.host, "compute_memo_key", None)``
+seam). A pure function over the inputs that drive deterministic LLM output;
+no I/O, no persistence.
+
+#5703 (doc-sync): this module docstring used to also name the phase-axis
+consumer of that seam (``LLMCallRecorder.make_phase_memo_provider`` +
+``PhaseRouterLoopHost.compute_memo_key``, both introduced by #1092). Neither
+exists in this repo any more — the whole phase engine, including both, was
+deleted by #2434/#2438's clean-break arc (same removal #5701 traced for the
+sibling ``record_force_close`` seam). The chat-router fallback role this
+module plays is unaffected either way — no host in this repo implements
+``compute_memo_key`` today, so ``RouterLoop``'s own memo key is always this
+module's output.
 """
 from __future__ import annotations
 
