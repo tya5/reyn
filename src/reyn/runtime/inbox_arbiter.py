@@ -4,7 +4,7 @@ extracted from Session (proposal 0067 P1, #3978).
 Before this extraction, four pieces of state (`_pending_inbox_item`,
 `_cancelled_msg_ids`, `_next_turn_context`, `_last_sender`/`_last_reply_to`)
 and the methods that read/write them (`_consume_inbox`,
-`_peek_mid_turn_injection`, `_drain_to_wake`, `_stage_next_turn_context`,
+`_peek_mid_turn_injections`, `_drain_to_wake`, `_stage_next_turn_context`,
 `_handle_sender_attribution`) lived directly on ``Session`` alongside ~40
 unrelated fields — one more example of the field-usage cluster the
 `refactoring` skill's Extract Class step targets: these methods touch each
@@ -12,7 +12,7 @@ other's state and nothing else Session owns (external deps are threaded in
 at construction, see below).
 
 Byte-identical extraction where the prior inline body allowed it
-(`consume_inbox`, `peek_mid_turn_injection`, `stage_next_turn_context`,
+(`consume_inbox`, `peek_mid_turn_injections`, `stage_next_turn_context`,
 `drain_to_wake`) — moved, not rewritten. `handle_sender_attribution` is the
 one exception: extraction is also where the reply_to staleness bug (see its
 own docstring) is closed, since fixing it required threading `kind` through
@@ -132,7 +132,7 @@ class InboxArbiter:
         self._notify_state_change = notify_state_change
 
         # #3792/#5647: a volatile (not WAL/snapshot-backed) peek buffer, in
-        # ARRIVAL ORDER — see ``peek_mid_turn_injection``'s own docstring.
+        # ARRIVAL ORDER — see ``peek_mid_turn_injections``'s own docstring.
         # Was a 1 slot until #5647: injection now looks PAST an ineligible
         # head for the operator's own message, and the items it looked past
         # have to be held somewhere that preserves the order they arrived in.
@@ -166,7 +166,7 @@ class InboxArbiter:
 
         #3792: drains ``self.pending_inbox_items`` FIRST, from its head, ahead
         of a fresh ``self._inbox.get()``. Items land there via
-        ``peek_mid_turn_injection`` — either because the running turn ended
+        ``peek_mid_turn_injections`` — either because the running turn ended
         (cancel / cap / overflow / LLM exception) before
         ``Session._commit_mid_turn_injection`` ever fired (carry-forward: the
         item is simply processed as an ordinary new turn here, exactly as if
@@ -221,7 +221,7 @@ class InboxArbiter:
             await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
 
-    async def peek_mid_turn_injection(self) -> "list[dict]":
+    async def peek_mid_turn_injections(self) -> "list[dict]":
         """#3792/#5677: non-blocking, non-committing peek at the inbox for
         EVERY currently-eligible mid-turn injection candidate, in arrival
         order.

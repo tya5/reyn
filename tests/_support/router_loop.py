@@ -313,7 +313,7 @@ class FakeRouterHost:
 
     # --- #3792 PR1: mid-turn injection seam ---
 
-    async def peek_mid_turn_injection(self) -> "list[dict]":
+    async def peek_mid_turn_injections(self) -> "list[dict]":
         """PR1 test double: records every call (for seam-position witness
         tests) and always returns ``[]`` (PR1's own production behaviour —
         PR2 wires the real peek; #5677 changed the shape from
@@ -323,7 +323,7 @@ class FakeRouterHost:
         ORDER (relative to other recorded events, via the shared
         ``self.call_order`` log some tests also append to)."""
         self.mid_turn_injection_peeks.append(len(self.mid_turn_injection_peeks))
-        self.call_order.append("peek_mid_turn_injection")
+        self.call_order.append("peek_mid_turn_injections")
         return []
 
 

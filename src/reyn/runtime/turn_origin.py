@@ -182,7 +182,7 @@ class TurnOrigin(StrEnum):
 
 #: #5677 (architect co-vet, lead-coder's own correction of #3595's
 #: original slash-dispatch predicate): which kinds may STEER a turn
-#: that is already running — ``InboxArbiter.peek_mid_turn_injection``'s
+#: that is already running — ``InboxArbiter.peek_mid_turn_injections``'s
 #: own eligibility set. This is a SEPARATE question from
 #: ``CLIENT_INPUT``'s "may this text reach slash dispatch" (that
 #: predicate is a trust decision about a text's FORM; this one is about

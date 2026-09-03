@@ -92,7 +92,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     not one alone): every OTHER member must still be excluded.
 
     Falsification (performed during review): reverting
-    ``InboxArbiter.peek_mid_turn_injection``'s eligibility check from
+    ``InboxArbiter.peek_mid_turn_injections``'s eligibility check from
     ``kind not in MID_TURN_INJECTABLE`` back to
     ``kind != TurnOrigin.CLIENT_INPUT`` makes the AGENT_REQUEST accept-side
     assertion below go RED (an empty list, not one entry); widening it to
@@ -121,7 +121,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
             tmp_path / f"{origin.value}.wal", tmp_path / f"{origin.value}.json",
         )
         await session._put_inbox(origin, kwargs)
-        result = await session._inbox_arbiter.peek_mid_turn_injection()
+        result = await session._inbox_arbiter.peek_mid_turn_injections()
         assert result == [], f"origin {origin!r} must NOT be peek-eligible"
         await state_log.aclose()
 
@@ -130,7 +130,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
         tmp_path / "client_input.wal", tmp_path / "client_input.json",
     )
     await session.submit_user_text("hello")
-    result = await session._inbox_arbiter.peek_mid_turn_injection()
+    result = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = result
     assert only["payload"]["text"] == "hello"
     assert only["kind"] == TurnOrigin.CLIENT_INPUT
@@ -144,7 +144,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
         TurnOrigin.AGENT_REQUEST,
         {"from_agent": "peer-agent", "request": "corrected instruction", "depth": 1, "chain_id": "c1"},
     )
-    result2 = await session2._inbox_arbiter.peek_mid_turn_injection()
+    result2 = await session2._inbox_arbiter.peek_mid_turn_injections()
     (only2,) = result2
     assert only2["payload"]["request"] == "corrected instruction"
     assert only2["kind"] == TurnOrigin.AGENT_REQUEST
@@ -159,7 +159,7 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     await session3._put_inbox(
         TurnOrigin.EXTERNAL_MESSAGE, {"text": "urgent update", "sender": "slack:U456"},
     )
-    result3 = await session3._inbox_arbiter.peek_mid_turn_injection()
+    result3 = await session3._inbox_arbiter.peek_mid_turn_injections()
     (only3,) = result3
     assert only3["payload"]["text"] == "urgent update"
     assert only3["kind"] == TurnOrigin.EXTERNAL_MESSAGE
@@ -206,7 +206,7 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
     await session._put_inbox(TurnOrigin.HOOK, {"name": "on_idle"})
     await session.submit_user_text("second, eligible")
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked, (
         "#5647: peek must look PAST the ineligible HOOK head to find "
         "the operator's message — stopping here is the reported defect"
@@ -233,7 +233,7 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
 async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
     """Tier 2: #5677 (owner ruling, verbatim: "溜まっているものは基本inject
     すべき… わざわざ分けるとコスト増えるだけ") — multiple queued eligible
-    items are ALL returned by one ``peek_mid_turn_injection()`` call, not
+    items are ALL returned by one ``peek_mid_turn_injections()`` call, not
     just the first, so a caller can splice them into the SAME completion
     round instead of paying for one round trip per item.
 
@@ -242,7 +242,7 @@ async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
     don't stop" behavior #5647 established, generalized from "stop at the
     first eligible hit" to "keep going to the end of what's available".
 
-    Strip-falsifier: reverting ``peek_mid_turn_injection`` to ``return``
+    Strip-falsifier: reverting ``peek_mid_turn_injections`` to ``return``
     immediately after the FIRST eligible hit (the pre-#5677 shape) makes
     the length assertion below go red (1 item, not 2) and the AGENT_REQUEST
     assertion never runs.
@@ -256,7 +256,7 @@ async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
         {"from_agent": "peer", "request": "second, eligible", "depth": 1, "chain_id": "c1"},
     )
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     first, second = peeked  # exactly 2 — a 3rd or a missing one fails to unpack
     assert first["kind"] == TurnOrigin.CLIENT_INPUT
     assert first["payload"]["text"] == "first, eligible"
@@ -301,7 +301,7 @@ async def test_peek_without_commit_carries_forward_to_normal_consume(tmp_path):
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
     await session.submit_user_text("carry me")
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked
     # Deliberately do NOT commit — simulates the abnormal exit.
 
@@ -336,7 +336,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     events = collect_events(session)
 
     msg_id = await session.submit_user_text("inject me", attribution=None)
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked
     assert peeked[0]["msg_id"] == msg_id
 
@@ -397,7 +397,7 @@ async def test_commit_truncate_falsify(tmp_path):
 
     msg_id = await session.submit_user_text("inject me")
     keep_id = await session.submit_user_text("stays queued")
-    await session._inbox_arbiter.peek_mid_turn_injection()
+    await session._inbox_arbiter.peek_mid_turn_injections()
     await session._commit_mid_turn_injection(msg_id)
     await session.journal.flush()
 

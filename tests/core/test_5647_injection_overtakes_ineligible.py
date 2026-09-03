@@ -84,7 +84,7 @@ async def test_injection_reaches_the_operator_message_behind_two_hooks(tmp_path)
     await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
     await session.submit_user_text("stop and look at this")
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked, (
         "the operator's message must be reachable past the two hook items — "
         "returning [] here IS the reported defect"
@@ -123,7 +123,7 @@ async def test_the_overtaken_items_are_still_consumed_first_and_in_order(tmp_pat
     await session._put_inbox(TurnOrigin.HOOK, {"name": "second"})
     await session.submit_user_text("steer")
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
     await session._commit_mid_turn_injection(only["msg_id"])
 
@@ -155,7 +155,7 @@ async def test_items_that_arrived_after_the_operator_keep_their_place_too(tmp_pa
     await session.submit_user_text("steer")
     await session._put_inbox(TurnOrigin.HOOK, {"name": "B"})
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
     assert only["payload"]["text"] == "steer"
     await session._commit_mid_turn_injection(only["msg_id"])
@@ -185,7 +185,7 @@ async def test_no_injection_when_no_operator_message_is_queued(tmp_path):
     await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
     await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked == []
     await settle(session)
     assert _mid_turn_started(events) == [], "no injection means no turn_started"
@@ -214,7 +214,7 @@ async def test_an_operator_message_at_the_head_reports_an_empty_skipped_list(tmp
 
     await session.submit_user_text("nothing ahead of me")
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
     await session._commit_mid_turn_injection(only["msg_id"])
     await settle(session)
@@ -249,7 +249,7 @@ async def test_a_cancelled_operator_message_is_passed_over_for_the_next_one(tmp_
     await session.submit_user_text("the real one")
     await session.cancel_queued(cancelled_id)
 
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
     assert only["payload"]["text"] == "the real one", (
         "the cancelled message must not be injected; the scan continues past "
@@ -286,7 +286,7 @@ async def test_overtaken_items_survive_a_wal_truncation_in_arrival_order(tmp_pat
     await session._put_inbox(TurnOrigin.HOOK, {"name": "B"})
 
     # Overtake, but never commit — the abnormal-exit shape.
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked
     await settle(session)
     await state_log.aclose()
@@ -334,7 +334,7 @@ async def test_the_ride_along_drain_does_not_read_past_the_peek_buffer(tmp_path)
 
     # The peek pulls both ride-alongs into the buffer on its way to the user
     # message, which is what makes the buffer hold more than one item.
-    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
     await session._commit_mid_turn_injection(only["msg_id"])
 
