@@ -662,16 +662,38 @@ class CompactionController:
             _summary_messages = (
                 [wrap_summary_as_message(prev_structured)] if prev_structured else []
             )
-            input_chunk = HistoryChunkToCompact(
-                messages=_summary_messages
-                + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
-                section_token_caps={
+            # #5721 (architect ruling, #5712's own "reactive protected /
+            # operator-driven bare" asymmetry — this is its 3rd instance):
+            # this is the OPERATOR-DRIVEN path (`/compact` -> force_compact_
+            # now -> here) — before this fix it built section_token_caps
+            # from `cfg.section_token_caps.*`, the STATIC legacy defaults
+            # (sum 1500 tokens), regardless of the model's own context
+            # window. `compute_budgets`'s own `section_caps` field (window-
+            # relative, computed from `section_weights`) is PRIMARY —
+            # engine.py's own comment names the static values "Fallback:
+            # use CompactionSectionCaps legacy values" for when weights are
+            # absent — and `engine.py`'s reactive `_stage_fold` (the
+            # retry_loop-internal compact() call) already reads it that
+            # way (`self._bg.section_caps if self._bg.section_caps else
+            # {...legacy...}`). This path now reads the SAME
+            # `self._engine.budgets.section_caps`, matching that shape —
+            # never a second, independently-derived cap dict.
+            budgets = getattr(self._engine, "budgets", None)
+            section_caps = (
+                budgets.section_caps
+                if budgets is not None and budgets.section_caps
+                else {
                     "topic_arc": cfg.section_token_caps.topic_arc,
                     "decisions": cfg.section_token_caps.decisions,
                     "pending": cfg.section_token_caps.pending,
                     "session_user_facts": cfg.section_token_caps.session_user_facts,
                     "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
-                },
+                }
+            )
+            input_chunk = HistoryChunkToCompact(
+                messages=_summary_messages
+                + [_turn_to_compactor_input(t, redact=_redact) for t in candidates],
+                section_token_caps=section_caps,
             )
         except Exception as exc:
             # #5633: this segment's OWN failure surface — see the comment
