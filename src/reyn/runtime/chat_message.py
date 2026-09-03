@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 
 class Spillability(StrEnum):
@@ -214,6 +214,90 @@ class Disclosure(StrEnum):
         if not isinstance(other, Disclosure):
             return NotImplemented
         return _DISCLOSURE_RANK[self.value] >= _DISCLOSURE_RANK[other.value]
+
+
+def is_model_visible(m: Any) -> bool:
+    """#5678: true for a ``role="system"`` entry declared ``Disclosure.
+    MODEL`` — the ONE case every filter below (and every history-window/
+    compaction-candidate filter in ``session.py``, ``compaction_
+    controller.py`` and ``router_history_buffer.py``) admits on TOP of
+    each filter's own always-included roles.
+
+    THE single shared predicate for this question (#5678, relocated here
+    by #5699 — see :func:`is_compaction_eligible`'s own docstring for
+    why): never duplicated inline at any call site.
+
+    ``m.disclosure`` is ``None`` for every non-``"system"`` role (see
+    ``Disclosure``'s own docstring / ``_normalize_disclosure``) and for a
+    ``role="system"`` entry it is NEVER ``None`` (``ChatMessage.__init__``
+    raises otherwise, and a pre-#5678 persisted line is migrated to a real
+    value before construction) — so the ``is not None`` guard here is a
+    defensive belt, not a live branch for any reachable production value.
+    """
+    return (
+        m.role == "system"
+        and m.disclosure is not None
+        and m.disclosure >= Disclosure.MODEL
+    )
+
+
+#: #5699 (architect ruling): the base roles a history-window/compaction
+#: filter always includes, REGARDLESS of ``is_model_visible`` — E-full
+#: #383's own user/assistant/tool/agent. Named here (not a literal tuple
+#: hand-typed at each of the 4 call sites this used to be #5699's own
+#: root cause) so ``scripts/check_no_hardcoded_compaction_role_tuple.py``
+#: has exactly one legitimate definition site to allow.
+COMPACTION_ELIGIBLE_BASE_ROLES: "tuple[str, ...]" = ("user", "assistant", "tool", "agent")
+
+
+def is_compaction_eligible(m: Any) -> bool:
+    """#5699: true for an entry a history-window projection or a
+    compaction candidate filter should admit — the base roles (E-full
+    #383) OR a MODEL-visible ``system`` entry (#5678). Does NOT admit
+    ``role="summary"`` — see :func:`is_compaction_eligible_including_
+    summary` for the one filter (``decompose_history_for_retry``) that
+    deliberately does, and #5678's own acceptance-item-3 test for why
+    the two must stay genuinely different predicates, not one collapsed
+    into the other.
+
+    THE single shared predicate for "can this entry enter the window /
+    be offered to ``/compact``" — used by ``router_history_buffer.py``'s
+    own ``_elide_candidate_turns`` (feeds ``build_history``, the wire
+    projection), ``compaction_controller.py``'s ``force_compact_now``
+    candidate filter, and ``session.py``'s own ``_compact_now_for_op``
+    reporting filter. Before #5699 these were 2 independent hand-typed
+    copies of the base-role tuple (``router_history_buffer.py``'s own
+    filter DID gain the ``is_model_visible`` OR-term when #5678/#5688
+    widened the window; ``compaction_controller.py``'s and
+    ``session.py``'s never did) — an entry could enter the live window
+    forever while staying permanently un-foldable by ``/compact``, the
+    owner's own real-machine incident (2026-09-03): a history dominated
+    by such entries reported "Nothing was compacted this pass" on every
+    ``/compact``, while the next turn's overflow eventually exhausted the
+    reactive ladder's own, correctly-widened raw_middle and surfaced a
+    raw, unrecovered provider error.
+    """
+    return m.role in COMPACTION_ELIGIBLE_BASE_ROLES or is_model_visible(m)
+
+
+def is_compaction_eligible_including_summary(m: Any) -> bool:
+    """#5699: :func:`is_compaction_eligible`'s own sibling for the ONE
+    filter that also admits ``role="summary"`` —
+    ``decompose_history_for_retry`` (the reactive overflow ladder's own
+    candidate builder). #5531's own invariant: a summary represents ONE
+    continuous span and sits at its own chronological position, so the
+    windowing that places head/mid/tail must be able to see it — never
+    admitted by :func:`is_compaction_eligible` itself (``build_history``'s
+    own projection attaches summary content via a synthetic bridge
+    instead; a raw ``role="summary"`` turn must never leak into it — see
+    ``test_5678_disclosure_axis.py``'s own
+    ``test_summary_role_reaches_retry_decompose_but_not_build_history``,
+    the strip-falsifier for accidentally collapsing these two predicates
+    into one)."""
+    return (
+        m.role in (*COMPACTION_ELIGIBLE_BASE_ROLES, "summary")
+        or is_model_visible(m)
+    )
 
 
 def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosure | None":

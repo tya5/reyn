@@ -950,26 +950,131 @@ _CONTEXT_OVERFLOW_KEYWORDS = (
     "context", "token", "length", "limit", "too long", "too large",
 )
 
+#: #5699 (owner real-machine incident): the OpenAI/litellm structured
+#: ``error.code`` value for a provider-side context-length overflow —
+#: the SAME kind of type-adjacent, definitive signal ``status_code ==
+#: 413`` and ``isinstance(..., ContextWindowExceededError)`` above
+#: already are (openai's own ``APIError.code``, parsed straight off the
+#: response body's ``error.code`` field — see ``openai._exceptions.
+#: APIError.__init__``), but was NOT checked here: a provider/proxy that
+#: flattens its typed error to a bare ``BadRequestError`` (this
+#: function's own docstring already names this as the case the keyword
+#: fallback exists for) still carries this field even when its own
+#: free-text ``message`` does not happen to contain any of
+#: ``_CONTEXT_OVERFLOW_KEYWORDS`` — confirmed by direct construction: a
+#: real ``litellm.BadRequestError`` with ``body={"code":
+#: "context_length_exceeded", ...}`` and a message reading only "Input
+#: rejected by upstream service." matches NONE of the keywords, so
+#: ``is_shrinkable_overflow`` (this predicate's one caller) returned
+#: False and the raw exception would propagate unrecovered — the exact
+#: gap the module docstring's own principle already states but this
+#: function had not yet applied to this field: "``str(exc)`` … must
+#: never be the ONLY signal when a stronger one … is available"
+#: (:func:`is_context_overflow_error`'s own docstring, unchanged).
+#:
+#: Same allowlist-not-enumeration posture as ``error_format.py``'s own
+#: ``_QUOTA_EXHAUSTED_BODY_TYPE`` (its own docstring's disclosed-gap
+#: precedent): a provider expressing this failure under a different
+#: ``code`` value is not silently assumed absent, it is a disclosed gap.
+_CONTEXT_OVERFLOW_ERROR_CODES = frozenset({"context_length_exceeded"})
+
+
+@dataclass(frozen=True)
+class LLMErrorSignal:
+    """#5699 (architect ruling): the MATERIAL extracted from a raw
+    provider exception, built exactly ONCE by :func:`build_llm_error_signal`
+    and read by every predicate below that classifies it — never a merged
+    DECISION (architect, verbatim: a single classifier collapsing several
+    genuinely different questions into one value is "今週3度潰した形" —
+    the #3082 god-object shape). :func:`is_context_overflow_error`
+    ("is this overflow"), :func:`classify_llm_failure` ("fatal / retryable
+    / overflow"), :func:`is_shrinkable_overflow` ("should the shrink
+    ladder be entered") and its own ``_is_fatal_auth_error`` helper
+    each still ask their OWN question against this SAME material — none
+    of them re-derives ``status_code``/``.code``/``type(exc).__name__``/
+    ``str(exc)`` from ``exc`` a second time, so a stronger-signal-available
+    gap fixed once (#5699's own ``.code`` gap) cannot silently persist at
+    a sibling predicate that still reads the raw exception its own way
+    (lead-coder review, #5700: ``_is_fatal_auth_error`` was initially
+    missed — it ran BEFORE ``classify_llm_failure``'s own signal build,
+    reading ``exc`` directly; fixed by moving the signal build to the top
+    of that function, ahead of every check).
+
+    Fields are ordered by STRENGTH, matching how every consumer below
+    checks them — ``status_code``/``code``/the litellm type first, the
+    free-text ``message`` last, as the fallback of last resort (this
+    module's own long-standing principle, ``is_context_overflow_error``'s
+    docstring: ``str(exc)`` "must never be the ONLY signal when a
+    stronger one … is available").
+
+    Deliberately scoped to what ``error_format.py``'s own
+    ``classify_router_error`` (a DIFFERENT layer — the user-FACING
+    formatter, never imports litellm by design, see that module's own
+    docstring) does NOT need: no litellm-typed field is force-shared
+    across that boundary. ``error_format.py`` reads the same
+    ``status_code``/``.code``/``type(exc).__name__``/``str(exc)``
+    primitives directly off ``exc`` for its own, narrower reason (a
+    display bucket, not a shrink-ladder decision) — sharing the
+    EXTRACTION across that specific boundary would invert the existing
+    dependency direction (``engine.py`` already imports FROM
+    ``error_format.py``, never the reverse) for no behavioural gain.
+    """
+
+    status_code: "int | None"
+    code: "str | None"
+    is_context_window_exceeded_type: bool
+    class_name: str
+    message: str
+
+
+def build_llm_error_signal(exc: BaseException) -> LLMErrorSignal:
+    """#5699: the ONE extraction point — see :class:`LLMErrorSignal`'s
+    own docstring for why this exists and what it deliberately does not
+    cover. Never raises: the litellm-typed check degrades to ``False``
+    exactly the way :func:`is_context_overflow_error` always tolerated
+    litellm not being warm yet (#4395 PR-2) — a deferred/absent litellm
+    import must not make signal construction itself fail.
+    """
+    is_cwe = False
+    try:
+        litellm = ensure_litellm_ready_or_defer()
+        is_cwe = isinstance(exc, litellm.ContextWindowExceededError)
+    except (ImportError, LitellmWarmingInBackgroundError):
+        pass
+    return LLMErrorSignal(
+        status_code=getattr(exc, "status_code", None),
+        code=getattr(exc, "code", None),
+        is_context_window_exceeded_type=is_cwe,
+        class_name=type(exc).__name__,
+        message=str(exc),
+    )
+
 
 def is_context_overflow_error(exc: BaseException) -> bool:
     """True when *exc* looks like a provider context-length overflow.
 
     #3783 stage 1: the single owner for this question, replacing 5
-    independent (and divergent) copies. Type-checked FIRST — litellm raises
-    ``ContextWindowExceededError`` (a ``BadRequestError`` subclass) for a
-    real provider-side overflow, a definitive positive — with a keyword
-    match on the stringified exception as a fallback for everything else.
+    independent (and divergent) copies. Checked in STRENGTH order —
+    ``status_code`` → type → structured ``error.code`` (#5699) → a
+    keyword match on the stringified exception, last, as the fallback for
+    everything else: litellm raises ``ContextWindowExceededError`` (a
+    ``BadRequestError`` subclass) for a real provider-side overflow, a
+    definitive positive; when a proxy has flattened that type away
+    (below), the structured ``code`` field openai's own SDK already
+    parses off the response body is the next-strongest signal, checked
+    before ever falling back to matching free text.
 
     The keyword fallback is NOT deleted (a litellm *proxy* can flatten a
     provider's typed error down to a bare ``BadRequestError`` or another
-    generic exception, losing the specific type): `str(exc)` is a value the
-    thing being classified writes freely, so it is fine as a fallback signal
-    but must never be the ONLY signal when a stronger one (the type) is
-    available. This predicate answers ONLY "is this overflow" — it says
-    nothing about whether shrinking can fix it (that is
-    ``services.compaction.engine``'s own recover-classification, #3783
-    stage 3, a deliberately separate question living in this same module
-    but not this function).
+    generic exception, losing the specific type AND sometimes the
+    structured ``code`` too): `str(exc)` is a value the thing being
+    classified writes freely, so it is fine as a fallback signal but must
+    never be the ONLY signal when a stronger one (the type, or the
+    structured ``code`` field, #5699) is available. This predicate
+    answers ONLY "is this overflow" — it says nothing about whether
+    shrinking can fix it (that is ``services.compaction.engine``'s own
+    recover-classification, #3783 stage 3, a deliberately separate
+    question living in this same module but not this function).
 
     #4381 stage 1: HTTP 413 (Request Entity Too Large — a request-BODY-byte
     limit, a different dimension entirely from the token-count limit
@@ -1008,32 +1113,33 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     """
     if is_quota_exhausted_error(exc):
         return False
-    # #4381 stage 1: checked BEFORE the litellm import below (and so
-    # regardless of whether that import succeeds) — a plain attribute
-    # read needs no litellm dependency at all, and this signal must not
-    # be weaker than the fallback it is meant to replace.
-    if getattr(exc, "status_code", None) == 413:
+    # #5699: ONE extraction (status_code / structured code / litellm type
+    # / stringified message), read in strength order below — see
+    # :class:`LLMErrorSignal`'s own docstring for why this replaces each
+    # of the 4 independent re-derivations that used to live here and in
+    # :func:`classify_llm_failure`.
+    signal = build_llm_error_signal(exc)
+    # #4381 stage 1: a plain status_code read needs no litellm dependency
+    # at all, and this signal must not be weaker than the fallback it is
+    # meant to replace.
+    if signal.status_code == 413:
         return True
-    try:
-        # #4395 PR-2: non-blocking chokepoint variant — this classifier
-        # already falls back to the keyword search below when litellm's own
-        # exception class isn't available, so "litellm not warm yet" is a
-        # safe case to defer rather than block on (see
-        # litellm_bootstrap.py's own PR-2 section comment). In practice this
-        # path runs only AFTER a real completion call already failed, so
-        # litellm is almost always already warm by the time this runs — the
-        # defer path exists for correctness, not because this specific site
-        # is where the reported freeze occurred. Also fixes the same
-        # residual PR-1-shaped double-attempt-on-failure defect
-        # ``estimate_tokens`` above had (this module wasn't part of PR-1's
-        # diff): the old code ignored ``ensure_litellm_ready()``'s return
-        # value and did its own unconditional ``import litellm`` right after.
-        litellm = ensure_litellm_ready_or_defer()
-        if isinstance(exc, litellm.ContextWindowExceededError):
-            return True
-    except (ImportError, LitellmWarmingInBackgroundError):
-        pass
-    return any(kw in str(exc).lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
+    # #4395 PR-2 / litellm not warm yet: ``build_llm_error_signal`` already
+    # degrades ``is_context_window_exceeded_type`` to False in that case
+    # (never raises) — this classifier still falls back to the keyword
+    # search below when litellm's own exception class isn't available.
+    if signal.is_context_window_exceeded_type:
+        return True
+    # #5699: the structured ``error.code`` field — a stronger, type-
+    # adjacent signal than the keyword fallback below, checked BEFORE it
+    # for the same reason ``status_code == 413`` is checked before it —
+    # see ``_CONTEXT_OVERFLOW_ERROR_CODES``'s own docstring for why this
+    # was missing and how it was confirmed missing (a real proxy-flattened
+    # ``BadRequestError`` whose message carries none of the keywords
+    # below).
+    if signal.code in _CONTEXT_OVERFLOW_ERROR_CODES:
+        return True
+    return any(kw in signal.message.lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
 
 
 class LLMFailureClass(enum.Enum):
@@ -1101,16 +1207,25 @@ class LLMFailureClass(enum.Enum):
 FATAL_EXC_TYPES: "tuple[type[BaseException], ...]" = (TypeError, AttributeError, KeyError)
 
 
-def _is_fatal_auth_error(exc: BaseException) -> bool:
+def _is_fatal_auth_error(signal: LLMErrorSignal) -> bool:
     """True for a credential/permission failure — the auth bucket
     ``reyn.runtime.error_format._bucket_for`` already names (kept as a
     separate, narrower check here rather than importing that function
     directly: this module intentionally does not depend on the
     user-facing formatter, only on the SAME underlying signal it reads
-    — class name substring or a 401/403 status code)."""
-    name = type(exc).__name__
-    code = getattr(exc, "status_code", None)
-    return "Authentication" in name or "PermissionDenied" in name or code in (401, 403)
+    — class name substring or a 401/403 status code).
+
+    #5699 (lead-coder review): reads the already-materialized
+    :class:`LLMErrorSignal` rather than re-deriving ``type(exc).__name__``/
+    ``status_code`` from the raw exception a second time — the same
+    material :func:`classify_llm_failure`'s other checks read, closing the
+    one spot that predicate's own docstring claimed but did not yet
+    apply."""
+    return (
+        "Authentication" in signal.class_name
+        or "PermissionDenied" in signal.class_name
+        or signal.status_code in (401, 403)
+    )
 
 
 def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
@@ -1218,12 +1333,17 @@ def classify_llm_failure(exc: BaseException) -> LLMFailureClass:
     (that would make the proxy's own defect permanently invisible, the
     exact Q3 "does the repair destroy the evidence" band violation).
     """
-    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(exc):
+    # #5699: built once, at the top, so EVERY check below (including
+    # ``_is_fatal_auth_error``) reads this SAME material instead of
+    # re-deriving its own copy from ``exc`` — see :class:`LLMErrorSignal`'s
+    # own docstring.
+    signal = build_llm_error_signal(exc)
+    if isinstance(exc, FATAL_EXC_TYPES) or _is_fatal_auth_error(signal):
         return LLMFailureClass.FATAL
     if is_quota_exhausted_error(exc):
         return LLMFailureClass.RETRYABLE
-    name = type(exc).__name__
-    code = getattr(exc, "status_code", None)
+    name = signal.class_name
+    code = signal.status_code
     if "RateLimit" in name or code == 429:
         return LLMFailureClass.RETRYABLE
     if (
