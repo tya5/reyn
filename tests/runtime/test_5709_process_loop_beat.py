@@ -57,9 +57,17 @@ def _wait_until(condition) -> None:
         time.sleep(0)
 
 
-def _spawn_registering_subprocess() -> subprocess.Popen:
+def _spawn_registering_subprocess(pythonpath: str) -> subprocess.Popen:
     """A REAL, separate OS subprocess — same shape as
-    test_5226_process_registry.py's own helper of the same name."""
+    ``test_5226_process_registry.py``'s own helper of the same name, but
+    PINNED via ``out_of_process_reyn`` (#5028) rather than inheriting
+    that file's own pre-existing, baselined gap: ``pythonpath`` is the
+    fixture's own value, threaded through as this subprocess's
+    ``PYTHONPATH`` so it imports the SAME ``reyn`` this test itself
+    imported, never trusting the ambient venv/worktree to agree (mirrors
+    ``test_5350_process_identity_never_by_cwd.py``'s own
+    ``_spawn_identified_subprocess``, the closest sibling that already
+    does this correctly for this exact module)."""
     script = (
         "import sys\n"
         "from reyn.runtime import process_registry\n"
@@ -67,10 +75,11 @@ def _spawn_registering_subprocess() -> subprocess.Popen:
         "process_registry.register_process('subproc')\n"
         "sys.stdin.readline()\n"
     )
+    env = {**os.environ, "PYTHONPATH": pythonpath}
     return subprocess.Popen(
         [sys.executable, "-c", script, str(process_registry.PROCESSES_DIR)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        text=True, env=env,
     )
 
 
@@ -213,14 +222,16 @@ async def test_arm_process_loop_beat_is_idempotent_across_two_sessions_in_one_pr
 # ── non-destructive reader (#5709 R3) ───────────────────────────────────────
 
 
-def test_read_process_markers_does_not_reap_a_dead_pid_marker() -> None:
+def test_read_process_markers_does_not_reap_a_dead_pid_marker(
+    out_of_process_reyn: str,
+) -> None:
     """Tier 2: R3's own charter-Q3 concern — a dead-PID marker read by
     :func:`read_process_markers` must survive the read (unlike
     :func:`live_processes`, which reaps it as part of its own, DIFFERENT
     contract — see that function's own docstring, unchanged by this
     issue). Reading twice must not destroy what a SECOND reader (doctor,
     then a broker poll, in either order) still needs to see."""
-    proc = _spawn_registering_subprocess()
+    proc = _spawn_registering_subprocess(out_of_process_reyn)
     try:
         _wait_until(lambda: len(process_registry.read_process_markers()) >= 1)
         marker_path = process_registry.PROCESSES_DIR / f"{proc.pid}.json"
