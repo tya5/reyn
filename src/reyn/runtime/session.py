@@ -4545,12 +4545,14 @@ class Session:
         Storage shape mirrors :meth:`notify_state_change` exactly (same
         precedent, same owner ruling — "むやみに増やすべきでない、system
         あるならそれで": no new role, reuse ``system``):
-          - ``role="system"`` — excluded from every LLM-facing turn list
-            (``RouterHistoryBuffer.build_history``'s allowlist is
-            ``role in ("user","assistant","tool","agent")``) and from
-            compaction candidates (``force_compact_now``'s own turns
-            filter is the same allowlist) — structurally, not by a new
-            check either of those already-existing filters would need.
+          - ``role="system"`` at ``Disclosure.OPERATOR`` (below) —
+            excluded from every LLM-facing turn list AND from compaction
+            candidates: both ``RouterHistoryBuffer.build_history`` and
+            ``force_compact_now`` admit a ``role="system"`` entry only
+            when it is ``Disclosure.MODEL`` (#5678/#5699's shared
+            ``chat_message.is_compaction_eligible[_including_summary]``)
+            — structurally, not by a new check either of those
+            already-existing filters would need.
           - ``meta.kind="turn_cancelled"`` — distinguishes this from a
             ``state_change`` system entry; a reader (TUI restore
             projection) dispatches on this key, never on the rendered
@@ -10726,6 +10728,7 @@ class Session:
         """
         import json as _json
 
+        from reyn.runtime.chat_message import is_compaction_eligible
         from reyn.services.compaction.engine import estimate_tokens
 
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
@@ -10749,7 +10752,14 @@ class Session:
         # Chat middle-compression: the conversational turns newly covered by the
         # summary bridge (prev_cover < seq <= new_cover) and their raw vs bridge
         # token cost. Empty when nothing was compacted (new_cover == prev_cover).
-        conv = [m for m in self.history if m.role in ("user", "assistant", "tool", "agent")]
+        # #5699: same shared predicate (chat_message.py) as
+        # compaction_controller.py's own candidate filter and
+        # router_history_buffer.py's two window filters (imported, not
+        # re-derived) — a role="system"/Disclosure.MODEL entry that
+        # force_compact_now() just folded must be counted here too, or
+        # this metric silently underreports what a fold with such
+        # entries in it actually covered.
+        conv = [m for m in self.history if is_compaction_eligible(m)]
         middle = [m for m in conv if prev_cover < int(getattr(m, "seq", 0) or 0) <= new_cover]
         summary = self._latest_summary()
         bridge_text = summary.text if summary is not None else ""

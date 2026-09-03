@@ -269,8 +269,9 @@ def test_summary_role_reaches_retry_decompose_but_not_build_history(tmp_path):
     """Tier 2: #5678 acceptance item 3 — SUMMARY_MESSAGE_ROLE passes
     decompose_history_for_retry's own allowlist but not build_history's,
     UNCHANGED by #5678's own widening (both filters gained the SAME new
-    `_is_model_visible` admission, applied ON TOP of their pre-existing,
-    genuinely different role tuples — not collapsed into one).
+    `is_model_visible` admission (relocated to chat_message.py by #5699),
+    applied ON TOP of their pre-existing, genuinely different role
+    tuples — not collapsed into one).
 
     Strip-falsifier: replacing `_elide_candidate_turns`'s own role tuple
     with the one `decompose_history_for_retry` uses (i.e. accidentally

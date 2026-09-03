@@ -1,0 +1,44 @@
+name: no-hardcoded-compaction-role-tuple gate
+
+# #5699: reject a hand-typed compaction-eligible role tuple
+# (`("user", "assistant", "tool", "agent")`, with or without a trailing
+# summary role) anywhere under src/ except chat_message.py — the single
+# legitimate definition site for the named predicate
+# (`is_compaction_eligible`/`is_compaction_eligible_including_summary`)
+# every filter must import instead. See
+# scripts/check_no_hardcoded_compaction_role_tuple.py's module docstring
+# for the full design rationale — the owner's real-machine incident this
+# closes: a hand-typed copy of this tuple silently drifted from a sibling
+# copy that had been widened, with no signal until an operator hit it
+# live.
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# same shape as fastmcp-import-boundary-gate.yml / file-depth-reference-
+# gate.yml. A shallow checkout is enough.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+
+permissions:
+  contents: read
+
+jobs:
+  no-hardcoded-compaction-role-tuple:
+    name: no-hardcoded-compaction-role-tuple gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_no_hardcoded_compaction_role_tuple.py is stdlib-only
+      # (re / pathlib / sys). No pip install needed.
+      - name: Check no src/ file hand-types the compaction-eligible role tuple
+        run: |
+          python scripts/check_no_hardcoded_compaction_role_tuple.py

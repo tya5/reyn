@@ -91,22 +91,23 @@ def test_helper_ignores_malformed_tool_call_entries() -> None:
 
 
 def test_compaction_filter_includes_tool_role() -> None:
-    """Tier 2: the role filter in ``force_compact_now`` admits tool turns.
+    """Tier 2: the role filter ``force_compact_now``'s own candidate
+    selection uses admits tool turns.
 
-    Pin via source-text invariant since the filter is a literal tuple
-    inside the method body. The string check guards against accidental
-    revert to the pre-PR-E2 ``("user", "agent")``-only filter. (#1128 PR-a:
-    the former ``_maybe_compact`` background path was removed; the same
-    candidate role filter lives in the surviving ``force_compact_now``.)
-    """
-    import inspect
+    #5699: the literal role tuple this test used to pin via source-text
+    (a brittle string check the #5699 refactor legitimately moved OUT of
+    ``compaction_controller.py`` — the candidate filter now calls the ONE
+    shared predicate, ``chat_message.is_compaction_eligible``, so a
+    string search over ``compaction_controller``'s own source no longer
+    finds the literal at all) is replaced by pinning the BEHAVIOUR
+    directly against the real predicate every call site imports — the
+    same one whose own source (``chat_message.py``) still names the tool
+    + assistant roles the pre-PR-E2 filter used to drop."""
+    from reyn.runtime.chat_message import ChatMessage, is_compaction_eligible
 
-    from reyn.runtime.services import compaction_controller
-    src = inspect.getsource(compaction_controller)
-    assert '"user", "assistant", "tool", "agent"' in src, (
-        "compaction candidate filter must include tool + assistant roles "
-        "post-#383 PR-E2"
-    )
+    assert is_compaction_eligible(ChatMessage(role="tool", content="t", ts="t1"))
+    assert is_compaction_eligible(ChatMessage(role="assistant", content="a", ts="t1"))
+    assert is_compaction_eligible(ChatMessage(role="user", content="u", ts="t1"))
 
 
 def test_compaction_system_prompt_mentions_tool_calls() -> None:

@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Callable
 
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
+from reyn.runtime.chat_message import is_compaction_eligible
 from reyn.services.compaction.engine import (
     CompactionEngine,
     HistoryChunkToCompact,
@@ -342,10 +343,18 @@ class CompactionController:
         # the audit trail so a capped-batch pass is distinguishable from
         # "there was genuinely nothing more to compact."
         history, batch_truncated = self._history_from_disk(prev_cover)
-        turns = [
-            m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
+        # #5699 (owner real-machine incident): a role="system"/Disclosure.MODEL
+        # entry has been admitted into the live WINDOW since #5678/#5688
+        # (router_history_buffer.py's own _elide_candidate_turns and
+        # decompose_history_for_retry, both via chat_message.py's
+        # is_compaction_eligible[_including_summary]) but this candidate
+        # filter never gained the same admission — such an entry could
+        # accumulate in the window forever, permanently un-foldable by
+        # /compact (this method) even though the reactive overflow
+        # ladder's own raw_middle DOES include it (decompose_history_for_
+        # retry). Same shared predicate as those two call sites, imported
+        # rather than re-derived, so this can never drift from them again.
+        turns = [m for m in history if is_compaction_eligible(m)]
         if not turns:
             self._events.emit("compaction_check", outcome="forced_sync_no_turns")
             return
