@@ -1912,6 +1912,7 @@ def status_line_text(
     warn_percent: int = CTX_WARN_PERCENT,
     diagnostics_count: int = 0,
     diagnostics_log_path: "str | None" = None,
+    pump_swallow_count: int = 0,
 ) -> str:
     """The Telemetry segment (#4542: ``model · agent    $cost  ctx%``, no
     ``│``/``|`` separators — position and text-style carry the grouping
@@ -1966,6 +1967,19 @@ def status_line_text(
     LAST, after every other branch (``connecting``/``failed``/HALTED/base)
     — diagnostics can coexist with any of those, so it is not folded into
     any single branch's own return.
+
+    #5732: ``pump_swallow_count`` (default 0, byte-identical text when
+    unset) PREPENDS a further ``draw failed: N — see log`` segment, the
+    SAME shape as ``diagnostics_count`` immediately above (never a
+    traceback, never a transient toast — architect ruling: an operator
+    needs "something failed to draw, N times" and where to look, not the
+    exception itself) — a pump call site (frame ingest, ``/rewind``,
+    ``/open``) raised and was caught to keep the chat loop alive
+    (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _record_pump_swallow`); this is the operator-facing half of that
+    fact, never shown when the count is 0. Ordered ahead of
+    ``diagnostics_count`` (leftmost = most recently added) — no
+    dependency between the two, an arbitrary but stable order.
     """
     if attach_state == "connecting":
         text = f"connecting… · agent {agent_name}"
@@ -2001,6 +2015,8 @@ def status_line_text(
         )
     if diagnostics_count:
         text = f"diagnostics: {diagnostics_count} — {diagnostics_log_path or '.reyn/logs/reyn.log'} · {text}"
+    if pump_swallow_count:
+        text = f"draw failed: {pump_swallow_count} — see log · {text}"
     return text
 
 

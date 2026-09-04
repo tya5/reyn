@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable
 
 from textual import events
@@ -155,6 +155,55 @@ logger = logging.getLogger(__name__)
 # currently empty — kept (not deleted) as the documented extension point for
 # a future control sentinel that needs skipping here.
 _SKIP_KINDS: "frozenset[str]" = frozenset()
+
+
+@dataclass
+class PumpSwallowStats:
+    """#5732 (architect ruling, real-machine incident #5731 — a broken
+    call site inside ``_ingest_frame`` raised ``AttributeError`` on
+    EVERY frame, silently, and shipped that way undetected): the pump's
+    own per-sentinel/per-frame ``except Exception`` blocks (:meth:`_pump_
+    frames`) are the correct scope — a single bad frame must never take
+    down the whole chat loop — but a caught exception used to become
+    nothing more than one ``logger.exception`` line, visible only to
+    someone already reading the log. This is the live counter that
+    closes that: mirrors :class:`~reyn.interfaces.inline.textual_chat.
+    stray_output.StrayOutputStats`'s own shape exactly (a plain,
+    App/widget-free dataclass the App reads at each status-line
+    refresh) — no new visibility vocabulary, the SAME "one persistent
+    number, prepended to the always-visible status line, never a
+    per-occurrence toast" precedent #5168 already established.
+
+    ``count`` is the TOTAL swallowed occurrences across every kind and
+    exception type — the number an operator sees ("N frames failed to
+    draw"), always complete regardless of how many distinct call sites
+    are broken. ``record`` ALSO gates a separate, bounded concern: a
+    broken call site fails on EVERY frame it's given (#5731's own
+    measured shape), so recording one audit-event per occurrence would
+    turn a single defect into thousands of durable records (charter Q1
+    — "who stops this if it repeats" — nobody, if nothing bounds it).
+    ``record``'s own return value is that bound: True only the FIRST
+    time a given ``(kind, exception type)`` pair is seen, so the caller
+    emits an audit-event on that transition alone. The COUNT still
+    reflects every occurrence — only the EVENT population is bounded,
+    never the number an operator or a test reads."""
+
+    count: int = 0
+    _seen: "set[tuple[str, str]]" = field(default_factory=set)
+
+    def record(self, kind: str, exc: BaseException) -> bool:
+        """Record one swallowed exception for *kind*. Returns True iff
+        this exact ``(kind, type(exc).__name__)`` pair has never been
+        recorded before — the caller's own signal to emit the bounded,
+        once-per-pair audit-event; a repeat of an already-seen pair
+        still increments :attr:`count` but returns False."""
+        self.count += 1
+        key = (kind, type(exc).__name__)
+        if key in self._seen:
+            return False
+        self._seen.add(key)
+        return True
+
 
 # Turn-end event types (#72): when one of these lands on the EVENT-tag frame
 # path, any tool row still RUNNING is a confirmed ORPHAN — its completion frame
@@ -1321,6 +1370,10 @@ class TextualChatApp(App):
         # TextualChatApp(...) in a test), in which case _status_text's own
         # diagnostics_count read stays 0, byte-identical to before #5168.
         self._stray_output_stats: "StrayOutputStats | None" = None
+        # #5732: unlike _stray_output_stats above (only set inside
+        # run_textual_chat's own capture window), this pump ALWAYS runs
+        # for every App instance — always constructed, never None.
+        self._pump_swallow_stats = PumpSwallowStats()
         # #5149: the two halves of "current location" are seeded TOGETHER,
         # one ``_Destination`` construction — see that class's own
         # docstring for why they can no longer be seeded (or later updated)
@@ -2226,7 +2279,13 @@ class TextualChatApp(App):
         ``None`` whenever this App wasn't constructed inside
         :func:`run_textual_chat`'s own ``capture_stray_output`` window (a
         bare ``TextualChatApp(...)`` in a test, for instance), in which case
-        the count is always 0 — byte-identical status text to before #5168."""
+        the count is always 0 — byte-identical status text to before #5168.
+
+        #5732: ``pump_swallow_count`` reads ``self._pump_swallow_stats``
+        (always constructed, unlike ``_stray_output_stats`` above) — the
+        SAME "prepend, don't replace" segment shape #5168 established,
+        applied to a different failure class (a pump call site raising,
+        not a stray stdout/stderr write)."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         warn_percent = getattr(
             getattr(self._config, "tui", None),
@@ -2240,6 +2299,7 @@ class TextualChatApp(App):
             attach_state=self._attach_state(),
             warn_percent=warn_percent,
             diagnostics_count=diagnostics_count,
+            pump_swallow_count=self._pump_swallow_stats.count,
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
@@ -4900,6 +4960,54 @@ class TextualChatApp(App):
             # never a candidate for this collapse in the first place.
             entry.collapse()
 
+    def _record_pump_swallow(self, kind: str, exc: BaseException) -> None:
+        """#5732: the ONE call site every ``except Exception`` block in
+        :meth:`_pump_frames` routes through — bumps :attr:`_pump_swallow_
+        stats` (the always-complete count) and, only on the first time
+        THIS ``(kind, exception type)`` pair is seen, durably records a
+        ``pump_exception_swallowed`` audit-event (architect ruling: bounded
+        by the pair, never by the occurrence — a broken call site fails
+        every frame, so 1-event-per-occurrence would flood ``.reyn/events``
+        with thousands of records for a single defect).
+
+        ``emit_cli_event`` (cwd-derived project root), not ``emit_direct_
+        event`` with an explicit root: unlike a long-lived multi-project
+        server (``reyn web``, #5714's own case for why cwd is wrong
+        there), this is a single-invocation, single-cwd CLI entrypoint —
+        the SAME shape ``asyncio_diagnostics.py``'s own ``install_asyncio_
+        exception_handler`` already uses for ``reyn chat``. Best-effort:
+        an emit failure here must never propagate into the pump — logged,
+        swallowed, matching this module's own posture for every other
+        diagnostic-only write.
+
+        Never includes the exception's own message/traceback — that is
+        `logger.exception`'s own job (already called at every one of
+        this method's 3 call sites, unchanged); the audit-event carries
+        only ``frame_kind``/``exception_type`` (named ``frame_kind``,
+        not ``kind`` — ``emit_cli_event``'s own first positional
+        parameter is itself named ``kind``, the audit-event's own kind
+        string; passing this method's ``kind`` argument under that same
+        name collides with it), the structured facts a post-mortem
+        reader queries by, not the free-text a log grep already
+        answers."""
+        first_occurrence = self._pump_swallow_stats.record(kind, exc)
+        if not first_occurrence:
+            return
+        try:
+            from reyn.core.events.events import emit_cli_event
+
+            emit_cli_event(
+                "pump_exception_swallowed",
+                frame_kind=kind,
+                exception_type=type(exc).__name__,
+            )
+        except Exception:
+            logger.exception(
+                "textual chat: failed to emit pump_exception_swallowed "
+                "for kind=%r (diagnostic-only, does not block the pump)",
+                kind,
+            )
+
     def _ingest_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage] | None":
         """Fold one display frame into the retained model — appending a new entry,
         or COALESCING a correlated tool result into its RUNNING started entry.
@@ -6694,21 +6802,24 @@ class TextualChatApp(App):
                     elif msg.kind == "__rewind_list__":
                         try:
                             await self._handle_rewind_request(msg)
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("textual chat: /rewind sentinel failed")
+                            self._record_pump_swallow("__rewind_list__", exc)
                     elif msg.kind == "__open_artifact__":
                         try:
                             await self._handle_open_artifact_request(msg.text)
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("textual chat: /open sentinel failed")
+                            self._record_pump_swallow("__open_artifact__", exc)
                     elif msg.kind not in _SKIP_KINDS:
                         try:
                             self._ingest_frame(msg)
-                        except Exception:
+                        except Exception as exc:
                             logger.exception(
                                 "textual chat: frame ingest failed for kind=%r",
                                 msg.kind,
                             )
+                            self._record_pump_swallow(msg.kind, exc)
                 # F5b + #3338: refresh the live chrome (the always-visible
                 # status-values line, plus whichever drawer pane is OPEN) on EVERY
                 # frame — DISPLAY **and** EVENT alike. This used to sit inside the

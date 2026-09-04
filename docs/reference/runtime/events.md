@@ -203,6 +203,7 @@ presentation_load_failed
 presented
 process_marker_reaped
 project_context_changed
+pump_exception_swallowed
 recovery_summary_persisted
 repo_ingest_files_skipped
 resource_cap_exceeds_budget_trigger
@@ -733,6 +734,29 @@ readers ran `live_processes` first would otherwise destroy the evidence
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
 | `process_marker_reaped` | #5358: a confirmed-dead PID's marker is about to be reaped (unlinked) — the marker was the ONLY record that PID ever ran, since the process itself never got to say it was stopping (a graceful exit's own `atexit` handler would have already removed it). Emitted from the reading CALLER's process, but under the DEAD process's OWN project (`reyn_root` resolved by walking up from the marker's own `cwd` field, never the caller's cwd — a `reyn doctor` run from project A must not misattribute a reap for a process that ran in project B). Best-effort: an emit failure (no `.reyn/` reachable from the marker's cwd, or any other error) logs a warning and never blocks the reap itself. Detection, not diagnosis — carries no information about WHY the process stopped (crash / SIGKILL / power loss / OOM are indistinguishable from here). #5709: `marker` now also carries `last_loop_beat_at` (absent/`None` if the process's own turn loop never armed the beat driver, e.g. it died before `Session.run()` ever started) — together with `observed_at` this is the ONE place `[last_loop_beat_at, observed_at]` — the tightened death window #5709 exists to produce — is readable, and it lands in the dead session's own `.reyn/events`, the same place a post-mortem reader already looks. | `marker` (the dead process's own full recorded content: `pid`/`ppid`/`cwd`/`subcommand`/`started_at`/`sessions` (#5714 — a collection of hosted-session identity entries, replacing the pre-#5714 singular `agent_name`/`broker_session_id` pair)/`last_loop_beat_at`), `observed_at` (an UPPER BOUND on the stop time — the real stop happened sometime between the marker's `last_loop_beat_at` (or `started_at`, if the beat never armed) and this timestamp, never asserted as the exact moment) |
+
+## Textual chat pump
+
+`TextualChatApp._pump_frames` (`src/reyn/interfaces/inline/textual_chat/app.py`)
+wraps each of its 3 per-message-kind handlers (`/rewind` sentinel,
+`__open_artifact__` sentinel, `_ingest_frame`) in its own
+`try`/`except Exception` — the pump must survive one bad frame, since a
+single unhandled exception there would end the whole chat loop. #5732
+(architect ruling, real-machine incident #5731 — `_coalesce_pipeline_step`
+raised `AttributeError` on EVERY `"status"`-kind frame, shipped, undetected:
+tests stayed green and nothing surfaced it to a human): keeping the catch
+is correct — the defect was that a swallowed exception reached nowhere but
+one `logger.exception` line, with no operator-visible signal. `reyn.
+interfaces.inline.textual_chat.app.PumpSwallowStats.count` (also folded
+into the status line via `chrome.status_line_text`'s `pump_swallow_count`
+param — `"draw failed: N — see log · "`, only when `N > 0`, never a
+transient toast) is the COMPLETE read: it increments on every swallowed
+occurrence, from every one of the 3 handlers, with no gating. This event is
+a deliberately BOUNDED companion, not a duplicate of that count.
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `pump_exception_swallowed` | One of the pump's 3 `except Exception` blocks caught an exception. Fires only on the FIRST time a given `(frame_kind, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally. Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at all 3 sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `frame_kind` (the pump message's own `kind` — `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind`), `exception_type` (`type(exc).__name__`) |
 
 ## Replay
 
