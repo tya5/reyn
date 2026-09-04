@@ -29,6 +29,16 @@ def _write_yaml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _bucket_line(out: str, label: str) -> str:
+    """The one printed line starting with *label* (e.g. ``"state/:"``) —
+    content-only lookup, never pinning the column-alignment padding
+    between the label and the count (CLAUDE.md: "Never pin algorithm-
+    level behaviour ... exact whitespace" — a future bucket added to
+    this section changes every row's padding width with no defect,
+    lead-coder's own BLOCKING finding on this file's first draft)."""
+    return next(line for line in out.splitlines() if line.strip().startswith(label))
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
@@ -47,7 +57,7 @@ def test_state_bucket_reports_real_bytes(project: Path, capsys) -> None:
     run(Namespace(project_root=str(project)))
     out = capsys.readouterr().out
 
-    assert "state/:   1 file(s), 543 bytes" in out
+    assert "1 file(s), 543 bytes" in _bucket_line(out, "state/:")
 
 
 def test_cache_bucket_reports_real_bytes_across_nested_dirs(
@@ -67,7 +77,7 @@ def test_cache_bucket_reports_real_bytes_across_nested_dirs(
     run(Namespace(project_root=str(project)))
     out = capsys.readouterr().out
 
-    assert "cache/:   2 file(s), 421 bytes" in out
+    assert "2 file(s), 421 bytes" in _bucket_line(out, "cache/:")
 
 
 def test_memory_bucket_total_includes_history_content(
@@ -88,7 +98,7 @@ def test_memory_bucket_total_includes_history_content(
     run(Namespace(project_root=str(project)))
     out = capsys.readouterr().out
 
-    assert "memory/:  2 file(s), 333 bytes" in out
+    assert "2 file(s), 333 bytes" in _bucket_line(out, "memory/:")
 
 
 def test_missing_buckets_report_zero_not_a_crash(project: Path, capsys) -> None:
@@ -99,9 +109,9 @@ def test_missing_buckets_report_zero_not_a_crash(project: Path, capsys) -> None:
     run(Namespace(project_root=str(project)))
     out = capsys.readouterr().out
 
-    assert "state/:   0 file(s), 0 bytes" in out
-    assert "memory/:  0 file(s), 0 bytes" in out
-    assert "cache/:   0 file(s), 0 bytes" in out
+    assert "0 file(s), 0 bytes" in _bucket_line(out, "state/:")
+    assert "0 file(s), 0 bytes" in _bucket_line(out, "memory/:")
+    assert "0 file(s), 0 bytes" in _bucket_line(out, "cache/:")
 
 
 def test_dir_size_bytes_helper_directly(tmp_path: Path) -> None:
