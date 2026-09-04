@@ -224,15 +224,14 @@ async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
             resolved = await session_b.answer_intervention_by_id(iv.id, "ok")
             assert resolved is True
             await iv_task
+            # Unbounded — CI's own timeout is the kill switch (CLAUDE.md:
+            # no attempts=N/range(N) wrapping a wait). A real failure here
+            # (never clearing) hangs until CI's timeout, not a guessed
+            # attempt count that a slower CI run could outrun.
             cleared = next(r for r in _rows() if sid_b in r)
-            for _ in range(20):
-                if "?" not in cleared:
-                    break
+            while "?" in cleared:
                 await pilot.pause()
                 cleared = next(r for r in _rows() if sid_b in r)
-            assert "?" not in cleared, (
-                f"agent pane never cleared iv_waiting after the real resolve: {cleared!r}"
-            )
         except BaseException:
             if not iv_task.done():
                 await session_b.interventions.deliver_answer(iv, "ok")
