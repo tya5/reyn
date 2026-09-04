@@ -492,6 +492,22 @@ remote client has not attached. `turn_active`/`iv_waiting` are carried as
 2 INDEPENDENT booleans, never collapsed into a status enum: a turn can be
 dispatched and ALSO waiting on an intervention answer at once, and that
 combination is the one an operator most needs to see.
+
+**A change on an unattached session reaches this channel immediately**
+(#5736), not only at this connection's own frame cadence. `endpoint.py`'s
+`_SessionFrameSource` stays bound to exactly ONE session (unchanged,
+#5729's own "1 session bound" contract) — a SEPARATE, connection-scoped
+`_StatusFrameSource` subscribes `AgentRegistry.add_status_listener`
+(registry-wide) and pushes a payload-free `StatusPingFrame` onto that
+SAME ordered queue, coalesced to at most one unconsumed ping at a time
+(a busy fleet's transitions never grow the queue past O(1) per
+connection). `AgUiEmitter.stream()` reacts to that frame kind by
+re-projecting the CURRENT status and emitting a `STATE_DELTA` if
+anything changed — the identical `StatusModel.delta` path every other
+status change already uses. `remove_status_listener` is called on
+disconnect, matching `_SessionFrameSource`'s own `remove_attach_listener`
+teardown — a remote connection's own subscription lifetime, unlike the
+process-lifetime local TUI consumer, must not outlive the connection.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
 

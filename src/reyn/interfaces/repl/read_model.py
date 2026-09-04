@@ -1084,6 +1084,25 @@ class RemoteReadModel(ChatReadModel):
     def capabilities(self) -> ChatReadModelCapabilities:
         return REMOTE_CHAT_READ_CAPABILITIES
 
+    def add_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        """#5736: the real REMOTE wiring — was the base class's no-op
+        default (issue #5736's own residual from #5734: values were
+        already correct over the wire, but nothing woke this read model's
+        ONE consumer for a session other than the currently-attached one).
+        Delegates to :meth:`AgUiTransport.add_status_listener` when this
+        read model's own transport implements it (it does, in production);
+        a transport that does not (e.g. a bare ``ClientTransportStub`` in a
+        test with no status wiring of its own) degrades to the base
+        class's no-op via ``getattr``, never raising."""
+        add = getattr(self._transport, "add_status_listener", None)
+        if callable(add):
+            add(callback)
+
+    def remove_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        remove = getattr(self._transport, "remove_status_listener", None)
+        if callable(remove):
+            remove(callback)
+
     def snapshot(self, config=None):
         # ``transport.status`` is the RemoteStatusView the AgUiTransport updates as
         # it decodes STATE_* frames; read it live each render tick.

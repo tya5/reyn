@@ -607,6 +607,32 @@ def _merged_delta_frame(run: list):
     return EventFrame(last.model_copy(update={"data": {**(last.data or {}), "text": text}}))
 
 
+@dataclass(frozen=True)
+class StatusPingFrame:
+    """#5736: a lightweight "re-check status now" signal — NOT a
+    :class:`DisplayFrame`/:class:`EventFrame`, carries no payload at all.
+    Pushed onto :class:`_SessionFrameSource`'s own ordered queue by a
+    SEPARATE, connection-scoped :class:`_StatusFrameSource` (architect
+    ruling, issue #5736: "status は connection 単位の第 2 source として置
+    く" — the frame SOURCE that reads one session's outbox/audit-events
+    stays exactly that; this rides the SAME ordered queue as a different
+    frame kind instead of opening a second stream/connection).
+
+    ``AgUiEmitter.stream()`` reacts to this by re-projecting the CURRENT
+    status (``status_provider()``, always a fresh registry read — see
+    ``AgentRegistry.all_sessions_status()``'s own "no stored copy"
+    ruling) and emitting a ``STATE_DELTA`` if anything actually changed —
+    the SAME ``StatusModel.delta`` code path every OTHER status change
+    already goes through (frame-cadence deltas included), never a second,
+    parallel diff/encode implementation. Carries no ``(name, sid, ...)``
+    payload of its own because none is needed: the eventual re-read is
+    always of the CURRENT, whole ``all_sessions_status()`` list, so
+    coalescing multiple pings into "at most one pending" (see
+    :meth:`_SessionFrameSource.push_status_ping`) loses nothing — the
+    drain always picks up every change accumulated since the last one,
+    never a stale slice."""
+
+
 class _SessionFrameSource:
     """Per-connection unified frame stream off a session (server analogue of
     :class:`InProcessTransport`): fan out ``session.outbox`` as DisplayFrames and
@@ -707,6 +733,10 @@ class _SessionFrameSource:
         self._switch_signal: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue()
         self._listening_for = ""
         self._connection_id = ""
+        # #5736: at most one unconsumed StatusPingFrame in self._q at a
+        # time — see that class's own docstring for why a coalesced,
+        # payload-free ping loses nothing.
+        self._status_ping_pending = False
         self._bind(session)
         if self._registry is not None and self._agent_name:
             self._registry.add_attach_listener(self._agent_name, self._on_attach_announced)
@@ -724,6 +754,21 @@ class _SessionFrameSource:
         """#5116: the ONE read path for "which session is this connection
         looking at right now" — see :meth:`current_agent_name`."""
         return self._session
+
+    def push_status_ping(self) -> None:
+        """#5736: called by a SEPARATE, connection-scoped
+        :class:`_StatusFrameSource` (never by this class itself — this
+        source still only ever READS from one session's own outbox_hub/
+        audit_events, unchanged; it merely accepts an out-of-band wake
+        the same way :attr:`_switch_signal` already does from
+        ``registry.add_attach_listener``, #4534 PR-2b). Coalesced: a
+        second call while one :class:`StatusPingFrame` is already sitting
+        unconsumed in :attr:`_q` is a no-op — see that class's own
+        docstring for why nothing is lost."""
+        if self._status_ping_pending:
+            return
+        self._status_ping_pending = True
+        self._q.put_nowait(StatusPingFrame())
 
     def listen_for_retarget(self, connection_id: str) -> None:
         """#5116: subscribe this source to :data:`_CONNECTION_RETARGET_HUB`
@@ -952,6 +997,18 @@ class _SessionFrameSource:
     async def frames(self):
         while True:
             frame = await self._q.get()
+            if isinstance(frame, StatusPingFrame):
+                # #5736: cleared the MOMENT this ping is taken off the
+                # queue (not when the caller finishes processing it) —
+                # a listener firing between now and the caller's own
+                # re-read must be able to enqueue its own fresh ping
+                # rather than assume this drain will still see it (the
+                # eventual re-read always reflects whatever is CURRENT
+                # at read time regardless, so no ordering is lost).
+                self._status_ping_pending = False
+                await suspend_between_frames()
+                yield frame
+                continue
             # #5259: whatever else is ALREADY waiting is collected here, and a
             # run of consecutive ``agent_delta`` frames leaves as one. The
             # window is however long the consumer took to come back for the
@@ -1034,6 +1091,69 @@ class _SessionFrameSource:
         return _merged_delta_frame(run), held
 
 
+class _StatusFrameSource:
+    """#5736 (architect ruling, issue #5736): the connection-scoped SECOND
+    source status rides — deliberately a SEPARATE object from
+    :class:`_SessionFrameSource`, not a widened responsibility on it.
+    ``_SessionFrameSource`` stays bound to exactly one session's own
+    outbox/audit-events (its own docstring's "bound to ONE session
+    object" claim would become misleading the moment it also subscribed
+    registry-wide); this class owns the registry-wide subscription and
+    pushes a :class:`StatusPingFrame` onto that SAME source's ordered
+    queue (:meth:`_SessionFrameSource.push_status_ping`) — one stream,
+    two producers, never a second connection.
+
+    **Lifetime is the CONNECTION, not the attached session** (architect's
+    own point ②): constructed once per ``agui_events`` call, alongside
+    ``_SessionFrameSource``, and never re-subscribed on a ``/session
+    switch`` or cross-agent ``/attach`` — those re-point WHICH session
+    ``_SessionFrameSource`` reads display/event frames from; the status
+    universe (every loaded session, owner ruling B) does not change, so
+    there is nothing to re-subscribe.
+
+    Identifiers stay in the callback's own ARGUMENTS, never a captured
+    closure variable (#5729 ①'s own named trap, architect's explicit
+    "この形を変えないでください") — :meth:`_on_status_changed` reads
+    nothing from ``self`` but the sink it pushes to."""
+
+    def __init__(self, registry, sink: "_SessionFrameSource") -> None:
+        self._registry = registry
+        self._sink = sink
+        self._subscribed = False
+
+    def start(self) -> None:
+        self._registry.add_status_listener(self._on_status_changed)
+        self._subscribed = True
+
+    def close(self) -> None:
+        # #5736 (architect ruling ⑥, real gap measured on origin/main
+        # before #5734 merged): a remote connection is per-CONNECTION,
+        # unlike the single process-lifetime local TUI consumer #5729
+        # never needed to unsubscribe — omitting this leaks one listener
+        # per connection AND fires a callback into a dead connection's
+        # now-closed queue. Idempotent (`_subscribed` guards a double
+        # `close()`, e.g. the construction-window try/except in
+        # ``agui_events`` racing this method's own normal call in
+        # ``gen()``'s ``finally``).
+        if self._subscribed:
+            self._registry.remove_status_listener(self._on_status_changed)
+            self._subscribed = False
+
+    def _on_status_changed(
+        self, agent_name: str, sid: str, turn_active: bool, iv_waiting: bool, seq: int,
+    ) -> None:
+        # #5736: the 5 identifiers arrive as arguments (AgentRegistry's own
+        # contract, #5729 ①) and are UNUSED here — the eventual re-read
+        # (AgUiEmitter.stream()'s reaction to the pushed StatusPingFrame)
+        # always re-derives the CURRENT, whole all_sessions_status() list
+        # fresh, never carries a per-event payload forward. Naming them in
+        # the signature (not `*args`) keeps this callback's own shape
+        # identical to every other AgentRegistry.add_status_listener
+        # consumer, so a reader comparing the two sees one contract, not
+        # two that happen to agree today.
+        self._sink.push_status_ping()
+
+
 @router.get("/agui/chat/{agent_name}/events")
 async def agui_events(request: Request):
     """SSE stream of the session's frames as AG-UI events (server→client).
@@ -1077,6 +1197,12 @@ async def agui_events(request: Request):
     _ensure_fail_close_driver(agent_name, manager, registry)
 
     source = _SessionFrameSource(session, registry=registry, agent_name=agent_name)
+    # #5736: the connection-scoped SECOND source — see its own class
+    # docstring. Constructed/closed alongside ``source`` in this SAME
+    # try/except/finally window (below) for the identical reason #5119
+    # names for ``source`` itself: an exception anywhere in this window
+    # must not leave a registry-wide listener subscribed forever.
+    status_source = _StatusFrameSource(registry, sink=source)
     # #5119 (architect co-vet on #5118, issuecomment-5380501066, item ④):
     # everything from here through the ``AgUiEmitter`` construction below
     # runs BEFORE ``gen()``'s own ``try``/``finally`` (which is where
@@ -1097,6 +1223,7 @@ async def agui_events(request: Request):
     try:
         source.listen_for_retarget(connection_id)  # #5116: cross-agent /attach
         source.start()
+        status_source.start()
 
         def _status_provider():
             # #5094: read status off THIS connection's own resolved session
@@ -1164,6 +1291,7 @@ async def agui_events(request: Request):
             initial_status=initial_status,
         )
     except Exception:
+        status_source.close()
         source.close()
         raise
 
@@ -1172,6 +1300,7 @@ async def agui_events(request: Request):
             async for chunk in emitter.stream():
                 yield chunk
         finally:
+            status_source.close()
             source.close()
             now2 = monotonic()
             manager.detach(connection_id, now2)
