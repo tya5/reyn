@@ -30,7 +30,7 @@ def test_no_configured_path_never_fires(tmp_path) -> None:
     permanent no-op, never touches the event log."""
     log = EventLog()
     collected = collect_events(log)
-    watcher = ProjectContextWatcher(path=None, events=log)
+    watcher = ProjectContextWatcher(path=None, events=log, scope="project")
 
     assert watcher.check() is False
     assert watcher.check() is False
@@ -44,7 +44,7 @@ def test_unchanged_file_never_fires(tmp_path) -> None:
     _touch(agents_md, mtime_ns=1_000_000_000)
     log = EventLog()
     collected = collect_events(log)
-    watcher = ProjectContextWatcher(path=agents_md, events=log)
+    watcher = ProjectContextWatcher(path=agents_md, events=log, scope="project")
 
     for _ in range(3):
         assert watcher.check() is False
@@ -59,7 +59,7 @@ def test_edit_fires_exactly_once(tmp_path) -> None:
     _touch(agents_md, mtime_ns=1_000_000_000)
     log = EventLog()
     collected = collect_events(log)
-    watcher = ProjectContextWatcher(path=agents_md, events=log)
+    watcher = ProjectContextWatcher(path=agents_md, events=log, scope="project")
 
     assert watcher.check() is False  # baseline, nothing changed yet
 
@@ -70,6 +70,7 @@ def test_edit_fires_exactly_once(tmp_path) -> None:
 
     (event,) = [e for e in collected if e.type == "project_context_changed"]
     assert event.data["path"] == str(agents_md)
+    assert event.data["scope"] == "project"
 
 
 def test_a_second_edit_fires_again(tmp_path) -> None:
@@ -79,7 +80,7 @@ def test_a_second_edit_fires_again(tmp_path) -> None:
     _touch(agents_md, mtime_ns=1_000_000_000)
     log = EventLog()
     collected = collect_events(log)
-    watcher = ProjectContextWatcher(path=agents_md, events=log)
+    watcher = ProjectContextWatcher(path=agents_md, events=log, scope="project")
     watcher.check()  # baseline
 
     _touch(agents_md, mtime_ns=2_000_000_000)
@@ -99,7 +100,7 @@ def test_no_events_sink_is_a_safe_no_op(tmp_path) -> None:
     raising, it just cannot emit anywhere."""
     agents_md = tmp_path / "AGENTS.md"
     _touch(agents_md, mtime_ns=1_000_000_000)
-    watcher = ProjectContextWatcher(path=agents_md, events=None)
+    watcher = ProjectContextWatcher(path=agents_md, events=None, scope="project")
     watcher.check()
 
     _touch(agents_md, mtime_ns=2_000_000_000)
@@ -159,6 +160,10 @@ def test_session_constructs_a_second_watcher_for_the_agent_own_file(tmp_path) ->
     assert event.data["path"] == str(expected_agent_path), (
         "a consumer must be able to tell an agent-side edit apart from a "
         f"project-side one via the emitted path: {event.data!r}"
+    )
+    assert event.data["scope"] == "agent", (
+        "#5742: a consumer must be able to tell the frame apart from a "
+        f"typed field, not by sniffing path's shape: {event.data!r}"
     )
     # The pre-existing project-side watcher is untouched by this — it never
     # observed anything, since no project_context_path was configured.

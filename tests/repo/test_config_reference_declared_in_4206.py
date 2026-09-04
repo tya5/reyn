@@ -24,8 +24,16 @@ from. `Declared in` is the one column this repo currently has a source of
 truth for.
 
 Source of truth: `PREFERENCE_KEYS` (`src/reyn/runtime/preferences.py`, the ③
-preference axis) plus the ONE explicit agent-layer-only `AgentProfile` field
-(`project_context_path` #5086).
+preference axis). #5742 (PR1) retired the ONE explicit agent-layer-only
+`AgentProfile` field this module used to also check by name
+(`project_context_path`, #5086) — its cross-layer relationship to
+`reyn.yaml`'s own key of the same name no longer exists (that mechanism is
+deprecated; see `docs/reference/config/reyn-yaml.md`'s own footnote ³). The
+replacement field, `context_path`, is `profile.yaml`-only (no `reyn.yaml`
+counterpart of the same name), so it has no analogous "same key, 2 layers,
+Declared-in cell must say both" defect class to guard against here — its own
+completeness is gated by `AGENT_PROFILE_RELOAD_CLASSES`/`missing_reload_
+class_declarations` instead (`test_4206_slice1_profile_reload_class.py`).
 
 Real file reads throughout (the actual doc, the actual `PREFERENCE_KEYS`
 declaration) — no mocks.
@@ -138,21 +146,25 @@ def test_output_language_specifically_is_project_agent_session():
 # ── the explicit agent-layer-only fields ────────────────────────────────────
 
 
-def test_project_context_path_is_declared_agent_overridable():
-    """Tier 2: strip-falsifier for the #5086 defect architect actually
-    caught mid-review (PR #5086's own `Declared in` cell still said `PRJ
-    only` after the agent-layer override landed) — `project_context_path`
-    is NOT in `PREFERENCE_KEYS` (a separate, REPLACE-not-merge agent-layer
-    mechanism, #5086's own docstring), so it needs its own explicit check
-    rather than riding the generic PREFERENCE_KEYS sweep above.
+def test_project_context_path_is_now_declared_project_scope_only():
+    """Tier 2: #5742 (PR1) — the inverse of this file's own pre-#5742 test
+    (`test_project_context_path_is_declared_agent_overridable`, removed):
+    that test guarded the #5086 defect where `project_context_path`'s
+    agent-layer override existed in code but the doc's `Declared in` cell
+    still said `PRJ only`. #5742 retired the override itself (deprecated,
+    not yet hard-errored — PR2), so the CORRECT claim inverted: this row
+    must now say `project` ONLY, never `agent` — the row that reads
+    "agent" today would be describing a mechanism that no longer exists.
 
-    Strip-falsifier: reverting this row to `PRJ only` (the exact #5086
-    review finding) turns this red — verified locally."""
+    Strip-falsifier: adding `· agent` back to this cell (reintroducing the
+    #5086-era claim after the mechanism was removed) turns this red —
+    verified locally."""
     table = _table_text()
     cell = _declared_in_cell(table, "project_context_path")
-    assert "agent" in cell, (
-        f"`project_context_path` is agent-layer-overridable (#5086) but its "
-        f"`Declared in` cell never names `agent`: {cell!r}"
+    assert "agent" not in cell, (
+        f"`project_context_path`'s agent-layer override was retired by "
+        f"#5742 (PR1) — its `Declared in` cell must not claim `agent` "
+        f"scope any more: {cell!r}"
     )
 
 

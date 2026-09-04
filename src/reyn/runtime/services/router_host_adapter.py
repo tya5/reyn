@@ -990,9 +990,12 @@ class RouterHostAdapter:
         return True
 
     def get_project_context(self) -> str:
-        """Project context text: the project-wide file (REYN.md /
-        ``project_context_path``) additively composed with this agent's own
-        ``.reyn/agents/<agent_name>/AGENTS.md``, when either is present.
+        """Project context text: the project-wide file (REYN.md/AGENTS.md,
+        ``reyn.yaml``'s own ``project_context_path``) additively composed
+        with this agent's OWN instructed context file (``profile.yaml``'s
+        ``context_path``, #5742 — REYN.md/AGENTS.md again, default-order
+        search WITHIN this agent's own workspace_dir), when either is
+        present.
 
         Threaded into the router's system prompt so casual chat queries see
         the operator's project context. Empty string when neither side is
@@ -1014,25 +1017,35 @@ class RouterHostAdapter:
         marker. Detection telemetry (``scan_tool_result``) stays — only
         the fence-wrapping is gone.
 
-        #3787 (owner ruling B): the project-wide file stays exactly as
-        above — read ONCE at session construction (``self._project_context``
-        is frozen), never reloaded mid-session (owner: "project context path
-        は起動時のみで hot 対応不要"). The per-agent file is different: this
-        method reads ``self._workspace_dir / "AGENTS.md"`` FRESH on every
-        call — no cache, no watcher-driven update needed here — because this
-        method itself is already called fresh every turn (``router_loop.py``'s
-        ``build_system_prompt(project_context=host.get_project_context())``
-        and ``RouterHistoryBuffer.build_system_prompt``'s T_SP estimate both
-        call it live, not from a memoized value), so a plain synchronous read
-        IS the hot-reload — an edit to the agent's own file is reflected the
-        very next turn with no additional wiring. (``ProjectContextWatcher``,
-        constructed separately per agent in ``session.py``, still runs
-        alongside this — its role is now purely the audit-event signal for
-        "an edit was observed", not gating whether the reload happens.)
-        Same trust class, same scan-not-fence treatment as the project side
-        (owner: agent can write its own file; no dedicated op — controlled by
-        sandbox policy's ``allow_write_paths``/``deny_write_paths``, which
-        only narrows the write floor, never widens it — #3823/``infra.py``).
+        #3787 (owner ruling B) / #5742 (owner ruling, chat 2026-09-04): the
+        project-wide file stays exactly as above — read ONCE at session
+        construction (``self._project_context`` is frozen), never reloaded
+        mid-session ("config だから起動時" — #5742's own re-framing of the
+        SAME #3787 ruling, now that the reason is the LAYER (config), not
+        merely precedent). The agent frame is different, and #5742
+        generalized it beyond #3787's own original scope: this method calls
+        :meth:`_read_agent_instructions`, which reads ``profile.yaml``'s own
+        ``context_path`` field FRESH from disk every call
+        (``AgentProfile.load(self._workspace_dir)``) and resolves it the
+        SAME way the project frame does — REYN.md/AGENTS.md default-order
+        search (or an explicit pin), now WITHIN this agent's own
+        workspace_dir — no cache, no watcher-driven update needed here —
+        because this method itself is already called fresh every turn
+        (``router_loop.py``'s ``build_system_prompt(project_context=host.
+        get_project_context())`` and ``RouterHistoryBuffer.
+        build_system_prompt``'s T_SP estimate both call it live, not from a
+        memoized value), so a plain synchronous read IS the hot-reload — an
+        edit to the agent's own file (or to which file ``context_path``
+        selects) is reflected the very next turn with no additional wiring.
+        (``ProjectContextWatcher``, constructed separately per agent in
+        ``session.py``, still runs alongside this — its role is purely the
+        audit-event signal for "an edit was observed" (#5742: now carrying
+        an explicit ``scope`` field, never inferred from ``path``'s shape),
+        not gating whether the reload happens.) Same trust class, same
+        scan-not-fence treatment as the project side (owner: agent can
+        write its own file; no dedicated op — controlled by sandbox
+        policy's ``allow_write_paths``/``deny_write_paths``, which only
+        narrows the write floor, never widens it — #3823/``infra.py``).
 
         Composition is additive, never a "winner": when both sides have
         content, each gets its own sub-heading so the model can tell which
@@ -1072,17 +1085,55 @@ class RouterHostAdapter:
         return ""
 
     def _read_agent_instructions(self) -> str:
-        """#3787: this agent's own ``.reyn/agents/<agent_name>/AGENTS.md`` —
-        a fresh, synchronous read on every call (see :meth:`get_project_context`'s
-        docstring for why no caching is needed). ``""`` when absent — never
-        raises (a missing/unreadable file is "nothing configured", not an
-        error, matching every other best-effort per-agent file read in this
-        codebase, e.g. ``Session._read_per_agent_composers``)."""
-        path = self._workspace_dir / "AGENTS.md"
+        """#5742 (owner ruling, chat 2026-09-04): the agent frame — this
+        agent's own instructed context file, resolved fresh on every call
+        (see :meth:`get_project_context`'s docstring for why no caching is
+        needed, unchanged from #3787).
+
+        Reads ``profile.yaml``'s own ``context_path`` field FRESH from
+        disk every call (``AgentProfile.load(self._workspace_dir)``) — the
+        SAME "live re-read on every access" idiom every other LIVE-
+        reload-class profile field already uses (``Session.
+        _workspace_base_dir``/``_agent_profile_sandbox``), never a value
+        cached at session construction. ``AGENT_PROFILE_RELOAD_CLASSES``
+        (``runtime/profile_reload.py``) declares this field's class.
+
+        Resolution mirrors the project frame exactly (#5742:
+        ``config.loader.resolve_context_text``, shared implementation) —
+        ``context_path`` unset auto-resolves ``REYN.md`` else
+        ``AGENTS.md`` (first EXISTING wins) within THIS agent's own
+        ``workspace_dir`` (default ``.reyn/agents/<agent_name>/``);
+        explicit non-empty pins exactly that file; explicit ``""``
+        disables. An operator-specified value that can't be read logs a
+        WARNING and emits ``project_context_unreadable`` (``scope=
+        "agent"``) — #5742's own runtime-side "捏造しないこと" fix,
+        mirroring the project frame's identical treatment.
+
+        A malformed ``profile.yaml`` (unrelated field raising inside
+        ``AgentProfile.load``, e.g. an unknown ``preferences``/
+        ``bounding`` key) degrades to "nothing configured" here — same
+        fail-open posture ``_agent_profile_sandbox`` already established
+        for this exact failure mode, since a typo in an UNRELATED profile
+        field must not also blank out this agent's own context text."""
+        from reyn.config.loader import resolve_context_text
+        from reyn.runtime.profile import AgentProfile
+
         try:
-            return path.read_text(encoding="utf-8")
-        except OSError:
-            return ""
+            context_path = AgentProfile.load(self._workspace_dir).context_path
+        except Exception:
+            context_path = None
+        text, _path, _outcome = resolve_context_text(
+            context_path, self._workspace_dir,
+            reyn_root=self._project_root / ".reyn" if self._project_root else None,
+            scope="agent",
+            # #5742: no .strip() — this method's own pre-existing contract
+            # (see this method's own docstring, and get_project_context's
+            # "No .strip() on either RETURNED value") is byte-identical,
+            # unstripped content; only the project frame's own
+            # load_project_context strips.
+            strip=False,
+        )
+        return text
 
     def get_cwd(self) -> str:
         """Agent-visible working directory for the SP Environment section.

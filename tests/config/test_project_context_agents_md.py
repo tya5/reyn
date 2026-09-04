@@ -1,10 +1,14 @@
-"""Tier 2: project-context resolution adopts AGENTS.md (cross-tool standard).
+"""Tier 2: project-context resolution's default candidate order.
 
 `load_project_context` resolves the markdown injected into the router system
-prompt. The default (project_context_path=None) auto-resolves the cross-tool
-standard AGENTS.md (read by Claude Code / Codex / opencode / etc.) and falls
-back to the legacy REYN.md — migration-safe. An explicit path pins one file;
-"" disables.
+prompt. #5742 (owner ruling, chat 2026-09-04) flipped the default order:
+project_context_path=None now auto-resolves REYN.md first, falling back to
+the cross-tool-standard AGENTS.md (read by Claude Code / Codex / opencode /
+etc.) only when REYN.md is absent — reyn's own file wins by default; the
+cross-tool name is the fallback, not the other way around (this repo's own
+resolved-path record, `resolve_project_context`, exists precisely so a
+workspace with BOTH files never has to guess which one won). An explicit
+path pins one file; "" disables.
 
 Each fixture writes DISTINCT content per file so the assertion pins WHICH file
 was read, not merely that some content came back (round-trip on a non-default
@@ -40,12 +44,13 @@ def test_default_falls_back_to_reyn_md_when_only_reyn(tmp_path: Path) -> None:
     assert load_project_context(cfg, tmp_path) == _REYN
 
 
-def test_default_prefers_agents_md_when_both_exist(tmp_path: Path) -> None:
-    """Tier 2: default (None) prefers AGENTS.md over REYN.md when both exist."""
+def test_default_prefers_reyn_md_when_both_exist(tmp_path: Path) -> None:
+    """Tier 2: #5742 flip — default (None) prefers REYN.md over AGENTS.md
+    when both exist (was the reverse before #5742's owner ruling)."""
     _write(tmp_path, "AGENTS.md", _AGENTS)
     _write(tmp_path, "REYN.md", _REYN)
     cfg = ReynConfig()
-    assert load_project_context(cfg, tmp_path) == _AGENTS
+    assert load_project_context(cfg, tmp_path) == _REYN
 
 
 def test_explicit_path_pins_that_file_over_defaults(tmp_path: Path) -> None:
@@ -70,14 +75,13 @@ def test_default_returns_empty_when_no_file(tmp_path: Path) -> None:
     assert load_project_context(cfg, tmp_path) == ""
 
 
-def test_present_but_empty_agents_md_does_not_fall_through(tmp_path: Path) -> None:
-    """Tier 2: an existing-but-empty AGENTS.md is authoritative (no REYN.md fallthrough).
-
-    Mirrors opencode's "AGENTS.md beats CLAUDE.md when both exist" — presence,
-    not content, decides which file is read.
-    """
-    _write(tmp_path, "AGENTS.md", "   \n")
-    _write(tmp_path, "REYN.md", _REYN)
+def test_present_but_empty_reyn_md_does_not_fall_through(tmp_path: Path) -> None:
+    """Tier 2: #5742 flip — an existing-but-empty REYN.md is now the
+    authoritative candidate (no AGENTS.md fallthrough) — presence, not
+    content, decides which file is read (the same invariant, applied to
+    the new winner)."""
+    _write(tmp_path, "REYN.md", "   \n")
+    _write(tmp_path, "AGENTS.md", _AGENTS)
     cfg = ReynConfig()
     assert load_project_context(cfg, tmp_path) == ""
 

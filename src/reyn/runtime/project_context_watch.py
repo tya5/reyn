@@ -37,11 +37,24 @@ if TYPE_CHECKING:
 class ProjectContextWatcher:
     """Turn-boundary check: has the project context file's mtime moved since
     construction (or the last detected change)? Read-only — never touches
-    the live ``project_context`` string a `Session` was built with."""
+    the live ``project_context`` string a `Session` was built with.
 
-    def __init__(self, *, path: "Path | None", events: "EventLog | None") -> None:
+    #5742 (architect ruling): every construction now names its own
+    ``scope`` (``"project"`` or ``"agent"``) — a real class of consumer
+    confusion, not a hypothetical one: both watchers already emitted the
+    SAME ``project_context_changed`` kind, distinguishable only by
+    sniffing ``path``'s shape (this file's own pre-#5742 comment,
+    verbatim: "told apart from the project-wide one via the emitted
+    ``path``"). Reyn prefers a typed discriminator over form-sniffing —
+    see this module's own kind's row in ``docs/reference/runtime/
+    events.md`` for the full rationale."""
+
+    def __init__(
+        self, *, path: "Path | None", events: "EventLog | None", scope: str,
+    ) -> None:
         self._path = path
         self._events = events
+        self._scope = scope
         self._last_mtime_ns = self._stat(path)
 
     @staticmethod
@@ -74,5 +87,7 @@ class ProjectContextWatcher:
             return False
         self._last_mtime_ns = current
         if self._events is not None:
-            self._events.emit("project_context_changed", path=str(self._path))
+            self._events.emit(
+                "project_context_changed", scope=self._scope, path=str(self._path),
+            )
         return True

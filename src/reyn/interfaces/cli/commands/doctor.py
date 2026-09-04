@@ -469,6 +469,13 @@ def run(args: argparse.Namespace) -> None:
     print("each agent's own bounding:/preferences:), mismatches only:")
     _print_bounding_preference_composition(config, resolved_root)
 
+    # ── #5742: project context (REYN.md/AGENTS.md) — RESOLVED path per
+    # frame, project (config, frozen) and agent (profile.yaml, hot) ────────
+    print()
+    print("Project context — RESOLVED file per frame (not the config value;")
+    print("a workspace with both REYN.md and AGENTS.md needs this, not a guess):")
+    _print_project_context_status(config, resolved_root)
+
     # ── #4364 (this slice, 2026-09-03): external_transports — configured
     # entries are inert unless reached via the web/AGUI server runner ──────
     print()
@@ -1286,6 +1293,79 @@ def _print_bounding_preference_composition(config: object, project_root: Path) -
         "  (session-layer overrides are never visible to doctor — a "
         "separate, one-shot process with no live session, D-2)",
     )
+
+
+def _print_project_context_status(config: object, project_root: Path) -> None:
+    """#5742 (architect ruling, issue #5742): doctor derives its answer by
+    CALLING the same functions startup calls — never a second, hand-
+    reconstructed resolution. The default-name-order, the pin, and the
+    disabled/no-candidate/unreadable classification all live in
+    :func:`~reyn.config.loader.resolve_project_context` (project frame)
+    and the SAME shared :func:`~reyn.config.loader.resolve_context_text`
+    the agent frame's own runtime resolver uses (``router_host_adapter.
+    py``) — this function writes NONE of that logic itself, so a future
+    default-order flip, a new candidate name, or a new outcome value
+    reaches this output with zero edits here (the SAME "same
+    implementation as startup, called from both places" requirement
+    ``build_policy_tier_config``'s own docstring already states for
+    ``reyn config validate``, #4174 T0b — re-applied to this axis).
+
+    Answers the 2 questions owner named (chat, #5742): ①which file is
+    ACTUALLY being read, per frame — the RESOLVED path, never the
+    config value (an unset/auto-resolved config still names a real
+    file); ②a configured-but-broken value is reported, never silently
+    folded into "nothing configured" (``PROJECT_CONTEXT_UNREADABLE`` is
+    its own line, distinct from ``PROJECT_CONTEXT_NO_CANDIDATE``/
+    ``PROJECT_CONTEXT_DISABLED`` — the SAME 捏造しないこと discipline the
+    runtime side's WARN + audit-event now also honors, ``config.loader.
+    _warn_context_unreadable``).
+
+    D-2: read-only — never constructs a live ``Session``/``RouterHostAdapter``
+    (this repo's own doctor scoping) — the agent frame's own resolver reads
+    ``AgentProfile.load(agent_dir)`` + ``resolve_context_text`` directly,
+    the SAME 2 primitives ``RouterHostAdapter._read_agent_instructions``
+    calls at runtime, just without constructing the adapter around them."""
+    from reyn.config.loader import (
+        PROJECT_CONTEXT_DISABLED,
+        PROJECT_CONTEXT_NO_CANDIDATE,
+        resolve_context_text,
+        resolve_project_context,
+    )
+    from reyn.runtime.profile import AgentProfile
+
+    def _describe(text: str, path: "Path | None", outcome: str) -> str:
+        if outcome == PROJECT_CONTEXT_DISABLED:
+            return "disabled (explicit \"\")"
+        if outcome == PROJECT_CONTEXT_NO_CANDIDATE:
+            return "not configured, no default-order file present"
+        if path is None:
+            return "⚠ configured but unreadable (see log for the path)"
+        return f"{path}" + ("" if text.strip() else " (present, empty)")
+
+    _text, path, outcome = resolve_project_context(config, project_root)
+    print(f"  project: {_describe(_text, path, outcome)}")
+
+    agents_dir = project_root / ".reyn" / "agents"
+    agent_names = (
+        sorted(p.name for p in agents_dir.iterdir() if p.is_dir())
+        if agents_dir.is_dir() else []
+    )
+    if not agent_names:
+        print("  no .reyn/agents/<name>/ found — nothing to resolve per-agent")
+        return
+    for agent_name in agent_names:
+        agent_dir = agents_dir / agent_name
+        try:
+            context_path = AgentProfile.load(agent_dir).context_path
+        except FileNotFoundError:
+            continue  # a directory with no profile.yaml -- not a real agent
+        except Exception as exc:  # noqa: BLE001 -- D-1: report the real failure, never swallow it
+            print(f"  agent [{agent_name}]: profile.yaml failed to load: {exc}")
+            continue
+        agent_text, agent_path, agent_outcome = resolve_context_text(
+            context_path, agent_dir, reyn_root=None, scope="agent", strip=False,
+        )
+        print(f"  agent [{agent_name}]: {_describe(agent_text, agent_path, agent_outcome)}")
 
 
 def _print_external_transports_status(config: object) -> None:
