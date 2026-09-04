@@ -292,6 +292,99 @@ def test_router_loop_last_call_usage_is_the_final_iteration_only():
     assert loop.last_call_usage.prompt_tokens != total.prompt_tokens
 
 
+def test_router_loop_on_call_usage_fires_once_per_iteration_not_once_per_turn():
+    """Tier 2: #5745 — ``on_call_usage`` (RouterLoop's live per-call wire)
+    is invoked once per LLM call, with THAT call's own usage — not once at
+    the whole turn's end with the turn-summed total. This is the exact gap
+    #5745 named: the status-bar ctx chip's underlying figure
+    (``BudgetGateway._last_call_usage``, which this callback feeds via
+    ``update_last_call_usage``) previously only synced at ``add_router_
+    usage``'s own turn-end call site, so it stayed frozen through a whole
+    multi-tool-iteration turn even though a live per-call source
+    (``RouterLoop.last_call_usage``, this same field) already existed.
+
+    Real ``RouterLoop`` + real ``LLMToolCallResult``/``TokenUsage`` (no
+    mock) — mirrors the sibling ``test_router_loop_last_call_usage_is_the_
+    final_iteration_only`` above byte-for-byte except for the callback."""
+    import json
+
+    host = _FakeHost()
+    calls: list[TokenUsage] = []
+    loop = RouterLoop(
+        host=host, chain_id="c-test", max_iterations=3,
+        on_call_usage=calls.append,
+    )
+
+    first_usage = TokenUsage(prompt_tokens=50, completion_tokens=10)
+    final_usage = TokenUsage(prompt_tokens=90, completion_tokens=15)
+
+    tool_result = LLMToolCallResult(
+        content=None,
+        tool_calls=[{
+            "id": "tc_1",
+            "type": "function",
+            "function": {"name": "list_skills", "arguments": json.dumps({})},
+        }],
+        finish_reason="tool_calls",
+        usage=first_usage,
+    )
+    text_result = LLMToolCallResult(
+        content="done", tool_calls=[], finish_reason="stop", usage=final_usage,
+    )
+    results_queue = [tool_result, text_result]
+
+    async def fake_call_llm_tools(**kwargs):
+        return results_queue.pop(0)
+
+    async def run_it():
+        import reyn.runtime.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools
+        try:
+            return await loop.run(user_text="hi", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
+
+    asyncio.run(run_it())
+
+    # Non-vacuity + the core claim in one: TWO calls, each with its OWN
+    # iteration's usage, in order — never one call with the turn-summed
+    # total (140), which is what a "fires once, at the end" bug would
+    # produce instead.
+    assert [u.prompt_tokens for u in calls] == [50, 90], (
+        "on_call_usage must fire per iteration with that iteration's own "
+        "usage, not once at turn-end with the summed total"
+    )
+
+
+def test_router_loop_on_call_usage_defaults_to_none_no_behavior_change():
+    """Tier 2: #5745 — a caller that does not pass ``on_call_usage`` (every
+    call site except ``router_loop_driver.py`` today) sees byte-identical
+    behavior: no callback, no exception, run() completes exactly as it did
+    before this parameter existed."""
+    host = _FakeHost()
+    loop = RouterLoop(host=host, chain_id="c-test", max_iterations=3)
+
+    usage = TokenUsage(prompt_tokens=33, completion_tokens=4)
+    result = LLMToolCallResult(content="done", tool_calls=[], finish_reason="stop", usage=usage)
+
+    async def fake_call_llm_tools(**kwargs):
+        return result
+
+    async def run_it():
+        import reyn.runtime.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools
+        try:
+            return await loop.run(user_text="hi", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
+
+    total = asyncio.run(run_it())
+    assert total.prompt_tokens == 33
+    assert loop.last_call_usage.prompt_tokens == 33
+
+
 def test_router_loop_last_call_usage_resets_between_runs():
     """Tier 2: last_call_usage (like total_usage) resets to zero at the start
     of each run() — a stale value from a prior turn must not leak into a new

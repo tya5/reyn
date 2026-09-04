@@ -1317,6 +1317,7 @@ class RouterLoop:
         max_schema_reprompt_attempts: int = 2,  # 0062 §2.1 failure-mode-(c): bounded re-prompt budget (extra attempts beyond the first)
         intra_turn_contextual_for_turn_fn: "Any | None" = None,  # #1909 OPT-IN: () -> ContextualPermission|None, re-invoked every run() iteration. None (default) = off — self._contextual_permission stays turn-frozen. RouterLoopDriver only threads this when safety.threat_scan.capability_narrowing is "iteration" (#3501 — the top rung of the 3-value ladder off/turn/iteration; at "turn" the narrowing is resolved at the turn boundary only, so this stays None there too).
         contextual_static_baseline: "object | None" = None,  # #1909: the UN-narrowed static contextual (identity anchor) — a per-iteration resolve equal (by identity) to this means "not tainted"; anything else means the untrusted-composed profile engaged. Only consulted when intra_turn_contextual_for_turn_fn is not None.
+        on_call_usage: "Any | None" = None,  # #5745: Callable[[TokenUsage], None] | None — invoked immediately after EVERY ``self._last_call_usage`` write below (both call sites), never batched to turn-end. This field is ALREADY live per-call on this instance (``self.last_call_usage``); the status-bar ctx chip reads a SEPARATE copy (``BudgetGateway._last_call_usage``, session.py's own ``last_call_usage`` property) that was previously only synced once per whole turn (``add_router_usage``, at run_turn's own end) — a multi-tool-iteration turn could run for minutes with the chip frozen. This callback is the live wire for that copy; it does ONLY that — it must never touch billing/total_usage (that stays add_router_usage's own turn-summed job, called exactly once, unchanged).
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1456,6 +1457,11 @@ class RouterLoop:
         # the same growing context each iteration re-sends, wildly overstating
         # "how much of the window is currently occupied".
         self._last_call_usage: TokenUsage = TokenUsage()
+        # #5745: see the constructor param's own comment — the live wire to
+        # BudgetGateway's separate copy of "most recent call" (what the
+        # status-bar ctx chip actually reads). None for any caller that
+        # doesn't pass one (byte-identical to before this field existed).
+        self._on_call_usage = on_call_usage
         # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
         # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
         # config selection (tool_use) plugs in here; with all
@@ -2473,6 +2479,14 @@ class RouterLoop:
             if result.usage:
                 self._total_usage += result.usage
                 self._last_call_usage = result.usage
+                # #5745: live per-call wire to the status-bar ctx chip's own
+                # copy — see the constructor param's own comment. Never
+                # touches billing (self._total_usage, just above, already
+                # did that) — this call site's ONLY other job is telling
+                # BudgetGateway which call was most recent, right now,
+                # not at this whole turn's eventual end.
+                if self._on_call_usage is not None:
+                    self._on_call_usage(result.usage)
             # #1593 loop-unify (Issue-1): interpret-driven routing — the active
             # scheme classifies EVERY result, instead of the OS sniffing
             # ``result.tool_calls``. universal-category returns Execute when there
@@ -3291,6 +3305,14 @@ class RouterLoop:
             if result.usage:
                 self._total_usage += result.usage
                 self._last_call_usage = result.usage
+                # #5745: live per-call wire to the status-bar ctx chip's own
+                # copy — see the constructor param's own comment. Never
+                # touches billing (self._total_usage, just above, already
+                # did that) — this call site's ONLY other job is telling
+                # BudgetGateway which call was most recent, right now,
+                # not at this whole turn's eventual end.
+                if self._on_call_usage is not None:
+                    self._on_call_usage(result.usage)
             text = result.content or ""
             try:
                 parsed = json.loads(text)
