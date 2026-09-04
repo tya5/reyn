@@ -4982,7 +4982,7 @@ class TextualChatApp(App):
 
         Never includes the exception's own message/traceback — that is
         `logger.exception`'s own job (already called at every one of
-        this method's 3 call sites, unchanged); the audit-event carries
+        this method's 4 call sites, unchanged); the audit-event carries
         only ``frame_kind``/``exception_type`` (named ``frame_kind``,
         not ``kind`` — ``emit_cli_event``'s own first positional
         parameter is itself named ``kind``, the audit-event's own kind
@@ -6797,8 +6797,9 @@ class TextualChatApp(App):
                     elif msg.kind == "__copy_last_reply__":
                         try:
                             await self._handle_copy_request(msg.text)
-                        except Exception:
+                        except Exception as exc:
                             logger.exception("textual chat: /copy sentinel failed")
+                            self._record_pump_swallow("__copy_last_reply__", exc)
                     elif msg.kind == "__rewind_list__":
                         try:
                             await self._handle_rewind_request(msg)

@@ -547,8 +547,9 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "process_marker_reaped",
     "project_context_changed",
     # #5732 (architect ruling): the textual chat pump's own bounded
-    # diagnostic for a swallowed per-frame exception (/rewind sentinel,
-    # __open_artifact__ sentinel, _ingest_frame) -- one event per FIRST
+    # diagnostic for a swallowed per-frame exception (/copy sentinel,
+    # /rewind sentinel, __open_artifact__ sentinel, _ingest_frame) --
+    # one event per FIRST
     # occurrence of a (frame_kind, exception type) pair, never per
     # occurrence (a broken call site fails every frame; the running
     # count is exposed separately via PumpSwallowStats.count, which is

@@ -738,8 +738,8 @@ readers ran `live_processes` first would otherwise destroy the evidence
 ## Textual chat pump
 
 `TextualChatApp._pump_frames` (`src/reyn/interfaces/inline/textual_chat/app.py`)
-wraps each of its 3 per-message-kind handlers (`/rewind` sentinel,
-`__open_artifact__` sentinel, `_ingest_frame`) in its own
+wraps each of its 4 per-message-kind handlers (`/copy` sentinel, `/rewind`
+sentinel, `__open_artifact__` sentinel, `_ingest_frame`) in its own
 `try`/`except Exception` — the pump must survive one bad frame, since a
 single unhandled exception there would end the whole chat loop. #5732
 (architect ruling, real-machine incident #5731 — `_coalesce_pipeline_step`
@@ -751,12 +751,12 @@ interfaces.inline.textual_chat.app.PumpSwallowStats.count` (also folded
 into the status line via `chrome.status_line_text`'s `pump_swallow_count`
 param — `"draw failed: N — see log · "`, only when `N > 0`, never a
 transient toast) is the COMPLETE read: it increments on every swallowed
-occurrence, from every one of the 3 handlers, with no gating. This event is
+occurrence, from every one of the 4 handlers, with no gating. This event is
 a deliberately BOUNDED companion, not a duplicate of that count.
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `pump_exception_swallowed` | One of the pump's 3 `except Exception` blocks caught an exception. Fires only on the FIRST time a given `(frame_kind, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally. Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at all 3 sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `frame_kind` (the pump message's own `kind` — `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind`), `exception_type` (`type(exc).__name__`) |
+| `pump_exception_swallowed` | One of the pump's 4 `except Exception` blocks caught an exception. Fires only on the FIRST time a given `(frame_kind, exception type)` pair is seen this process (`PumpSwallowStats.record`) — a broken call site fails on every frame, so a durable record per OCCURRENCE would flood `.reyn/events` with thousands of rows for one defect; the bounded count above already carries the complete tally. Never carries the exception's own message or traceback — `logger.exception` (unchanged, already called at all 4 sites) already covers the free-text half; this event carries only the structured facts a post-mortem reader queries by. Best-effort (`emit_cli_event`, matching `install_asyncio_exception_handler`'s own posture for `reyn chat` — a single-invocation, single-cwd CLI entrypoint, unlike a long-lived multi-project server): an emit failure here is logged and swallowed, never propagated into the pump. | `frame_kind` (the pump message's own `kind` — `__copy_last_reply__` \| `__rewind_list__` \| `__open_artifact__` \| the `_ingest_frame` frame's `kind`), `exception_type` (`type(exc).__name__`) |
 
 ## Replay
 

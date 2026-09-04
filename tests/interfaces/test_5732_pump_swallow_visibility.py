@@ -1,16 +1,26 @@
 """Tier 2: #5732 (architect ruling, real-machine incident #5731 —
 ``_coalesce_pipeline_step`` raised ``AttributeError`` on EVERY ``"status"``-
 kind frame, shipped, undetected: tests stayed green and nothing surfaced it
-to a human) — ``TextualChatApp._pump_frames``'s 3 sibling ``except
-Exception`` blocks (``/rewind`` sentinel, ``__open_artifact__`` sentinel,
-``_ingest_frame``) must keep the app alive (unchanged) AND make the
-swallowed failure legible: a complete, public ``PumpSwallowStats.count``,
-a status-line segment once it is nonzero, and a bounded
-``pump_exception_swallowed`` audit-event (one per first-seen
+to a human) — ``TextualChatApp._pump_frames``'s 4 sibling ``except
+Exception`` blocks (``/copy`` sentinel, ``/rewind`` sentinel,
+``__open_artifact__`` sentinel, ``_ingest_frame``) must keep the app alive
+(unchanged) AND make the swallowed failure legible: a complete, public
+``PumpSwallowStats.count``, a status-line segment once it is nonzero, and
+a bounded ``pump_exception_swallowed`` audit-event (one per first-seen
 ``(frame_kind, exception type)`` pair, never one per occurrence).
 
-Architect's own 8-point acceptance (issuecomment on #5732), verbatim:
-  ① all 3 sibling catches treated alike
+The ``/copy`` sentinel (``__copy_last_reply__``) was NOT in the architect's
+own original 3-item enumeration below (nor lead-coder's brief) — e2e-coder
+disclosed it as a 4th, identically-shaped sibling on the original PR;
+lead-coder independently re-read the window their own census used, found
+it excluded ``/copy`` by construction, and BLOCKED on folding it in now
+rather than leaving "one catch still silent" open (the architect's own
+"1 つだけ直すと残り 2 つが黙ったまま残ります" ruling holds at 3-of-4 too).
+
+Architect's own 8-point acceptance (issuecomment on #5732), verbatim below
+— written against 3 siblings; this PR applies the same ① at 4:
+  ① all sibling catches treated alike (originally worded "3"; now 4 — see
+     the ``/copy`` disclosure above)
   ② deliberately breaking ``_ingest_frame`` makes a test go RED
   ③ production behaviour unchanged (catch stays, loop survives)
   ④ no test-only branch (behaviour does not vary by environment)
