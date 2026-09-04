@@ -31,6 +31,21 @@ seq-gated merge (the P2a order-race protocol, reused as-is — see the app
 module docstring); this widget is a pure renderer of whatever the app tells it
 to show/remove, keyed by ``msg_id``.
 
+**A fourth, LOCAL entry (#4409)**: before any of the three server-driven
+exits above can fire, ``app.py``'s ``on_composer_submitted`` calls
+:meth:`show_item` with ``sending=True`` and a LOCALLY-generated id,
+synchronously with clearing the composer — closing the gap the owner
+reported ("input box から消えると同時に... 消えること多い"): between a
+message leaving the input box and the (async, network-round-trip-bound)
+``user_submitted`` broadcast materializing it here, there was previously a
+window where the message was visible NOWHERE. The row renders with
+:data:`_SENDING_GLYPH` (not :data:`_QUEUED_GLYPH`) while in this state —
+an honest "not yet confirmed sent" distinct from "confirmed queued,
+awaiting dispatch". :meth:`rekey` promotes it in place once
+``submit_user_text`` acks (``app.py``'s ``_reconcile_local_send``); if the
+real broadcast already materialized the row first (:meth:`has_row`), the
+placeholder is simply dropped as redundant.
+
 **Cancel affordance (#3300 Y-client)**: this widget is focusable
 (``can_focus = True``) and keeps a highlighted row index, keyed by the SAME
 ``msg_id`` ordering as :meth:`rendered_texts` (never a guessed/head-of-queue
@@ -117,6 +132,21 @@ _QUEUED_GLYPH = "▷"
 #: hollow-to-filled step as ``▷`` -> the NOW row's running state, so "filled"
 #: consistently means "this is the one being acted on".
 _SELECTED_GLYPH = "▶"
+
+#: The SENDING (not-yet-confirmed) row's glyph — #4409. A row keyed by a
+#: LOCAL id (``app.py``'s ``on_composer_submitted``, no server ``msg_id``
+#: yet) renders with this instead of :data:`_QUEUED_GLYPH`: it is showing
+#: BEFORE any server round trip has confirmed the submission even reached
+#: the inbox, which ``▷`` — "queued, confirmed, waiting on dispatch" — would
+#: overstate. A diamond, not a variant of the triangle family ``▷``/``▶``
+#: already own (#3777's own hollow→filled PROMOTION pairing) — this state
+#: is not a step in that pair, it precedes it, and reusing a shape from
+#: that family would read as a third rung on the SAME ladder rather than
+#: the separate, prior fact it is. ``rekey`` (below) is what promotes a row
+#: OUT of this state once the server acks it, in place, never by
+#: remove+re-add (see that method's own docstring for why position and
+#: on-screen continuity both depend on that).
+_SENDING_GLYPH = "◇"
 
 #: What separates a row's glyph from its label. Two spaces, not one: the NOW
 #: row above the queue carries no glyph at all (#3777), so its text has to
@@ -211,6 +241,11 @@ class SentQueue(Vertical):
         self.display = False
         self._rows: "dict[str, Static]" = {}
         self._labels: "dict[str, str]" = {}
+        #: #4409: keys (of ``_rows``) currently in the SENDING (not-yet-
+        #: confirmed) sub-state — a row's own key set membership, not a
+        #: second row list, so :meth:`rekey`/:meth:`remove_item` only ever
+        #: have ONE place tracking a row's identity to keep in sync.
+        self._sending: "set[str]" = set()
         self._selected_index = 0
         #: #3680: when the terminal is too short to give the queue a row per
         #: item, it renders as one ``Queued: N`` line instead. Every item is
@@ -222,18 +257,30 @@ class SentQueue(Vertical):
         self.mount(self._summary)
         self._summary.display = False
 
-    def show_item(self, msg_id: str, text: str) -> None:
+    def show_item(self, msg_id: str, text: str, *, sending: bool = False) -> None:
         """Materialize a queued item (``user_submitted``): neutralize the
         untrusted text at this display boundary, wrap it in a ``Content``
         literal (never a bare ``str`` — see the module docstring's security
         note), and mount it as a new dim row. A duplicate ``msg_id`` (should
         not happen server-side, but guarded) replaces the existing row rather
-        than stacking a second one."""
+        than stacking a second one.
+
+        ``sending`` (#4409): the row is a LOCAL, not-yet-server-confirmed
+        placeholder — ``app.py``'s ``on_composer_submitted`` calls this,
+        keyed by a local id, synchronously with clearing the composer, so
+        the gap between "left the input box" and "visible somewhere" is
+        zero rather than however long the server round trip takes. Renders
+        with :data:`_SENDING_GLYPH` instead of :data:`_QUEUED_GLYPH` — see
+        that constant's own docstring. :meth:`rekey` is how a caller
+        promotes it out of this state once the server acks."""
         if msg_id in self._rows:
             self.remove_item(msg_id)
         label = _neutralized_label(text)
         self._labels[msg_id] = label
-        row = Static(Content(f"{_QUEUED_GLYPH}{_GLYPH_GAP}{label}"))
+        if sending:
+            self._sending.add(msg_id)
+        glyph = _SENDING_GLYPH if sending else _QUEUED_GLYPH
+        row = Static(Content(f"{glyph}{_GLYPH_GAP}{label}"))
         self._rows[msg_id] = row
         self.mount(row)
         self.display = True
@@ -254,6 +301,7 @@ class SentQueue(Vertical):
         REMOVE exit, #3300 Y-client). No-op for an unknown ``msg_id``.
         Collapses the region back to hidden once the last item is gone."""
         self._labels.pop(msg_id, None)
+        self._sending.discard(msg_id)
         row = self._rows.pop(msg_id, None)
         if row is not None:
             row.remove()
@@ -329,6 +377,33 @@ class SentQueue(Vertical):
             return None
         return order[max(0, min(self._selected_index, len(order) - 1))]
 
+    def has_row(self, msg_id: str) -> bool:
+        """Whether a row keyed by ``msg_id`` is currently shown — #4409's
+        reconciliation read: the app asks this to tell "the server's
+        ``user_submitted`` broadcast already materialized this id" apart
+        from "still waiting", before deciding whether :meth:`rekey`ing a
+        local placeholder onto it would create a duplicate."""
+        return msg_id in self._rows
+
+    def rekey(self, old_id: str, new_id: str) -> None:
+        """Rename a row's key in place — #4409: promotes a local SENDING
+        placeholder (``old_id``) to the server-confirmed ``msg_id``
+        (``new_id``) once ``submit_user_text`` acks it, without moving its
+        queue position or re-mounting it. A plain ``remove_item`` +
+        ``show_item`` pair would do both — the row would jump to the END
+        (dict re-insertion order) and flash off/on for one frame — neither
+        of which is true here: the SAME message is still exactly as queued
+        as it was a moment ago, only its id changed from a local guess to
+        the authoritative one. No-op if ``old_id`` is not currently a row
+        (already reconciled, or removed by a cancel/dispatch that raced
+        this call — the caller's own docstring covers that race)."""
+        if old_id not in self._rows:
+            return
+        self._rows = {new_id if k == old_id else k: v for k, v in self._rows.items()}
+        self._labels = {new_id if k == old_id else k: v for k, v in self._labels.items()}
+        self._sending.discard(old_id)  # now confirmed — drops out of SENDING
+        self._apply_highlight()
+
     def _bring_into_view(self, row: Static) -> None:
         """Scroll ``row`` into the visible window, best-effort.
 
@@ -392,7 +467,16 @@ class SentQueue(Vertical):
             selected = i == self._selected_index
             row = self._rows[msg_id]
             row.set_class(selected, "-selected")
-            glyph = _SELECTED_GLYPH if selected else _QUEUED_GLYPH
+            # #4409: SENDING (not yet server-confirmed) wins over selection —
+            # a selected-but-unconfirmed row still needs to read as
+            # unconfirmed; ``_SELECTED_GLYPH`` only applies once a row has
+            # graduated to :data:`_QUEUED_GLYPH`'s state.
+            if selected and msg_id not in self._sending:
+                glyph = _SELECTED_GLYPH
+            elif msg_id in self._sending:
+                glyph = _SENDING_GLYPH
+            else:
+                glyph = _QUEUED_GLYPH
             # #3777 (owner call, "先頭行だけを区別する話は終わり" — option ①):
             # the NEXT label singling out the head row is gone, with no
             # replacement mark at that position. Every queued row now renders

@@ -350,7 +350,7 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
     transport = RecordingTransport(session)
     app = TextualChatApp(transport=transport)
 
-    await app._submit("/help")
+    await app._submit("/help", local_id="local:test-help")
     assert "Slash commands:" in transport.system_text(), (
         "the TUI did not run /help as a command; _submit is not going through "
         f"the shared client-side slash layer. shown={transport.texts()!r}"
@@ -359,7 +359,7 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
         "the TUI submitted /help as a turn as well as running it"
     )
 
-    await app._submit("an ordinary line")
+    await app._submit("an ordinary line", local_id="local:test-ordinary")
     assert [i["text"] for i in session.queued_user_messages()] == [
         "an ordinary line",
     ], (
@@ -580,7 +580,7 @@ async def test_both_clients_run_the_same_layer(tmp_path, monkeypatch) -> None:
     )
 
     tui_transport = RecordingTransport(session)
-    await TextualChatApp(transport=tui_transport)._submit("/halp")
+    await TextualChatApp(transport=tui_transport)._submit("/halp", local_id="local:test")
     tui_text = tui_transport.error_text()
 
     assert "unknown command /halp" in cui_text, (
