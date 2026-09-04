@@ -140,11 +140,49 @@ def _load_yaml(
         return {}
 
 
-# Cross-tool default resolution order when project_context_path is unset
-# (None): AGENTS.md is the convention Claude Code / Codex / opencode / etc.
-# all read; REYN.md is the legacy fallback. First existing file wins (mirrors
-# opencode's "AGENTS.md beats CLAUDE.md when both exist").
-DEFAULT_PROJECT_CONTEXT_FILES: tuple[str, ...] = ("AGENTS.md", "REYN.md")
+# #5742 (owner ruling, chat 2026-09-04): flipped from ("AGENTS.md",
+# "REYN.md") — REYN.md now wins when both exist. This is the SAME default-
+# name-order shape the agent frame also uses (project_context_watch's own
+# per-agent resolver, router_host_adapter.py) — owner's own framing: "project
+# 枠は reyn.yaml/reyn.local.yaml でのみ指定可能として…既定は REYN.md >
+# AGENT.md の優先度". Measured harmless for reyn's own repo (only REYN.md
+# exists here, no AGENTS.md) — a workspace with BOTH files sees its resolved
+# candidate change; see resolve_project_context's own `path` return for the
+# record of which file was actually chosen (#5742's own "推測させない"
+# requirement).
+DEFAULT_PROJECT_CONTEXT_FILES: tuple[str, ...] = ("REYN.md", "AGENTS.md")
+
+
+def resolve_context_candidate(rel: "str | None", search_root: "Path | None") -> "Path | None":
+    """#5742: the shared candidate-walk both the project frame
+    (``search_root=project_root``) and the agent frame
+    (``search_root=this agent's own workspace_dir``, ``router_host_
+    adapter.py``) use — one implementation of "explicit pin vs
+    default-name-order search", not two that could drift (the same
+    resolution shape, applied at a different root and reread cadence per
+    #5742's own owner ruling).
+
+    ``rel is None`` → auto-resolve :data:`DEFAULT_PROJECT_CONTEXT_FILES`
+    (``REYN.md`` else ``AGENTS.md``), first EXISTING candidate wins;
+    explicit non-empty → pin exactly that file (relative to
+    ``search_root``); explicit ``""`` (after stripping) → ``None``
+    (disabled — the caller distinguishes "disabled" from "no candidate"
+    via whether ``rel`` was given at all, since both resolve to ``None``
+    here)."""
+    if search_root is None:
+        return None
+    if rel is None:
+        candidates: "tuple[str, ...]" = DEFAULT_PROJECT_CONTEXT_FILES
+    else:
+        rel = rel.strip()
+        if not rel:
+            return None
+        candidates = (rel,)
+    for name in candidates:
+        target = search_root / name
+        if target.is_file():
+            return target
+    return None
 
 
 def resolve_project_context_path(config: ReynConfig, project_root: "Path | None") -> "Path | None":
@@ -154,25 +192,168 @@ def resolve_project_context_path(config: ReynConfig, project_root: "Path | None"
     forced to also pay for + discard a full read.
 
     Same resolution as :func:`load_project_context`'s docstring: ``None`` →
-    auto-resolve (``AGENTS.md`` else ``REYN.md``, first EXISTING wins);
-    explicit non-empty → pin that file; explicit ``""`` → disabled (``None``).
-    Returns ``None`` when disabled or no candidate exists.
+    auto-resolve (``REYN.md`` else ``AGENTS.md`` — #5742 flip, see
+    :data:`DEFAULT_PROJECT_CONTEXT_FILES`'s own comment — first EXISTING
+    wins); explicit non-empty → pin that file; explicit ``""`` → disabled
+    (``None``). Returns ``None`` when disabled or no candidate exists.
     """
-    if project_root is None:
-        return None
-    rel = config.project_context_path
-    if rel is None:
-        candidates: tuple[str, ...] = DEFAULT_PROJECT_CONTEXT_FILES
+    return resolve_context_candidate(config.project_context_path, project_root)
+
+
+# #5742 (architect ruling, issue #5742): the outcome string
+# `resolve_project_context`/its agent-frame counterpart return alongside
+# the text — 3 DIFFERENT reasons a caller could see empty content, now
+# distinguishable instead of collapsing to one "" (the "捏造しないこと"
+# requirement, owner's own words applied to runtime, not only `reyn
+# doctor`). Never "ok-but-empty" as a 4th value: a chosen candidate whose
+# CONTENT happens to be blank still reads OK — "ok" means "resolution and
+# read both succeeded", not "there is text".
+PROJECT_CONTEXT_DISABLED = "disabled"  # project_context_path: "" (explicit opt-out)
+PROJECT_CONTEXT_NO_CANDIDATE = "no_candidate"  # nothing configured, and no default-order file exists
+PROJECT_CONTEXT_UNREADABLE = "unreadable"  # a real candidate resolved, but read_text() raised
+PROJECT_CONTEXT_OK = "ok"
+
+
+def resolve_context_text(
+    rel: "str | None", search_root: "Path | None", *, reyn_root: "Path | None",
+    scope: str, strip: bool = True,
+) -> "tuple[str, Path | None, str]":
+    """#5742: resolve AND read a context markdown file, returning
+    ``(text, resolved_path, outcome)`` — the shared implementation BOTH
+    :func:`resolve_project_context` (``search_root=project_root``) and
+    the agent frame's own resolver (``router_host_adapter.py``,
+    ``search_root=`` this agent's ``workspace_dir``) call, so the 4-way
+    classification below (and the WARN + audit-event it drives) exists
+    ONCE — never two independently-written copies for the two frames
+    (the exact "same guard, second copy" shape this codebase's own
+    ``unknown_profile_keys`` docstring names and rejects elsewhere).
+
+    ``scope`` is stamped onto the ``project_context_unreadable`` event
+    (``"project"`` or ``"agent"``) so a consumer reads which frame failed
+    from a typed field, never by sniffing ``path``'s shape (#5742's own
+    "推測させない" requirement, the SAME reasoning
+    :class:`~reyn.runtime.project_context_watch.ProjectContextWatcher`'s
+    own emitted event now applies its ``scope`` field for).
+
+    Resolution: ``rel is None`` → auto-resolve
+    :data:`DEFAULT_PROJECT_CONTEXT_FILES` (first EXISTING candidate
+    wins, even if empty); explicit non-empty → pin exactly that file;
+    explicit ``""`` → disabled.
+
+    ``outcome`` is one of :data:`PROJECT_CONTEXT_DISABLED` (explicit
+    ``""``), :data:`PROJECT_CONTEXT_NO_CANDIDATE` (UNSET, and no default-
+    order file exists — nothing was ever asked for, silent/normal), or
+    :data:`PROJECT_CONTEXT_UNREADABLE` (an operator NAMED something,
+    explicitly, and it didn't work — #5742 (lead-coder): "path の打ち間
+    違い、権限、等" names a missing file as an example of THIS category,
+    not of "no candidate" — a typo'd pin and a real permission/race
+    failure on an existing file are the SAME observable fact to the
+    operator, "I specified a file and reyn couldn't read it").
+    :data:`PROJECT_CONTEXT_OK` on a genuine successful read (``text`` may
+    still be ``""`` if the file itself is empty/whitespace-only).
+
+    ``text`` is ``""`` on every non-OK outcome (degrade is unchanged,
+    #5742's own architect ruling: "戻り値は "" のままで構いません") — only
+    the UNREADABLE branch additionally logs a WARNING and emits a
+    best-effort ``project_context_unreadable`` P6 audit-event (via
+    :func:`~reyn.core.events.events.emit_direct_event`, no live
+    ``Session``/``EventLog`` exists at either call site's own point in
+    startup — #5065's own "no Session to call through" shape;
+    ``reyn_root=None`` skips the emit entirely — degraded further only
+    for a caller with no resolvable project root at all). DISABLED and
+    NO_CANDIDATE are normal, silent outcomes — an operator who never
+    configured this, or who explicitly opted out, gets no diagnostic
+    noise; only "you asked for something and it broke" is voiced.
+
+    ``strip`` (default ``True``, the project frame's own pre-#5742
+    contract, :func:`load_project_context`'s docstring: "Returns ...
+    stripped") — pass ``False`` for a caller whose OWN docstring makes a
+    byte-identical, no-strip promise (the agent frame,
+    ``RouterHostAdapter.get_project_context``: "No .strip() on either
+    RETURNED value ... stripping it would silently change what an
+    operator's REYN.md ... renders")."""
+    if rel is not None and not rel.strip():
+        return "", None, PROJECT_CONTEXT_DISABLED
+    target = resolve_context_candidate(rel, search_root)
+    if target is None:
+        if rel is not None:
+            # An EXPLICIT pin naming a file that does not exist at all —
+            # #5742's own "typo'd path" case. There is no Path object to
+            # report (resolve_context_candidate never constructed one
+            # that passed is_file()), so the record names the
+            # CONFIGURED value instead of a resolved Path.
+            return "", None, _warn_context_unreadable(
+                reyn_root, scope=scope, configured=rel,
+            )
+        return "", None, PROJECT_CONTEXT_NO_CANDIDATE
+    try:
+        raw = target.read_text(encoding="utf-8")
+        return (raw.strip() if strip else raw), target, PROJECT_CONTEXT_OK
+    except OSError as exc:
+        return "", target, _warn_context_unreadable(
+            reyn_root, scope=scope, configured=str(target), read_error=exc,
+        )
+
+
+def resolve_project_context(
+    config: ReynConfig, project_root: Path,
+) -> "tuple[str, Path | None, str]":
+    """The project frame's own call into :func:`resolve_context_text` —
+    the single function both :func:`load_project_context` (runtime) and
+    ``reyn doctor`` (#5742) call, so neither hand-reconstructs the
+    resolution (the SAME "one call, checks exactly what startup checks"
+    shape ``build_policy_tier_config``'s own docstring already requires
+    for config validation, #4174 T0b, re-applied here per owner's own
+    instruction: "自動追従するような構造化が可能ならそうしておいてね")."""
+    return resolve_context_text(
+        config.project_context_path, project_root,
+        reyn_root=project_root / ".reyn", scope="project",
+    )
+
+
+def _warn_context_unreadable(
+    reyn_root: "Path | None", *, scope: str, configured: str,
+    read_error: "OSError | None" = None,
+) -> str:
+    """#5742: the ONE place both non-existent-explicit-pin and
+    exists-but-unreadable funnel through, for EITHER frame — a single
+    log line + a single best-effort audit-event, never two
+    implementations of "tell the operator their configured value didn't
+    work"."""
+    import logging
+
+    if read_error is None:
+        logging.getLogger(__name__).warning(
+            "%s context file %r is configured but does not exist -- "
+            "this section of the system prompt will be empty this "
+            "session",
+            scope, configured,
+        )
     else:
-        rel = rel.strip()
-        if not rel:
-            return None
-        candidates = (rel,)
-    for name in candidates:
-        target = project_root / name
-        if target.is_file():
-            return target
-    return None
+        logging.getLogger(__name__).warning(
+            "%s context file %r is configured but could not be read: "
+            "%s -- this section of the system prompt will be empty "
+            "this session",
+            scope, configured, read_error,
+        )
+    if reyn_root is not None:
+        try:
+            from reyn.core.events.events import emit_direct_event
+
+            emit_direct_event(
+                "project_context_unreadable",
+                surface="config",
+                reyn_root=reyn_root,
+                track_audit_seq=False,
+                scope=scope,
+                path=configured,
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "failed to emit project_context_unreadable audit-event "
+                "(diagnostic-only, does not block startup)"
+            )
+    return PROJECT_CONTEXT_UNREADABLE
 
 
 def load_project_context(config: ReynConfig, project_root: Path) -> str:
@@ -180,24 +361,20 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
 
     Resolution:
       - ``project_context_path = None`` (default, unset): auto-resolve the
-        cross-tool standard — ``AGENTS.md`` if present, else ``REYN.md``
-        (``DEFAULT_PROJECT_CONTEXT_FILES``). First existing file wins.
+        cross-tool standard — ``REYN.md`` if present, else ``AGENTS.md``
+        (``DEFAULT_PROJECT_CONTEXT_FILES``, #5742). First existing file wins.
       - explicit non-empty path: pin exactly that file.
       - explicit ``""``: disabled.
 
     Returns the chosen file's content stripped, or "" when disabled, none of
-    the candidates exist, or the chosen file is unreadable. Empty /
-    whitespace-only content also yields "" so callers can short-circuit the
-    system-prompt section. The first EXISTING candidate is authoritative even
-    if empty (AGENTS.md present-but-empty does not fall through to REYN.md).
-    """
-    target = resolve_project_context_path(config, project_root)
-    if target is None:
-        return ""
-    try:
-        return target.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
+    the candidates exist, or the chosen file is unreadable (the last case is
+    no longer silent — see :func:`resolve_project_context`, #5742, for the
+    WARN + audit-event this now delegates to). Empty / whitespace-only
+    content also yields "" so callers can short-circuit the system-prompt
+    section. The first EXISTING candidate is authoritative even if empty
+    (REYN.md present-but-empty does not fall through to AGENTS.md)."""
+    text, _path, _outcome = resolve_project_context(config, project_root)
+    return text
 
 
 def build_policy_tier_config(cwd: Path | None = None) -> dict:

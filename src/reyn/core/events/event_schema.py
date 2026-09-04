@@ -559,6 +559,16 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "presented",
     "process_marker_reaped",
     "project_context_changed",
+    # #5742 (architect ruling): an operator EXPLICITLY specified a
+    # project-context or agent-context file (project_context_path /
+    # profile.yaml's context_path) and reyn could not read it -- a typo'd
+    # path, a permission change, or a deletion in the narrow resolve-then-
+    # read race. Never fired for "nothing configured" (silent/normal) --
+    # only for "you asked for something and it broke" (owner: "捏造しない
+    # こと" applied to runtime, not only reyn doctor). The session/agent
+    # still starts (degrades to empty text, same as before) -- this is a
+    # WARN-class diagnostic, not a startup failure.
+    "project_context_unreadable",
     # #5732 (architect ruling): the textual chat pump's own bounded
     # diagnostic for a swallowed per-frame exception (/copy sentinel,
     # /rewind sentinel, __open_artifact__ sentinel, _ingest_frame) --

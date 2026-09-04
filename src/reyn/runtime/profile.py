@@ -122,6 +122,26 @@ class AgentProfile:
     # the string. None = no override (falls through to the project-wide
     # file, same convention as `base_dir`'s own None).
     project_context_path: "str | None" = None
+    # #5742 (owner ruling, chat 2026-09-04): REPLACES project_context_path
+    # above as the agent frame's own instructed spelling. Deliberately a
+    # DIFFERENT shape, not a rename: this is a bare filename resolved
+    # against THIS agent's own workspace_dir (default `.reyn/agents/
+    # <name>/`, `resolve_context_candidate`/`DEFAULT_PROJECT_CONTEXT_
+    # FILES`, config/loader.py) — REYN.md else AGENTS.md, first EXISTING
+    # wins — never an arbitrary absolute/`${REYN_PROJECT_DIR}`-relative
+    # path anywhere in the workspace the way project_context_path's own
+    # value could be (that shape has no room for a default-name-order
+    # search, architect's own #5742 reasoning). None = auto-resolve
+    # (same convention as base_dir's own None). Read FRESH every turn
+    # (router_host_adapter.py's own _resolve_agent_context) — unlike
+    # project_context_path (CONSTRUCTION_ONCE, owner ruling B/#3787),
+    # this is the agent-layer field, so it follows #3787's OTHER half of
+    # that same ruling: "hot reload — する（agent 側のみ）". PR1
+    # (#5742): project_context_path stays accepted (deprecated, not yet
+    # retired — hard-erroring it is PR2, after existing profiles migrate
+    # to this field; retiring it first would make an existing agent's
+    # profile unloadable).
+    context_path: "str | None" = None
     # #5352: this agent's OWN declared sandbox-policy narrowing — the
     # config-facing vocabulary dict (``network`` / ``subprocess`` /
     # ``allow_write_paths`` / ``deny_write_paths`` / ``deny_read_paths`` /
@@ -211,6 +231,8 @@ class AgentProfile:
         project_context_path = (
             str(raw_project_context_path) if raw_project_context_path else None
         )
+        raw_context_path = data.get("context_path")
+        context_path = str(raw_context_path) if raw_context_path else None
         # #5352: `sandbox:` — a dict (the config-facing sandbox-policy
         # vocabulary) or absent/None. Not routed through any further
         # validation here (same "no hard-fail, warn elsewhere" posture
@@ -228,6 +250,7 @@ class AgentProfile:
             bounding=bounding,
             base_dir=base_dir,
             project_context_path=project_context_path,
+            context_path=context_path,
             sandbox=sandbox,
         )
 
@@ -252,6 +275,8 @@ class AgentProfile:
             payload["base_dir"] = self.base_dir
         if self.project_context_path is not None:
             payload["project_context_path"] = self.project_context_path
+        if self.context_path is not None:
+            payload["context_path"] = self.context_path
         if self.sandbox is not None:
             payload["sandbox"] = dict(self.sandbox)
         path.write_text(

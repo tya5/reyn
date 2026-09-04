@@ -1573,29 +1573,43 @@ class Session:
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
-        # #3787: project-context (AGENTS.md/REYN.md) read-only edit-detection watcher.
+        # #3787: project-context (REYN.md/AGENTS.md) read-only edit-detection watcher.
         # Deliberately NOT the HotReloader above — see ProjectContextWatcher's module
         # docstring for why this file cannot go through the LLM-writable IN-set.
         from reyn.runtime.project_context_watch import ProjectContextWatcher
         self._project_context_watcher = ProjectContextWatcher(
-            path=project_context_path, events=self._audit_events,
+            path=project_context_path, events=self._audit_events, scope="project",
         )
         # #3787 (owner ruling B): a SECOND watcher, same class, for this
-        # agent's own ``.reyn/agents/<agent_name>/AGENTS.md``. Unlike the
-        # project-side instance above, the reload for THIS file doesn't
-        # depend on this watcher at all — RouterHostAdapter.get_project_context
-        # reads it fresh on every call (see that method's own docstring). This
-        # watcher's only job here is the audit-event signal ("an edit was
-        # observed") on the SAME project_context_changed kind, told apart from
-        # the project-wide one via the emitted `path` (this one is always
-        # `.reyn/agents/<agent_name>/AGENTS.md`, the other is
-        # `project_context_path`'s resolved file). No LIVE subscriber reads
-        # this today — same as every other `*_changed` kind (band:
-        # observability, see events.md's own row for this kind), it exists
-        # for the audit trail, not a reactive path. No new machinery: the
-        # existing mtime-compare class, constructed a second time.
+        # agent's own context file. Unlike the project-side instance above,
+        # the reload for THIS file doesn't depend on this watcher at all —
+        # RouterHostAdapter.get_project_context reads it fresh on every call
+        # (see that method's own docstring). This watcher's only job here is
+        # the audit-event signal ("an edit was observed") — #5742: told apart
+        # from the project-wide one via the `scope` field now, not by
+        # sniffing `path`'s shape. No LIVE subscriber reads this today — same
+        # as every other `*_changed` kind (band: observability, see events.md's
+        # own row for this kind), it exists for the audit trail, not a
+        # reactive path. No new machinery: the existing mtime-compare class,
+        # constructed a second time.
+        #
+        # #5742: the watched path is now the SAME resolution
+        # RouterHostAdapter's own agent-frame resolver uses (profile.yaml's
+        # `context_path`, REYN.md else AGENTS.md default order within this
+        # agent's own workspace_dir) — no longer hardcoded to AGENTS.md. A
+        # malformed profile.yaml degrades to the SAME default-order search
+        # with no override, matching _read_agent_instructions's own fail-open
+        # posture for this exact failure mode.
+        from reyn.config.loader import resolve_context_candidate
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            _agent_context_path = AgentProfile.load(self.workspace_dir).context_path
+        except Exception:
+            _agent_context_path = None
         self._agent_context_watcher = ProjectContextWatcher(
-            path=self.workspace_dir / "AGENTS.md", events=self._audit_events,
+            path=resolve_context_candidate(_agent_context_path, self.workspace_dir),
+            events=self._audit_events, scope="agent",
         )
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log

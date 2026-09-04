@@ -129,7 +129,8 @@ AGENT_PROFILE_RELOAD_CLASSES: "dict[str, str]" = {
     "role": CONSTRUCTION_ONCE,  # agent.py: Agent is frozen, built once at construction
     "allowed_mcp": EXPLICIT_TRIGGER,  # session.py:_reapply_per_agent_capability, the per_agent_capability seam
     "base_dir": LIVE,  # session.py:_workspace_base_dir, "a live re-read on every access"
-    "project_context_path": CONSTRUCTION_ONCE,  # registry_bootstrap.py:resolve_agent_project_context, owner ruling B/#3787
+    "project_context_path": CONSTRUCTION_ONCE,  # registry_bootstrap.py:resolve_agent_project_context, owner ruling B/#3787 -- #5742 PR1: deprecated, still accepted; hard-error retirement is PR2
+    "context_path": LIVE,  # router_host_adapter.py:_read_agent_instructions, owner ruling #5742 ("agent 側は hot")
     "sandbox": LIVE,  # session.py:_agent_profile_sandbox, "a live re-read ... same shape _workspace_base_dir already uses" (#5352)
     # `preferences.*` — every PREFERENCE_KEYS entry, all resolved through
     # the SAME `_resolve_session_preference`/`warn_ratio_overrides` live

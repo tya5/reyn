@@ -130,7 +130,7 @@ aren't.
 | `external_transports` | map | project | restart | `reyn.yaml` | Inbound transport → MCP tool routing, wired only via the web/AGUI server runner — inert under plain `reyn chat` (Slack / LINE / Discord etc.). See below. |
 | `multimodal` | map | project | restart | `reyn.yaml` | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
 | `permissions` | map | project · agent · session² | restart⁷ | `reyn.yaml` | Default permission policy. See below. |
-| `project_context_path` | string | project · agent³ | restart⁶ | `reyn.yaml` | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key. See note below. |
+| `project_context_path` | string | project | restart | `reyn.yaml` / `reyn.local.yaml` only | Markdown file injected into every phase system prompt (the **project frame**, #5742 owner ruling — "config だから起動時"). Unset (default): auto-resolves `REYN.md` if present, else `AGENTS.md` (#5742: flipped from the pre-#5742 order — REYN.md now wins when both exist). Set an explicit path to pin one file; set `""` to disable. **#5742 (PR1): the agent-layer `project_context_path` override this row's own footnote used to describe is DEPRECATED** — see `.reyn/agents/<name>/profile.yaml`'s own `context_path` field below, the **agent frame** (owner ruling, live/hot, resolved WITHIN that agent's own workspace directory — not this project-wide `reyn.yaml` key's own scope at all). `project_context_path` in `profile.yaml` is still accepted for now (PR1 does not hard-error it) but no longer documented as the agent's own instructed spelling; PR2 retires it. |
 | `llm` | map | project | restart | `reyn.yaml` | LLM-layer config: model selection (`llm.model` default class, `llm.models` class → LiteLLM string map, `llm.model_class_by_purpose` per-purpose override, `llm.api_base` proxy URL, `llm.prompt_cache_enabled`), plus routing (#1829) and retry (#1835). See below. |
 | `delegation` | map | project | restart | `reyn.yaml` | Cross-agent delegation policy (#2081). |
 | `cost_warn` | map | project | restart | `reyn.yaml` | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
@@ -163,10 +163,17 @@ reflected into this column now that it exists on its own. `hooks`'s own
 `<session-state-dir>/hooks.yaml` — a 3rd/4th file this column does not
 enumerate, per the "project-layer write-gate boundary only" rule above).
 
-³ #5086. No session-layer override exists for this key (unlike ¹'s
-`PREFERENCE_KEYS` set) — an agent's own `profile.yaml` REPLACES the
-project-wide file for that one agent; there is nothing for a session
-layer to further compose with.
+³ #5086/#5742. This footnote's own marker no longer appears on the row
+above — #5742 (PR1) retired the "an agent's own `profile.yaml` REPLACES
+the project-wide file" mechanism this footnote used to describe (the
+agent-layer `project_context_path` override, `registry_bootstrap.
+resolve_agent_project_context`). It is DEPRECATED, not yet hard-errored
+(PR2); `project_context_path` in `reyn.yaml` itself is now project-scope
+only, config-layer, restart-reload — no agent-layer override exists for
+it at all. See `.reyn/agents/<name>/profile.yaml`'s own `context_path`
+field (the agent frame's OWN, unrelated instructed spelling, live/hot,
+resolved within that agent's own workspace directory) for the ruling's
+actual replacement.
 
 ⁴ **Unconfirmed during this pass** — the pre-split text asserted a
 `.reyn/config/`-side write surface for `composers` ("both (but not
@@ -191,19 +198,13 @@ re-read, not a file re-read). This footnote points at the SAME
 rows carries this footnote's claim along with it, rather than the two
 drifting independently.
 
-⁶ **`Reload` is also not a bare `restart` at the agent layer** — a
-DIFFERENT mechanism from both ¹ (a live property-access re-read on every
-call) and `_HOT_RELOAD_FILES` (a file re-read on every turn boundary):
-`project_context_path`'s agent-layer override is resolved ONCE PER AGENT,
-at session construction (`registry_bootstrap.resolve_agent_project_
-context`, called from `chat.py`'s own `_session_factory` closure via
-`AgentRegistry`). A NEW
-session picks up whatever `profile.yaml` currently says with no
-project-layer restart needed; an ALREADY-RUNNING session does not notice
-a `profile.yaml` edit until its own next construction (the next
-`--connect`/re-attach), which is neither "restart" (project-layer,
-process-wide) nor "hot" (file-based, mid-session) in this column's other
-two senses.
+⁶ **This footnote's own marker no longer appears on any row** — #5742
+(PR1) retired the agent-layer `project_context_path` override this
+footnote used to qualify (see ³ above for the full account). With that
+mechanism deprecated, `project_context_path` in `reyn.yaml` is a plain
+`restart` key like any other project-level config: no special per-agent
+reload caveat applies. Kept as a historical pointer rather than
+renumbering every later footnote.
 
 ⁷ **`Reload` is also not a bare `restart` at the agent/session layer** —
 `permissions`'s agent/session-layer narrowing (`tool_allow`/`tool_deny`/
@@ -215,16 +216,30 @@ practical effect, though via a distinct capability-composition mechanism,
 not `PREFERENCE_KEYS`.
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
-> `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and
-> others also read — so a project shared with those tools works as-is, with no
-> Reyn-specific file. If `AGENTS.md` is absent, Reyn falls back to `REYN.md`
-> (legacy). The first existing file wins, and a present-but-empty `AGENTS.md` is
-> authoritative (it does not fall through to `REYN.md`).
+> `REYN.md` — #5742 (owner ruling, chat 2026-09-04): flipped from the
+> pre-#5742 order, which preferred `AGENTS.md` (the cross-tool convention
+> Claude Code, Codex, opencode and others also read). If `REYN.md` is
+> absent, Reyn falls back to `AGENTS.md`. The first existing file wins,
+> and a present-but-empty `REYN.md` is authoritative (it does not fall
+> through to `AGENTS.md`). A workspace carrying BOTH files sees its
+> resolved candidate change under this flip — `reyn doctor` reports the
+> ACTUAL resolved path (not just the config value) so this is never a
+> guess.
 >
-> **Migration.** Existing `REYN.md` projects keep working unchanged; new projects
-> should prefer `AGENTS.md`. To pin a specific file regardless of the standard,
-> set `project_context_path` to that path; set it to `""` to inject no project
-> context at all.
+> **Migration.** Existing `AGENTS.md`-preferring workflows keep working
+> as long as no `REYN.md` also exists; a project with both now resolves
+> to `REYN.md`. To pin a specific file regardless of the default order,
+> set `project_context_path` to that path; set it to `""` to inject no
+> project context at all.
+>
+> **This key is project-scope only** (#5742, PR1) — `reyn.yaml` /
+> `reyn.local.yaml`, never `profile.yaml`. An agent's own INSTRUCTED
+> context file is a separate, unrelated setting — `.reyn/agents/<name>/
+> profile.yaml`'s own `context_path` field (the **agent frame**: live/
+> hot, same REYN.md-then-AGENTS.md default order, resolved WITHIN that
+> agent's own workspace directory, never merged with or replacing this
+> project-wide value — the two compose additively, see `RouterHostAdapter.
+> get_project_context`'s own docstring).
 
 ## Per-agent profile key reload classes (#4206 slice 1)
 
@@ -269,6 +284,7 @@ not attempt project-layer or session-layer reload classes.
 | `allowed_mcp` | `explicit-trigger` |
 | `base_dir` | `live` |
 | `project_context_path` | `construction-once` |
+| `context_path` | `live` |
 | `sandbox` | `live` |
 | `preferences.output_language` | `live` |
 | `preferences.chat.reasoning.display` | `live` |
