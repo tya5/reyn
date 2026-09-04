@@ -507,7 +507,9 @@ def wire_role(role: str) -> str:
     return role
 
 
-def wrap_summary_as_message(summary: dict) -> dict:
+def wrap_summary_as_message(
+    summary: dict, *, spill_reachability: "tuple[int, str] | None" = None,
+) -> dict:
     """#5531 condition④ — a previously-compacted summary is JUST a message
     in :attr:`HistoryChunkToCompact.messages`, distinguished only by
     :data:`SUMMARY_MESSAGE_ROLE`. This is the ONE place that wrapping
@@ -529,8 +531,20 @@ def wrap_summary_as_message(summary: dict) -> dict:
     from the wire; (2) it lets every site that places a summary directly
     into a message list (this function's own callers) skip carrying a
     SEPARATE decoration step — the content IS the decoration, so there is
-    no second place a caller could decide whether/how to splice it in."""
-    rendered = render_summary_for_storage(summary)
+    no second place a caller could decide whether/how to splice it in.
+
+    ``spill_reachability`` (#5720): passed straight through to
+    :func:`~reyn.runtime.session_pure.render_summary_for_storage` — see
+    that function's own docstring. Only the 2 callers whose ``content``
+    genuinely reaches the MAIN LLM's wire (``RouterHistoryBuffer.
+    _serialise_turn``, ``RecoveryLadder._advance_state_after_fold``)
+    pass a real value; ``CompactionController``'s own re-wrap of a PRIOR
+    summary as ``compact()``'s own INPUT (never main_call's wire) is
+    unaffected by this parameter's default and does not need one — that
+    call's own summary gets its section applied fresh the NEXT time
+    ``_serialise_turn`` renders it for an actual wire send, same as any
+    other fold."""
+    rendered = render_summary_for_storage(summary, spill_reachability=spill_reachability)
     return {
         "role": SUMMARY_MESSAGE_ROLE,
         **summary,
@@ -2872,6 +2886,7 @@ async def retry_loop(
     main_call: Callable[..., Awaitable[Any]],
     spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
     on_summary_used: "Callable[[ChatSummary, list[dict]], Awaitable[None]] | None" = None,
+    spill_reachability_fn: "Callable[[], tuple[int, str] | None] | None" = None,
 ) -> Any:
     """Bounded shrink loop for context overflow recovery (PR-N6).
 
@@ -2906,6 +2921,7 @@ async def retry_loop(
         SP=SP, payload=payload, cfg=cfg, model=model, engine=engine,
         learner=learner, main_call=main_call, spill_fn=spill_fn,
         on_summary_used=on_summary_used,
+        spill_reachability_fn=spill_reachability_fn,
     )
     return await ladder.run()
 
@@ -3118,6 +3134,21 @@ class RecoveryLadder:
         anything — trusting ``ChatSummary.covers_through_seq`` off this
         path would silently persist 0 (#5498's own load-bearing warning,
         re-confirmed by this change).
+    spill_reachability_fn:
+        #5720 — optional zero-arg callable returning a FRESH ``(count,
+        directory)`` snapshot of what is currently recoverable from
+        this session's own spill store, or ``None`` when there is
+        nothing to report. Called EVERY time :meth:`_advance_state_
+        after_fold` wraps a fresh summary — never cached across calls,
+        never read back from anything a prior fold wrote (a persisted
+        value would ride through the summarizing LLM on the NEXT fold
+        and become its own judgment call, the exact failure
+        ``artifacts_referenced`` already has). ``None`` (the default)
+        preserves this class's pre-#5720 shape byte-for-byte — see
+        :func:`~reyn.runtime.session_pure.render_summary_for_storage`'s
+        own docstring for the full rationale and the OTHER wire-egress
+        point (``RouterHistoryBuffer._serialise_turn``) that shares the
+        SAME snapshot implementation.
     """
 
     def __init__(
@@ -3132,6 +3163,7 @@ class RecoveryLadder:
         main_call: Callable[..., Awaitable[Any]],
         spill_fn: "Callable[[list[dict]], list[tuple[int, dict]]] | None" = None,
         on_summary_used: "Callable[[ChatSummary, list[dict]], Awaitable[None]] | None" = None,
+        spill_reachability_fn: "Callable[[], tuple[int, str] | None] | None" = None,
     ) -> None:
         self._SP = SP
         self.head = payload.head
@@ -3145,6 +3177,12 @@ class RecoveryLadder:
         self._main_call = main_call
         self._spill_fn = spill_fn
         self._on_summary_used = on_summary_used
+        # #5720: zero-arg, called FRESH at every fold this episode makes
+        # (never cached across calls) — the caller's own snapshot of
+        # "how many spilled bodies are reachable right now, and where."
+        # None (the default) preserves this class's pre-#5720 shape byte-
+        # for-byte for any caller that doesn't wire one.
+        self._spill_reachability_fn = spill_reachability_fn
 
         from reyn.llm.llm import note_upstream_recovery_call_attempt
         from reyn.llm.model_budget import get_max_input_tokens
@@ -3787,7 +3825,21 @@ class RecoveryLadder:
         # ``max_iterations`` no longer exists as a backstop.)
         self.head = [
             t for t in self.head if t.get("role") != SUMMARY_MESSAGE_ROLE
-        ] + [wrap_summary_as_message(chat_summary.to_dict())]
+        ] + [
+            wrap_summary_as_message(
+                chat_summary.to_dict(),
+                # #5720: this wrap's own `content` goes straight into
+                # `self.head`, which `main_call` receives DIRECTLY (see
+                # this method's own module-level docstring) — one of the
+                # 2 genuine wire-egress points, so a real snapshot (not
+                # None) is passed whenever the caller wired one.
+                spill_reachability=(
+                    self._spill_reachability_fn()
+                    if self._spill_reachability_fn is not None
+                    else None
+                ),
+            )
+        ]
         # Only the ATTEMPTED slice is compacted — a smaller
         # remainder (if any) stays in raw_middle for a later
         # iteration. #5531 §10 (architect/owner correction,

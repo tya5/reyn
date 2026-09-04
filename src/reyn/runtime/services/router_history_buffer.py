@@ -768,7 +768,16 @@ class RouterHistoryBuffer:
         if m.role == "summary":
             from reyn.services.compaction.engine import wrap_summary_as_message
             structured = (m.meta or {}).get("structured")
-            return wrap_summary_as_message(structured if isinstance(structured, dict) else {})
+            # #5720: this IS a genuine wire-egress point (the SAME shape
+            # `wrap_summary_as_message`'s own docstring names) — a real,
+            # FRESHLY-derived snapshot every call, never one persisted
+            # onto `structured` (see that function's own docstring for
+            # why a persisted value would ride through the summarizing
+            # LLM on the next fold and become its own judgment call).
+            return wrap_summary_as_message(
+                structured if isinstance(structured, dict) else {},
+                spill_reachability=self.spill_reachability_snapshot(),
+            )
 
         # Legacy "agent" stragglers (= migrated entries that somehow bypassed
         # _migrate_legacy_chat_message) → normalise on read.
@@ -1236,6 +1245,68 @@ class RouterHistoryBuffer:
         spill axis is compared as "did a candidate get consumed", never
         by re-measuring wire bytes for either."""
         return self._compaction_watermark()
+
+    def spill_reachability_snapshot(self) -> "tuple[int, str] | None":
+        """#5720 (architect ruling): a FRESH ``(count, directory)`` read
+        of this session's own ``.reyn/memory/history-content/<agent>/
+        <session_id>/`` directory — the one :meth:`_serialise_turn`'s
+        summary branch (and, via ``RouterLoopDriver``'s own injection,
+        ``RecoveryLadder._advance_state_after_fold``) passes to
+        :func:`~reyn.services.compaction.engine.wrap_summary_as_message`
+        as its ``spill_reachability`` value, EVERY time either is
+        called — never cached, never derived from anything a prior fold
+        wrote into ``structured`` (see that function's own docstring for
+        why: a persisted value would ride through the summarizing LLM
+        on the next fold and become that LLM's own judgment call, the
+        same failure ``artifacts_referenced`` already has).
+
+        Deliberately a plain directory LISTING, not scoped to any one
+        fold's own covered turns: this session's history-content
+        directory holds every reactive-spill / write-time-cap dump this
+        store has EVER written for THIS session, and nothing removes an
+        entry from it once a turn carrying its reference gets folded
+        away (eviction is a separate, storage-cap-driven policy —
+        :meth:`MediaStore._evict_history_content_over_cap` — not a
+        fold-time GC) — so "everything currently on disk for this
+        session" and "everything reachable behind the current summary"
+        coincide in practice, without needing to parse a filename's own
+        encoded ``seq`` (which, per #5720's own architect correction,
+        means two DIFFERENT things depending on which spill path wrote
+        it — a store-side naming position for the head/tail path, the
+        turn's real seq for the mid path — not a uniform provenance
+        field a listing could filter on).
+
+        Returns ``None`` when there is nothing to report — no
+        ``agent_name`` (a legacy/read-only store construction), no
+        directory yet (nothing spilled this session), or an empty one —
+        so a caller can pass this straight through as
+        ``wrap_summary_as_message``'s own ``spill_reachability`` kwarg
+        without a separate zero-check."""
+        if self._media_store is None:
+            return None
+        try:
+            directory = self._media_store.history_content_dir
+        except ValueError:
+            # #5364: MediaStore.save_tool_result's own directory requires
+            # a real agent_name; a legacy/read-only construction (4 of 5
+            # production MediaStore call sites) has none — nothing this
+            # store could have written under a session directory either.
+            return None
+        if not directory.is_dir():
+            return None
+        count = sum(1 for p in directory.iterdir() if p.is_file())
+        if count == 0:
+            return None
+        # #5720: project-relative, matching the SAME shape every
+        # individual spill's own read_file(path=...) marker already uses
+        # (tool_result_cap.py's `_build_preview`, MediaStore.save_tool_
+        # result's own "Convert absolute path_ref to project-relative
+        # path for the block" comment) — an absolute path here would be
+        # the one inconsistency between this section and the markers it
+        # is meant to explain, and would leak this process's own
+        # filesystem layout onto the wire besides.
+        relative = directory.relative_to(self._media_store.project_root)
+        return count, str(relative)
 
     def is_already_spilled(self, content: str) -> bool:
         """#5364 §1.6: True if ``content`` IS a previously-produced spill

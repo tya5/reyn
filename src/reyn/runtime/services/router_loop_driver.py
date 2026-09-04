@@ -917,6 +917,14 @@ class RouterLoopDriver:
                         on_summary_used=_partial(
                             self._persist_recovery_fold, seq_by_id=payload.seq_by_id,
                         ),
+                        # #5720: the SAME snapshot _serialise_turn's own
+                        # summary branch uses — RouterHistoryBuffer's
+                        # spill_reachability_snapshot is the ONE
+                        # implementation both wire-egress points share
+                        # (never a private copy that could drift).
+                        spill_reachability_fn=(
+                            self._history_buffer.spill_reachability_snapshot
+                        ),
                         # #5531 §10: no `max_iterations=` any more —
                         # retry_loop abolished its iteration-count bound
                         # (see its own "Bounded termination proof"

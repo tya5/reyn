@@ -82,12 +82,44 @@ def merge_memory_indexes(
     return {"status": "ok", "content": "\n\n".join(parts).strip() + "\n"}
 
 
-def render_summary_for_storage(structured: dict) -> str:
+def render_summary_for_storage(
+    structured: dict,
+    *,
+    spill_reachability: "tuple[int, str] | None" = None,
+) -> str:
     """Render a chat_summary structured dict to a quick-display text blob.
 
     Stored in ChatMessage.text so REPL traces and audit dumps don't need
-    to re-render the structured form. The slicer prefers the structured
-    form for LLM consumption — this is for human consumption only.
+    to re-render the structured form.
+
+    #5720 (architect correction, issuecomment-5525827176): the prior
+    docstring here said "the slicer prefers the structured form for LLM
+    consumption — this is for human consumption only," read by two
+    people in the SAME hour as opposite claims about which LLM. Both
+    readings were partly right: for the COMPACTION LLM (``compact()``'s
+    own call, which JSON-dumps the whole message dict as its input),
+    the structured keys genuinely ride along — "for LLM consumption"
+    is true there. For the MAIN LLM (``main_call`` — the one the owner
+    meant by "何を覚えてるか聞いてみた"), this rendered TEXT is the ONE
+    form that reaches the wire at all (``engine.py``'s own
+    ``wrap_summary_as_message``, verbatim: "this rendered form is the
+    ONE the wire actually sends") — never the structured dict, never
+    ``meta``. "For human consumption only" was accurate for that
+    reader, not for this one.
+
+    ``spill_reachability``, when given, is a PRE-COMPUTED ``(count,
+    directory)`` pair — this function stays pure (no store access) and
+    never reads a decision out of *structured* for it: baking a
+    deterministic count into ``structured`` would make it ride through
+    the summarizing LLM on the NEXT fold and become that LLM's own
+    judgment whether to keep it, echo it, or drop it — the exact
+    failure mode ``artifacts_referenced`` (an LLM-output field) already
+    has, measured directly in #5720 (a real fold discarding it). The
+    caller is expected to derive a FRESH value from the store every
+    time this function is called (a summary message is re-rendered on
+    every turn, not once at fold time), never persist it into
+    ``structured``, and pass ``None`` when there is nothing to report
+    (zero spilled bodies is a normal answer, not an omitted section).
     """
     parts: list[str] = []
     # #1092 PR-F2a: a force-close handoff consolidation carries its (free-text)
@@ -106,4 +138,22 @@ def render_summary_for_storage(structured: dict) -> str:
             continue
         parts.append(f"[{key}]")
         parts.extend(f"  - {item}" for item in items)
+    if spill_reachability is not None:
+        # #5720: fixed-length section — 3 lines regardless of how many
+        # bodies were spilled (charter Q1's own bound: wire cost must
+        # not scale with N). Names the COUNT and a LOCATE instruction,
+        # never every path — answers the owner's own two questions
+        # ("is there a spill file at all" / "I didn't know how to get
+        # it") without re-introducing the per-path enumeration this
+        # section deliberately avoids.
+        count, directory = spill_reachability
+        parts.append("[spilled_content]")
+        parts.append(
+            f"  - {count} tool result(s) from this conversation were "
+            f"offloaded to disk and are not shown above"
+        )
+        parts.append(
+            f'  - list them: glob(path="{directory}/*"); '
+            f'then read one: read_file(path="<listed path>")'
+        )
     return "\n".join(parts)
