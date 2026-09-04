@@ -7,9 +7,10 @@ the WRITE side (``AgentRegistry.create``/``create_agent``'s own kwarg,
 live creation seam that kept writing a key ``load()`` now hard-rejects
 would silently make the created agent unstartable.
 
-Replaces (deleted, not patched — the whole feature under test is gone):
-``tests/runtime/test_5084_agent_project_context_override.py``,
-``tests/cli/test_5111_agent_new_project_context_path.py``.
+Replaces the #5084/#5111 read-side and write-side test files this PR
+deleted (not patched — the whole feature under test is gone, so
+patching around a now-false premise would be the wrong move; see the
+test-review six-questions discipline, "should this exist").
 
 Real ``AgentRegistry``/argparse construction throughout — no mocks.
 """
