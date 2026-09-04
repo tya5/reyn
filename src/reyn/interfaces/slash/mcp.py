@@ -1,0 +1,40 @@
+"""``/mcp`` — per-server MCP actions (#4401 ③: retry a failed probe).
+
+The mcp pane's "↻ retry probe" row (chrome.py's ``_mcp_pane_entries``,
+appended only under a ``"failed"`` server row) submits this command; it
+maps 1:1 to ``Session.retry_mcp_probe``. Session-scoped, and this handler
+AWAITS it — deliberately not fire-and-forget (see
+``RouterHostAdapter.retry_mcp_probe``'s own docstring for why a background
+task is out of scope here). The row's own state (``mcp_probe_state``)
+already reads "retrying…" the instant the retry starts (any render that
+happens during this await sees it); this command's own reply just confirms
+the outcome once the probe settles, up to ``per_server_timeout`` later.
+"""
+from __future__ import annotations
+
+from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+
+
+@slash(
+    "mcp",
+    summary="MCP server actions — retry a failed probe",
+    locus="session",
+    usage="/mcp retry <server>",
+)
+async def mcp_cmd(ctx: "SlashContext", args: str) -> None:
+    """``/mcp retry <server>`` — re-probe one mcp server (#4401 ③), waiting
+    for it to settle. Bypasses the server's own #5674 failure cooldown (a
+    manual retry that silently no-ops until 60s have passed would look
+    like nothing happened) — see ``Session.retry_mcp_probe``'s own
+    docstring."""
+    parts = args.split()
+    if len(parts) != 2 or parts[0] != "retry":
+        await reply_error(ctx, "usage: /mcp retry <server>")
+        return
+    server = parts[1]
+    retry = getattr(ctx.session, "retry_mcp_probe", None)
+    if retry is None:
+        await reply_error(ctx, "mcp probe retry is not available in this session")
+        return
+    await retry(server)
+    await reply(ctx, f"mcp probe retry for {server!r} finished — see the mcp pane for the result")

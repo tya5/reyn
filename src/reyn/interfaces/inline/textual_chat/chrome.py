@@ -1016,23 +1016,80 @@ def _mcp_pane_entries(snap: dict) -> "list[tuple[str, str]]":
     require redrawing this grammar, only exercising a branch already here."""
     rows = _visibility_pane_rows(snap, "mcp", "mcp_servers")
     subs_by_server = {s["server"]: s for s in (snap.get("mcp_subscriptions") or [])}
+    # #4401 ②: per-server probe state (answered / failed / not_probed /
+    # retrying) — gated by mcp_probe_states_reported (a remote connection
+    # does not have this on the wire yet, #4401), same pattern
+    # mcp_subscriptions_reported gates the subscription augmentation.
+    # ``None`` (not the empty-dict default) when un-reported, so a
+    # not-reported connection adds NO probe note at all rather than
+    # rendering every server as "not yet probed" — which would be a
+    # FABRICATION indistinguishable from a genuine unprobed state, the
+    # exact conflation #4401 exists to close.
+    probes_by_server = (
+        {p["name"]: p for p in (snap.get("mcp_probe_states") or [])}
+        if snap.get("mcp_probe_states_reported", False) else None
+    )
     out: "list[DrawerRow]" = []
     for row in rows:
+        probe = probes_by_server.get(row.label) if probes_by_server is not None else None
+        if probe is not None:
+            row = _apply_mcp_probe_note(row, probe)
         sub = subs_by_server.get(row.label)
         if sub is None or not sub.get("uris"):
             out.append(row)
-            continue
-        uris = sub["uris"]
-        unhonored = sub.get("unhonored")
-        mark = "unconfirmed" if unhonored is None else "subscribed"
-        out.append(replace(row, note=f"{row.note} · {mark}" if row.note else mark))
-        unhonored_set = set(unhonored) if unhonored is not None else set()
-        for uri in uris:
+        else:
+            uris = sub["uris"]
+            unhonored = sub.get("unhonored")
+            mark = "unconfirmed" if unhonored is None else "subscribed"
+            out.append(replace(row, note=f"{row.note} · {mark}" if row.note else mark))
+            unhonored_set = set(unhonored) if unhonored is not None else set()
+            for uri in uris:
+                out.append(DrawerRow(
+                    label=f"    {uri}",
+                    note="not honored" if uri in unhonored_set else None,
+                ))
+        if probe is not None and probe.get("state") == "failed":
+            # #4401 ③: retry offered ONLY on a row that actually failed a
+            # probe attempt — not "not_probed" (nothing has failed yet; the
+            # lazy, post-startup probe, FP-0037 issue #160, simply hasn't
+            # reached this server yet) and not "retrying" (already in
+            # flight; a second retry would just re-request the same thing).
+            # Independent of whether this server
+            # ALSO has subscription sub-rows above — a probe failure and a
+            # subscription state are two different axes. A separate
+            # indented row (never the server row's own `command` slot —
+            # already the `/visibility` toggle) mirrors the #4686
+            # subscription sub-row convention above.
             out.append(DrawerRow(
-                label=f"    {uri}",
-                note="not honored" if uri in unhonored_set else None,
+                label="    ↻ retry probe", command=f"/mcp retry {row.label}",
             ))
     return [r.as_entry() for r in out]
+
+
+def _apply_mcp_probe_note(row: "DrawerRow", probe: "dict") -> "DrawerRow":
+    """#4401 ②: append the probe-state note to one mcp server row — the 3
+    states #4401 requires, none conflated (plus a transient 4th, ③'s own
+    "retrying"): ``"answered"`` → tool count (0 is a genuine answer, never
+    conflated with "not probed"); ``"failed"`` → the probe reason;
+    ``"not_probed"`` → said plainly, NEVER rendered as "0 tools" (the exact
+    conflation #4401 exists to close — owner: the model can't NAME an
+    unprobed server's tools, that is not the same as the server having
+    none); ``"retrying"`` → a manual retry (#4401 ③) is in flight.
+    An unrecognised state string is a forward-compat no-op (row unchanged)
+    rather than a crash."""
+    state = probe.get("state")
+    if state == "answered":
+        n = probe.get("tool_count", 0)
+        note = f"{n} tool{'s' if n != 1 else ''}"
+    elif state == "failed":
+        note = f"probe failed: {probe.get('reason') or 'unknown'}"
+    elif state == "retrying":
+        note = "retrying…"
+    elif state == "not_probed":
+        note = "not yet probed"
+    else:
+        return row
+    return replace(row, note=f"{row.note} · {note}" if row.note else note)
 
 
 def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":

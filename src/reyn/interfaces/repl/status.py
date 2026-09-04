@@ -452,6 +452,24 @@ def _session_mcp_subscriptions(session) -> list[dict]:
         return []
 
 
+def _session_mcp_probe_states(session) -> list[dict]:
+    """Read the per-server MCP probe-state read model from the session
+    (#4401 ② backend seam). Shape: ``[{"name", "state", ...}, ...]`` — see
+    ``Session.mcp_probe_state``'s own docstring for the field semantics.
+    Mirrors ``_session_mcp_subscriptions``'s defensiveness (a getattr +
+    try/except around an accessor that's always constructed, not a
+    "not wired yet" seam) — [] on any missing accessor or unexpected raise,
+    never a crash of the whole status readout."""
+    getter = getattr(session, "mcp_probe_state", None)
+    if getter is None:
+        return []
+    try:
+        return list(getter() or [])
+    except Exception:  # noqa: BLE001
+        logger.warning("mcp_probe_state() raised; mcp pane probe-state rows degraded to []", exc_info=True)
+        return []
+
+
 def _session_pipelines(session) -> list[dict]:
     """Read registered pipeline names + descriptions from the session's
     PipelineRegistry — always constructed at Session.__init__ (never a "not
@@ -747,6 +765,9 @@ def _snapshot_for_session(registry, s, config=None):
         # than a not-wired seam — Session always owns an MCPConnectionService
         # (see Session.mcp_subscription_state's own docstring).
         "mcp_subscriptions": _session_mcp_subscriptions(s),
+        # #4401 ②: per-server probe state (answered / failed / not_probed)
+        # for the mcp pane — see _session_mcp_probe_states's own docstring.
+        "mcp_probe_states": _session_mcp_probe_states(s),
         # Always available (Session owns a PipelineRegistry from __init__) —
         # not a "not wired yet" seam like the two lines above.
         "pipelines": _session_pipelines(s),

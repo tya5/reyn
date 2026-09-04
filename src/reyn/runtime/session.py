@@ -10576,6 +10576,35 @@ class Session:
             self._cached_mcp_subscriptions = (gen, self._mcp_connection_service.subscription_summary())
         return self._cached_mcp_subscriptions[1]
 
+    def mcp_probe_state(self) -> "list[dict]":
+        """#4401 ②: the status-bar/mcp-pane's per-server PROBE-state read
+        model — the session-level seam ``_session_mcp_probe_states``
+        (status.py) reads, mirroring ``mcp_subscription_state``'s own
+        forwarder shape just above.
+
+        Thin forwarder to ``RouterHostAdapter.mcp_probe_snapshot`` (see its
+        own docstring for the 3-state shape: ``"answered"`` /
+        ``"failed"`` / ``"not_probed"``) — no caching needed, unlike
+        subscriptions: reads 2 small in-memory dicts directly, no
+        recomputation cost to amortize."""
+        return self._router_host.mcp_probe_snapshot()
+
+    async def retry_mcp_probe(self, server: str) -> None:
+        """#4401 ③: the ``/mcp retry`` slash command's own target — awaits
+        the retry to completion (deliberately NOT backgrounded; see
+        ``RouterHostAdapter.retry_mcp_probe``'s own docstring for why: the
+        #4401 A-4 co-vet found real concurrent-cache-mutation hazards a
+        BACKGROUND probe introduces, and ③ stays inside the existing
+        turn-serialized safety margin rather than take on that redesign).
+        The slash command handler itself stays ``async`` and awaits this —
+        the row shows "retrying…" (`mcp_probe_state`) the instant the
+        in-flight flag is set, on whatever render happens to run during
+        this await (the TUI keeps rendering; only the slash command's own
+        reply is delayed up to ``per_server_timeout``)."""
+        await self._router_host.retry_mcp_probe(
+            server, per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+        )
+
     async def aclose_background_tasks(self) -> None:
         """#4759 teardown: drain every background task this session (or a
         sub-component it owns — SpawnTracker's ephemeral-vanish task,
