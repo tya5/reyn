@@ -1,8 +1,13 @@
 # CLAUDE.md loads into every session, so its word count is the cost of every
 # rule in it — which is why the file itself asks for `wc -w` in any PR that
-# touches it. Three PRs in a row reported that number wrong (a value read at
-# some intermediate head, not the one being merged), so the number is printed
-# here instead of transcribed by hand. Report-only: it never fails.
+# touches it. #4872: this used to be report-only ("it never fails") — under
+# that posture, root CLAUDE.md grew 2,240 -> 2,588 words in 3 weeks with no
+# gate stopping it. Now a ratchet (scripts/claude_md_word_count_ratchet.py,
+# same skeleton as mypy_ratchet.py / flat_tests_ratchet.py): crossing the
+# committed baseline (scripts/claude_md_word_count_baseline.json) fails CI.
+# Raising the baseline is not forbidden — see that script's own module
+# docstring — but it must be a real PR action (--write-baseline, committed),
+# never silent.
 name: CLAUDE.md word count
 on:
   pull_request:
@@ -15,7 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: {fetch-depth: 0}
-      - name: word count, this head vs the base
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: word count, this head vs the base (report only, for context)
         run: |
           set -euo pipefail
           base="origin/${{ github.base_ref }}"
@@ -26,3 +37,9 @@ jobs:
             printf '%s: %s -> %s (%+d words)\n' "${f}" "${was}" "${now}" "$((now - was))" \
               | tee -a "${GITHUB_STEP_SUMMARY}"
           done
+
+      # scripts/claude_md_word_count_ratchet.py is stdlib-only (argparse /
+      # json / pathlib). No pip install needed. This is the BLOCKING step —
+      # the diff report above is context, this is the gate.
+      - name: Check the CLAUDE.md word-count ratchet (no file over its baseline)
+        run: python scripts/claude_md_word_count_ratchet.py
