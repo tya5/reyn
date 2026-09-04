@@ -76,21 +76,30 @@ name: main invariant sweep
 #
 # #5480 was ALSO going to fold in `branch-protection-strict-stays-off`
 # as a step here — NOT done (architect BLOCKING, live-verified): that
-# standalone workflow has run exactly once since its own same-day
-# addition (#5435) and FAILED — `gh: Resource not accessible by
+# standalone workflow ran 35/35 times since its own same-day addition
+# (#5435) and FAILED every time — `gh: Resource not accessible by
 # integration (HTTP 403)`. The default `GITHUB_TOKEN` cannot read
-# branch protection at all (`administration` is not grantable via this
+# branch protection at all (`administration` is not grantable via any
 # workflow's own `permissions:` block the way `contents: read` is), so
-# this check has NEVER actually observed its own subject — its own
-# former "has no false positives" claim was already false the one time
-# it ran. Folding it in AS-IS would make every run of THIS sweep red
-# from the moment this PR merges, and that red would say nothing about
-# the other whole-tree gates this sweep exists to witness — destroying
-# the thing #5479 just fixed. See #5488 for the real fix (a token
-# scoped with `administration: read`, an owner-level decision this PR
-# does not make). `branch-protection-strict-stays-off.yml` stays
-# exactly as it was, still broken, filed separately — not silently
-# dropped by this PR.
+# that check never once observed its own subject — its own former
+# "has no false positives" claim was false from the moment it was
+# written. Folding it in AS-IS would have made every run of THIS
+# sweep red from the moment this PR merged, and that red would have
+# said nothing about the other whole-tree gates this sweep exists to
+# witness — destroying the thing #5479 just fixed.
+#
+# #5487/#5488 (owner + lead-coder, 2026-09-04): resolved as "abandon,
+# don't route around" — `administration: read` needs a PAT/GitHub App
+# only the owner can issue (not a `permissions:` block), the value
+# being watched (`required_status_checks.strict`) cannot change on its
+# own (a branch-protection setting only an admin — here, the owner —
+# can flip), and a week with the gate silently broken carried no
+# symptom. `branch-protection-strict-stays-off.yml` was DELETED, not
+# left broken-and-filed-separately: this repo currently has NO
+# machine watching `strict`. The owner's own `strict=false` policy
+# (#4239) is unchanged and still in force — what changed is only that
+# nothing mechanical asserts it anymore. re-open trigger: a token with
+# `administration: read` becomes available.
 on:
   schedule:
     # GitHub's own scheduler is best-effort under load — "roughly hourly",
