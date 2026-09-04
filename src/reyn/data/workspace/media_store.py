@@ -1820,6 +1820,17 @@ class MediaStore:
     # ── Introspection ─────────────────────────────────────────────────
 
     @property
+    def project_root(self) -> Path:
+        """Resolved absolute path of this store's own project root — the
+        SAME boundary every path-ref block this store returns is already
+        rendered relative to (e.g. :meth:`save_tool_result`'s own
+        ``"path"``). #5720: exposed so a caller deriving a directory-level
+        listing instruction (rather than a single path-ref block) can
+        render it in the SAME project-relative shape, instead of leaking
+        this process's own absolute filesystem layout onto the wire."""
+        return self._project_root
+
+    @property
     def media_dir(self) -> Path:
         """Absolute path of the image storage directory."""
         return self._media_dir
