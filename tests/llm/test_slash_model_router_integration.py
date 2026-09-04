@@ -20,6 +20,7 @@ import pytest
 from reyn.config.chat import SafetyConfig
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 
 # ---------------------------------------------------------------------------
@@ -40,11 +41,23 @@ class _FakeRouterHost:
         pass
 
 
-class _FakeBudget:
-    def check_and_increment_router_cap(self, text):
+class _FakeBudget(BudgetGateway):
+    """#5748 (lead-coder finding — same shape as #5734's
+    ``_PickerReadModel``/``_TaskSnapshotReadModel``): a hand-written
+    double that only reimplements the methods THIS test drives goes
+    stale the moment the real class gains a new one — ``RouterLoop``
+    construction now unconditionally reads ``self._budget.
+    update_last_call_usage`` (#5745), which a bare ``_FakeBudget``
+    never had. Inherits the real ``BudgetGateway`` (cheap — no I/O in
+    ``__init__``) instead."""
+
+    def __init__(self) -> None:
+        super().__init__(budget_tracker=None, events=EventLog(), agent_name="t-agent")
+
+    def check_and_increment_router_cap(self, user_text):
         pass
 
-    def extend_router_cap(self, n):
+    def extend_router_cap(self, additional):
         pass
 
     def add_router_usage(self, **kwargs):
