@@ -245,6 +245,44 @@ _MEASURABILITY_CRITERION: Final[str] = (
 )
 
 
+def _dir_size_bytes(root: Path) -> "tuple[int, int]":
+    """(file_count, total_bytes) for every FILE under *root*, recursively
+    — #5759 stage 1: a generic bucket-size walk, reused as-is for every
+    bucket that has no OWN pre-existing size-computation function (see
+    ``run()``'s own "Disk usage by bucket" section for which buckets use
+    this vs. one of those). Same shape as ``MediaStore``'s own private
+    ``_dir_stats_recursive`` (``data/workspace/media_store.py``) and this
+    module's own ``_events_dir_stats`` above — a THIRD independent copy
+    of the identical rglob-and-stat walk would be exactly the "same
+    guard, second copy" shape this codebase's own ``unknown_profile_
+    keys`` docstring already names and rejects elsewhere; not imported
+    directly only because both existing copies are module-private to
+    files this module has no other reason to import from, and the walk
+    itself is a few lines — copying THREE LINES of ``Path.rglob`` is not
+    the same class of duplication risk as re-deriving classification
+    rules or default-order logic would be (#5742's own doctor-derivation
+    discipline is about NOT hand-typing a KNOWN VOCABULARY, e.g. field
+    names or default resolution order — a directory-size walk has no
+    vocabulary to drift).
+
+    ``FileNotFoundError`` mid-scan (a concurrent write/rotation) is
+    swallowed — best-effort, matching ``_events_dir_stats``'s own
+    identical policy; any OTHER ``OSError`` is not."""
+    if not root.is_dir():
+        return 0, 0
+    count = 0
+    total_bytes = 0
+    for entry in root.rglob("*"):
+        try:
+            if not entry.is_file():
+                continue
+            total_bytes += entry.stat().st_size
+        except FileNotFoundError:
+            continue
+        count += 1
+    return count, total_bytes
+
+
 def _events_dir_stats(root: Path) -> "tuple[int, int, date | None]":
     """(file_count, total_bytes, oldest_start_date) for every dated
     ``.jsonl`` under ``root`` — read-only, mirrors
@@ -442,6 +480,34 @@ def run(args: argparse.Namespace) -> None:
     print("Project-wide storage cap (storage.max_bytes/pin, #5366/#4478 —")
     print("bounds media/ + tool-results/ TOGETHER, one operator number):")
     _print_storage_cap_status(config, media_stats)
+
+    # ── #5759 stage 1 (architect + lead-coder ruling, issue #5759): the
+    # 2 remaining buckets with NO gate of any kind at all -- unlike
+    # media/tool-results (storage.max_bytes/pin above) and events/ (a
+    # declared, if unenforced, retention policy above), state/ and
+    # cache/ have neither a cap nor a policy to even be out of step
+    # with. Stage 1 is visibility ONLY -- no retention decision, no
+    # deletion mechanism (naive history.jsonl truncation would break
+    # correctness: dropping a wal_seq anchor below the floor resurfaces
+    # a discarded branch's turns into the LLM's context, retention.py's
+    # own verbatim warning). This is the "第三の項" candidate for #4401's
+    # own startup-time investigation (owner's real environment measured
+    # a 500MB history.jsonl) -- the driving reason for measuring at all.
+    print()
+    print("Disk usage by bucket (#5759 stage 1 — visibility only, no")
+    print("retention policy exists for state/ or cache/; agents/*/")
+    print("history.jsonl and events/ are the SAME numbers already")
+    print("reported above, not repeated here):")
+    state_count, state_bytes = _dir_size_bytes(resolved_root / ".reyn" / "state")
+    memory_count, memory_bytes = _dir_size_bytes(resolved_root / ".reyn" / "memory")
+    cache_count, cache_bytes = _dir_size_bytes(resolved_root / ".reyn" / "cache")
+    print(f"  state/:   {state_count} file(s), {state_bytes:,} bytes")
+    print(
+        f"  memory/:  {memory_count} file(s), {memory_bytes:,} bytes "
+        f"(includes history-content/ + tool_result_spills.jsonl already "
+        f"counted as 'tool-results/' above -- NOT additional to it)",
+    )
+    print(f"  cache/:   {cache_count} file(s), {cache_bytes:,} bytes")
 
     # ── C-1: hook argv[0] launch probe (#4364 PR-2, architect ruling) ──────
     print()
