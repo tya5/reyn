@@ -306,6 +306,12 @@ class ChatReadModelCapabilities:
     # #5034's clearance and why they stay 2 fields despite landing together.
     visibility_items_reported: bool  # covers `visibility_items` (tool/mcp/skill panes)
     mcp_subscriptions_reported: bool  # covers `mcp_subscriptions` (mcp pane only)
+    # #4401 ②: covers `mcp_probe_states` (mcp pane's 3-state probe display).
+    # Not yet on the AG-UI wire (no producer projects a remote session's
+    # RouterHostAdapter.mcp_probe_snapshot() for a remote client to read) —
+    # a disclosed gap declared from day one, same shape hooks_reported/
+    # pipelines_reported closed, not a #5034-style undeclared fabrication.
+    mcp_probe_states_reported: bool
     # #5100/#5272 (lead-coder correction, issuecomment on #5272): unlike
     # `unknown_config_key_count`/`unknown_config_keys` (genuinely client-
     # local — a remote's OWN reyn.yaml, structurally absent on that
@@ -378,6 +384,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     attached_name_reported=True,
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
+    mcp_probe_states_reported=True,
     hooks_config_warnings_reported=True,
     compaction_progress_reported=True,
     tasks_reported=True,
@@ -416,6 +423,9 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     attached_name_reported=True,
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
+    # #4401 ②: not yet wired onto the AG-UI wire (see the field's own
+    # docstring) — False, not True.
+    mcp_probe_states_reported=False,
     # #5100/#5272: not yet wired onto the AG-UI wire (no producer projects
     # the server session's real hooks_config_warnings for a remote
     # client to read) -- False, not True; see the field's own docstring.
@@ -1025,6 +1035,12 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # so `[]` is the correct default for BOTH "genuinely no
         # subscriptions" and "key not yet on the wire" here.
         "mcp_subscriptions": v.get("mcp_subscriptions", []),
+        # `[]` below is correct (per-server probe state is not on the wire
+        # yet — RouterHostAdapter.mcp_probe_snapshot() is session-local,
+        # #4401 ②); gated by ``mcp_probe_states_reported`` above so the mcp
+        # pane renders "not reported" instead of a fabricated "not_probed"
+        # row for every server.
+        "mcp_probe_states": [],
         # `[]` below is correct (pipeline registry is not on the wire);
         # gated by ``pipelines_reported`` above so `pipe_pane_lines`
         # renders "not reported" instead of its own `["(none)"]` fallback

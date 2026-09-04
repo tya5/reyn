@@ -236,6 +236,36 @@ class ClientTransport(ABC):
         real op."""
 
     @abstractmethod
+    async def request_mcp_retry(self, server: str) -> bool:
+        """Retry one mcp server's tools probe (the mcp pane's "↻ retry
+        probe" row / ``/mcp retry <server>`` seam, #4401 ③). ``True`` iff
+        the retry actually ran here.
+
+        #3595 S4's own principle applied to a THIRD case (after
+        :meth:`request_attach`/:meth:`run_slash_command`): a slash handler
+        may not reach a session member whose only reason to exist is
+        letting it do so — ``Session.retry_mcp_probe`` was BLOCKING'd for
+        exactly that shape (PR #5761, lead-coder review) and folded into
+        ``Session._retry_mcp_probe``, reachable only from this method's own
+        production implementations. Deliberately a single AWAITED round
+        trip, not fire-and-forget — the mcp pane's row reads "retrying…"
+        (``mcp_probe_state``) the instant the retry starts (any render
+        during this await sees it, same reasoning
+        ``Session._retry_mcp_probe``'s own docstring gives), and the caller
+        (the slash handler) needs the real outcome to report.
+
+        ``False`` means "did not happen here" (no attached session locally,
+        or not yet supported on this transport — #4401's own scope: remote/
+        AG-UI does not carry `mcp_probe_states` on the wire yet either, so a
+        remote client's mcp pane never shows the retry row in the first
+        place; this only matters for someone typing the command by hand) —
+        mirrors :meth:`cancel_queued`'s own convention.
+
+        Abstract: the no-op-``False`` default body lives on
+        :class:`ClientTransportStub`; ``InProcessTransport`` overrides it
+        with the real op."""
+
+    @abstractmethod
     async def request_attach(self, agent_name: str) -> bool:
         """Attach to a different agent (the ``/attach`` seam); ``True`` iff it
         happened (#4534 PR-1).
@@ -534,6 +564,9 @@ class ClientTransportStub(ClientTransport):
     async def cancel_queued(self, msg_id: str) -> bool:
         return False
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        return False
+
     async def request_attach(self, agent_name: str) -> bool:
         return False
 
@@ -662,6 +695,9 @@ class DelegatingClientTransport(ClientTransport):
 
     async def cancel_queued(self, msg_id: str) -> bool:
         return await self._inner.cancel_queued(msg_id)
+
+    async def request_mcp_retry(self, server: str) -> bool:
+        return await self._inner.request_mcp_retry(server)
 
     async def request_attach(self, agent_name: str) -> bool:
         return await self._inner.request_attach(agent_name)

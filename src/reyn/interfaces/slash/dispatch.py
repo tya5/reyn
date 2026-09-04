@@ -244,6 +244,9 @@ class _ErrorWatchingTransport(ClientTransport):
     async def cancel_queued(self, msg_id: str) -> bool:
         return await self._inner.cancel_queued(msg_id)
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        return await self._inner.request_mcp_retry(server)
+
     async def request_attach(self, agent_name: str) -> bool:
         return await self._inner.request_attach(agent_name)
 

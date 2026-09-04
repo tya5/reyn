@@ -423,6 +423,9 @@ class ThreadedTransportProxy(ClientTransport):
     async def cancel_queued(self, msg_id: str) -> bool:
         return await self._call_on_worker("cancel_queued", msg_id)
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        return await self._call_on_worker("request_mcp_retry", server)
+
     async def run_slash_command(self, name: str, args: str) -> bool:
         return await self._call_on_worker("run_slash_command", name, args)
 

@@ -140,6 +140,7 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         attached_name_reported=True,
         visibility_items_reported=True,
         mcp_subscriptions_reported=True,
+        mcp_probe_states_reported=True,
         hooks_config_warnings_reported=True,
         compaction_progress_reported=True,
         tasks_reported=True,
@@ -180,8 +181,9 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
     ``agent_roster_reported`` / ``model_catalog_reported`` /
     ``attached_name_reported`` (#5094) /
     ``visibility_items_reported`` / ``mcp_subscriptions_reported`` (#5185) /
+    ``mcp_probe_states_reported`` (#4401) /
     ``hooks_config_warnings_reported`` (#5100/#5272)
-    are the 12 fields NOT named after a ``ChatReadModel`` method — see the
+    are the 13 fields NOT named after a ``ChatReadModel`` method — see the
     class's own docstring for why they live here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
@@ -202,6 +204,7 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
         "attached_name_reported",
         "visibility_items_reported",
         "mcp_subscriptions_reported",
+        "mcp_probe_states_reported",
         "hooks_config_warnings_reported",
         "compaction_progress_reported",
         "tasks_reported",

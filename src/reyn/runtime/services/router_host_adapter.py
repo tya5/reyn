@@ -536,6 +536,28 @@ class RouterHostAdapter:
         # capability the model is never told about.
         self._mcp_tools_cache: dict[str, ToolsAnswered] | None = None
         self._mcp_probe_cooldown_until: dict[str, float] = {}
+        # #4401 ②: the LAST ToolsUnknown outcome per server, so the TUI can
+        # tell "probed, did not answer" (this dict) apart from "never
+        # probed" (absent from both this and `_mcp_tools_cache`) — see
+        # `mcp_probe_snapshot`. Cleared for a server the instant it later
+        # answers (`ensure_mcp_tools_cached`'s own gather loop), so a
+        # transient failure does not linger as "failed" after a successful
+        # retry. Not persisted (unlike `_mcp_tools_cache`) — this is a
+        # display aid, not the FP-0037 permanence guarantee; a restart
+        # legitimately forgets it and re-probes fresh.
+        self._mcp_last_unknown: "dict[str, ToolsUnknown]" = {}
+        # #4401 ③: the server a manual retry is currently in flight for, if
+        # any — `mcp_probe_snapshot` reports it as ``"retrying"`` rather
+        # than falling through to "failed" (the in-flight retry hasn't
+        # cleared the old failure yet) or "not_probed" (misleading — a
+        # probe genuinely IS running). `retry_mcp_probe` is a single
+        # synchronously-awaited call (not backgrounded — #4401 A-4's own
+        # co-vet found real concurrent-cache-mutation hazards a background
+        # probe introduces; ③ deliberately stays out of that scope, see
+        # `retry_mcp_probe`'s own docstring), so at most ONE retry is ever
+        # in flight for THIS session at a time — a set, not a per-server
+        # dict, is enough.
+        self._mcp_retry_in_flight: "set[str]" = set()
         # FP-0037 S1: mtime of the cache file when we last loaded from it.
         # None = never loaded from disk. Used by maybe_reload_mcp_tools_cache_from_disk
         # to detect when the CLI has written a fresher version.
@@ -2763,6 +2785,15 @@ class RouterHostAdapter:
             *(_probe_one(name) for name in unanswered),
             return_exceptions=False,  # _probe_one handles its own errors
         )
+        # #4401 ②: record/clear the per-server failure state BEFORE the
+        # early return below — a cycle where every probe fails still needs
+        # its failures recorded, even though nothing gets written to the
+        # tools cache or disk.
+        for _name, _outcome in results:
+            if isinstance(_outcome, ToolsUnknown):
+                self._mcp_last_unknown[_name] = _outcome
+            else:
+                self._mcp_last_unknown.pop(_name, None)
         new_answers = answered_only(results)
         if not new_answers:
             # Every probe came back unknown: nothing was measured, so there is
@@ -2871,6 +2902,97 @@ class RouterHostAdapter:
         if self._mcp_tools_cache is None:
             return None
         return {name: entry.tools for name, entry in self._mcp_tools_cache.items()}
+
+    def mcp_probe_snapshot(self) -> "list[dict]":
+        """#4401 ②③: per-server probe state for every CONFIGURED server, in
+        the 3 states the mcp tab must not conflate (plus a transient 4th,
+        ③'s own "retrying"):
+
+        - ``"retrying"`` — a manual retry (`retry_mcp_probe`, #4401 ③) is
+          currently in flight for this server. Checked FIRST — a retry can
+          be in flight for a server that still has a stale ``"failed"``
+          entry (not yet cleared; the retry hasn't resolved) or none at all.
+        - ``"answered"`` — a real probe measurement exists, ``tool_count``
+          set (0 is a genuine answer, not a failure).
+        - ``"failed"`` — the last probe attempt for this server did NOT
+          answer (``ToolsUnknown`` — timeout or exception), ``reason`` set
+          and ``detail`` set when ``reason == "exception"``. Cleared the
+          instant the server later answers (`ensure_mcp_tools_cached`'s own
+          gather loop), so a stale failure never outlives a successful retry.
+        - ``"not_probed"`` — none of the above: no attempt has been
+          recorded for this server at all (absent from every dict — the
+          lazy, post-startup probe, FP-0037 issue #160, has not reached it
+          yet). MUST NOT be rendered as "0 tools" — that is the exact
+          conflation #4401 exists to close (owner: the model can't NAME an
+          unprobed server's tools, that is not the same as the server
+          having none).
+
+        Ordered by ``self._mcp_servers_flat()``'s own iteration order (config
+        declaration order), same as `_get_mcp_servers_for_router`.
+        """
+        servers = self._mcp_servers_flat()
+        tools_cache = self._mcp_tools_cache or {}
+        out: "list[dict]" = []
+        for name in servers:
+            if name in self._mcp_retry_in_flight:
+                out.append({"name": name, "state": "retrying"})
+                continue
+            answered = tools_cache.get(name)
+            if answered is not None:
+                out.append({"name": name, "state": "answered", "tool_count": len(answered.tools)})
+                continue
+            unknown = self._mcp_last_unknown.get(name)
+            if unknown is not None:
+                out.append({
+                    "name": name, "state": "failed",
+                    "reason": unknown.reason, "detail": unknown.detail,
+                })
+                continue
+            out.append({"name": name, "state": "not_probed"})
+        return out
+
+    async def retry_mcp_probe(self, server: str, *, per_server_timeout: float) -> None:
+        """#4401 ③: the per-row retry action — invalidates the tools cache
+        AND clears ``server``'s own failure cooldown (a manual retry that
+        silently no-ops because the 60s cooldown, #5674, hasn't elapsed yet
+        would look like nothing happened — the wrong UX for a button whose
+        whole point is "try again now"), then re-probes.
+
+        Deliberately a single SYNCHRONOUSLY-AWAITED call, never backgrounded
+        — the #4401 A-4 co-vet (architect) found real concurrent-cache-
+        mutation hazards a BACKGROUND probe introduces against
+        ``invalidate_mcp_tools_cache``/``maybe_reload_mcp_tools_cache_from_disk``'s
+        own writes (3 writers into 1 field, previously safe only because a
+        turn's own probe call was always synchronous/serialized). ③
+        deliberately stays inside that same existing safety margin — the
+        caller (``Session.retry_mcp_probe``, and the ``/mcp retry`` slash
+        handler above it) awaits this to completion rather than spawning it
+        as a background task, so at most one retry is ever in flight per
+        session and it never overlaps a turn's own probe call. #4401 A-4's
+        own construction-time background kickoff is a SEPARATE, deferred
+        follow-up (not in this PR) that will need the epoch/single-
+        writer redesign the co-vet asked for; this method does not.
+
+        ``invalidate_mcp_tools_cache`` is whole-cache-scoped, not
+        per-server (see its own docstring for why) — a retry on one server
+        can therefore also re-probe OTHER currently-unanswered servers
+        whose own cooldown has separately elapsed, as a side effect of
+        reusing that existing primitive rather than adding a second,
+        narrower one. ``server``'s own cooldown is unconditionally cleared
+        regardless, so IT is always retried by this call even if its
+        cooldown had not elapsed.
+
+        Marks ``server`` ``"retrying"`` (`mcp_probe_snapshot`) for the
+        duration — cleared in `finally` regardless of outcome (including a
+        raised exception, or the caller's own Task being cancelled), so a
+        row can never get stuck showing "retrying…" forever."""
+        self._mcp_retry_in_flight.add(server)
+        try:
+            self._mcp_probe_cooldown_until.pop(server, None)
+            self.invalidate_mcp_tools_cache(server)
+            await self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout)
+        finally:
+            self._mcp_retry_in_flight.discard(server)
 
     @property
     def yaml_mtimes_snapshot(self) -> dict[Path, float]:

@@ -151,6 +151,15 @@ class SessionBoundTransport(ClientTransport):
     async def cancel_queued(self, msg_id: str) -> bool:
         return bool(await self._session.cancel_queued(msg_id))
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        # #4401 ③: same private-member seam InProcessTransport uses — this
+        # transport is a production boundary, not a slash handler.
+        retry_fn = getattr(self._session, "_retry_mcp_probe", None)
+        if callable(retry_fn):
+            await retry_fn(server)
+            return True
+        return False
+
     async def run_slash_command(self, name: str, args: str) -> bool:
         # #5094: EXPLICITLY implemented, not inherited — mirrors
         # InProcessTransport's own real execution side (#3595 S5): the
