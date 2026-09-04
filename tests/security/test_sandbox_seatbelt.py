@@ -1,4 +1,12 @@
-"""Tier 2: SeatbeltBackend invariants (FP-0017 Component C)."""
+"""Tier 2: SeatbeltBackend invariants (FP-0017 Component C).
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 5 of this
+module's 24 tests are Darwin-gated (`skipif(sys.platform != "darwin", ...)`,
+sandbox-exec is macOS-only) and have therefore NEVER executed in CI. A green
+CI run of this module does not mean those 5 passed — it means they never
+ran. They exercise only on a real macOS machine.
+"""
 from __future__ import annotations
 
 import sys

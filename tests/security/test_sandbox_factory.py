@@ -9,6 +9,14 @@ Verifies:
 
 No mocks of collaborators — monkeypatch platform.system() where needed;
 use real SandboxConfig and real NoopBackend instances.
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 1 of this
+module's 38 collected tests is genuinely Darwin-gated (`skipif(sys.platform
+!= "darwin", ...)`) and has therefore NEVER executed in CI — the sibling
+Linux-gated test right next to it (`skipif(sys.platform != "linux", ...)`)
+DOES run, so this module's own green is mostly real signal; only that ONE
+test's green means "never ran", not "passed".
 """
 from __future__ import annotations
 
