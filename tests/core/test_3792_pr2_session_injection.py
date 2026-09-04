@@ -105,8 +105,12 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
         TurnOrigin.CLIENT_INPUT: {"text": "hello"},
         TurnOrigin.AGENT_REQUEST: {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
         TurnOrigin.EXTERNAL_MESSAGE: {"text": "hi", "sender": "slack:U456"},
-        # #5747: owner-requested feature, previously unimplemented.
-        TurnOrigin.HOOK: {"name": "on_idle", "text": "hi"},
+        # #5747: owner-requested feature, previously unimplemented. Only
+        # the mcp_resource_updated POINT is actually eligible (a NARROWER
+        # gate than this dict's own key-level vacuity check expresses —
+        # see test_hook_injection_is_eligible_only_for_its_one_declared_
+        # point below for that finer-grained accept/deny pair).
+        TurnOrigin.HOOK: {"name": "on_idle", "text": "hi", "point": "mcp_resource_updated"},
     }
     # Vacuity guard: if TurnOrigin grew, shrank, or the enumeration came back
     # empty, this set-equality against the explicit expected membership
@@ -169,16 +173,76 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     await state_log3.aclose()
 
     # Accept side: HOOK — #5747, owner-requested feature, previously
-    # unimplemented — is ALSO eligible.
+    # unimplemented — is ALSO eligible, when its own point is
+    # mcp_resource_updated (see test_hook_injection_is_eligible_only_
+    # for_its_one_declared_point below for the finer-grained pair this
+    # abbreviates).
     session4, state_log4 = _make_session(
         tmp_path / "hook.wal", tmp_path / "hook.json",
     )
-    await session4._put_inbox(TurnOrigin.HOOK, {"name": "on_idle", "text": "check the queue"})
+    await session4._put_inbox(
+        TurnOrigin.HOOK,
+        {"name": "on_idle", "text": "check the queue", "point": "mcp_resource_updated"},
+    )
     result4 = await session4._inbox_arbiter.peek_mid_turn_injections()
     (only4,) = result4
     assert only4["payload"]["text"] == "check the queue"
     assert only4["kind"] == TurnOrigin.HOOK
     await state_log4.aclose()
+
+
+@pytest.mark.asyncio
+async def test_hook_injection_is_eligible_only_for_its_one_declared_point(tmp_path):
+    """Tier 2: #5747 — ``TurnOrigin.HOOK`` membership in
+    ``MID_TURN_INJECTABLE`` is necessary but not sufficient: a hook push
+    is ALSO required to have fired from ``mcp_resource_updated`` (the
+    owner's own request — a broker/MCP inbox notification steering an
+    in-flight turn). A hook wired to any OTHER point is looked past
+    exactly like an ineligible-kind item — the design question of which
+    other points should also qualify is an open discussion, deliberately
+    not decided by this test (see ``InboxArbiter.peek_mid_turn_
+    injections``'s own docstring).
+
+    Falsification (performed during review): removing the ``payload.get(
+    "point") not in _HOOK_INJECTABLE_POINTS`` guard from
+    ``peek_mid_turn_injections`` (reverting to plain ``TurnOrigin``
+    membership, #5750's own original shipped shape) makes the deny-side
+    assertion below go RED — a hook from ANY point would be injected."""
+    # Accept: mcp_resource_updated.
+    session, state_log = _make_session(tmp_path / "accept.wal", tmp_path / "accept.json")
+    await session._put_inbox(
+        TurnOrigin.HOOK,
+        {"name": "broker-inbox", "text": "peer message arrived", "point": "mcp_resource_updated"},
+    )
+    result = await session._inbox_arbiter.peek_mid_turn_injections()
+    (only,) = result
+    assert only["payload"]["text"] == "peer message arrived"
+    await state_log.aclose()
+
+    # Deny: any other point — file_changed here, the exact one architect's
+    # own self-recursion concern named (a turn's own tool writes a file a
+    # `file_changed` hook watches) — must NOT be injected.
+    session2, state_log2 = _make_session(tmp_path / "deny.wal", tmp_path / "deny.json")
+    await session2._put_inbox(
+        TurnOrigin.HOOK,
+        {"name": "fs-watch", "text": "a file changed", "point": "file_changed"},
+    )
+    result2 = await session2._inbox_arbiter.peek_mid_turn_injections()
+    assert result2 == [], (
+        "a hook from a point OTHER than mcp_resource_updated must not be "
+        "peek-eligible — widening past this one point is an open design "
+        "question, not something this code should do unasked"
+    )
+    await state_log2.aclose()
+
+    # Deny: a HOOK payload missing "point" entirely (a hand-built/legacy
+    # payload shape) must also be treated as ineligible, never as a
+    # free pass — absence is not the same claim as "the right point".
+    session3, state_log3 = _make_session(tmp_path / "deny2.wal", tmp_path / "deny2.json")
+    await session3._put_inbox(TurnOrigin.HOOK, {"name": "no-point", "text": "no point field"})
+    result3 = await session3._inbox_arbiter.peek_mid_turn_injections()
+    assert result3 == [], "a HOOK payload with no 'point' field must not be peek-eligible"
+    await state_log3.aclose()
 
 
 # ---------------------------------------------------------------------------

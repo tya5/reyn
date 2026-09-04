@@ -39,10 +39,21 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.runtime.turn_origin import MID_TURN_INJECTABLE
+from reyn.runtime.turn_origin import MID_TURN_INJECTABLE, TurnOrigin
 
 if TYPE_CHECKING:
     from reyn.runtime.services.snapshot_journal import SnapshotJournal
+
+#: #5747: within ``TurnOrigin.HOOK`` (itself in ``MID_TURN_INJECTABLE``, a
+#: coarse per-PRODUCER-TYPE eligibility test), only a push from ONE
+#: specific hook POINT is actually eligible for mid-turn injection today
+#: — see ``peek_mid_turn_injections``'s own docstring for the full
+#: reasoning and what is deliberately left an open question rather than
+#: decided here. Bare form (``dispatcher.py``'s own ``point`` values,
+#: ``hooks/schema_registry.py``'s ``bare_point()``), matching the
+#: ``payload["point"]`` field ``dispatcher.py``'s ``_push_resolved``
+#: threads onto every hook push.
+_HOOK_INJECTABLE_POINTS: "frozenset[str]" = frozenset({"mcp_resource_updated"})
 
 
 # FP-0041 (#489) PR-A: humanic dispatch attribution helper — moved from
@@ -268,6 +279,22 @@ class InboxArbiter:
         see that constant's own docstring for why the two questions are
         separate). What is looked past is every kind NOT in that set.
 
+        **#5747 narrows one member further.** ``TurnOrigin.HOOK`` is in
+        ``MID_TURN_INJECTABLE`` (a lifecycle-hook push may steer an
+        in-flight turn, closing a real reported gap — see that member's
+        own comment in ``turn_origin.py``), but membership there answers
+        only "which PRODUCER TYPES may ever inject", not "every push
+        from that type". A ``HOOK`` item is ALSO required to have fired
+        from :data:`_HOOK_INJECTABLE_POINTS` (today: only
+        ``mcp_resource_updated`` — the owner's own request, a broker/MCP
+        inbox notification). A hook wired to any OTHER point (e.g.
+        ``file_changed``, ``turn_start``) is looked past exactly like any
+        ineligible kind — the design question of which OTHER points
+        should also qualify (and by what rule) is an open discussion,
+        not decided here; widening ``_HOOK_INJECTABLE_POINTS`` is how a
+        settled answer gets applied once one lands, not a config value an
+        operator sets.
+
         A CANCELLED item is the one case this DOES discard outright — mirrors
         ``consume_inbox``'s own skip-at-consume handling, since a cancelled
         item was never going to be eligible for anything. That applies to items
@@ -290,6 +317,15 @@ class InboxArbiter:
                 del self.pending_inbox_items[scan]
                 continue
             if kind not in MID_TURN_INJECTABLE:
+                scan += 1
+                continue
+            # #5747: HOOK's own membership above is necessary, not
+            # sufficient — see this method's own docstring for why only
+            # SOME hook points are actually eligible.
+            if kind == TurnOrigin.HOOK and (
+                not isinstance(payload, dict)
+                or payload.get("point") not in _HOOK_INJECTABLE_POINTS
+            ):
                 scan += 1
                 continue
             collected.append({"payload": payload, "msg_id": msg_id, "kind": kind})
