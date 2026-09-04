@@ -611,6 +611,50 @@ async def test_reset_sent_queue_view_and_widget_and_item_meta(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_reset_clears_a_local_sending_placeholder_not_just_confirmed_rows(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: #4409 accept ② — a LOCAL, not-yet-server-confirmed SENDING
+    placeholder (``on_composer_submitted``'s own optimistic row, shown
+    before ``submit_user_text`` has even returned) must not survive an
+    attach switch either — the sibling test above only exercises a
+    CONFIRMED row (materialized via a real ``user_submitted`` broadcast);
+    this one is #4409's own new state, added after that test was written,
+    and needs its own witness. ``SentQueue.clear_all()`` (called
+    unconditionally by the reset, regardless of a row's own sending/
+    confirmed sub-state) is what closes this — the SAME single call, not
+    a second one, so nothing had to special-case the new state."""
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        await reg.attach("alpha")
+        transport = QueueTransport()
+        app = TextualChatApp(
+            transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            sent_queue = app.query_one(SentQueue)
+            sent_queue.show_item("local:abc123", "not yet acked on alpha", sending=True)
+            assert sent_queue.has_items() is True
+            assert any("not yet acked on alpha" in t for t in sent_queue.rendered_texts())
+
+            await reg.attach("beta")
+            transport.push_event(
+                "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID}
+            )
+            await _settle(pilot)
+
+            assert sent_queue.has_items() is False, (
+                "alpha's local SENDING placeholder must not survive the switch to beta"
+            )
+            assert sent_queue.rendered_texts() == []
+    finally:
+        await reg.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_ghost(
     tmp_path, monkeypatch,
 ) -> None:

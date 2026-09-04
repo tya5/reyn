@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Callable
@@ -1320,6 +1321,13 @@ class TextualChatApp(App):
         "_streaming_replies",
         "_pending_own_cancels",
         "_call_parents",
+        # #4409: dict-shaped only in spirit (sets — ``.clear()`` is the
+        # same call either way), see ``_dispatched_before_ack``'s own
+        # docstring for what they track and why an OLD session's entries
+        # are meaningless once its queue view is gone too (same reasoning
+        # as ``_queue_item_meta`` just above).
+        "_dispatched_before_ack",
+        "_pending_local_send_ids",
     )
 
     #: #5131 (architect ruling): the FIRST "state down" migration target —
@@ -1647,6 +1655,38 @@ class TextualChatApp(App):
         # client that populated this entry ever restores anything; every
         # other client applies the SAME delta as a plain removal.
         self._pending_own_cancels: "dict[str, str]" = {}
+        # #4409: server ``msg_id``s this client has SEEN dispatched
+        # (``turn_started``, :meth:`_handle_turn_started_event`), used ONLY
+        # to resolve a race :meth:`_reconcile_local_send` cannot otherwise
+        # see: ``submit_user_text``'s ack and the ``user_submitted`` /
+        # ``turn_started`` broadcasts travel on independent channels
+        # (``client_transport.py``'s own ``submit_user_text`` docstring,
+        # F2), so a fast dispatch can promote-then-remove the REAL row
+        # before this client's own ack-driven reconcile ever runs — without
+        # this set, that reconcile would see "no row for msg_id yet" and
+        # wrongly rekey the local placeholder back INTO the queue for an
+        # item that already left it.
+        #
+        # Bound: the sent-queue widget renders EVERY client's queued items
+        # (ADR-0039 attribution — a peer's queue entry shows too), so
+        # ``turn_started`` fires for dispatches that are never this
+        # client's own submission at all; naively adding every one of
+        # those here would accumulate for as long as the attach lasts, not
+        # for as long as this client has anything of its own to reconcile
+        # — the accumulation :attr:`_pending_local_send_ids` exists to
+        # prevent. ``_handle_turn_started_event`` only adds to this set
+        # while that one is non-empty, and the moment it empties (this
+        # client's last outstanding submission resolved,
+        # :meth:`_reconcile_local_send`) this set is wiped too — so its
+        # size is bounded by how many dispatches (of ANY client's items)
+        # interleave during the brief window THIS client has an
+        # unresolved submission of its own, never by session lifetime.
+        self._dispatched_before_ack: "set[str]" = set()
+        # #4409: local placeholder ids (``on_composer_submitted``) still
+        # awaiting :meth:`_reconcile_local_send` — see
+        # ``_dispatched_before_ack``'s own docstring for the bound this
+        # gates.
+        self._pending_local_send_ids: "set[str]" = set()
         # Per-picker parallel SLASH COMMAND lists, keyed by tab id and kept in
         # lock-step with the OptionList options a pane was last refreshed with, so
         # an ``OptionSelected.option_index`` maps back to the command that applies
@@ -3567,7 +3607,14 @@ class TextualChatApp(App):
         # the intended integration, not a targeted jump).
         if event.key == "r" and self.focused is self._flow:
             event.stop()
-            await self._submit("/rewind")
+            # #4409: this call site (and its 2 siblings — the drawer's
+            # own picker-selected commands, and RewindPicker's checkout)
+            # always sends a synthetic, already-``/``-prefixed string, so
+            # ``_submit``'s own slash-dispatch branch always fires and
+            # this id is only ever handed to a harmless no-op remove — no
+            # placeholder was ever shown here to reconcile (unlike
+            # ``on_composer_submitted``'s own real composer text).
+            await self._submit("/rewind", local_id=f"local:{uuid.uuid4().hex}")
 
     def _open_drawer(self, tab_id: "str | None") -> None:
         """Expand/collapse the downward drawer. ``None`` (or the ``"__close__"``
@@ -3756,7 +3803,10 @@ class TextualChatApp(App):
                     return
         cmds = self._pane_commands.get(tab_id or "", [])
         if 0 <= event.option_index < len(cmds) and cmds[event.option_index]:
-            await self._submit(cmds[event.option_index])
+            # #4409: see ``on_key``'s own comment on its ``/rewind``
+            # call site — this is the same shape (a synthetic, already-
+            # ``/``-prefixed command, never composer text).
+            await self._submit(cmds[event.option_index], local_id=f"local:{uuid.uuid4().hex}")
         self._open_drawer(None)
 
     async def _handle_open_inline_artifact_request(self, row: "ArtifactRow") -> None:
@@ -4826,7 +4876,10 @@ class TextualChatApp(App):
         out to seq N`` reply, the branch/fork semantics of ``checkout``) is
         defined in exactly one place, and a rewind triggered from here is
         indistinguishable from a typed one."""
-        await self._submit(f"/rewind {event.seq}")
+        # #4409: see ``on_key``'s own comment on its ``/rewind`` call
+        # site — this is the same shape (a synthetic, already-``/``-
+        # prefixed command, never composer text).
+        await self._submit(f"/rewind {event.seq}", local_id=f"local:{uuid.uuid4().hex}")
         self.query_one(Composer).focus()
 
     def on_rewind_picker_dismissed(self, event: "RewindPicker.Dismissed") -> None:
@@ -6006,7 +6059,15 @@ class TextualChatApp(App):
         )
         if applied and msg_id:
             self._queue_item_meta[msg_id] = dict(data.get("meta") or {})
-            self._sent_queue.show_item(msg_id, text)
+            # #4409: if THIS client's own ``_reconcile_local_send`` already
+            # rekeyed a local placeholder onto ``msg_id`` (its ack, on the
+            # independent send-response channel, arrived before this
+            # broadcast), the row already shows this exact text — a plain
+            # ``show_item`` would remove+re-mount it (its own dedup guard)
+            # for no visible change, only a jump-to-bottom/flash risk. Skip
+            # the remount; the meta write above still lands either way.
+            if not self._sent_queue.has_row(msg_id):
+                self._sent_queue.show_item(msg_id, text)
             self._apply_compact_layout()
         elif not applied:
             # #3688: the rejecting branch used to be pure absence — no row, no
@@ -6072,6 +6133,11 @@ class TextualChatApp(App):
             msg_id = item.get("msg_id")
             if msg_id:
                 self._sent_queue.remove_item(msg_id)
+                # #4409: record BEFORE the pending-ack reconcile can run —
+                # see ``_dispatched_before_ack``'s own docstring for the
+                # race this closes and the bound this gate keeps.
+                if self._pending_local_send_ids:
+                    self._dispatched_before_ack.add(msg_id)
             meta = self._queue_item_meta.pop(msg_id, {}) if msg_id else {}
             # #4691 arc item ④: stamp THIS turn's own chain_id onto the
             # user row itself — the row is created here, at promotion time,
@@ -7212,8 +7278,18 @@ class TextualChatApp(App):
         if not self._transport.has_session():
             self._notify_blocked_on_attach()
             return
+        # #4409: the local placeholder is shown and the composer cleared
+        # back-to-back, with no ``await`` between them — so there is no
+        # frame where the message is visible in NEITHER place (the owner's
+        # own report: "msg enter -> sent 表示の間でメッセージ消えること
+        # 多い"). See ``SentQueue``'s own module docstring for the full
+        # "fourth, LOCAL entry" account and ``_reconcile_local_send`` for
+        # how it resolves once the server acks.
+        local_id = f"local:{uuid.uuid4().hex}"
+        self._sent_queue.show_item(local_id, text, sending=True)
+        self._pending_local_send_ids.add(local_id)
         self.query_one(Composer).clear_and_reset()
-        await self._submit(text)
+        await self._submit(text, local_id=local_id)
 
     def _notify_blocked_on_attach(self) -> None:
         """#3671 P3: tell the operator WHY their Enter did nothing, matching
@@ -7272,8 +7348,33 @@ class TextualChatApp(App):
         except Exception:
             pass
 
-    async def _submit(self, text: str) -> None:
+    def _maybe_sent_queue_remove(self, msg_id: str) -> None:
+        """``self._sent_queue.remove_item(msg_id)``, tolerant of
+        ``_sent_queue`` not existing yet — #4409: ``_sent_queue`` is a
+        widget, constructed in ``compose()`` alongside every OTHER widget
+        this App owns (same convention throughout this module, not
+        something #4409 changes), so it is absent on an App this test
+        suite's own established pattern constructs and calls ``_submit``
+        on DIRECTLY, without mounting (several pre-existing #3595 tests do
+        exactly this). A no-op there is correct, not merely tolerated: no
+        placeholder was ever shown pre-mount either (that only happens in
+        ``on_composer_submitted``, which the framework never calls before
+        mount)."""
+        sent_queue = getattr(self, "_sent_queue", None)
+        if sent_queue is not None:
+            sent_queue.remove_item(msg_id)
+
+    async def _submit(self, text: str, *, local_id: str) -> None:
         """Route one submitted line through the transport send seam.
+
+        ``local_id`` (#4409): the sent-queue row ``on_composer_submitted``
+        already showed, synchronously with clearing the composer, keyed by
+        a LOCAL id (no server ``msg_id`` exists yet). Every exit from this
+        method resolves it exactly once: dispatched as a slash command (was
+        never queued at all — see the ``#3595 S5`` paragraph below) drops
+        it, a submit failure drops it, and an ordinary submission hands the
+        server-acked ``msg_id`` to :meth:`_reconcile_local_send`, which
+        decides drop-vs-promote (see that method's own docstring).
 
         #3299 P1: the Composer is now EXCLUSIVELY for new turns — it no longer
         reads ``pending_intervention_head()`` at all. Answering a pending
@@ -7318,9 +7419,11 @@ class TextualChatApp(App):
         try:
             from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
             if await maybe_dispatch_slash(self._transport, text):
+                self._maybe_sent_queue_remove(local_id)
                 return
-            await self._transport.submit_user_text(text)
+            msg_id = await self._transport.submit_user_text(text)
         except Exception as exc:
+            self._maybe_sent_queue_remove(local_id)
             logger.exception("textual chat: submit failed")
             from reyn.runtime.outbox import OutboxMessage
             detail = f"{type(exc).__name__}: {exc}"
@@ -7332,6 +7435,68 @@ class TextualChatApp(App):
                 )
             except Exception:
                 pass
+        else:
+            self._reconcile_local_send(local_id, msg_id)
+        finally:
+            # #4409: every exit above resolved ``local_id`` one way or
+            # another — see ``_dispatched_before_ack``'s own docstring for
+            # why the moment NONE of this client's own submissions are
+            # still outstanding is exactly the moment that set can hold
+            # nothing worth keeping.
+            self._pending_local_send_ids.discard(local_id)
+            if not self._pending_local_send_ids:
+                self._dispatched_before_ack.clear()
+
+    def _reconcile_local_send(self, local_id: str, msg_id: str) -> None:
+        """#4409: resolve the local SENDING placeholder against the
+        server's ack, once ``submit_user_text`` returns.
+
+        The ack (this call) and the ``user_submitted`` broadcast that
+        materializes the AUTHORITATIVE row (:meth:`_handle_user_submitted_event`)
+        are two independent deliveries of the same fact, over two
+        independent channels (``client_transport.py``'s own
+        ``submit_user_text`` docstring, F2) — either can arrive first:
+
+        - the broadcast already arrived (:meth:`SentQueue.has_row` is
+          ``True`` for ``msg_id``) → the placeholder is now redundant;
+          drop it.
+        - ``msg_id`` was already seen DISPATCHED
+          (:attr:`_dispatched_before_ack` — ``turn_started`` can race
+          ahead of this ack too, see that attribute's own docstring) →
+          the item already left the queue entirely; drop the placeholder
+          rather than rekey it back INTO a queue it no longer belongs to.
+        - neither yet → promote the placeholder in place
+          (:meth:`SentQueue.rekey`), so the still-pending broadcast finds
+          an existing row under ``msg_id`` and updates it rather than
+          adding a second one.
+        - ``msg_id`` is falsy (no id echoed — an implementation detail of
+          ``ClientTransport.submit_user_text``'s own contract, never
+          ``None``) → nothing to reconcile against; the placeholder stays
+          exactly as it is, which is the honest state given no confirmed
+          id exists to promote it onto.
+        """
+        if not msg_id:
+            return
+        sent_queue = getattr(self, "_sent_queue", None)
+        if sent_queue is None:
+            # #4409: only reachable when this method is invoked directly,
+            # pre-mount, the way several existing tests already exercise
+            # ``_submit`` (``_sent_queue`` is a widget, constructed in
+            # ``compose()`` alongside every OTHER widget this App owns —
+            # same convention throughout this module, not something #4409
+            # changes). Nothing to reconcile a placeholder onto: no
+            # placeholder was ever shown pre-mount either (that only
+            # happens in ``on_composer_submitted``, which the framework
+            # never calls before mount).
+            return
+        if msg_id in self._dispatched_before_ack:
+            self._dispatched_before_ack.discard(msg_id)
+            sent_queue.remove_item(local_id)
+            return
+        if sent_queue.has_row(msg_id):
+            sent_queue.remove_item(local_id)
+            return
+        sent_queue.rekey(local_id, msg_id)
 
 
 async def run_textual_chat(

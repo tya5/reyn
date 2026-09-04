@@ -477,7 +477,12 @@ async def test_picking_a_checkpoint_rewinds_through_the_real_slash_seam() -> Non
         typed_app = TextualChatApp(transport=typed, read_model=_PickerReadModel())
         async with typed_app.run_test() as typed_pilot:
             await typed_pilot.pause()
-            await typed_app._submit("/rewind 9")
+            # #4409: _submit now requires local_id (the sent-queue's own
+            # local-placeholder reconcile key) — a fixed literal is fine
+            # here, this call is a synthetic "/rewind 9" that never
+            # touches the sent-queue (the slash-dispatch branch always
+            # fires for an already-``/``-prefixed string).
+            await typed_app._submit("/rewind 9", local_id="local:test")
             await typed_pilot.pause()
         assert transport.commands == typed.commands, (
             "the picker's rewind is not the typed /rewind path"
