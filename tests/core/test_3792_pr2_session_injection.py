@@ -67,7 +67,6 @@ _INELIGIBLE_KWARGS: dict[TurnOrigin, dict] = {
     TurnOrigin.PIPELINE_RESULT: {"run_id": "run1", "pipeline_name": "p", "status": "ok", "text": "t"},
     TurnOrigin.AGENT_STEP: {"seq": 1},
     TurnOrigin.CRON: {"job": "nightly"},
-    TurnOrigin.HOOK: {"name": "on_idle"},
     TurnOrigin.PIPELINE_NUDGE: {"run_id": "run1"},
     # Proposal 0067 P5 (#3978): send_to_session / run_prompt(attached), a
     # peer session's text — see TurnOrigin.PEER_SESSION's own docstring.
@@ -84,12 +83,14 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     a corresponding case here is caught, not silently vacuous).
 
     #5677 widened eligibility from ``CLIENT_INPUT`` alone to
-    ``MID_TURN_INJECTABLE`` (``CLIENT_INPUT`` + ``AGENT_REQUEST`` — see
-    that constant's own per-member reasoning). This test is the sibling
-    architect's #5677 co-vet required for the new axis, in the SAME
-    exhaustive-enumeration shape #3595's own site-census gate uses (one
-    file, one gate, both directions — deny-side and accept-side together,
-    not one alone): every OTHER member must still be excluded.
+    ``MID_TURN_INJECTABLE`` (``CLIENT_INPUT`` + ``AGENT_REQUEST`` +
+    ``EXTERNAL_MESSAGE``); #5747 widened it once more (``HOOK`` — see
+    ``MID_TURN_INJECTABLE``'s own per-member reasoning for all four).
+    This test is the sibling architect's #5677 co-vet required for the
+    new axis, in the SAME exhaustive-enumeration shape #3595's own
+    site-census gate uses (one file, one gate, both directions —
+    deny-side and accept-side together, not one alone): every OTHER
+    member must still be excluded.
 
     Falsification (performed during review): reverting
     ``InboxArbiter.peek_mid_turn_injections``'s eligibility check from
@@ -104,6 +105,8 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
         TurnOrigin.CLIENT_INPUT: {"text": "hello"},
         TurnOrigin.AGENT_REQUEST: {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
         TurnOrigin.EXTERNAL_MESSAGE: {"text": "hi", "sender": "slack:U456"},
+        # #5747: owner-requested feature, previously unimplemented.
+        TurnOrigin.HOOK: {"name": "on_idle", "text": "hi"},
     }
     # Vacuity guard: if TurnOrigin grew, shrank, or the enumeration came back
     # empty, this set-equality against the explicit expected membership
@@ -165,6 +168,18 @@ async def test_only_mid_turn_injectable_origins_are_peek_eligible(tmp_path):
     assert only3["kind"] == TurnOrigin.EXTERNAL_MESSAGE
     await state_log3.aclose()
 
+    # Accept side: HOOK — #5747, owner-requested feature, previously
+    # unimplemented — is ALSO eligible.
+    session4, state_log4 = _make_session(
+        tmp_path / "hook.wal", tmp_path / "hook.json",
+    )
+    await session4._put_inbox(TurnOrigin.HOOK, {"name": "on_idle", "text": "check the queue"})
+    result4 = await session4._inbox_arbiter.peek_mid_turn_injections()
+    (only4,) = result4
+    assert only4["payload"]["text"] == "check the queue"
+    assert only4["kind"] == TurnOrigin.HOOK
+    await state_log4.aclose()
+
 
 # ---------------------------------------------------------------------------
 # Order — injection looks past an ineligible head; consumption order does not
@@ -191,11 +206,18 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
     the ineligible head before CLIENT_INPUT, exactly as this test asserted
     before.
 
-    #5677 (this update): the head item is now ``HOOK`` rather than
-    ``AGENT_REQUEST`` — ``AGENT_REQUEST`` is itself peek-eligible now (#5677's
-    own motivation), so it can no longer stand in for "an ineligible head" in
-    this test; a still-ineligible kind is needed for THIS test's own claim to
-    keep meaning what it says.
+    #5677 (this update): the head item was made ``HOOK`` rather than
+    ``AGENT_REQUEST`` — ``AGENT_REQUEST`` is itself peek-eligible now
+    (#5677's own motivation), so it could no longer stand in for "an
+    ineligible head" in this test.
+
+    #5747 (this same update, repeated): ``HOOK`` is now ALSO
+    peek-eligible (the owner-requested feature #5747 built), so it
+    cannot stand in either — swapped again, to ``CRON`` (still
+    genuinely ineligible; see ``TurnOrigin.CRON``'s own docstring). This
+    is the SECOND time this test's own "ineligible head" example has had
+    to move as ``MID_TURN_INJECTABLE`` widened — a reader maintaining
+    this test next should expect a THIRD move is possible too.
 
     Strip-falsifier: restore the STOP (return ``[]`` on an ineligible head)
     and the peek assertion below goes red — which is the owner's symptom, not
@@ -203,24 +225,24 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "on_idle"})
+    await session._put_inbox(TurnOrigin.CRON, {"job": "nightly"})
     await session.submit_user_text("second, eligible")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked, (
-        "#5647: peek must look PAST the ineligible HOOK head to find "
+        "#5647: peek must look PAST the ineligible CRON head to find "
         "the operator's message — stopping here is the reported defect"
     )
     assert peeked[0]["payload"]["text"] == "second, eligible"
 
     # The item looked past is NOT consumed by the peek, and is still first.
     kind, payload = await session._inbox_arbiter.consume_inbox()
-    assert kind == TurnOrigin.HOOK, (
+    assert kind == TurnOrigin.CRON, (
         "the FIRST item consume_inbox returns must still be the ineligible "
         "head — injection reorders what the MODEL sees, never what the turn "
         "boundary consumes"
     )
-    assert payload["name"] == "on_idle"
+    assert payload["job"] == "nightly"
 
     kind2, payload2 = await session._inbox_arbiter.consume_inbox()
     assert kind2 == TurnOrigin.CLIENT_INPUT
@@ -237,10 +259,13 @@ async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
     just the first, so a caller can splice them into the SAME completion
     round instead of paying for one round trip per item.
 
-    An ineligible item BETWEEN the two eligible ones is looked past and
-    stays in the buffer — collecting continues past it, the same "skip,
-    don't stop" behavior #5647 established, generalized from "stop at the
-    first eligible hit" to "keep going to the end of what's available".
+    An ineligible item (``CRON`` — #5747 made ``HOOK`` itself eligible
+    too, so this test's own "ineligible, between" example moved to CRON,
+    same swap as the sibling test above) BETWEEN the two eligible ones
+    is looked past and stays in the buffer — collecting continues past
+    it, the same "skip, don't stop" behavior #5647 established,
+    generalized from "stop at the first eligible hit" to "keep going to
+    the end of what's available".
 
     Strip-falsifier: reverting ``peek_mid_turn_injections`` to ``return``
     immediately after the FIRST eligible hit (the pre-#5677 shape) makes
@@ -250,7 +275,7 @@ async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
     await session.submit_user_text("first, eligible")
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "on_idle"})  # ineligible, between
+    await session._put_inbox(TurnOrigin.CRON, {"job": "nightly"})  # ineligible, between
     await session._put_inbox(
         TurnOrigin.AGENT_REQUEST,
         {"from_agent": "peer", "request": "second, eligible", "depth": 1, "chain_id": "c1"},
@@ -263,12 +288,12 @@ async def test_peek_collects_every_eligible_item_in_one_scan(tmp_path):
     assert second["kind"] == TurnOrigin.AGENT_REQUEST
     assert second["payload"]["request"] == "second, eligible"
 
-    # The ineligible HOOK item looked past remains, unconsumed, in arrival order.
+    # The ineligible CRON item looked past remains, unconsumed, in arrival order.
     kind, payload = await session._inbox_arbiter.consume_inbox()
     assert kind == TurnOrigin.CLIENT_INPUT
     kind2, payload2 = await session._inbox_arbiter.consume_inbox()
-    assert kind2 == TurnOrigin.HOOK
-    assert payload2["name"] == "on_idle"
+    assert kind2 == TurnOrigin.CRON
+    assert payload2["job"] == "nightly"
     kind3, payload3 = await session._inbox_arbiter.consume_inbox()
     assert kind3 == TurnOrigin.AGENT_REQUEST
 

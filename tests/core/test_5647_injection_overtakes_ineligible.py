@@ -23,8 +23,19 @@ answers both halves of #3792's objection rather than dismissing them:
   ``skipped_over``, enumerating kind and msg_id of everything looked past, in
   arrival order.
 
-Eligibility is UNCHANGED (#3792 / provenance gate #3595): only
-``CLIENT_INPUT`` is ever injected.
+**#5747 update**: the ``broker_drain`` HOOK example above is now the
+WRONG illustration of "ineligible" — #5747 added ``TurnOrigin.HOOK`` to
+``MID_TURN_INJECTABLE`` itself, so a hook item sitting in front of the
+operator's message is no longer looked past at all; it is now INJECTED
+alongside it (``peek_mid_turn_injections`` collects every eligible item
+in the scan, #5677's own "溜まっているものは基本inject すべき" ruling —
+see that method's own docstring). The historical incident narrative
+above is left as written (it is what #5647 was actually built to fix,
+and remains true as history); the tests below now use ``TurnOrigin.CRON``
+as their running example of a kind that stays genuinely ineligible
+(cron is not a lifecycle hook — see ``TurnOrigin.CRON``'s own docstring
+for why), so the "look past an ineligible item" mechanism this file
+exists to test still has a real subject to exercise it against.
 
 Real ``Session`` / ``StateLog`` / ``SnapshotJournal`` / real
 ``asyncio.Queue`` throughout — no mocks, no fakes, no hand-rolled arbiter. The
@@ -48,7 +59,7 @@ from tests._support.events import collect_events, settle
 
 AGENT = "injection-overtake-agent"
 
-_HOOK = {"name": "broker_drain"}
+_CRON = {"name": "broker_drain"}
 
 
 def _make_session(wal: Path, snapshot_path: Path) -> "tuple[Session, StateLog]":
@@ -80,8 +91,8 @@ async def test_injection_reaches_the_operator_message_behind_two_hooks(tmp_path)
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
     events = collect_events(session)
 
-    await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
-    await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
+    await session._put_inbox(TurnOrigin.CRON, dict(_CRON))
+    await session._put_inbox(TurnOrigin.CRON, dict(_CRON))
     await session.submit_user_text("stop and look at this")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
@@ -102,7 +113,7 @@ async def test_injection_reaches_the_operator_message_behind_two_hooks(tmp_path)
         "the overtaking must leave a trace — #3792's objection to skipping "
         "was that it would leave none, and this field is the answer to it"
     )
-    assert [s["kind"] for s in skipped] == [TurnOrigin.HOOK, TurnOrigin.HOOK], skipped
+    assert [s["kind"] for s in skipped] == [TurnOrigin.CRON, TurnOrigin.CRON], skipped
 
     await state_log.aclose()
 
@@ -119,8 +130,8 @@ async def test_the_overtaken_items_are_still_consumed_first_and_in_order(tmp_pat
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "first"})
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "second"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "first"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "second"})
     await session.submit_user_text("steer")
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
@@ -130,7 +141,7 @@ async def test_the_overtaken_items_are_still_consumed_first_and_in_order(tmp_pat
     first = await session._inbox_arbiter.consume_inbox()
     second = await session._inbox_arbiter.consume_inbox()
     assert first is not None and second is not None
-    assert [first[0], second[0]] == [TurnOrigin.HOOK, TurnOrigin.HOOK]
+    assert [first[0], second[0]] == [TurnOrigin.CRON, TurnOrigin.CRON]
     assert [first[1]["name"], second[1]["name"]] == ["first", "second"], (
         "the two overtaken hooks must keep THEIR arrival order relative to "
         "each other, not just relative to the injected message"
@@ -151,9 +162,9 @@ async def test_items_that_arrived_after_the_operator_keep_their_place_too(tmp_pa
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "A"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "A"})
     await session.submit_user_text("steer")
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "B"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "B"})
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     (only,) = peeked
@@ -182,8 +193,8 @@ async def test_no_injection_when_no_operator_message_is_queued(tmp_path):
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
     events = collect_events(session)
 
-    await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
-    await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
+    await session._put_inbox(TurnOrigin.CRON, dict(_CRON))
+    await session._put_inbox(TurnOrigin.CRON, dict(_CRON))
 
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
     assert peeked == []
@@ -194,7 +205,7 @@ async def test_no_injection_when_no_operator_message_is_queued(tmp_path):
     first = await session._inbox_arbiter.consume_inbox()
     second = await session._inbox_arbiter.consume_inbox()
     assert first is not None and second is not None
-    assert [first[0], second[0]] == [TurnOrigin.HOOK, TurnOrigin.HOOK]
+    assert [first[0], second[0]] == [TurnOrigin.CRON, TurnOrigin.CRON]
 
     await state_log.aclose()
 
@@ -244,7 +255,7 @@ async def test_a_cancelled_operator_message_is_passed_over_for_the_next_one(tmp_
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(TurnOrigin.HOOK, dict(_HOOK))
+    await session._put_inbox(TurnOrigin.CRON, dict(_CRON))
     cancelled_id = await session.submit_user_text("withdrawn")
     await session.submit_user_text("the real one")
     await session.cancel_queued(cancelled_id)
@@ -281,9 +292,9 @@ async def test_overtaken_items_survive_a_wal_truncation_in_arrival_order(tmp_pat
     wal, snap_path = tmp_path / "s.wal", tmp_path / "s.json"
     session, state_log = _make_session(wal, snap_path)
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "A"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "A"})
     await session.submit_user_text("steer")
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "B"})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "B"})
 
     # Overtake, but never commit — the abnormal-exit shape.
     peeked = await session._inbox_arbiter.peek_mid_turn_injections()
@@ -296,7 +307,7 @@ async def test_overtaken_items_survive_a_wal_truncation_in_arrival_order(tmp_pat
     snap.apply_events(list(reloaded.iter_from(snap.applied_seq)))
 
     kinds = [entry.get("kind") for entry in snap.inbox]
-    assert kinds == [TurnOrigin.HOOK, TurnOrigin.CLIENT_INPUT, TurnOrigin.HOOK], (
+    assert kinds == [TurnOrigin.CRON, TurnOrigin.CLIENT_INPUT, TurnOrigin.CRON], (
         f"a peek commits nothing, so every item must survive reconstruction, "
         f"in arrival order — the volatile buffer must not have reordered the "
         f"durable record: {kinds!r}"
@@ -328,8 +339,8 @@ async def test_the_ride_along_drain_does_not_read_past_the_peek_buffer(tmp_path)
     """
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "ride-1", "wake": False})
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "ride-2", "wake": False})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "ride-1", "wake": False})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "ride-2", "wake": False})
     await session.submit_user_text("the trigger")
 
     # The peek pulls both ride-alongs into the buffer on its way to the user
@@ -338,7 +349,7 @@ async def test_the_ride_along_drain_does_not_read_past_the_peek_buffer(tmp_path)
     (only,) = peeked
     await session._commit_mid_turn_injection(only["msg_id"])
 
-    await session._put_inbox(TurnOrigin.HOOK, {"name": "trigger", "wake": True})
+    await session._put_inbox(TurnOrigin.CRON, {"name": "trigger", "wake": True})
     ride_alongs, trigger = await session._inbox_arbiter.drain_to_wake()
 
     assert [p["name"] for _k, p in ride_alongs] == ["ride-1", "ride-2"], (

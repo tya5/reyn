@@ -52,6 +52,7 @@ def test_every_mid_turn_injectable_member_has_a_rendering():
         TurnOrigin.CLIENT_INPUT: {"text": "hello"},
         TurnOrigin.AGENT_REQUEST: {"from_agent": "peer", "request": "do X"},
         TurnOrigin.EXTERNAL_MESSAGE: {"text": "urgent update", "sender": "slack:U456"},
+        TurnOrigin.HOOK: {"name": "on_idle", "text": "check the queue"},
     }
     assert set(_sample_payloads) == set(MID_TURN_INJECTABLE), (
         "this test's own sample payloads must cover exactly "
@@ -66,12 +67,15 @@ def test_every_mid_turn_injectable_member_has_a_rendering():
 
 def test_a_kind_outside_mid_turn_injectable_has_no_declared_rendering():
     """Tier 2: deny-side sibling — a kind that is NOT eligible for mid-turn
-    injection (e.g. HOOK) has no obligation to render here at all; calling
-    ``_render_mid_turn_injection`` for one is a caller bug this function
-    correctly refuses rather than silently guessing a shape for."""
-    assert TurnOrigin.HOOK not in MID_TURN_INJECTABLE
+    injection (CRON, #5747's own module docstring: operator-authored but
+    delivered to a session with no client attached, not typed at a
+    composer — a distinct question from HOOK's own eligibility) has no
+    obligation to render here at all; calling ``_render_mid_turn_injection``
+    for one is a caller bug this function correctly refuses rather than
+    silently guessing a shape for."""
+    assert TurnOrigin.CRON not in MID_TURN_INJECTABLE
     with pytest.raises(AssertionError):
-        _render_mid_turn_injection(TurnOrigin.HOOK, {"name": "on_idle"})
+        _render_mid_turn_injection(TurnOrigin.CRON, {"text": "0 * * * *"})
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +158,43 @@ def test_external_message_injection_without_sender_falls_back_to_kind():
     )
     assert rendered["role"] == "system"
     assert rendered["content"] == "[external_message:external_message] hi from mcp peer"
+
+
+# ---------------------------------------------------------------------------
+# HOOK — role="system", attributed (#5747: owner-requested feature, real
+# damage from the gap — see TurnOrigin.HOOK's own MID_TURN_INJECTABLE
+# comment for the two incidents)
+# ---------------------------------------------------------------------------
+
+
+def test_hook_injection_renders_role_system_not_user():
+    """Tier 2: accept side of #5747 — an injected HOOK push must NOT render
+    as role="user" (would be indistinguishable from the operator's own
+    text, reopening #3595's own closed class one layer down). Renders
+    role="system" with the SAME ``[hook:name]`` attribution
+    ``_handle_hook_message``'s own wake=true push already uses — an
+    injected hook and a turn-starting one read identically on the wire.
+
+    Reviewer strip (recorded here, to be executed manually before
+    landing): removing the ``TurnOrigin.HOOK`` branch from
+    ``_render_mid_turn_injection`` makes this assertion go red (the
+    function's own fail-loud fallback raises instead)."""
+    rendered = _render_mid_turn_injection(
+        TurnOrigin.HOOK, {"name": "on_idle", "text": "check the queue"},
+    )
+    assert rendered["role"] != "user"
+    assert rendered["role"] == "system"
+    assert rendered["content"] == "[hook:on_idle] check the queue"
+
+
+def test_hook_injection_without_name_falls_back_to_kind():
+    """Tier 2: a payload with no ``name`` falls back to the bare ``kind``
+    rather than raising — mirrors EXTERNAL_MESSAGE's own no-sender
+    fallback above; an attribution missing the SPECIFIC hook is still a
+    true, non-operator attribution."""
+    rendered = _render_mid_turn_injection(TurnOrigin.HOOK, {"text": "check the queue"})
+    assert rendered["role"] == "system"
+    assert rendered["content"] == "[hook:hook] check the queue"
 
 
 # ---------------------------------------------------------------------------
