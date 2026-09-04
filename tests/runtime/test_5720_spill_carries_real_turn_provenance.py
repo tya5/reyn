@@ -32,6 +32,7 @@ from __future__ import annotations
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
 from reyn.runtime.chat_message import SPILL_TARGET_SEQ_META_KEY, ChatMessage
+from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 from tests._support.events import collect_events
@@ -46,11 +47,25 @@ class _FakeRouterHost:
         pass
 
 
-class _FakeBudget:
-    def check_and_increment_router_cap(self, text):
+class _FakeBudget(BudgetGateway):
+    """#5748 (lead-coder finding, the 3rd instance of this same shape —
+    #5734's ``_PickerReadModel``/``_TaskSnapshotReadModel`` were the
+    first two): a hand-written double that only reimplements the methods
+    THIS test drives goes stale the moment the real class gains a new
+    one — ``RouterLoop`` construction now unconditionally reads
+    ``self._budget.update_last_call_usage`` (#5745), which a bare
+    ``_FakeBudget`` never had. Inheriting the real ``BudgetGateway``
+    (cheap to construct — no I/O in ``__init__``) means every CURRENT
+    and FUTURE method this test doesn't care about is the real,
+    correct one by construction, never a manually-kept-in-sync copy."""
+
+    def __init__(self) -> None:
+        super().__init__(budget_tracker=None, events=EventLog(), agent_name="t-agent")
+
+    def check_and_increment_router_cap(self, user_text):
         pass
 
-    def extend_router_cap(self, n):
+    def extend_router_cap(self, additional):
         pass
 
     def add_router_usage(self, **kwargs):

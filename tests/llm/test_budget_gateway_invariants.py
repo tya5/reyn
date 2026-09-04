@@ -364,14 +364,73 @@ def test_add_router_usage_uses_explicit_last_call_usage_not_turn_total():
     assert gw.total_usage.prompt_tokens == 300        # billing still counts every call
 
 
-def test_add_router_usage_falls_back_to_turn_total_when_last_call_usage_omitted():
-    """Tier 2: last_call_usage is optional (default None) — omitting it (as an
-    older/non-UI caller might) falls back to the turn total, so nothing
-    breaks for callers that don't care about the ctx-chip distinction."""
+def test_add_router_usage_leaves_last_call_usage_untouched_when_omitted():
+    """Tier 2: #5745 fix — ``last_call_usage`` is optional (default None) on
+    ``add_router_usage``, but omitting it no longer falls back to writing
+    the TURN-SUMMED total into the single-most-recent-call field (that
+    fallback was itself the bug #5745 named — turn-summed and per-call are
+    two DIFFERENT figures, and silently substituting one for the other
+    the moment a caller omits the newer kwarg is exactly the ambiguity the
+    field exists to avoid). Billing (``total_usage``) is unaffected either
+    way — this only pins that ``last_call_usage`` itself is left alone,
+    not that ``add_router_usage`` stops accumulating."""
     resolver = ModelResolver({"light": "openai/gpt-4o-mini"})
     gw, _ = _make_gateway()
 
+    # A prior per-call value already on the field (the #5745 live wire,
+    # ``update_last_call_usage``, would have put one there) — proves
+    # "omitted" means UNCHANGED, not "zeroed", not "overwritten with the
+    # turn total below".
+    gw.update_last_call_usage(TokenUsage(prompt_tokens=7, completion_tokens=1))
+
     u = TokenUsage(prompt_tokens=40, completion_tokens=5, cached_tokens=5)
     gw.add_router_usage(usage=u, resolver=resolver, router_model_name="light")
-    assert gw.last_call_usage.prompt_tokens == 40
-    assert gw.total_usage.prompt_tokens == 40
+    assert gw.last_call_usage.prompt_tokens == 7, (
+        "omitting last_call_usage must leave the field as it was, not "
+        "overwrite it with the turn-summed total"
+    )
+    assert gw.total_usage.prompt_tokens == 40, "billing still accumulates the turn total"
+
+
+def test_update_last_call_usage_touches_only_the_one_field():
+    """Tier 2: #5745 — ``update_last_call_usage`` (the live per-call wire
+    ``router_loop.py``'s ``on_call_usage`` callback drives) writes
+    ``last_call_usage`` and NOTHING else: not ``total_usage``, not
+    ``total_cost_usd``. Calling this per-call (as intended — every LLM
+    call, not just once per turn) must never double-count billing, which
+    is exactly what would happen if it touched the same totals
+    ``add_router_usage``/``accumulate`` already own."""
+    gw, _ = _make_gateway()
+
+    gw.update_last_call_usage(TokenUsage(prompt_tokens=99, completion_tokens=3))
+
+    assert gw.last_call_usage.prompt_tokens == 99
+    assert gw.total_usage.prompt_tokens == 0, "must never accumulate into billing totals"
+    assert gw.total_cost_usd == 0.0, "must never accumulate into billing totals"
+
+
+def test_update_last_call_usage_overwrites_not_accumulates():
+    """Tier 2: #5745 — each call REPLACES the field (the property's own
+    docstring: "Overwritten (not accumulated) on each call") — two calls
+    in a row must show the SECOND call's figure, never a sum of the two."""
+    gw, _ = _make_gateway()
+
+    gw.update_last_call_usage(TokenUsage(prompt_tokens=10))
+    gw.update_last_call_usage(TokenUsage(prompt_tokens=25))
+
+    assert gw.last_call_usage.prompt_tokens == 25
+
+
+def test_update_last_call_usage_ignores_a_falsy_usage():
+    """Tier 2: #5745 — a call whose provider echoed no usage at all (an
+    empty/falsy ``TokenUsage``, or ``None``) must not clobber whatever the
+    field already honestly reflected — the previous OBSERVED figure stays
+    more accurate than a fabricated zero."""
+    gw, _ = _make_gateway()
+    gw.update_last_call_usage(TokenUsage(prompt_tokens=42))
+
+    gw.update_last_call_usage(None)
+    assert gw.last_call_usage.prompt_tokens == 42
+
+    gw.update_last_call_usage(TokenUsage())  # a real, but all-zero, TokenUsage
+    assert gw.last_call_usage.prompt_tokens == 42

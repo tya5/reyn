@@ -1280,6 +1280,13 @@ class RouterLoopDriver:
             scheme_name=self._chat_scheme_name,
             max_iterations=self._router_max_iterations,
             budget=self._budget_tracker,
+            # #5745: the live per-call wire to the status-bar ctx chip's own
+            # copy of "most recent call" (BudgetGateway._last_call_usage) —
+            # fires on EVERY LLM call this loop makes, not just once at
+            # run_turn's own end below (add_router_usage, unchanged, still
+            # the sole turn-summed BILLING writer). See RouterLoop's own
+            # on_call_usage param docstring and BudgetGateway.update_last_call_usage.
+            on_call_usage=self._budget.update_last_call_usage,
             # #1440 followup: thread the run-once autonomy flag to the LIVE
             # chat-router SP path (router_loop build_system_prompt).
             non_interactive=self._non_interactive,

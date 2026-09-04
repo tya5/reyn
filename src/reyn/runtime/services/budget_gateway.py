@@ -151,14 +151,17 @@ class BudgetGateway:
         (status-bar ctx chip's headline figure). Overwritten (not
         accumulated) on each call.
 
-        #4703/#4709: this field's only two writers today are
-        :meth:`accumulate` (``session.py``'s own router-turn-result path)
-        and :meth:`add_router_usage` (``router_loop_driver.py``) — both
-        ROUTER calls. That is why the ctx chip's figure never needs a
-        ``purpose`` filter: compaction's own LLM call (a real, separate
-        recorder — ``BudgetTracker`` via ``recorder=self._budget_tracker``
-        in ``session.py``, never this gateway) has no path to this field at
-        all. If a THIRD writer is ever wired to this gateway from a
+        #4703/#4709/#5745: this field's writers today are :meth:`accumulate`
+        (``session.py``'s own router-turn-result path), :meth:`add_router_usage`
+        (``router_loop_driver.py``, once per whole turn), and
+        :meth:`update_last_call_usage` (``router_loop.py``'s own
+        ``on_call_usage`` wire, once per LLM call — #5745, the actual LIVE
+        source most of the time a turn is in flight) — all three ROUTER
+        calls. That is why the ctx chip's figure never needs a ``purpose``
+        filter: compaction's own LLM call (a real, separate recorder —
+        ``BudgetTracker`` via ``recorder=self._budget_tracker`` in
+        ``session.py``, never this gateway) has no path to this field at
+        all. If a FOURTH writer is ever wired to this gateway from a
         non-router call site (a purpose OTHER than the conversation turn),
         it will overwrite this property with that call's usage instead —
         silently, no exception, no raise — and the ctx chip will start
@@ -185,6 +188,29 @@ class BudgetGateway:
         if cost_breakdown is not None:
             self._total_cost_breakdown += cost_breakdown
 
+    def update_last_call_usage(self, usage: "TokenUsage | None") -> None:
+        """#5745: the LIVE per-call wire — ``router_loop.py``'s
+        ``on_call_usage`` callback calls this immediately after EVERY LLM
+        call, not just once at the whole turn's end. Touches ONLY
+        ``_last_call_usage`` — never billing (``_total_usage``/
+        ``_total_cost_usd``/``_total_cost_breakdown``, all still exclusively
+        :meth:`add_router_usage`'s and :meth:`accumulate`'s own job, each
+        called exactly as often as before this method existed) — calling
+        this per-call is what a per-call call to ``add_router_usage``
+        itself would have double(triple/...)-counted into billing, which
+        is why this narrower method exists instead of just calling that
+        one more often.
+
+        ``None`` or an all-zero ``usage`` (a call whose provider echoed no
+        usage at all — ``TokenUsage`` has no ``__bool__``, so a bare
+        ``TokenUsage()`` is truthy despite being empty; ``total_tokens``
+        is the real emptiness check, mirroring ``add_router_usage``'s own
+        ``usage.total_tokens == 0`` guard) is a no-op — the previous
+        value, however stale, is a more honest answer than silently
+        zeroing what was actually the most recently OBSERVED figure."""
+        if usage is not None and usage.total_tokens != 0:
+            self._last_call_usage = usage
+
     def add_router_usage(
         self, *, usage: TokenUsage, last_call_usage: "TokenUsage | None" = None,
         resolver, router_model_name: str,
@@ -201,11 +227,23 @@ class BudgetGateway:
         count every call). ``last_call_usage`` — the single most recent call,
         from RouterLoop.last_call_usage — is what last_call_usage reports;
         they are NOT the same figure for a multi-tool-iteration turn.
+
+        #5745 fix: a ``None`` (or omitted) ``last_call_usage`` no longer
+        falls back to writing ``usage`` (the TURN-SUMMED figure) into the
+        single-most-recent-call field — that fallback was itself the bug
+        this issue named, now unreachable from its own ONE call site
+        (``router_loop_driver.py`` always passes ``loop.last_call_usage``)
+        but left in place before as a live footgun for any future caller
+        that omitted it. ``None`` here means "nothing to say about the
+        most recent call" — leave whatever :meth:`update_last_call_usage`
+        (the #5745 per-call live wire) already wrote alone, never overwrite
+        it with a turn aggregate.
         """
         if usage is None or usage.total_tokens == 0:
             return
         self._total_usage += usage
-        self._last_call_usage = last_call_usage if last_call_usage is not None else usage
+        if last_call_usage is not None:
+            self._last_call_usage = last_call_usage
         # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
         from reyn.llm.llm import proxy_kwargs
         from reyn.llm.pricing import estimate_cost, estimate_cost_breakdown
