@@ -394,8 +394,10 @@ def test_this_cell_reaches_the_paradigm_without_a_represent_round() -> None:
         "this transport gets for free is not happening"
     )
 
+    # #5739: a real (protocol-conforming) ops, not None — this branch
+    # never dispatches through ops, but the parameter is non-Optional.
     represented = RetrievalScheme().interpret(
-        _ToolCallResp(), tool_catalog={}, ops=None,
+        _ToolCallResp(), tool_catalog={}, ops=_Ops(wrappers=[], catalog=[]),
     )
     assert isinstance(represented, RePresent), (
         "the tool_calls sibling no longer RePresents, so this arm is contrasting "

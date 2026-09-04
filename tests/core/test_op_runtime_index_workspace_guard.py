@@ -53,9 +53,25 @@ class _NullEventLog:
 
 def _make_ctx_no_workspace() -> OpContext:
     """Construct an OpContext with workspace=None — the failure mode the
-    fix guards against."""
+    fix guards against.
+
+    #5739: ``OpContext.workspace`` is declared non-Optional (every LIVE
+    production chokepoint always supplies a real ``Workspace`` — measured,
+    not assumed: the offending caller this guard was written for was
+    itself retired, FP-0066 P1b, per this file's own docstring). Widening
+    the field to ``Workspace | None`` to make this ONE deliberate
+    regression test type-clean was measured and rejected: it adds 23 NEW
+    mypy findings across 5 OTHER files in ``src/reyn`` (every unguarded
+    ``ctx.workspace.<attr>`` access project-wide), a ripple far outside
+    this gate's own scope (architect's #5739 ruling: a narrow, zero-FP
+    gate — not a vehicle for a shared dataclass field's contract change).
+    ``# type: ignore`` here is the deliberate, narrow exception: this
+    test's own stated purpose IS constructing the "should never happen"
+    state the still-live ``index_query``/``index_drop`` guards defend
+    against — passing a real ``Workspace`` instead would stop exercising
+    the guard this test exists to pin."""
     return OpContext(
-        workspace=None,
+        workspace=None,  # type: ignore[arg-type]
         events=_NullEventLog(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,

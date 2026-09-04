@@ -21,11 +21,61 @@ from pathlib import Path
 import pytest
 
 from reyn.interfaces.repl.read_model import RegistryReadModel, RemoteReadModel
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+
+
+class _InertTransport(ClientTransportStub):
+    """#5739: a real, minimal ClientTransport — RemoteReadModel's own
+    ``transport`` is declared non-Optional, and the production
+    construction site (remote_client.py) always passes a real one. The
+    methods under test here never touch it at all (verified: only
+    ``snapshot()``, not exercised below, reads ``self._transport``), so
+    this never needs to do anything beyond existing. Not a cross-file
+    import of test_3338's own ``_EventOnlyTransport`` (same shape, kept
+    local per this session's established convention)."""
+
+    def start(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def close(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def frames(self):  # pragma: no cover - never iterated here
+        # unreachable — satisfies "async generator"
+        return
+        yield
+
+    async def submit_user_text(self, text: str) -> str:  # pragma: no cover
+        return ""
+
+    async def run_slash_command(self, name: str, args: str) -> bool:  # pragma: no cover
+        return True
+
+    async def answer_intervention_text(self, text: str, *, intervention_id=None) -> bool:  # pragma: no cover
+        return False
+
+    async def answer_intervention_choice(self, choice_id: str, *, intervention_id=None) -> bool:  # pragma: no cover
+        return False
+
+    def has_session(self) -> bool:
+        return False
+
+    def pending_intervention_head(self) -> "object | None":
+        return None
+
+    def put_display(self, msg) -> None:  # pragma: no cover
+        pass
+
+    async def cancel_inflight(self) -> str:  # pragma: no cover - trivial
+        return ""
+
+    async def shutdown(self) -> None:  # pragma: no cover - trivial
+        pass
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
@@ -138,7 +188,7 @@ def test_remote_read_model_always_degrades_to_zero() -> None:
     """Tier 1: frame-sufficiency accept side — a remote client holds no
     session and no on-disk history to extend into; every call (targeted or
     not) degrades to 0, never a fabricated count."""
-    rm = RemoteReadModel(transport=None)
+    rm = RemoteReadModel(transport=_InertTransport())
 
     assert rm.load_older_conversation_history() == 0
     assert rm.load_older_conversation_history(agent="anything", session_id="main") == 0
@@ -154,7 +204,7 @@ def test_remote_read_model_split_methods_agree_with_conversation_history() -> No
     frame-sufficiency degrade (``[]``) as calling ``conversation_history()``
     directly, so a future base-class default change is caught here rather
     than only by this class's silence (six-questions ④)."""
-    rm = RemoteReadModel(transport=None)
+    rm = RemoteReadModel(transport=_InertTransport())
 
     assert rm.resolve_conversation_history_source() == []
     assert rm.conversation_history_from_source([]) == []

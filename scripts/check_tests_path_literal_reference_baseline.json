@@ -510,6 +510,16 @@
     "class": "stale"
   },
   {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/runtime/test_foo.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/x.py",
+    "class": "never-existed"
+  },
+  {
     "file": "tests/scripts/test_5691_ci_diff_filter_excludes_deletions.py",
     "literal": "tests/test_edit_me.py",
     "class": "never-existed"

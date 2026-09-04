@@ -186,7 +186,13 @@ def test_reactivity_is_required_at_session_boundary() -> None:
     from reyn.runtime.session import Session
 
     with pytest.raises(TypeError, match="reactivity configuration is required"):
-        Session.__init__(object(), None, None, None, reactivity=None)
+        # #5739: deliberately NOT real Agent/SnapshotGenerationStore/
+        # SnapshotJournal instances — this test's own claim is that the
+        # `reactivity is None` guard fires BEFORE any of those 3 args are
+        # ever touched, so building real ones just to satisfy the
+        # declared (non-Optional) types would prove nothing extra.
+        # type: ignore[arg-type] on the 3 positional Nones only.
+        Session.__init__(object(), None, None, None, reactivity=None)  # type: ignore[arg-type]
 
 
 def test_uniform_config_is_single_sourced_in_the_bundle() -> None:

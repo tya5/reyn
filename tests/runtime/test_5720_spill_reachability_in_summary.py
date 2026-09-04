@@ -107,8 +107,13 @@ def _make_controller(
 
 
 def _make_history_buffer(
-    *, history: "list[ChatMessage]", media_store: "MediaStore",
+    *, history: "list[ChatMessage]", media_store: "MediaStore | None",
 ) -> RouterHistoryBuffer:
+    # #5739: this helper's own annotation was stricter than the real class
+    # it wraps — RouterHistoryBuffer.__init__'s own media_store is
+    # documented "MediaStore | None — for _serialise_turn", and production
+    # legitimately passes None (Session._media_store, multimodal disabled).
+    # Widened to match reality, not to demand a non-null MediaStore.
     return RouterHistoryBuffer(
         history_fn=lambda: history,
         compaction=CompactionConfig(use_chars4_estimate=True),

@@ -20,6 +20,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.scheme import (
     CodeBlock,
@@ -127,7 +128,10 @@ class _FakeCodeActScheme:
 
 
 def _result(content: str) -> LLMToolCallResult:
-    return LLMToolCallResult(content=content, tool_calls=[], usage=None, finish_reason="stop")
+    # #5739: a real TokenUsage(), not None — matching production's own
+    # fallback (llm.py's real construction site: `usage = _extract_usage
+    # (response) or TokenUsage()`, never None even on a degraded response).
+    return LLMToolCallResult(content=content, tool_calls=[], usage=TokenUsage(), finish_reason="stop")
 
 
 @pytest.mark.asyncio

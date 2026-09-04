@@ -64,6 +64,7 @@ from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
 from reyn.hooks.bus import HookBus
 from reyn.hooks.schema_registry import is_emittable_llm_kind
 from reyn.schemas.models import EmitHookEventIROp
@@ -77,8 +78,10 @@ from reyn.tools.types import RouterCallerState, ToolContext
 
 
 def _op_context(*, session_id: str, hook_bus: HookBus, events: EventLog) -> OpContext:
+    # #5739: a real Workspace, not None — this op (emit_hook_event) never
+    # reads ctx.workspace, but the field is declared non-Optional.
     return OpContext(
-        workspace=None,
+        workspace=Workspace(events),
         events=events,
         permission_decl=PermissionDecl(),
         session_id=session_id,
