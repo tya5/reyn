@@ -2260,9 +2260,13 @@ class RouterLoop:
             if _peek_injection_fn is not None and not _force_close_now:
                 _injection = await _peek_injection_fn()
                 if _injection is not None:
+                    # #5677: preserve producer provenance on the wire; only
+                    # CLIENT_INPUT uses the user role, while AGENT_REQUEST is
+                    # a peer-authored note and must not look operator-authored.
                     _injected_payload = _injection["payload"]
+                    _injected_kind = _injection.get("kind", "user")
                     _injected_msg = {
-                        "role": "user",
+                        "role": "user" if _injected_kind == "user" else "assistant",
                         "content": _injected_payload.get("text") or "",
                     }
                     messages = [*messages, _injected_msg]

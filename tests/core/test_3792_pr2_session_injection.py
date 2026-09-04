@@ -37,7 +37,7 @@ import pytest
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
-from reyn.runtime.turn_origin import TurnOrigin
+from reyn.runtime.turn_origin import MID_TURN_INJECTABLE, TurnOrigin
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
 
@@ -79,7 +79,7 @@ _NON_CLIENT_INPUT_KWARGS: dict[TurnOrigin, dict] = {
 
 @pytest.mark.asyncio
 async def test_only_client_input_origin_is_peek_eligible(tmp_path):
-    """Tier 2: #3792 — exhaustive origin gate over ALL 10 ``TurnOrigin``
+    """Tier 2: #5677 — exhaustive injection eligibility over ALL 10 ``TurnOrigin``
     members (vacuity guard: asserts the enumeration itself is non-empty and
     matches the expected 10, so a future member silently added to the enum
     without a corresponding case here is caught, not silently vacuous).
@@ -99,13 +99,17 @@ async def test_only_client_input_origin_is_peek_eligible(tmp_path):
         "above to cover the new/removed member before trusting this gate again"
     )
 
+    assert MID_TURN_INJECTABLE == {TurnOrigin.CLIENT_INPUT, TurnOrigin.AGENT_REQUEST}
     for origin, kwargs in _NON_CLIENT_INPUT_KWARGS.items():
         session, state_log = _make_session(
             tmp_path / f"{origin.value}.wal", tmp_path / f"{origin.value}.json",
         )
         await session._put_inbox(origin, kwargs)
         result = await session._inbox_arbiter.peek_mid_turn_injection()
-        assert result is None, f"origin {origin!r} must NOT be peek-eligible"
+        if origin in MID_TURN_INJECTABLE:
+            assert result is not None, f"origin {origin!r} must be peek-eligible"
+        else:
+            assert result is None, f"origin {origin!r} must NOT be peek-eligible"
         await state_log.aclose()
 
     # Positive control: CLIENT_INPUT (via the real submit_user_text path) IS eligible.
@@ -150,8 +154,8 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
 
     await session._put_inbox(
-        TurnOrigin.AGENT_REQUEST,
-        {"from_agent": "a", "request": "r", "depth": 1, "chain_id": "c1"},
+        TurnOrigin.HOOK,
+        {"name": "background-hook", "text": "hook work"},
     )
     await session.submit_user_text("second, eligible")
 
@@ -160,16 +164,16 @@ async def test_peek_looks_past_an_ineligible_head_but_consume_order_is_unchanged
         "#5647: peek must look PAST the ineligible AGENT_REQUEST head to find "
         "the operator's message — stopping here is the reported defect"
     )
-    assert peeked["payload"]["text"] == "second, eligible"
+    assert peeked["payload"].get("text") == "second, eligible"
 
     # The item looked past is NOT consumed by the peek, and is still first.
     kind, payload = await session._inbox_arbiter.consume_inbox()
-    assert kind == TurnOrigin.AGENT_REQUEST, (
+    assert kind == TurnOrigin.HOOK, (
         "the FIRST item consume_inbox returns must still be the ineligible "
         "head — injection reorders what the MODEL sees, never what the turn "
         "boundary consumes"
     )
-    assert payload["request"] == "r"
+    assert payload["text"] == "hook work"
 
     kind2, payload2 = await session._inbox_arbiter.consume_inbox()
     assert kind2 == TurnOrigin.CLIENT_INPUT

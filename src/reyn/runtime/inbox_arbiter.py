@@ -39,7 +39,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
-from reyn.runtime.turn_origin import TurnOrigin
+from reyn.runtime.turn_origin import MID_TURN_INJECTABLE
 
 if TYPE_CHECKING:
     from reyn.runtime.services.snapshot_journal import SnapshotJournal
@@ -222,11 +222,11 @@ class InboxArbiter:
         return kind, payload
 
     async def peek_mid_turn_injection(self) -> "dict | None":
-        """#3792: non-blocking, non-committing peek at the inbox head for a
-        mid-turn ``CLIENT_INPUT`` injection candidate.
+        """#3792: non-blocking, non-committing peek at the inbox for a
+        mid-turn injection candidate from :data:`MID_TURN_INJECTABLE`.
 
-        Returns ``{"payload": dict, "msg_id": str}`` for the FIRST eligible,
-        uncancelled ``CLIENT_INPUT`` in arrival order; ``None`` when there is
+        Returns ``{"payload": dict, "msg_id": str, "kind": TurnOrigin}`` for
+        the FIRST eligible item in arrival order; ``None`` when there is
         none (empty queue, or nothing but ineligible origins).
 
         Does NOT commit — ``self._journal``/``snapshot.inbox`` (the SSoT) is
@@ -260,9 +260,10 @@ class InboxArbiter:
           when none, so the key is always present and the deny case is
           distinguishable from an absent field).
 
-        Eligibility itself is UNCHANGED (#3792 / provenance gate #3595): only
-        ``CLIENT_INPUT`` may be injected. What is looked past is every other
-        ``TurnOrigin`` — machine- and agent-originated work.
+        Eligibility is the explicit :data:`MID_TURN_INJECTABLE` set (#5677):
+        local client input and trusted agent requests may be injected. What is
+        looked past is every other ``TurnOrigin`` — machine-originated work and
+        untrusted or terminal results.
 
         A CANCELLED item is the one case this DOES discard outright — mirrors
         ``consume_inbox``'s own skip-at-consume handling, since a cancelled
@@ -284,10 +285,10 @@ class InboxArbiter:
                 self.cancelled_msg_ids.discard(msg_id)
                 del self.pending_inbox_items[scan]
                 continue
-            if kind != TurnOrigin.CLIENT_INPUT:
+            if kind not in MID_TURN_INJECTABLE:
                 scan += 1
                 continue
-            return {"payload": payload, "msg_id": msg_id}
+            return {"payload": payload, "msg_id": msg_id, "kind": kind}
 
     def skipped_over_before(self, msg_id: "str | None") -> "list[dict]":
         """#5647: the items injection looked past to reach ``msg_id``, as

@@ -32,6 +32,7 @@ class _InjectingHost(FakeRouterHost):
         self._queued: dict | None = {
             "payload": {"text": injection_text, "chain_id": "inj-chain", "meta": {}},
             "msg_id": "inj-1",
+            "kind": "user",
         }
         self.committed_msg_ids: list[str] = []
         # Mirrors real production timing: the queue only has something for

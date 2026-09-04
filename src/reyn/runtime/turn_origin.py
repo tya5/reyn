@@ -180,4 +180,11 @@ class TurnOrigin(StrEnum):
     PEER_SESSION = "peer_session"
 
 
-__all__ = ["TurnOrigin"]
+# Mid-turn injection is a separate eligibility axis: only text authored by
+# the local operator or a trusted sub-agent request may interrupt a running
+# tool round. External transport, cron, replies, and pipeline results remain
+# ordinary turn-boundary work until their policy is decided.
+MID_TURN_INJECTABLE = frozenset({TurnOrigin.CLIENT_INPUT, TurnOrigin.AGENT_REQUEST})
+
+
+__all__ = ["MID_TURN_INJECTABLE", "TurnOrigin"]
