@@ -475,13 +475,23 @@ state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
   `attached_name`, `model`, `agent_names`, `session_tree`,
-  `model_active_class`, `model_classes` (#5094), `visibility_items`,
-  `mcp_subscriptions` (#5185), `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `waiting_on`, `pending_intervention_head`
-  (#5050), `queue`, `turn_active`, `queue_seq` (#3300 P2a),
-  `halted_reason`. `agui/state.py`'s own `project_status` is the sole
-  declaration of this list (#5098) — read it directly rather than trusting
-  this doc's transcription to stay current.
+  `all_sessions_status` (#5729), `model_active_class`, `model_classes`
+  (#5094), `visibility_items`, `mcp_subscriptions` (#5185), `cost_agent`,
+  `cost_total`, `agent_tokens`, `ctx_used`, `ctx_window`, `waiting_on`,
+  `pending_intervention_head` (#5050), `queue`, `turn_active`, `queue_seq`
+  (#3300 P2a), `halted_reason`. `agui/state.py`'s own `project_status` is
+  the sole declaration of this list (#5098) — read it directly rather than
+  trusting this doc's transcription to stay current.
+
+`all_sessions_status` (#5729) is `AgentRegistry.all_sessions_status()` —
+per-session `{agent, sid, turn_active, iv_waiting}` for every LOADED
+session in this process (never a sibling process, #5694/#5714). Unlike
+`turn_active` above (scoped to the one attached session), this covers
+every session so the agent tab can show them all — including ones a
+remote client has not attached. `turn_active`/`iv_waiting` are carried as
+2 INDEPENDENT booleans, never collapsed into a status enum: a turn can be
+dispatched and ALSO waiting on an intervention answer at once, and that
+combination is the one an operator most needs to see.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
 

@@ -69,6 +69,12 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         # graceful-degrade placeholder.
         "agent_names": snap.get("agent_names", []),
         "session_tree": snap.get("session_tree", []),
+        # #5729: turn_active/iv_waiting for every loaded session in THIS
+        # process (owner ruling B: a remote client sees them even unattached)
+        # — same pattern as #5094's session_tree forwarding above, real
+        # per-connection data computed server-side
+        # (``AgentRegistry.all_sessions_status()``), not a placeholder.
+        "all_sessions_status": snap.get("all_sessions_status", []),
         "model_active_class": snap.get("model_active_class"),
         "model_classes": snap.get("model_classes", []),
         # #5185: the same pattern #5094 used above — real per-session data

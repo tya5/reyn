@@ -299,7 +299,7 @@ class ChatReadModelCapabilities:
     # ``attached_name_reported`` are declared here at the SAME time the
     # underlying wire gap is fixed, so there is no window where the
     # declaration exists but the value is still fabricated.
-    agent_roster_reported: bool  # covers `agent_names` + `session_tree` together
+    agent_roster_reported: bool  # covers `agent_names` + `session_tree` + `all_sessions_status` (#5729) together
     model_catalog_reported: bool  # covers `model_classes` + `model_active_class` together
     attached_name_reported: bool
     # #5185: see the class docstring's own section for why these reverse
@@ -880,6 +880,9 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "model_classes": v.get("model_classes", []),
         "agent_names": v.get("agent_names", []),
         "session_tree": v.get("session_tree", []),
+        # #5729: same pattern — real wire data, not a placeholder (see
+        # agui/state.py's ``project_status`` docstring for the field).
+        "all_sessions_status": v.get("all_sessions_status", []),
         "cost_agent": v.get("cost_agent", 0.0),
         "cost_total": v.get("cost_total", 0.0),
         "cost_usd": v.get("cost_agent", 0.0),

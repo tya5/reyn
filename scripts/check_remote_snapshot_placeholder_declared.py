@@ -108,6 +108,10 @@ _GROUPED_AXIS_KEYS = {
     # #5094/#5097: one flag covers both halves of the agent roster.
     "agent_names": "agent_roster_reported",
     "session_tree": "agent_roster_reported",
+    # #5729: per-session turn_active/iv_waiting rides the SAME roster axis
+    # as session_tree above — it is the same registry-derived roster data,
+    # always projected together, not a separately-gateable capability.
+    "all_sessions_status": "agent_roster_reported",
     # #5094/#5097: one flag covers both halves of the model-class catalog.
     "model_classes": "model_catalog_reported",
     "model_active_class": "model_catalog_reported",
