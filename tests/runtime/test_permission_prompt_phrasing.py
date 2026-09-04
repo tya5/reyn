@@ -27,6 +27,8 @@ from reyn.core.events.events import EventLog
 from reyn.intervention_choices import generic_yn_choices
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.services.intervention_handler import InterventionHandler
+from reyn.runtime.services.intervention_registry import InterventionRegistry
+from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -80,26 +82,35 @@ async def test_require_web_fetch_prompt_is_natural(tmp_path) -> None:
 # ── 2. End-to-end announce: meta.prompt carries natural phrasing ────────
 
 
-async def _capture_announce(iv: UserIntervention) -> OutboxMessage:
+async def _capture_announce(iv: UserIntervention, tmp_path: Path) -> OutboxMessage:
     """Run the production announce() path and capture the produced msg."""
     captured: list[OutboxMessage] = []
 
     async def _put(msg: OutboxMessage) -> None:
         captured.append(msg)
 
+    async def _on_announce(_iv: UserIntervention) -> None:
+        pass
+
     handler = InterventionHandler(
-        # #5739: intervention_registry/journal are declared non-Optional
-        # (production's one construction site, session.py:6406, always
-        # passes real ones) but announce() — the only method this helper
-        # calls — never touches either. Building real instances just to
-        # satisfy the type checker would add machinery this test's own
-        # narrow claim (announce()'s outbox message shape) doesn't need.
-        intervention_registry=None,  # type: ignore[arg-type]
-        journal=None,  # type: ignore[arg-type]
-        # #5729: announce() now also emits "intervention_announced" via
-        # self._events — a real EventLog, not None. Production's one
-        # construction site (session.py:6406) always passes a real one
-        # (self._audit_events, never None).
+        # #5739 (lead-coder's own follow-up finding on this exact file,
+        # same night): NOT a type:ignore, even though announce() — the
+        # only method this helper calls — never touches either TODAY.
+        # That was the EXACT reasoning that made event_log=None silently
+        # green here for hours until #5734 added one line to announce()
+        # that DID touch it, costing a CI round-trip. Both are cheap to
+        # construct for real (CLAUDE.md: "never fake a collaborator when
+        # a real instance is cheaply constructible") — a real
+        # InterventionRegistry just needs a no-op async on_announce
+        # callback; a real SnapshotJournal with state_log=None disables
+        # persistence (its own documented, intentional no-op mode) and
+        # needs only an agent_name + a throwaway snapshot_path.
+        intervention_registry=InterventionRegistry(on_announce=_on_announce),
+        journal=SnapshotJournal(
+            agent_name="permission-prompt-phrasing-test",
+            snapshot_path=tmp_path / "snapshot.json",
+            state_log=None,
+        ),
         event_log=EventLog(),
         put_outbox=_put,
         append_history=lambda *_a, **_k: None,
@@ -110,7 +121,7 @@ async def _capture_announce(iv: UserIntervention) -> OutboxMessage:
 
 
 @pytest.mark.asyncio
-async def test_announce_meta_carries_natural_prompt() -> None:
+async def test_announce_meta_carries_natural_prompt(tmp_path: Path) -> None:
     """Tier 2: the natural prompt flows through announce() into meta.prompt.
 
     Pins the end-to-end: TUI widget reads meta.prompt → renders as
@@ -125,7 +136,7 @@ async def test_announce_meta_carries_natural_prompt() -> None:
         run_id="r1",
         actor="chat_router",
     )
-    msg = await _capture_announce(iv)
+    msg = await _capture_announce(iv, tmp_path)
     assert msg.meta["prompt"] == "Allow fetching this URL?"
     assert msg.meta["detail"] == "web fetch: https://example.com"
     # msg.text (CLI Panel renderer backward-compat) still has it all
