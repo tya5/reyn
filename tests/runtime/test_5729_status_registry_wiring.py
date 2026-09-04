@@ -161,26 +161,33 @@ async def test_iv_waiting_push_fires_for_a_non_ask_user_intervention_kind(tmp_pa
     callers, emits ``user_intervention_requested`` directly (verified,
     interfaces/repl/renderer.py's own comment) — permission confirm, cost
     warn, MCP install confirm, elicitation, and hook confirm do NOT. The
-    signal common to all 6 is ``InterventionHandler.announce``'s own
-    OUTBOX message (``kind="intervention"``), drained by
-    ``_drain_intervention_announces_for_status`` — a DIFFERENT channel
-    than ``subscribe_audit_events``.
+    signal common to all 6 is the NEW ``intervention_announced`` audit
+    event, emitted from ``InterventionHandler.announce`` itself — the one
+    choke point every caller shares.
+
+    (An earlier revision read this off the session's OUTBOX instead,
+    since ``announce`` also puts a ``kind="intervention"`` message there.
+    That was reverted after it caused a REAL, measured regression:
+    subscribing to ``session.outbox_hub`` starts that hub's drain task
+    eagerly for every session, silently consuming ``session.outbox``
+    before any real UI ever attaches — it broke
+    ``test_multisession_history_isolation_2348.py``'s own direct
+    ``outbox.get_nowait()`` read. ``intervention_announced`` is the
+    side-effect-free fix: the same choke point, over the already-existing
+    audit-event channel.)
 
     Dispatches a ``kind="permission.generic"`` intervention (never
-    ``ask_user``) through the REAL ``dispatch()`` and asserts: a push
-    fires with ``iv_waiting=True``, AND no ``user_intervention_requested``
-    event was emitted at all — proving the outbox drain, not the
-    ask_user-only audit event, is what carried it.
-
-    ``@pytest.mark.asyncio`` (a real running loop for the WHOLE test, not a
-    nested ``asyncio.run()`` around only the drive) — the registry/session
-    construction above must run on the SAME loop the outbox hub's internal
-    queues get exercised on; constructing them with no loop running (a
-    plain sync test) and then driving them inside a separately-created
-    ``asyncio.run()`` loop is the same cross-loop mismatch class this PR's
-    own ``UserIntervention.future`` binding hit earlier — confirmed by
-    reproducing the hang locally with the sync-def shape and fixing it
-    exactly this way, not by inspection alone."""
+    ``ask_user``) through the REAL ``dispatch()`` and asserts the FULL
+    PAIR: a push fires with ``iv_waiting=True`` (no ``user_intervention_
+    requested`` event — ``intervention_announced``, not that event,
+    carried it), AND resolving it — via ``Session.
+    answer_intervention_by_id``, the REAL production resolve path (NOT
+    ``InterventionRegistry.deliver_answer`` directly, which bypasses the
+    audit emit entirely) — pushes it back to ``iv_waiting=False``.
+    Lead-coder's own #5734 follow-up warning: watching only the True
+    transition go green is the most dangerous kind of green here — a
+    fabricated "waiting" that never clears is worse than one that never
+    lit at all."""
     monkeypatch.chdir(tmp_path)
     reg = _make_registry(tmp_path)
     reg.get_or_load("alice")
@@ -193,17 +200,22 @@ async def test_iv_waiting_push_fires_for_a_non_ask_user_intervention_kind(tmp_pa
 
     iv = UserIntervention(kind="permission.generic", prompt="Allow tool 'shell'?")
     task = asyncio.ensure_future(session.interventions.dispatch(iv))
-    # The outbox drain crosses several real hops (dispatch -> announce ->
-    # put_outbox -> OutboxHub's own drain task -> this registry's drain
-    # task) — a condition wait, not a fixed sleep(0) count (CLAUDE.md: no
-    # duration the assertion depends on).
+    # A condition wait, not a fixed sleep(0) count (CLAUDE.md: no duration
+    # the assertion depends on).
     await wait_until(lambda: any(p[3] is True for p in pushes))
     assert not any(e.type == "user_intervention_requested" for e in events), (
         "this kind must never emit user_intervention_requested — "
-        "confirms the outbox drain, not that event, is the real mechanism"
+        "confirms intervention_announced, not that event, is the real mechanism"
     )
-    await session.interventions.deliver_answer(iv, "ok")
+
+    resolved = await session.answer_intervention_by_id(iv.id, "ok")
+    assert resolved is True
     await task
+    await wait_until(lambda: pushes[-1][3] is False)
+    assert any(e.type == "user_answered_intervention" for e in events), (
+        "answer_intervention_by_id must emit user_answered_intervention — "
+        "this is the OUT-side event the status subscription actually reads"
+    )
 
 
 # ── IV: head-limited announce is enough for a bool (architect's own point) ──

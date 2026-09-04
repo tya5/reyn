@@ -203,6 +203,18 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # User intervention (op_runtime/ask_user.py)
     "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
+    # #5729: fired from InterventionHandler.announce — the ONE choke point
+    # ALL 6 intervention_bus.request() callers share (ask_user/permissions/
+    # limit_handler/mcp_install/elicitation/hooks-shell_runner), unlike
+    # user_intervention_requested above (ask_user.py only, verified).
+    # Exists so a subscriber (the #5729 registry status fan-out) can learn
+    # "an intervention was just enqueued" via subscribe_audit_events alone,
+    # without also subscribing to the session's outbox (which would force
+    # every session's OutboxHub drain task to start eagerly — a real,
+    # measured regression: it silently began consuming session.outbox
+    # before any real UI ever subscribed, starving direct outbox.get_nowait()
+    # readers elsewhere in the test suite).
+    "intervention_announced": frozenset({"intervention_id", "kind"}),
     # (#3410) ``mcp_search_invoked`` / ``mcp_tool_loaded`` were declared here for
     # the FP-0024 tool_search meta-tool and REMOVED. The reason is narrower than
     # it looks, and getting it right matters more than the removal does — see
@@ -447,6 +459,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "index_update_cost_warning",
     "index_updated",
     "ingress_bridge_dropped",
+    "intervention_announced",
     "intervention_answer_submitted",
     "intervention_denied",
     "intervention_routed",

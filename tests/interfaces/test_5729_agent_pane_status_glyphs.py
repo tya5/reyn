@@ -136,9 +136,10 @@ async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
     generic"`` intervention (deliberately NOT ``ask_user``) through the
     REAL ``dispatch()`` (never a synthetic audit-event emit) and asserts
     the agent pane reacts with a transport of ZERO frames AND zero
-    ``user_intervention_requested`` events — proving the outbox-based
-    drain (``_drain_intervention_announces_for_status``), not the
-    ask_user-only audit event, is what actually carries it.
+    ``user_intervention_requested`` events — proving the NEW
+    ``intervention_announced`` audit event (emitted from
+    ``InterventionHandler.announce``, the choke point every caller
+    shares), not the ask_user-only event, is what actually carries it.
 
     Real ``AgentRegistry``/``Session``/``RegistryReadModel``/
     ``TextualChatApp`` throughout — ``app.on_mount``'s real
@@ -189,21 +190,21 @@ async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
         # lead-coder's #5734 follow-up finding: 5 of the 6
         # intervention_bus.request() callers (permission confirm being the
         # most common in real use) never emit user_intervention_requested
-        # at all; the signal common to all 6 is InterventionHandler.
-        # announce's own outbox message. Driving this via the REAL
-        # dispatch() (not a synthetic audit-event emit) is what actually
-        # exercises that shared path.
+        # at all; the signal common to all 6 is the NEW
+        # intervention_announced audit event (InterventionHandler.
+        # announce's own emit). Driving this via the REAL dispatch() (not
+        # a synthetic audit-event emit) is what actually exercises that
+        # shared path.
         iv = UserIntervention(kind="permission.generic", prompt="Allow tool 'shell'?")
         events = []
         session_b.subscribe_audit_events(events.append)
         iv_task = asyncio.ensure_future(session_b.interventions.dispatch(iv))
         try:
-            await asyncio.sleep(0)  # let dispatch() enqueue + announce() reach the outbox
+            await asyncio.sleep(0)  # let dispatch() enqueue + announce() fire
             await pilot.pause()
-            await pilot.pause()  # the outbox drain is its own task — give it a tick
             assert not any(e.type == "user_intervention_requested" for e in events), (
                 "this path must reach the pane with NO user_intervention_requested "
-                "audit event — the outbox drain is the mechanism under test, not "
+                "audit event — intervention_announced is the mechanism under test, not "
                 "a fallback to the ask_user-only event"
             )
 
@@ -212,9 +213,31 @@ async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
                 f"agent pane did not react to session B's iv_waiting with no "
                 f"frame sent: {after!r}"
             )
-        finally:
-            await session_b.interventions.deliver_answer(iv, "ok")
+
+            # ★ the pair, not just the True half (lead-coder's own #5734
+            # follow-up warning: a fabricated "waiting" that never clears
+            # is worse than one that never lit). Resolving via
+            # ``Session.answer_intervention_by_id`` — the REAL production
+            # path — not ``InterventionRegistry.deliver_answer`` directly,
+            # which bypasses the ``user_answered_intervention`` audit emit
+            # entirely and would prove nothing about the OUT side.
+            resolved = await session_b.answer_intervention_by_id(iv.id, "ok")
+            assert resolved is True
             await iv_task
+            cleared = next(r for r in _rows() if sid_b in r)
+            for _ in range(20):
+                if "?" not in cleared:
+                    break
+                await pilot.pause()
+                cleared = next(r for r in _rows() if sid_b in r)
+            assert "?" not in cleared, (
+                f"agent pane never cleared iv_waiting after the real resolve: {cleared!r}"
+            )
+        except BaseException:
+            if not iv_task.done():
+                await session_b.interventions.deliver_answer(iv, "ok")
+                await iv_task
+            raise
 
 
 @pytest.mark.asyncio

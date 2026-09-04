@@ -137,19 +137,17 @@ _LIFECYCLE_CREATE_KINDS = frozenset({"agent_created", "session_spawned"})
 # turn_active or iv_waiting — see AgentRegistry._subscribe_session_status.
 # turn_started/turn_settled (NOT chat_turn_completed_inline, which only
 # fires on one router branch — see that method's own docstring) cover
-# turn_active. ⚠️ These kinds do NOT, by themselves, cover iv_waiting's
-# ENQUEUE side for all 6 intervention paths — only ask_user.py emits
-# user_intervention_requested directly (renderer.py's own verified
-# comment); the other 5 (permissions/limit_handler/mcp_install/
-# elicitation/hooks-shell_runner) are covered by the SEPARATE outbox-based
-# drain (_drain_intervention_announces_for_status), not this set.
-# user_answered_intervention IS common to all 6 (the shared resolve
-# funnel, InterventionHandler.deliver_answer_to) and covers the RESOLVE
-# side here. No new AUDIT_EVENT_KINDS declaration is needed — every kind
-# below is already declared; this is a SUBSCRIPTION filter, not a new emit.
+# turn_active. intervention_announced covers iv_waiting's ENQUEUE side for
+# ALL 6 intervention paths (a NEW kind, declared in AUDIT_EVENT_KINDS +
+# events.md, emitted from InterventionHandler.announce — the one choke
+# point every caller shares; user_intervention_requested alone only
+# covers ask_user.py, per renderer.py's own verified comment).
+# user_answered_intervention covers the RESOLVE side (also common to all
+# 6, InterventionHandler.deliver_answer_to).
 _STATUS_AUDIT_EVENT_KINDS = frozenset({
     "turn_started",
     "turn_settled",
+    "intervention_announced",
     "user_intervention_requested",
     "user_intervention_received",
     "intervention_denied",
@@ -4160,46 +4158,54 @@ class AgentRegistry:
         (both its own call site and the ``spawn_session`` new-sid path, which
         routes through it — see that method's own note).
 
-        Two independent subscriptions, because the IN and OUT signals for
-        ``iv_waiting`` live on two DIFFERENT channels:
+        One audit-event subscription now covers both halves of
+        ``iv_waiting`` (as well as ``turn_active``):
 
-        - **turn_active**: audit events ``turn_started``/``turn_settled`` (NOT
+        - **turn_active**: ``turn_started``/``turn_settled`` (NOT
           ``chat_turn_completed_inline`` — that one only fires on the single
           router branch that took no catalog dispatch, per router_loop.py's
           own guarding ``if``; ``turn_settled`` is the unconditional
           ``finally``-block event session.py documents as firing "for EVERY
           turn kind").
-        - **iv_waiting OUT** (resolved): the audit event
-          ``user_answered_intervention`` — verified common to all 6
-          ``intervention_bus.request()`` callers (renderer.py's own comment:
-          "the SAME primitive... which all 6 paths DO share" — the
-          resolution funnel every answer path routes through,
-          ``InterventionHandler.deliver_answer_to``).
-        - **iv_waiting IN** (enqueued): NOT an audit event for 5 of the 6
-          paths — renderer.py's own verified comment: "ask_user.py is the
-          ONLY one of the 6... callers... that emits
-          ``user_intervention_requested`` directly; permissions.py /
-          limit_handler.py / mcp_install.py / elicitation.py /
-          hooks/shell_runner.py do NOT." The signal common to all 6 is the
-          OUTBOX message ``InterventionHandler.announce`` puts for every one
-          of them (``kind="intervention"``) — a different channel
-          (``session.outbox_hub``, not ``subscribe_audit_events``), drained
-          by :meth:`_drain_intervention_announces_for_status` below.
+        - **iv_waiting OUT** (resolved): ``user_answered_intervention`` —
+          verified common to all 6 ``intervention_bus.request()`` callers
+          (renderer.py's own comment: "the SAME primitive... which all 6
+          paths DO share" — the resolution funnel every answer path routes
+          through, ``InterventionHandler.deliver_answer_to``).
+        - **iv_waiting IN** (enqueued): ``intervention_announced`` — a NEW
+          #5729 audit event, emitted from ``InterventionHandler.announce``
+          (the ONE choke point all 6 callers share; ``user_intervention_
+          requested`` is ask_user.py-only, verified via renderer.py's own
+          comment).
 
-        Both paths recompute LIVE off ``session`` on every fire (never read
-        from the triggering event/message itself) — over-firing is harmless
-        (the recompute is idempotent), under-firing would leave a bool stuck
-        stale, the worse failure.
+        ⚠️ An earlier revision of this method subscribed to the session's
+        OUTBOX (``session.outbox_hub``) instead, since ``announce`` puts a
+        ``kind="intervention"`` message there too. That was a real,
+        MEASURED regression: adding a subscriber starts ``OutboxHub``'s
+        drain task eagerly for EVERY session (its own docstring: "Lazily
+        (re)starts... only when the first surface attaches") — for a
+        session nothing else has ever subscribed to, this began silently
+        consuming ``session.outbox`` before any real UI attached, starving
+        direct ``outbox.get_nowait()`` readers elsewhere (caught by
+        ``test_multisession_history_isolation_2348.py`` going from green to
+        red on this exact change). The new ``intervention_announced`` audit
+        event is the fix: same choke point, the ALREADY-existing,
+        side-effect-free ``subscribe_audit_events`` channel instead.
+
+        Recomputes both bools LIVE off ``session`` on every fire (never
+        reads from the triggering event itself) — over-firing is harmless
+        (the recompute is idempotent), under-firing would leave a bool
+        stuck stale, the worse failure.
 
         ``name``/``sid`` are captured by this call's own local scope, not a
         shared loop variable — each call to this method gets its own stack
-        frame, so neither closure below can suffer the classic late-binding
+        frame, so the closure below cannot suffer the classic late-binding
         bug where every closure in a loop ends up sharing the LAST loop
         variable's value (see the accept test that drives 2 real sessions
         and asserts the two never cross)."""
         interventions = getattr(session, "interventions", None)
 
-        def _push_status() -> None:
+        def _on_status_event(_event: "object") -> None:
             turn_active = bool(getattr(session, "turn_active", False))
             iv_waiting = (
                 not interventions.is_empty() if interventions is not None else False
@@ -4210,53 +4216,9 @@ class AgentRegistry:
             for listener in list(self._status_listeners):
                 listener(name, sid, turn_active, iv_waiting, seq)
 
-        def _on_status_event(_event: "object") -> None:
-            _push_status()
-
         subscribe = getattr(session, "subscribe_audit_events", None)
         if callable(subscribe):
             subscribe(_on_status_event, kinds=_STATUS_AUDIT_EVENT_KINDS)
-
-        outbox_hub = getattr(session, "outbox_hub", None)
-        if outbox_hub is not None:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # No running loop at session-construction time (e.g. a bare
-                # sync test harness) — the drain task cannot be scheduled.
-                # turn_active/OUT-side iv_waiting still work via the audit-
-                # event subscription above; only the 5-non-ask_user-path IN
-                # signal is unavailable until something re-subscribes on a
-                # loop (not a production path today — every real registry
-                # construction site runs on a loop).
-                loop = None
-            if loop is not None:
-                sub = outbox_hub.subscribe()
-                loop.create_task(
-                    self._drain_intervention_announces_for_status(sub, _push_status)
-                )
-
-    async def _drain_intervention_announces_for_status(
-        self, sub: "object", push: "Callable[[], None]",
-    ) -> None:
-        """Background drain for the IN half of ``iv_waiting`` (#5729) — see
-        :meth:`_subscribe_session_status`'s own docstring for why this
-        channel (the session's outbox) is needed at all: 5 of the 6
-        intervention callers never emit an audit event when they enqueue.
-
-        Exits on ``None`` (the hub's own force-closed signal) or a genuine
-        ``__end__`` message (session shutdown) — both already fire without
-        this method's help, so no separate registry-side cleanup hook is
-        needed; the task ends itself when the session it belongs to ends."""
-        while True:
-            msg = await sub.get()
-            if msg is None:
-                return
-            kind = getattr(msg, "kind", None)
-            if kind == "__end__":
-                return
-            if kind == "intervention":
-                push()
 
     def all_sessions_status(self) -> "list[dict]":
         """Snapshot of ``turn_active``/``iv_waiting`` for every live session in

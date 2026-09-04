@@ -44,6 +44,7 @@ import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -67,10 +68,27 @@ _SINGLE_BRANCH_POINTS = [
 ]
 
 
-class _PickerReadModel:
+class _PickerReadModel(ChatReadModel):
     """The same minimal read model ``test_textual_chat_copy_rewind_3362.py``
     uses — reproduced rather than imported so this file does not reach into
-    that one's private test scaffolding."""
+    that one's private test scaffolding.
+
+    #5729 (lead-coder's #5734 review, real CI red): this class did NOT
+    inherit ``ChatReadModel`` before — a bare duck-type satisfying only
+    the methods this file's OWN test happened to call. That meant it
+    never picked up ``ChatReadModel``'s new ``add_status_listener``/
+    ``remove_status_listener`` no-op defaults, and ``TextualChatApp.
+    on_unmount``'s unconditional call to the latter crashed with
+    ``AttributeError`` on real CI. Inheriting the real ABC — the SAME fix
+    ``test_textual_chat_copy_rewind_3362.py``'s own copy of this class
+    already has — closes the class properly (owner's standing "close the
+    hole, don't route around it" instruction) rather than adding a
+    defensive ``getattr`` in ``app.py`` that the next new method would
+    fall through the same way."""
+
+    @property
+    def capabilities(self):
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, pending: "dict | None" = None) -> None:
         self._pending = pending
