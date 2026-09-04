@@ -189,6 +189,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
+    from reyn.config.root import ReynConfig
     from reyn.hooks.schema import HookDef
 
 
@@ -1295,7 +1296,7 @@ def _print_bounding_preference_composition(config: object, project_root: Path) -
     )
 
 
-def _print_project_context_status(config: object, project_root: Path) -> None:
+def _print_project_context_status(config: "ReynConfig", project_root: Path) -> None:
     """#5742 (architect ruling, issue #5742): doctor derives its answer by
     CALLING the same functions startup calls — never a second, hand-
     reconstructed resolution. The default-name-order, the pin, and the
