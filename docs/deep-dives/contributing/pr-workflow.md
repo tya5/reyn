@@ -292,7 +292,17 @@ These rules then keep multi-session work coherent:
    box alone no longer closes it: closing takes a comment quoting that
    line verbatim (`BLOCKING-CLEARED (head <sha>)` for the comment form),
    or the gate stays red (#5314). The author reports the fix and asks the
-   reviewer to confirm — the author does not tick the reviewer's own box.
+   reviewer to confirm — the author does not tick the reviewer's own box,
+   **and does not post the `BLOCKING-CLEARED` comment form either — same
+   asymmetry, both forms of the same marker.** This was ambiguous enough to
+   cost two sessions independently: #5607 (this session, a self-caught
+   mistake) and #5734 (tui-coder, corrected by lead-coder) both posted
+   `BLOCKING-CLEARED` as the PR's own author after fixing the reviewer's
+   point — the gate only checks whether the marker text landed as a
+   comment, never who a role-prefix claims to be (role prefixes are
+   unauthenticated, same hole rule 9 names for arm/merge), so an author's
+   own `BLOCKING-CLEARED` makes the PR read as reviewed-and-cleared when
+   the reviewer never re-read it.
    **Rule 4 applies to this edit too** — a reviewer's appended text lands
    on the same PR body surface rule 4 governs, and `check_pr_closing_intent.py`
    deliberately strips backticks before matching (the criterion is *use vs
