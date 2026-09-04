@@ -913,7 +913,6 @@ class AgentRegistry:
 
     def create(
         self, name: str, *, role: str = "", base_dir: "str | Path | None" = None,
-        project_context_path: "str | Path | None" = None,
     ) -> AgentProfile:
         """#5080: ``base_dir`` (optional) is #4206's axis ① (capability,
         restrict-only) applied to a "file zone" the agent layer had none
@@ -938,11 +937,17 @@ class AgentRegistry:
         agent-spawn with nothing given defaults to the PROJECT base_dir,
         not the spawner's.
 
-        ``project_context_path`` (#5111): same shape, same bound
-        (``within_workspace``), same "restrict-only, reject rather than
-        clamp" — #5084's own goal witness names this as declarable ONLY
-        through this creation seam (no slash command), so this is the
-        one place it needs to land."""
+        #5742 PR2 (architect ruling, issue #5742): the ``project_context_
+        path`` write-side parameter this method used to accept (#5111,
+        #5084's own creation-seam declaration path) is retired along with
+        the read side (``AgentProfile.project_context_path`` itself,
+        ``registry_bootstrap.resolve_agent_project_context``) — a live
+        creation seam that kept writing a key ``AgentProfile.load`` now
+        hard-rejects would silently make the created agent unstartable.
+        An agent's own instructed text is now declared via ``profile.
+        yaml``'s ``context_path`` (edited directly, or a future creation-
+        seam parameter for it, not yet built — no caller has asked for
+        one)."""
         _validate_agent_name(name)
         if self.exists(name):
             raise FileExistsError(f"agent {name!r} already exists")
@@ -976,39 +981,7 @@ class AgentRegistry:
                     "project workspace."
                 )
             resolved_base_dir = str(candidate)
-        resolved_project_context_path: "str | None" = None
-        if project_context_path is not None:
-            # #5111: mirrors ``base_dir`` immediately above, verbatim shape
-            # — #5084's own instruction (issue body, "①③" ordering note):
-            # ``project_context_path`` needs the IDENTICAL "⊆ workspace,
-            # restrict-only" bound ``base_dir`` already gets here, via the
-            # SAME ``within_workspace`` function (never a second,
-            # independently-written copy of the same check — the exact
-            # "same guard, different code" family #5057 closed three
-            # instances of already). The READ-side protection
-            # (``registry_bootstrap.resolve_agent_project_context``) is
-            # separate and already landed (#5086) — this is the WRITE-side
-            # twin, eager at creation time, same as ``base_dir``'s own.
-            from reyn.runtime.workspace_paths import within_workspace
-
-            candidate = Path(project_context_path)
-            if not candidate.is_absolute():
-                candidate = self._project_root / candidate
-            candidate = candidate.resolve()
-            workspace_resolved = self._project_root.resolve()
-            if not within_workspace(candidate, workspace_resolved):
-                raise ValueError(
-                    f"requested project_context_path {str(candidate)!r} "
-                    f"resolves outside the project workspace "
-                    f"{str(workspace_resolved)!r} — restrict-only: an "
-                    "agent's project_context_path must fall under the "
-                    "project workspace."
-                )
-            resolved_project_context_path = str(candidate)
-        profile = AgentProfile.new(
-            name, role=role, base_dir=resolved_base_dir,
-            project_context_path=resolved_project_context_path,
-        )
+        profile = AgentProfile.new(name, role=role, base_dir=resolved_base_dir)
         profile.save(self._dir / name)
         return profile
 
@@ -1291,7 +1264,6 @@ class AgentRegistry:
     async def create_agent(
         self, name: str, *, role: str = "", parent: "str | None" = None,
         base_dir: "str | None" = None,
-        project_context_path: "str | None" = None,
     ) -> AgentProfile:
         """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
         emit ``agent_created`` so rewind can track / reconstruct / drop the agent
@@ -1308,10 +1280,7 @@ class AgentRegistry:
         escalation-on-rewind — so the carry+restore is a security linchpin (the emit
         AND the reconstruction-restore are both verified, the registered-but-unemitted
         → resurrection hazard class)."""
-        profile = self.create(
-            name, role=role, base_dir=base_dir,
-            project_context_path=project_context_path,
-        )
+        profile = self.create(name, role=role, base_dir=base_dir)
         if parent is not None:
             self._record_spawn_lineage(name, parent)
         # #2103 C2b: the parent's identity FROZEN at this spawn — read back from the

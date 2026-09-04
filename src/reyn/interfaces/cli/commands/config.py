@@ -542,9 +542,17 @@ def _validate() -> None:
     # ReynConfig's schema) — see unknown_profile_keys's own docstring for
     # why this is a dedicated function, not a new entry in
     # unknown_config_keys.
-    from reyn.runtime.profile import unknown_profile_keys
+    from reyn.runtime.profile import retired_profile_keys_present, unknown_profile_keys
 
     profile_unknown: dict[str, "frozenset[str]"] = {}
+    # #5742 PR2: a SEPARATE, distinctly-reported population from
+    # profile_unknown above — a retired key (with a named replacement,
+    # e.g. project_context_path -> context_path) is not "unrecognized, no
+    # further signal" (unknown_profile_keys's own generic bucket); folding
+    # it in there would understate a finding that raises a hard error at
+    # AgentProfile.load to the same severity as a stale/renamed field with
+    # no effect.
+    profile_retired: dict[str, "dict[str, str]"] = {}
     if agents_dir.is_dir():
         for agent_dir in sorted(agents_dir.iterdir()):
             if not agent_dir.is_dir():
@@ -552,11 +560,15 @@ def _validate() -> None:
             profile_path = agent_dir / "profile.yaml"
             if not profile_path.is_file():
                 continue
-            # #5455 ②: CHECKED_BY_CALLER — the very next line runs
-            # unknown_profile_keys on this exact return value.
+            # #5455 ②: CHECKED_BY_CALLER — the very next lines run
+            # unknown_profile_keys/retired_profile_keys_present on this
+            # exact return value.
             raw_profile = _load_yaml(
                 profile_path, vocabulary=_CheckedElsewhere.CHECKED_BY_CALLER,
             )
+            retired_found = retired_profile_keys_present(raw_profile)
+            if retired_found:
+                profile_retired[agent_dir.name] = retired_found
             found = unknown_profile_keys(raw_profile)
             if found:
                 profile_unknown[agent_dir.name] = found
@@ -575,7 +587,7 @@ def _validate() -> None:
     if (
         not policy_unknown and not disabled and not in_set_unknown
         and not hook_entry_errors and not mcp_misplaced and not mcp_renamed_http
-        and not profile_unknown
+        and not profile_unknown and not profile_retired
     ):
         print(
             "No unknown, renamed, or disabled-by-dependency config keys "
@@ -734,6 +746,32 @@ def _validate() -> None:
             "leaves this line behind in an operator's file with no "
             "further signal until now. Fix by hand: remove the key(s) "
             "above from the file named."
+        )
+
+    if profile_retired:
+        # #5742 PR2: a SEPARATE section from profile_unknown above — a
+        # retired key raises a HARD error at AgentProfile.load (unlike a
+        # merely-unrecognized one, which is read and ignored), so this
+        # report is deliberately louder and names the replacement.
+        if (
+            policy_unknown or disabled or in_set_unknown or hook_entry_errors
+            or mcp_misplaced or mcp_renamed_http or profile_unknown
+        ):
+            print()
+        print(
+            f"Agent profile.yaml — {len(profile_retired)} agent(s) with "
+            f"RETIRED key(s) (these agents cannot start until fixed):\n"
+        )
+        for agent_name, retired in sorted(profile_retired.items()):
+            lines = ", ".join(
+                f"{old!r} -> use {new!r} instead"
+                for old, new in sorted(retired.items())
+            )
+            print(f"  [{agent_name}] {lines}")
+        print(
+            "\nEach key above is not merely unrecognized — AgentProfile."
+            "load() raises for it, so the agent named cannot start until "
+            "its profile.yaml is fixed by hand."
         )
 
 
