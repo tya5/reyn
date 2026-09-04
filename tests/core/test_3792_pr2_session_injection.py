@@ -30,6 +30,7 @@ Real ``Session``/``StateLog``/``SnapshotJournal`` throughout (the
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -449,6 +450,92 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     (only,) = turn_started_events
     assert only.data["kind"] == TurnOrigin.CLIENT_INPUT
     assert only.data["chain_id"] == peeked[0]["payload"]["chain_id"]
+
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_commit_of_a_hook_injection_reaches_the_live_display(tmp_path):
+    """Tier 2: #5755 — owner-reported (real machine): a HOOK injection was
+    read by the LLM and acted on (confirmed in history), but never showed
+    on the operator's own screen. Root cause: the ONLY live-display path
+    (app.py's ``_handle_turn_started_event`` "promote") is keyed to a
+    sent-queue item's own ``chain_id``; a HOOK push never went through the
+    sent-queue (nobody typed it) and carries ``chain_id=None``, so the
+    promote's own match always finds zero items — nothing ever reaches
+    the screen, even though history/the model both saw it correctly.
+
+    Fix: ``_commit_mid_turn_injection`` ALSO pushes the same rendered text
+    through ``_put_outbox`` (``kind="system"``) — the SAME live-display
+    convention ``lifecycle_forwarder.py``'s own notices already use — a
+    separate path from the sent-queue promote, not a repair of it.
+
+    Falsification (performed during review): removing the new
+    ``_put_outbox`` call from ``_commit_mid_turn_injection`` makes the
+    ``session.outbox.get_nowait()`` call below raise ``QueueEmpty``."""
+    session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
+
+    await session._put_inbox(
+        TurnOrigin.HOOK,
+        {"name": "on_idle", "text": "check the queue", "point": "mcp_resource_updated"},
+    )
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
+    (only,) = peeked
+
+    await session._commit_mid_turn_injection(only["msg_id"])
+    await settle(session)
+
+    pushed = session.outbox.get_nowait()
+    assert pushed.kind == "system"
+    assert pushed.text == "[hook:on_idle] check the queue"
+
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_commit_of_an_agent_request_injection_also_reaches_the_live_display(tmp_path):
+    """Tier 2: #5755 scope check (lead-coder's own explicit ask, unmeasured
+    by them) — AGENT_REQUEST is ALSO not sent-queue-backed (nobody typed
+    it), so it has the SAME display gap HOOK does, and the SAME fix
+    covers it (the fix branches on rendered role, not on kind)."""
+    session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
+
+    await session._put_inbox(
+        TurnOrigin.AGENT_REQUEST,
+        {"from_agent": "peer-agent", "request": "please redo step 1", "depth": 1, "chain_id": "c1"},
+    )
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
+    (only,) = peeked
+
+    await session._commit_mid_turn_injection(only["msg_id"])
+    await settle(session)
+
+    pushed = session.outbox.get_nowait()
+    assert pushed.kind == "system"
+    assert pushed.text == "[agent_request:peer-agent] please redo step 1"
+
+    await state_log.aclose()
+
+
+@pytest.mark.asyncio
+async def test_commit_of_client_input_does_not_double_push_to_the_outbox(tmp_path):
+    """Tier 2: #5755 — CLIENT_INPUT's own promote path (app.py's
+    ``_handle_turn_started_event``, matched by the sent-queue's own
+    ``chain_id``) already works correctly and is untouched by this fix;
+    the NEW outbox push is gated on ``_rendered["role"] != "user"``
+    specifically so CLIENT_INPUT (the ONE role="user" member) is never
+    ALSO pushed here — that would double-render the operator's own line."""
+    session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
+
+    msg_id = await session.submit_user_text("inject me", attribution=None)
+    peeked = await session._inbox_arbiter.peek_mid_turn_injections()
+    assert peeked[0]["msg_id"] == msg_id
+
+    await session._commit_mid_turn_injection(msg_id)
+    await settle(session)
+
+    with pytest.raises(asyncio.QueueEmpty):
+        session.outbox.get_nowait()
 
     await state_log.aclose()
 

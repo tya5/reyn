@@ -7582,6 +7582,34 @@ class Session:
             # producer (#5684) — content meant for the model, MODEL.
             disclosure=Disclosure.MODEL,
         ))
+        # #5755 (owner-reported, real-machine): a NON-CLIENT_INPUT injection
+        # (AGENT_REQUEST / EXTERNAL_MESSAGE / HOOK) was durably appended to
+        # history above, but had NO live-display path at all — the only
+        # mouth that ever reaches the screen is app.py's
+        # ``_handle_turn_started_event`` "promote" (this event, below), and
+        # that promote is keyed to a SENT-QUEUE item's own ``chain_id``; a
+        # producer that never went through the sent-queue (this is never
+        # something the operator typed) has nothing there to match, so the
+        # promote silently finds zero matches and nothing appears — the
+        # LLM read it and acted (confirmed in history/the model's own
+        # reply), the operator's own screen just never showed it.
+        #
+        # Fix: push the SAME rendered text the history entry just got,
+        # ``kind="system"``, through ``_put_outbox`` — the SAME live-display
+        # convention ``lifecycle_forwarder.py``'s own notices (budget
+        # warnings, compaction, #5732's pump-failure visibility) already
+        # use, reused as-is rather than inventing a second mechanism.
+        # Deliberately does NOT touch the sent-queue/``chain_id`` matching
+        # at all — a mid-turn injection is not a queue item and stamping a
+        # fabricated one onto it would misrepresent a fact nobody typed
+        # (lead-coder's own explicit warning, #5755 issue thread). This is
+        # a SEPARATE, parallel display path, not a repair of the promote
+        # one — CLIENT_INPUT is excluded because its own promote path
+        # already works correctly; pushing here too would double-render it.
+        if _rendered["role"] != "user":
+            await self._put_outbox(
+                OutboxMessage(kind="system", text=_rendered["content"], meta=payload.get("meta") or {}),
+            )
         await self._journal.consume_inbox(msg_id=msg_id)
         self._audit_events.emit(
             "turn_started",
