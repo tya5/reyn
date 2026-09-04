@@ -11,14 +11,19 @@ Closes the gap #3119 names between the two existing RAG-turnkey test files:
     correctness (pipeline-name resolution, tool catalog, doc paths) — again no
     LLM, no live dispatch.
 
-Neither witnesses "an operator hands the LLM the ``rag`` skill + a corpus, and
-the LLM DRIVES install -> register -> ingest -> query to a real retrieval
-result" — the reachable-for-purpose property
-([[feedback-complete-means-reachable-for-purpose]]) that this file pins, for
-real, through the REAL production dispatch path (``install_plugin``,
+Neither witnesses "an operator hands the LLM the ``rag`` skill + a corpus,
+and a REPLAYED (previously-recorded) LLM decision sequence drives install
+-> register -> ingest -> query to a real retrieval result" — the
+reachable-for-purpose property
+([[feedback-complete-means-reachable-for-purpose]]) that this file pins,
+for real, through the REAL production dispatch path (``install_plugin``,
 the pipeline installer's capability auto-registration, ``run_pipeline``'s
-attached-driver-session execution, the real sqlite-vec store) with the LLM's
-own DECISIONS driven through ``LLMReplay`` — this is genuinely Tier 3, not
+attached-driver-session execution, the real sqlite-vec store), with the
+tool-call SEQUENCE fixed and driven through ``LLMReplay`` (#4987, lead-
+coder correction: this is NOT the LLM "driving" anything live — the
+decisions are recorded and fixed, so this file witnesses that the REAL
+DISPATCH PATH stays reachable when the right calls arrive, not that a
+live model would choose them unprompted) — this is genuinely Tier 3, not
 Tier 2c's "LLM faked via a scripted real callable" carve-out
 (``docs/deep-dives/contributing/testing.md`` "Tier 3 — LLM-replay tests").
 
@@ -189,7 +194,6 @@ verified while developing this test):
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -607,24 +611,43 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _ps_snapshot_or_reason() -> str:
-    """#4827②: best-effort ``ps -ef`` for a failing assert's diagnostic
-    message. Must NEVER raise -- this only runs inside that assert's
-    message expression (Python evaluates it exclusively on the falsy
-    path), so an exception here would replace the real AssertionError
-    with an unrelated one, hiding the very failure this diagnostic
-    exists to explain (lead-coder's review point). ``ps`` is POSIX and
-    already assumed available by this file's own ``_child_pids`` (a
-    plain, unguarded ``pgrep`` call on every run, not just on failure) --
-    but this string is built ONLY on an already-rare failure path, so
-    the extra defensiveness costs nothing and closes the hole rather
-    than merely documenting a judgment call."""
-    try:
-        return subprocess.run(
-            ["ps", "-ef"], capture_output=True, text=True, check=False,
-        ).stdout
-    except Exception as exc:  # noqa: BLE001 -- diagnostic-only, must degrade not raise
-        return f"(ps unavailable: {exc!r})"
+def _mcp_initialized_servers(events_dir: Path) -> "set[str]":
+    """#4987: every ``server`` named on an ``mcp_initialized`` P6 audit
+    event under *events_dir* — reyn's OWN record that IT completed a real
+    MCP handshake (``connection_service.py``'s own emit, fired once per
+    (re)connect on the live-session path; ``reyn doctor``'s
+    ``_mcp_initialized_evidence`` already reads the identical event kind
+    the identical way, C-3(b)). This is the read-口 #4987 names as
+    already existing — not a new audit-event, not a new surface, and no
+    ``subscription_adapter``/transport discrimination (architect's own
+    #4987 finding: that field names a SUBSCRIPTION STRATEGY, not a
+    transport, and carries no live/stub distinction at all).
+
+    Deliberately a plain directory walk (mirrors ``doctor.py``'s own
+    ``collect_dated_files`` idiom, not reproduced here as a second copy
+    for a bounded number of small test-run files) rather than
+    ``collect_dated_files``'s own newest-N-files windowing — that
+    windowing exists for a REAL operator's months of accumulated event
+    files; a single test run's ``.reyn/events`` tree has at most a
+    handful."""
+    servers: "set[str]" = set()
+    if not events_dir.is_dir():
+        return servers
+    for path in events_dir.rglob("*.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if obj.get("type") != "mcp_initialized":
+                continue
+            server = (obj.get("data") or {}).get("server")
+            if isinstance(server, str):
+                servers.add(server)
+    return servers
 
 
 async def _drive_one_turn(registry, prompt: str, timeout: float) -> str:
@@ -784,6 +807,24 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
     (``_rounds_script``), so it witnesses that the DISPATCH PATH works when the
     right calls are made, not that a live model would choose them unprompted.
 
+    Scope note (#4987, a SECOND over-claim guard -- what "a real MCP server
+    ran" now does and does not mean): this test's final assert on
+    ``mcp_initialized`` proves reyn ITSELF completed a real MCP handshake
+    with ``reyn_chunker``/``reyn_vector_store`` during turn 2 -- it does
+    NOT (any more) assert that the OS's process table shows a live child
+    process (owner ruling, #4987: whether the OS successfully starts a
+    process reyn asked it to start is the OS's own contract, not reyn's
+    to test). The distinction between "a real subprocess-backed server"
+    and a stub comes entirely from THIS TEST'S OWN CONSTRUCTION -- the
+    rag plugin's shipped ``mcp.json`` declares ``reyn_chunker``/``reyn_
+    vector_store`` as real ``stdio`` servers (real ``command``/``args``,
+    installed via ``install_plugin`` in turn 1) -- not from the assert
+    itself: ``mcp_initialized`` fires identically for ANY live connection
+    regardless of transport (``connection_service.py``'s own emit is
+    gated only on ``self._emit_sink is not None``), and its
+    ``subscription_adapter`` field names a subscription STRATEGY, not a
+    transport -- do not read a transport distinction out of that field.
+
     Portable ``LLMReplay`` keys across machines/OSes (the #3122-review fix -- the
     first cut hit exactly this and went RED on CI[Linux] while green on
     local[macOS]). ``LLMReplay.key`` hashes over ``messages``, and this arc bakes
@@ -923,13 +964,27 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
     # would need n >= 17 clean runs for ~5% false-negative confidence, and
     # even then never explains WHY). The MECHANISM claim -- that
     # registry.shutdown() is what actually terminates the child, not luck --
-    # is instead witnessed structurally below: real OS pids captured while
-    # the arc's servers are confirmed running, asserted gone from the OS
-    # process table after registry.shutdown() returns. Stripping the
-    # shutdown() call must flip ONLY that assertion red, independent of
-    # whether this particular run happened to hang.
+    # is instead witnessed structurally below: a real OS pid, captured
+    # after the arc is done running, asserted gone from the OS process
+    # table after registry.shutdown() returns. Stripping the shutdown()
+    # call must flip ONLY that assertion red, independent of whether this
+    # particular run happened to hang.
+    #
+    # #4987: this snapshot is a BEST-EFFORT input to that ONE witness only
+    # (part 2, below) -- it is deliberately NOT used to claim "the arc
+    # spawned a real subprocess" any more (that claim now comes from
+    # ``events_dir``/``mcp_initialized``, see the try-block's own #4987
+    # comment). A single post-arc snapshot can legitimately observe an
+    # EMPTY diff here even on a fully healthy run (the #4827② finding:
+    # the pipeline-inner driver session's own async reap can already have
+    # exited the process by the time this line runs) -- an empty
+    # ``_arc_children`` makes part 2's own assert vacuously pass, which is
+    # an accepted, disclosed weakening of that ONE secondary witness, not
+    # a correctness regression (the PRIMARY "a real MCP server actually
+    # ran" claim no longer depends on this variable at all).
     _baseline_children = _child_pids(os.getpid())
     _arc_children: "set[int]" = set()
+    events_dir = project_root / ".reyn" / "events"
     try:
         from reyn.dev.testing.replay import LLMReplay
 
@@ -958,6 +1013,13 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
                 replay_install.flush()
         assert install_text, "turn 1 (install) must reach a final assistant turn"
 
+        # #4987: baseline of servers already ``mcp_initialized`` before
+        # turn 2 starts -- turn 1 (install only) may itself have connected
+        # to a server (e.g. markitdown, if the install script probes it);
+        # this baseline is what lets the post-turn-2 diff attribute a NEW
+        # server strictly to turn 2's own ingest/query work, not to turn 1.
+        _mcp_baseline = _mcp_initialized_servers(events_dir)
+
         # -- Turn 2 (a FRESH ephemeral spawn -- see _make_install_script's
         # docstring for why): LLM drives ingest then query -----------------------
         if generate:
@@ -969,131 +1031,82 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         )
         replay_query.install()
         try:
-            # #4827②: run turn 2 as a background task and sample the arc's
-            # child pids WHILE it is still executing, instead of after
-            # ``_drive_one_turn`` returns. architect's 3rd-branch finding
-            # (issue #4827②, after the (A)/(B) split proved insufficient):
-            # the driver session that holds the MCP connections is
-            # deliberately marked ephemeral right after terminal
-            # (``pipeline_executor_driver.py``'s own comment: "after
-            # terminal, the driver marks its session ephemeral so the
-            # standard post-turn vanish teardown ... reclaims it") and
-            # reaped ASYNCHRONOUSLY from there — sampling AFTER
-            # ``_drive_one_turn`` returns (the old position) races that
-            # reap, win-or-lose depending on scheduler luck (measured
-            # ~1/26 CI failure rate). Sampling DURING execution is
-            # structurally race-free: the driver session is provably
-            # still alive (it is what is actively running the turn), so
-            # there is nothing to race — not "wait less", a different
-            # WINDOW entirely. No new WAIT the assert depends on: the
-            # loop below still exits the instant the task itself
-            # completes — never blocks longer than turn 2 was already
-            # going to take, and never delays the assert past when it
-            # would already fire. The 50ms poll interval between ticks
-            # is a CADENCE, not a floor the assert's correctness depends
-            # on (CLAUDE.md's distinction) — each ``pgrep`` call is a
-            # real, blocking subprocess invocation, so polling with NO
-            # interval (``asyncio.sleep(0)``) starves turn 2's own async
-            # work of scheduling time entirely (measured: doubled this
-            # test's wall time, from ~58s to ~120s) and can even observe
-            # ``pgrep``'s own transient child process as a false-positive
-            # "arc child" — the interval exists to let turn 2 actually
-            # run, not to make the assert wait longer.
-            #
-            # Truth condition is UNCHANGED from the original (same
-            # ``_child_pids(os.getpid()) - _baseline_children`` diff,
-            # same downstream asserts) — only WHEN it samples moves.
-            # Positive control: moving this capture back to after
-            # ``await turn2_task`` (the original position) must
-            # reintroduce the exact race this PR fixes.
-            #
-            # UNION across every poll, not the first hit: the arc spawns
-            # more than one real server (chunker + vector-store), and
-            # they need not appear at the same poll tick — stopping at
-            # the FIRST non-empty diff risks locking onto an early,
-            # unrelated, short-lived child instead (measured: a transient
-            # subprocess elsewhere in setup was caught this way once and
-            # was already dead by the very next assert, before
-            # registry.shutdown() ever ran). Accumulating every pid ever
-            # observed while the task is still in flight keeps the same
-            # "captured while provably alive" property without depending
-            # on which single tick happens to see the real servers.
-            #
-            # #4827②, 2nd-round finding: the driver session holding the
-            # MCP connections is an INNER session `run_pipeline` spawns
-            # mid-turn-2 (`pipeline_executor_driver.py`), not turn 2's own
-            # outer session — its own reap can fire (and complete) BEFORE
-            # turn 2's overall final reply, i.e. WHILE this loop is still
-            # running. So aliveness must be checked in the SAME tick as
-            # discovery, with NO await between the two — any intervening
-            # yield (even just awaiting the rest of turn 2, as an earlier
-            # revision of this fix did) reopens the exact same race one
-            # step later. `_dead_at_capture` records a pid that was
-            # ALREADY dead the instant we saw it (impossible under a
-            # correct arc — would mean this witness observed a corpse,
-            # not a real running server); `_arc_children` only ever
-            # accumulates pids confirmed alive at their own discovery
-            # moment.
-            turn2_task = asyncio.ensure_future(_drive_one_turn(
+            # #4987 (architect + owner ruling): NO poll loop here any more.
+            # The prior shape ran turn 2 as a background task and sampled
+            # the OS process table on a 50ms cadence WHILE it executed, to
+            # catch the arc's real MCP server subprocess(es) before an
+            # inner, asynchronously-reaped driver session could beat the
+            # sampler to it (#4827②). That machinery existed ONLY to
+            # support ``assert _arc_children`` -- "the OS actually created
+            # a subprocess" -- which owner ruled is not reyn's property to
+            # assert on at all ("別プロセスとして起動できるかどうかは OS
+            # の機能でしょ？"): if reyn calls spawn with the right
+            # arguments, whether the OS's process table reflects that is
+            # the OS's own contract, not a reyn bug when it doesn't. What
+            # IS reyn's own property -- and IS observable without racing
+            # anything -- is whether REYN ITSELF recorded completing a
+            # real MCP handshake (see the ``mcp_initialized`` assert
+            # below). That record is a normal, permanent, on-disk P6
+            # audit-event -- unlike a live OS process table, it does not
+            # get torn down by an inner session's own async reap, so there
+            # is nothing left to race: turn 2's own completion is already
+            # the barrier (CLAUDE.md: "no sleep(N) the assertion depends
+            # on"; the prior 50ms interval was disclosed as a CADENCE, not
+            # a floor, but removing it removes any ambiguity).
+            final_text = await _drive_one_turn(
                 registry,
                 "Ingest the docs/ corpus into rag.sqlite, then query it for 'what is reyn'.",
                 timeout=60.0,
-            ))
-            _arc_children: "set[int]" = set()
-            _dead_at_capture: "set[int]" = set()
-            while not turn2_task.done():
-                _new = _child_pids(os.getpid()) - _baseline_children - _arc_children
-                for _pid in _new:
-                    if _pid_is_alive(_pid):  # checked THIS tick -- no await since discovery
-                        _arc_children.add(_pid)
-                    else:
-                        _dead_at_capture.add(_pid)
-                await asyncio.sleep(0.05)
-            final_text = await turn2_task
+            )
+            # #4759's own OS-pid witness (part 2, below) still wants a
+            # best-effort real pid set -- a SINGLE snapshot, taken now
+            # (turn 2 already complete, no loop, no sleep). See this
+            # variable's own #4987 comment, above the try block, for why
+            # an empty result here is an accepted, disclosed weakening of
+            # ONLY that secondary witness, not of this test's primary
+            # "a real MCP server ran" claim.
+            _arc_children = _child_pids(os.getpid()) - _baseline_children
         finally:
             replay_query.restore()
             if generate:
                 replay_query.flush()
         assert final_text, "turn 2 (ingest/query) must reach a final assistant turn"
 
-        # #4759 structural witness, part 1: the arc's real MCP server
-        # subprocess(es) were captured above WHILE turn 2 was still running
-        # (#4827②), confirmed alive in the SAME tick as discovery -- see
-        # the capture loop's own comment for why aliveness cannot be
-        # re-checked later without reopening the same race one step down.
-        # An empty set here would mean this witness has nothing to
-        # observe -- fail loudly rather than let part 2 vacuously pass.
-        # #4827②: this assert's failure message is enriched (NOT its truth
-        # condition — no wait/sync/new gate added; lead-coder's explicit
-        # instruction after two independently-refuted hypotheses on my own
-        # part: local reproduction is 0/1 and every further theory is
-        # speculation without a repro to iterate against). The enrichment
-        # itself is what makes the NEXT CI occurrence a usable n=2 instead
-        # of a repeat of the same bare "assert set()" — it captures exactly
-        # the two things this investigation needed and didn't have: the
-        # baseline set this diffed against, and the full OS process table
-        # at the moment of failure (mirrors the diagnostic I ran by hand
-        # locally, ``ps -ef``, under a real 3.11 venv -- on that PASSING
-        # run the vector-store server showed up as a genuine direct child,
-        # so "categorically not a direct child" is refuted; what's
-        # different in the CI-3.11-only failure remains open). ``ps -ef``
-        # is only invoked in the message expression itself, so it is NEVER
-        # run on a passing test (Python only evaluates an ``assert``'s
-        # message when the condition is falsy) -- zero cost on green.
-        assert _arc_children, (
-            "expected the rag plugin's real chunker/vector-store MCP server "
-            "subprocess(es) to be running as direct children of this process "
-            "at this point in the arc -- found none, so the #4759 structural "
-            "witness below would vacuously pass. "
-            f"os.getpid()={os.getpid()!r} baseline_children={_baseline_children!r} "
-            f"dead_at_capture={_dead_at_capture!r}. "
-            "Full OS process table at the moment of failure:\n"
-            f"{_ps_snapshot_or_reason()}"
-        )
-        assert not _dead_at_capture, (
-            f"pid(s) {_dead_at_capture} appeared as a NEW child of this process "
-            "but were already dead the instant they were observed -- this "
-            "witness never saw them as a genuinely running server at all"
+        # #4987 (replaces the #4759 "OS process table" structural witness
+        # this test used to open with -- see the try-block's own #4987
+        # comment for the full ruling): reyn's OWN record that it
+        # completed a real MCP handshake with the servers THIS test's own
+        # construction wires as real stdio subprocesses (the rag plugin's
+        # ``mcp.json``, chunker + vector-store -- see ``_prepare_local_
+        # plugin_copy``'s docstring; markitdown is the one deliberately
+        # stubbed/faked server in this arc, see module docstring). The
+        # distinction between "a real server" and "a stub" comes from
+        # THIS TEST'S OWN SETUP, not from this assert (architect's #4987
+        # review, item ④: "区別を与えているのは assert ではなく test 自身
+        # の構成") -- ``mcp_initialized`` itself fires identically for a
+        # live in-process connection regardless of transport (confirmed:
+        # ``connection_service.py``'s own emit is gated on ``self.
+        # _emit_sink is not None`` only, never on ``subprocess`` vs.
+        # anything else, and its ``subscription_adapter`` field names a
+        # SUBSCRIPTION STRATEGY, not a transport -- do not try to recover
+        # a transport distinction from that field).
+        #
+        # Narrower than the witness it replaces, DELIBERATELY: the old
+        # ``assert _arc_children`` claimed "the OS created a process",
+        # which owner ruled is not reyn's to assert (see the try block's
+        # own comment). This assert claims only "reyn itself completed a
+        # handshake with chunker or vector-store during turn 2" -- reyn's
+        # own boundary, not the OS's internals.
+        assert (_mcp_initialized_servers(events_dir) - _mcp_baseline) & {
+            "reyn_chunker", "reyn_vector_store",
+        }, (
+            "expected an mcp_initialized event for reyn_chunker or "
+            "reyn_vector_store (the rag plugin's real stdio MCP servers) "
+            "newly recorded during turn 2 -- found none. baseline (before "
+            f"turn 2) = {sorted(_mcp_baseline)!r}, after turn 2 = "
+            f"{sorted(_mcp_initialized_servers(events_dir))!r}. Either the "
+            "servers never connected, or events_dir "
+            f"({events_dir}) is not where this run wrote them."
         )
 
         from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
@@ -1112,13 +1125,25 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
     finally:
         await registry.shutdown()
 
-    # #4759 structural witness, part 2: registry.shutdown() (the #2714
-    # production teardown seam) must have actually reaped the arc's own MCP
-    # server subprocess(es) at the OS level -- not merely "the test function
-    # returned without hanging" (see the #4759 comment above this test for
-    # why that symptom alone is not trustworthy evidence). Strip-falsify:
-    # commenting out the ``await registry.shutdown()`` line above must flip
-    # ONLY this assertion red.
+    # #4759 structural witness, part 2 (#4987 narrowed the INPUT, not the
+    # CLAIM): registry.shutdown() (the #2714 production teardown seam)
+    # must have actually reaped the arc's own MCP server subprocess(es)
+    # at the OS level -- not merely "the test function returned without
+    # hanging" (see the #4759 comment above this test for why that
+    # symptom alone is not trustworthy evidence). Strip-falsify:
+    # commenting out the ``await registry.shutdown()`` line above must
+    # flip ONLY this assertion red.
+    #
+    # #4987 disclosure: ``_arc_children`` is now a SINGLE best-effort
+    # post-turn-2 snapshot (see its own #4987 comment, above the try
+    # block) rather than a set accumulated live throughout turn 2 -- it
+    # can legitimately be EMPTY on a fully healthy run (the pipeline-
+    # inner driver session's own async reap may have already exited the
+    # process before this snapshot runs), which makes this assert
+    # vacuously pass. That is an accepted, disclosed weakening of THIS
+    # secondary witness only; it does not touch the arc's PRIMARY claim
+    # (a real MCP handshake happened during turn 2, asserted above via
+    # ``mcp_initialized``).
     _still_alive = {pid for pid in _arc_children if _pid_is_alive(pid)}
     if _still_alive:  # diagnostic aid on failure -- which server, not just which pid
         for _pid in _still_alive:
