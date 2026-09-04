@@ -148,8 +148,13 @@ class TurnOrigin(StrEnum):
 
     #: A wake=true lifecycle-hook push delivered as a turn trigger (#1800 slice
     #: 5b): a system-role ``[hook:name]`` message plus one router turn
-    #: (self-continuation). ``Session.run_one_iteration``'s loop valve counts
-    #: consecutive turns of this member.
+    #: (self-continuation). #5747 correction: no mechanism counts
+    #: consecutive turns of this member — #5561 (owner ruling, 2026-08-30,
+    #: verbatim "hook 起動を回数で制限なんて誰も設定できないでしょ")
+    #: retired the counter that once did, with no successor. (What, if
+    #: anything, bounds a recursive/runaway hook-driven turn instead is
+    #: an open design discussion as of this writing — not settled, and
+    #: deliberately not asserted here.)
     HOOK = "hook"
 
     #: The empty-text pump that starts an ATTACHED pipeline run
@@ -233,40 +238,45 @@ MID_TURN_INJECTABLE: "frozenset[TurnOrigin]" = frozenset({
     # the SAME commit.
     TurnOrigin.EXTERNAL_MESSAGE,
     # #5747 (owner-requested feature, previously unimplemented — this was
-    # never a "wait for a decision" gap): an operator-declared lifecycle
-    # hook (``reyn.yaml``) may steer a turn already in flight, same as
-    # CLIENT_INPUT/AGENT_REQUEST/EXTERNAL_MESSAGE above. Real damage from
-    # the gap: a stop instruction the owner gave mid-turn didn't reach the
-    # session until the NEXT turn boundary — coder-brown had already
-    # pushed a PR implementing an issue the owner had since closed, and
-    # coder-smith sat halted 13 hours because a hook-delivered correction
-    # could not land until its target turn ended.
+    # never a "wait for a decision" gap): a lifecycle-hook push may steer
+    # a turn already in flight, same as CLIENT_INPUT/AGENT_REQUEST/
+    # EXTERNAL_MESSAGE above. Real damage from the gap: a stop instruction
+    # the owner gave mid-turn (via a hook) didn't reach the session until
+    # the NEXT turn boundary — coder-brown had already pushed a PR
+    # implementing an issue the owner had since closed, and coder-smith
+    # sat halted 13 hours because a hook-delivered correction could not
+    # land until its target turn ended.
     #
-    # Architect ruling (3 points, #5747 issue thread):
-    # 1. NOT scoped by a flag or a uri check — either would be form-
-    #    sniffing (deciding the origin's trust by a string the origin
-    #    itself gets to write) and a default-off flag would ship the
-    #    owner's requested feature turned off, which is not shipping it.
-    #    ``HOOK`` here means exactly what ``TurnOrigin.HOOK`` already
-    #    means everywhere else: an operator-declared lifecycle hook push
-    #    — CRON and EXTERNAL_MESSAGE are independent members, never this
-    #    one.
-    # 2. No new gate — ``_render_mid_turn_injection``'s own fail-loud
-    #    raise (this module's own docstring, above) already refuses a
-    #    member with no rendering branch; that branch lands in the SAME
-    #    commit as this line, same as EXTERNAL_MESSAGE's own addition did.
-    # 3. Scope limit, stated here so it cannot be misread later: the
-    #    (#5561-retired) consecutive-hook-turn counter — see
-    #    ``session.py``'s ``run_one_iteration`` and ``hooks/dispatcher.py``
-    #    for where it used to live — counted TURNS. An INJECTION is not a
-    #    turn (it splices into an ALREADY-RUNNING one,
-    #    ``InboxArbiter.peek_mid_turn_injections``), so nothing that ever
-    #    counted consecutive hook turns counts this. No new valve is added
-    #    here either — the bound is producer pace, identical to
-    #    CLIENT_INPUT (a human's own typing rate) above: an operator who
-    #    wires a hook to fire constantly is the same class of
-    #    self-inflicted problem a human mashing Enter would be, not a new
-    #    hazard this feature introduces.
+    # ★ NARROWER than the member alone can say: eligibility here is
+    # necessary but not sufficient. ``InboxArbiter.peek_mid_turn_
+    # injections`` ADDITIONALLY requires the push's own hook point
+    # (``payload["point"]``) to be ``"mcp_resource_updated"`` — see that
+    # method's own docstring for the current reasoning and the parts of
+    # the original design that are still an open discussion, not settled:
+    #
+    # - The owner's own request (a broker/MCP inbox notification steering
+    #   a running turn) IS this one point, so scoping to it closes the
+    #   real, reported harm above completely.
+    # - A broader rule — EVERY hook point unconditionally, or a rule that
+    #   classifies points by "can a turn cause this to fire itself"
+    #   (an anti-recursion design) — was proposed and is, as of this
+    #   writing, an open discussion (owner, 2026-09-04, verbatim: "今の
+    #   は議論だから設計・実装への反映はまだしないでね"). Widening past
+    #   ``mcp_resource_updated`` needs that discussion to resolve first —
+    #   implementing a broader rule now would risk being wrong in a
+    #   direction nobody would notice failing (an unsafe-but-quiet
+    #   default), and would need undoing once it does.
+    # - No mechanism counts consecutive hook-driven turns — #5561 (owner
+    #   ruling, 2026-08-30, verbatim "hook 起動を回数で制限なんて誰も設定
+    #   できないでしょ") retired the counter that once did, with no
+    #   successor. What (if anything) bounds a recursive/runaway
+    #   hook-driven turn is itself part of the open discussion above —
+    #   deliberately not asserted here.
+    #
+    # ``_render_mid_turn_injection``'s own fail-loud raise (this module's
+    # own docstring, above) already refuses a member with no rendering
+    # branch; that branch lands in the SAME commit as this line, same as
+    # EXTERNAL_MESSAGE's own addition did.
     TurnOrigin.HOOK,
 })
 

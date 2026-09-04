@@ -708,6 +708,14 @@ class HookDispatcher:
             "name": hook.name or point,
             "text": resolved.message,
             "spillability": (hook.spillability or Spillability.default()).value,
+            # #5747: the bare hook-point string (same form ``bare_point()``
+            # returns, e.g. "mcp_resource_updated") — distinct from
+            # "name" above, which is the OPERATOR's own label when set
+            # and only falls back to the point when it isn't. A mid-turn
+            # injection eligibility check needs to know WHICH POINT
+            # fired, regardless of what the operator named the hook
+            # entry — see ``InboxArbiter.peek_mid_turn_injections``.
+            "point": point,
         }
         # #2072: cross-session push. A ``resolved.session`` naming a DIFFERENT session routes
         # to THAT session's inbox (the canonical wake-triple); ``wake`` rides in the payload
