@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 
+from reyn.core.events.events import EventLog
 from reyn.core.op_runtime import execute_op
 from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import CompactIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.services.compaction.context_signal import render_context_size_signal
@@ -37,8 +39,13 @@ class _Events:
 
 
 def _ctx(compact_now=None) -> OpContext:
+    # #5739: a real Workspace, not None — this op (compact) never reads
+    # ctx.workspace, but the field is declared non-Optional. A fresh real
+    # EventLog for the Workspace's own constructor arg (kept separate from
+    # this fixture's own `_Events` stub, which OpContext.events accepts
+    # as-is).
     return OpContext(
-        workspace=None,
+        workspace=Workspace(EventLog()),
         events=_Events(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,

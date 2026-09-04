@@ -524,6 +524,7 @@ def test_session_emits_an_audit_event_when_the_loop_driver_has_no_spill_capabili
     missing spill capability degrades, it never blocks voluntary
     compaction."""
     from reyn.core.pipeline.work_order import PipelineWorkOrder
+    from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 
     monkeypatch.chdir(tmp_path)
@@ -538,8 +539,15 @@ def test_session_emits_an_audit_event_when_the_loop_driver_has_no_spill_capabili
         reply_to_agent="default", reply_to_sid="main",
         driver_agent="default", driver_sid="main",
     )
+    # #5739: a real, minimal AgentRegistry, not None — this driver's own
+    # registry is never dereferenced along the spill-capability-absence
+    # path this test exercises, but the parameter is non-Optional.
+    registry = AgentRegistry(
+        project_root=tmp_path, session_factory=lambda profile: session,
+        state_log=session._state_log,
+    )
     session.set_loop_driver(
-        PipelineExecutorDriver(work_order, registry=None, state_log=session._state_log)
+        PipelineExecutorDriver(work_order, registry=registry, state_log=session._state_log)
     )
     collected = collect_events(session._audit_events)
     # No spill available at all -> only halving can shrink this; a lower

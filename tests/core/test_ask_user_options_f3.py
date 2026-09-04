@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.ask_user import _options_to_choices, handle
 from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import AskUserIROp
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.user_intervention import InterventionAnswer
 
 
@@ -46,10 +49,12 @@ class _RecordingBus:
 
 def _ctx(bus) -> OpContext:
     # ask_user's handler only reads events / intervention_bus / actor /
-    # run_id / current_phase, so workspace + permission_decl are unused dummies.
+    # run_id / current_phase — workspace/permission_decl are unused here,
+    # but #5739: both fields are declared non-Optional, so a real (if
+    # otherwise-untouched) Workspace/PermissionDecl, not None.
     return OpContext(
-        workspace=None, events=_RecordingEvents(),
-        permission_decl=None, intervention_bus=bus,
+        workspace=Workspace(EventLog()), events=_RecordingEvents(),
+        permission_decl=PermissionDecl(), intervention_bus=bus,
     )
 
 

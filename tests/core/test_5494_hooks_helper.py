@@ -28,6 +28,7 @@ import pytest
 
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.emit_hook_event import handle as emit_handle
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import EmitHookEventIROp
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
@@ -49,8 +50,11 @@ async def test_collect_hook_events_observes_a_real_publish() -> None:
     session = make_session(agent_name="hooks-helper-witness")
     sub = collect_hook_events(session)
 
+    # #5739: a real Workspace, not None — emit_hook_event never reads
+    # ctx.workspace, but the field is declared non-Optional.
     ctx = OpContext(
-        workspace=None, events=session._audit_events, permission_decl=PermissionDecl(),
+        workspace=Workspace(session._audit_events),
+        events=session._audit_events, permission_decl=PermissionDecl(),
         session_id=session.session_id, hook_bus=session._hook_bus,
     )
     op = EmitHookEventIROp(kind="emit_hook_event", event_name="ping")
@@ -73,7 +77,8 @@ async def test_collect_hook_events_strip_falsify_wrong_session_sees_nothing() ->
     sub_b = collect_hook_events(session_b)
 
     ctx = OpContext(
-        workspace=None, events=session_a._audit_events, permission_decl=PermissionDecl(),
+        workspace=Workspace(session_a._audit_events),
+        events=session_a._audit_events, permission_decl=PermissionDecl(),
         session_id=session_a.session_id, hook_bus=session_a._hook_bus,
     )
     op = EmitHookEventIROp(kind="emit_hook_event", event_name="ping")

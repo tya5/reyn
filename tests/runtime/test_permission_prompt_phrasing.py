@@ -88,13 +88,18 @@ async def _capture_announce(iv: UserIntervention) -> OutboxMessage:
         captured.append(msg)
 
     handler = InterventionHandler(
-        intervention_registry=None,
-        journal=None,
+        # #5739: intervention_registry/journal are declared non-Optional
+        # (production's one construction site, session.py:6406, always
+        # passes real ones) but announce() — the only method this helper
+        # calls — never touches either. Building real instances just to
+        # satisfy the type checker would add machinery this test's own
+        # narrow claim (announce()'s outbox message shape) doesn't need.
+        intervention_registry=None,  # type: ignore[arg-type]
+        journal=None,  # type: ignore[arg-type]
         # #5729: announce() now also emits "intervention_announced" via
         # self._events — a real EventLog, not None. Production's one
         # construction site (session.py:6406) always passes a real one
-        # (self._audit_events, never None); intervention_registry/journal
-        # stay None since announce() itself never touches them.
+        # (self._audit_events, never None).
         event_log=EventLog(),
         put_outbox=_put,
         append_history=lambda *_a, **_k: None,

@@ -208,6 +208,7 @@ def test_main_fails_even_when_the_only_measured_pair_is_a_baselined_syntax_one(
         lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
                 "Found 1 error in 1 file (errors prevented further checking)\n",
     )
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
 
     rc = module.main([])
 
@@ -226,6 +227,7 @@ def test_main_ok_when_measured_matches_baseline_with_no_syntax(
         module, "run_mypy",
         lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n",
     )
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
 
     assert module.main([]) == 0
 
@@ -246,9 +248,182 @@ def test_main_write_baseline_refuses_when_a_syntax_pair_is_measured(
         lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
                 "Found 1 error in 1 file (errors prevented further checking)\n",
     )
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
 
     rc = module.main(["--write-baseline"])
 
     assert rc == 1
     assert "REFUSING" in capsys.readouterr().err
     assert calls == []
+
+
+# ── #4576: mypy_is_importable() must gate the WHOLE script ─────────────────
+# (architect's #5739 ruling named this "この gate の最大の失敗様式" — no
+# existing test in this file drove it through main() before now; #5739
+# adds a second mypy invocation, so the guard's reach matters twice over.)
+
+
+def test_main_refuses_when_mypy_is_not_importable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 1: FALSIFY the #4576 shape — with mypy absent, `main()` must
+    fail LOUDLY (not print "0 findings" and exit 0) and must never even
+    reach either mypy invocation."""
+    module = _load()
+    monkeypatch.setattr(module, "mypy_is_importable", lambda: False)
+    calls: list[str] = []
+    monkeypatch.setattr(module, "run_mypy", lambda: calls.append("src") or "")
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type", lambda: calls.append("tests") or "",
+    )
+
+    rc = module.main([])
+
+    assert rc == 1
+    assert "NOTHING WAS MEASURED" in capsys.readouterr().err
+    assert calls == [], "the guard must fire BEFORE either mypy invocation runs"
+
+
+def test_main_write_baseline_also_refuses_when_mypy_is_not_importable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: the #4576 guard covers --write-baseline too — regenerating
+    the baseline from a run that never happened would silently discard
+    every declared pair (module's own docstring)."""
+    module = _load()
+    monkeypatch.setattr(module, "mypy_is_importable", lambda: False)
+    calls: list[object] = []
+    monkeypatch.setattr(module, "write_baseline", lambda pairs, path=None: calls.append(pairs))
+
+    rc = module.main(["--write-baseline"])
+
+    assert rc == 1
+    assert calls == []
+
+
+# ── #5739: none_arg_type_hits_in_tests — the zero-FP, zero-baseline gate ────
+
+
+def test_none_arg_type_hit_is_extracted_from_a_tests_file() -> None:
+    """Tier 1: the exact shape architect named — a None literal passed to a
+    declared non-Optional argument, under tests/."""
+    module = _load()
+    text = (
+        'tests/runtime/test_foo.py:42: error: Argument "bar" to "Baz" has '
+        'incompatible type "None"; expected "Qux"  [arg-type]\n'
+    )
+    assert module.none_arg_type_hits_in_tests(text) == {
+        (
+            "tests/runtime/test_foo.py", 42,
+            'Argument "bar" to "Baz" has incompatible type "None"; expected "Qux"',
+        )
+    }
+
+
+def test_a_src_file_hit_is_never_counted_even_if_shaped_identically() -> None:
+    """Tier 1: FALSIFY — this gate is tests/-scoped ONLY (architect's own
+    ruling: the general src/reyn arg-type population stays on the existing,
+    baselined ratchet). A followed-import error landing in src/reyn must
+    never leak into a gate with NO baseline at all."""
+    module = _load()
+    text = (
+        'src/reyn/foo.py:10: error: Argument "bar" to "Baz" has incompatible '
+        'type "None"; expected "Qux"  [arg-type]\n'
+    )
+    assert module.none_arg_type_hits_in_tests(text) == set()
+
+
+def test_a_non_none_arg_type_hit_in_tests_is_not_counted() -> None:
+    """Tier 1: FALSIFY — an ordinary (non-None) [arg-type] mismatch under
+    tests/ is exactly the structural-false-positive population architect
+    rejected baselining wholesale; this gate must stay narrow to it."""
+    module = _load()
+    text = (
+        'tests/runtime/test_foo.py:1: error: Argument "bar" to "Baz" has '
+        'incompatible type "_Fake"; expected "RealThing"  [arg-type]\n'
+    )
+    assert module.none_arg_type_hits_in_tests(text) == set()
+
+
+def test_a_none_hit_under_a_different_code_is_not_counted() -> None:
+    """Tier 1: FALSIFY — the shape is scoped to [arg-type] specifically
+    (mypy's own literal-None-argument message), not any error mentioning
+    the word None."""
+    module = _load()
+    text = 'tests/runtime/test_foo.py:1: error: Item "None" of "X | None" has no attribute "y"  [union-attr]\n'
+    assert module.none_arg_type_hits_in_tests(text) == set()
+
+
+def test_two_none_hits_on_the_same_line_are_kept_distinct() -> None:
+    """Tier 1: a multi-line call passing None for 2+ positional args mypy
+    reports as separate lines already collapses correctly since each
+    carries its own line number and message — distinct entries, not one."""
+    module = _load()
+    text = (
+        'tests/x.py:5: error: Argument 2 to "f" has incompatible type "None"; expected "A"  [arg-type]\n'
+        'tests/x.py:5: error: Argument 3 to "f" has incompatible type "None"; expected "B"  [arg-type]\n'
+    )
+    assert module.none_arg_type_hits_in_tests(text) == {
+        ("tests/x.py", 5, 'Argument 2 to "f" has incompatible type "None"; expected "A"'),
+        ("tests/x.py", 5, 'Argument 3 to "f" has incompatible type "None"; expected "B"'),
+    }
+
+
+def test_main_fails_on_a_none_arg_type_hit_even_when_the_baselined_ratchet_is_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 1: FALSIFY — #5739's own gate has NO baseline, so it must fail
+    `main()` independently of the src/reyn ratchet's own verdict (a clean
+    baselined run must not mask a real #5739 hit)."""
+    module = _load()
+    monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
+    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type",
+        lambda: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
+                'incompatible type "None"; expected "Z"  [arg-type]\n',
+    )
+
+    rc = module.main([])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "#5739 gate FAILED" in err
+    assert "tests/runtime/test_foo.py:1" in err
+
+
+def test_main_ok_when_both_the_ratchet_and_the_5739_gate_are_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: the ordinary green path — neither gate has anything to
+    report."""
+    module = _load()
+    monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
+    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
+
+    assert module.main([]) == 0
+
+
+def test_main_write_baseline_still_surfaces_a_5739_hit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Tier 1: FALSIFY — #5739 has no baseline to write, so
+    `--write-baseline` must not read as "everything is clean" while a real
+    #5739 hit exists; the OTHER (src/reyn) baseline still gets written
+    (this gate's absence of a baseline is not a reason to block an
+    unrelated, legitimate baseline regeneration), but main() still exits
+    nonzero and reports the hit."""
+    module = _load()
+    monkeypatch.setattr(module, "write_baseline", lambda pairs, path=None: None)
+    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type",
+        lambda: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
+                'incompatible type "None"; expected "Z"  [arg-type]\n',
+    )
+
+    rc = module.main(["--write-baseline"])
+
+    assert rc == 1
+    assert "#5739 gate FAILED" in capsys.readouterr().err

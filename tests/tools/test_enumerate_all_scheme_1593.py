@@ -26,6 +26,7 @@ if str(_SRC) not in sys.path:
 
 from reyn.tools.scheme import (
     AdvertisedTools,
+    ExecContext,
     Execute,
     ExecutionResult,
     PlainText,
@@ -147,7 +148,10 @@ async def test_execute_dispatches_via_ops() -> None:
     s = EnumerateAllScheme()
     ops = _FakeOps()
     interp = Execute(actions=[{"name": "git__commit", "args": {}}])
-    res = await s.execute(interp, None, ops)
+    # #5739: a real ExecContext, not None — every field defaults, so this
+    # is the minimal real construction; execute() never reads any of them
+    # in this branch, but the declared parameter is non-Optional.
+    res = await s.execute(interp, ExecContext(), ops)
     assert isinstance(res, ExecutionResult)
     assert ops.dispatched == interp.actions               # dispatched the resolved actions
     assert res.tool_results[0] == {"name": "git__commit", "ok": True}

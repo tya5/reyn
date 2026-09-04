@@ -98,6 +98,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -106,6 +107,16 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_PATH = _ROOT / "scripts" / "mypy_ratchet_baseline.json"
 _TARGET = "src/reyn"
+#: #5739: the SEPARATE target for the tests/-scoped None-arg-type gate
+#: below — never folded into ``_TARGET``/the baselined ratchet above.
+#: Architect's own measurement: `tests/` as a whole carries 3,248+ mypy
+#: errors (762 `[arg-type]` alone), most of them structural false
+#: positives (CLAUDE.md's own sanctioned test-double/fake pattern, which
+#: mypy has no way to know is deliberate) — baselining THAT population
+#: would be a second ratchet that only ever grows. This target is used
+#: ONLY for the narrow, zero-false-positive shape :func:`none_arg_type_
+#: hits_in_tests` looks for, never for a general tests/ mypy sweep.
+_TESTS_TARGET = "tests"
 
 # Matches mypy's normal-mode error line:
 #   src/reyn/foo/bar.py:123: error: <message>  [error-code]
@@ -114,6 +125,19 @@ _TARGET = "src/reyn"
 # trailing "Found N errors in M files" summary line — neither carries a
 # `[code]` a future run can be diffed against.
 _ERROR_LINE = re.compile(r"^(?P<file>[^:]+\.py):\d+: error: .*\[(?P<code>[a-z][a-z0-9-]*)\]\s*$")
+
+# #5739: the one arg-type shape architect ruled has NO syntactic defense —
+# a `None` literal passed to a parameter mypy resolves as non-Optional.
+# Captures the line number and the exact message text too (unlike
+# `_ERROR_LINE` above): this gate has NO baseline (architect: "0 から
+# 始まる"), so a caller needs the precise site to fix, not just which
+# (file, code) pair recurred — the coarser grain above exists specifically
+# to survive line-drift across a BASELINE's lifetime, which does not apply
+# to a gate that keeps no baseline at all.
+_NONE_ARG_TYPE_LINE = re.compile(
+    r"^(?P<file>tests/[^:]+\.py):(?P<lineno>\d+): error: "
+    r'(?P<msg>.*incompatible type "None"; expected.*)\[arg-type\]\s*$'
+)
 
 
 def mypy_is_importable() -> bool:
@@ -167,6 +191,57 @@ def parse_mypy_output(text: str) -> "set[tuple[str, str]]":
         if m:
             pairs.add((m.group("file"), m.group("code")))
     return pairs
+
+
+def run_mypy_tests_none_arg_type(root: Path = _ROOT) -> str:
+    """Run mypy against :data:`_TESTS_TARGET` and return combined stdout+stderr
+    (#5739).
+
+    ``MYPYPATH=src`` — unlike the ``src/reyn`` target above, ``tests/``
+    itself is not on mypy's default search path, so an ``import reyn.foo``
+    inside a test file cannot resolve without pointing mypy at the real
+    checkout's ``src/`` (architect's own measurement command:
+    ``MYPYPATH=src python -m mypy tests``). A caller of this script from a
+    *different* checkout, or one whose environment already resolves
+    ``reyn`` via an editable/site-packages install, is unaffected either
+    way — this only ADDS a search path, never removes one.
+
+    A SEPARATE subprocess call from :func:`run_mypy` (different target,
+    different env) — never folds the two together, so `--write-baseline`
+    (which only ever touches the ``src/reyn`` baseline) cannot accidentally
+    absorb a ``tests/`` finding into a population it was never meant to
+    cover.
+    """
+    env = {**os.environ, "MYPYPATH": str(root / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "mypy", _TESTS_TARGET],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    return proc.stdout + proc.stderr
+
+
+def none_arg_type_hits_in_tests(text: str) -> "set[tuple[str, int, str]]":
+    """Extract every (file, line, message) triple matching the #5739 shape:
+    a `tests/` call site passing a `None` literal to an argument mypy
+    resolves as non-Optional.
+
+    NO baseline gates this — every hit is unconditionally new (architect:
+    "gate は検出器ではなく修理義務" — a detector reports; a repair
+    obligation has nothing left to grandfather). Keyed on the EXACT site
+    (file, line, message), not the coarser (file, code) grain
+    :func:`parse_mypy_output` uses above — see :data:`_NONE_ARG_TYPE_LINE`'s
+    own comment for why the coarser grain does not apply to a baseline-free
+    gate."""
+    hits: set[tuple[str, int, str]] = set()
+    for line in text.splitlines():
+        m = _NONE_ARG_TYPE_LINE.match(line)
+        if m:
+            hits.add((m.group("file"), int(m.group("lineno")), m.group("msg").strip()))
+    return hits
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[tuple[str, str]]":
@@ -236,14 +311,33 @@ def main(argv: "list[str] | None" = None) -> int:
 
     # #4576: before anything else — including --write-baseline, which would
     # otherwise overwrite the baseline with the empty measurement of a run
-    # that never happened, silently discarding every declared pair.
+    # that never happened, silently discarding every declared pair. Guards
+    # BOTH mypy invocations below (the src/reyn ratchet and the #5739
+    # tests/ None-arg-type gate) — the same import either both runs use.
     if not mypy_is_importable():
         print(_MYPY_MISSING.format(exe=sys.executable), file=sys.stderr)
         return 1
 
+    # #5739: the tests/-scoped, baseline-free gate — checked in EVERY mode
+    # (including --write-baseline, which only ever regenerates the OTHER
+    # gate's baseline and has no bearing on this one). Any hit is
+    # unconditionally a failure; there is nothing here to grandfather.
+    none_arg_hits = none_arg_type_hits_in_tests(run_mypy_tests_none_arg_type())
+
     output = run_mypy()
     measured = parse_mypy_output(output)
     syntax_pairs = syntax_pairs_in(measured)
+
+    def _report_none_arg_hits() -> None:
+        print(
+            f"\n#5739 gate FAILED: {len(none_arg_hits)} tests/ site(s) pass a "
+            f"None literal to a non-Optional argument (no baseline — fix "
+            f"each site; see the finding's own message for whether the TEST "
+            f"or the production signature is wrong):",
+            file=sys.stderr,
+        )
+        for file, lineno, msg in sorted(none_arg_hits):
+            print(f"  {file}:{lineno}: {msg}", file=sys.stderr)
 
     if args.write_baseline:
         if syntax_pairs:
@@ -261,12 +355,17 @@ def main(argv: "list[str] | None" = None) -> int:
             return 1
         write_baseline(measured)
         print(f"Wrote {len(measured)} (file, code) pairs to {_BASELINE_PATH}")
+        if none_arg_hits:
+            # #5739 has no baseline to write — surfaced here too so
+            # --write-baseline never reads as "everything is clean".
+            _report_none_arg_hits()
+            return 1
         return 0
 
     baseline = load_baseline()
     new = new_findings(measured, baseline)
 
-    if not new and not syntax_pairs:
+    if not new and not syntax_pairs and not none_arg_hits:
         print(f"mypy ratchet OK: {len(measured)} findings, all baselined ({len(baseline)} declared).")
         return 0
 
@@ -287,10 +386,13 @@ def main(argv: "list[str] | None" = None) -> int:
         for file, code in sorted(syntax_pairs):
             note = "" if (file, code) in new else "  (already \"baselined\" — still fatal, see above)"
             print(f"  {file}  [{code}]{note}", file=sys.stderr)
+    if none_arg_hits:
+        _report_none_arg_hits()
     print(
         "\nEither fix the new finding(s), or if this is a deliberate, understood "
         "addition, add the (file, code) pair to the baseline explicitly — do "
-        "NOT regenerate the whole baseline with --write-baseline to silence this.",
+        "NOT regenerate the whole baseline with --write-baseline to silence this. "
+        "(The #5739 gate above has no baseline at all — fix those sites directly.)",
         file=sys.stderr,
     )
     return 1

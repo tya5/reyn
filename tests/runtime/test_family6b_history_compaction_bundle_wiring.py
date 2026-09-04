@@ -240,6 +240,29 @@ async def test_strip_falsify_inter_agent_messaging_chains_wiring_is_live(
     from reyn.core.events.events import EventLog
     from reyn.runtime.services.chain_manager import ChainManager
 
+    class _NullJournal:
+        """Minimal real _JournalLike Fake — this poisoned manager's own
+        register/handle_agent_response calls never actually reach the
+        journal in this test's path (#5739: the declared parameter is
+        non-Optional; a None literal here would defeat the type checker
+        for no runtime reason, since a cheap conforming Fake exists)."""
+
+        @property
+        def snapshot(self):
+            raise AssertionError("not expected to be read in this test")
+
+        async def record_chain_register(self, *, chain_id: str, fields: dict) -> None:
+            pass
+
+        async def record_chain_update(self, *, chain_id: str, fields: dict) -> None:
+            pass
+
+        async def record_chain_resolve(self, *, chain_id: str) -> None:
+            pass
+
+        async def record_chain_timeout_fired(self, *, chain_id: str) -> None:
+            pass
+
     inter_agent_messaging = session._inter_agent_messaging
     chain_id = "family6b-strip-falsify"
     await session.chains.register(
@@ -248,7 +271,7 @@ async def test_strip_falsify_inter_agent_messaging_chains_wiring_is_live(
     )
 
     poisoned_chains = ChainManager(
-        journal=None, events=EventLog(), chain_timeout_seconds=0, max_hop_depth=10,
+        journal=_NullJournal(), events=EventLog(), chain_timeout_seconds=0, max_hop_depth=10,
     )
     inter_agent_messaging._chains = poisoned_chains  # deliberate poison, this test only
 
