@@ -59,6 +59,12 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import StatusModel, project_status
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
+# #5736: not part of the shared local/remote ``Frame`` union (``frames.py``)
+# — this is an AG-UI-server-internal signal, never produced by
+# InProcessTransport, so it stays a forward reference imported lazily
+# inside ``stream()`` rather than widening that shared module's own
+# vocabulary for a mechanism the local transport never has.
+
 # WaitingOn label derivation off the audit-event stream — a lightweight, local
 # mirror of the renderer's ``_WAITING_ON_BY_EVENT`` table + turn lifecycle, kept
 # here so the emitter need not import the inline app (which pulls the renderer).
@@ -162,6 +168,11 @@ class AgUiEmitter:
         ]
 
     async def stream(self) -> AsyncIterator[str]:
+        # #5736: imported here (not at module level) — endpoint.py already
+        # imports AgUiEmitter FROM this module at ITS OWN module level, so
+        # a module-level import the other direction would be circular.
+        from reyn.interfaces.transport.agui.endpoint import StatusPingFrame
+
         # Reconnect snapshots first (A4): backlog display, then full status —
         # ``self._initial_status``, paired with ``self._backlog`` at the
         # SAME instant the caller captured both (#5179), not a fresh read.
@@ -172,6 +183,23 @@ class AgUiEmitter:
             yield chunk
 
         async for frame in self._frames:
+            if isinstance(frame, StatusPingFrame):
+                # #5736: no DisplayFrame/EventFrame encoding at all for
+                # this kind — re-project the CURRENT status (a fresh
+                # ``status_provider()`` read, always live —
+                # ``AgentRegistry.all_sessions_status()``'s own "no
+                # stored copy" ruling) through the SAME
+                # ``StatusModel.delta`` diff every OTHER status change
+                # already goes through below (the per-frame delta at
+                # the bottom of this loop), never a second, parallel
+                # diff/encode implementation. Emits nothing when the
+                # ping turns out to have been redundant (e.g. the
+                # change already got picked up by an ordinary frame's
+                # own delta check before this ping was drained).
+                delta = self._model.delta(self._project())
+                if delta:
+                    yield to_sse(encode_state_delta(delta))
+                continue
             # Control sentinels in CONTROL_FILTER_KINDS are NOT forwarded on the
             # AG-UI wire — the explicit per-entry allowlist (protocol.py), not the
             # negation of any forward-set. It holds only ``__end__`` (the stream

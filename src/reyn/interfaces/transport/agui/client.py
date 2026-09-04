@@ -158,6 +158,18 @@ class AgUiTransport(ClientTransport):
         # server's own per-connection binding (``_CONNECTION_RETARGET_HUB``,
         # #5116) has already forgotten it.
         self._pump_died = False
+        # #5736: RemoteReadModel's real add_status_listener/remove_status_
+        # listener wiring — see those methods' own docstrings. Fired from
+        # _consume_block whenever a decoded STATE_DELTA touches
+        # all_sessions_status; ChatReadModel.add_status_listener's OWN
+        # consumer (TextualChatApp._on_session_status_delta) ignores every
+        # argument but "something changed" (re-reads a fresh snapshot
+        # itself), so a client-local counter here is a legitimate seq —
+        # there is no per-key server seq for this side to relay in the
+        # first place (the wire already carries a value-level diff,
+        # StatusModel.delta's own coalescing, not a per-row sequence).
+        self._status_listeners: "list[Callable[[str, str, bool, bool, int], None]]" = []
+        self._status_listener_seq = 0
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -185,6 +197,52 @@ class AgUiTransport(ClientTransport):
     def status(self) -> RemoteStatusView:
         """The remote status read-model view (reflects the server's STATE_*)."""
         return self._status
+
+    def add_status_listener(
+        self, callback: "Callable[[str, str, bool, bool, int], None]",
+    ) -> None:
+        """#5736: the real ``RemoteReadModel.add_status_listener`` wiring —
+        fired synchronously from :meth:`_consume_block` whenever a decoded
+        ``STATE_DELTA`` touches ``all_sessions_status`` (server ⑤: the SAME
+        function, ``AgentRegistry.all_sessions_status()``, already gates
+        both the snapshot and this delta — this side adds no second
+        visibility check). Mirrors ``AgentRegistry.add_status_listener``'s
+        own shape exactly so ``ChatReadModel``'s ONE consumer
+        (``TextualChatApp._on_session_status_delta``) works unchanged
+        against either read model."""
+        self._status_listeners.append(callback)
+
+    def remove_status_listener(
+        self, callback: "Callable[[str, str, bool, bool, int], None]",
+    ) -> None:
+        """Undo :meth:`add_status_listener`. A no-op if already removed."""
+        if callback in self._status_listeners:
+            self._status_listeners.remove(callback)
+
+    def _dispatch_status_listeners(self, delta: dict) -> None:
+        """#5736: fire every registered status listener for each row in a
+        decoded ``all_sessions_status`` delta. A no-op (never even reads
+        the delta's other keys) when the delta did not touch that key —
+        this STATE_DELTA channel also carries unrelated status fields
+        (cost, ctx, queue, …) that must not spuriously trigger an agent-
+        tab refresh."""
+        if not self._status_listeners:
+            return
+        rows = delta.get("all_sessions_status")
+        if not isinstance(rows, list):
+            return
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            self._status_listener_seq += 1
+            for listener in list(self._status_listeners):
+                listener(
+                    str(row.get("agent", "")),
+                    str(row.get("sid", "")),
+                    bool(row.get("turn_active", False)),
+                    bool(row.get("iv_waiting", False)),
+                    self._status_listener_seq,
+                )
 
     # -- frame production ---------------------------------------------------
 
@@ -219,6 +277,7 @@ class AgUiTransport(ClientTransport):
                     self._status.apply_snapshot(decoded.snapshot)
                 if decoded.delta is not None:
                     self._status.apply_delta(decoded.delta)
+                    self._dispatch_status_listeners(decoded.delta)
                 # #5050 ③: either kind of STATE_* update means the status
                 # side-channel now reflects at least one genuine server
                 # update — see :meth:`state_ready`'s own docstring for why
