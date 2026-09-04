@@ -1097,6 +1097,22 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         # own comment). This assert claims only "reyn itself completed a
         # handshake with chunker or vector-store during turn 2" -- reyn's
         # own boundary, not the OS's internals.
+        #
+        # #4987 disclosure (lead-coder review, PR #5752): what THIS
+        # assert's own strip-falsifier actually shows. Corrupting
+        # reyn_chunker/reyn_vector_store's ``command`` in the installed
+        # ``.reyn/config/mcp.yaml`` between turn 1 and turn 2 (verified
+        # locally, not committed) turns the test red -- but via
+        # ``LLMReplay.MissingFixture`` on the "rag ingest blocked" tool-
+        # result text the corrupted connection produces, NOT by reaching
+        # THIS assert directly: this test's own fixed-replay design means
+        # a real config break changes turn 2's tool-result content before
+        # the LLM's next scripted response can even be looked up, so
+        # execution never gets far enough to evaluate this line at all.
+        # A genuine, non-vacuous red either way -- but this specific
+        # assert's own load-bearing-ness is NOT separately demonstrated by
+        # that falsifier. A future edit that weakens or removes this
+        # assert would not be caught by the same strip-falsify run.
         assert (_mcp_initialized_servers(events_dir) - _mcp_baseline) & {
             "reyn_chunker", "reyn_vector_store",
         }, (
