@@ -223,12 +223,15 @@ def test_allowed_mcp_is_the_explicit_trigger_class_not_construction_once_or_rest
     assert AGENT_PROFILE_RELOAD_CLASSES["allowed_mcp"] == EXPLICIT_TRIGGER
 
 
-def test_role_and_project_context_path_are_construction_once():
+def test_role_is_construction_once():
     """Tier 2: regression guard — `role` (a frozen `Agent` identity field,
     `agent.py`'s own "Frozen — identity is immutable for a session's
-    lifetime") and `project_context_path` (owner ruling B / #3787,
-    "resolved ONCE per agent, at session construction") are both
-    construction-once, matching the pre-measured #3787 example this
-    slice's own assignment named."""
+    lifetime") is construction-once, matching the pre-measured #3787
+    example this slice's own assignment named.
+
+    #5742 PR2: this test's sibling assertion on `project_context_path`
+    (also construction-once, owner ruling B / #3787) was removed, not
+    updated — that field's own premise (it exists on `AgentProfile`) is
+    now false; it is retired (`AgentProfile.load` raises
+    `RetiredProfileKeyError`), not merely reclassified."""
     assert AGENT_PROFILE_RELOAD_CLASSES["role"] == CONSTRUCTION_ONCE
-    assert AGENT_PROFILE_RELOAD_CLASSES["project_context_path"] == CONSTRUCTION_ONCE

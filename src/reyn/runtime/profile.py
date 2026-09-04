@@ -42,6 +42,49 @@ if TYPE_CHECKING:
 PROFILE_FILENAME = "profile.yaml"
 
 
+#: #5742 PR2 (architect ruling, issue #5742): every profile.yaml top-level
+#: key that has been RETIRED, mapped to its replacement — the population
+#: :meth:`AgentProfile.load` raises :class:`RetiredProfileKeyError` for.
+#: A map, not a set, so the error can NAME the replacement (a bare "unknown
+#: key" WARN — :func:`unknown_profile_keys`'s own generic disclosure — does
+#: not tell an operator their agent's instructed text stopped being read;
+#: this dict is what lets the raised message say "use X instead" instead of
+#: just "Y is gone"). Adding the NEXT retirement is one entry here, never a
+#: new hand-written check — see :meth:`AgentProfile.load`'s own retired-key
+#: block.
+_RETIRED_PROFILE_KEYS: "dict[str, str]" = {
+    "project_context_path": "context_path",
+}
+
+
+class RetiredProfileKeyError(ValueError):
+    """A ``profile.yaml`` names a top-level key in :data:`_RETIRED_PROFILE_
+    KEYS` — raised, never merely warned, unlike every other unrecognized
+    top-level key (:func:`unknown_profile_keys`'s own generic WARN).
+
+    #5742 PR2 (architect, verbatim): this asymmetry with ``reyn.yaml``'s own
+    retired top-level keys (WARN-only, ``config/chat.py``'s
+    ``max_shrink_iterations`` for the current instance) is DELIBERATE, not
+    an inconsistency to reconcile: "この key は model に渡る指示文そのもの
+    を選ぶ。誤った timeout で動くことと、誤った指示で動くことは別の
+    class." A stale ``reyn.yaml`` tuning knob degrades gracefully (the
+    orphaned value is read, does nothing, the feature it drove already has
+    a replacement path); a stale ``project_context_path`` silently starts
+    an agent on WRONG instructed text — the harm is invisible until a
+    human notices the agent is behaving as if it never read what an
+    operator thinks it did. Not visible with the shipped config (an
+    operator who never customized ``project_context_path`` never sees it);
+    the bound is "the operator immediately, at their own next `reyn chat`,
+    a load, not a silent runtime drift" — a hard fail here trades a broken
+    session for a self-correcting one.
+
+    Scope note: retiring ``reyn.yaml``'s OWN retired-key severity to match
+    is explicitly OUT of this PR's scope (architect, #5742) — that
+    population and its actual incident rate are unmeasured; re-open trigger
+    is a real incident from a stale ``reyn.yaml`` key, not this asymmetry
+    alone."""
+
+
 def unknown_profile_keys(data: "dict") -> "frozenset[str]":
     """#5455 ①: every top-level key in a raw ``profile.yaml`` dict that is
     not a real :class:`AgentProfile` field — the same class of gap #4501/
@@ -66,9 +109,28 @@ def unknown_profile_keys(data: "dict") -> "frozenset[str]":
     call site, to see this) and ``reyn config validate`` (a dedicated
     CLI section, walking ``.reyn/agents/*/profile.yaml`` itself) —
     mirroring how ``unknown_config_keys``
-    itself already serves 3 callers from one implementation."""
+    itself already serves 3 callers from one implementation.
+
+    #5742 PR2: :data:`_RETIRED_PROFILE_KEYS` is excluded from the returned
+    population — a retired key is not "unrecognized, no further signal"
+    (this function's own generic disclosure); it has a NAMED replacement
+    and, at :meth:`AgentProfile.load`, a hard raise. Folding it back into
+    this bucket would understate it to a bare WARN at any OTHER caller
+    (e.g. ``reyn config validate``) that reads only this function's
+    result — see :func:`retired_profile_keys_present` for that population."""
     known = {f.name for f in dataclasses.fields(AgentProfile)}
-    return frozenset(data.keys()) - known
+    return frozenset(data.keys()) - known - set(_RETIRED_PROFILE_KEYS)
+
+
+def retired_profile_keys_present(data: "dict") -> "dict[str, str]":
+    """#5742 PR2: the subset of :data:`_RETIRED_PROFILE_KEYS` actually
+    present as top-level keys in *data* (a raw, just-``yaml.safe_load``ed
+    ``profile.yaml`` dict), mapped old -> replacement. Shared by
+    :meth:`AgentProfile.load` (raises :class:`RetiredProfileKeyError` when
+    non-empty) and ``reyn config validate``'s own profile-scanning section
+    (reports the SAME finding without constructing a live
+    ``AgentProfile`` — read-only diagnostic, no raise)."""
+    return {k: v for k, v in _RETIRED_PROFILE_KEYS.items() if k in data}
 
 
 @dataclass(frozen=True)
@@ -104,43 +166,34 @@ class AgentProfile:
     # to the project's own base_dir, same convention as `allowed_mcp`'s
     # None).
     base_dir: "str | None" = None
-    # #5084 (#4206's own axis ①, applied to a SECOND file zone): an
-    # agent-layer override of WHICH file is read as this agent's project
-    # context (REYN.md/AGENTS.md, the model-facing system-prompt text) —
-    # NOT the additive `.reyn/agents/<name>/AGENTS.md` composition that
-    # already exists (`RouterHostAdapter.get_project_context`); this
-    # REPLACES the project-wide file for this one agent's own session,
-    # the same "coder-ready agent gets its OWN REYN.md" the owner's goal
-    # names directly. Architect's own re-scoping (#5084): this is NOT axis
-    # ③ preference (a free override) — this value selects what content
-    # reaches the model, and `.reyn` is the agent's own default write
-    # zone, so opening it to the agent layer needs the SAME "⊆ workspace,
-    # protect-at-use" treatment `base_dir` already has (`Session.
-    # _workspace_project_context`, mirroring `_workspace_base_dir`) —
-    # never a bare capability toggle. Same "raw value, resolved/bounded
-    # at USE time, not here" split as `base_dir`: this field just carries
-    # the string. None = no override (falls through to the project-wide
-    # file, same convention as `base_dir`'s own None).
-    project_context_path: "str | None" = None
-    # #5742 (owner ruling, chat 2026-09-04): REPLACES project_context_path
-    # above as the agent frame's own instructed spelling. Deliberately a
-    # DIFFERENT shape, not a rename: this is a bare filename resolved
-    # against THIS agent's own workspace_dir (default `.reyn/agents/
-    # <name>/`, `resolve_context_candidate`/`DEFAULT_PROJECT_CONTEXT_
-    # FILES`, config/loader.py) — REYN.md else AGENTS.md, first EXISTING
-    # wins — never an arbitrary absolute/`${REYN_PROJECT_DIR}`-relative
-    # path anywhere in the workspace the way project_context_path's own
-    # value could be (that shape has no room for a default-name-order
-    # search, architect's own #5742 reasoning). None = auto-resolve
-    # (same convention as base_dir's own None). Read FRESH every turn
-    # (router_host_adapter.py's own _resolve_agent_context) — unlike
-    # project_context_path (CONSTRUCTION_ONCE, owner ruling B/#3787),
-    # this is the agent-layer field, so it follows #3787's OTHER half of
-    # that same ruling: "hot reload — する（agent 側のみ）". PR1
-    # (#5742): project_context_path stays accepted (deprecated, not yet
-    # retired — hard-erroring it is PR2, after existing profiles migrate
-    # to this field; retiring it first would make an existing agent's
-    # profile unloadable).
+    # #5742 PR2 (architect ruling, issue #5742): project_context_path
+    # (#5084/#5111 — an agent-layer override of WHICH file is read as this
+    # agent's project context, REPLACING the project-wide file for this
+    # one agent's own session) is RETIRED — no longer a field. A
+    # profile.yaml naming it raises RetiredProfileKeyError at load() (see
+    # _RETIRED_PROFILE_KEYS); the write side (AgentRegistry.create's own
+    # former project_context_path kwarg, `reyn agent new
+    # --project-context-path`) is removed in the same PR (a live creation
+    # seam that keeps writing a key load() then hard-rejects would be a
+    # landmine, not a deprecation). context_path (below) is the
+    # replacement — a DIFFERENT shape, not a rename: a bare filename
+    # resolved against THIS agent's own workspace_dir, never an arbitrary
+    # absolute/${REYN_PROJECT_DIR}-relative path anywhere in the
+    # workspace.
+    #
+    # #5742 (owner ruling, chat 2026-09-04): context_path's own default-
+    # name-order search (REYN.md else AGENTS.md, first EXISTING wins,
+    # resolve_context_candidate/DEFAULT_PROJECT_CONTEXT_FILES, config/
+    # loader.py) is what project_context_path's arbitrary-path shape had
+    # no room for — the reason #5742 generalizes THIS mechanism, not that
+    # one. None = auto-resolve (same convention as base_dir's own None).
+    # Read FRESH every turn (router_host_adapter.py's own
+    # _read_agent_instructions) — unlike project_context_path's own
+    # CONSTRUCTION_ONCE (owner ruling B/#3787), this is the agent-layer
+    # field, so it follows #3787's OTHER half of that same ruling: "hot
+    # reload — する（agent 側のみ）". PR1 (#5742) landed this field
+    # alongside the still-accepted, deprecated project_context_path; PR2
+    # (this PR) retires that field, as described above.
     context_path: "str | None" = None
     # #5352: this agent's OWN declared sandbox-policy narrowing — the
     # config-facing vocabulary dict (``network`` / ``subprocess`` /
@@ -159,7 +212,7 @@ class AgentProfile:
     # declares it, else falls back to the spawner's value) lives in
     # ``AgentRegistry.resolved_sandbox_for`` / the spawn call sites — this
     # field only carries the agent's OWN raw declaration, same "raw value,
-    # resolved/bounded at USE time" split ``base_dir``/``project_context_path``
+    # resolved/bounded at USE time" split ``base_dir``/``context_path``
     # already use above.
     sandbox: "dict[str, object] | None" = None
 
@@ -167,14 +220,12 @@ class AgentProfile:
     def new(
         cls, name: str, role: str = "", *,
         base_dir: "str | None" = None,
-        project_context_path: "str | None" = None,
     ) -> "AgentProfile":
         return cls(
             name=name,
             role=role,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             base_dir=base_dir,
-            project_context_path=project_context_path,
         )
 
     @classmethod
@@ -195,7 +246,15 @@ class AgentProfile:
         this dataclass, like #5095's `broker_identity`) WARNs — never
         raises, matching every other "not applied" disclosure in this
         codebase (an operator's file stays loadable; the log is where the
-        mismatch surfaces) — see :func:`unknown_profile_keys`."""
+        mismatch surfaces) — see :func:`unknown_profile_keys`.
+
+        #5742 PR2: a top-level key in :data:`_RETIRED_PROFILE_KEYS` (e.g.
+        `project_context_path`, retired in favor of `context_path`) is
+        DIFFERENT from the WARN above — it raises
+        :class:`RetiredProfileKeyError`, naming the replacement, before any
+        other parsing happens. See that error class's own docstring for
+        why this severity is deliberately asymmetric with `reyn.yaml`'s own
+        retired keys (WARN-only there)."""
         from reyn.runtime.bounding import validate_bounding
         from reyn.runtime.preferences import validate_preferences
 
@@ -203,6 +262,21 @@ class AgentProfile:
         if not path.is_file():
             raise FileNotFoundError(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        retired_present = retired_profile_keys_present(data)
+        if retired_present:
+            lines = ", ".join(
+                f"{old!r} -> use {new!r} instead"
+                for old, new in sorted(retired_present.items())
+            )
+            raise RetiredProfileKeyError(
+                f"agent {data.get('name', agent_dir.name)!r} profile.yaml "
+                f"uses retired key(s): {lines}. This key selects the "
+                "instructed text delivered to the model — a stale value "
+                "here means the agent silently would not run on what its "
+                "operator wrote, so this is a hard failure, not a "
+                f"warning. Edit {path} and rewrite the key(s) named above "
+                "before this agent can start."
+            )
         unknown_top_level = unknown_profile_keys(data)
         if unknown_top_level:
             import logging
@@ -227,10 +301,6 @@ class AgentProfile:
         validate_bounding(bounding, source=f"agent {name!r} profile.yaml")
         raw_base_dir = data.get("base_dir")
         base_dir = str(raw_base_dir) if raw_base_dir else None
-        raw_project_context_path = data.get("project_context_path")
-        project_context_path = (
-            str(raw_project_context_path) if raw_project_context_path else None
-        )
         raw_context_path = data.get("context_path")
         context_path = str(raw_context_path) if raw_context_path else None
         # #5352: `sandbox:` — a dict (the config-facing sandbox-policy
@@ -249,7 +319,6 @@ class AgentProfile:
             preferences=preferences,
             bounding=bounding,
             base_dir=base_dir,
-            project_context_path=project_context_path,
             context_path=context_path,
             sandbox=sandbox,
         )
@@ -273,8 +342,6 @@ class AgentProfile:
             payload["bounding"] = dict(self.bounding)
         if self.base_dir is not None:
             payload["base_dir"] = self.base_dir
-        if self.project_context_path is not None:
-            payload["project_context_path"] = self.project_context_path
         if self.context_path is not None:
             payload["context_path"] = self.context_path
         if self.sandbox is not None:

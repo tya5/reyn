@@ -44,8 +44,9 @@ rejection never does.
 
 **Two distinct mechanisms deliberately share the SAME token name.**
 ``${REYN_PROJECT_DIR}`` (this module's own consumer, "A": values reyn
-itself reads — ``profile.yaml``'s ``base_dir``/``project_context_path``,
-``permissions``' file paths) expands through
+itself reads — ``profile.yaml``'s ``base_dir`` (``project_context_path``,
+this same shape, was retired in #5742 PR2), ``permissions``' file paths)
+expands through
 :func:`reyn.plugins.tokens.expand_with_map`, an in-process string
 substitution — never through ``os.environ``. ``REYN_PROJECT_DIR`` (no
 ``${}``, no lowercase collision intended) is ALSO the name of an actual
@@ -65,8 +66,9 @@ from pathlib import Path
 
 def within_workspace(candidate: Path, workspace_root: Path) -> bool:
     """True iff *candidate* falls under *workspace_root* — restrict-only,
-    the bound every #4206-family agent-layer override (``base_dir``,
-    ``project_context_path``) shares.
+    the bound every #4206-family agent-layer override (``base_dir`` today;
+    ``project_context_path`` used it too before #5742 PR2 retired that
+    field) shares.
 
     *candidate* is resolved here (idempotent if the caller already
     resolved it, e.g. after token expansion); *workspace_root* is resolved
