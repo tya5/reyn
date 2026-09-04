@@ -133,6 +133,28 @@ ARCHIVED_MARKER = ".archived"
 # this (the foundation tests do). Inert until the events are emitted.
 _LIFECYCLE_CREATE_KINDS = frozenset({"agent_created", "session_spawned"})
 
+# #5729: the closed set of a session's own audit-event kinds that can flip
+# turn_active or iv_waiting — see AgentRegistry._subscribe_session_status.
+# turn_started/turn_settled (NOT chat_turn_completed_inline, which only
+# fires on one router branch — see that method's own docstring) cover
+# turn_active. intervention_announced covers iv_waiting's ENQUEUE side for
+# ALL 6 intervention paths (a NEW kind, declared in AUDIT_EVENT_KINDS +
+# events.md, emitted from InterventionHandler.announce — the one choke
+# point every caller shares; user_intervention_requested alone only
+# covers ask_user.py, per renderer.py's own verified comment).
+# user_answered_intervention covers the RESOLVE side (also common to all
+# 6, InterventionHandler.deliver_answer_to).
+_STATUS_AUDIT_EVENT_KINDS = frozenset({
+    "turn_started",
+    "turn_settled",
+    "intervention_announced",
+    "user_intervention_requested",
+    "user_intervention_received",
+    "intervention_denied",
+    "intervention_answer_submitted",
+    "user_answered_intervention",
+})
+
 
 def _count_inflight_disposition(tasks: "list") -> "tuple[int, int]":
     """#2115: classify settled in-flight tasks → (cancelled, finished). A task
@@ -442,6 +464,28 @@ class AgentRegistry:
         # transport (#5139's own "AgentRegistry does not call into interfaces"
         # ruling) — the listener lets transport clean up after itself instead.
         self._remove_listeners: "list[Callable[[str], None]]" = []
+        # #5729: per-session status (turn_active / iv_waiting) delta fan-out —
+        # the registry-level sibling of ``_attach_listeners`` above, NOT a new
+        # kind of mechanism. Fired synchronously with ``(agent_name, sid,
+        # turn_active, iv_waiting, seq)`` whenever one of the 4 audit-events
+        # that can flip either bool fires for a live session (see
+        # :meth:`_subscribe_session_status`). No subscriber list is keyed by
+        # agent name (unlike ``_attach_listeners``) — a status consumer (the
+        # TUI agent tab) wants every session in this process, not one it has
+        # pre-selected, and owner ruling B (#5729) says a remote client sees
+        # them too.
+        self._status_listeners: "list[Callable[[str, str, bool, bool, int], None]]" = []
+        # ``seq`` is a fan-out-owned monotonic counter per (name, sid) — NOT
+        # a copy of turn_active/iv_waiting (architect's "no stored copy of
+        # STATUS" ruling is about those two values, which this dict never
+        # holds; a sequence token is metadata about ordering, exactly like
+        # ``Session._queue_seq`` is already metadata about the queue, not the
+        # queue's content). Deliberately its OWN counter, not a reuse of
+        # ``Session.queue_seq`` — that field is scoped to the sent-queue race
+        # specifically (its own docstring), and folding an unrelated bool pair
+        # through it would be the same "one value, two facts" shape the
+        # architect has ruled against elsewhere in this same design.
+        self._status_seq_by_key: "dict[tuple[str, str], int]" = {}
         # #3671 P3 (now #3793 stage 1: moved onto self._connection): the ONE
         # place a caller doing a BACKGROUND attach (P2's
         # `chat.py._background_attach`, running off the render path) can
@@ -652,6 +696,13 @@ class AgentRegistry:
         ident = getattr(session, "_agent", None)
         if ident is not None:
             self._identities.setdefault(name, ident)
+        # #5729: every real (name, sid) insertion goes through this one
+        # method (the ``spawn_session`` new-sid path below routes through
+        # it too, rather than assigning ``self._sessions`` directly, so this
+        # stays the single hook) — wire the status fan-out here so a status
+        # listener never has to know how many session-creation call sites
+        # exist.
+        self._subscribe_session_status(name, sid, session)
 
     def _has_session(self, name: str, sid: str = _DEFAULT_SID) -> bool:
         return sid in self._sessions.get(name, {})
@@ -3682,7 +3733,11 @@ class AgentRegistry:
         loader = getattr(session, "load_persisted_toggles", None)
         if callable(loader):
             loader()
-        self._sessions.setdefault(name, {})[new_sid] = session
+        # #5729: route through _store_session (not a raw dict assignment) so
+        # this new-sid path gets the status fan-out subscription for free —
+        # ``name`` already exists in ``_identities`` here, so the identity-
+        # capture half of ``_store_session`` is a harmless no-op setdefault.
+        self._store_session(name, session, sid=new_sid)
         return new_sid
 
     async def spawn_session_recorded(
@@ -4053,6 +4108,155 @@ class AgentRegistry:
         """Undo :meth:`add_remove_listener`. A no-op if already removed."""
         if callback in self._remove_listeners:
             self._remove_listeners.remove(callback)
+
+    # ── #5729: per-session status (turn_active / iv_waiting) fan-out ───────
+
+    def add_status_listener(
+        self, callback: "Callable[[str, str, bool, bool, int], None]",
+    ) -> None:
+        """Subscribe to every live session's ``(turn_active, iv_waiting)``
+        transitions in this process, for the TUI agent tab (#5729).
+
+        ``callback`` is invoked synchronously with ``(agent_name, sid,
+        turn_active, iv_waiting, seq)`` — the sibling of
+        :meth:`add_attach_listener`'s fired-synchronously, no-``await``-
+        between idiom, not a new mechanism. Unlike ``add_attach_listener``
+        this is not keyed by agent name: a status consumer wants every
+        session in this process (owner ruling B — a remote client sees
+        sessions it has not attached too), so there is exactly one global
+        listener list, not one per name.
+
+        ``seq`` is a per-``(name, sid)`` monotonic counter this registry
+        owns (see :attr:`_status_seq_by_key`) — a caller merging deltas
+        keeps the highest ``seq`` applied per key and discards one that is
+        not strictly greater, the same stale-delta-cannot-resurrect-old-
+        state gate ``Session._bump_queue_seq`` already established for the
+        sent-queue region. It is a SEPARATE counter, not a reuse of
+        ``Session.queue_seq`` — see :attr:`_status_seq_by_key`'s own
+        comment for why."""
+        self._status_listeners.append(callback)
+
+    def remove_status_listener(
+        self, callback: "Callable[[str, str, bool, bool, int], None]",
+    ) -> None:
+        """Undo :meth:`add_status_listener`. A no-op if already removed."""
+        if callback in self._status_listeners:
+            self._status_listeners.remove(callback)
+
+    def status_listener_count(self) -> int:
+        """Public read of how many :meth:`add_status_listener` subscribers
+        are currently registered (#5729) — the test-facing witness that a
+        consumer's teardown (``on_unmount`` in the TUI) actually called
+        :meth:`remove_status_listener` rather than leaking one per attach/
+        detach cycle. Not used by any production code path."""
+        return len(self._status_listeners)
+
+    def _subscribe_session_status(self, name: str, sid: str, session: "object") -> None:
+        """Wire one freshly-stored session into the status fan-out (#5729).
+
+        Called exactly once per real session object, from :meth:`_store_session`
+        (both its own call site and the ``spawn_session`` new-sid path, which
+        routes through it — see that method's own note).
+
+        One audit-event subscription now covers both halves of
+        ``iv_waiting`` (as well as ``turn_active``):
+
+        - **turn_active**: ``turn_started``/``turn_settled`` (NOT
+          ``chat_turn_completed_inline`` — that one only fires on the single
+          router branch that took no catalog dispatch, per router_loop.py's
+          own guarding ``if``; ``turn_settled`` is the unconditional
+          ``finally``-block event session.py documents as firing "for EVERY
+          turn kind").
+        - **iv_waiting OUT** (resolved): ``user_answered_intervention`` —
+          verified common to all 6 ``intervention_bus.request()`` callers
+          (renderer.py's own comment: "the SAME primitive... which all 6
+          paths DO share" — the resolution funnel every answer path routes
+          through, ``InterventionHandler.deliver_answer_to``).
+        - **iv_waiting IN** (enqueued): ``intervention_announced`` — a NEW
+          #5729 audit event, emitted from ``InterventionHandler.announce``
+          (the ONE choke point all 6 callers share; ``user_intervention_
+          requested`` is ask_user.py-only, verified via renderer.py's own
+          comment).
+
+        ⚠️ An earlier revision of this method subscribed to the session's
+        OUTBOX (``session.outbox_hub``) instead, since ``announce`` puts a
+        ``kind="intervention"`` message there too. That was a real,
+        MEASURED regression: adding a subscriber starts ``OutboxHub``'s
+        drain task eagerly for EVERY session (its own docstring: "Lazily
+        (re)starts... only when the first surface attaches") — for a
+        session nothing else has ever subscribed to, this began silently
+        consuming ``session.outbox`` before any real UI attached, starving
+        direct ``outbox.get_nowait()`` readers elsewhere (caught by
+        ``test_multisession_history_isolation_2348.py`` going from green to
+        red on this exact change). The new ``intervention_announced`` audit
+        event is the fix: same choke point, the ALREADY-existing,
+        side-effect-free ``subscribe_audit_events`` channel instead.
+
+        Recomputes both bools LIVE off ``session`` on every fire (never
+        reads from the triggering event itself) — over-firing is harmless
+        (the recompute is idempotent), under-firing would leave a bool
+        stuck stale, the worse failure.
+
+        ``name``/``sid`` are captured by this call's own local scope, not a
+        shared loop variable — each call to this method gets its own stack
+        frame, so the closure below cannot suffer the classic late-binding
+        bug where every closure in a loop ends up sharing the LAST loop
+        variable's value (see the accept test that drives 2 real sessions
+        and asserts the two never cross)."""
+        interventions = getattr(session, "interventions", None)
+
+        def _on_status_event(_event: "object") -> None:
+            turn_active = bool(getattr(session, "turn_active", False))
+            iv_waiting = (
+                not interventions.is_empty() if interventions is not None else False
+            )
+            key = (name, sid)
+            seq = self._status_seq_by_key.get(key, 0) + 1
+            self._status_seq_by_key[key] = seq
+            for listener in list(self._status_listeners):
+                listener(name, sid, turn_active, iv_waiting, seq)
+
+        subscribe = getattr(session, "subscribe_audit_events", None)
+        if callable(subscribe):
+            subscribe(_on_status_event, kinds=_STATUS_AUDIT_EVENT_KINDS)
+
+    def all_sessions_status(self) -> "list[dict]":
+        """Snapshot of ``turn_active``/``iv_waiting`` for every live session in
+        this process (#5729), for the agent tab's initial render / a reader
+        that missed deltas.
+
+        Computed fresh on every call by enumerating live sessions and reading
+        each one's own public accessors — the same "no stored copy, compute
+        by listing" shape :meth:`session_tree` already established (architect
+        ruling: a saved dict here would be a second copy of status that
+        nothing bounds from drifting). Iterates :meth:`list_active_names`
+        (every declared, non-archived agent) the same way :meth:`session_tree`
+        does, but — unlike that method — only emits a row for a name that has
+        at least one LOADED session (an unattached, never-loaded agent has no
+        live Session to read ``turn_active``/``iv_waiting`` off of; it is not
+        "not running", it is "nothing to report", so it is simply absent
+        here rather than fabricated as False).
+
+        ★ Scope: this process only. A session in a sibling process is
+        invisible to this call (registry has no cross-process knowledge —
+        #5694/#5714) — the caller (the agent tab) must render this as "every
+        session in this process", never as "every session"."""
+        out: "list[dict]" = []
+        for name in self.list_active_names():
+            sessions = self._sessions.get(name) or {}
+            for sid in sorted(sessions):
+                session = sessions[sid]
+                interventions = getattr(session, "interventions", None)
+                out.append({
+                    "agent": name,
+                    "sid": sid,
+                    "turn_active": bool(getattr(session, "turn_active", False)),
+                    "iv_waiting": (
+                        not interventions.is_empty()
+                        if interventions is not None else False
+                    ),
+                })
+        return out
 
     def _announce_session_attached(self, name: str, sid: str) -> None:
         """#3310 N1: notify the client a switch just happened, as a stream

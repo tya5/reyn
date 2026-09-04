@@ -622,6 +622,14 @@ def _snapshot_for_session(registry, s, config=None):
         "agent_names": list(registry.list_active_names()),
         "attached_name": s.agent_name,
         "session_tree": registry.session_tree(),
+        # #5729: turn_active/iv_waiting for EVERY loaded session in this
+        # process (not only the attached one) — computed fresh on every call
+        # (registry.all_sessions_status()'s own "no stored copy" ruling),
+        # riding the SAME snapshot both local and remote clients already
+        # derive queue/turn_active/queue_seq from (this dict), so the two
+        # never diverge by construction. ★ Process-scoped: a sibling
+        # process's session never appears here (#5694/#5714's own limit).
+        "all_sessions_status": registry.all_sessions_status(),
         # LOCAL genuinely measures the prompt/completion SPLIT below
         # (real Session state, u.prompt_tokens/u.completion_tokens) —
         # gated by ``usage_breakdown_reported`` above.

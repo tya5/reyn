@@ -27,6 +27,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
 from reyn.interfaces.repl.read_model import (
     LOCAL_CHAT_READ_CAPABILITIES,
     REMOTE_CHAT_READ_CAPABILITIES,
+    ChatReadModel,
     project_remote_snapshot,
     reported_snapshot_keys,
 )
@@ -200,11 +201,23 @@ def test_task_tab_is_registered_and_in_the_actionable_list_panes():
 # ---------------------------------------------------------------------------
 
 
-class _TaskSnapshotReadModel:
+class _TaskSnapshotReadModel(ChatReadModel):
     """Minimal real ChatReadModel returning a fixed snapshot — mirrors the
     convention every other real-App chrome test in this package uses
     (``_MutableSnapshotReadModel`` et al.), reproduced here rather than
-    imported to keep this file's fixture surface self-contained."""
+    imported to keep this file's fixture surface self-contained.
+
+    #5729 (lead-coder's #5734 review, real CI red): this class did NOT
+    inherit ``ChatReadModel`` before — a bare duck-type — so it never
+    picked up the ABC's new ``add_status_listener``/``remove_status_
+    listener`` no-op defaults, and ``TextualChatApp.on_unmount``'s
+    unconditional call to the latter crashed with ``AttributeError`` on
+    real CI. Inheriting the real ABC closes the class properly rather
+    than adding a defensive ``getattr`` in ``app.py``."""
+
+    @property
+    def capabilities(self):
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, snap: dict) -> None:
         self._snap = snap

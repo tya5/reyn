@@ -444,6 +444,17 @@ class InterventionHandler:
             text="\n".join(lines),
             meta={**_iv_meta(iv), "nodes": nodes},
         ))
+        # #5729: the ONE choke point all 6 intervention_bus.request() callers
+        # share (ask_user/permissions/limit_handler/mcp_install/elicitation/
+        # hooks-shell_runner) — a subscriber that needs "an intervention was
+        # just enqueued" (the registry status fan-out) reads this instead of
+        # the ask_user-only user_intervention_requested, and instead of
+        # subscribing to the outbox directly (measured regression: an extra
+        # OutboxHub subscriber starts that hub's drain task eagerly for
+        # EVERY session, silently consuming session.outbox before any real
+        # UI ever attaches — starving tests/production code that reads
+        # session.outbox directly).
+        self._events.emit("intervention_announced", intervention_id=iv.id, kind=iv.kind)
 
     async def dispatch(self, iv: UserIntervention) -> InterventionAnswer:
         """Register an intervention via the registry.  Emits a "queued" status

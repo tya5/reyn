@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.intervention_choices import generic_yn_choices
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.services.intervention_handler import InterventionHandler
@@ -89,7 +90,12 @@ async def _capture_announce(iv: UserIntervention) -> OutboxMessage:
     handler = InterventionHandler(
         intervention_registry=None,
         journal=None,
-        event_log=None,
+        # #5729: announce() now also emits "intervention_announced" via
+        # self._events — a real EventLog, not None. Production's one
+        # construction site (session.py:6406) always passes a real one
+        # (self._audit_events, never None); intervention_registry/journal
+        # stay None since announce() itself never touches them.
+        event_log=EventLog(),
         put_outbox=_put,
         append_history=lambda *_a, **_k: None,
     )

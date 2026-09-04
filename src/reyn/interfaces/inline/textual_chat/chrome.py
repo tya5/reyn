@@ -727,6 +727,7 @@ def _agent_pane_entries(
     names: "Sequence[str]",
     active: "str | None",
     tree: "Sequence[dict]" = (),
+    status: "Sequence[dict]" = (),
 ) -> "list[tuple[str, str]]":
     """``(row, slash)`` for the agent→session tree (``AgentRegistry.session_tree()``
     via the snapshot's ``session_tree``), UNIONED with the flat ``names`` list —
@@ -750,19 +751,56 @@ def _agent_pane_entries(
     different information — the tree's silence about an agent must never read
     as that agent not existing. So every agent gets exactly one representation:
     a tree row if the tree has one, else a flat row — never both, never
-    neither."""
+    neither.
+
+    #5729: ``status`` (= ``AgentRegistry.all_sessions_status()`` via the
+    snapshot's ``all_sessions_status``) adds 2 INDEPENDENT glyph slots to
+    each session row — ``●`` for ``turn_active``, ``?`` for ``iv_waiting``
+    — never collapsed into one indicator (architect ruling, #5729: "turn
+    dispatched AND waiting on an answer" is the one combination that
+    matters most to an operator, and a single glyph could not carry it).
+    The agent-level row shows the OR across its own sessions, a display
+    convenience only — the authoritative per-(agent, sid) values live on
+    the session rows. A session absent from ``status`` (not yet loaded, or
+    #5729's own process-scope limit — a sibling process's session is
+    invisible here) renders no glyphs, never a fabricated "not running"
+    mark.
+
+    ★ The glyphs are VARIABLE-width (appended only when true), not a
+    fixed-width blank slot — an idle/unattached agent row must stay
+    BYTE-IDENTICAL to its pre-#5729 shape. A fixed 2-char blank slot once
+    pushed an idle, unattached agent-level row to a 4-space-only prefix,
+    indistinguishable from a session row's 4-space INDENT — the exact
+    collision ``test_agent_pane_never_double_renders_an_agent_present_in_
+    both`` (test_5094) caught, since that test tells an agent row from a
+    session row by testing for a literal 4-space start."""
+    status_by_key = {(s.get("agent"), s.get("sid")): s for s in status}
     out: "list[tuple[str, str]]" = []
     tree_agents: "set[str]" = set()
     for agent in tree:
         name = agent.get("agent", "")
         tree_agents.add(name)
         attached = bool(agent.get("attached"))
-        out.append((f"{'▸' if attached else ' '} {name}", f"/attach {name}"))
-        for sess in agent.get("sessions") or []:
+        sessions = agent.get("sessions") or []
+        rows = [status_by_key.get((name, s.get("sid")), {}) for s in sessions]
+        agent_glyphs = (
+            ("●" if any(r.get("turn_active") for r in rows) else "")
+            + ("?" if any(r.get("iv_waiting") for r in rows) else "")
+        )
+        out.append((
+            f"{'▸' if attached else ' '}{agent_glyphs} {name}",
+            f"/attach {name}",
+        ))
+        for sess in sessions:
             sid = sess.get("sid", "")
             smark = "▸" if sess.get("attached") else " "
+            row = status_by_key.get((name, sid), {})
+            glyphs = (
+                ("●" if row.get("turn_active") else "")
+                + ("?" if row.get("iv_waiting") else "")
+            )
             cmd = f"/session switch {sid}" if attached else f"/attach {name}"
-            out.append((f"    {smark} {sid}", cmd))
+            out.append((f"    {smark}{glyphs} {sid}", cmd))
     for n in names:
         if n in tree_agents:
             continue
@@ -774,6 +812,7 @@ def agent_pane_options(
     names: "Sequence[str]",
     active: "str | None",
     tree: "Sequence[dict]" = (),
+    status: "Sequence[dict]" = (),
 ) -> list[str]:
     """One row per loaded agent AND per session beneath it, the attach focus
     marked. Derived from the snapshot's ``session_tree`` (=
@@ -782,8 +821,10 @@ def agent_pane_options(
     loaded set either way, so a freshly-created/attached agent (or a
     newly-spawned session) appears automatically, and an agent the tree
     hasn't caught up to yet is never silently dropped just because some
-    OTHER agent already has a tree entry."""
-    return [row for row, _cmd in _agent_pane_entries(names, active, tree)]
+    OTHER agent already has a tree entry. ``status`` (#5729) adds the
+    turn_active/iv_waiting glyphs — see ``_agent_pane_entries``'s own
+    docstring."""
+    return [row for row, _cmd in _agent_pane_entries(names, active, tree, status)]
 
 
 # ── the six toggle/list categories the retired "more…" sub-bar owned (#3338) ──
@@ -1760,7 +1801,8 @@ _PANE_ENTRY_BUILDERS: "dict[str, object]" = {
         s.get("model_active_class") or s.get("model"),
     ),
     "agent": lambda s: _agent_pane_entries(
-        s.get("agent_names") or [], s.get("attached_name"), s.get("session_tree") or []
+        s.get("agent_names") or [], s.get("attached_name"), s.get("session_tree") or [],
+        s.get("all_sessions_status") or [],
     ),
     "tool": lambda s: _visibility_pane_entries(s, "tool", None),
     "mcp": _mcp_pane_entries,

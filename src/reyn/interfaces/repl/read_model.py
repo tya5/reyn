@@ -49,7 +49,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from reyn.interfaces.repl.status import _snapshot
 
@@ -299,7 +299,7 @@ class ChatReadModelCapabilities:
     # ``attached_name_reported`` are declared here at the SAME time the
     # underlying wire gap is fixed, so there is no window where the
     # declaration exists but the value is still fabricated.
-    agent_roster_reported: bool  # covers `agent_names` + `session_tree` together
+    agent_roster_reported: bool  # covers `agent_names` + `session_tree` + `all_sessions_status` (#5729) together
     model_catalog_reported: bool  # covers `model_classes` + `model_active_class` together
     attached_name_reported: bool
     # #5185: see the class docstring's own section for why these reverse
@@ -447,6 +447,33 @@ class ChatReadModel(ABC):
     def snapshot(self, config=None) -> "dict | None":
         """Return the status-bar snapshot dict (the ``_snapshot`` shape), or None
         when there is nothing to show (no attached session locally)."""
+
+    def add_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        """Subscribe to per-session ``turn_active``/``iv_waiting`` deltas
+        (#5729) for every session in this process, so the agent tab
+        refreshes on ANY session's change — not only when the currently
+        attached session happens to produce a frame (the gap
+        lead-coder's #5734 review found: a snapshot-cadence-only refresh
+        never sees another session's state change).
+
+        NOT abstract — a no-op default is a complete, honest answer for a
+        read model with no live registry to subscribe against.
+        :class:`RegistryReadModel` (LOCAL) overrides this with the real
+        ``AgentRegistry.add_status_listener`` call. :class:`RemoteReadModel`
+        (REMOTE) keeps this no-op default: the AG-UI stream loop has no
+        wake channel today for a status change on a session OTHER than the
+        one the connection's own frame source follows — it would need a
+        new plumbing addition to ``emitter.py``'s ``stream()`` (which reads
+        ``async for frame in self._frames`` today, one queue bound to one
+        session), filed as its own follow-up rather than folded into this
+        already-large PR. A remote client's agent-tab glyphs still update
+        on the existing snapshot-cadence (each frame from ITS OWN attached
+        session re-triggers ``project_status``), same limit as before."""
+        return None
+
+    def remove_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        """Undo :meth:`add_status_listener`. No-op default, same reason."""
+        return None
 
     @abstractmethod
     def intervention_head(self) -> "object | None":
@@ -662,6 +689,15 @@ class RegistryReadModel(ChatReadModel):
 
     def snapshot(self, config=None):
         return _snapshot(self._registry, config)
+
+    def add_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        """#5729: the ONE real production wiring of ``AgentRegistry.
+        add_status_listener`` — a registry handle genuinely exists here,
+        unlike the base class's no-op default."""
+        self._registry.add_status_listener(callback)
+
+    def remove_status_listener(self, callback: "Callable[[str, str, bool, bool, int], None]") -> None:
+        self._registry.remove_status_listener(callback)
 
     def _attached(self):
         return self._registry.attached_session()
@@ -880,6 +916,9 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "model_classes": v.get("model_classes", []),
         "agent_names": v.get("agent_names", []),
         "session_tree": v.get("session_tree", []),
+        # #5729: same pattern — real wire data, not a placeholder (see
+        # agui/state.py's ``project_status`` docstring for the field).
+        "all_sessions_status": v.get("all_sessions_status", []),
         "cost_agent": v.get("cost_agent", 0.0),
         "cost_total": v.get("cost_total", 0.0),
         "cost_usd": v.get("cost_agent", 0.0),
