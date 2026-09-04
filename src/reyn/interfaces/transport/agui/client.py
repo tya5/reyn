@@ -743,6 +743,18 @@ class AgUiTransport(ClientTransport):
         # queue-affecting mutation on this transport.
         return bool(await self._send({"type": "cancel_queued", "msg_id": msg_id}))
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        # #4401 ③: NOT wired to a real server op yet — #4401 ②'s own
+        # `mcp_probe_states` never reaches this wire either
+        # (`mcp_probe_states_reported=False` for REMOTE, read_model.py),
+        # so a remote client's mcp pane never shows the retry row that
+        # would call this in the first place; only someone typing the
+        # command by hand on a --connect client reaches here. ``False`` —
+        # "did not happen here" — same disclosed-gap shape #4401 ②
+        # already committed to for remote, not a silent no-op invented
+        # for this method alone.
+        return False
+
     async def clear_pending_command_ui(self) -> None:
         # #5096 review finding (lead-coder): EXPLICITLY implemented, not
         # inherited from ClientTransportStub, even though the VALUE

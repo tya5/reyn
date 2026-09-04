@@ -10589,18 +10589,25 @@ class Session:
         recomputation cost to amortize."""
         return self._router_host.mcp_probe_snapshot()
 
-    async def retry_mcp_probe(self, server: str) -> None:
-        """#4401 ③: the ``/mcp retry`` slash command's own target — awaits
-        the retry to completion (deliberately NOT backgrounded; see
-        ``RouterHostAdapter.retry_mcp_probe``'s own docstring for why: the
-        #4401 A-4 co-vet found real concurrent-cache-mutation hazards a
-        BACKGROUND probe introduces, and ③ stays inside the existing
-        turn-serialized safety margin rather than take on that redesign).
-        The slash command handler itself stays ``async`` and awaits this —
-        the row shows "retrying…" (`mcp_probe_state`) the instant the
-        in-flight flag is set, on whatever render happens to run during
-        this await (the TUI keeps rendering; only the slash command's own
-        reply is delayed up to ``per_server_timeout``)."""
+    async def _retry_mcp_probe(self, server: str) -> None:
+        """#4401 ③: the target ``ClientTransport.request_mcp_retry`` calls
+        (never a slash handler directly — #3595 S4's own ceiling gate,
+        ``test_session_public_surface_does_not_grow``, forbids publishing a
+        member whose only reason to exist is letting a slash handler reach
+        it; the transport is the sanctioned production boundary that MAY
+        reach a session's private members, same as ``InProcessTransport``
+        already does for ``cancel_inflight``/``run_slash_command`` and
+        siblings). Awaits the retry to completion (deliberately NOT
+        backgrounded; see ``RouterHostAdapter.retry_mcp_probe``'s own
+        docstring for why: the #4401 A-4 co-vet found real concurrent-
+        cache-mutation hazards a BACKGROUND probe introduces, and ③ stays
+        inside the existing turn-serialized safety margin rather than take
+        on that redesign). The row shows "retrying…" (`mcp_probe_state`,
+        a genuinely PUBLIC read-model forwarder — mirrors
+        ``mcp_subscription_state``'s own already-approved shape) the
+        instant the in-flight flag is set, on whatever render happens to
+        run during this await (the TUI keeps rendering; only the request's
+        own return is delayed up to ``per_server_timeout``)."""
         await self._router_host.retry_mcp_probe(
             server, per_server_timeout=self._safety.timeout.mcp_probe_seconds,
         )

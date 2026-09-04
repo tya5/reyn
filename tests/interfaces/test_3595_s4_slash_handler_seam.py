@@ -598,7 +598,23 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: eligible mid-turn injections (``session.py``'s own wiring, mirroring the
 #: already-public ``peek_mid_turn_injections``/``commit_mid_turn_injection``
 #: siblings it renders on top of) — never reached via slash dispatch.
-_PUBLIC_MEMBER_CEILING = 121
+#: Raised 121 -> 122 for #4401 ②: ``mcp_probe_state`` — a NEW public
+#: read-only method, the mcp pane's per-server probe-state read model
+#: (answered / failed / not_probed / retrying). Genuinely unrelated to
+#: #3595 S4's slash-handler-encapsulation concern — same shape, same
+#: reasoning as the 106->107 entry above for ``mcp_subscription_state``
+#: (a status-readout seam, ``status.py``'s ``_session_mcp_probe_states``,
+#: reads it; it is not a private-state leak published so a slash handler
+#: could keep reaching into the session). ③'s own ``retry_mcp_probe`` is
+#: DELIBERATELY NOT added here — its only real consumer would have been
+#: the ``/mcp retry`` slash handler, the exact S4 failure mode this gate
+#: exists to catch (BLOCKING, PR #5761, lead-coder) — so it stays a
+#: private ``Session._retry_mcp_probe``, reached only from
+#: ``ClientTransport.request_mcp_retry``'s own transport-layer
+#: implementations (the sanctioned production boundary, same as
+#: ``InProcessTransport`` already reaching ``cancel_inflight``/
+#: ``run_slash_command`` and siblings), never published.
+_PUBLIC_MEMBER_CEILING = 122
 
 
 def test_session_public_surface_does_not_grow() -> None:

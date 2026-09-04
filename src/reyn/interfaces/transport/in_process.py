@@ -395,6 +395,23 @@ class InProcessTransport(ClientTransport):
             return bool(await cancel_fn(msg_id))
         return False
 
+    async def request_mcp_retry(self, server: str) -> bool:
+        # #4401 ③: the production seam BLOCKING'd PR #5761 asked for —
+        # this transport (not a slash handler) is the sanctioned boundary
+        # that may reach a session's PRIVATE member (mirrors
+        # cancel_inflight/cancel_queued's own getattr-by-name shape just
+        # above, on the SAME PUBLIC method name convention those use for
+        # THEIR own session calls — Session._retry_mcp_probe is private
+        # specifically because its only real caller is this method).
+        s = self._attached()
+        if s is None:
+            return False
+        retry_fn = getattr(s, "_retry_mcp_probe", None)
+        if callable(retry_fn):
+            await retry_fn(server)
+            return True
+        return False
+
     async def shutdown(self) -> None:
         await self._registry.shutdown()
 
