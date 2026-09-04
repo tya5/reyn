@@ -465,7 +465,7 @@ def _render_mid_turn_injection(kind: str, payload: dict) -> "dict[str, str]":
     ``disclosure=Disclosure.MODEL`` regardless of kind (harmless for
     ``CLIENT_INPUT``'s own ``role="user"`` — the axis does not apply
     outside ``role="system"``), so this is no longer a gap: an
-    injected ``AGENT_REQUEST``/``EXTERNAL_MESSAGE`` entry now persists
+    injected ``AGENT_REQUEST``/``EXTERNAL_MESSAGE``/``HOOK`` entry now persists
     across turn boundaries the same way the wire splice delivers it
     for THIS turn.
     """
@@ -492,6 +492,16 @@ def _render_mid_turn_injection(kind: str, payload: dict) -> "dict[str, str]":
         # make an ordinary, expected payload shape a router turn
         # failure.
         name = payload.get("sender") or kind
+        text = payload.get("text") or ""
+        return {"role": "system", "content": _format_ride_along_attribution(kind, name, text)}
+    if kind == TurnOrigin.HOOK:
+        # #5747: same payload shape and attribution ``_handle_hook_message``
+        # (this module's own wake=true push) already builds —
+        # ``payload.get("name", "hook")`` / ``payload.get("text", "")`` —
+        # so an injected hook push and a wake=true turn-starting one read
+        # identically on the wire, the SAME "one formatter, every mouth"
+        # discipline this function's own docstring names for C/E.
+        name = payload.get("name") or kind
         text = payload.get("text") or ""
         return {"role": "system", "content": _format_ride_along_attribution(kind, name, text)}
     raise AssertionError(
