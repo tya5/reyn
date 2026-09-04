@@ -5234,12 +5234,13 @@ class TextualChatApp(App):
         entry = self._pipeline_runs.get(run_id)
         item = replace(msg, meta={**meta, _PIPELINE_RUN_KEY: run_id})
         if entry is None:
-            entry = self._flow.append(item)
+            # ``_flow`` is the view; new entries belong to its model, just like
+            # every other entry-creating path. Reuse the established running
+            # indicator helper so pipeline rows receive the same viewport-gated
+            # animation as other live rows.
+            entry = self.conversation.append(item)
             self._pipeline_runs[run_id] = entry
-            try:
-                self._flow.start_entry_animation(entry)
-            except Exception:
-                logger.exception("textual chat: could not start pipeline animation")
+            self._begin_running_indicator(entry)
             return True
         try:
             entry.set_item(item)
