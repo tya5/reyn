@@ -24,6 +24,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 
 
@@ -148,6 +149,61 @@ async def test_status_push_never_reports_the_wrong_sessions_identifier(
     assert final[("alice", sid_b)] == {
         "agent": "alice", "sid": sid_b, "turn_active": False, "iv_waiting": False,
     }
+
+
+# ── push side: iv_waiting's ENQUEUE half covers all 6 real callers, not ────
+# ── just ask_user (lead-coder's #5734 second-round finding) ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_iv_waiting_push_fires_for_a_non_ask_user_intervention_kind(tmp_path, monkeypatch):
+    """Tier 2: only ask_user.py, of the 6 real ``intervention_bus.request()``
+    callers, emits ``user_intervention_requested`` directly (verified,
+    interfaces/repl/renderer.py's own comment) — permission confirm, cost
+    warn, MCP install confirm, elicitation, and hook confirm do NOT. The
+    signal common to all 6 is ``InterventionHandler.announce``'s own
+    OUTBOX message (``kind="intervention"``), drained by
+    ``_drain_intervention_announces_for_status`` — a DIFFERENT channel
+    than ``subscribe_audit_events``.
+
+    Dispatches a ``kind="permission.generic"`` intervention (never
+    ``ask_user``) through the REAL ``dispatch()`` and asserts: a push
+    fires with ``iv_waiting=True``, AND no ``user_intervention_requested``
+    event was emitted at all — proving the outbox drain, not the
+    ask_user-only audit event, is what carried it.
+
+    ``@pytest.mark.asyncio`` (a real running loop for the WHOLE test, not a
+    nested ``asyncio.run()`` around only the drive) — the registry/session
+    construction above must run on the SAME loop the outbox hub's internal
+    queues get exercised on; constructing them with no loop running (a
+    plain sync test) and then driving them inside a separately-created
+    ``asyncio.run()`` loop is the same cross-loop mismatch class this PR's
+    own ``UserIntervention.future`` binding hit earlier — confirmed by
+    reproducing the hang locally with the sync-def shape and fixing it
+    exactly this way, not by inspection alone."""
+    monkeypatch.chdir(tmp_path)
+    reg = _make_registry(tmp_path)
+    reg.get_or_load("alice")
+    session = reg.get_session("alice")
+
+    events: list = []
+    session.subscribe_audit_events(events.append)
+    pushes: list[tuple[str, str, bool, bool, int]] = []
+    reg.add_status_listener(lambda name, sid, ta, iw, seq: pushes.append((name, sid, ta, iw, seq)))
+
+    iv = UserIntervention(kind="permission.generic", prompt="Allow tool 'shell'?")
+    task = asyncio.ensure_future(session.interventions.dispatch(iv))
+    # The outbox drain crosses several real hops (dispatch -> announce ->
+    # put_outbox -> OutboxHub's own drain task -> this registry's drain
+    # task) — a condition wait, not a fixed sleep(0) count (CLAUDE.md: no
+    # duration the assertion depends on).
+    await wait_until(lambda: any(p[3] is True for p in pushes))
+    assert not any(e.type == "user_intervention_requested" for e in events), (
+        "this kind must never emit user_intervention_requested — "
+        "confirms the outbox drain, not that event, is the real mechanism"
+    )
+    await session.interventions.deliver_answer(iv, "ok")
+    await task
 
 
 # ── IV: head-limited announce is enough for a bool (architect's own point) ──

@@ -25,7 +25,6 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.user_intervention import UserIntervention
 from tests._support.agent_session import make_session
-from tests._support.events import settle
 
 AGENT = "chrome-5729-agent"
 
@@ -121,13 +120,25 @@ async def test_agent_pane_status_is_process_scoped_never_fabricated_for_a_siblin
 async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
     tmp_path,
 ) -> None:
-    """Tier 2: lead-coder's #5734 BLOCKING finding — ``add_status_listener``
-    had ZERO production call sites; the pull side (all_sessions_status ->
-    snapshot -> chrome) is only re-read when a FRAME lands
-    (``_refresh_live_chrome``), which never happens for a session this TUI
-    has not attached. This is the real, wired-up fix's own witness: a
-    SECOND, unattached session's ``iv_waiting`` flips True, and the OPEN
-    agent pane's glyph updates — with the transport sent ZERO frames.
+    """Tier 2: lead-coder's #5734 review, 2 rounds of BLOCKING findings.
+
+    Round 1 — ``add_status_listener`` had ZERO production call sites; the
+    pull side (all_sessions_status -> snapshot -> chrome) is only re-read
+    when a FRAME lands (``_refresh_live_chrome``), which never happens for
+    a session this TUI has not attached.
+
+    Round 2 — even wired, the push covered only 1 of the 6 real
+    ``intervention_bus.request()`` callers: only ``ask_user.py`` emits
+    ``user_intervention_requested`` directly (verified,
+    ``interfaces/repl/renderer.py``'s own comment); permission confirm —
+    the most common real-world intervention — is one of the other 5 and
+    would never push at all. This test drives a ``kind="permission.
+    generic"`` intervention (deliberately NOT ``ask_user``) through the
+    REAL ``dispatch()`` (never a synthetic audit-event emit) and asserts
+    the agent pane reacts with a transport of ZERO frames AND zero
+    ``user_intervention_requested`` events — proving the outbox-based
+    drain (``_drain_intervention_announces_for_status``), not the
+    ask_user-only audit event, is what actually carries it.
 
     Real ``AgentRegistry``/``Session``/``RegistryReadModel``/
     ``TextualChatApp`` throughout — ``app.on_mount``'s real
@@ -173,29 +184,28 @@ async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
         assert "?" not in before, f"session B row already shows iv_waiting before it was queued: {before!r}"
 
         # Constructed INSIDE the coroutine (a UserIntervention's future
-        # binds to whatever loop is current at construction).
-        iv = UserIntervention(kind="ask_user", prompt="Q?")
+        # binds to whatever loop is current at construction). ``kind=
+        # "permission.generic"`` deliberately, NOT "ask_user" — this is
+        # lead-coder's #5734 follow-up finding: 5 of the 6
+        # intervention_bus.request() callers (permission confirm being the
+        # most common in real use) never emit user_intervention_requested
+        # at all; the signal common to all 6 is InterventionHandler.
+        # announce's own outbox message. Driving this via the REAL
+        # dispatch() (not a synthetic audit-event emit) is what actually
+        # exercises that shared path.
+        iv = UserIntervention(kind="permission.generic", prompt="Allow tool 'shell'?")
+        events = []
+        session_b.subscribe_audit_events(events.append)
         iv_task = asyncio.ensure_future(session_b.interventions.dispatch(iv))
-        # ``InterventionRegistry.dispatch`` itself emits no audit event
-        # (that happens one layer up, in ``ask_user.py`` — real production
-        # callers hit both together). Driving the emit directly alongside
-        # the real dispatch is this repo's own established discriminator
-        # (test_5588's session-wiring tests use the same one): the claim
-        # under test is "the registry's subscriber reacts to a real
-        # user_intervention_requested event", not "ask_user.py's own op
-        # layer reaches this exact scenario" (a different, already-covered
-        # claim elsewhere).
-        session_b._audit_events.emit(
-            "user_intervention_requested", run_id="r", actor="test", intervention_id=iv.id,
-        )
         try:
-            await asyncio.sleep(0)  # let dispatch() enqueue
-            # #4961/#4966: EventLog subscriber dispatch is QUEUED under a
-            # running loop — a synchronous read right after emit() can
-            # race ahead of it (the exact bug #5588's own session-wiring
-            # tests hit and fixed the same way).
-            await settle(session_b._audit_events)
+            await asyncio.sleep(0)  # let dispatch() enqueue + announce() reach the outbox
             await pilot.pause()
+            await pilot.pause()  # the outbox drain is its own task — give it a tick
+            assert not any(e.type == "user_intervention_requested" for e in events), (
+                "this path must reach the pane with NO user_intervention_requested "
+                "audit event — the outbox drain is the mechanism under test, not "
+                "a fallback to the ask_user-only event"
+            )
 
             after = next(r for r in _rows() if sid_b in r)
             assert "?" in after, (
