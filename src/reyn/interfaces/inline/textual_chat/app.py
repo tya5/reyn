@@ -2497,6 +2497,15 @@ class TextualChatApp(App):
         from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
 
         _disarm_stall_trace()
+        # #5729: subscribe to every session's turn_active/iv_waiting deltas
+        # in this process — a real production consumer of
+        # ``ChatReadModel.add_status_listener`` (lead-coder's #5734 review
+        # finding: this method previously had ZERO production call sites).
+        # A no-op for a read model with no live registry to subscribe
+        # against (REMOTE today — see that method's own base-class
+        # docstring for the follow-up this leaves open).
+        if self._read_model is not None:
+            self._read_model.add_status_listener(self._on_session_status_delta)
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
         # #5050 ③: a SEPARATE worker, not sequenced inside ``_pump_frames``
         # itself — that loop can run forever (a live connection) or never
@@ -6793,6 +6802,44 @@ class TextualChatApp(App):
                 "(reason=session_ended) — the app stays open; only an "
                 "explicit /quit exits."
             )
+
+    def _on_session_status_delta(
+        self, agent_name: str, sid: str, turn_active: bool, iv_waiting: bool, seq: int,
+    ) -> None:
+        """#5729: fired synchronously whenever ANY session in this process
+        (attached or not) transitions ``turn_active``/``iv_waiting`` —
+        ``ChatReadModel.add_status_listener``'s own callback shape.
+
+        Refreshes the agent pane immediately if it is the OPEN tab,
+        regardless of which session the frame pump's own cadence is
+        currently following — this is the fix for the exact gap
+        lead-coder's #5734 review found: a refresh driven only by
+        ``_refresh_live_chrome`` (frame arrival on the ATTACHED session)
+        never sees another session's own state change. Re-reads a FRESH
+        snapshot (``_refresh_pane``'s own default) rather than trying to
+        patch just this one row in place — ``all_sessions_status()`` is
+        already cheap to recompute (registry-side enumeration, no I/O),
+        and a fresh read can never drift from a hand-patched one.
+
+        Deliberately ignores its own ``agent_name``/``sid``/``turn_active``/
+        ``iv_waiting``/``seq`` arguments beyond "something changed" — the
+        actual VALUES rendered always come from the fresh snapshot read
+        below, never from this callback's own payload (the same
+        never-parsed-from-the-trigger discipline #5588's own
+        ``_compaction_progress_body`` established)."""
+        try:
+            drawer = self.query_one("#drawer", ContentSwitcher)
+        except Exception:
+            return  # not yet mounted
+        if drawer.display and drawer.current == "agent":
+            self._refresh_pane("agent")
+
+    async def on_unmount(self) -> None:
+        """#5729: undo :meth:`on_mount`'s ``add_status_listener`` — a no-op
+        for a read model that never wired one (REMOTE today; LOCAL with no
+        ``_read_model`` at all, some existing tests' construction shape)."""
+        if self._read_model is not None:
+            self._read_model.remove_status_listener(self._on_session_status_delta)
 
     def _refresh_live_chrome(self) -> None:
         """Re-render everything that must track live session state as frames land:

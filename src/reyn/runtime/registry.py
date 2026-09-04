@@ -4138,6 +4138,14 @@ class AgentRegistry:
         if callback in self._status_listeners:
             self._status_listeners.remove(callback)
 
+    def status_listener_count(self) -> int:
+        """Public read of how many :meth:`add_status_listener` subscribers
+        are currently registered (#5729) — the test-facing witness that a
+        consumer's teardown (``on_unmount`` in the TUI) actually called
+        :meth:`remove_status_listener` rather than leaking one per attach/
+        detach cycle. Not used by any production code path."""
+        return len(self._status_listeners)
+
     def _subscribe_session_status(self, name: str, sid: str, session: "object") -> None:
         """Wire one freshly-stored session into the status fan-out (#5729).
 

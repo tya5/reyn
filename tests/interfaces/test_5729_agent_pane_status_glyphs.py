@@ -11,6 +11,7 @@ producer (a local copy, not a cross-file import — this session's own
 established convention, #5588)."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -18,10 +19,13 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat.chrome import pane_commands, pane_payload
 from reyn.interfaces.repl.status import _snapshot
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
+from reyn.user_intervention import UserIntervention
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 AGENT = "chrome-5729-agent"
 
@@ -108,3 +112,186 @@ async def test_agent_pane_status_is_process_scoped_never_fabricated_for_a_siblin
     session_row = next(r for r in rows if "main" in r)
     assert "●" not in session_row
     assert "?" not in session_row
+
+
+# ── the real end-to-end reactivity witness (#5734 review finding) ──────────
+
+
+@pytest.mark.asyncio
+async def test_agent_pane_reacts_to_an_unattached_sessions_status_with_no_frame(
+    tmp_path,
+) -> None:
+    """Tier 2: lead-coder's #5734 BLOCKING finding — ``add_status_listener``
+    had ZERO production call sites; the pull side (all_sessions_status ->
+    snapshot -> chrome) is only re-read when a FRAME lands
+    (``_refresh_live_chrome``), which never happens for a session this TUI
+    has not attached. This is the real, wired-up fix's own witness: a
+    SECOND, unattached session's ``iv_waiting`` flips True, and the OPEN
+    agent pane's glyph updates — with the transport sent ZERO frames.
+
+    Real ``AgentRegistry``/``Session``/``RegistryReadModel``/
+    ``TextualChatApp`` throughout — ``app.on_mount``'s real
+    ``read_model.add_status_listener(self._on_session_status_delta)`` call
+    is the thing under test, not a stand-in for it."""
+    from textual.widgets import OptionList
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+    from reyn.interfaces.repl.read_model import RegistryReadModel
+
+    state_log = StateLog(tmp_path / "state.wal")
+    holder: dict = {}
+
+    def _factory(profile: AgentProfile) -> Session:
+        return make_session(agent_name=profile.name, state_log=state_log, registry=holder.get("reg"))
+
+    registry = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
+    holder["reg"] = registry
+    AgentProfile.new(AGENT, role="").save(tmp_path / ".reyn" / "agents" / AGENT)
+    await registry.attach(AGENT)  # session A — this is what the TUI attaches to
+    sid_b = registry.spawn_session(AGENT, presentation_consumer=None, intervention_bridge=None)
+    session_b = registry.get_session(AGENT, sid_b)
+    assert session_b is not None
+    # A real Session's InterventionRegistry short-circuits dispatch()
+    # (enforce_listener_presence=True, #254 Phase 1) with no listener —
+    # register one so the drive below actually enqueues.
+    session_b.register_intervention_listener("test")
+
+    read_model = RegistryReadModel(registry, agent_name=AGENT)
+    transport = _EventOnlyTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        app._open_drawer("agent")
+        await pilot.pause()
+
+        def _rows() -> list[str]:
+            opts = app.query_one("#agent", OptionList)
+            return [str(opts.get_option_at_index(i).prompt) for i in range(opts.option_count)]
+
+        before = next(r for r in _rows() if sid_b in r)
+        assert "?" not in before, f"session B row already shows iv_waiting before it was queued: {before!r}"
+
+        # Constructed INSIDE the coroutine (a UserIntervention's future
+        # binds to whatever loop is current at construction).
+        iv = UserIntervention(kind="ask_user", prompt="Q?")
+        iv_task = asyncio.ensure_future(session_b.interventions.dispatch(iv))
+        # ``InterventionRegistry.dispatch`` itself emits no audit event
+        # (that happens one layer up, in ``ask_user.py`` — real production
+        # callers hit both together). Driving the emit directly alongside
+        # the real dispatch is this repo's own established discriminator
+        # (test_5588's session-wiring tests use the same one): the claim
+        # under test is "the registry's subscriber reacts to a real
+        # user_intervention_requested event", not "ask_user.py's own op
+        # layer reaches this exact scenario" (a different, already-covered
+        # claim elsewhere).
+        session_b._audit_events.emit(
+            "user_intervention_requested", run_id="r", actor="test", intervention_id=iv.id,
+        )
+        try:
+            await asyncio.sleep(0)  # let dispatch() enqueue
+            # #4961/#4966: EventLog subscriber dispatch is QUEUED under a
+            # running loop — a synchronous read right after emit() can
+            # race ahead of it (the exact bug #5588's own session-wiring
+            # tests hit and fixed the same way).
+            await settle(session_b._audit_events)
+            await pilot.pause()
+
+            after = next(r for r in _rows() if sid_b in r)
+            assert "?" in after, (
+                f"agent pane did not react to session B's iv_waiting with no "
+                f"frame sent: {after!r}"
+            )
+        finally:
+            await session_b.interventions.deliver_answer(iv, "ok")
+            await iv_task
+
+
+@pytest.mark.asyncio
+async def test_on_unmount_removes_the_status_listener(tmp_path) -> None:
+    """Tier 2: teardown half of the same finding — ``on_unmount`` calls
+    ``remove_status_listener`` so repeated attach/detach (a real operator
+    workflow) does not accumulate dead listeners on the registry. Reads
+    the public ``status_listener_count()`` witness, never the private
+    ``_status_listeners`` list directly."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+    from reyn.interfaces.repl.read_model import RegistryReadModel
+
+    state_log = StateLog(tmp_path / "state.wal")
+    holder: dict = {}
+
+    def _factory(profile: AgentProfile) -> Session:
+        return make_session(agent_name=profile.name, state_log=state_log, registry=holder.get("reg"))
+
+    registry = AgentRegistry(project_root=tmp_path, session_factory=_factory, state_log=state_log)
+    holder["reg"] = registry
+    AgentProfile.new(AGENT, role="").save(tmp_path / ".reyn" / "agents" / AGENT)
+    await registry.attach(AGENT)
+
+    read_model = RegistryReadModel(registry, agent_name=AGENT)
+    transport = _EventOnlyTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+
+    assert registry.status_listener_count() == 0
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        assert registry.status_listener_count() == 1, "on_mount did not register a listener"
+
+    assert registry.status_listener_count() == 0, (
+        "on_unmount did not remove the listener — it leaked past app teardown"
+    )
+
+
+# ── local minimal ClientTransport (mirrors test_3338's own _EventOnlyTransport,
+#    a local copy per this session's established convention, not a cross-file
+#    import) ───────────────────────────────────────────────────────────────
+
+
+class _EventOnlyTransport(ClientTransportStub):
+    """A real, minimal :class:`ClientTransport` — no display/event queue
+    actually used by these tests (they drive state directly on the real
+    Session objects, never through the transport), but ``TextualChatApp``
+    needs a concrete, non-abstract instance to construct and run. Same
+    override set as test_3338_tui_status_chrome_liveness.py's own
+    ``_EventOnlyTransport`` (a local copy, not a cross-file import — this
+    session's established convention, #5588)."""
+
+    def __init__(self) -> None:
+        self._queue: "asyncio.Queue[object]" = asyncio.Queue()
+
+    def start(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    def close(self) -> None:  # pragma: no cover - trivial
+        pass
+
+    async def frames(self):
+        while True:
+            yield await self._queue.get()  # pragma: no cover - never actually sent
+
+    async def submit_user_text(self, text: str) -> str:  # pragma: no cover
+        return ""
+
+    async def run_slash_command(self, name: str, args: str) -> bool:  # pragma: no cover
+        return True
+
+    async def answer_intervention_text(self, text: str, *, intervention_id=None) -> bool:  # pragma: no cover
+        return False
+
+    async def answer_intervention_choice(self, choice_id: str, *, intervention_id=None) -> bool:  # pragma: no cover
+        return False
+
+    def has_session(self) -> bool:
+        return True
+
+    def pending_intervention_head(self) -> "object | None":
+        return None
+
+    def put_display(self, msg) -> None:  # pragma: no cover
+        pass
+
+    async def cancel_inflight(self) -> str:  # pragma: no cover - trivial
+        return ""
+
+    async def shutdown(self) -> None:  # pragma: no cover - trivial
+        pass
