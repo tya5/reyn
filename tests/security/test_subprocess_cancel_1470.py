@@ -7,6 +7,14 @@ Merge-gate 5-point verification:
   4. Cancel-path        — cancel_event fire → killed → SandboxResult(cancelled=True)
                           + P6 sandboxed_exec_cancelled event + P5 status=cancelled
   5. Callsite completeness — verified in sister test files (stub signature updated)
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 2 of this
+module's 11 tests are Darwin-gated (`skipif(sys.platform != "darwin", ...)`,
+SeatbeltBackend macOS only) and have therefore NEVER executed in CI — the
+sibling Landlock (Linux-only) tests right next to them DO run, so this
+module's own green is mostly real signal; only those 2 tests' green means
+"never ran", not "passed".
 """
 from __future__ import annotations
 

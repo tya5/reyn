@@ -9,6 +9,13 @@ sandbox).
 Real subprocess + real AF_UNIX socketpair + a real (non-mock) ``dispatch`` callback
 — no fakes of the channel. The sandbox wrap is S2b (Seatbelt) / S2c (Landlock);
 this pins the transport + proxy core that survives inside the sandbox.
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 1 of this
+module's 18 tests is Darwin-gated (`skipif(sys.platform != "darwin", ...)`,
+SeatbeltBackend macOS only) and has therefore NEVER executed in CI. A green
+CI run of this module does not mean that one passed — it means it never
+ran. It exercises only on a real macOS machine.
 """
 from __future__ import annotations
 

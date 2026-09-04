@@ -13,6 +13,13 @@ Two tiers of coverage:
 - behavioral (darwin-only): sandbox-exec actually blocks a child spawn.
 
 Policy: real _build_sbpl_profile + real SeatbeltBackend.run (no mocks). Tier first.
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 1 of this
+module's 3 tests (the "behavioral" one above) is Darwin-gated
+(`skipif(sys.platform != "darwin", ...)`) and has therefore NEVER executed
+in CI. A green CI run of this module does not mean that one passed — it
+means it never ran. It exercises only on a real macOS machine.
 """
 from __future__ import annotations
 

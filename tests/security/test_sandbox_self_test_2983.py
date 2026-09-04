@@ -18,6 +18,13 @@ Section 5 is stage 2, and exists because stage 1 could not see the layer #2962
 killed: the write boundary is Landlock's alone, so a seccomp filter that never
 loads leaves the stage-1 probe green while `deny_subprocess` — documented as
 "Enforced" — enforces nothing.
+
+★ CI-visibility gap (#3881, owner ruling 2026-09-04: no macOS CI runner will
+be added — every job in this repo's CI runs on ubuntu-latest): 3 of this
+module's 18 tests are Darwin-gated (`skipif(sys.platform != "darwin", ...)`,
+Seatbelt is macOS-only) and have therefore NEVER executed in CI. A green CI
+run of this module does not mean those 3 passed — it means they never ran.
+They exercise only on a real macOS machine.
 """
 from __future__ import annotations
 
