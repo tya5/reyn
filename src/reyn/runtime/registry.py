@@ -50,7 +50,7 @@ from reyn.core.events.snapshot_generations import (
     RewindIntoAbandonedError,
     RewindQuiesceTimeoutError,
     SnapshotGenerationStore,
-    active_rewind_target,
+    active_rewind_target_with_scope,
     branch_ids_for,
     build_active_predicate,
     is_active_seq,
@@ -2161,11 +2161,14 @@ class AgentRegistry:
                         "history.jsonl GC failed for %r/%r: %s", name, sid, e,
                     )
 
-    async def checkout(self, seq: int) -> dict:
-        """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
+    async def checkout(
+        self, seq: int, *, scope: "tuple[str, str] | None" = None,
+    ) -> dict:
+        """Consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2 /
+        ADR-0047 decision 3, session-scoped rewind).
 
-        The unified time-travel primitive: jump the whole world's active cut to
-        ``seq`` — whether ``seq`` is on the live branch (= undo, the ``rewind_to``
+        The unified time-travel primitive: jump the active cut to ``seq`` —
+        whether ``seq`` is on the live branch (= undo, the ``rewind_to``
         special case) or on an abandoned/dead branch (= branch-switch / fork
         revival). Unlike ``rewind_to`` there is **no active-target guard**: a
         target on a dead branch is allowed and revives that lineage.
@@ -2179,8 +2182,9 @@ class AgentRegistry:
         ``is_active`` from the full chain, the runtime substrate follows the
         *target's* lineage automatically.
 
-        Architecture-enforced global cut (D2): one global single-seq WAL ⇒ one
-        reset-record moves *every* agent atomically:
+        ``scope=None`` (default) is the **architecture-enforced global cut**
+        (D2), byte-identical to before this parameter existed: one global
+        single-seq WAL ⇒ one reset-record moves *every* agent atomically:
 
           1. retention guard — reject a target truncated out of the WAL (1e).
           2. all-cancel  — ``cancel_inflight`` on every loaded session.
@@ -2193,6 +2197,15 @@ class AgentRegistry:
              ``applied_seq = R`` (``restore_all`` replays only > R); loaded
              sessions reset (``reset_for_rewind``) + re-adopt.
 
+        ``scope=(name, sid)`` (ADR-0047 decision 3/4/5) cancels/quiesces
+        **only** that session, appends a reset-record **scoped** to it, and
+        materialises **only** that ``(name, sid)`` — never touching the
+        workspace, config generations, or any other agent/session (decision
+        4/6). **The retention guard stays GLOBAL regardless of scope**
+        (architect's explicit ruling): the WAL floor is one global fact,
+        not owned by any one session, so a scoped checkout is bounded by the
+        exact same physical floor a global one is.
+
         ``_rewind_in_progress`` gates compaction for the whole window.
         """
         if self._state_log is None:
@@ -2200,7 +2213,8 @@ class AgentRegistry:
         # 1e (D5): bounded by retention — reject targets truncated out of the WAL.
         # Guard on the PHYSICAL oldest kept seq (not the policy floor): under a
         # live policy nothing is truncated between turns, so recent history stays
-        # reachable; only genuinely-truncated history is rejected.
+        # reachable; only genuinely-truncated history is rejected. UNCHANGED by
+        # scope — architect's ruling: the floor is a global fact either way.
         oldest_seq = self._oldest_kept_seq()
         if oldest_seq is not None and seq < oldest_seq:
             raise RewindBeyondRetentionError(
@@ -2211,6 +2225,34 @@ class AgentRegistry:
 
         self._rewind_in_progress = True
         try:
+            if scope is not None:
+                name, sid = scope
+                # Scoped cancel/quiesce: ONLY the target session, if loaded
+                # (an unloaded session has nothing in-flight to stop-world).
+                session = self._peek_session(name, sid)
+                if session is not None:
+                    await session.cancel_inflight()
+                    await self._await_quiescent_bounded(session)
+                prior_head = self._state_log.last_durable_seq
+                reset_seq = await _append_reset_record(
+                    self._state_log, target_seq=seq, scope=scope,
+                    supersedes=prior_head,
+                )
+                agents = await self._materialize_rewind(
+                    reconstruct_seq=reset_seq, workspace_at_or_below=seq,
+                    scope=scope,
+                )
+                return {
+                    "target_n": seq,
+                    "reset_seq": reset_seq,
+                    "agents": agents,
+                    "scope": list(scope),
+                    # #2115: no in-flight background-run machinery exists
+                    # (stage1 decouple) — same "always 0" fact the unscoped
+                    # path below states explicitly, not a new claim.
+                    "in_flight_cancelled": 0,
+                    "in_flight_finished": 0,
+                }
             sessions = self._iter_sessions()
             # #2115: the in-flight-task snapshot would be taken BEFORE the cancel
             # here, but background run machinery was removed (stage1 decouple):
@@ -2975,20 +3017,74 @@ class AgentRegistry:
 
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
+        scope: "tuple[str, str] | None" = None,
     ) -> list[str]:
         """Bring the runtime substrate to the active branch as-of ``reconstruct_seq``.
 
-        Idempotent — shared by ``rewind_to`` (right after the reset-record) and
-        crash ``recover_rewind_if_needed`` (at restart). Per agent: ``reconstruct``
-        as-of the active branch + persist a self-contained snapshot pinned to
-        ``reconstruct_seq`` (so ``restore_all`` replays only beyond it); loaded
-        sessions are reset + re-adopt it.
+        Idempotent — shared by ``rewind_to``/``checkout`` (right after the
+        reset-record) and crash ``recover_rewind_if_needed`` (at restart).
+        Per agent: ``reconstruct`` as-of the active branch + persist a
+        self-contained snapshot pinned to ``reconstruct_seq`` (so
+        ``restore_all`` replays only beyond it); loaded sessions are reset +
+        re-adopt it.
 
         ``reconstruct_seq`` is the WAL head at call time (= R in rewind_to, =
         current head in recovery); ``workspace_at_or_below`` is the as-of-cut DROP
         boundary = ``target_n`` in rewind_to or head in recovery. Returns the agents
         materialised.
+
+        #5769 stage 3 (ADR-0047 decision 3/4/5): ``scope=None`` (default) is
+        the full GLOBAL pass below, byte-identical to before this parameter
+        existed. ``scope=(name, sid)`` brings ONLY that session's own
+        substrate to as-of-cut — reconstruct + restore its conversation and
+        per-session agent state — and returns immediately, touching NOTHING
+        else: no agent create/drop/archive/purge, no topology reconcile, no
+        config-generation reconcile, no spawn-lineage/identity rebuild. All
+        of those are global, agent-wide facts (decision 6) a session-scoped
+        rewind must never move; the unscoped path below already handles them
+        exhaustively for `scope=None`, which is the ONLY case that needs to.
         """
+        if scope is not None:
+            name, sid = scope
+            created_at = self._created_at_map()
+            sess_vanished = self._session_vanished_map()
+            session_is_active = (
+                build_active_predicate(self._state_log, scope=scope)
+                if self._state_log is not None
+                else None
+            )
+            sess_seq = created_at.get(("session", name, sid))
+            van_seq = sess_vanished.get((name, sid))
+            spawned_after_cut = (
+                sess_seq is not None
+                and session_is_active is not None
+                and not session_is_active(sess_seq)
+            )
+            vanished_by_cut = (
+                van_seq is not None
+                and session_is_active is not None
+                and session_is_active(van_seq)
+            )
+            if spawned_after_cut or vanished_by_cut:
+                # Mirrors the unscoped path's own drop shape (#2125): quiesce
+                # via _drop_session, then purge the dir — no restore succeeds
+                # here to defer the purge past, so it is safe to do inline.
+                await self._drop_session(name, sid, purge_dir=False)
+                self._purge_session_dir(name, sid)
+                return []
+            store = self._store_for(name, sid)
+            snap = reconstruct(
+                name, store, self._state_log,
+                target_seq=reconstruct_seq, session_id=sid,
+            )
+            snap.applied_seq = reconstruct_seq
+            snap.save(self._session_snapshot_path(name, sid))
+            session = self._peek_session(name, sid)
+            if session is not None:
+                await session.reset_for_rewind()
+                session.restore_state(snap)
+            return [name if sid == _DEFAULT_SID else f"{name}/{sid}"]
+
         # FP-0043 Stage 5: the runtime snapshot is reconstructed PER SESSION (each
         # (name, sid) from its own generations + session_id-routed WAL delta), so a
         # global cut moves every session of every agent to the target — consistent
@@ -3170,17 +3266,30 @@ class AgentRegistry:
         sessions, closing the window where the crash hit after the reset-record
         but before snapshots / workspace were brought to as-of-N. No-op when no
         rewind record exists. Returns a summary or ``None``.
+
+        #5769 stage 3 (ADR-0047 decision 3's recovery half): reads
+        ``(target_n, scope)`` off the LATEST reset-record, not just its
+        target — a crash mid-SCOPED-rewind must re-materialise only that
+        ``(name, sid)``, never the whole world. A legacy/global record
+        (``scope is None``) takes the unchanged full-materialise path below,
+        byte-identical to before this parameter existed.
         """
         if self._state_log is None:
             return None
-        target = active_rewind_target(self._state_log)
-        if target is None:
+        result = active_rewind_target_with_scope(self._state_log)
+        if result is None:
             return None
+        target, scope = result
         head = self._state_log.last_durable_seq
         agents = await self._materialize_rewind(
-            reconstruct_seq=head, workspace_at_or_below=target,
+            reconstruct_seq=head, workspace_at_or_below=target, scope=scope,
         )
-        return {"recovered_target_n": target, "head": head, "agents": agents}
+        return {
+            "recovered_target_n": target,
+            "head": head,
+            "agents": agents,
+            "scope": list(scope) if scope is not None else None,
+        }
 
     # ── WAL truncation (WAL-floor design) ───────────────────────────────────
     #

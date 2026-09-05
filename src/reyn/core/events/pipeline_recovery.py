@@ -42,12 +42,15 @@ one call.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from reyn.core.events.config_recovery import reyn_root
 from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, build_active_predicate
+
+logger = logging.getLogger(__name__)
 
 # `reyn.core.pipeline.work_order` imports `pipeline_state_dir` FROM this
 # module — a module-level import of `load_invocation` here would be
@@ -197,10 +200,32 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     read the same way ``AgentRegistry._rewake_pipeline_runs`` already
     reads it). One extra file read here is not a new cost class: this
     function is called once per resume, on the crash-recovery path, never
-    in a hot per-message loop. A missing/unreadable ``invocation.json``
-    (should not happen for a run with generations, but is not proven
-    impossible) falls back to ``GLOBAL_SCOPE`` — the safe side, matching
-    every other fail-closed-to-broad default in this stage."""
+    in a hot per-message loop.
+
+    #5769 stage 3 (ADR-0047 decision 7, disclosed deliberate deviation):
+    decision 7 says an item whose owner cannot be named should be
+    "observably skipped, never silently defaulted to global" —
+    ``_rewake_pipeline_runs``'s own ``continue`` (leave the run alone,
+    log a warning) is the named reference shape. This function CANNOT
+    follow that shape literally: returning ``None`` here means "no
+    generation was ever recorded" to its one caller
+    (``PipelineExecutor.resume``), which responds by running the WHOLE
+    pipeline from scratch — re-executing every already-completed
+    side-effecting (``tool``/``shell``) step. That is a MUCH worse
+    failure than showing a possibly-not-maximally-narrowed answer: it
+    breaks the exactly-once guarantee R4 exists to provide, for a
+    condition (``invocation.json`` unreadable for a run that HAS
+    generations) already documented as "should not happen... not proven
+    impossible" — i.e. speculative, not measured. Chose the safer
+    concrete behavior instead: log a warning (satisfies "observable, not
+    silent") and keep the ``GLOBAL_SCOPE`` fallback (safe: a global query
+    is still CORRECT for genuine global rewinds, only not narrowed by an
+    undeterminable scoped one — the true unsafe direction, "wrongly
+    resurrecting a run a scoped rewind should have hidden," has no
+    real writer yet since this PR is what first makes scoped rewind
+    exist). Flagged for lead-coder-30/architect's explicit read — this
+    is a genuine, measured deviation from decision 7's literal shape,
+    not a silent one."""
     from reyn.core.pipeline.work_order import load_invocation, pipeline_run_dir
     store = _store(state_log, run_id)
     if store is None:
@@ -208,6 +233,14 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     root = reyn_root(state_log.path)
     run_dir = pipeline_run_dir(root, run_id) if root is not None else None
     work_order = load_invocation(run_dir) if run_dir is not None else None
+    if work_order is None:
+        logger.warning(
+            "pipeline recovery: run %r has generations but no readable "
+            "invocation.json -- cannot determine its own (agent, sid) scope; "
+            "falling back to GLOBAL_SCOPE (see this function's own docstring "
+            "for why this deviates from ADR-0047 decision 7's literal shape)",
+            run_id,
+        )
     scope = (
         (work_order.driver_agent, work_order.driver_sid)
         if work_order is not None
