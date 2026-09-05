@@ -76,20 +76,22 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 
 ## Acceptance (for raising to ACCEPTED)
 
-Checked against `origin/main` on **2026-09-05**, after #5772 (stage 1) and #5775 (stage 2) merged. **Decisions 3, 5 and 7 have no implementation yet — stage 3 carries the writer — so this ADR stays PROPOSED.** The unchecked boxes below are the reason, not an oversight.
+Re-checked against `origin/main` at **b659b55de**, 2026-09-05, after every stage-3 PR merged (#5778 #5782 #5784 #5785 #5788 #5792 #5795). **11 of 12 hold. One does not, and it is the only thing keeping this ADR PROPOSED** — see the last box.
 
-- [x] `scope=None` checkout leaves every existing rewind test green and unmodified.
-- [ ] `checkout(N, scope=(A, s))` puts `A/s` as-of-N and leaves every other session at head. — **stage 3**: `checkout(state_log, *, target_seq, supersedes)` and `AgentRegistry.checkout(seq)` on `origin/main` take no `scope`.
-- [ ] A WAL containing an A→B message, A rewound alone: A forgets sending, B keeps receiving — pinned as the intended property. — **stage 3** (needs the writer).
+Items 8 and 9 were re-measured rather than carried over: #5795 changed `is_active_seq` and `earliest_relevant_wal_seq`'s signatures, and a verdict does not survive a change to the set it was measured against.
+
+- [x] `scope=None` checkout leaves every existing rewind test green — **and the "unmodified" half of this box no longer applies, deliberately.** Decision 3 was later refined (#5784) to make `scope` a *required* keyword, which this ADR now states; that made every existing call site name `GLOBAL_SCOPE` explicitly, so ~20 test files changed mechanically. Verified that the change is mechanical: across #5784's test diff, no existing assertion's expectation was altered and none was removed; two assertions were **added**. The property this box exists for — global rewind behaves exactly as before — holds.
+- [x] `checkout(N, scope=(A, s))` puts `A/s` as-of-N and leaves every other session at head — `test_5769_stage3_checkout_scope.py::test_checkout_scoped_touches_only_its_own_session`.
+- [x] A WAL containing an A→B message, A rewound alone: A forgets sending, B keeps receiving — `test_5786_reconstruct_scope_aware.py::test_scoped_rewind_of_a_leaves_bs_own_received_message_untouched`. This witness found a real defect on `main` before it could be ticked (#5786): `reconstruct()` re-derived a scope-blind predicate, so a scoped rewind hid another session's own WAL entries, silently.
 - [x] A legacy reset-record (no scope field) reads as global.
 - [x] Calling `build_active_predicate` without `scope` fails.
-- [ ] Crash mid-scoped-rewind, then recover: only the scoped session is as-of-N (truncate-falsify form). — **stage 3**.
-- [ ] A target below the global WAL floor is rejected for a scoped checkout too. — **stage 3**.
-- [x] No collaborator takes a caller-built `is_active` predicate. Census on `origin/main`: `git grep -nE 'is_active: .*Callable' -- src/` returns **one** hit, `Session._filter_visible_on_active_branch` — a private static helper shared by two methods that each build their own predicate first, not a cross-owner seam. Disclosed, not empty.
-- [x] A predicate is never built above a loop whose variables are the scope (`_materialize_rewind`'s session predicate is built inside the `sid` loop).
-- [ ] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6). — **stage 3**: the rule is implemented (`GLOBAL_SCOPE` on the agent-level checks), but nothing can perform a session-scoped rewind yet to witness it.
-- [ ] An item whose owner cannot be named is skipped observably, not answered globally (decision 7). — **stage 3**.
-- [x] ADR-0038 is byte-identical.
+- [x] Crash mid-scoped-rewind, then recover: only the scoped session is as-of-N — `test_recover_rewind_if_needed_materialises_only_the_scoped_session`, plus the truncate-falsify form in `test_scoped_rewind_survives_wal_truncation_past_its_own_events` and `test_bs_message_survives_wal_truncation_past_the_scoped_rewind`.
+- [x] A target below the global WAL floor is rejected for a scoped checkout too — `test_checkout_retention_guard_stays_global_for_scoped_checkout`.
+- [x] No collaborator takes a caller-built `is_active` predicate. Census at b659b55de: `git grep -nE 'is_active: .*Callable' -- src/` returns **one** hit, `Session._filter_visible_on_active_branch` — a private static helper shared by two methods that each build their own scoped predicate first, not a cross-owner seam. Disclosed, not empty.
+- [x] A predicate is never built above a loop whose variables are the scope. Every `build_active_predicate` call in `registry.py` re-measured: the two inside owner loops name `(name, sid)` / the run's own driver pair; the rest name `GLOBAL_SCOPE` for the agent-level and workspace-level facts decision 6 makes global.
+- [x] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6) — `test_5769_adr0047_acceptance_10.py::test_scoped_rewind_leaves_another_agents_archived_state_untouched`.
+- [ ] 🔴 **An item whose owner cannot be named is skipped observably, not answered globally (decision 7).** The mechanism is on `main` — `AgentRegistry._rewake_pipeline_runs` logs and `continue`s a run whose `invocation.json` is unreadable — but **nothing pins it**: a census of `tests/` finds no test that exercises that branch, so replacing the `continue` with a global fallback would go green. Decision 7 is the one decision in this ADR whose property is asserted only by prose. **This is the remaining blocker.** What closes it: a test that a run dir with an unreadable or absent `invocation.json` is left parked (not re-woken) and that the skip is observable — red if the branch is replaced by a global answer.
+- [x] ADR-0038 is byte-identical — untouched throughout this arc.
 
 ## References
 
