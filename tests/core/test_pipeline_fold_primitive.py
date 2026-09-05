@@ -186,6 +186,7 @@ async def test_truncate_falsify_fold_resumes_completed_iterations_exactly_once(t
     rode a truncatable WAL event, or if resume re-ran the whole fold instead of
     replaying the completed iteration."""
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     from reyn.core.pipeline.executor import ExprRef
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
@@ -213,7 +214,7 @@ async def test_truncate_falsify_fold_resumes_completed_iterations_exactly_once(t
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A"]
 
-    snap_mid = latest_pipeline_state("run-fold-tf", state_log)
+    snap_mid = latest_pipeline_state("run-fold-tf", state_log, scope=GLOBAL_SCOPE)
     # #2425 PR-2: a ToolStep `do`'s ctx value is the flat {"text": ...} shape.
     assert snap_mid["completed_step_results"]["0.fold.0"] == {"text": "A"}
     assert "0.fold.1" not in snap_mid["completed_step_results"]

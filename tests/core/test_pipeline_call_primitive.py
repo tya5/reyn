@@ -191,6 +191,7 @@ async def test_mid_call_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp_
     store does NOT appear in the persisted OUTER ``named_stores`` (pass:[...]
     isolation on the recovery axis)."""
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
@@ -207,7 +208,7 @@ async def test_mid_call_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp_
         )
     await state_log.flush()
 
-    snap = latest_pipeline_state("run-dotted", state_log)
+    snap = latest_pipeline_state("run-dotted", state_log, scope=GLOBAL_SCOPE)
     # The finished callee sub-step is present under the dotted key; the failed one
     # and the outer call's own key are absent (the call is not done).
     assert "1.call.0" in snap["completed_step_results"]

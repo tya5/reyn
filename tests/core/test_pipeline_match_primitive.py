@@ -242,6 +242,7 @@ async def test_mid_match_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp
     store does NOT appear in the persisted OUTER ``named_stores`` (pass:[...]
     isolation on the recovery axis)."""
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
@@ -258,7 +259,7 @@ async def test_mid_match_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp
         )
     await state_log.flush()
 
-    snap = latest_pipeline_state("run-match-dotted", state_log)
+    snap = latest_pipeline_state("run-match-dotted", state_log, scope=GLOBAL_SCOPE)
     assert "1.match.0" in snap["completed_step_results"]
     assert "1.match.1" not in snap["completed_step_results"]
     assert "1" not in snap["completed_step_results"]

@@ -118,6 +118,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.offload.canonical import (
     CANONICAL_DEGRADED_EVENT,
     CANONICAL_FALLBACK_EVENT,
@@ -1905,6 +1906,7 @@ class PipelineExecutor:
         pipeline: Pipeline,
         tool_dispatch: ToolDispatch,
         state_log: "StateLog",
+        scope: "tuple[str, str] | None" = GLOBAL_SCOPE,
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
@@ -1925,8 +1927,24 @@ class PipelineExecutor:
         `pipeline_registry` (R7) is required only if the resumed run re-enters a
         `CallStep` — the callee is re-resolved by name and re-walked to reconstruct
         its local state from the dotted keys. `events` / `cancel_check` behave as in
-        :meth:`run`."""
-        snapshot = latest_pipeline_state(run_id, state_log)
+        :meth:`run`.
+
+        #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling): `scope`
+        is forwarded straight to `latest_pipeline_state` — this run's own
+        (agent, sid) is a FACT, not a caller decision, so the one real
+        production caller (`PipelineExecutorDriver.run_turn`, which always
+        holds its own `PipelineWorkOrder`) always passes its real
+        `(wo.driver_agent, wo.driver_sid)`. Defaults to `GLOBAL_SCOPE` for
+        the many existing lower-level executor tests that exercise pure
+        R3/R4 mechanics with no owning driver-session concept at all — for
+        those, GLOBAL_SCOPE is the honestly correct answer (there is no
+        scoped-rewind concern in play), not a silently-forgotten one; this
+        default carries none of the "read the wrong branch" risk stage 1
+        made `build_active_predicate`'s own `scope` required to close,
+        since NOTHING in this codebase can yet write a scoped record for a
+        pipeline run's own generations without going through the one real
+        caller above, which never omits its real scope."""
+        snapshot = latest_pipeline_state(run_id, state_log, scope=scope)
         if snapshot is None:
             return await self.run(
                 pipeline,
