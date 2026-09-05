@@ -179,26 +179,25 @@ def test_no_event_when_ambient_log_unset_but_still_raises(monkeypatch) -> None:
 def test_error_event_parses_litellm_retry_count_from_exception_text(monkeypatch) -> None:
     """Tier 2: #5797 — litellm appends "LiteLLM Retried: N times" to an
     exception's own message once ITS internal retry mechanism (invisible
-    to reyn) is exhausted. The owner's own real incident (#5793) carried
-    this exact substring; `llm_request_error` now surfaces it as a
-    structured `litellm_retries` field instead of leaving it buried in
-    free text."""
-    monkeypatch.setattr(
-        litellm, "acompletion",
-        _raising_acompletion(
-            message=(
-                "litellm.Timeout: APITimeoutError - Request timed out. "
-                "timeout value=60.0, time taken=245.2 seconds  "
-                "LiteLLM Retried: 3 times"
-            ),
-            status_code=None,
-        ),
+    to reyn) is exhausted (real litellm behaviour, not a hand-mirrored
+    string -- litellm owns that format; a copy of it would stay green if
+    litellm ever changed it, silently losing the observability #5797
+    exists to add). `llm_request_error` now surfaces it as a structured
+    `litellm_retries` field instead of leaving it buried in free text."""
+    real_exc = litellm.Timeout(
+        message="Request timed out.", model="gpt-5.4", llm_provider="openai",
+        num_retries=3,
     )
+
+    async def _raise_real_litellm_timeout(**_kwargs):
+        raise real_exc
+
+    monkeypatch.setattr(litellm, "acompletion", _raise_real_litellm_timeout)
     log = EventLog()
     collected = collect_events(log)
     set_llm_request_event_log(log)
 
-    with pytest.raises(_FakeProviderError):
+    with pytest.raises(litellm.Timeout):
         _call(monkeypatch, log=log)
 
     (err,) = [e for e in collected if e.type == "llm_request_error"]
