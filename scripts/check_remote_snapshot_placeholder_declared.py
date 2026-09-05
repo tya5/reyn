@@ -117,7 +117,12 @@ import sys
 from pathlib import Path
 
 from reyn.interfaces.repl import read_model as read_model_module
-from reyn.interfaces.repl.read_model import _WIRE_KEYS, ChatReadModelCapabilities
+from reyn.interfaces.repl.read_model import (
+    _WIRE_KEYS,
+    REMOTE_CHAT_READ_CAPABILITIES,
+    ChatReadModelCapabilities,
+    reported_snapshot_keys,
+)
 from reyn.interfaces.transport.agui import state as agui_state_module
 
 #: #5093 — keys whose placeholder-shaped value is covered by ONE declared
@@ -206,6 +211,27 @@ def _get_call_placeholder_key(node: "ast.expr") -> "str | None":
     return key_arg.value
 
 
+def _own_return_statements(func_node: "ast.FunctionDef") -> "list[ast.Return]":
+    """#5773: every ``ast.Return`` that belongs to *func_node* ITSELF —
+    inside its own ``if``/``for``/``with`` bodies, but NOT inside a nested
+    ``def``/``async def``/``lambda`` (a return there belongs to that
+    NESTED function, never to *func_node*; a bare ``ast.walk`` conflates
+    the two, over-collecting). Order is source order (line number)."""
+    found: "list[ast.Return]" = []
+
+    def _walk(node: "ast.AST") -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Return):
+                found.append(child)
+                continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue  # a nested scope's own return is not func_node's
+            _walk(child)
+
+    _walk(func_node)
+    return sorted(found, key=lambda n: n.lineno)
+
+
 def _find_function_return_dict(
     package_dir: Path, func_name: str,
 ) -> "tuple[ast.Dict | None, str | None]":
@@ -218,7 +244,25 @@ def _find_function_return_dict(
     shape) — the LAST top-level assignment to the returned name before the
     ``return`` statement, matching how a reader would resolve it by eye.
     Returns ``(None, error_message)`` if the function, its return, or the
-    dict literal it resolves to could not be found."""
+    dict literal it resolves to could not be found.
+
+    #5773 (architect BLOCKING finding, agreed by lead-coder): this used to
+    take the FIRST ``ast.Return`` found via a bare ``ast.walk`` -- a real,
+    silent hazard shared by EVERY check that calls this helper, not just
+    #5773's own new one. An early guard clause (e.g. ``if values is None:
+    return {}``) added to either producer in the future would make this
+    silently resolve to the WRONG (possibly empty) dict, and every caller's
+    own population would just as silently shrink to whatever that early
+    return happened to be -- the exact "empty population, still green"
+    shape CLAUDE.md's own test-review question 4 names, now closed at the
+    SOURCE rather than trusted per-caller. Two independent guards: (1)
+    collect every top-level ``Return`` belonging to THIS function (not
+    walking into a nested ``def``/``lambda``, where a return would belong
+    to a DIFFERENT function entirely) and refuse to guess if there is more
+    than one; (2) refuse a return that resolves to a dict literal with ZERO
+    keys -- neither producer this gate parses has ever had a legitimately
+    empty return, so an empty result here is always a mis-resolution, never
+    a real shape to accept quietly."""
     source = package_dir.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(package_dir))
 
@@ -234,18 +278,35 @@ def _find_function_return_dict(
             f"Update this gate's function-name lookup."
         )
 
-    return_node = None
-    for node in ast.walk(func_node):
-        if isinstance(node, ast.Return):
-            return_node = node
-            break
-    if return_node is None:
+    return_nodes = _own_return_statements(func_node)
+    if not return_nodes:
         return None, (
             f"check_remote_snapshot_placeholder_declared: {func_name} has no "
             f"return statement -- update this gate."
         )
+    if len(return_nodes) > 1:
+        return None, (
+            f"check_remote_snapshot_placeholder_declared: {func_name} has "
+            f"{len(return_nodes)} return statements (lines "
+            f"{[n.lineno for n in return_nodes]}) -- this gate assumes exactly "
+            f"one and cannot safely guess which is the real one (an early "
+            f"guard-clause return would silently shrink this gate's own "
+            f"population). Update this gate to resolve the correct one "
+            f"explicitly."
+        )
+    return_node = return_nodes[0]
 
     if isinstance(return_node.value, ast.Dict):
+        if len(return_node.value.keys) == 0:
+            return None, (
+                f"check_remote_snapshot_placeholder_declared: {func_name}'s "
+                f"return resolves to an EMPTY dict literal at line "
+                f"{return_node.lineno} -- neither producer this gate parses "
+                f"legitimately returns an empty dict; this is almost "
+                f"certainly the wrong return statement or a stubbed/mis-"
+                f"parsed source. Refusing to silently treat an empty "
+                f"population as a clean one."
+            )
         return return_node.value, None
 
     if isinstance(return_node.value, ast.Name):
@@ -262,6 +323,14 @@ def _find_function_return_dict(
             ):
                 return_dict = node.value  # last assignment wins (top-to-bottom walk)
         if return_dict is not None:
+            if len(return_dict.keys) == 0:
+                return None, (
+                    f"check_remote_snapshot_placeholder_declared: {func_name}'s "
+                    f"``{returned_name}`` resolves to an EMPTY dict literal -- "
+                    f"neither producer this gate parses legitimately returns "
+                    f"an empty dict; refusing to silently treat an empty "
+                    f"population as a clean one."
+                )
             return return_dict, None
 
     return None, (
@@ -415,10 +484,42 @@ def find_unwired_key_violations(
     }
 
     violations: "list[str]" = []
-    for key_node in remote_dict.keys:
-        if key_node is None:  # a ``**spread`` entry -- not a literal output key
+    for key_node, value_node in zip(remote_dict.keys, remote_dict.values):
+        if key_node is None:  # a ``**spread`` entry
+            spread_keys = _resolve_reported_snapshot_keys_spread(value_node)
+            if spread_keys is None:
+                violations.append(
+                    "an unrecognized `**spread` entry in project_remote_"
+                    "snapshot's return dict cannot be statically analyzed by "
+                    "this check -- #5773 (architect BLOCKING finding): a "
+                    "silently-skipped spread is a silent gap in this gate's "
+                    "own census, not an exemption. Either make this gate "
+                    "recognize the new spread shape (see "
+                    "_resolve_reported_snapshot_keys_spread), or confirm by "
+                    "hand that every key it expands to is backed by a "
+                    "same-named project_status key."
+                )
+                continue
+            for spread_key in spread_keys:
+                if spread_key in wire_keys:
+                    continue
+                violations.append(
+                    f'"{spread_key}" (via **reported_snapshot_keys(...)): '
+                    f'project_remote_snapshot maps this key through the '
+                    f'ChatReadModelCapabilities spread, but project_status '
+                    f'(agui/state.py) has no key of this name -- same #5098 '
+                    f'drift as a literal key, just reached through the '
+                    f'spread instead of a direct dict entry.'
+                )
             continue
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
+            violations.append(
+                f"project_remote_snapshot's return dict has a key at line "
+                f"{key_node.lineno} that is not a string literal -- this "
+                f"check cannot verify a computed key against project_status "
+                f"and refuses to silently skip it (#5773: a skip here is a "
+                f"census gap, not a pass)."
+            )
             continue
         dict_key = key_node.value
         if dict_key in wire_keys:
@@ -435,6 +536,34 @@ def find_unwired_key_violations(
             f'not accept a same-file exemption.'
         )
     return violations
+
+
+def _resolve_reported_snapshot_keys_spread(node: "ast.expr") -> "list[str] | None":
+    """#5773 (architect BLOCKING finding): recognize the ONE ``**spread``
+    shape ``project_remote_snapshot`` actually uses —
+    ``**reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)`` — and
+    resolve it to its REAL field names via a genuine import + call (not a
+    second, hand-typed guess at what it expands to), so
+    :func:`find_unwired_key_violations` can check each one same as any
+    other output key. Every ``ChatReadModelCapabilities`` field name is
+    itself absent from ``project_status`` today (that dataclass's fields
+    are declared-axis booleans, never wire keys) — this is precisely the
+    "stage③'s own family is invisible to this census" gap the architect
+    finding named; surfacing it here, once, at the ONE call site that
+    produces it, is cheaper and more honest than trying to keep a second
+    hand-typed list of field names in sync with the dataclass. Returns
+    ``None`` for any OTHER spread shape (unrecognized -- the caller must
+    not silently accept it either)."""
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "reported_snapshot_keys"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "REMOTE_CHAT_READ_CAPABILITIES"
+    ):
+        return None
+    return sorted(reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES))
 
 
 def main() -> int:

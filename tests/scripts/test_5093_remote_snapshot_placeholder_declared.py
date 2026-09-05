@@ -291,16 +291,26 @@ class TestUnwiredKeyViolations:
         being a check nothing reaches.
 
         Disclosed (CLAUDE.md test-review question 4): as of this PR the
-        real source also exposes 16 further keys with the SAME shape —
-        ``ctx_recent_usage``, ``ctx_source``, ``ctx_compaction_status_fn``,
+        real source exposes 39 further keys. 16 are literal output keys
+        with the SAME shape as the 3 required witnesses — ``ctx_recent_
+        usage``, ``ctx_source``, ``ctx_compaction_status_fn``,
         ``compaction_progress_raw``, ``turn_usage_fn``, ``cron_jobs``,
         ``mcp_servers``, ``hooks``, ``skills``, ``hook_items``,
         ``mcp_probe_states``, ``pipelines``, ``unknown_config_key_count``,
-        ``unknown_config_keys``, ``hooks_config_warnings``, ``tasks``. Per
-        #5771's own dispatch these are reported (lead-coder files them as
-        separate issues), not fixed in this PR — a future PR that fixes one
-        removes it from the real-source output; this test does not pin the
-        total count for that reason, only the 3 required witnesses."""
+        ``unknown_config_keys``, ``hooks_config_warnings``, ``tasks``. The
+        other 21 (architect BLOCKING finding, #5773) come through the
+        ``**reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)`` spread
+        — every ``ChatReadModelCapabilities`` field name (``completion_
+        source``, ``hooks_reported``, ``cache_usage_reported``, etc.),
+        since that dataclass's fields are declared-axis booleans, never
+        ``project_status`` wire keys; this is the "stage③'s own family is
+        invisible to this census" gap the architect finding named — #5771's
+        stage③ (flipping the relevant ``*_reported`` fields once real cost
+        data lands) touches exactly this family. Per #5771's own dispatch
+        these are reported (lead-coder files them as separate issues), not
+        fixed in this PR — a future PR that fixes one removes it from the
+        real-source output; this test does not pin the total count for
+        that reason, only the 3 required witnesses."""
         violations = find_unwired_key_violations()
         found_keys = {v.split('"')[1] for v in violations}
         for required in ("cost_usd", "usage", "session_cached_tokens"):
@@ -359,3 +369,89 @@ class TestUnwiredKeyViolations:
         status_fixture = _write_status_module(tmp_path, ["model", "cost_agent"])
 
         assert find_unwired_key_violations(remote_fixture, status_fixture) == []
+
+    def test_the_reported_snapshot_keys_spread_is_expanded_not_silently_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: architect BLOCKING finding (#5773, agreed by lead-coder)
+        — a ``**spread`` entry used to be skipped unconditionally
+        (``if key_node is None: continue``), making the ENTIRE
+        ``ChatReadModelCapabilities`` field family invisible to this
+        census (project_status has zero ``*_reported``-style keys, so
+        every one of those 21 fields is unwired drift the OLD code never
+        reported). The real
+        ``**reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)`` shape
+        is now recognized and resolved via a genuine import + call, so its
+        real field names are checked the same as any literal key."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {**reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        violations = find_unwired_key_violations(remote_fixture, status_fixture)
+
+        assert any(
+            '"completion_source"' in v and "via **reported_snapshot_keys" in v
+            for v in violations
+        ), violations
+
+    def test_an_unrecognized_spread_shape_is_flagged_not_silently_skipped(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: acceptance② — a ``**spread`` this check does NOT
+        recognize (some future/hypothetical helper, not
+        ``reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)``) must
+        still surface as a violation demanding manual review, never a
+        silent pass — the exact "skip means the gate can be blind without
+        saying so" shape the architect finding closed."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {**some_other_helper()}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        violations = find_unwired_key_violations(remote_fixture, status_fixture)
+
+        assert any("unrecognized `**spread`" in v for v in violations), violations
+
+
+# ── #5773 — _find_function_return_dict must not silently pick the wrong
+# (or an empty) return when a producer gains an early guard-clause return ──
+
+
+class TestFindFunctionReturnDictGuards:
+    def test_multiple_top_level_returns_are_refused_not_guessed(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: architect BLOCKING finding (#5773) — an early guard-
+        clause return (``if values is None: return {}``) ahead of the
+        real return used to be silently picked or silently ignored
+        depending on ``ast.walk``'s own traversal order; this must refuse
+        instead, since guessing which return is "the real one" can
+        silently shrink this gate's own population to whatever the guard
+        clause happens to return."""
+        path = _write_module(
+            tmp_path,
+            '    if values is None:\n'
+            '        return {}\n'
+            '    return {"cost_agent": v.get("cost_agent", 0.0)}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        violations = find_unwired_key_violations(path, status_fixture)
+
+        assert any("return statements" in v for v in violations), violations
+
+    def test_an_empty_dict_return_is_refused_not_treated_as_a_clean_population(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: architect BLOCKING finding (#5773) — a resolved return
+        dict with ZERO keys must be refused as a mis-resolution, never
+        silently accepted as "a clean, fully-compliant population" (the
+        exact empty-population-still-green shape CLAUDE.md's own
+        test-review question 4 names)."""
+        path = _write_module(tmp_path, '    return {}\n')
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        violations = find_unwired_key_violations(path, status_fixture)
+
+        assert any("EMPTY dict" in v for v in violations), violations
