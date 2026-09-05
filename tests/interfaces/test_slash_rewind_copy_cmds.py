@@ -385,8 +385,23 @@ async def test_rewind_direct_unknown_identity_without_global_is_an_error(tmp_pat
     what's under test."""
     reg = _make_registry(tmp_path)
     identityless = SimpleNamespace(agent_name=None, session_id=None, _registry=reg)
+
+    calls: list = []
+    real_checkout = reg.checkout
+
+    async def _spy_checkout(seq, *, scope):
+        calls.append(seq)
+        return await real_checkout(seq, scope=scope)
+
+    reg.checkout = _spy_checkout
+
     ctx = _ctx(identityless)
     await rewind_cmd(ctx, "5")
+    assert calls == [], (
+        "checkout must not run without a resolvable scope -- a regression "
+        "that both names the workaround AND silently runs a global checkout "
+        "anyway must not pass this test"
+    )
     err = ctx.transport.error_text()
     assert err, "expected a non-empty error reply"
     assert "global" in err, f"the error must name the workaround ('global'); got {err!r}"
