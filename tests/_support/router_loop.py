@@ -126,6 +126,32 @@ class FakeRouterHost:
     def memory(self) -> MemoryService:
         return self._memory
 
+    def make_router_op_context(self) -> Any:
+        """#5822 (architect ruling): ``RouterLoopHost`` is now read
+        directly (``tools/types.py``'s ``build_resource_caller_state``,
+        no more ``getattr(host, "make_router_op_context", None)``
+        fallback) — a host reaching that constructor must genuinely
+        implement this method, this fake included, rather than being
+        tolerated as an exception to "the compose branch has a real
+        factory." A minimal, REAL ``OpContext`` (the same shape
+        ``tools/exec.py``'s own "minimal synthesis" path builds for a
+        caller with no factory to delegate to) — this fake carries none
+        of the real materials (a permission resolver, a declared sandbox
+        config, ...) a real ``RouterHostAdapter`` would, so those fields
+        stay at their own Optional defaults; a test asserting on THEM
+        specifically constructs its own ``OpContext``/uses a real host
+        instead (unchanged by this method's existence)."""
+        from reyn.core.op_runtime.context import OpContext
+        from reyn.data.workspace.workspace import Workspace
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        return OpContext(
+            workspace=Workspace(events=self._events),
+            events=self._events,
+            permission_decl=PermissionDecl(),
+            actor="fake_router_host",
+        )
+
     # --- Catalogue ---
 
     def list_available_skills(self) -> list[dict]:

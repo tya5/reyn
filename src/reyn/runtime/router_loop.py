@@ -907,6 +907,15 @@ class RouterLoopCore(Protocol):
         ...
 
     def resolve_model(self, name: str) -> str: ...
+    # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
+    # Builds a permission-aware OpContext with the operator-declared
+    # PermissionDecl + Workspace(actor="chat_router") + mcp_servers,
+    # so handlers in src/reyn/tools/{file,mcp,web*}.py can delegate to
+    # op_runtime with the same gating the legacy router branches had.
+    # #5822 (architect ruling): read DIRECTLY by ``tools/types.py``'s
+    # ``build_resource_caller_state`` (no ``getattr(..., None)`` default)
+    # -- every ``RouterLoopHost`` genuinely implements this, test hosts
+    # included (``tests/_support/router_loop.py``'s ``FakeRouterHost``).
     def make_router_op_context(self) -> Any: ...
     # #3633: ``persist`` makes the kind=="agent" → history-append coupling an
     # EXPLICIT per-call-site choice instead of an implicit blanket rule the
@@ -1158,12 +1167,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def mcp_get_prompt(self, server: str, name: str,
                               arguments: dict | None = None) -> dict: ...
 
-    # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
-    # Builds a permission-aware OpContext with the operator-declared
-    # PermissionDecl + Workspace(actor="chat_router") + mcp_servers,
-    # so handlers in src/reyn/tools/{file,mcp,web*}.py can delegate to
-    # op_runtime with the same gating the legacy router branches had.
-    def make_router_op_context(self) -> Any: ...
+    # #5822: make_router_op_context is inherited from RouterLoopCore above
+    # -- this used to be a redundant re-declaration (same signature, no
+    # override) that made two Protocol-declaration sites LOOK like they
+    # could be two different facts, costing a real reviewer's time
+    # tracking down whether they were (#5822's own genesis). See
+    # RouterLoopCore's own declaration for the method's rationale.
 
     # Safety-limit intervention bus factory (FP-0005 extension).
     # Returns the current RequestBus for handle_limit_exceeded interactive

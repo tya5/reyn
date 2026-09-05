@@ -434,6 +434,21 @@ class _FakeHost:
     @property
     def events(self): return self._events
 
+    def make_router_op_context(self):
+        """#5822: RouterLoopHost is read directly now (no getattr default
+        on tools/types.py's build_resource_caller_state) -- every host
+        genuinely implements this."""
+        from reyn.core.op_runtime.context import OpContext
+        from reyn.data.workspace.workspace import Workspace
+        from reyn.security.permissions.permissions import PermissionDecl
+
+        return OpContext(
+            workspace=Workspace(events=self._events),
+            events=self._events,
+            permission_decl=PermissionDecl(),
+            actor="fake_router_host",
+        )
+
     def get_universal_wrappers_enabled(self) -> bool: return True
     def get_action_usage_tracker(self): return None
     def get_action_embedding_index(self): return None
