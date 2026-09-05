@@ -1964,12 +1964,27 @@ class AgentRegistry:
         oldest = next(iter(self._state_log.iter_from(1)), None)
         return oldest.get("seq") if oldest else None
 
-    def _history_margin_boundary_seq(self, name: str) -> "int | None":
+    def _history_path_for(self, name: str, sid: str = _DEFAULT_SID) -> Path:
+        """On-disk ``history.jsonl`` path for ``(name, sid)`` (#5759 stage 2).
+
+        Mirrors the 2 real construction sites this codebase already has —
+        ``last_activity_at`` above (main: ``<agent>/history.jsonl``, the
+        legacy byte-identical path) and ``spawn_session``'s own per-session
+        fixup (spawned: ``<agent>/state/sessions/<enc(sid)>/history.jsonl``,
+        i.e. ``_session_state_dir(name, sid) / "history.jsonl"``) — rather
+        than re-deriving a third copy of this branch."""
+        if sid == _DEFAULT_SID:
+            return self._dir / name / "history.jsonl"
+        return self._session_state_dir(name, sid) / "history.jsonl"
+
+    def _history_margin_boundary_seq(
+        self, name: str, sid: str = _DEFAULT_SID,
+    ) -> "int | None":
         """The oldest ``seq`` that startup hydration would still read back
-        for agent *name* — history.jsonl condition ④ (#5759 stage 2, lead-
-        coder ruling). Only entries STRICTLY OLDER than this are outside
-        the startup-hydration margin and eligible for GC; this boundary
-        itself and everything newer must never be removed.
+        for session ``(name, sid)`` — history.jsonl condition ④ (#5759
+        stage 2, lead-coder ruling). Only entries STRICTLY OLDER than this
+        are outside the startup-hydration margin and eligible for GC; this
+        boundary itself and everything newer must never be removed.
 
         Reuses the SAME named constant and the SAME tail-reading function
         real startup hydration already uses (``Session._HISTORY_HYDRATE_
@@ -1988,7 +2003,7 @@ class AgentRegistry:
         from reyn.runtime.history_tail_reader import read_history_tail
         from reyn.runtime.session import _HISTORY_HYDRATE_MIN_LINES
 
-        history_path = self._dir / name / "history.jsonl"
+        history_path = self._history_path_for(name, sid)
         tail = read_history_tail(history_path, min_lines=_HISTORY_HYDRATE_MIN_LINES)
         if not tail:
             return None
@@ -1997,6 +2012,141 @@ class AgentRegistry:
         except (json.JSONDecodeError, AttributeError):
             return None
         return seq if isinstance(seq, int) else None
+
+    def _history_compacted_ranges(
+        self, name: str, sid: str = _DEFAULT_SID,
+    ) -> "list[tuple[int, int]]":
+        """Every ``(covers_from_seq, covers_through_seq)`` range recorded
+        by EVERY ``role="summary"`` line in session ``(name, sid)``'s
+        ``history.jsonl`` — #5759 stage 2, architect correction.
+
+        GC needs the UNION of every fold's coverage, not just the latest
+        one: an older fold's range sits below the latest summary's own
+        ``(covers_from, covers_through)`` pair once a later fold has run
+        again (each fold only records its OWN span). Copying the 2
+        existing consumers of ``compaction_coverage_from_summary``
+        (``router_history_buffer.py``, ``session.py`` — both pass only
+        the SINGLE latest summary) would make GC drop almost nothing —
+        the exact "discard-only, 0 bytes" shape an earlier #5759 design
+        was already rejected for. The parsing function itself is reused
+        unchanged (called once per summary found, not redefined) so
+        structuralization ② (one accessor) still holds — only the call
+        COUNT differs from those 2 existing callers, not the function.
+
+        Fail-closed per summary (matches ``is_seq_still_active``'s own
+        per-summary safe-side default): a summary with no ``covers_from_
+        seq`` (persisted before #5765) contributes NO range rather than a
+        guessed one — never hides content based on it."""
+        from reyn.runtime.chat_message import (
+            compaction_coverage_from_summary,
+            parse_history_line,
+        )
+
+        history_path = self._history_path_for(name, sid)
+        ranges: list[tuple[int, int]] = []
+        if not history_path.is_file():
+            return ranges
+        with history_path.open("r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    quick = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(quick, dict) or quick.get("role") != "summary":
+                    continue
+                msg = parse_history_line(line)
+                if msg is None:
+                    continue
+                covers_from, covers_through = compaction_coverage_from_summary(msg)
+                if covers_from is not None and covers_through > 0:
+                    ranges.append((covers_from, covers_through))
+        return ranges
+
+    def _gc_one_session_history(
+        self, name: str, sid: str, oldest_seq: int,
+    ) -> dict:
+        """The synchronous GC rewrite body for ONE ``(name, sid)`` session's
+        ``history.jsonl`` (#5759 stage 2) — run off the event loop by the
+        caller (``asyncio.to_thread``; history.jsonl can reach hundreds of
+        MB, #4387's own measurement).
+
+        A turn is GC-eligible only when ALL of:
+          ① below the WAL's own PHYSICAL oldest-kept seq (``oldest_seq``,
+             passed in from ``_oldest_kept_seq()`` — the SAME accessor
+             ``checkout()``/``list_rewind_points()`` use, never re-derived
+             here as a second copy)
+          ② outside the startup-hydration margin
+             (``_history_margin_boundary_seq``)
+          ③ inside SOME recorded fold's ``[covers_from, covers_through]``
+             range (``_history_compacted_ranges``, unioned via the shared
+             ``is_seq_still_active`` predicate — #5765's own single place
+             for this check)
+        A ``role="summary"`` line is NEVER dropped, regardless of its own
+        seq: it is the durable EVIDENCE of what a fold covered — dropping
+        one would corrupt every future GC pass's own range computation
+        (``_history_compacted_ranges`` reads every surviving summary), the
+        same reasoning ``truncate_below``'s own ``always_keep_kinds``
+        gives ``REWIND_KIND`` reset-records.
+        Missing history.jsonl, or nothing ever folded, is a no-op."""
+        from reyn.runtime.chat_message import is_seq_still_active
+        from reyn.runtime.history_tail_reader import rewrite_history_dropping
+
+        margin_boundary = self._history_margin_boundary_seq(name, sid)
+        if margin_boundary is None:
+            return {"dropped": 0, "kept": 0}
+        ranges = self._history_compacted_ranges(name, sid)
+        if not ranges:
+            return {"dropped": 0, "kept": 0}
+
+        def should_drop(entry: dict) -> bool:
+            if entry.get("role") == "summary":
+                return False
+            seq = entry["seq"]
+            if seq >= oldest_seq or seq >= margin_boundary:
+                return False
+            return any(
+                not is_seq_still_active(seq, covers_from=cf, covers_through=ct)
+                for cf, ct in ranges
+            )
+
+        history_path = self._history_path_for(name, sid)
+        return rewrite_history_dropping(history_path, should_drop=should_drop)
+
+    async def _gc_history_jsonl_below(self, floor: int) -> None:
+        """#5759 stage 2: GC every known session's ``history.jsonl`` on the
+        SAME throttled pass as the WAL truncation + generation prune above
+        (lead-coder ruling: no new trigger mechanism — piggyback on the
+        existing pass, never a "compaction just finished" trigger).
+
+        Deliberately re-derives the WAL floor via ``_oldest_kept_seq()``
+        rather than trusting the ``floor`` parameter this method receives:
+        ``truncate_below`` (called just above, in the caller) is FIRE-AND-
+        FORGET — its rewrite drains in a worker, not necessarily done yet
+        — so ``_oldest_kept_seq()`` may still report the PRE-truncation
+        physical floor for a cycle. That is the fail-safe direction (more
+        conservative, never drops a history.jsonl range whose WAL
+        counterpart has not actually been truncated away yet), and it is
+        the SAME accessor ``checkout()``/``list_rewind_points()`` use —
+        never a second, independently-derived floor (structuralization ②).
+
+        Best-effort per session, matching this method's own sibling prune
+        steps: one session's failure never blocks another's."""
+        oldest_seq = self._oldest_kept_seq()
+        if oldest_seq is None:
+            return  # nothing has ever been truncated from the WAL yet
+        for name in self.list_names():
+            for sid in self._discover_session_ids(name):
+                try:
+                    await asyncio.to_thread(
+                        self._gc_one_session_history, name, sid, oldest_seq,
+                    )
+                except Exception as e:  # noqa: BLE001 — defensive, matches sibling prune steps
+                    logger.warning(
+                        "history.jsonl GC failed for %r/%r: %s", name, sid, e,
+                    )
 
     async def checkout(self, seq: int) -> dict:
         """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
@@ -3110,6 +3260,12 @@ class AgentRegistry:
             self._agent_identity_generation_store().prune_below(floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
+        # #5759 stage 2: history.jsonl GC on the SAME boundary/pass — no new
+        # trigger, piggybacks on this already-throttled truncation cycle
+        # (lead-coder ruling). Own try/except inside (best-effort per
+        # session), so a failure here never blocks the archived-agent purge
+        # below, matching the existing generation-GC try's own isolation.
+        await self._gc_history_jsonl_below(floor)
         # #1954 slice 2: WAL-window-bounded auto-purge of archived agents — run
         # OUTSIDE the generation-GC try so a hiccup above never
         await self._purge_archived_below(floor)
