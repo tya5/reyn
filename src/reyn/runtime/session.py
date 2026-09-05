@@ -4388,11 +4388,19 @@ class Session:
         if self._state_log is None:
             return self.history
         from reyn.core.events.snapshot_generations import (
+            GLOBAL_SCOPE,
             build_active_predicate,
             earliest_relevant_wal_seq,
         )
 
-        threshold = earliest_relevant_wal_seq(self._state_log)
+        # #5789: `earliest_relevant_wal_seq` is GLOBAL-BY-DESIGN, not
+        # scoped to (self.agent_name, self.session_id) -- see its own
+        # docstring for the disclosed, measured caveat this default
+        # carries now that a scoped writer (checkout()) exists: this
+        # function is a conservative LOAD-EXTENSION bound only, the
+        # actual correctness filter is the properly-scoped `is_active`
+        # built below.
+        threshold = earliest_relevant_wal_seq(self._state_log, scope=GLOBAL_SCOPE)
         if threshold is not None:
             while True:
                 loaded_wal_seqs: "list[int]" = [

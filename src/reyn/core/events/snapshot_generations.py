@@ -266,19 +266,33 @@ def _rewind_records_with_scope(
     return index.records()
 
 
-def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
-    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq).
+def _rewind_records_for_scope(
+    state_log: StateLog, *, scope: "tuple[str, str] | None",
+) -> list[tuple[int, int]]:
+    """Rewind reset-records visible to ``scope`` (global + exactly matching),
+    scope stripped, as ``(R, target_n)``.
 
-    #5769 stage 1: every OTHER consumer of the branch model
-    (``is_active_seq``, ``active_rewind_target``, ``branch_ids_for``,
-    ``list_branches``, ``rewind()`` itself) stays scope-blind on purpose —
-    stage 1's only scope-aware consumer is ``build_active_predicate``
-    (see :func:`_rewind_records_with_scope`); narrowing these too is a
-    later stage's own decision, not made here. Strips ``scope`` off the
-    same underlying records, so this remains byte-identical to its own
-    pre-#5769 behavior regardless of what any record's ``scope`` holds.
-    """
-    return [(r, n) for (r, n, _scope) in _rewind_records_with_scope(state_log)]
+    #5789: the scope-application step every consumer of the abandoned-
+    interval model now uses explicitly, replacing the removed
+    ``_rewind_records`` (which stripped ``scope`` off EVERY record and
+    fed it to every consumer as if it were global-only — stage 1's own
+    docstring for that function admitted this was "a later stage's own
+    decision, not made here"; #5786 found the exact cost of that stage
+    never being named: `reconstruct` silently treated a scoped checkout's
+    reset-record as global abandonment for an unrelated session it
+    reconstructed afterward). ``_rewind_records`` is deleted rather than
+    kept: with it gone, no consumer can omit ``scope`` by continuing to
+    call the old, unscoped accessor — the same "delete the function that
+    lets you skip the decision" shape ``latest_pipeline_state`` and
+    `reconstruct` already took (#5786/#5788).
+
+    Same filter :func:`build_active_predicate` applies inline: a record is
+    visible when its own ``scope`` is ``None`` (global) or equals the
+    query's ``scope`` exactly."""
+    return [
+        (r, n) for (r, n, record_scope) in _rewind_records_with_scope(state_log)
+        if record_scope is None or record_scope == scope
+    ]
 
 
 def _abandoned_intervals(rewinds: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -314,12 +328,20 @@ def _make_is_active(abandoned: list[tuple[int, int]]):
     return is_active
 
 
-def is_active_seq(state_log: StateLog, seq: int) -> bool:
-    """True if ``seq`` is on the current active branch (not in any abandoned segment)."""
-    return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))(seq)
+def is_active_seq(state_log: StateLog, seq: int, *, scope: "tuple[str, str] | None") -> bool:
+    """True if ``seq`` is on the current active branch (not in any abandoned segment).
+
+    #5789: ``scope`` is required, no default. GLOBAL-BY-DESIGN at both real
+    call sites (``AgentRegistry.rewind_to``'s own active-target guard, and
+    every test call over a plain-global fixture) — neither has a per-
+    session concept in play, so ``GLOBAL_SCOPE`` is the honest, explicit
+    answer rather than an inferred one."""
+    return _make_is_active(_abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope)))(seq)
 
 
-def earliest_relevant_wal_seq(state_log: StateLog) -> "int | None":
+def earliest_relevant_wal_seq(
+    state_log: StateLog, *, scope: "tuple[str, str] | None",
+) -> "int | None":
     """The lowest ``wal_seq`` any abandoned interval's active-check could
     possibly need to compare against, or ``None`` if the session has never
     rewound. #4387 Phase B ②: a consumer holding only a BOUNDED in-memory
@@ -336,8 +358,25 @@ def earliest_relevant_wal_seq(state_log: StateLog) -> "int | None":
     is ``lo < seq < hi`` — a seq at or below every ``lo`` is active by
     construction, off every interval it could possibly be inside, so
     nothing OLDER than the lowest ``lo`` changes the answer for it.
-    """
-    abandoned = _abandoned_intervals(_rewind_records(state_log))
+
+    #5789: ``scope`` is required, no default. GLOBAL_SCOPE at the one real
+    call site (``Session._active_branch_history``) — safe, but only
+    because this function's OWN role is a conservative LOAD-EXTENSION
+    bound, not the correctness filter itself (the sibling `is_active`
+    check right after it in that same method is properly scoped to
+    ``(self.agent_name, self.session_id)``). Disclosed, not silently
+    inherited: `GLOBAL_SCOPE` here sees strictly FEWER abandoned intervals
+    than a query scoped to this session's own `(agent, sid)` would (global
+    records only, excluding this session's own scoped ones per decision
+    7's "GLOBAL_SCOPE means apply only the unscoped ones") — meaning it is
+    a **lower**, not higher, threshold whenever this session has its own
+    scoped rewind records. `GLOBAL_SCOPE` was safe here before ANY scoped
+    writer existed (stage 1-2); #5778 made scoped `checkout()` real. This
+    is exactly the "safe but accidental" case #5789 exists to convert into
+    a stated decision, not the closed-out consequence of one: if a
+    session's own scoped rewind is ever observed under-loading history
+    here, this comment is where that regression should be chased first."""
+    abandoned = _abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope))
     if not abandoned:
         return None
     return min(lo for lo, _hi in abandoned)
@@ -349,8 +388,9 @@ def build_active_predicate(
     """Build a reusable ``is_active(seq)`` predicate — ONE derivation for MANY seqs.
 
     #2941 (owner-reported ``reyn chat`` freeze, growing with session length):
-    ``_abandoned_intervals(_rewind_records(state_log))`` depends only on the
-    state_log's rewind records, NOT on ``seq`` — so calling ``is_active_seq``
+    ``_abandoned_intervals(_rewind_records_for_scope(state_log, scope=...))``
+    depends only on the state_log's rewind records (for a given scope), NOT
+    on ``seq`` — so calling ``is_active_seq``
     once per history message (``Session._active_branch_history``, the
     LLM-facing hot path run every turn) re-derived the whole branch model once
     per message: O(N messages x M WAL entries) per turn. This factors the
@@ -394,34 +434,22 @@ def build_active_predicate(
     return _make_is_active(_abandoned_intervals(relevant))
 
 
-def active_rewind_target(state_log: StateLog) -> int | None:
-    """``target_n`` of the active reset-record, or ``None`` when no rewind exists.
-
-    The active reset-record is the **highest-seq** rewind (latest wins — a later
-    rewind can never be abandoned by an earlier one, so the max-R record is always
-    the active pointer). Crash recovery uses this to re-materialise the active
-    branch as-of-N idempotently (ADR-0038 Stage 1d two-substrate crash-safety).
-    """
-    records = _rewind_records(state_log)
-    if not records:
-        return None
-    return max(records, key=lambda t: t[0])[1]
-
-
 def active_rewind_target_with_scope(
     state_log: StateLog,
 ) -> "tuple[int, tuple[str, str] | None] | None":
     """``(target_n, scope)`` of the active reset-record, or ``None`` when no
-    rewind exists — #5769 stage 3's scope-aware sibling of
-    :func:`active_rewind_target` above.
+    rewind exists.
 
     Crash recovery needs not just WHERE the active rewind points but WHOSE
     scope it was written under, to materialise only that ``(name, sid)`` on
-    a scoped crash-recovery (ADR-0047 decision 3's own recovery half) —
-    ``active_rewind_target`` itself stays unchanged (it still has its own
-    caller-independent contract; this is a genuinely new question, not a
-    replacement). Same latest-wins rule: the active reset-record is the
-    highest-seq one."""
+    a scoped crash-recovery (ADR-0047 decision 3's own recovery half).
+
+    #5789: the scope-blind ``active_rewind_target`` this was originally
+    written as a sibling of is deleted — it had zero real callers left in
+    ``src/`` (this function fully subsumed its own crash-recovery caller
+    when #5769 stage 3 landed the recovery half; the plain-target answer
+    is `result[0]` for any caller that only needs `target_n`). Same
+    latest-wins rule: the active reset-record is the highest-seq one."""
     records = _rewind_records_with_scope(state_log)
     if not records:
         return None
@@ -466,7 +494,9 @@ def _branch_of_seq(seq: int, abandoned: list[tuple[int, int]]) -> int:
     return ACTIVE_BRANCH_ID if best is None else best[1]
 
 
-def branch_ids_for(state_log: StateLog, seqs: "list[int]") -> dict[int, int]:
+def branch_ids_for(
+    state_log: StateLog, seqs: "list[int]", *, scope: "tuple[str, str] | None",
+) -> dict[int, int]:
     """Map each seq → its owning branch_id (lineage-correct membership, #1533 2a→2b).
 
     ``is_active`` seqs → the active branch (0); a rewound-past seq → the dead branch
@@ -475,23 +505,39 @@ def branch_ids_for(state_log: StateLog, seqs: "list[int]") -> dict[int, int]:
     so a naive intersect over-includes — e2e's repro). Grounded in the proven
     ``_abandoned_intervals`` (inherits 1b-1e correctness). ``list_rewind_points``
     tags each row with this so the UX groups by branch_id.
-    """
-    abandoned = _abandoned_intervals(_rewind_records(state_log))
+
+    #5789: ``scope`` is required, no default -- SCOPED, a real behavior
+    change from the prior scope-blind form (#5786 review, decision table):
+    since #5782 every ``list_rewind_points`` row already carries its own
+    real ``(name, sid)`` owner, ``branch_id`` must be that SAME owner's
+    value, not one global tree blindly applied to every owner's seqs (a
+    session-scoped reset-record would otherwise misclassify an unrelated
+    owner's seqs, the same class of bug #5786 fixed for ``reconstruct``).
+    Callers with seqs spanning more than one owner must call this once per
+    owner group and merge results -- see ``list_rewind_points``'s own
+    per-``(name, sid)`` loop."""
+    abandoned = _abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope))
     return {s: _branch_of_seq(s, abandoned) for s in seqs}
 
 
-def list_branches(state_log: StateLog) -> list[Branch]:
+def list_branches(state_log: StateLog, *, scope: "tuple[str, str] | None") -> list[Branch]:
     """Derive the branch tree (#1533 Phase-2 2a / D8).
 
     The active branch (id 0) = the live lineage (all is_active seqs). Each abandoned
     interval ``(N, R)`` = a dead branch (id R) forked at N, with ``parent`` = the
     branch owning N (active or an enclosing dead branch → nesting). Returns the
     active branch first, then dead branches ascending by id. Empty WAL → [].
-    """
+
+    #5789: ``scope`` is required, no default -- SCOPED: "the fork UX's
+    branches are the OWNER's own branches" (decision table, #5786 review).
+    ``scope=GLOBAL_SCOPE`` sees only unscoped/global forks -- the same
+    tree this function always derived before any scoped writer existed.
+    ``scope=(name, sid)`` additionally includes that session's own scoped
+    forks, invisible to every other session (ADR-0047 decision 5)."""
     head = state_log.last_durable_seq  # #2259 PR-2b: durable head (operates on durable state)
     if head <= 0:
         return []
-    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    abandoned = _abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope))
     out: list[Branch] = [Branch(
         branch_id=ACTIVE_BRANCH_ID, fork_point_seq=0, head_seq=head,
         parent_branch_id=None, is_active=True,
@@ -509,6 +555,7 @@ def list_branches(state_log: StateLog) -> list[Branch]:
 
 def lineage_predecessor(
     state_log: StateLog, candidates: "list[int]", target: int,
+    *, scope: "tuple[str, str] | None",
 ) -> int | None:
     """The greatest candidate seq strictly below ``target`` on ``target``'s lineage.
 
@@ -522,12 +569,17 @@ def lineage_predecessor(
 
     ``candidates`` is the caller-filtered set (e.g. turn-kind checkpoint seqs);
     this function only resolves lineage ordering, staying kind-agnostic (P7).
-    """
+
+    #5789: ``scope`` is required, no default -- SCOPED, same family as
+    ``list_branches`` (decision table, #5786 review): ``target``'s own
+    lineage is its OWNER's lineage, so both the abandoned-interval model
+    and the branch tree this walks must be derived under that same owner's
+    scope, not a scope-blind global-only view."""
     cand = [int(c) for c in candidates]
     if not cand:
         return None
-    abandoned = _abandoned_intervals(_rewind_records(state_log))
-    by_id = {b.branch_id: b for b in list_branches(state_log)}
+    abandoned = _abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope))
+    by_id = {b.branch_id: b for b in list_branches(state_log, scope=scope)}
     cur: int | None = _branch_of_seq(int(target), abandoned)
     cutoff = int(target)            # collect candidates strictly below this on `cur`
     best: int | None = None
@@ -616,9 +668,15 @@ async def rewind(
     genuinely global Phase-1 undo primitive (no per-session concept
     anywhere in its own contract), so it passes ``GLOBAL_SCOPE`` to
     ``checkout`` explicitly — an honest spelling of "this caller has no
-    owner to name," not an inferred or forgotten one.
+    owner to name," not an inferred or forgotten one. #5789: its own
+    active-target guard now names ``GLOBAL_SCOPE`` explicitly too, for
+    the same reason — checking "is `target_n` on MY active branch" for a
+    caller with no owner concept at all is a GLOBAL question by
+    definition, matching the ``checkout`` call it guards.
     """
-    is_active = _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
+    is_active = _make_is_active(
+        _abandoned_intervals(_rewind_records_for_scope(state_log, scope=GLOBAL_SCOPE)),
+    )
     if not is_active(target_n):
         raise RewindIntoAbandonedError(
             f"rewind target seq {target_n} is on an abandoned branch — switching "

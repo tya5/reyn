@@ -2326,7 +2326,7 @@ class AgentRegistry:
         """
         if self._state_log is None:
             raise RuntimeError("rewind_to requires a state log")
-        if not is_active_seq(self._state_log, target_n):
+        if not is_active_seq(self._state_log, target_n, scope=GLOBAL_SCOPE):
             raise RewindIntoAbandonedError(
                 f"rewind target seq {target_n} is on an abandoned branch — "
                 "Phase-1 undo only rewinds to a seq on the active timeline "
@@ -2478,7 +2478,28 @@ class AgentRegistry:
 
         anchors = self.anchor_store
         # #1533 2a→2b: lineage-correct branch membership per checkpoint seq.
-        branch_of = branch_ids_for(self._state_log, sorted(seqs))
+        # #5789: `branch_ids_for` is now SCOPED (decision table, #5786
+        # review) -- a seq's branch_id must be derived under its OWN
+        # owner's abandoned-interval view (global + that owner's own
+        # scoped records), never one global tree blindly applied to every
+        # owner's seqs (the same class of bug #5786 fixed for
+        # `reconstruct`). `seq_owner` already has each seq's real owner
+        # (or `None` for the structurally-impossible ambiguous case, see
+        # above) -- grouped here and called once per owner, merged into
+        # one dict. An unresolved (`None`) owner gets `GLOBAL_SCOPE`: with
+        # no nameable owner to ask for, the global-only view is the
+        # honest "don't know" answer, not a guess (ADR-0047 decision 7).
+        by_owner: "dict[tuple[str, str] | None, list[int]]" = {}
+        for s in seqs:
+            by_owner.setdefault(seq_owner.get(s), []).append(s)
+        branch_of: dict[int, int] = {}
+        for owner, owner_seqs in by_owner.items():
+            branch_of.update(
+                branch_ids_for(
+                    self._state_log, sorted(owner_seqs),
+                    scope=owner if owner is not None else GLOBAL_SCOPE,
+                ),
+            )
         rows: list[dict] = []
         for s in sorted(seqs):
             entry = wal_at.get(s, {})
@@ -2510,7 +2531,7 @@ class AgentRegistry:
             })
         return rows
 
-    def list_branches(self) -> "list[Branch]":
+    def list_branches(self, *, scope: "tuple[str, str] | None") -> "list[Branch]":
         """The derived branch tree for the fork UX (#1533 Phase-2 2a / D8).
 
         ``[Branch(branch_id, fork_point_seq, head_seq, parent_branch_id,
@@ -2518,12 +2539,23 @@ class AgentRegistry:
         Tree topology (nesting/active); per-branch checkpoint *membership* comes
         from ``list_rewind_points(include_abandoned=True)`` rows' ``branch_id``.
         Empty when there is no WAL.
+
+        #5789: ``scope`` is required, no default -- SCOPED (decision table,
+        #5786 review): "the fork UX's branches are the OWNER's own
+        branches." Callers wiring a cross-session picker alongside
+        ``list_rewind_points``'s own multi-owner rows should pass
+        ``GLOBAL_SCOPE`` to keep every row's branch_id resolvable in the
+        returned tree (a session-scoped tree would omit branches other
+        sessions' rows reference) -- see ``interfaces/slash/rewind.py``'s
+        own call for the disclosed reasoning.
         """
         if self._state_log is None:
             return []
-        return list_branches(self._state_log)
+        return list_branches(self._state_log, scope=scope)
 
-    def predecessor_turn_checkpoint(self, seq: int) -> int | None:
+    def predecessor_turn_checkpoint(
+        self, seq: int, *, scope: "tuple[str, str] | None",
+    ) -> int | None:
         """The lineage-correct prior **turn** checkpoint of ``seq`` (#1533 2c edit).
 
         The 2c edit flow re-runs an edited turn from the state before it: checkout
@@ -2538,14 +2570,30 @@ class AgentRegistry:
         the UX disables first-turn edit. Genesis-checkout is intentionally NOT
         offered — there is no captured pre-turn-1 workspace version, so it would be
         workspace-incoherent (coherent genesis = a future session-start capture).
+
+        #5789: ``scope`` is required, no default -- SCOPED, same family as
+        ``list_branches``/``branch_ids_for`` (decision table, #5786
+        review): an edit's own lineage is its OWNER's lineage. No real
+        caller exists yet (the 2c edit-flow wiring this serves has not
+        landed) -- ``scope=GLOBAL_SCOPE`` preserves this method's own
+        pre-#5789 behavior byte-for-byte (checkpoints across every known
+        agent's default session); ``scope=(name, sid)`` narrows to that
+        one session's own checkpoints only, for whenever the edit flow
+        lands and needs it.
         """
         if self._state_log is None:
             return None
         # Checkpoint seqs = generation boundaries across every known agent (all
         # branches — the lineage walk may cross to a parent/ancestor branch).
+        # #5789: `scope=GLOBAL_SCOPE` keeps this exact cross-agent collection
+        # (byte-identical to pre-#5789); a real `(name, sid)` narrows to
+        # just that owner's own store.
         cps: set[int] = set()
-        for name in self.list_names():
-            cps.update(self._store_for(name).seqs())
+        if scope is None:
+            for name in self.list_names():
+                cps.update(self._store_for(name).seqs())
+        else:
+            cps.update(self._store_for(*scope).seqs())
         if not cps:
             return None
         # Turn-kind filter via the WAL entry kind at each boundary (one pass;
@@ -2556,7 +2604,7 @@ class AgentRegistry:
             s = entry.get("seq")
             if isinstance(s, int) and s in cps and _rewind_point_kind(entry.get("kind", "")) == "turn":
                 turn_cps.append(s)
-        return lineage_predecessor(self._state_log, turn_cps, seq)
+        return lineage_predecessor(self._state_log, turn_cps, seq, scope=scope)
 
     @property
     def anchor_store(self) -> AnchorStore | None:

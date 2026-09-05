@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
-from reyn.core.events.snapshot_generations import rewind
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -78,7 +78,7 @@ async def test_predecessor_skips_plan_step_to_prior_turn(tmp_path):
     await _plan_step_cp(reg)                 # intra-turn plan-step (must be skipped)
     t2 = await _turn_cp(reg, "turn2")
 
-    assert reg.predecessor_turn_checkpoint(t2) == t1   # NOT the plan-step between them
+    assert reg.predecessor_turn_checkpoint(t2, scope=GLOBAL_SCOPE) == t1   # NOT the plan-step between them
 
 
 @pytest.mark.asyncio
@@ -89,8 +89,8 @@ async def test_predecessor_linear_prior_turn(tmp_path):
     t2 = await _turn_cp(reg, "t2")
     t3 = await _turn_cp(reg, "t3")
 
-    assert reg.predecessor_turn_checkpoint(t3) == t2
-    assert reg.predecessor_turn_checkpoint(t2) == t1
+    assert reg.predecessor_turn_checkpoint(t3, scope=GLOBAL_SCOPE) == t2
+    assert reg.predecessor_turn_checkpoint(t2, scope=GLOBAL_SCOPE) == t1
 
 
 # ── first turn → None (genesis = (b)) ─────────────────────────────────────────
@@ -101,7 +101,7 @@ async def test_first_turn_has_no_predecessor(tmp_path):
     """Tier 2: the first turn has no prior turn → None (UX disables first-turn edit)."""
     reg = _make_registry(tmp_path)
     t1 = await _turn_cp(reg, "only")
-    assert reg.predecessor_turn_checkpoint(t1) is None
+    assert reg.predecessor_turn_checkpoint(t1, scope=GLOBAL_SCOPE) is None
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_first_turn_none_even_with_leading_plan_step(tmp_path):
     reg = _make_registry(tmp_path)
     await _plan_step_cp(reg)                  # not a turn
     t1 = await _turn_cp(reg, "first-turn")
-    assert reg.predecessor_turn_checkpoint(t1) is None
+    assert reg.predecessor_turn_checkpoint(t1, scope=GLOBAL_SCOPE) is None
 
 
 # ── lineage: cross-fork-point ─────────────────────────────────────────────────
@@ -131,13 +131,13 @@ async def test_cross_fork_point_predecessor_is_parent_fork_point_turn(tmp_path):
     await rewind(reg.state_log, target_n=t2)  # t3 now on a dead branch forked at t2
 
     # t3 is the first (only) turn on the dead branch → predecessor = parent fork-point turn t2.
-    assert reg.predecessor_turn_checkpoint(t3) == t2
+    assert reg.predecessor_turn_checkpoint(t3, scope=GLOBAL_SCOPE) == t2
     # sanity: t2's own predecessor is still t1 (active lineage).
-    assert reg.predecessor_turn_checkpoint(t2) == t1
+    assert reg.predecessor_turn_checkpoint(t2, scope=GLOBAL_SCOPE) == t1
 
 
 @pytest.mark.asyncio
 async def test_empty_or_no_state_log_returns_none(tmp_path):
     """Tier 2: no checkpoints → None (slot-in-unconditionally for the UX gate)."""
     reg = _make_registry(tmp_path)
-    assert reg.predecessor_turn_checkpoint(5) is None
+    assert reg.predecessor_turn_checkpoint(5, scope=GLOBAL_SCOPE) is None

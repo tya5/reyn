@@ -104,7 +104,11 @@ class _FakeRegistry:
     def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
         return self._points
 
-    def list_branches(self) -> list:
+    def list_branches(self, *, scope: "tuple[str, str] | None") -> list:
+        # #5789: the real AgentRegistry.list_branches takes `scope` as a
+        # required keyword-only argument (no default) too now, matching
+        # `checkout`'s own contract -- accepted here so this fake stays a
+        # drop-in stand-in for the real signature.
         return self._branches
 
     async def checkout(self, target: int, *, scope: "tuple[str, str] | None") -> dict:

@@ -99,7 +99,21 @@ async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
             # ``list_branches`` returns ``Branch`` dataclasses; the tree builder
             # and the command-UI payload both speak plain dicts (the payload
             # crosses a transport boundary). Converted here, at the one seam.
-            for b in (registry.list_branches() if registry is not None else [])
+            # #5789: `list_branches` is now SCOPED (decision table, #5786
+            # review). `GLOBAL_SCOPE` here is a DELIBERATE, disclosed choice
+            # preserving today's picker behavior byte-for-byte, not the
+            # session-local default #5785 gave the actual rewind operation:
+            # `points` above already aggregates EVERY session's own
+            # checkpoints (each correctly tagged with its own owner, #5782),
+            # so the tree must cover every branch those rows can reference —
+            # a session-scoped tree would omit branches other sessions' rows
+            # point at. Narrowing the PICKER itself to session-local-by-
+            # default is a real UX decision (which forks a user sees without
+            # asking) that needs the owner's own screen, not an inference
+            # made here.
+            for b in (
+                registry.list_branches(scope=GLOBAL_SCOPE) if registry is not None else []
+            )
         ]
         if not points:
             await reply(ctx, "/rewind: no earlier checkpoints to rewind to")
