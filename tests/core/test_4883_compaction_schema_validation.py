@@ -197,9 +197,13 @@ def _controller_with_real_engine(
             use_chars4_estimate=True, max_schema_reprompt_attempts=0,
         )),
         history_appender=history.append,
-        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+        make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
             role="summary", content=rendered, seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
+            meta={
+                "structured": structured,
+                "covers_through_seq": covers,
+                "covers_from_seq": covers_from_seq,
+            },
         ),
         render_summary=lambda s: str(s),
     )

@@ -852,9 +852,13 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
         latest_summary=lambda: None,
         compaction_engine_factory=lambda: engine,
         history_appender=lambda m: None,
-        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+        make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
             role="summary", content=rendered, seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
+            meta={
+                "structured": structured,
+                "covers_through_seq": covers,
+                "covers_from_seq": covers_from_seq,
+            },
         ),
         render_summary=lambda s: str(s),
     )

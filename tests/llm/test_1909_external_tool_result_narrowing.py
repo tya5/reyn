@@ -226,7 +226,10 @@ async def test_self_clears_after_tainted_entry_compacted_out(tmp_path, monkeypat
     session._append_history(
         ChatMessage(
             role="summary", content="summarised",
-            meta={"structured": {}, "covers_through_seq": tainted_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": tainted_seq,
+            },
         )
     )
 

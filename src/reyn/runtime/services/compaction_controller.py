@@ -219,10 +219,16 @@ class CompactionController:
         Callable ``(ChatMessage) -> None`` that appends a message to the
         persisted history.  Wraps ``Session._append_history``.
     make_summary_message:
-        Callable ``(rendered_text, structured, covers_through_seq) ->
-        ChatMessage`` that constructs the summary ``ChatMessage`` to be
-        appended.  Provided by the session so the controller does not
-        need to import ``ChatMessage`` or ``_now_iso`` directly.
+        Callable ``(rendered_text, structured, covers_through_seq, *,
+        covers_from_seq) -> ChatMessage`` that constructs the summary
+        ``ChatMessage`` to be appended.  Provided by the session so the
+        controller does not need to import ``ChatMessage`` or ``_now_iso``
+        directly. ``covers_from_seq`` (#5765, required keyword-only —
+        same shape #5759's own field addition uses): the LOWER bound of
+        what this summary actually folded — see
+        :func:`~reyn.runtime.chat_message.is_seq_still_active` for why a
+        bare upper bound (``covers_through_seq`` alone, the pre-#5765
+        shape) silently hid head-protected turns that were never folded.
     render_summary:
         Callable ``(structured: dict) -> str`` that renders a structured
         summary dict to a storage-friendly text blob.
@@ -597,7 +603,22 @@ class CompactionController:
 
         structured = {**chat_summary.to_dict(), "covers_through_seq": covers_through_seq}
         rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
-        summary_msg = self._make_summary_message(rendered, structured, covers_through_seq)
+        # #5765: this writer's own fold has NO head-protected exclusion —
+        # `retry_loop`'s ladder decomposes the wire dicts directly
+        # (`decompose_history_for_retry`), never applies `trim_head`'s
+        # own token-budget protection the way `_run_compaction`'s
+        # candidate selection does — so the range it actually covered IS
+        # `(prev_cover, covers_through_seq]`, with no gap. `covers_from_
+        # seq = prev_cover + 1` records that EMPTY excluded region
+        # explicitly (architect ruling, #5765 co-vet) rather than leaving
+        # the field unset — an unset field means "unknown, protect
+        # everything" (see `is_seq_still_active`'s own SAFE-SIDE
+        # fallback), which would be WRONG here: this writer's own range
+        # genuinely has nothing to protect.
+        summary_msg = self._make_summary_message(
+            rendered, structured, covers_through_seq,
+            covers_from_seq=prev_cover + 1,
+        )
         self._append_history(summary_msg)
         self._events.emit(
             "recovery_summary_persisted", outcome="persisted",
@@ -795,6 +816,14 @@ class CompactionController:
                 (idx, {**offered[idx], "text": replacement.get("content", offered[idx].get("text", ""))})
                 for idx, replacement in edits
             ]
+        # #5765: the range's own LOWER bound — the first candidate this
+        # cycle actually offers to the summarizer. Invariant across shrink
+        # attempts (`shrink_pool_after_overflow` only ever trims `attempt_
+        # len` — i.e. the END of `pool` — never removes `candidates[0]`
+        # itself as long as `_n_candidates_offered > 0`), so it is
+        # computed once, outside the retry loop below, unlike `_covers_
+        # through` (which genuinely changes per shrink attempt).
+        _covers_from = candidates[0].seq
         while True:
             offered = pool[:attempt_len]
             _offered_chunk = HistoryChunkToCompact(
@@ -843,7 +872,9 @@ class CompactionController:
             # it. Static string → no LLM dependency.
             rendered = _SUMMARY_PREAMBLE + self._render_summary(structured)
 
-            summary_msg = self._make_summary_message(rendered, structured, covers)
+            summary_msg = self._make_summary_message(
+                rendered, structured, covers, covers_from_seq=_covers_from,
+            )
             self._append_history(summary_msg)
             self._events.emit(
                 "compaction_completed",

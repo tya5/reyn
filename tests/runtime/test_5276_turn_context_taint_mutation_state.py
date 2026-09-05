@@ -99,7 +99,10 @@ def test_the_engage_and_lift_transitions_are_not_vacuous(tmp_path: Path) -> None
 
     s._append_history(ChatMessage(
         role="summary", content="summarised",
-        meta={"structured": {}, "covers_through_seq": tainted_seq},
+        meta={
+            "structured": {}, "covers_from_seq": 1,
+            "covers_through_seq": tainted_seq,
+        },
     ))
     lifted = _denied_by_turn_context(s)
 

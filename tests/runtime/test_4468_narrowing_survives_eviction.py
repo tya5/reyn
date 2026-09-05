@@ -124,7 +124,10 @@ def test_narrowing_still_self_clears_once_real_compaction_covers_the_evicted_ent
     s._append_history(
         ChatMessage(
             role="summary", content="summarised",
-            meta={"structured": {}, "covers_through_seq": tainted_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": tainted_seq,
+            },
         )
     )
 
