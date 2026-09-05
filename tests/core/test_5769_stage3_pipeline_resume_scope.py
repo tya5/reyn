@@ -13,14 +13,17 @@ read, a warning log, a `GLOBAL_SCOPE` fallback, and a disclosed decision-7
 exception) -- there is now exactly one path, no cases to reconcile.
 
 Real `StateLog` + real `PipelineStateStore` (no mocks). Covers: `scope`
-is a required keyword-only argument (no default, no silent fallback);
-`resume()` forwards its own `scope` straight through with its own
-default of `GLOBAL_SCOPE` (safe for the many pre-existing R3/R4 executor
-tests with no owning-driver concept at all -- GLOBAL_SCOPE is the
-honestly correct answer for those, not a silently-forgotten one, since
-nothing in this codebase can yet write a scoped pipeline-state record
-without going through the one real production caller, which always
-passes its real scope).
+is a required keyword-only argument on BOTH `latest_pipeline_state` and
+`resume()` (no default, no silent fallback, at either layer -- a round-1
+draft of this PR gave `resume()`'s own `scope` a `GLOBAL_SCOPE` default,
+which silently reopened decision 7's hole one layer OUT; lead-coder-30's
+review caught it, architect confirmed no default is justified here since
+every real caller already knows its own answer). `resume()` forwards its
+own `scope` straight through to `latest_pipeline_state`; every owner-less
+R3/R4/primitive-mechanics test call site now passes `scope=GLOBAL_SCOPE`
+explicitly (honest, not silently-forgotten -- nothing in this codebase
+can yet write a scoped pipeline-state record without going through the
+one real production caller, which always passes its real scope).
 """
 from __future__ import annotations
 
@@ -29,7 +32,7 @@ import pytest
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
 from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND
 from reyn.core.events.state_log import StateLog
-from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
+from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep, TransformStep
 from reyn.tools.pipeline_verbs import _make_tool_dispatch
 
 
@@ -48,6 +51,25 @@ async def test_latest_pipeline_state_requires_scope_kwarg(tmp_path):
 
     with pytest.raises(TypeError):
         latest_pipeline_state("run-x", log)  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_resume_requires_scope_kwarg(tmp_path):
+    """Tier 2: no default -- same shape as
+    `test_latest_pipeline_state_requires_scope_kwarg` above, one layer OUT.
+    Pins OUR signature decision (decision 2/7: no silent GLOBAL_SCOPE
+    default), not a language behaviour -- a round-1 draft of this PR gave
+    `resume()`'s own `scope` a `GLOBAL_SCOPE` default, silently reopening
+    the same hole `latest_pipeline_state`'s required kwarg already closed
+    one layer in (lead-coder-30 review, PR #5778). A call site that forgets
+    `scope` must fail at the call, not silently resume as GLOBAL_SCOPE."""
+    log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
+    pipeline = Pipeline(steps=[TransformStep(value="1 + 1", output="x")])
+
+    with pytest.raises(TypeError):
+        await PipelineExecutor().resume(  # type: ignore[call-arg]
+            "run-y", pipeline=pipeline, tool_dispatch=lambda *_a, **_k: None, state_log=log,
+        )
 
 
 @pytest.mark.asyncio
