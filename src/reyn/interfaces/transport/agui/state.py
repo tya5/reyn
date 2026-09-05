@@ -173,6 +173,28 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         # docstring). See ``status._snapshot``'s own docstring for the
         # shape.
         "pending_intervention_head": snap.get("pending_intervention_head"),
+        # #5802 (owner-hit: web/connect's /rewind showed the text list
+        # only, no picker — the #5773 baseline had declared this
+        # "permanently session-local", falsified by the owner's report).
+        # The pending command-UI request (currently only ``{"kind":
+        # "rewind", "points": [...], "branches": [...], "default_scope":
+        # {...} | None}``, #5769) — the source
+        # ``RemoteReadModel.pending_command_ui()`` reads instead of an
+        # unconditional None. None when nothing is pending — never a
+        # fabricated placeholder. Same STATE_SNAPSHOT/STATE_DELTA channel
+        # as every other field here; ``points`` can be large (one row per
+        # session checkpoint), but STATE_DELTA only carries CHANGED keys
+        # (this project_status call's own contract), so this rides the
+        # wire only when a picker opens or closes, not every frame — see
+        # the delta-not-every-frame test this field's own PR pins.
+        #
+        # Named ``pending_command_ui_request`` — NOT ``pending_command_
+        # ui`` — to avoid colliding with the LITERAL ``"pending_command_
+        # ui": <bool>`` key ``snap`` already carries (the
+        # ChatReadModelCapabilities FLAG value, spread in by ``status.py``'s
+        # own ``_reported_snapshot_keys()``); see that call site's own
+        # comment for the full reasoning.
+        "pending_command_ui_request": snap.get("pending_command_ui_request"),
         # #3300 P2a: server-authoritative sent-queue state — the
         # undispatched inbox queue (list of {msg_id, chain_id, text}) +
         # whether a turn is currently dispatched. Rides this SAME

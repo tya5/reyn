@@ -628,6 +628,29 @@ def _snapshot_for_session(registry, s, config=None):
         # call sites.
         **_reported_snapshot_keys(),
         "pending_intervention_head": pending_intervention_head,
+        # #5802 (owner-hit: web/connect's /rewind showed the text
+        # fallback only, no picker — `pending_command_ui`/
+        # `has_command_ui_region` were declared `_LOCAL` in the #5773
+        # baseline, "permanently session-local; no project_status twin
+        # is ever planned" — the owner's report falsified that "ever").
+        # Already a JSON-safe plain dict (`{"kind", "points", "branches",
+        # "default_scope"}` — see `slash/rewind.py`'s own
+        # `set_pending_command_ui` call), so no reshape is needed here,
+        # unlike `pending_intervention_head` above (which projects a
+        # `UserIntervention` object). `None` when nothing is pending —
+        # never a fabricated placeholder.
+        #
+        # Named `pending_command_ui_request`, NOT `pending_command_ui`
+        # (mirrors `pending_intervention_head` vs. the `intervention_
+        # head` capability flag, same reason): `**_reported_snapshot_
+        # keys()` above already spreads a LITERAL `"pending_command_ui":
+        # <bool>` key (the ChatReadModelCapabilities FLAG value, off
+        # `reported_snapshot_keys`'s own field-name-doubles-as-snapshot-
+        # key convention) — reusing that exact name here would silently
+        # overwrite the flag with this method's own real DATA in the
+        # same dict literal (later key wins), the collision this
+        # different name avoids.
+        "pending_command_ui_request": s.pending_command_ui,
         "model": s.model,
         "model_active_class": s.active_model_class(),
         "model_classes": list(s.known_model_classes()),
