@@ -2322,7 +2322,8 @@ class AgentRegistry:
 
         Returns one row per snapshot-generation boundary, ascending by seq::
 
-            [{"seq": int, "ts": str, "kind": str, "anchor": str, "branch_id": int}, ...]
+            [{"seq": int, "ts": str, "kind": str, "anchor": str, "branch_id": int,
+              "sid": str}, ...]
 
         Default (``include_abandoned=False``) keeps only **active-branch** boundaries
         (Phase-1 1f timeline). Phase-2 fork UX passes ``include_abandoned=True`` to
@@ -2346,6 +2347,26 @@ class AgentRegistry:
         the union across known agents is the global rewind-point set. Abandoned
         (rewound-past) boundaries are filtered out via ``is_active_seq``.
 
+        #5769 stage 3 (③, architect scope): ``sid`` — every row's ORIGIN
+        session id, not only the agent's default ("main") one. Before this
+        stage the loop below enumerated only ``_store_for(name)`` (the
+        implicit ``_DEFAULT_SID``), so a checkpoint cut by a spawned
+        subagent session's own generation store was invisible here
+        entirely, not merely unlabeled — ``_discover_session_ids`` (the
+        same disk+in-memory discovery the rewind materialiser already
+        depends on for crash recovery) now supplies every sid to fold
+        in. A boundary seq is always the ORIGIN of exactly one (name,
+        sid) pair — a WAL entry belongs to one session's own turn/step
+        by construction (the same "seq is globally unique per event"
+        property today's per-agent union already relies on) — so ``sid``
+        is looked up per seq with no collision to resolve.
+
+        ⚠️ Scope boundary (explicit, per dispatch): this field only makes
+        the DATA available. Whether/how a caller surfaces ``sid``
+        (grouping, a column, a filter) is a presentation decision left
+        to whoever wires the timeline UI to it (owner-gated) — not
+        decided here.
+
         Empty when there is no WAL or no generations.
         """
         if self._state_log is None:
@@ -2357,28 +2378,37 @@ class AgentRegistry:
         # rejected by checkout — advertising them is misleading.
         oldest_seq = self._oldest_kept_seq()
 
-        # Union of generation boundary seqs across every known agent. Default =
-        # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
+        # Union of generation boundary seqs across every known agent AND every
+        # sid of each (#5769 stage 3 ③ — was agent-default-sid-only through
+        # stage 2). Default = active branch only (1f); include_abandoned =
+        # all branches (Phase-2 tree).
         seqs: set[int] = set()
+        seq_sid: dict[int, str] = {}
         for name in self.list_names():
-            # #5769 stage 2: `_store_for(name)` (no sid) is today's own
-            # implicit "main" session — this loop's real, nameable owner
-            # per agent is (name, _DEFAULT_SID), not a placeholder. Built
-            # per agent name rather than hoisted once: `build_active_
-            # predicate`'s own record fetch is incremental/cached (#2939),
-            # so this is O(rewind records) per agent, not O(WAL) — the
-            # #2941 quadratic-WAL-scan concern this loop's own comment used
-            # to cite no longer applies (only the seq-independent
-            # DERIVATION was ever the expensive part; that stays cached
-            # regardless of how many times a scope filter runs over it).
-            is_active = build_active_predicate(
-                self._state_log, scope=(name, _DEFAULT_SID),
-            )
-            for s in self._store_for(name).seqs():
-                if oldest_seq is not None and s < oldest_seq:
-                    continue  # #2236: truncated out of WAL — not reachable
-                if include_abandoned or is_active(s):
-                    seqs.add(s)
+            # #5769 stage 3: every sid this agent has (main + loaded +
+            # on-disk spawned — the SAME discovery the rewind materialiser
+            # already depends on, `_discover_session_ids`'s own docstring),
+            # not only `_DEFAULT_SID`. Built per (name, sid) rather than
+            # hoisted once: `build_active_predicate`'s own record fetch is
+            # incremental/cached (#2939), so this is O(rewind records) per
+            # (agent, sid), not O(WAL) — the #2941 quadratic-WAL-scan
+            # concern this loop's own comment used to cite no longer
+            # applies (only the seq-independent DERIVATION was ever the
+            # expensive part; that stays cached regardless of how many
+            # times a scope filter runs over it).
+            for sid in self._discover_session_ids(name):
+                is_active = build_active_predicate(
+                    self._state_log, scope=(name, sid),
+                )
+                for s in self._store_for(name, sid).seqs():
+                    if oldest_seq is not None and s < oldest_seq:
+                        continue  # #2236: truncated out of WAL — not reachable
+                    if include_abandoned or is_active(s):
+                        seqs.add(s)
+                        # A boundary seq is the origin of exactly one (name,
+                        # sid) pair (see this method's own docstring) — a
+                        # plain last-write-wins map, no collision to resolve.
+                        seq_sid[s] = sid
         if not seqs:
             return []
 
@@ -2406,6 +2436,12 @@ class AgentRegistry:
                 "anchor": anchors.get(s) if anchors is not None else "",
                 # #1533 2a→2b: the branch this checkpoint belongs to (group by this).
                 "branch_id": branch_of.get(s, 0),
+                # #5769 stage 3 ③: the (name, sid) pair that actually cut
+                # this generation — see the method's own docstring for why
+                # this lookup never collides. Presentation (grouping, a
+                # column, a filter) is a later, owner-gated decision — not
+                # this stage's own scope.
+                "sid": seq_sid.get(s, _DEFAULT_SID),
             })
         return rows
 

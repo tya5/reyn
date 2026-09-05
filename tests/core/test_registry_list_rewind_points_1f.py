@@ -50,6 +50,18 @@ def _record_gen(reg: AgentRegistry, name: str, seq: int) -> None:
     reg._store_for(name).record(snap)
 
 
+def _record_gen_for_sid(reg: AgentRegistry, name: str, sid: str, seq: int) -> None:
+    """#5769 stage 3: persist a generation for a NON-default ``sid`` — the
+    same on-disk shape a spawned subagent session's own generation store
+    would produce (``state/sessions/<sid>/generations/``, created via
+    ``AgentSnapshot.write_durable``'s own ``mkdir(parents=True)``), so
+    ``_discover_session_ids``'s disk scan finds it exactly the way it
+    would find a real spawned session."""
+    snap = AgentSnapshot.empty(name)
+    snap.applied_seq = seq
+    reg._store_for(name, sid).record(snap)
+
+
 # ── unit: kind mapping ────────────────────────────────────────────────────────
 
 
@@ -235,3 +247,51 @@ async def test_list_rewind_points_scopes_abandonment_per_agent(tmp_path) -> None
     listed_seqs = [r["seq"] for r in rows]
     assert a1 not in listed_seqs, "alpha's own boundary must be abandoned by its own scoped rewind"
     assert b1 in listed_seqs, "beta's boundary must be untouched by a rewind scoped to a different agent"
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_default_sid_is_main(tmp_path) -> None:
+    """Tier 2: #5769 stage 3 (③) -- backward compatibility. A generation
+    recorded via the pre-existing helper (the implicit _DEFAULT_SID store,
+    unchanged since before this stage) must still be listed, now carrying
+    ``"sid": "main"`` explicitly rather than the field being absent."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    s1 = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", s1)
+
+    rows = reg.list_rewind_points()
+    assert [r["seq"] for r in rows] == [s1]
+    assert rows[0]["sid"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_includes_non_default_sid(tmp_path) -> None:
+    """Tier 2: #5769 stage 3 (③, architect scope) -- a generation cut by a
+    NON-default session id (the on-disk shape a spawned subagent session's
+    own generation store produces) must now be enumerated at all. Before
+    this stage the loop only consulted ``_store_for(name)``'s implicit
+    _DEFAULT_SID store, so a boundary owned by any other sid was silently
+    absent from the output -- not merely unlabeled. The returned row's
+    "sid" must equal the real sid that owns the boundary, and the agent's
+    own default-sid boundary (still present) must keep its own "main" tag,
+    proving the two are enumerated and labelled independently, not
+    conflated into one."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+
+    s_main = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", s_main)
+    s_sub = await log.append("inbox_consume", target="alpha", msg_id="m2")
+    _record_gen_for_sid(reg, "alpha", "sub-42", s_sub)
+
+    rows = reg.list_rewind_points()
+    by_seq = {r["seq"]: r for r in rows}
+    assert s_main in by_seq and s_sub in by_seq, (
+        f"both the default-sid and the non-default-sid boundary must be listed; got {sorted(by_seq)}"
+    )
+    assert by_seq[s_main]["sid"] == "main"
+    assert by_seq[s_sub]["sid"] == "sub-42"
