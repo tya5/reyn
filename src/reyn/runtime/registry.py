@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import logging
 import re
 import threading
@@ -1962,6 +1963,40 @@ class AgentRegistry:
             return None
         oldest = next(iter(self._state_log.iter_from(1)), None)
         return oldest.get("seq") if oldest else None
+
+    def _history_margin_boundary_seq(self, name: str) -> "int | None":
+        """The oldest ``seq`` that startup hydration would still read back
+        for agent *name* — history.jsonl condition ④ (#5759 stage 2, lead-
+        coder ruling). Only entries STRICTLY OLDER than this are outside
+        the startup-hydration margin and eligible for GC; this boundary
+        itself and everything newer must never be removed.
+
+        Reuses the SAME named constant and the SAME tail-reading function
+        real startup hydration already uses (``Session._HISTORY_HYDRATE_
+        MIN_LINES`` / ``read_history_tail``, session.py's own 4 call
+        sites) rather than a second, independently-typed ``200`` literal
+        or a second reader — the exact "same guard, second copy" shape
+        ``_oldest_kept_seq`` above already exists to avoid, now for the
+        margin instead of the WAL floor.
+
+        Returns ``None`` when history.jsonl is missing/empty (nothing to
+        bound — there is no content for GC to consider either)."""
+        # Deferred import: mirrors this module's own existing lazy-import
+        # pattern (e.g. ``workspace_paths``, ``process_registry`` above) —
+        # avoids a module-level session.py <-> registry.py coupling for a
+        # single shared constant.
+        from reyn.runtime.history_tail_reader import read_history_tail
+        from reyn.runtime.session import _HISTORY_HYDRATE_MIN_LINES
+
+        history_path = self._dir / name / "history.jsonl"
+        tail = read_history_tail(history_path, min_lines=_HISTORY_HYDRATE_MIN_LINES)
+        if not tail:
+            return None
+        try:
+            seq = json.loads(tail[0]).get("seq")
+        except (json.JSONDecodeError, AttributeError):
+            return None
+        return seq if isinstance(seq, int) else None
 
     async def checkout(self, seq: int) -> dict:
         """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
