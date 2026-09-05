@@ -1161,8 +1161,9 @@ class RouterHistoryBuffer:
         without this filter once retry_loop's own fold began persisting).
         The current latest summary's own turn is never excluded by this:
         its own ``seq`` is assigned when IT is appended, strictly after
-        (numerically greater than) every seq it covers, so
-        ``m.seq > watermark`` keeps it.
+        (numerically greater than) every seq it covers, so it always
+        falls outside ``[covers_from, covers_through]`` — the range the
+        summary itself folded.
 
         #5531 PR-1/PR-2 boundary (lead-coder ruling, 2026-08-29): PR-1
         only fixes WHERE the summary sits (this filter) — it does NOT
