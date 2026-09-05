@@ -128,7 +128,10 @@ class ConfigGenerationStore:
         derivation is seq-independent — see ``build_active_predicate``). A caller
         reconciling MANY rel_paths in one pass (e.g.
         ``AgentRegistry._reconcile_config_as_of_cut``) MUST hoist ONE
-        ``build_active_predicate(state_log)`` and reuse it here per rel_path — passing
+        ``build_active_predicate(state_log, scope=GLOBAL_SCOPE)`` (#5769 stage 1:
+        ``scope`` is now required, no default — ``GLOBAL_SCOPE`` is the named
+        constant for "this call site's own scope is genuinely global", not a
+        placeholder) and reuse it here per rel_path — passing
         ``is_active_seq`` re-bound per call would re-scan the whole WAL once per
         rel_path (the #2941 sibling quadratic-cold-start shape this signature exists to
         prevent). A single-path caller may pass

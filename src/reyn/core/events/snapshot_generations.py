@@ -111,6 +111,43 @@ class SnapshotGenerationStore:
 
 REWIND_KIND = "rewind"
 
+GLOBAL_SCOPE: "tuple[str, str] | None" = None
+"""#5769 stage 1: the explicit spelling for "this call site's scope is
+genuinely, permanently global" — architect's own BLOCKING finding on
+#5772: a bare ``scope=None`` literal carries TWO different facts with no
+way to tell them apart on sight — "this consumer operates globally, by
+design" vs "this consumer hasn't decided its own (agent, session) scope
+yet" (the same "one value, two facts" shape architect rejected reusing
+the cooldown map for in #5759). Runtime-identical to ``None`` (this
+constant IS ``None``) — the split is in the SPELLING, for the human
+reader, not the type; per architect's own answer to whether the type
+needs to enforce it too (#5772 review): "naming suffices, the type is
+not required — the requirement is that the two spellings actually hold
+different SETS of call sites, not that every consumer picks one."
+
+Of ``build_active_predicate``'s 9 real stage-1 call sites, **6** were
+individually read and confirmed to genuinely evaluate seqs spanning
+MORE than one (agent, session) in a single pass, uncorrelated with any
+one session's own identity — ``list_rewind_points``, the archived-agent
+WAL-window purge, the topology-lifecycle reconcile (not even an
+agent-scoped concept), the config-generation reconcile (one shared
+predicate reused across every ``rel_path``, agent-owned or not),
+``_materialize_rewind``, and the pipeline rewoken scan (iterates every
+run dir project-wide). **These 6 use this constant.**
+
+The other **3** each evaluate seqs belonging to exactly ONE session's
+own history (``Session._active_branch_history``,
+``Session._durable_active_history_after``) or one pipeline run whose
+mapping to a session is itself unconfirmed
+(``pipeline_recovery.latest_pipeline_state``) — architect's own #5772
+finding on this docstring's FIRST draft, which wrongly claimed all 9 as
+settled. **These 3 keep a bare ``None`` with an explicit ``# TODO(#5769
+stage 2): decide this consumer's own scope`` comment** — the two
+spellings must hold genuinely different sets, or splitting them
+achieves nothing. A future stage-2/3 call site that has not yet decided
+its own scope should follow the same TODO pattern, never reach for this
+constant to look finished."""
+
 
 class RewindIntoAbandonedError(Exception):
     """Phase-1 rewind target is on an abandoned branch.
@@ -178,15 +215,26 @@ class _RewindIndex:
 
     def __init__(self, state_log: StateLog) -> None:
         self._reader = state_log.tail_reader()
-        self._records: list[tuple[int, int]] = []
+        self._records: "list[tuple[int, int, tuple[str, str] | None]]" = []
 
-    def records(self) -> list[tuple[int, int]]:
+    def records(self) -> "list[tuple[int, int, tuple[str, str] | None]]":
+        """``(R, target_n, scope)`` — #5769 stage 1 adds ``scope``: the
+        ``(agent, session_id)`` this reset-record is confined to, or
+        ``None`` for a global record (every record ever written before
+        this field existed, AND every record this stage's own writers
+        still produce — see ``checkout()``'s own docstring: stage 1 adds
+        no writer for a non-``None`` scope, only the read-side field and
+        ``build_active_predicate``'s filter). A JSON array read back from
+        the WAL is a ``list``, not a ``tuple`` — normalized here, the ONE
+        read site, so every consumer compares real tuples."""
         entries, restarted = self._reader.poll()
         if restarted:
             self._records = []
         for e in entries:
             if e.get("kind") == REWIND_KIND:
-                self._records.append((e["seq"], int(e["target_n"])))
+                scope_raw = e.get("scope")
+                scope = tuple(scope_raw) if scope_raw is not None else None
+                self._records.append((e["seq"], int(e["target_n"]), scope))
         return list(self._records)
 
 
@@ -197,8 +245,14 @@ class _RewindIndex:
 _REWIND_INDEXES: "WeakKeyDictionary[StateLog, _RewindIndex]" = WeakKeyDictionary()
 
 
-def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
-    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq).
+def _rewind_records_with_scope(
+    state_log: StateLog,
+) -> "list[tuple[int, int, tuple[str, str] | None]]":
+    """All rewind reset-records as ``(R, target_n, scope)`` (R = the
+    record's own seq) — #5769 stage 1's scope-aware accessor, used ONLY by
+    :func:`build_active_predicate` (the one consumer stage 1 makes scope-
+    aware; every other consumer keeps calling :func:`_rewind_records`
+    below, unchanged).
 
     Incremental (#2939): folded over a resumable tail-reader per ``state_log``,
     so repeated calls re-scan only WAL bytes appended since the last call —
@@ -210,6 +264,21 @@ def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
         index = _RewindIndex(state_log)
         _REWIND_INDEXES[state_log] = index
     return index.records()
+
+
+def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
+    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq).
+
+    #5769 stage 1: every OTHER consumer of the branch model
+    (``is_active_seq``, ``active_rewind_target``, ``branch_ids_for``,
+    ``list_branches``, ``rewind()`` itself) stays scope-blind on purpose —
+    stage 1's only scope-aware consumer is ``build_active_predicate``
+    (see :func:`_rewind_records_with_scope`); narrowing these too is a
+    later stage's own decision, not made here. Strips ``scope`` off the
+    same underlying records, so this remains byte-identical to its own
+    pre-#5769 behavior regardless of what any record's ``scope`` holds.
+    """
+    return [(r, n) for (r, n, _scope) in _rewind_records_with_scope(state_log)]
 
 
 def _abandoned_intervals(rewinds: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -274,7 +343,9 @@ def earliest_relevant_wal_seq(state_log: StateLog) -> "int | None":
     return min(lo for lo, _hi in abandoned)
 
 
-def build_active_predicate(state_log: StateLog) -> Callable[[int], bool]:
+def build_active_predicate(
+    state_log: StateLog, *, scope: "tuple[str, str] | None",
+) -> Callable[[int], bool]:
     """Build a reusable ``is_active(seq)`` predicate — ONE derivation for MANY seqs.
 
     #2941 (owner-reported ``reyn chat`` freeze, growing with session length):
@@ -294,8 +365,33 @@ def build_active_predicate(state_log: StateLog) -> Callable[[int], bool]:
     call instead of re-reading every line. ``is_active_seq`` is UNCHANGED and
     equally cheap; it is simply the wrong shape when there is more than one seq
     to test, since it rebuilds the predicate per call.
+
+    #5769 stage 1: ``scope`` is now a REQUIRED keyword-only argument, no
+    default. This is the one function stage 1 makes scope-aware (the
+    other rewind-record consumers stay untouched — see
+    ``_rewind_records``'s own docstring). A record is visible to a query
+    ``scope`` when the record's own scope is ``None`` (a global record —
+    every record in existence until a later stage adds a writer for a
+    non-``None`` scope — always visible, to everyone) OR equals ``scope``
+    exactly (a session-scoped record, visible only to its own session's
+    query). Passing ``scope=GLOBAL_SCOPE`` (see that constant's own
+    docstring — its spelling, not just ``None``, is the deliberate,
+    final "this call site is genuinely global" signal) therefore
+    composes the SAME chain as before this field existed (only global
+    records ever exist today, so this filter is a no-op in stage 1 —
+    the acceptance this stage must prove) — a call site that forgets to
+    pass ``scope`` at all raises
+    ``TypeError`` at the call, not silently falls back to global, which
+    is deliberate: a caller with a real ``(agent, sid)`` in hand that
+    forgot to pass it would otherwise silently reason about the GLOBAL
+    branch instead of its own, and no test would notice.
     """
-    return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
+    records = _rewind_records_with_scope(state_log)
+    relevant = [
+        (r, n) for (r, n, record_scope) in records
+        if record_scope is None or record_scope == scope
+    ]
+    return _make_is_active(_abandoned_intervals(relevant))
 
 
 def active_rewind_target(state_log: StateLog) -> int | None:

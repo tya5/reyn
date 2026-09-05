@@ -179,7 +179,12 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     store = _store(state_log, run_id)
     if store is None:
         return None
-    latest = store.latest_active(build_active_predicate(state_log))
+    # TODO(#5769 stage 2): this call is scoped to ONE run_id -- the issue's
+    # own "unconfirmed" list flags whether a pipeline run maps 1:1 to an
+    # (agent, session) -- so `None` here is NOT a confirmed GLOBAL_SCOPE
+    # decision (architect's #5772 finding). Undecided until that mapping
+    # is resolved.
+    latest = store.latest_active(build_active_predicate(state_log, scope=None))
     if latest is None:
         return None
     _seq, content = latest

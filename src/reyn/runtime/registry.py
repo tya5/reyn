@@ -43,6 +43,7 @@ from reyn.core.events.anchor_store import AnchorStore
 from reyn.core.events.events import Event
 from reyn.core.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.core.events.snapshot_generations import (
+    GLOBAL_SCOPE,
     REWIND_KIND,
     Branch,
     RewindBeyondRetentionError,
@@ -1814,7 +1815,7 @@ class AgentRegistry:
         rewoken: "list[str]" = []
         # Hoisted once for the whole scan (not per run_dir): the seq-independent
         # derivation otherwise re-scans the WAL once per pipeline run dir (#2941/#2944).
-        is_active = build_active_predicate(self._state_log)
+        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
         for run_dir in sorted(state_root.iterdir()):
             if not run_dir.is_dir() or has_result(run_dir):
                 continue
@@ -2307,7 +2308,7 @@ class AgentRegistry:
         # Hoisted once for the whole (names x seqs) scan — the same fix-class as
         # restore_all/#2941: the seq-independent derivation must not re-scan the
         # WAL per candidate seq.
-        is_active = build_active_predicate(self._state_log)
+        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
         seqs: set[int] = set()
         for name in self.list_names():
             for s in self._store_for(name).seqs():
@@ -2545,7 +2546,7 @@ class AgentRegistry:
         # #2941/restore_all — the seq-independent derivation must not re-scan the
         # WAL once per archived agent).
         is_active = (
-            build_active_predicate(self._state_log)
+            build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
             else None
         )
@@ -2600,7 +2601,7 @@ class AgentRegistry:
         # fix-class sibling as above: one WAL scan for every topology name's
         # events, not one scan per event.
         is_active = (
-            build_active_predicate(self._state_log)
+            build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
             else None
         )
@@ -2755,7 +2756,7 @@ class AgentRegistry:
         # above: `latest_active` takes the predicate directly so this loop doesn't
         # re-derive (and re-scan the whole WAL for) `is_active_seq` once per rel_path.
         is_active = (
-            build_active_predicate(self._state_log)
+            build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
             else None
         )
@@ -3001,7 +3002,7 @@ class AgentRegistry:
         # re-scans the entire WAL (`is_active_seq` → `_rewind_records` →
         # `iter_from(1)`), turning this cold-start/rewind path quadratic in WAL size.
         is_active = (
-            build_active_predicate(self._state_log)
+            build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
             else None
         )
