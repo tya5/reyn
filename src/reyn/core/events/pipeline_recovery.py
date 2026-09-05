@@ -179,7 +179,7 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     store = _store(state_log, run_id)
     if store is None:
         return None
-    latest = store.latest_active(build_active_predicate(state_log))
+    latest = store.latest_active(build_active_predicate(state_log, scope=None))
     if latest is None:
         return None
     _seq, content = latest

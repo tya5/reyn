@@ -68,21 +68,21 @@ async def test_active_branch_derivation_decodes_do_not_grow_with_wal_size(tmp_pa
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 50)
     await checkout(state_log, target_seq=anchor // 2)
-    build_active_predicate(state_log)  # warm
+    build_active_predicate(state_log, scope=None)  # warm
 
     counter = _count_decodes(monkeypatch)
 
     # Derive against a small WAL, then again against a much larger one. The WAL
     # grew ~20x between the two; a full re-scan would decode ~20x more lines.
     counter["n"] = 0
-    build_active_predicate(state_log)
+    build_active_predicate(state_log, scope=None)
     small = counter["n"]
 
     await _grow_wal(state_log, 1000)
-    build_active_predicate(state_log)  # absorb the delta once
+    build_active_predicate(state_log, scope=None)  # absorb the delta once
 
     counter["n"] = 0
-    build_active_predicate(state_log)
+    build_active_predicate(state_log, scope=None)
     large = counter["n"]
 
     assert large == small, (
@@ -99,11 +99,11 @@ async def test_repeated_derivation_over_unchanged_wal_decodes_nothing(tmp_path, 
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 200)
     await checkout(state_log, target_seq=anchor // 2)
-    build_active_predicate(state_log)  # warm
+    build_active_predicate(state_log, scope=None)  # warm
 
     counter = _count_decodes(monkeypatch)
     counter["n"] = 0
-    build_active_predicate(state_log)
+    build_active_predicate(state_log, scope=None)
 
     assert counter["n"] == 0, (
         f"an unchanged WAL must cost zero decodes to re-derive (got {counter['n']}) "

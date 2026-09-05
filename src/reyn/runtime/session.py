@@ -4412,7 +4412,7 @@ class Session:
         # per-message seq — so it is computed ONCE per call (one WAL scan) and
         # reused for every message, instead of re-scanning the whole WAL per
         # message (was O(N messages x M WAL entries) per turn; now O(N + M)).
-        is_active = build_active_predicate(self._state_log)
+        is_active = build_active_predicate(self._state_log, scope=None)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
@@ -4519,7 +4519,7 @@ class Session:
             return parsed, truncated
         from reyn.core.events.snapshot_generations import build_active_predicate
 
-        is_active = build_active_predicate(self._state_log)
+        is_active = build_active_predicate(self._state_log, scope=None)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
