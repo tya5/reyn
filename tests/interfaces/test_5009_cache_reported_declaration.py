@@ -81,9 +81,17 @@ from reyn.interfaces.repl.read_model import (
 
 def test_capabilities_declare_cache_usage_reported():
     """Tier 1: the declaration itself, on both constants — the SSoT every
-    `snapshot()` producer must derive from rather than hand-type."""
+    `snapshot()` producer must derive from rather than hand-type.
+
+    #5774: `cache_usage_reported` (this key's own SOLE remaining
+    consumer after #5771 stage②'s axis split — the Ctx pane's recent-
+    call cache line, `ctx_recent_usage`) flips to `True` for remote too
+    — real wire data now (lead-coder's own correction: this key's tuple
+    shape being invisible to #5093's own AST walk had been misread as
+    "no wiring needed", a different question from whether the data is
+    real)."""
     assert LOCAL_CHAT_READ_CAPABILITIES.cache_usage_reported is True
-    assert REMOTE_CHAT_READ_CAPABILITIES.cache_usage_reported is False
+    assert REMOTE_CHAT_READ_CAPABILITIES.cache_usage_reported is True
 
 
 def test_the_snapshot_key_helper_derives_from_the_capabilities_it_is_given():
@@ -93,17 +101,26 @@ def test_the_snapshot_key_helper_derives_from_the_capabilities_it_is_given():
     key` — see that function's own docstring) — its `cache_usage_
     reported` entry always matches the source it was given, nothing
     hand-typed alongside it. Both real producers call this (see the
-    tests below), so this pins the ONE function they both depend on."""
+    tests below), so this pins the ONE function they both depend on.
+
+    #5774: `True` for remote now — see `test_capabilities_declare_
+    cache_usage_reported` above for why."""
     assert reported_snapshot_keys(LOCAL_CHAT_READ_CAPABILITIES)["cache_usage_reported"] is True
-    assert reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)["cache_usage_reported"] is False
+    assert reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)["cache_usage_reported"] is True
 
 
-def test_remote_snapshot_declares_cache_usage_unreported():
+def test_remote_snapshot_declares_cache_usage_reported_now():
     """Tier 1: the REAL producer — `project_remote_snapshot` — carries the
-    declaration through to its own output, paired with the graceful
-    `0`/`(0, 0)` values those same 2 keys already carried."""
+    declaration through to its own output.
+
+    #5774: renamed from `..._declares_cache_usage_unreported` — both
+    `session_cached_tokens` (#5771 stage②) and `ctx_recent_usage`
+    (#5774) are real wire data now, so this producer's own `(0, 0)` for
+    `ctx_recent_usage` here is the genuine graceful degrade for an EMPTY
+    ``values`` dict (no server data at all), not a permanent "unreported"
+    default — the axis itself is `True`."""
     snap = project_remote_snapshot({})
-    assert snap["cache_usage_reported"] is False
+    assert snap["cache_usage_reported"] is True
     assert snap["session_cached_tokens"] == 0
     assert snap["ctx_recent_usage"] == (0, 0)
 

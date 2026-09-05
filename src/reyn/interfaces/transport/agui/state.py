@@ -104,6 +104,23 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         # narrowed" the moment this key happened to be absent from `snap`.
         "visibility_items": snap.get("visibility_items"),
         "mcp_subscriptions": snap.get("mcp_subscriptions", []),
+        # #5774: the mcp pane's per-server 3(+1)-state probe display
+        # (#4401 ②③ — "answered"/"failed"/"not_probed"/"retrying") — a
+        # plain list of small dicts (name/state/tool_count/reason/
+        # detail), already JSON-safe as-is, no encode step needed. Real,
+        # per-connection data (RouterHostAdapter.mcp_probe_snapshot());
+        # owner's own stated purpose for #4401 ("tui mcp tab でユーザは
+        # 気付けて対処できる") was silently unmet for a remote attach
+        # until this key rode the wire — see project_remote_snapshot's
+        # own comment for the *_reported flip this pairs with.
+        "mcp_probe_states": snap.get("mcp_probe_states", []),
+        # #5774: per-session hooks.yaml parse warnings — a plain list of
+        # strings, already JSON-safe. Real SESSION state (`Session.
+        # hooks_config_warnings`) — unlike `unknown_config_key_count`/
+        # `unknown_config_keys` (project_remote_snapshot's own client-
+        # local keys, which name the CLIENT's own reyn.yaml and never
+        # appear here at all), this one genuinely belongs on the wire.
+        "hooks_config_warnings": snap.get("hooks_config_warnings", []),
         "cost_agent": snap.get("cost_agent", 0.0),
         "cost_total": snap.get("cost_total", 0.0),
         # #5771 stage②: the session-cumulative TOTAL (a different fact
@@ -129,6 +146,13 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "agent_tokens": snap.get("agent_tokens", 0),
         "ctx_used": snap.get("ctx_used", 0),
         "ctx_window": snap.get("ctx_window", 0),
+        # #5774: the single most-recent call's own cache figures
+        # (Session.last_call_usage) — a plain int pair, already JSON-safe.
+        # This is the LAST key #5773's own axis-split left behind (see
+        # read_model.py's own comment at this key for the full "one
+        # spelling, two facts" history lead-coder's #5774 follow-up
+        # corrected).
+        "ctx_recent_usage": snap.get("ctx_recent_usage", (0, 0)),
         # #5771 stage②: cache-hit accounting is genuinely measured
         # LOCALLY (status.py's own inline comment at this key) — now
         # forwarded for real, the same pattern #5094/#5185 already used

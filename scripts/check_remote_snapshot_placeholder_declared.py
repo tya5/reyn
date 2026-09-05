@@ -637,6 +637,11 @@ def _resolve_reported_snapshot_keys_spread(node: "ast.expr") -> "list[str] | Non
 #: makes the repair-obligation message in :func:`find_new_unwired_key_
 #: violations` mechanically askable per key, not just a generic reminder.
 _LOCAL = "LOCAL"
+#: #5774 wired every key this baseline had marked PENDING — no entry uses
+#: this disposition right now. Kept defined (not deleted): the NEXT
+#: genuinely-real-but-not-yet-wired key found needs it, and re-adding a
+#: whole disposition vocabulary from scratch is a worse failure mode than
+#: one temporarily-unused constant.
 _PENDING = "PENDING"
 
 #: #5771 (lead-coder BLOCKING, PR #5773 head 2c59bbfc0): "①に無い key を②が
@@ -654,15 +659,12 @@ _PENDING = "PENDING"
 #: flagged — encouraged, not required, so a fix elsewhere never needs to
 #: touch this file.
 #:
-#: 38 entries (was 40 — #5771 stage② wired ``cost_usd``/``usage``/
-#: ``session_cached_tokens`` for real and removed them here, then added 1
-#: new spread field, ``session_cache_usage_reported``, split off ``cache_
-#: usage_reported`` on the SAME PR; a wired key is no longer unwired-key
-#: drift at all, so a baseline entry for it would be a standing lie about
-#: the gate's own findings). PENDING (2): ``hooks_config_warnings``/
-#: ``mcp_probe_states`` — real session data, not yet wired, filed on
-#: #5774 for triage (see their own entries below for the citation).
-#: LOCAL (36): 14 literal
+#: 35 entries (was 38 — #5774 wired ``mcp_probe_states``/``hooks_config_
+#: warnings``/``ctx_recent_usage`` for real and removed them here; a
+#: wired key is no longer unwired-key drift at all, so a baseline entry
+#: for it would be a standing lie about the gate's own findings). PENDING
+#: (0): none remain — #5774 closed both entries #5773's own baseline had
+#: filed on it. LOCAL (35): 13 literal
 #: output keys whose OWN inline comment in ``project_remote_snapshot``
 #: already says the underlying data is session-local/client-local by
 #: construction (``skills``/``mcp_servers``/``turn_usage_fn`` already sit
@@ -681,31 +683,24 @@ _PENDING = "PENDING"
 #: reported``/``visibility_items_reported``/``mcp_subscriptions_
 #: reported`` — since what they report reflects reaches the wire under
 #: OTHER, real key names, e.g. ``agent_names``/``session_tree``, never
-#: under the flag's own name). ``hooks_config_warnings`` and ``mcp_probe_
-#: states`` are marked PENDING, not LOCAL, DESPITE looking like the other
-#: session-local literal keys above — their own inline comments in
-#: ``project_remote_snapshot`` explicitly say "not wired onto the wire
-#: YET" (not "structurally cannot exist"), the opposite framing the LOCAL
-#: entries' own comments use — genuinely different from the other 36,
-#: filed on #5774 for real triage rather than guessed here.
+#: under the flag's own name). Note: ``mcp_probe_states_reported``/
+#: ``hooks_config_warnings_reported`` (the SPREAD FLAG names) stay LOCAL
+#: below even though their own underlying DATA keys (``mcp_probe_
+#: states``/``hooks_config_warnings``) are wired now — the flag's own
+#: name is still never itself a ``project_status`` key, same reasoning
+#: as every other spread field.
+#:
+#: #5774 (lead-coder's own correction): the PENDING entries this baseline
+#: used to carry for ``hooks_config_warnings``/``mcp_probe_states`` — and
+#: ``ctx_recent_usage``'s own LOCAL entry — were reached by conflating
+#: "this gate's shape-detector can't parse a tuple" (a #5093-era disclosed
+#: gap, ``ctx_recent_usage`` specifically) with "no real wiring is
+#: needed" — two different questions. All 3 are real, per-connection data
+#: with a genuine consumer; #5774 wired them for real rather than leaving
+#: them as disclosed debt.
 _UNWIRED_KEY_VIOLATIONS_BASELINE: "dict[str, str]" = {
-    # #5771 stage②: "cost_usd"/"usage"/"session_cached_tokens" REMOVED —
-    # all 3 are now genuinely, unconditionally on the wire (project_status
-    # emits them for real); find_unwired_key_violations no longer flags
-    # them at all, so a baseline entry for them would be a standing lie
-    # (lead-coder's own instruction on the stage② dispatch: "残すと gate
-    # は緑のまま宣言が嘘になります" — leaving it would keep the gate green
-    # while the declaration itself became false).
-    #
-    # PENDING — real session data, explicitly "not wired onto the wire
-    # YET" per project_remote_snapshot's own inline comment (unlike the
-    # LOCAL entries below, whose own comments say the opposite) -- #5774
-    # triage, not guessed here.
-    "hooks_config_warnings": _PENDING,
-    "mcp_probe_states": _PENDING,
     # LOCAL — genuinely, permanently session-local per each key's own
     # inline comment in project_remote_snapshot.
-    "ctx_recent_usage": _LOCAL,
     "ctx_source": _LOCAL,
     "ctx_compaction_status_fn": _LOCAL,
     "compaction_progress_raw": _LOCAL,

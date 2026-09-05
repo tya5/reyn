@@ -212,7 +212,8 @@ def test_main_exits_nonzero_when_only_an_unwired_key_violation_exists(
         ["model", "cost_agent", "cost_total", "cost_usd", "agent_tokens",
          "ctx_used", "ctx_window", "queue", "turn_active", "queue_seq",
          "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
-         "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens"],
+         "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens",
+         "mcp_probe_states", "hooks_config_warnings", "ctx_recent_usage"],
     )
     monkeypatch.setattr(gate_module, "_PACKAGE_DIR", remote_fixture)
     monkeypatch.setattr(gate_module, "_AGUI_STATE_PATH", status_fixture)
@@ -280,6 +281,7 @@ def test_project_status_emitting_every_wire_key_is_not_flagged(tmp_path: Path) -
          "ctx_window", "queue", "turn_active", "queue_seq",
          "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
          "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens",
+         "mcp_probe_states", "hooks_config_warnings", "ctx_recent_usage",
          "some_unrelated_extra_key"],
     )
 
