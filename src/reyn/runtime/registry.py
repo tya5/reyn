@@ -2566,13 +2566,11 @@ class AgentRegistry:
         # Hoisted once for the whole archived.items() scan (fix-class sibling of
         # #2941/restore_all — the seq-independent derivation must not re-scan the
         # WAL once per archived agent).
-        # TODO(#5769): archival's own attribution is unsettled — `name` (the
-        # agent) is nameable at the point `is_active(aseq)` is called below,
-        # but whether archival belongs to one particular SESSION (as
-        # opposed to being an agent-wide fact, like agent create/drop in
-        # _materialize_rewind above) is architect's judgment to make, not
-        # this PR's. Left at GLOBAL_SCOPE deliberately, on hold — this
-        # comment is the witness that the question was READ, not missed.
+        # #5769: archival is agent-wide, not owned by any one session
+        # (ADR-0047 decision 6 — "agent-level lifecycle is global; only
+        # session-level state is scoped" — archiving preserves every
+        # session, #1954) ∴ GLOBAL_SCOPE here is the FINAL answer, not a
+        # placeholder pending a later decision.
         is_active = (
             build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
