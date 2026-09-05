@@ -262,6 +262,35 @@ class AgentProfile:
         if not path.is_file():
             raise FileNotFoundError(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        # #5801: profile.yaml is a reyn-token-aware face too (base_dir /
+        # context_path both name project-relative locations) but was
+        # never routed through reyn's own expand-then-fail-closed rule —
+        # a real incident: coder-brown/coder-smith's own
+        # ``context_path: ${REYN_PROJECT_DIR}/AGENTS.md`` never expanded,
+        # so ``resolve_context_candidate`` looked for a literal
+        # ``${REYN_PROJECT_DIR}`` subdirectory under workspace_dir, found
+        # none, and this agent silently never read its own instructed
+        # text — every session, with no warning (the pre-#5801 gap: no
+        # expansion call existed here AT ALL, so there was nothing to
+        # warn). ``agent_dir`` is always ``<project_root>/.reyn/agents/
+        # <name>`` (AgentRegistry.load_profile/agent_workspace_dir's own
+        # ``self._dir / name`` — the SAME path every ``AgentProfile.load``
+        # caller in src/ passes, verified by grep), so project_root is
+        # available here without a caller-supplied parameter — same
+        # shared rule as every other face (:func:`reyn.plugins.tokens.
+        # expand_yaml_tokens_or_refuse`), this face's own map.
+        # ``agent_dir.name`` (not yet-unparsed ``data["name"]``) supplies
+        # ``REYN_AGENT_NAME`` — the profile's own filename IS this
+        # agent's identity, same value ``name`` below falls back to.
+        if data:
+            from reyn.plugins.tokens import expand_yaml_tokens_or_refuse
+            _project_root = agent_dir.parent.parent.parent
+            _expanded = expand_yaml_tokens_or_refuse(
+                data,
+                {"REYN_PROJECT_DIR": str(_project_root), "REYN_AGENT_NAME": agent_dir.name},
+                source=path,
+            )
+            data = _expanded if isinstance(_expanded, dict) else {}
         retired_present = retired_profile_keys_present(data)
         if retired_present:
             lines = ", ".join(
