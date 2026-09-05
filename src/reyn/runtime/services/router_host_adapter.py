@@ -613,6 +613,25 @@ class RouterHostAdapter:
         # discipline as the cache itself — a stale probe cycle's failures
         # are dropped, not recorded, alongside its (also dropped) answers.
         self._mcp_last_unknown: "dict[str, ToolsUnknown]" = {}
+        # #4401 A-4 (single source of truth for ①/②/③ — architect+lead-coder
+        # ruling, PR #5763): whether THIS session has ever DISPATCHED a
+        # probe for a server — never conflated with `_mcp_tools_cache`
+        # (answered), `_mcp_last_unknown` (answered=no, with a reason), or
+        # `_mcp_probe_cooldown_until` ("don't retry yet", a TIMING fact —
+        # architect: reusing it as an "attempted" proxy would make one
+        # value carry two facts). Set in `ensure_mcp_tools_cached`, for
+        # every name about to be probed, BEFORE `asyncio.gather` runs and
+        # BEFORE the epoch-staleness check (F3/F5) that can later discard
+        # that cycle's own results — "attempted" means a probe was
+        # genuinely dispatched, regardless of whether its outcome got
+        # applied. `await_mcp_probe_ready`'s own fallback (①) and
+        # `mcp_probe_snapshot`'s own "not_probed" state (③) both read this
+        # set as their ONLY source for "has this server ever been tried" —
+        # never a second, independently-derived answer to the same
+        # question. Never cleared (a server invalidated/retried stays
+        # "attempted" — `_mcp_tools_cache`/`_mcp_last_unknown` are what
+        # track its CURRENT outcome).
+        self._mcp_attempted: "set[str]" = set()
         # #4401 ③: the server a manual retry is currently in flight for, if
         # any — `mcp_probe_snapshot` reports it as ``"retrying"`` rather
         # than falling through to "failed" (the in-flight retry hasn't
@@ -2817,6 +2836,14 @@ class RouterHostAdapter:
         ]
         if not unanswered:
             return
+        # #4401 A-4 (single source of truth, ①/②/③): mark every name about
+        # to be probed BEFORE gather runs and BEFORE the epoch-staleness
+        # check below can discard this cycle's results — "attempted" means
+        # a probe was genuinely DISPATCHED, independent of whether its
+        # outcome ever gets applied. `await_mcp_probe_ready`'s own fallback
+        # (①) and `mcp_probe_snapshot` (③) both read this set — see
+        # `_mcp_attempted`'s own __init__ comment.
+        self._mcp_attempted.update(unanswered)
 
         async def _probe_one(server_name: str) -> tuple[str, ProbeOutcome]:
             # ``asyncio.timeout()`` (Python 3.11+) instead of
@@ -2904,9 +2931,24 @@ class RouterHostAdapter:
                 self._mcp_last_unknown.pop(_name, None)
         new_answers = answered_only(results)
         if not new_answers:
-            # Every probe came back unknown: nothing was measured, so there is
-            # nothing to record. Rewriting the file here would only advance its
-            # mtime and make every following turn reload an unchanged cache.
+            # Every probe came back unknown: nothing was MEASURED, so there is
+            # nothing new to persist — rewriting the file here would only
+            # advance its mtime for no reason. But the probe DID run, and
+            # that fact matters: #4401 architect review (PR #5763) — `{}`
+            # ("probed, nobody answered") and `None` ("never probed at all")
+            # are two different facts `mcp_tools_cache_snapshot`'s own
+            # contract is built to distinguish (see that property's own
+            # docstring), and #4401 A-4 silently collapsed them by only
+            # marking the cache "populated" from THIS branch's own merge
+            # below — a probe cycle where every server timed out never
+            # reached it, so `_mcp_cache_populated` stayed False forever.
+            # Establishing it here (self-merge — the value is unchanged,
+            # same object, so this is a no-op except the flag) is the fix:
+            # the SAME single apply point every other writer uses, not a
+            # second, parallel way to set the flag.
+            self._apply_mcp_cache(
+                self._mcp_tools_cache, mtime=self._mcp_tools_cache_mtime, bump_epoch=False,
+            )
             return
         # #4401 A-4 (F1/②): the ONE place this cycle assigns the cache — a
         # plain merge (ADD, never replace), so it does NOT bump the epoch
@@ -3085,18 +3127,30 @@ class RouterHostAdapter:
           entry (not yet cleared; the retry hasn't resolved) or none at all.
         - ``"answered"`` — a real probe measurement exists, ``tool_count``
           set (0 is a genuine answer, not a failure).
-        - ``"failed"`` — the last probe attempt for this server did NOT
-          answer (``ToolsUnknown`` — timeout or exception), ``reason`` set
-          and ``detail`` set when ``reason == "exception"``. Cleared the
-          instant the server later answers (`ensure_mcp_tools_cached`'s own
-          gather loop), so a stale failure never outlives a successful retry.
-        - ``"not_probed"`` — none of the above: no attempt has been
-          recorded for this server at all (absent from every dict — the
-          lazy, post-startup probe, FP-0037 issue #160, has not reached it
-          yet). MUST NOT be rendered as "0 tools" — that is the exact
-          conflation #4401 exists to close (owner: the model can't NAME an
-          unprobed server's tools, that is not the same as the server
-          having none).
+        - ``"failed"`` — this session has DISPATCHED a probe for this
+          server (`_mcp_attempted`, #4401 A-4's single source of truth for
+          "has this server ever been tried" — see that field's own
+          __init__ comment) and it has not answered. ``reason``/``detail``
+          come from `_mcp_last_unknown` when present.
+          ⚠️ Disclosed gap (lead-coder/architect review, PR #5763, accepted
+          as a transient display artifact rather than fixed): `_mcp_
+          attempted` is marked BEFORE the epoch-staleness check (F3/F5)
+          that can discard a probe cycle's own results — a server whose
+          cycle got discarded as stale (not a real answer failure, just a
+          superseded measurement, with a fresh probe already in flight)
+          reads as ``"failed"`` with ``reason="unknown"`` for the brief
+          window until the next cycle settles, rather than as a distinct
+          "a fresher probe is already running" state. Accepted because it
+          is momentary and self-correcting, never a lingering false
+          "0 tools" (the #4401 conflation this method exists to close) —
+          reopen if this is ever observed to persist rather than resolve
+          on the next probe cycle.
+        - ``"not_probed"`` — none of the above: `_mcp_attempted` has no
+          record of this server at all — no probe was ever dispatched for
+          it, by this session, yet. MUST NOT be rendered as "0 tools" —
+          that is the exact conflation #4401 exists to close (owner: the
+          model can't NAME an unprobed server's tools, that is not the
+          same as the server having none).
 
         Ordered by ``self._mcp_servers_flat()``'s own iteration order (config
         declaration order), same as `_get_mcp_servers_for_router`.
@@ -3112,14 +3166,15 @@ class RouterHostAdapter:
             if answered is not None:
                 out.append({"name": name, "state": "answered", "tool_count": len(answered.tools)})
                 continue
-            unknown = self._mcp_last_unknown.get(name)
-            if unknown is not None:
-                out.append({
-                    "name": name, "state": "failed",
-                    "reason": unknown.reason, "detail": unknown.detail,
-                })
+            if name not in self._mcp_attempted:
+                out.append({"name": name, "state": "not_probed"})
                 continue
-            out.append({"name": name, "state": "not_probed"})
+            unknown = self._mcp_last_unknown.get(name)
+            out.append({
+                "name": name, "state": "failed",
+                "reason": unknown.reason if unknown is not None else "unknown",
+                "detail": unknown.detail if unknown is not None else None,
+            })
         return out
 
     async def retry_mcp_probe(self, server: str, *, per_server_timeout: float) -> None:
@@ -3210,14 +3265,28 @@ class RouterHostAdapter:
         turn-boundary ``await ensure_mcp_tools_cached(...)``.
 
         Awaits the background task `start_mcp_probe` kicked off at
-        construction, if it is still around; runs the probe inline
-        otherwise (task never started — no loop at construction time; or
-        this is a later turn and the construction-time task already
-        finished and was consumed). Consumed exactly ONCE — the reference
-        is cleared the moment it is awaited, so a later call in the SAME
-        session always re-checks `ensure_mcp_tools_cached`'s own per-server
-        cache/cooldown gate (already a cheap no-op once every server has
-        answered) rather than re-awaiting an already-done Task forever.
+        construction, if it is still around (consumed exactly ONCE — the
+        reference is cleared the moment it is awaited).
+
+        #4401 A-4 (real regression found driving this method — PR #5763
+        CI, `test_2761_pr3_mcp_immediate_probe.py`): after awaiting that
+        task, this method does NOT simply return. A server added to the
+        roster AFTER the construction-time task already finished (e.g.
+        ``mcp_install``'s immediate probe-commit reassigning the roster)
+        would otherwise never get probed at all — the finished task's own
+        scan never saw it, and nothing else would ever call `ensure_mcp_
+        tools_cached` for it. The fallback condition is deliberately NOT
+        "any server still unanswered" (lead-coder/architect review): that
+        would ALSO catch a server that already answered "no" and is
+        sitting in its #5674 60s cooldown, reintroducing exactly the
+        turn-path 5-second cost A-4 exists to remove — the owner's own
+        reported environment (every server unreachable) is precisely that
+        case. The condition is "a server this session has never even
+        DISPATCHED a probe for" (`_mcp_attempted`, #4401 A-4's single
+        source of truth — see that field's own __init__ comment): a
+        genuinely new server is never in it; an already-tried, still-
+        cooling-down server always is, from the moment its own probe
+        cycle dispatched, so it is never re-probed synchronously here.
 
         #4401 A-4 co-vet (F3): does NOT re-wait if the epoch moves while
         this call is itself awaiting — a single `await`, never a loop. If
@@ -3238,8 +3307,12 @@ class RouterHostAdapter:
         if task is not None:
             self._mcp_probe_task = None
             await task
-            return
-        await self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout)
+        never_attempted = [
+            name for name in self._mcp_servers_flat()
+            if name not in self._mcp_attempted
+        ]
+        if never_attempted:
+            await self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout)
 
     @property
     def yaml_mtimes_snapshot(self) -> dict[Path, float]:
