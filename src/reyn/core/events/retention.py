@@ -81,8 +81,11 @@ def compute_retention_floor(
     ``N < S < R``, hence ``R > S >= floor`` — so any rewind record whose
     abandoned interval touches the retained window has ``R >= floor`` and is kept.
     This argument is correct for runtime-state reconstruction (WAL replay uses
-    only seqs >= floor), but ``history.jsonl`` is append-only and never
-    floor-truncated: ``_active_branch_history`` tests the branch model
+    only seqs >= floor), but ``history.jsonl`` is append-only apart from the
+    narrow #5759 stage 2 GC (which only ever removes content already folded
+    into a compaction summary, never a rewind-record/branch-anchor line — see
+    ``reyn.runtime.history_tail_reader.rewrite_history_dropping``):
+    ``_active_branch_history`` tests the branch model
     (``build_active_predicate``) against ``wal_seq`` anchors from
     ``history.jsonl`` that may be below the floor (abandoned-branch turns).
     Dropping a rewind record below the floor therefore lets abandoned

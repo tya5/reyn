@@ -21,6 +21,7 @@ content meant for the model — see that enum's own docstring).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -385,6 +386,27 @@ def compaction_coverage_from_summary(
     covers_from_raw = meta.get("covers_from_seq")
     covers_from = int(covers_from_raw) if covers_from_raw is not None else None
     return covers_from, covers_through
+
+
+def parse_history_line(line: str) -> "ChatMessage | None":
+    """Parse one raw ``history.jsonl`` line into a :class:`ChatMessage`, or
+    ``None`` if malformed (skipped, never raised).
+
+    Extracted from ``Session._parse_history_line`` (#5759 stage 2): that
+    method's own body never touched ``self`` — a pure JSON-line parse
+    (read-time legacy migration + construction), so a SECOND caller with
+    no live ``Session`` (the history.jsonl GC below, which runs from
+    ``AgentRegistry`` and may need to find the latest summary for an agent
+    that isn't currently loaded) would otherwise have had to duplicate
+    this exact 3-line body — the same "same guard, second copy" shape
+    ``AgentRegistry._oldest_kept_seq`` was extracted to avoid, one module
+    over. ``Session._parse_history_line`` now delegates here unchanged."""
+    try:
+        raw = json.loads(line)
+        raw = _migrate_legacy_chat_message(raw)
+        return ChatMessage(**raw)
+    except Exception:
+        return None
 
 
 def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosure | None":

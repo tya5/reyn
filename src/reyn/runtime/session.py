@@ -74,10 +74,10 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     ChatMessage,
     Disclosure,
     Spillability,
-    _migrate_legacy_chat_message,
     _now_iso,
     compaction_coverage_from_summary,
     is_seq_still_active,
+    parse_history_line,
 )
 from reyn.runtime.error_format import classify_router_error
 from reyn.runtime.errors import AgentStepError, RouterCapExceeded, StructuredOutputError
@@ -4905,15 +4905,13 @@ class Session:
     def _parse_history_line(self, line: str) -> "ChatMessage | None":
         """Parse one ``history.jsonl`` line into a ``ChatMessage``, or
         ``None`` if malformed (skipped, never raised — byte-identical to
-        the pre-#4387 behavior). Pure: does not touch ``self.history``."""
-        try:
-            raw = json.loads(line)
-            # Read-time migration for pre-#383 entries (legacy text + media
-            # shape → new content shape).
-            raw = _migrate_legacy_chat_message(raw)
-            return ChatMessage(**raw)
-        except Exception:
-            return None
+        the pre-#4387 behavior). Pure: does not touch ``self.history``.
+
+        #5759 stage 2: this body never touched ``self`` — delegates to
+        ``chat_message.parse_history_line`` (extracted there so the
+        history.jsonl GC, which runs from ``AgentRegistry`` with no live
+        ``Session``, has one parser to call instead of a second copy)."""
+        return parse_history_line(line)
 
     def _append_parsed_history_line(self, line: str) -> None:
         """Parse one ``history.jsonl`` line and append it to ``self.history``
