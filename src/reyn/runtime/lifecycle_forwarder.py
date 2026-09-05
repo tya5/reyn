@@ -4,9 +4,10 @@ This forwarder bridges **session-level lifecycle events** into the chat
 outbox:
 
   * ``compaction_completed`` (issue #162) — head/body/tail compaction
-    just replaced N early-session turns with a rolling summary. Without
-    a marker the user has no signal that pre-seq-M turns are now a
-    summarised proxy.
+    just replaced N early-session messages with a rolling summary
+    (#5791: a message count, not a turn count — see this module's own
+    ``on_compaction_completed`` docstring). Without a marker the user
+    has no signal that pre-seq-M history is now a summarised proxy.
 
 Designed for growth — additional lifecycle handlers (attach / detach
 notifications, budget warnings, session-level errors) can land here
@@ -181,9 +182,9 @@ class ChatLifecycleForwarder:
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_started(self, data: dict) -> None:
-        """Surface a ``[⟳ compacting N turns]`` marker when a real compaction
-        pass begins (#5633 — owner: "縮小フロー開始開始通知みたいなものは tui
-        で受けてないのかしら？").
+        """Surface a ``[⟳ compacting N messages]`` marker when a real
+        compaction pass begins (#5633 — owner: "縮小フロー開始開始通知みたいな
+        ものは tui で受けてないのかしら？").
 
         Before this handler, ``completed``/``failed`` both had a marker but
         ``started`` had none — asymmetric, and the gap this issue's own
@@ -203,13 +204,23 @@ class ChatLifecycleForwarder:
         so a surface with no episode-entry mechanism of its own, e.g.
         AG-UI, still gets this marker exactly as before).
 
-        ``new_turn_count`` mirrors ``on_compaction_completed``'s own field
-        name for the same count (this pass's target, not its result) —
-        absent degrades to a generic marker, never a fabricated count."""
-        count = data.get("new_turn_count")
+        #5791 (owner-hit, real machine: ``[⟳ compacting 3925 turns]`` shown
+        against a 73-user-message history): this field is
+        ``new_message_count`` — ``engine.py``'s own count of wire messages
+        in the input chunk (every role, mixed). This is the SAME quantity
+        ``on_compaction_completed``'s own ``new_message_count`` below
+        measures (a different producer, ``CompactionController`` — its own
+        candidate selection never groups messages into turns either,
+        despite a ``turns``-named local variable there; BLOCKING-corrected
+        mid-review, the same "trusted the name, not the code" misreading
+        as #5592's own incident and this issue's own owner-hit). The two
+        used to share one field name (``new_turn_count``) that was wrong
+        for BOTH producers, not different-but-each-correct. Degrades to a
+        generic marker when absent, never a fabricated count."""
+        count = data.get("new_message_count")
         meta = {"compaction_episode_marker": True}
         if isinstance(count, int) and count > 0:
-            self._enqueue(f"[⟳ compacting {count} turn{'s' if count != 1 else ''}]", meta=meta)
+            self._enqueue(f"[⟳ compacting {count} message{'s' if count != 1 else ''}]", meta=meta)
         else:
             self._enqueue("[⟳ compacting history]", meta=meta)
 
@@ -276,11 +287,23 @@ class ChatLifecycleForwarder:
         self._enqueue(f"[✗ summary re-compress failed: {reason}]")
 
     def on_compaction_completed(self, data: dict) -> None:
-        """Surface a ``[↑ N turns compacted]`` marker in the conv pane.
+        """Surface a ``[↑ N messages compacted]`` marker in the conv pane.
 
-        ``new_turn_count`` is the count of turns replaced by the rolling
-        summary.  Falls back to a generic marker when the field is
+        ``new_message_count`` is the count of wire messages replaced by the
+        rolling summary. Falls back to a generic marker when the field is
         absent (= forward-compat with future event-shape variations).
+
+        #5791 (BLOCKING correction, lead-coder review of this PR's own
+        first pass — which had claimed this WAS a genuine turn count):
+        ``CompactionController``'s own ``_select_candidates`` never groups
+        messages into turns — its ``turns`` parameter (the source of this
+        method's misleading former name, ``new_turn_count``) is itself a
+        flat list of individual ``ChatMessage`` entries. This field is the
+        SAME quantity as ``on_compaction_started``'s own
+        ``new_message_count`` above (a different producer, ``engine.py``)
+        — the two were never actually different quantities, only
+        differently-misnamed instances of the same one. Both markers now
+        say "messages", never "turns".
 
         #4703 axis①: the marker also names what the compaction LLM call
         itself SPENT (``prompt_tokens``/``completion_tokens``/``cost_usd``,
@@ -290,9 +313,9 @@ class ChatLifecycleForwarder:
         silent about. Absent (pre-#4703-shape events, or usage genuinely
         unreadable off the response) degrades to the pre-#4703 marker —
         never a fabricated ``$0.00``."""
-        count = data.get("new_turn_count")
+        count = data.get("new_message_count")
         if count:
-            text = f"[↑ {count} turn{'s' if count != 1 else ''} compacted"
+            text = f"[↑ {count} message{'s' if count != 1 else ''} compacted"
         else:
             text = "[↑ history compacted"
         prompt = data.get("prompt_tokens")

@@ -9,7 +9,9 @@ own internal compaction attempts share, so the emit lives there, moved
 from the controller (not added alongside it — #5382/#5455's own ruling on
 two emit sites for the same kind).
 
-``new_turn_count``/``had_previous`` are genuinely derivable from
+``new_message_count`` (#5791: renamed from ``new_turn_count`` — it counts
+wire messages, not turns; see ``engine.py``'s own ``compact()`` docstring)
+/``had_previous`` are genuinely derivable from
 ``input_chunk`` alone for EITHER caller. ``covers_through_seq`` is not:
 the controller's own turn elements (in ``input_chunk.messages``) carry a
 real ``seq`` per turn (``_turn_to_compactor_input``); ``retry_loop``'s own
@@ -140,3 +142,49 @@ async def test_retry_loop_shaped_path_carries_a_named_absence():
 def _msg(text: str, *, seq: int):
     from reyn.runtime.chat_message import ChatMessage
     return ChatMessage(role="user", content=text, seq=seq)
+
+
+@pytest.mark.asyncio
+async def test_compaction_started_new_message_count_is_a_real_message_count() -> None:
+    """Tier 2: #5791 (owner-hit) — a real ``CompactionEngine.compact()``
+    call emits ``compaction_started.new_message_count`` equal to the exact
+    number of wire messages in ``input_chunk.messages`` (5 real messages
+    here) — never a turn count, never the OLD field name. This is the
+    real-engine witness the #5791 fix needed: the sibling tests in this
+    file drove the real `compact()` but only ever asserted on
+    `covers_through_*`, so a regression reintroducing the old
+    `new_turn_count` mislabel (or a wrong count) would have gone
+    undetected here."""
+    events = EventLog()
+    collected = collect_events(events)
+    engine = CompactionEngine(
+        "openai/test-standard-model", events, CompactionConfig(use_chars4_estimate=True),
+    )
+
+    stub = LLMStub()
+    stub.install()
+    try:
+        chunk = HistoryChunkToCompact(
+            messages=[
+                {"role": "user", "content": f"turn {i}"} for i in range(5)
+            ],
+            section_token_caps={},
+        )
+        await engine.compact(chunk, covers_through=SeqUnavailable.WIRE_DICTS_CARRY_NO_SEQ)
+        await settle(events)
+    finally:
+        stub.restore()
+
+    started = [e for e in collected if e.type == "compaction_started"]
+    assert started, "expected a real compaction_started event"
+    payload = started[0].data
+    assert payload.get("new_message_count") == 5, (
+        f"expected the exact wire-message count (5), got "
+        f"{payload.get('new_message_count')!r} — this is a MESSAGE count, "
+        f"never a turn count"
+    )
+    assert "new_turn_count" not in payload, (
+        "the OLD field name must not reappear on compaction_started — "
+        "that name belongs to compaction_completed's own, genuinely "
+        "different, turn-counting field"
+    )

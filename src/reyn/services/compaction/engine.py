@@ -2220,7 +2220,21 @@ class CompactionEngine:
         here closes it for BOTH callers, the same "one real entry" argument
         #5475 already made for ``compaction_started``.
 
-        ``new_turn_count``/
+        #5791 (owner-hit, `[⟳ compacting 3925 turns]` on a 73-user-message
+        history — a real message-vs-turn conflation, not a display typo):
+        this method's own count below is ``new_message_count``, never
+        ``new_turn_count`` — it counts *input_chunk.messages* entries
+        (every wire message: user/assistant/tool, all roles mixed), not
+        conversation turns. ``CompactionController``'s OWN
+        ``compaction_completed`` emit (a separate producer, a separate
+        event kind) has a genuinely different ``new_turn_count`` — a real
+        turn/candidate count, from ``_select_candidates``. The two used to
+        share ONE field name for two different quantities; #5592's own
+        incident (a misread of THIS field as a turn count, walked back by
+        re-deriving from ``history.jsonl``'s file size) is the shape that
+        produces. Distinct names now — never conflate the two again.
+
+        ``new_message_count``/
         ``had_previous`` are derived from *input_chunk* alone — both are
         genuinely available to every caller. ``covers_through`` is NOT: the
         controller's own caller can supply a real seq (its ``new_turns``
@@ -2238,28 +2252,33 @@ class CompactionEngine:
         still sees a bare, unexplained ``null`` on the retry_loop path;
         always check ``covers_through_unavailable_reason`` alongside it.
         """
-        # #5531: new_turn_count/had_previous are now derived from the
-        # single ordered `messages` list — every "summary" element (there
-        # can be more than one — see HistoryChunkToCompact's own
-        # docstring) is not a "new turn" being summarised for the first
+        # #5531/#5791: new_message_count/had_previous are now derived from
+        # the single ordered `messages` list — every "summary" element
+        # (there can be more than one — see HistoryChunkToCompact's own
+        # docstring) is not a new message being summarised for the first
         # time. The list comprehension below already counts however many
-        # there are; nothing here assumes exactly one.
+        # there are; nothing here assumes exactly one. #5791: this counts
+        # wire MESSAGES (every role, all mixed) — never renamed back to
+        # "turn_count"; see this method's own docstring for why that name
+        # belongs to a different, genuinely turn-counting field on a
+        # DIFFERENT event (compaction_controller.py's compaction_completed).
         summary_messages = [
             m for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
         ]
-        new_turn_count = len(input_chunk.messages) - len(summary_messages)
+        new_message_count = len(input_chunk.messages) - len(summary_messages)
         covers_through_seq = covers_through if isinstance(covers_through, int) else None
         covers_through_unavailable_reason = (
             None if isinstance(covers_through, int) else covers_through.value
         )
         # #5592 (owner ruling, "事後で測れる情報を残して" — post-hoc-
         # measurable, verbatim): the ACTUAL size of what this call is
-        # about to send, not an estimate. `new_turn_count` above answers
-        # "how many turns" — it does NOT answer "how much text", and
-        # #5592's own incident (lead-coder misread `new_turn_count` as a
-        # shrink signal, for lack of a real size field, and had to fall
-        # back to `ls -l history.jsonl` to answer the question this field
-        # exists to answer directly) is exactly the gap this closes.
+        # about to send, not an estimate. `new_message_count` above answers
+        # "how many wire messages" — it does NOT answer "how much text",
+        # and #5592's own incident (lead-coder misread this field, THEN
+        # still named `new_turn_count`, as a shrink signal, for lack of a
+        # real size field, and had to fall back to `ls -l history.jsonl`
+        # to answer the question this field exists to answer directly) is
+        # exactly the gap this closes.
         # Char count of the exact JSON this call sends — not a token
         # estimate (owner's own standing instruction: never build logic
         # on an unverified estimate; a real character count needs no
@@ -2268,7 +2287,7 @@ class CompactionEngine:
         input_chars = len(json.dumps(input_chunk.messages, ensure_ascii=False))
         self._events.emit(
             "compaction_started",
-            new_turn_count=new_turn_count,
+            new_message_count=new_message_count,
             covers_through_seq=covers_through_seq,
             covers_through_unavailable_reason=covers_through_unavailable_reason,
             had_previous=bool(summary_messages),

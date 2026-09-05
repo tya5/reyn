@@ -158,3 +158,15 @@ def test_compaction_completed_event_carries_the_usage_end_to_end(monkeypatch) ->
     assert completed[0].data["prompt_tokens"] == 500
     assert completed[0].data["completion_tokens"] == 50
     assert completed[0].data["cost_usd"] is not None and completed[0].data["cost_usd"] > 0.0
+    # #5791 (BLOCKING follow-up): no test in this repo asserted on
+    # compaction_completed's own count field's REAL VALUE from a real
+    # CompactionController run before this — the exact defect shape
+    # #5791 fixed (a mislabeled field) could have shipped again silently.
+    # Not pinning the exact integer (that would assert on private
+    # candidate-selection internals, forbidden by this repo's testing
+    # policy) — presence + a real positive int is the witness.
+    new_message_count = completed[0].data.get("new_message_count")
+    assert isinstance(new_message_count, int) and new_message_count > 0, (
+        f"expected a real positive new_message_count from the real "
+        f"controller path, got {new_message_count!r}"
+    )

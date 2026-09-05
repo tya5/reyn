@@ -65,15 +65,17 @@ def _emit_compaction_started(
     body, so this test file's own ``compaction_started`` witnesses stay
     meaningful (the SAME shape production now emits, not a shape this file
     invented independently that could silently drift from it)."""
-    # #5531: new_turn_count/had_previous mirror CompactionEngine.compact()'s
-    # own derivation — a "summary" element (at most one) is not a "new
-    # turn" being summarised for the first time.
+    # #5531/#5791: new_message_count/had_previous mirror CompactionEngine.
+    # compact()'s own derivation — a "summary" element (at most one) is not
+    # a new message being summarised for the first time. #5791: this is a
+    # message count, renamed from new_turn_count — see engine.py's own
+    # compact() docstring.
     _summary_messages = [
         m for m in input_chunk.messages if m.get("role") == SUMMARY_MESSAGE_ROLE
     ]
     events.emit(
         "compaction_started",
-        new_turn_count=len(input_chunk.messages) - len(_summary_messages),
+        new_message_count=len(input_chunk.messages) - len(_summary_messages),
         covers_through_seq=covers_through if isinstance(covers_through, int) else None,
         covers_through_unavailable_reason=(
             None if isinstance(covers_through, int) else covers_through.value
