@@ -1704,6 +1704,28 @@ class RouterLoop:
         self._total_usage = TokenUsage()
         self._last_call_usage = TokenUsage()
         host = self.host
+        # #4401 A-4: await the background MCP probe (kicked off at Session
+        # construction) BEFORE this turn reads `host.get_mcp_servers()` —
+        # either inline below (system-prompt build) or later via the
+        # SchemeOps `present`/`base_tools` calls this same turn makes.
+        # `test_4401_render_for_router_state_census.py` pins that every
+        # `render_for_router(state=...)` call site (the only ones that can
+        # inject the mcp enum into an LLM-facing schema) sits downstream of
+        # THIS point — issue #4401's own empirical trace found 2 OTHER
+        # `get_mcp_servers()` call sites that do NOT (a compaction budget
+        # size estimate, and 4 op-execution-only contexts that never build
+        # an LLM schema at all), so this single await is sufficient without
+        # enumerating every entry point. One of the 2 real catalog
+        # CONSUMPTION points (`mcp_list_servers` is the other) —
+        # getattr-guarded so a narrow test host (FakeRouterHost) without
+        # this method degrades to a no-op, same convention as the other
+        # host-capability probes just below.
+        _await_mcp_ready = getattr(host, "await_mcp_probe_ready", None)
+        if _await_mcp_ready is not None:
+            from reyn.runtime.services.router_host_adapter import (
+                _DEFAULT_MCP_PROBE_SECONDS,
+            )
+            await _await_mcp_ready(per_server_timeout=_DEFAULT_MCP_PROBE_SECONDS)
         # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
         # getattr fallback so narrow hosts (= test FakeRouterHost) that don't
         # implement the method default to off (= the prior flat tools= shape).
