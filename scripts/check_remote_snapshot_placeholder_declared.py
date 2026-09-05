@@ -720,6 +720,22 @@ _UNWIRED_KEY_VIOLATIONS_BASELINE: "dict[str, str]" = {
     # have its own project_status twin (see the block comment above).
     "completion_source": _LOCAL,
     "intervention_head": _LOCAL,
+    # #5802 (owner-hit; corrects the #5773 baseline's own "permanently
+    # session-local; no project_status twin is ever planned" — the owner's
+    # report falsified that "ever"). Both flags stay LOCAL by the SAME
+    # DESIGN reasoning as every entry in this block (a flag NAME is never
+    # itself a project_status key) — but unlike before #5802, the
+    # UNDERLYING DATA these flags describe genuinely IS wired now, the
+    # same "flag stays LOCAL, its data gets its own real key" shape
+    # `mcp_probe_states_reported`/`hooks_config_warnings_reported` below
+    # already are: `pending_command_ui` the METHOD now reads a real
+    # `project_status` key, `pending_command_ui_request` (named
+    # differently to avoid colliding with THIS flag's own literal
+    # `"pending_command_ui": <bool>` spread entry — see `status.py`'s own
+    # comment at that key); `has_command_ui_region` is now `True` for
+    # remote (RegistryReadModel's own precedent — no wire key of its own
+    # is needed, the value is read directly off `ChatReadModel.
+    # capabilities`, never off a snapshot dict).
     "pending_command_ui": _LOCAL,
     "has_command_ui_region": _LOCAL,
     "conversation_history": _LOCAL,

@@ -437,8 +437,12 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
 REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     completion_source=False,
     intervention_head=True,
-    pending_command_ui=False,
-    has_command_ui_region=False,
+    # #5802: both were False ("permanently session-local" per the #5773
+    # baseline declaration — the owner's own report falsified that
+    # "permanently"; see RemoteReadModel.pending_command_ui/
+    # has_command_ui_region's own docstrings for the wire mechanism).
+    pending_command_ui=True,
+    has_command_ui_region=True,
     conversation_history=False,
     load_older_conversation_history=False,
     # #5774: ctx_recent_usage (this field's own sole remaining consumer
@@ -1265,11 +1269,37 @@ class RemoteReadModel(ChatReadModel):
         return (values or {}).get("pending_intervention_head")
 
     def pending_command_ui(self):
-        return None
+        # #5802: was unconditional None (a #5773 baseline declaration this
+        # falsified — "permanently session-local, no project_status twin
+        # is ever planned"). STATE_SNAPSHOT/STATE_DELTA now carry
+        # ``pending_command_ui_request`` (state.py's own
+        # ``project_status`` — NOT ``pending_command_ui``, which is a
+        # different, pre-existing literal key on the SAME snapshot dict,
+        # the ChatReadModelCapabilities flag value; see that call site's
+        # own comment), the same live-tick pattern :meth:`intervention_
+        # head` above already uses. Returns the SAME JSON-safe dict
+        # production already builds (``Session.pending_command_ui``, set
+        # by ``slash/rewind.py``'s own ``set_pending_command_ui`` —
+        # ``{"kind", "points", "branches", "default_scope"}``), so
+        # ``app.py``'s ``_handle_rewind_request`` (already
+        # read-model-agnostic) needs no changes to consume this for real.
+        values = getattr(getattr(self._transport, "status", None), "values", None)
+        return (values or {}).get("pending_command_ui_request")
 
     @property
     def has_command_ui_region(self) -> bool:
-        return False
+        # #5802: was unconditionally False. The interactive-TTY `--connect`
+        # path mounts the SAME `TextualChatApp`/`RewindPicker` the local
+        # path does (`client_driver.py`'s own renderer-selection seam is
+        # shared, D2 local ≡ remote) — this read model's own capability
+        # declaration is the only thing that made it unreachable. True,
+        # matching `RegistryReadModel`'s own unconditional True just
+        # below: the non-interactive `--cui` path never reaches the code
+        # that reads this flag at all (`run_output_loop`'s own
+        # `renderer.uses_app_input()` gate is already False there,
+        # independent of this value — see that function's own docstring),
+        # so the local precedent this mirrors is not a decoration.
+        return True
 
     @property
     def history_path(self) -> Path:

@@ -4781,10 +4781,12 @@ class TextualChatApp(App):
           (``ClientTransport.clear_pending_command_ui`` — #5045: moved off the
           read model, which must not write) so it can never be replayed onto a
           later sentinel.
-        - No structured request available — the REMOTE case, where command-UI is
-          not on the AG-UI wire and ``pending_command_ui()`` is ``None`` by
-          design (``read_model.py``) — falls back to appending the sentinel's
-          text list. Swallowing it there would trade one silent no-op for
+        - No structured request available — a read model that does not host a
+          command-UI region (``has_command_ui_region`` False; #5802 wired
+          ``pending_command_ui()`` onto the AG-UI wire for the remote case
+          too, so this is no longer "remote" specifically, only a
+          region-less client) — falls back to appending the sentinel's text
+          list. Swallowing it there would trade one silent no-op for
           another, waiting on a picker that can never arrive.
 
         A ``kind`` other than ``"rewind"`` takes the text fallback too, rather

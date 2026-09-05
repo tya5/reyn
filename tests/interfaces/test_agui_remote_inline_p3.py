@@ -200,9 +200,16 @@ async def test_remote_read_model_intervention_head_is_none_not_unsupported() -> 
 
 @pytest.mark.asyncio
 async def test_remote_read_model_degrades_local_only_affordances() -> None:
-    """Tier 2: the remote read-model returns empty (not fabricated) for everything
-    NOT on the wire — intervention region, command-UI — and declares it
-    has no command-UI region so the /rewind text fallback engages."""
+    """Tier 2: the remote read-model returns empty (not fabricated) for
+    everything not yet ON the wire — intervention region, command-UI's own
+    pending request — before any STATE_SNAPSHOT has arrived.
+
+    ``has_command_ui_region`` is deliberately NOT one of these any more
+    (#5802 — the remote /rewind picker owner-hit): it is no longer a
+    session-local-only affordance, it is now unconditionally True for
+    remote too (the interactive `--connect` path mounts the SAME
+    TextualChatApp/RewindPicker widget stack local chat does), so it is
+    pinned in its own test below instead of this "local-only" group."""
 
     async def _noop_send(_payload):
         return None
@@ -211,10 +218,25 @@ async def test_remote_read_model_degrades_local_only_affordances() -> None:
     rm = RemoteReadModel(transport)
     assert rm.intervention_head() is None
     assert rm.pending_command_ui() is None
-    assert rm.has_command_ui_region is False
     # A pre-STATE_SNAPSHOT snapshot renders a placeholder model.
     snap = rm.snapshot()
     assert snap["model"] == "—"
+
+
+def test_remote_read_model_has_command_ui_region_true() -> None:
+    """Tier 2: (#5802) unlike this file's other local-only affordances
+    above, ``has_command_ui_region`` is unconditionally True for remote —
+    D2 (ADR-0039 P3, "local ≡ remote"): the interactive `--connect` path
+    mounts the identical widget stack local chat does, so the region
+    itself is never session-local; only the DATA it reads (``pending_
+    command_ui()``, pinned empty-before-wire-arrival above) is."""
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_sse_lines(""), _noop_send)
+    rm = RemoteReadModel(transport)
+    assert rm.has_command_ui_region is True
 
 
 def test_project_remote_snapshot_expansion_keys_are_empty() -> None:
