@@ -38,7 +38,7 @@ from types import SimpleNamespace
 import litellm
 
 from reyn.config import CompactionConfig
-from reyn.core.events.snapshot_generations import checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
@@ -148,7 +148,7 @@ def test_compaction_never_folds_an_abandoned_branch_turn_into_the_summary(
             asyncio.run(_turn(s, state_log, f"ABANDONED-MARKER-turn-{i} {pad}"))
         )
 
-    asyncio.run(checkout(state_log, target_seq=anchors[2]))  # hide turns 4-10
+    asyncio.run(checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE))  # hide turns 4-10
 
     for i in range(11, 15):
         asyncio.run(_turn(s, state_log, f"active-turn-{i} {pad}"))
@@ -189,7 +189,7 @@ def test_active_branch_history_still_agrees_with_compaction_after_a_rewind(
     for i in range(1, 8):
         anchors.append(asyncio.run(_turn(s, state_log, f"turn-{i}")))
 
-    asyncio.run(checkout(state_log, target_seq=anchors[2]))  # hide turns 4-7
+    asyncio.run(checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE))  # hide turns 4-7
 
     visible_resident = [m.content for m in s._active_branch_history()]
     durable_turns, _truncated = s._durable_active_history_after(0)

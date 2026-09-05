@@ -104,7 +104,10 @@ async def rewind_cmd(ctx: "SlashContext", args: str) -> None:
         # undo for a live-branch seq, fork-switch for a dead-branch seq. Keeps
         # the two "go to seq N" entries (slash + picker) behaviourally identical
         # (no sibling-gap); checkout subsumes rewind_to for active seqs.
-        result = await registry.checkout(target)
+        # #5769: this command has no per-session concept yet (the session-scoped
+        # rewind UI is a later, separate arc) — GLOBAL_SCOPE names that honestly.
+        from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+        result = await registry.checkout(target, scope=GLOBAL_SCOPE)
     except Exception as exc:  # noqa: BLE001 — surface the reason to the user
         await reply_error(ctx, f"/rewind: {exc}")
         return

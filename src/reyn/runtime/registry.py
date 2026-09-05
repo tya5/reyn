@@ -2162,7 +2162,7 @@ class AgentRegistry:
                     )
 
     async def checkout(
-        self, seq: int, *, scope: "tuple[str, str] | None" = None,
+        self, seq: int, *, scope: "tuple[str, str] | None",
     ) -> dict:
         """Consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2 /
         ADR-0047 decision 3, session-scoped rewind).
@@ -2182,7 +2182,7 @@ class AgentRegistry:
         ``is_active`` from the full chain, the runtime substrate follows the
         *target's* lineage automatically.
 
-        ``scope=None`` (default) is the **architecture-enforced global cut**
+        ``scope=GLOBAL_SCOPE`` is the **architecture-enforced global cut**
         (D2), byte-identical to before this parameter existed: one global
         single-seq WAL ⇒ one reset-record moves *every* agent atomically:
 
@@ -2207,6 +2207,19 @@ class AgentRegistry:
         exact same physical floor a global one is.
 
         ``_rewind_in_progress`` gates compaction for the whole window.
+
+        No default (required keyword-only): a forgotten ``scope`` here does
+        not merely widen a read, it WRITES a real, effectful reset-record
+        that rewinds every session atomically — the exact function ADR-0047
+        decision 3 names as the session-scoped-rewind boundary. Architect's
+        ruling (following the parallel finding on the module-level
+        ``checkout`` this method delegates the reset-record write to,
+        via ``_append_reset_record``): a default here would be unsafe in
+        the dangerous direction (an omitted ``scope`` silently becomes a
+        full global rewind, not an error) and every real caller already
+        knows its own answer (``rewind_to`` below, and the ``/rewind``
+        slash command, are both intentionally-global callers that name
+        ``GLOBAL_SCOPE`` explicitly).
         """
         if self._state_log is None:
             raise RuntimeError("checkout requires a state log")
@@ -2274,7 +2287,7 @@ class AgentRegistry:
             # 4. single global reset-record; supersedes = prior active head (audit).
             prior_head = self._state_log.last_durable_seq
             reset_seq = await _append_reset_record(
-                self._state_log, target_seq=seq, supersedes=prior_head,
+                self._state_log, target_seq=seq, scope=GLOBAL_SCOPE, supersedes=prior_head,
             )
             # 5. materialise both substrates along the target lineage.
             agents = await self._materialize_rewind(
@@ -2306,6 +2319,10 @@ class AgentRegistry:
         Raises ``RewindIntoAbandonedError`` if ``target_n`` is on an abandoned
         branch (switching branches is a Phase-2 fork, not Phase-1 undo — use
         ``checkout``).
+
+        No ``scope`` parameter of its own: like the module-level ``rewind``,
+        this is the pre-#5769, genuinely global Phase-1 undo primitive — it
+        passes ``GLOBAL_SCOPE`` to ``checkout`` explicitly.
         """
         if self._state_log is None:
             raise RuntimeError("rewind_to requires a state log")
@@ -2315,7 +2332,7 @@ class AgentRegistry:
                 "Phase-1 undo only rewinds to a seq on the active timeline "
                 "(use checkout for a Phase-2 branch-switch)."
             )
-        return await self.checkout(target_n)
+        return await self.checkout(target_n, scope=GLOBAL_SCOPE)
 
     def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
         """Enumerate rewind targets for the time-travel UI (1f / Phase-2 fork).

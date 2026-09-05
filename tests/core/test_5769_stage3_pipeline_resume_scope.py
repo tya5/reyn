@@ -244,3 +244,12 @@ async def test_resume_replays_from_the_snapshot_the_caller_passes(tmp_path, monk
     # tool's own side effect (creating out_file) never fires.
     assert result.step_index == 1
     assert not out_file.exists()
+
+    # Population witness (lead-coder-30 review, PR #5784): the negative
+    # assertion above is only meaningful if the counting tool actually
+    # WORKS -- fire it directly, once, and confirm it creates the file.
+    # Distinguishes "resume chose not to execute it" from "it could never
+    # have executed regardless" (a broken _install_counting_tool would
+    # pass the assertion above for the wrong reason).
+    await dispatch("stage3_step", {})
+    assert out_file.exists()

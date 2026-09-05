@@ -68,7 +68,7 @@ async def test_active_branch_derivation_decodes_do_not_grow_with_wal_size(tmp_pa
     with the WAL; the incremental index keeps it flat."""
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 50)
-    await checkout(state_log, target_seq=anchor // 2)
+    await checkout(state_log, target_seq=anchor // 2, scope=GLOBAL_SCOPE)
     build_active_predicate(state_log, scope=GLOBAL_SCOPE)  # warm
 
     counter = _count_decodes(monkeypatch)
@@ -99,7 +99,7 @@ async def test_repeated_derivation_over_unchanged_wal_decodes_nothing(tmp_path, 
     — the dropdown-open / per-turn path pays for change, not for history size."""
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 200)
-    await checkout(state_log, target_seq=anchor // 2)
+    await checkout(state_log, target_seq=anchor // 2, scope=GLOBAL_SCOPE)
     build_active_predicate(state_log, scope=GLOBAL_SCOPE)  # warm
 
     counter = _count_decodes(monkeypatch)
@@ -123,7 +123,7 @@ async def test_rewind_appended_after_warm_index_takes_effect(tmp_path):
 
     assert is_active_seq(state_log, abandoned_seq), "sanity: active before any rewind"
 
-    await checkout(state_log, target_seq=anchor)
+    await checkout(state_log, target_seq=anchor, scope=GLOBAL_SCOPE)
 
     assert not is_active_seq(state_log, abandoned_seq), (
         "a rewind appended after the derivation was first built must abandon the "
@@ -146,7 +146,7 @@ async def test_truncation_dropping_a_rewind_record_does_not_serve_a_stale_interv
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 10)
     abandoned_seq = await _grow_wal(state_log, 5)
-    await checkout(state_log, target_seq=anchor)
+    await checkout(state_log, target_seq=anchor, scope=GLOBAL_SCOPE)
     head = await _grow_wal(state_log, 5)
 
     # Warm the derivation while the reset-record is present.
@@ -178,7 +178,7 @@ async def test_truncation_preserving_rewind_records_keeps_them_active(tmp_path):
     state_log = StateLog(tmp_path / "state.wal")
     anchor = await _grow_wal(state_log, 10)
     abandoned_seq = await _grow_wal(state_log, 5)
-    await checkout(state_log, target_seq=anchor)
+    await checkout(state_log, target_seq=anchor, scope=GLOBAL_SCOPE)
     head = await _grow_wal(state_log, 5)
 
     assert not is_active_seq(state_log, abandoned_seq), "sanity: abandoned pre-truncation"

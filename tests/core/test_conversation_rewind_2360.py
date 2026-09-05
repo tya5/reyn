@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
@@ -91,7 +91,7 @@ async def test_rewind_hides_post_cut_turns_exactly(tmp_path, monkeypatch):
 
     assert _visible(s) == [f"turn {i}" for i in range(1, 6)]  # all visible pre-rewind
 
-    await checkout(state_log, target_seq=anchors[2])  # keep through turn 3
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)  # keep through turn 3
 
     assert _visible(s) == ["turn 1", "turn 2", "turn 3"], "exact prefix, 4/5 hidden"
 
@@ -104,7 +104,7 @@ async def test_history_file_stays_append_only(tmp_path, monkeypatch):
     state_log = StateLog(tmp_path / "state.wal")
     s = _session(tmp_path, "alice", state_log)
     anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 6)]
-    await checkout(state_log, target_seq=anchors[2])
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)
 
     raw = s.history_path.read_text()
     assert "turn 4" in raw and "turn 5" in raw, "append-only: hidden turns still on disk"
@@ -120,12 +120,12 @@ async def test_fork_switch_and_no_discard(tmp_path, monkeypatch):
     s = _session(tmp_path, "alice", state_log)
     anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 6)]
 
-    await checkout(state_log, target_seq=anchors[2])  # rewind to after turn 3
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)  # rewind to after turn 3
     await _turn(s, state_log, "turn 6")
     await _turn(s, state_log, "turn 7")
     assert _visible(s) == ["turn 1", "turn 2", "turn 3", "turn 6", "turn 7"]
 
-    await checkout(state_log, target_seq=anchors[4])  # switch back to the old tip (turn 5)
+    await checkout(state_log, target_seq=anchors[4], scope=GLOBAL_SCOPE)  # switch back to the old tip (turn 5)
     assert _visible(s) == [f"turn {i}" for i in range(1, 6)], "old future revived"
     raw = s.history_path.read_text()
     assert "turn 6" in raw and "turn 7" in raw, "no discard: the alternate branch survives in the file"
@@ -147,7 +147,7 @@ async def test_global_cut_filters_each_session_own_view(tmp_path, monkeypatch):
     await _turn(a, state_log, "A2")
     await _turn(b, state_log, "B2")
 
-    await checkout(state_log, target_seq=b1)  # world-cut just after B1 (A1 < B1 < A2 < B2)
+    await checkout(state_log, target_seq=b1, scope=GLOBAL_SCOPE)  # world-cut just after B1 (A1 < B1 < A2 < B2)
 
     assert _visible(a) == ["A1"], "alice: only her ≤-cut turn"
     assert _visible(b) == ["B1"], "bob: only his ≤-cut turn"
@@ -164,7 +164,7 @@ async def test_unanchored_turns_always_visible(tmp_path, monkeypatch):
     s.history.append(ChatMessage(role="user", content="legacy-no-anchor"))  # no wal_seq in meta
     await _turn(s, state_log, "anchored-2")
 
-    await checkout(state_log, target_seq=a1)  # hides anchored-2
+    await checkout(state_log, target_seq=a1, scope=GLOBAL_SCOPE)  # hides anchored-2
 
     visible = _visible(s)
     assert "legacy-no-anchor" in visible, "unanchored turns stay visible (no migration)"
@@ -186,7 +186,7 @@ async def test_mid_tool_cycle_cut_leaves_no_dangling(tmp_path, monkeypatch):
     assert result_anchor > call_anchor  # the cut can fall strictly between call and result
 
     # cut lands mid-cycle (at the call anchor; the result's anchor is beyond it)
-    await checkout(state_log, target_seq=call_anchor)
+    await checkout(state_log, target_seq=call_anchor, scope=GLOBAL_SCOPE)
     wire = s._history_buffer.build_history()
     assert _dangling(wire) == set(), "mid-cycle cut must leave a well-formed (dangling-free) payload"
     assert any(m.get("role") == "tool" and m.get("tool_call_id") == "tc1" for m in wire), \
@@ -211,7 +211,7 @@ async def test_rewind_record_survives_wal_truncation(tmp_path, monkeypatch):
 
     # Three turns; rewind to after turn 1 (abandons turns 2 and 3).
     anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 4)]
-    reset_seq = await checkout(state_log, target_seq=anchors[0])
+    reset_seq = await checkout(state_log, target_seq=anchors[0], scope=GLOBAL_SCOPE)
 
     # New turns on the active branch — these advance applied_seq past the reset record.
     for i in range(4, 10):
@@ -249,7 +249,7 @@ async def test_cut_before_tool_cycle_hides_whole_cycle_no_dangling(tmp_path, mon
     u1 = await _turn(s, state_log, "hello")
     await _tool_cycle(s, state_log, "tc1")
 
-    await checkout(state_log, target_seq=u1)  # cut before the cycle
+    await checkout(state_log, target_seq=u1, scope=GLOBAL_SCOPE)  # cut before the cycle
     wire = s._history_buffer.build_history()
     assert _dangling(wire) == set(), "cut before the cycle must leave no dangling tool result"
     assert not any(m.get("role") == "tool" for m in wire), "the whole cycle is hidden (call+result)"

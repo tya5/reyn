@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
-from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewind
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, RewindIntoAbandonedError, rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -80,14 +80,14 @@ async def test_checkout_back_revives_lineage_runtime(tmp_path):
     assert _inbox_ids(tmp_path, "alpha") == ["a1"]   # post-rewind active = [a1] (a3 not yet materialised on disk)
 
     # checkout to seq 2 (ABANDONED — a2's dead branch): revives a2, abandons a3.
-    res2 = await reg.checkout(2)
+    res2 = await reg.checkout(2, scope=GLOBAL_SCOPE)
     assert res2["target_n"] == 2
     assert _inbox_ids(tmp_path, "alpha") == ["a1", "a2"]   # target lineage, NOT [a1,a3]
     # self-contained snapshot pinned to the new reset-record (same invariant as rewind).
     assert AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha")).applied_seq == res2["reset_seq"]
 
     # checkout BACK to seq 4 (now abandoned — a3's lineage): revives a3, re-abandons a2.
-    res4 = await reg.checkout(4)
+    res4 = await reg.checkout(4, scope=GLOBAL_SCOPE)
     assert res4["target_n"] == 4
     assert _inbox_ids(tmp_path, "alpha") == ["a1", "a3"]   # lineage swapped back, no a2 leakage
 
@@ -108,7 +108,7 @@ async def test_checkout_to_active_seq_equals_rewind_to(tmp_path):
     await _put(log, "alpha", "a1")          # seq 1
     await _put(log, "alpha", "a2")          # seq 2
 
-    res = await reg.checkout(1)               # active target → undo semantics
+    res = await reg.checkout(1, scope=GLOBAL_SCOPE)  # active target → undo semantics
     assert res["target_n"] == 1
     assert _inbox_ids(tmp_path, "alpha") == ["a1"]   # a2 abandoned, as rewind_to(1) would
     assert AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha")).applied_seq == res["reset_seq"]
@@ -133,6 +133,6 @@ async def test_rewind_to_still_rejects_abandoned_after_refactor(tmp_path):
         await reg.rewind_to(2)               # abandoned target — undo still rejects
 
     # but checkout to the same abandoned seq is ALLOWED (the lifted guard).
-    res = await reg.checkout(2)
+    res = await reg.checkout(2, scope=GLOBAL_SCOPE)
     assert res["target_n"] == 2
     assert _inbox_ids(tmp_path, "alpha") == ["a", "b"]   # a2 lineage revived

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -72,7 +73,7 @@ async def test_web_path_session_checkout_restores_runtime(tmp_path) -> None:
 
     # Web checkout (the unified primitive) to seq A → the runtime substrate reverts.
     await session._journal.flush()  # #2259 PR-2b: drain before durable read
-    await reg.checkout(seq_a)
+    await reg.checkout(seq_a, scope=GLOBAL_SCOPE)
     markers = [m["payload"]["turn"] for m in session.current_snapshot.inbox]
     assert markers == ["A"]                                            # runtime reverted
 

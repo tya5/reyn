@@ -50,6 +50,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -115,7 +116,7 @@ async def test_ephemeral_vanish_racing_a_global_rewind_no_straggler_and_terminat
     # TrackedTaskSet.aclose's reentrancy exclusion (or anything else in the
     # #4759/#4765 chain) has a real cycle, THIS is where it hangs, and CI's
     # own --timeout=120 is the only thing that catches it.
-    result = await reg.checkout(put_seq)
+    result = await reg.checkout(put_seq, scope=GLOBAL_SCOPE)
     R = result["reset_seq"]
 
     # The vanish task must have actually run to completion by now (checkout's

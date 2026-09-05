@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -109,11 +110,11 @@ async def test_live_fork_checkout_back_follows_lineage_runtime(tmp_path):
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn C"]
 
     # ── checkout(seqB): branch-switch — revive the abandoned B lineage ──
-    await reg.checkout(seq_b)
+    await reg.checkout(seq_b, scope=GLOBAL_SCOPE)
     assert _turn_markers(AgentSnapshot.load("alpha", snap_path)) == ["turn A", "turn B"]  # disk
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn B"]    # live in-memory
 
     # ── checkout(seqC): switch back to the C lineage ──
-    await reg.checkout(seq_c)
+    await reg.checkout(seq_c, scope=GLOBAL_SCOPE)
     assert _turn_markers(AgentSnapshot.load("alpha", snap_path)) == ["turn A", "turn C"]  # disk
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn C"]    # live in-memory

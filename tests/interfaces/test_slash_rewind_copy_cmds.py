@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.interfaces.slash.copy import copy_cmd
 from reyn.interfaces.slash.rewind import rewind_cmd
 from reyn.runtime.outbox import OutboxMessage
@@ -86,6 +87,11 @@ class _FakeRegistry:
         self._checkout_result = checkout_result
         self._checkout_raises = checkout_raises
         self.checkout_calls: list[int] = []
+        # #5769/#5784: the real AgentRegistry.checkout takes `scope` as a
+        # required keyword-only argument (no default) -- recorded here too
+        # so a test can assert on it, matching the real signature this fake
+        # stands in for.
+        self.checkout_scopes: "list[tuple[str, str] | None]" = []
 
     def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
         return self._points
@@ -93,8 +99,9 @@ class _FakeRegistry:
     def list_branches(self) -> list:
         return self._branches
 
-    async def checkout(self, target: int) -> dict:
+    async def checkout(self, target: int, *, scope: "tuple[str, str] | None") -> dict:
         self.checkout_calls.append(target)
+        self.checkout_scopes.append(scope)
         if self._checkout_raises is not None:
             raise self._checkout_raises
         return self._checkout_result or {"agents": [], "target_n": target}
@@ -193,6 +200,9 @@ async def test_rewind_direct_success_calls_checkout_with_parsed_int() -> None:
     session = _FakeSession(registry=registry)
     await rewind_cmd(_ctx(session), "42")
     assert registry.checkout_calls == [42]
+    # #5769: /rewind has no per-session UI yet (a separate, owner-gated arc
+    # per #5778's own explicit split) -- it names GLOBAL_SCOPE explicitly.
+    assert registry.checkout_scopes == [GLOBAL_SCOPE]
 
 
 # ── /copy sentinel emitter ─────────────────────────────────────────────────

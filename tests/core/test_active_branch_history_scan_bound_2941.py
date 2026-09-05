@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
@@ -77,7 +77,7 @@ async def test_active_branch_history_scans_wal_o1_per_build_not_per_message(tmp_
         anchors.append(s.history[-1].meta["wal_seq"])
     # A rewind exists so the abandoned-interval predicate is non-trivial (not the
     # degenerate empty-list fast path).
-    await checkout(state_log, target_seq=anchors[5])
+    await checkout(state_log, target_seq=anchors[5], scope=GLOBAL_SCOPE)
 
     state_log.iter_from_calls = 0  # measure only the build_history() call under test
     wire = s._history_buffer.build_history()
@@ -106,7 +106,7 @@ async def test_active_branch_history_scan_count_independent_of_message_count(tmp
 
     for i in range(5):
         await _turn(i)
-    await checkout(state_log, target_seq=(await _turn(5)))
+    await checkout(state_log, target_seq=(await _turn(5)), scope=GLOBAL_SCOPE)
 
     state_log.iter_from_calls = 0
     s._history_buffer.build_history()

@@ -46,6 +46,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.events.state_log import StateLog
 from reyn.runtime import registry as registry_module
 from reyn.runtime.profile import AgentProfile
@@ -103,7 +104,7 @@ async def test_a_session_that_never_quiesces_fails_the_rewind_not_hangs(
 
     seq_before = reg.state_log.current_seq
     with pytest.raises(RewindQuiesceTimeoutError):
-        await asyncio.wait_for(reg.checkout(put_seq), timeout=5.0)
+        await asyncio.wait_for(reg.checkout(put_seq, scope=GLOBAL_SCOPE), timeout=5.0)
 
     # No reset-record was ever appended — the failure happened BEFORE step 4.
     assert reg.state_log.current_seq == seq_before, (
