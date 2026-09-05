@@ -2,8 +2,12 @@
 no per-request timeout at all, so an upstream provider that stopped
 responding hung the call for 11+ minutes with zero reyn-side events —
 `main`'s own router path already carries `safety.timeout.llm_call_seconds`
-(60s default) + `num_retries`; compaction's call site
-(`CompactionEngine._acompletion`, engine.py) passed neither.
++ `num_retries`; compaction's call site (`CompactionEngine._acompletion`,
+engine.py) passed neither. (#5793: `safety.timeout.llm_call_seconds` no
+longer defaults to 60s — it defaults to `None`, meaning NOT PASSED to
+litellm at all; this file's own assertions read the value dynamically
+off the real `SafetyConfig`, never a hardcoded `60`, so they are
+unaffected either way — see each test's own docstring.)
 
 Architect's own final ruling (issue #5597, verbatim): "新しい数を作らない。
 routerの値をそのまま使う" — no new number, compaction inherits `main`'s

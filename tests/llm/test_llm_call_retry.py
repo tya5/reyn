@@ -1,38 +1,58 @@
-"""Tier 2: OS invariant — LLM call infrastructure retry + event observability.
+"""Tier 2: OS invariant — LLM call retry + event observability.
 
 Guards the retry wrapper around the LiteLLM call boundary introduced in
-FP-0008 PR-Q v8:
+FP-0008 PR-Q v8. #5793 (owner decision, "自前の...汎用再試行は litellm に委ねる")
+NARROWED this wrapper to retry ONLY EmptyLLMResponseError (the one case
+litellm structurally cannot handle — a 200 with empty ``choices`` is not an
+API error, so litellm neither raises nor retries it). Every infra-exception
+kind (timeout / 5xx / httpx transport) this wrapper used to ALSO retry is
+litellm's own job now (reyn passes ``num_retries``, letting litellm/its
+Router retry those) — items 2/3/6/7 below were rewritten from "retried by
+reyn" (accept) to "NOT retried by reyn, propagates immediately" (deny), the
+new true contract.
 
 1. test_no_retry_on_success
    Successful call on first attempt → no retry, no retry events emitted.
 
-2. test_retry_and_succeed
-   Timeout on attempt 1 → retry fires, succeeds on attempt 2.
-   llm_call_retry event emitted with correct fields.
+2. test_infra_exception_not_retried_by_reyn_any_more (#5793 deny, was
+   test_retry_and_succeed)
+   A Timeout on attempt 1 propagates immediately — no reyn-owned retry;
+   litellm's own num_retries is the retry layer for this kind now.
 
-3. test_all_retries_exhausted
-   Timeout on all 3 attempts → llm_call_retry_exhausted event emitted,
-   exception propagates.
+3. test_infra_exception_exhausted_by_reyn_removed (#5793 deny, was
+   test_all_retries_exhausted)
+   A ServiceUnavailableError propagates on the FIRST attempt — no
+   llm_call_retry_exhausted event, because there was never a reyn retry
+   to exhaust.
 
 4. test_4xx_no_retry
-   BadRequestError (4xx semantic) → immediate failure, no retry, no events.
+   BadRequestError (4xx semantic) → immediate failure, no retry, no events
+   (unchanged — was never retried, by either reyn or litellm).
 
 5. test_backoff_shape
    Backoff values follow the exponential curve: _backoff_s(0)=2s,
-   _backoff_s(1)=4s, _backoff_s(2)=8s — capped at 16s.
+   _backoff_s(1)=4s, _backoff_s(2)=8s — capped at 16s. Unaffected by
+   #5793 — still exercised by the one retry kind that remains.
 
-6. test_httpx_errors_retried
-   Raw httpx.ConnectError and httpx.ReadTimeout are retried (= transport-level
-   errors LiteLLM may not wrap).
+6. test_httpx_errors_not_retried_by_reyn_any_more (#5793 deny, was
+   test_httpx_errors_retried)
+   Raw httpx.ConnectError / httpx.ReadTimeout propagate immediately — no
+   longer a reyn-owned retry kind.
+
+7. test_is_retryable_exc_classification (#5793 rewritten)
+   ONLY EmptyLLMResponseError classifies as retryable now; every litellm
+   infra-exception kind this used to also classify as retryable no longer
+   does — litellm's own retry handles those, not this function.
 
 9. test_empty_choices_retried_then_succeed   (#187 B1)
    A 200 response with choices=[] on attempt 1 → retried as a transient
-   condition, succeeds on attempt 2. No IndexError, no crash.
+   condition, succeeds on attempt 2. No IndexError, no crash. Unaffected
+   by #5793 — this is the ONE case litellm can't handle, kept explicitly.
 
 10. test_empty_choices_exhausted_raises_named_error   (#187 B1)
    choices=[] on every attempt → raises the named EmptyLLMResponseError
    (NOT a cryptic IndexError from response.choices[0]); exhausted event
-   emitted. Pins the real proxy failure-mode shape.
+   emitted. Pins the real proxy failure-mode shape. Unaffected by #5793.
 
 No real network calls — tests use a counter-based async callable stub that
 fails K times then succeeds (real instance, no unittest.mock).
@@ -220,12 +240,12 @@ async def _no_op_coro():
 
 
 @pytest.mark.asyncio
-async def test_retry_and_succeed(monkeypatch):
-    """Tier 2: retry wrapper — timeout on attempt 1, success on attempt 2.
-
-    Invariant: one llm_call_retry event emitted, no exhausted event, correct
-    error_kind and attempt_n fields.
-    """
+async def test_infra_exception_not_retried_by_reyn_any_more(monkeypatch):
+    """Tier 2: #5793 deny — a Timeout on attempt 1 propagates IMMEDIATELY, no
+    reyn-owned retry. litellm's own num_retries is the retry layer for this
+    kind now (owner decision: reyn does not duplicate litellm's own retry
+    decision). Was test_retry_and_succeed (accept-side, pre-#5793); rewritten
+    rather than deleted — the deny form is the live contract now."""
     import reyn.llm.llm as llm_mod
     slept: list[float] = []
     async def _fake_sleep(s: float) -> None:
@@ -241,33 +261,17 @@ async def test_retry_and_succeed(monkeypatch):
         success_response=resp,
     )
 
-    result = await _llm_call_with_retry(stub, "test-model", log)
-    assert result is resp
-    assert stub.call_count == 2
+    with pytest.raises(litellm.exceptions.Timeout):
+        await _llm_call_with_retry(stub, "test-model", log)
+    assert stub.call_count == 1, "a Timeout must not be retried by reyn's own loop any more"
+    assert slept == [], "no backoff sleep — there is no reyn-owned retry to back off before"
 
     await settle(log)
-    # Exactly one retry event (present) and no exhausted event (absent)
-    retry_events = [e for e in collected if e.type == "llm_call_retry"]
-    assert retry_events, "at least one llm_call_retry event must be emitted after a timeout"
-    assert not any(e.type == "llm_call_retry_exhausted" for e in collected), (
-        "llm_call_retry_exhausted must NOT be emitted when retry succeeds"
+    types = [e.type for e in collected]
+    assert "llm_call_retry" not in types, (
+        "no llm_call_retry event — reyn no longer retries this exception kind"
     )
-
-    ev = retry_events[0]
-    assert ev.data["model"] == "test-model"
-    assert ev.data["error_kind"] == "Timeout"
-    assert ev.data["attempt_n"] == 1
-    # #1835: jitter is default-ON — the emitted backoff_s and the sleep duration are
-    # independently drawn from [base/2, base] = [1.0, 2.0] for attempt 0 (base=2.0),
-    # so exact-value equality would be non-deterministic. Assert the range instead.
-    assert 1.0 <= ev.data["backoff_s"] <= 2.0, (
-        f"backoff_s for attempt 0 must be in [1.0, 2.0] (jitter range), got {ev.data['backoff_s']}"
-    )
-
-    # Sleep called exactly once (one retry); with jitter the value is in [1.0, 2.0].
-    # Use unpack to assert exactly-one-element rather than len() (pin behavior not size).
-    (sleep_val,) = slept
-    assert 1.0 <= sleep_val <= 2.0, f"sleep duration must be in [1.0, 2.0], got {sleep_val}"
+    assert "llm_call_retry_exhausted" not in types
 
 
 # ---------------------------------------------------------------------------
@@ -276,12 +280,12 @@ async def test_retry_and_succeed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_all_retries_exhausted(monkeypatch):
-    """Tier 2: retry wrapper — all 3 attempts fail → exhausted event + exception.
-
-    Invariant: llm_call_retry_exhausted emitted on terminal failure; the
-    original exception propagates; call_count == _LLM_RETRY_MAX_ATTEMPTS.
-    """
+async def test_infra_exception_exhausted_by_reyn_removed(monkeypatch):
+    """Tier 2: #5793 deny — a ServiceUnavailableError propagates on the FIRST
+    attempt, no llm_call_retry_exhausted event, since there is no reyn-owned
+    retry to exhaust any more (litellm's own num_retries governs this kind).
+    Was test_all_retries_exhausted (accept-side, pre-#5793); rewritten rather
+    than deleted."""
     import reyn.llm.llm as llm_mod
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
 
@@ -293,13 +297,14 @@ async def test_all_retries_exhausted(monkeypatch):
     with pytest.raises(litellm.exceptions.ServiceUnavailableError):
         await _llm_call_with_retry(stub, "model-503", log)
 
-    assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
+    assert stub.call_count == 1, "a ServiceUnavailableError must not be retried by reyn any more"
 
     await settle(log)
-    exhausted = [e for e in collected if e.type == "llm_call_retry_exhausted"]
-    assert exhausted, "llm_call_retry_exhausted must be emitted when all retries fail"
-    assert exhausted[0].data["model"] == "model-503"
-    assert exhausted[0].data["error_kind"] == "ServiceUnavailableError"
+    types = [e.type for e in collected]
+    assert "llm_call_retry_exhausted" not in types, (
+        "no exhausted event — there is no reyn-owned retry loop to exhaust for this kind"
+    )
+    assert "llm_call_retry" not in types
 
 
 async def _fake_sleep_noop(_: float) -> None:
@@ -352,21 +357,20 @@ async def test_4xx_no_retry(monkeypatch):
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Test 6: httpx transport errors retried
+# Test 6: httpx transport errors — #5793 deny, no longer retried by reyn
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_httpx_errors_retried(monkeypatch):
-    """Tier 2: retry wrapper — httpx.ConnectError and httpx.ReadTimeout are retried.
-
-    LiteLLM may not wrap transport-level errors that occur before the HTTP
-    response is received. The retry wrapper must catch them directly.
-    """
+async def test_httpx_errors_not_retried_by_reyn_any_more(monkeypatch):
+    """Tier 2: #5793 deny — httpx.ConnectError and httpx.ReadTimeout propagate
+    IMMEDIATELY now; reyn no longer catches raw transport-level errors as a
+    retry trigger (litellm's own num_retries governs transport failures now,
+    same as every other infra-exception kind #5793 moved). Was
+    test_httpx_errors_retried (accept-side, pre-#5793); rewritten rather
+    than deleted."""
     import reyn.llm.llm as llm_mod
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
-
-    resp = _fake_response()
 
     for exc_cls in (httpx.ConnectError, httpx.ReadTimeout):
         log = _make_event_log()
@@ -380,16 +384,17 @@ async def test_httpx_errors_retried(monkeypatch):
         stub = _FailThenSucceedCallable(
             fail_count=1,
             exc=raw_exc,
-            success_response=resp,
+            success_response=_fake_response(),
         )
 
-        result = await _llm_call_with_retry(stub, "model-net", log)
-        assert result is resp, f"{exc_cls.__name__} should be retried"
-        assert stub.call_count == 2
+        with pytest.raises(exc_cls):
+            await _llm_call_with_retry(stub, "model-net", log)
+        assert stub.call_count == 1, f"{exc_cls.__name__} must not be retried by reyn any more"
 
         await settle(log)
-        retry_events = [e for e in collected if e.type == "llm_call_retry"]
-        assert retry_events, f"{exc_cls.__name__}: expected at least one llm_call_retry event"
+        assert "llm_call_retry" not in [e.type for e in collected], (
+            f"{exc_cls.__name__}: no llm_call_retry event any more"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -398,25 +403,32 @@ async def test_httpx_errors_retried(monkeypatch):
 
 
 def test_is_retryable_exc_classification():
-    """Tier 2: _is_retryable_exc — correct classification of retryable vs non-retryable.
-
-    Checks the classification function directly against concrete exception
-    instances without exercising the full retry loop.
+    """Tier 2: #5793 rewritten — _is_retryable_exc now classifies ONLY
+    EmptyLLMResponseError as retryable. Every litellm infra-exception kind
+    this used to also classify as retryable (Timeout/APIConnectionError/
+    5xx/BadGateway) no longer does — litellm's own retry (reyn's
+    ``num_retries`` kwarg) is that decision now, not this function.
+    Was an accept-list for those kinds; now a deny list, the live contract.
     """
-    # Retryable
-    assert _is_retryable_exc(litellm.exceptions.Timeout("t", model="m", llm_provider="p"))
-    assert _is_retryable_exc(litellm.exceptions.APIConnectionError("c", llm_provider="p", model="m"))
-    assert _is_retryable_exc(
+    empty = EmptyLLMResponseError("empty choices")
+    assert _is_retryable_exc(empty), "EmptyLLMResponseError is the ONE case litellm can't handle"
+
+    # #5793: none of these are reyn-retryable any more.
+    assert not _is_retryable_exc(litellm.exceptions.Timeout("t", model="m", llm_provider="p"))
+    assert not _is_retryable_exc(
+        litellm.exceptions.APIConnectionError("c", llm_provider="p", model="m")
+    )
+    assert not _is_retryable_exc(
         litellm.exceptions.InternalServerError("500", response=None, llm_provider="p", model="m")
     )
-    assert _is_retryable_exc(
+    assert not _is_retryable_exc(
         litellm.exceptions.ServiceUnavailableError("503", response=None, llm_provider="p", model="m")
     )
-    assert _is_retryable_exc(
+    assert not _is_retryable_exc(
         litellm.exceptions.BadGatewayError("502", response=None, llm_provider="p", model="m")
     )
 
-    # Non-retryable
+    # Never retryable, unaffected by #5793 — semantic/validation errors.
     assert not _is_retryable_exc(
         litellm.exceptions.BadRequestError("400", response=None, llm_provider="p", model="m")
     )
@@ -439,20 +451,19 @@ async def test_event_log_none_no_crash(monkeypatch):
     """Tier 2: retry wrapper — event_log=None suppresses observability events without crashing.
 
     Callers that don't pass an EventLog must still benefit from retry behavior.
-    """
+    #5793: switched from a Timeout-retry scenario (no longer retried by reyn
+    at all) to the empty-choices scenario (#187 B1) — the one retry kind
+    #5793 keeps, so this test still exercises a REAL reyn-owned retry with
+    event_log=None, not a scenario that no longer retries at all."""
     import reyn.llm.llm as llm_mod
     monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
 
-    resp = _fake_response()
-    stub = _FailThenSucceedCallable(
-        fail_count=1,
-        exc=litellm.exceptions.Timeout("timed out", model="m", llm_provider="p"),
-        success_response=resp,
-    )
+    valid = _fake_response()
+    stub = _ReturnEmptyThenValidCallable(empty_count=1, valid_response=valid)
 
     # No event_log — must not raise
     result = await _llm_call_with_retry(stub, "model-y", None)
-    assert result is resp
+    assert result is valid
     assert stub.call_count == 2
 
 

@@ -142,23 +142,28 @@ class EmbeddingConfig:
         max_retries:   Transient-error retries (0–10).
         retry_backoff: Backoff strategy: ``'exponential'`` or ``'linear'``.
         timeout:       Per-attempt deadline in seconds — how long reyn WAITS for
-                       one embedding attempt (#3043). ``<= 0`` opts out (= no
-                       bound), mirroring the MCP gateway's
-                       ``call_timeout_seconds`` contract.
+                       one embedding attempt (#3043). ``None`` (the default,
+                       #5793) means NOT PASSED at all — litellm/the OpenAI SDK's
+                       own timeout default applies (owner decision: reyn does
+                       not invent a default duplicating litellm's own — this
+                       field used to default to 60.0, mirroring
+                       ``chat.timeout.llm_call_seconds``, which got the same
+                       fix in the same PR). ``<= 0`` is a SEPARATE, explicit
+                       operator setting (not the same fact as "unset" —
+                       mirrors the MCP gateway's ``call_timeout_seconds``
+                       contract) that resolves to the identical ``None`` at
+                       the one call site that consumes it, since litellm's
+                       own default is the ceiling either way — see
+                       ``resolve_embed_timeout``'s own docstring. Set this
+                       only to override litellm's default with a
+                       reyn-specific bound.
                        Bounds waiting, NOT spending: the OpenAI SDK client
                        retries beneath this knob, so one attempt can deliver up
                        to 3 requests and ``max_retries: 3`` up to 9 (measured:
-                       all 9 delivered in 7.6s under the 60.0s default, which
-                       never engages). Lowering it does not lower that count —
-                       reducing REQUESTS is a separate lever, open in #3047.
-                       Default 60.0 == ``chat.timeout.llm_call_seconds``: an
-                       embedding call is the same KIND of thing as a chat LLM
-                       call (one HTTP round-trip to a model provider), so it
-                       carries the same bound — unlike an MCP call (120.0),
-                       which also pays a subprocess spawn. Without this the
-                       effective bound was litellm's own ``request_timeout``
-                       default of 6000s (= 100 min/attempt, ~5h across
-                       ``max_retries``) — indistinguishable from a hang.
+                       all 9 delivered in 7.6s under the former 60.0s default,
+                       which never engaged). Lowering it does not lower that
+                       count — reducing REQUESTS is a separate lever, open in
+                       #3047.
         tokenizer:     tiktoken encoding used for chunk-size estimation.
         cost_warn_threshold:
                        Ask-user gate fires when estimated chunk count
@@ -176,7 +181,7 @@ class EmbeddingConfig:
     max_concurrent_batches: int = field(default=1, metadata={"axis": Axis.PROJECT})
     max_retries: int = field(default=3, metadata={"axis": Axis.PROJECT})
     retry_backoff: Literal["exponential", "linear"] = field(default="exponential", metadata={"axis": Axis.PROJECT})
-    timeout: float = field(default=60.0, metadata={"axis": Axis.PROJECT})
+    timeout: "float | None" = field(default=None, metadata={"axis": Axis.PROJECT})
     tokenizer: str = field(default="cl100k_base", metadata={"axis": Axis.PROJECT})
     cost_warn_threshold: int = field(default=10000, metadata={"axis": Axis.PROJECT})
 
@@ -316,13 +321,23 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     max_concurrent_batches = int(raw.get("max_concurrent_batches", defaults.max_concurrent_batches))
     max_retries = int(raw.get("max_retries", defaults.max_retries))
     retry_backoff = str(raw.get("retry_backoff", defaults.retry_backoff))
-    raw_timeout = raw.get("timeout", defaults.timeout)
-    try:
-        timeout = float(raw_timeout)
-    except (TypeError, ValueError):
-        raise ValueError(
-            f"embedding.timeout must be a number of seconds, got {raw_timeout!r}"
-        ) from None
+    # #5793: `timeout` unset in reyn.yaml means the OPERATOR never set it —
+    # `defaults.timeout` is None by design, and stays None, never coerced
+    # through `float(None)`. A genuinely-present-but-malformed value (the
+    # operator DID write something, just not a number) still raises —
+    # unlike `resolve_embed_timeout`'s own fail-open ("effectively
+    # unspecified") contract, THIS parser is reyn.yaml's own validation
+    # gate, where a malformed value is an operator TYPO to surface, not a
+    # silent no-op.
+    if "timeout" not in raw or raw.get("timeout") is None:
+        timeout: "float | None" = defaults.timeout
+    else:
+        try:
+            timeout = float(raw["timeout"])
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"embedding.timeout must be a number of seconds, got {raw['timeout']!r}"
+            ) from None
     tokenizer = str(raw.get("tokenizer", defaults.tokenizer))
     cost_warn_threshold = int(raw.get("cost_warn_threshold", defaults.cost_warn_threshold))
     default_class = str(raw.get("default_class", defaults.default_class))
@@ -346,7 +361,9 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
         raise ValueError(
             f"embedding.max_retries must be 0–10, got {max_retries}"
         )
-    if timeout <= 0:
+    # #5793: `timeout is None` (unset — the new default) is NOT the same
+    # fact as an explicit `<= 0` opt-out; only warn on the latter.
+    if timeout is not None and timeout <= 0:
         logging.getLogger(__name__).warning(
             "embedding.timeout=%s opts OUT of the per-attempt bound: an embedding "
             "API call that stalls will run to litellm's own request_timeout "

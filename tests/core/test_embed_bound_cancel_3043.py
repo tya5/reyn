@@ -193,15 +193,20 @@ async def test_batches_are_bounded_independently_of_batch_count(
 # The operator knob
 # ---------------------------------------------------------------------------
 
-def test_default_bound_is_finite_and_matches_the_chat_llm_call_bound() -> None:
-    """Tier 2: with no operator config the bound is finite (the invariant) and is
-    the same number a chat LLM call carries — an embed is the same kind of call.
+def test_default_bound_is_unset_and_matches_the_chat_llm_call_bound() -> None:
+    """Tier 2: #5793 — with no operator config the bound is ``None`` (NOT
+    PASSED to litellm at all; litellm/the OpenAI SDK's own default applies),
+    the same as a chat LLM call's own default — an embed is the same kind
+    of call, and the two surfaces got the SAME fix in the same PR.
 
     Reads `chat.timeout.llm_call_seconds`'s own default rather than restating
-    60.0, so the two cannot silently drift apart.
+    None, so the two cannot silently drift apart. Deliberately NOT "finite"
+    any more — reyn no longer invents a per-attempt number duplicating
+    litellm's own (owner decision, #5793).
     """
     from reyn.config.chat import TimeoutConfig
 
+    assert resolve_embed_timeout({}) is None
     assert resolve_embed_timeout({}) == TimeoutConfig().llm_call_seconds
 
 
@@ -227,9 +232,13 @@ def test_non_positive_timeout_opts_out_of_the_bound() -> None:
     assert LiteLLMEmbeddingProvider({"timeout": 0}).timeout is None
 
 
-def test_malformed_timeout_falls_back_to_the_bound_not_to_no_bound() -> None:
-    """Tier 2: a malformed value fails SAFE — it keeps a finite bound rather than
-    silently restoring the unbounded call (mirrors `resolve_call_timeout`)."""
+def test_malformed_timeout_is_treated_as_unspecified() -> None:
+    """Tier 2: #5793 — a malformed value collapses to the SAME state as no
+    config at all: ``None``, litellm's own default. (Pre-#5793 this used to
+    fail SAFE to a reyn-owned finite bound instead; #5793 removed that
+    reyn-owned number, so "malformed" and "unspecified" are now the same
+    fact, not two that happen to produce equal numbers.)"""
+    assert resolve_embed_timeout({"timeout": "not-a-number"}) is None
     assert resolve_embed_timeout({"timeout": "not-a-number"}) == resolve_embed_timeout({})
     assert resolve_embed_timeout({"timeout": None}) == resolve_embed_timeout({})
 
@@ -252,9 +261,12 @@ async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
     """Tier 2: Ctrl-C mid-embed cancels the in-flight call at once and surfaces the
     cancelled outcome + audit-event — it does not wait out the bound.
 
-    The bound here is the 60s default and the cancel fires at 0.3s, so the bound
-    CANNOT be what ends this call: only the cancel seam can. Pre-#3043 the op had
-    no seam at all and this would run the full 60s (past the 20s ceiling).
+    No explicit ``timeout`` is configured here — #5793: the default is no
+    longer a reyn-owned 60s, so whatever bound applies (litellm's own,
+    commonly far longer) is CERTAINLY not what ends this call at 0.3s: only
+    the cancel seam can. Pre-#3043 the op had no seam at all and this would
+    have run out whatever bound (or lack of one) applied (past the 20s
+    ceiling either way).
     """
     cancel_event = asyncio.Event()
     ctx, events = _make_ctx(cancel_event=cancel_event)
