@@ -1,20 +1,33 @@
 """Tier 2: OS invariant -- #5769 stage 3, checkout gains a session scope
 (ADR-0047 decision 3/5, the writer + recovery half).
 
-Real `AgentRegistry` + `StateLog` + on-disk agents (no mocks). `scope=None`
-(default) is byte-identical to the pre-#5769 global cut; `scope=(name, sid)`
-cancels/quiesces, appends a reset-record for, and materialises ONLY that
-session -- never touching another agent/session, the workspace, or config
-generations (decision 4/6).
+Real `AgentRegistry` + `StateLog` + on-disk agents (no mocks). `scope=
+GLOBAL_SCOPE` is byte-identical to the pre-#5769 global cut; `scope=(name,
+sid)` cancels/quiesces, appends a reset-record for, and materialises ONLY
+that session -- never touching another agent/session, the workspace, or
+config generations (decision 4/6).
 
 Covers: the retention guard staying global regardless of scope (architect's
 explicit ruling), a scoped checkout leaving an unrelated agent's session
 completely untouched (decision 5's own "sessions can diverge" witness),
 crash recovery reading `(target_n, scope)` off the latest reset-record and
-materialising only that pair, and the CLAUDE.md hard-rule truncate-falsify
+materialising only that pair, the CLAUDE.md hard-rule truncate-falsify
 test for a recovery-feature PR: write a scoped rewind, truncate the WAL past
 its own supporting events, reconstruct from the surviving self-contained
 snapshot alone, and confirm the scoped rewind's effect survives.
+
+`scope` is a required keyword-only argument on BOTH `checkout` functions
+(module-level `snapshot_generations.checkout` and
+`AgentRegistry.checkout`) -- no default. An earlier draft of this PR gave
+`scope` a `None` default, reasoning (by analogy with the READ-side/WRITE-side
+split #5769 stage 1 drew) that "write global" is a safe fallback. Architect's
+follow-up review overruled that: unlike a merely-too-broad READ, a forgotten
+`scope` here WRITES a real, effectful reset-record that rewinds every session
+atomically -- the exact function ADR-0047 decision 3 names as the
+session-scoped-rewind boundary -- so the omission is invisible under the
+shipped config, lands in the dangerous direction (silently global, not an
+error), and every real caller already knows its own answer (`rewind`/
+`rewind_to`/the `/rewind` slash command all name `GLOBAL_SCOPE` explicitly).
 """
 from __future__ import annotations
 
@@ -23,7 +36,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
-from reyn.core.events.snapshot_generations import RewindBeyondRetentionError
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, RewindBeyondRetentionError
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -61,14 +74,14 @@ def _inbox_ids(snap: AgentSnapshot) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_checkout_scope_none_writes_the_same_record_shape_as_before(tmp_path):
-    """Tier 2: acceptance -- scope=None (default) leaves the existing WAL
+    """Tier 2: acceptance -- scope=GLOBAL_SCOPE leaves the existing WAL
     entry shape untouched: no `scope` key at all in the reset-record."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
     await _put(log, "alpha", "a1")
 
-    result = await reg.checkout(1)
+    result = await reg.checkout(1, scope=GLOBAL_SCOPE)
 
     entry = next(e for e in log.iter_from(0) if e.get("kind") == "rewind")
     assert "scope" not in entry
@@ -177,8 +190,8 @@ async def test_recover_rewind_if_needed_materialises_only_the_scoped_session(tmp
 @pytest.mark.asyncio
 async def test_recover_rewind_if_needed_stays_global_for_a_legacy_unscoped_record(tmp_path):
     """Tier 2: non-regression -- a crash mid-GLOBAL-rewind (no scope field
-    at all, exactly what checkout()'s scope=None path still writes) is
-    still recovered via the full, unchanged materialise-everything path."""
+    at all, exactly what checkout()'s scope=GLOBAL_SCOPE path still writes)
+    is still recovered via the full, unchanged materialise-everything path."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     _seed_agent(tmp_path, "beta")
@@ -188,7 +201,9 @@ async def test_recover_rewind_if_needed_stays_global_for_a_legacy_unscoped_recor
     await _put(log, "beta", "b1")
 
     from reyn.core.events.snapshot_generations import checkout as append_reset_record
-    await append_reset_record(log, target_seq=1, supersedes=log.current_seq)  # no scope
+    await append_reset_record(
+        log, target_seq=1, scope=GLOBAL_SCOPE, supersedes=log.current_seq,
+    )  # GLOBAL_SCOPE writes no scope field -- byte-identical to legacy
 
     result = await reg.recover_rewind_if_needed()
 
@@ -243,3 +258,34 @@ async def test_scoped_rewind_survives_wal_truncation_past_its_own_events(tmp_pat
     saved.apply_events(list(log.iter_from(saved.applied_seq + 1)))
 
     assert _inbox_ids(saved) == ["a1", "a3"]  # a2 stays gone -- the scope survived truncation
+
+
+@pytest.mark.asyncio
+async def test_module_level_checkout_requires_scope_kwarg(tmp_path):
+    """Tier 2: no default -- a call site that forgets scope fails at the
+    call, matching every other #5769/#5781 (agent, sid)-carrying seam's
+    own required-kwarg contract. Pins OUR signature decision (a forgotten
+    scope here WRITES a real, effectful global rewind -- the dangerous
+    direction -- rather than silently reading the wrong branch), not a
+    language behaviour."""
+    from reyn.core.events.snapshot_generations import checkout
+
+    log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+
+    with pytest.raises(TypeError):
+        await checkout(log, target_seq=0)  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_registry_checkout_requires_scope_kwarg(tmp_path):
+    """Tier 2: no default -- same shape as
+    `test_module_level_checkout_requires_scope_kwarg`, one layer OUT, on
+    `AgentRegistry.checkout` itself (the function ADR-0047 decision 3
+    names as the session-scoped-rewind boundary)."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+    await _put(log, "alpha", "a1")
+
+    with pytest.raises(TypeError):
+        await reg.checkout(1)  # type: ignore[call-arg]

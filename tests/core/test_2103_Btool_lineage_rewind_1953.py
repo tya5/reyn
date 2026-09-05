@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import checkout, rewind
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, checkout, rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -72,7 +72,7 @@ async def test_lineage_survives_rewind_round_trip_child_stays_capped(tmp_path):
 
     # forward-checkout PAST C's create: Phase-2 checkout since cseq is now abandoned.
     # checkout subsumes R1 (R1 falls in (cseq, R2)), leaving C's seq active again.
-    R2 = await checkout(log, target_seq=cseq)    # new active target; R1 subsumed
+    R2 = await checkout(log, target_seq=cseq, scope=GLOBAL_SCOPE)    # new active target; R1 subsumed
     await reg._materialize_rewind(reconstruct_seq=R2, workspace_at_or_below=cseq)
     assert _agent_dir(tmp_path, "C").is_dir()  # re-materialised
     contextual, _ = reg.resolved_profile_for("C")

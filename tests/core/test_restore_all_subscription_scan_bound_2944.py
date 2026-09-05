@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 
@@ -76,7 +76,7 @@ async def test_restore_all_scan_count_independent_of_wal_size(tmp_path, monkeypa
 
     small_log = _CountingStateLog(tmp_path / "small" / ".reyn" / "wal.jsonl")
     seqs = await _seed_wal(small_log, 30)
-    await checkout(small_log, target_seq=seqs[5])
+    await checkout(small_log, target_seq=seqs[5], scope=GLOBAL_SCOPE)
     small_reg = _make_registry(tmp_path / "small", small_log)
     small_log.iter_from_calls = 0
     await small_reg.restore_all()
@@ -84,7 +84,7 @@ async def test_restore_all_scan_count_independent_of_wal_size(tmp_path, monkeypa
 
     large_log = _CountingStateLog(tmp_path / "large" / ".reyn" / "wal.jsonl")
     seqs = await _seed_wal(large_log, 600)
-    await checkout(large_log, target_seq=seqs[5])
+    await checkout(large_log, target_seq=seqs[5], scope=GLOBAL_SCOPE)
     large_reg = _make_registry(tmp_path / "large", large_log)
     large_log.iter_from_calls = 0
     await large_reg.restore_all()
@@ -109,7 +109,7 @@ async def test_restore_all_scan_count_bounded_not_proportional_to_wal_entries(
     state_log = _CountingStateLog(tmp_path / ".reyn" / "wal.jsonl")
     n = 200
     seqs = await _seed_wal(state_log, n)
-    await checkout(state_log, target_seq=seqs[10])  # non-trivial abandoned interval
+    await checkout(state_log, target_seq=seqs[10], scope=GLOBAL_SCOPE)  # non-trivial abandoned interval
     reg = _make_registry(tmp_path, state_log)
 
     state_log.iter_from_calls = 0

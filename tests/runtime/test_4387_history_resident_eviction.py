@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from reyn.config.chat import HistoryResidentConfig
-from reyn.core.events.snapshot_generations import REWIND_KIND, checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.mcp.server import _history_baseline_seq, _new_agent_history_entries
 from reyn.runtime.chat_message import ChatMessage
@@ -272,7 +272,7 @@ async def test_active_branch_history_survives_wal_truncation_after_real_eviction
         "earliest turn for this test to actually exercise eviction"
     )
 
-    await checkout(state_log, target_seq=anchors[2])  # hide turns 4-10
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)  # hide turns 4-10
 
     for i in range(11, 14):
         await _turn(s, state_log, f"turn {i}")

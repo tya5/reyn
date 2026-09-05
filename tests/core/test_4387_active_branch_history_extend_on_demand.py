@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import REWIND_KIND, checkout
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
@@ -78,7 +78,7 @@ async def test_rewind_past_a_bounded_prefix_extends_backward(tmp_path, monkeypat
     assert [m.content for m in s.history] == ["turn 8", "turn 9", "turn 10"]
 
     # Rewind to after turn 3 — entirely OLDER than what's currently loaded.
-    await checkout(state_log, target_seq=anchors[2])
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)
 
     assert _visible_texts(s) == ["turn 1", "turn 2", "turn 3"], (
         "the active branch (turns 1-3) must be visible even though none of "
@@ -143,7 +143,7 @@ async def test_extend_backward_survives_wal_truncation_below_the_rewind_record(
     anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 11)]
     s.history = s.history[-3:]  # bounded load: only turns 8-10 in memory
 
-    await checkout(state_log, target_seq=anchors[2])  # hide turns 4-10
+    await checkout(state_log, target_seq=anchors[2], scope=GLOBAL_SCOPE)  # hide turns 4-10
     # Grow the WAL further so there's real content past the rewind to
     # truncate BELOW (truncate_below's min_keep_seq must be > the rewind
     # record's own seq for this to be a meaningful drop, not a no-op).

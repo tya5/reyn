@@ -550,7 +550,7 @@ def lineage_predecessor(
 
 async def checkout(
     state_log: StateLog, *, target_seq: int,
-    scope: "tuple[str, str] | None" = None,
+    scope: "tuple[str, str] | None",
     supersedes: int | None = None,
 ) -> int:
     """Append a reset-record to ``target_seq`` UNCONDITIONALLY (Phase-2 D8 fork).
@@ -569,21 +569,30 @@ async def checkout(
     ``supersedes`` is **audit-only** (records the prior active pointer for the
     branch-tree audit trail); ``is_active`` derivation does not depend on it.
 
-    #5769 stage 3 (ADR-0047 decision 3): ``scope=None`` (the default) writes
-    the SAME record shape as before this parameter existed — no ``scope``
-    key at all in the WAL entry, byte-identical to every pre-#5769 call —
-    so every existing caller (``rewind()`` below, and the ~20 direct test
-    call sites across the suite) is completely unaffected. ``scope=(agent,
-    sid)`` writes that pair into the entry's own ``scope`` field, read back
-    by ``build_active_predicate``'s own scope filter (stage 1). Unlike
-    ``build_active_predicate``'s ``scope`` (required, no default — stage 1
-    made that required because a forgotten scope there silently reasons
-    about the WRONG branch for a real, already-known (agent, sid)), a
-    default here is safe: a caller that omits ``scope`` gets EXACTLY
-    today's well-understood global-rewind behavior, not a silent
-    misbehavior — there is no "wrong branch" to accidentally read on the
-    WRITE side, only "write global" (unchanged) vs. "write scoped" (new,
-    opt-in)."""
+    #5769 (ADR-0047 decision 3): ``scope=GLOBAL_SCOPE`` writes the SAME record
+    shape as before this parameter existed — no ``scope`` key at all in the
+    WAL entry, byte-identical to every pre-#5769 call. ``scope=(agent, sid)``
+    writes that pair into the entry's own ``scope`` field, read back by
+    ``build_active_predicate``'s own scope filter (stage 1).
+
+    No default (required keyword-only) — a stage-3 draft of this function
+    gave ``scope`` a ``None`` default, reasoning that "write global" is a
+    safe, well-understood fallback (unlike a forgotten READ-side scope,
+    which silently reasons about the wrong branch). Architect's follow-up
+    review overruled that: a forgotten ``scope`` here does not merely widen
+    a read, it WRITES a real, effectful reset-record that rewinds every
+    session atomically — the exact function ADR-0047 decision 3 names as
+    the session-scoped-rewind boundary. All three of the architect's
+    standing "does this default matter" lines land here: (1) is it visible
+    under the shipped config — no, an omitted ``scope`` produces a
+    successful, ordinary-looking global rewind; (2) is it the safe
+    direction — no, "forgot to scope it" silently becomes "rewound
+    everyone," the more dangerous of the two outcomes; (3) does the caller
+    already know its answer — yes, every real caller either has a real
+    ``(agent, sid)`` in hand or is an intentionally-global primitive
+    (``rewind``/``rewind_to``/the ``/rewind`` slash command) that can name
+    ``GLOBAL_SCOPE`` explicitly. A default here would only ever paper over
+    a forgotten call, never serve a caller with nothing to say."""
     fields: "dict[str, object]" = {
         "target_n": int(target_seq), "supersedes": supersedes,
     }
@@ -602,6 +611,12 @@ async def rewind(
     rewinds along the live timeline; Phase-2 ``checkout`` lifts it.
 
     Raises ``RewindIntoAbandonedError`` when ``target_n`` is on an abandoned branch.
+
+    No ``scope`` parameter of its own: ``rewind`` is the pre-#5769,
+    genuinely global Phase-1 undo primitive (no per-session concept
+    anywhere in its own contract), so it passes ``GLOBAL_SCOPE`` to
+    ``checkout`` explicitly — an honest spelling of "this caller has no
+    owner to name," not an inferred or forgotten one.
     """
     is_active = _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
     if not is_active(target_n):
@@ -610,7 +625,9 @@ async def rewind(
             "to an abandoned branch is a Phase-2 fork, not supported by Phase-1 "
             "undo (use checkout). Rewind only to a seq on the active timeline."
         )
-    return await checkout(state_log, target_seq=target_n, supersedes=supersedes)
+    return await checkout(
+        state_log, target_seq=target_n, scope=GLOBAL_SCOPE, supersedes=supersedes,
+    )
 
 
 def reconstruct(

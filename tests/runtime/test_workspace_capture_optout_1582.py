@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import is_active_seq
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, is_active_seq
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -80,7 +80,7 @@ async def test_rewind_reverts_runtime_not_workspace(tmp_path) -> None:
 
     # Runtime checkout works (consistent-cut on the runtime substrate alone).
     await session._journal.flush()  # #2259 PR-2b: drain before durable read
-    await reg.checkout(seq_a)
+    await reg.checkout(seq_a, scope=GLOBAL_SCOPE)
     markers = [m["payload"]["turn"] for m in session.current_snapshot.inbox]
     assert markers == ["A"]                                  # runtime reverted
     assert is_active_seq(reg.state_log, seq_a)               # cut landed on the runtime substrate

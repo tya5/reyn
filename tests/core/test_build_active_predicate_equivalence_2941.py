@@ -46,7 +46,7 @@ async def test_single_rewind_abandons_interval(tmp_path: Path) -> None:
     """Tier 2: one rewind — the abandoned (target, R) interval hidden under both."""
     state_log = StateLog(tmp_path / "state.wal")
     seqs = [await state_log.append("step_completed") for _ in range(10)]
-    await checkout(state_log, target_seq=seqs[2])
+    await checkout(state_log, target_seq=seqs[2], scope=GLOBAL_SCOPE)
     _assert_equivalent(state_log, range(1, state_log.current_seq + 1))
 
 
@@ -56,9 +56,9 @@ async def test_nested_subsuming_rewinds(tmp_path: Path) -> None:
     (nested abandonment) — equivalence holds through the composition."""
     state_log = StateLog(tmp_path / "state.wal")
     seqs = [await state_log.append("step_completed") for _ in range(6)]
-    await checkout(state_log, target_seq=seqs[4])  # abandon a small tail first
+    await checkout(state_log, target_seq=seqs[4], scope=GLOBAL_SCOPE)  # abandon a small tail first
     more = [await state_log.append("step_completed") for _ in range(4)]
-    await checkout(state_log, target_seq=seqs[1])  # subsumes the first rewind entirely
+    await checkout(state_log, target_seq=seqs[1], scope=GLOBAL_SCOPE)  # subsumes the first rewind entirely
     _assert_equivalent(state_log, range(1, state_log.current_seq + 1))
     assert more  # sanity: the intervening turns exist in the WAL
 
@@ -69,10 +69,10 @@ async def test_checkout_back_resurrection(tmp_path: Path) -> None:
     tip — resurrects it. Equivalence holds across the resurrection."""
     state_log = StateLog(tmp_path / "state.wal")
     seqs = [await state_log.append("step_completed") for _ in range(6)]
-    await checkout(state_log, target_seq=seqs[2])       # rewind: abandons seqs[3:6]
+    await checkout(state_log, target_seq=seqs[2], scope=GLOBAL_SCOPE)       # rewind: abandons seqs[3:6]
     for _ in range(3):
         await state_log.append("step_completed")         # new branch forward
-    await checkout(state_log, target_seq=seqs[5])       # checkout back: resurrects seqs[3:6]
+    await checkout(state_log, target_seq=seqs[5], scope=GLOBAL_SCOPE)       # checkout back: resurrects seqs[3:6]
     _assert_equivalent(state_log, range(1, state_log.current_seq + 1))
 
 
@@ -83,7 +83,7 @@ async def test_predicate_is_reusable_across_many_seqs(tmp_path: Path) -> None:
     on (build once per turn, apply per message)."""
     state_log = StateLog(tmp_path / "state.wal")
     seqs = [await state_log.append("step_completed") for _ in range(20)]
-    await checkout(state_log, target_seq=seqs[9])
+    await checkout(state_log, target_seq=seqs[9], scope=GLOBAL_SCOPE)
     predicate = build_active_predicate(state_log, scope=GLOBAL_SCOPE)
     expected = [is_active_seq(state_log, s) for s in range(1, state_log.current_seq + 1)]
     actual = [predicate(s) for s in range(1, state_log.current_seq + 1)]
