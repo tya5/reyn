@@ -108,6 +108,20 @@ class TimeoutConfig:
             repeating the literal, so raising this one number is the only
             operator action needed to widen the budget under co-located
             CPU load; it does not itself change the default.
+
+            #5794: why reyn holds this bound instead of delegating to the
+            MCP SDK's own `read_timeout_seconds`. That parameter exists,
+            but carries no default of its own (`ClientSession`/`call_tool`
+            both default it to `None`); an omitted value reaches
+            `JSONRPCDispatcher.send_raw_request`'s `anyio.fail_after(opts.
+            get("timeout"))` as `None`, which `anyio.fail_after` treats as
+            "disable the timeout" (`deadline = math.inf`,
+            `jsonrpc_dispatcher.py:401`) — measured, not assumed: the SDK
+            genuinely never bounds this wait on its own. Delegating would
+            trade the #3475/#3520 stale-empty-tools-cache regression this
+            field's own docstring describes above for an UNBOUNDED hang —
+            worse, not merely different. The delegate having a parameter
+            is not a witness that omitting it is safe.
     """
 
     # #5793 (owner decision, "わざわざ reyn が別に規定を持つ理由がわからん — 未指定な
