@@ -393,9 +393,10 @@ async def test_truncate_falsify_mid_fan_out_replays_items_exactly_once(tmp_path:
 
     # RESUME with COLLECT disarmed (C stays armed — it must NOT be re-run anyway).
     crash.discard("COLLECT")
+    snapshot = latest_pipeline_state("run-fe-tf", state_log, scope=GLOBAL_SCOPE)
     resumed = await PipelineExecutor().resume(
         "run-fe-tf", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
+        tool_dispatch=dispatch, state_log=state_log, snapshot=snapshot,
     )
 
     lines = out_file.read_text(encoding="utf-8").splitlines()
@@ -427,10 +428,12 @@ async def test_resume_after_full_fan_out_replays_with_zero_new_side_effects(tmp_
     before = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert before == ["A", "B", "C", "COLLECT", "D"]
 
+    from reyn.core.events.pipeline_recovery import latest_pipeline_state
     from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+    snapshot = latest_pipeline_state("run-fe-done", state_log, scope=GLOBAL_SCOPE)
     resumed = await PipelineExecutor().resume(
         "run-fe-done", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
+        tool_dispatch=dispatch, state_log=state_log, snapshot=snapshot,
     )
     after = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert after == before, "a fully-completed fan-out must replay with zero side effects"
@@ -508,10 +511,11 @@ async def test_truncate_falsify_compositional_do_sub_step_survives_mid_item_cras
     # RESUME with the crash disarmed: sub-step 0 REPLAYS (does not re-fire) —
     # only sub-step 1 (X-b) executes.
     crash.clear()
+    snapshot = latest_pipeline_state("run-fe-comp-tf", state_log, scope=GLOBAL_SCOPE)
     await PipelineExecutor().resume(
         "run-fe-comp-tf", pipeline=pipeline,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
-        scope=GLOBAL_SCOPE,
+        snapshot=snapshot,
     )
     lines = out_file.read_text(encoding="utf-8").splitlines()
     assert lines == ["X-a", "X-b"], (

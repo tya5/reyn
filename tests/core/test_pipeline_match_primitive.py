@@ -306,11 +306,13 @@ async def test_truncate_falsify_match_resumes_case_substeps_exactly_once(tmp_pat
     assert all(s >= 40 for s in surviving), "the case sub-step's WAL entry is truncated away"
 
     crash.clear()
+    from reyn.core.events.pipeline_recovery import latest_pipeline_state
     from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+    snapshot = latest_pipeline_state("run-match-tf", state_log, scope=GLOBAL_SCOPE)
     resumed = await PipelineExecutor().resume(
         "run-match-tf", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
-        scope=GLOBAL_SCOPE,
+        snapshot=snapshot,
     )
 
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
