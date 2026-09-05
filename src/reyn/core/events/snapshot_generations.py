@@ -43,6 +43,20 @@ class SnapshotGenerationStore:
         self._dir = Path(generations_dir)
 
     def _path_for(self, seq: int) -> Path:
+        """The on-disk path for the generation cut at WAL position ``seq``.
+
+        #5816/#5815: this builds a filename from a POSITION, not from an
+        owner — ``seq`` is whatever ``AgentSnapshot.applied_seq`` a caller
+        passes (itself a lower bound, never an exact/owned position, see
+        that field's own docstring). Multiple STORES (different agents'
+        own ``SnapshotGenerationStore`` instances, each rooted at that
+        agent's own ``generations_dir``) legitimately having a
+        ``gen-<seq>.json`` at the SAME ``seq`` is normal (#5815's own
+        finding: two agents' generations existed at the same WAL
+        position, whose own WAL entry belonged to a third agent
+        entirely) — this store never needs to disambiguate that, since
+        each store only ever reads/writes inside its own directory.
+        """
         return self._dir / f"gen-{seq}.json"
 
     def record(self, snapshot: AgentSnapshot) -> Path:

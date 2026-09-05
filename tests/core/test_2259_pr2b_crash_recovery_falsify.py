@@ -91,12 +91,34 @@ async def test_crash_before_wal_durable_loses_the_undurable_tail(tmp_path):
 
 @pytest.mark.asyncio
 async def test_concurrent_journals_each_snapshot_keyed_to_own_wal_seq(tmp_path):
-    """Tier 2: invariant #2 under CONCURRENCY — two journals sharing one durability worker mutate
-    interleaved; each journal's snapshot.applied_seq == the seq of ITS OWN last WAL entry, never a
-    peer's interleaved entry. The (`_wal_append_nowait`, `save_nowait`) pair is enqueued with no
-    await between, so the worker can never slot a peer's WAL job between a journal's pair → the snap
-    job's `last_assigned_seq` read is always its own paired WAL seq. RED if a save_nowait stamped
-    applied_seq from a peer's interleaved last_assigned_seq."""
+    """Tier 2: invariant #2 under CONCURRENCY — two journals share ONE durability
+    worker while mutating interleaved.
+
+    #5816 (architect ruling — this test's own prose used to conflate two
+    different facts): ``save_nowait`` always stamps the GLOBAL
+    ``state_log.last_assigned_seq`` — never "this journal's own last
+    event" specifically (see ``AgentSnapshot.applied_seq``'s own
+    docstring: a lower bound, not an ownership claim). What actually
+    protects a journal's own stamp from a PEER's later, interleaved
+    append is a real mechanism, not "keyed to its own event": ``append_
+    inbox`` calls ``_wal_append_nowait`` then ``save_nowait`` with NO
+    ``await`` between them, so on this ONE shared serial worker those two
+    jobs are submitted, and therefore execute, ADJACENT to each other —
+    no other WAL-assigning job (a peer's own append included) can be
+    interleaved between a journal's own WAL-append job and its own
+    paired snapshot-save job. So by the time ja's snapshot-save job reads
+    ``last_assigned_seq``, the global head has not moved since ja's OWN
+    append assigned it. That the resulting stamped value therefore equals
+    a1's own last WAL entry's seq is the CONSEQUENCE of this mechanism in
+    THIS test's own construction (2 journals, each mutating only its own
+    entries) — not evidence that ``save_nowait`` reads anything scoped to
+    one agent. Verified load-bearing (#5816, strip-falsified by hand):
+    inserting a real ``await asyncio.sleep(0)`` between the WAL-append and
+    the snapshot mutation in ``append_inbox`` (breaking the "no await
+    between" half of the mechanism) turns this exact assertion RED.
+
+    RED if a save_nowait stamped applied_seq from a peer's interleaved
+    last_assigned_seq — i.e. if the adjacency mechanism above ever broke."""
     log = StateLog(tmp_path / "shared.wal")
     store_a = SnapshotGenerationStore("a1", tmp_path / "gen_a")
     store_b = SnapshotGenerationStore("a2", tmp_path / "gen_b")
@@ -126,14 +148,18 @@ async def test_concurrent_journals_each_snapshot_keyed_to_own_wal_seq(tmp_path):
     order = [e["target"] for e in entries if e.get("target") in ("a1", "a2")]
     assert "a1" in order[:3] and "a2" in order[:3], f"streams did not interleave: {order}"
 
-    # each journal's snapshot is keyed to its OWN last WAL entry — no peer seq bled across the pair.
+    # #5816: the no-await-between-pair + single-serial-worker adjacency (this
+    # test's own docstring) is what stamps the GLOBAL head undisturbed by a
+    # peer's later append -- in THIS construction (each journal mutating only
+    # its own entries) that global-head value equals a1's own last WAL seq.
     assert ja.snapshot.applied_seq == max(a_seqs), (
-        f"a1 snapshot applied_seq={ja.snapshot.applied_seq} must == a1's own last WAL seq "
-        f"{max(a_seqs)} (no cross-contamination from a2's interleaved pair)"
+        f"a1 snapshot applied_seq={ja.snapshot.applied_seq}, expected {max(a_seqs)} "
+        f"(the global head at a1's own save-job execution time -- a2's later, "
+        f"interleaved append must not have bled into it)"
     )
     assert jb.snapshot.applied_seq == max(b_seqs), (
-        f"a2 snapshot applied_seq={jb.snapshot.applied_seq} must == a2's own last WAL seq "
-        f"{max(b_seqs)}"
+        f"a2 snapshot applied_seq={jb.snapshot.applied_seq}, expected {max(b_seqs)} "
+        f"(the global head at a2's own save-job execution time)"
     )
 
 
