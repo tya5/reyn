@@ -2322,7 +2322,8 @@ class AgentRegistry:
 
         Returns one row per snapshot-generation boundary, ascending by seq::
 
-            [{"seq": int, "ts": str, "kind": str, "anchor": str, "branch_id": int}, ...]
+            [{"seq": int, "ts": str, "kind": str, "anchor": str, "branch_id": int,
+              "name": str | None, "sid": str | None}, ...]
 
         Default (``include_abandoned=False``) keeps only **active-branch** boundaries
         (Phase-1 1f timeline). Phase-2 fork UX passes ``include_abandoned=True`` to
@@ -2346,6 +2347,45 @@ class AgentRegistry:
         the union across known agents is the global rewind-point set. Abandoned
         (rewound-past) boundaries are filtered out via ``is_active_seq``.
 
+        #5769 stage 3 (③, architect scope): ``name``/``sid`` — every row's
+        ORIGIN ``(agent_name, session_id)`` pair, not only the agent's
+        default ("main") session. Before this stage the loop below
+        enumerated only ``_store_for(name)`` (the implicit
+        ``_DEFAULT_SID``), so a checkpoint cut by a spawned subagent
+        session's own generation store was invisible here entirely, not
+        merely unlabeled — ``_discover_session_ids`` (the same
+        disk+in-memory discovery the rewind materialiser already depends
+        on for crash recovery) now supplies every sid to fold in.
+
+        A boundary seq is *architecturally* the origin of exactly one
+        ``(name, sid)`` pair (a WAL entry belongs to one session's own
+        turn/step by construction — the same "seq is globally unique per
+        event" property today's per-agent union already relies on).
+        **Architecturally guaranteed is not the same as checked** (#5782
+        review, architect BLOCKING): this method used to look the pair up
+        with ``.get(s, _DEFAULT_SID)``, which — had the invariant ever been
+        violated by a future bug — would have silently handed back
+        ``"main"``: not a placeholder, a REAL session's own name, wired
+        straight into the row the operator clicks to choose which session
+        to rewind. That is the exact "answer from a fallback instead of
+        admitting the owner can't be named" shape decision 7 (ADR-0047)
+        already forbids — it had simply reappeared inside this row instead
+        of a scope predicate. So the lookup is now checked, not assumed:
+        a seq claimed by two DIFFERING ``(name, sid)`` pairs is logged
+        (this should never happen) and ``name``/``sid`` come back ``None``
+        for that row rather than either owner's real value — an admitted
+        "don't know", never a fabricated one. The pair also travels
+        TOGETHER on one row (not ``sid`` alone) — a consumer that obtained
+        ``name`` from a different source (e.g. "whichever agent tab is
+        open") could otherwise present a ``(name, sid)`` combination that
+        never actually owned this seq; carrying both from the same lookup
+        makes that misattribution unwritable.
+
+        ⚠️ Scope boundary (explicit, per dispatch): these fields only make
+        the DATA available. Whether/how a caller surfaces them (grouping,
+        a column, a filter) is a presentation decision left to whoever
+        wires the timeline UI to it (owner-gated) — not decided here.
+
         Empty when there is no WAL or no generations.
         """
         if self._state_log is None:
@@ -2357,28 +2397,57 @@ class AgentRegistry:
         # rejected by checkout — advertising them is misleading.
         oldest_seq = self._oldest_kept_seq()
 
-        # Union of generation boundary seqs across every known agent. Default =
-        # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
+        # Union of generation boundary seqs across every known agent AND every
+        # sid of each (#5769 stage 3 ③ — was agent-default-sid-only through
+        # stage 2). Default = active branch only (1f); include_abandoned =
+        # all branches (Phase-2 tree).
         seqs: set[int] = set()
+        # None once written = seen more than one DIFFERING (name, sid) claim
+        # this seq — an admitted "don't know", never a fabricated owner
+        # (#5782 review, architect BLOCKING; see the method's own docstring).
+        seq_owner: dict[int, "tuple[str, str] | None"] = {}
         for name in self.list_names():
-            # #5769 stage 2: `_store_for(name)` (no sid) is today's own
-            # implicit "main" session — this loop's real, nameable owner
-            # per agent is (name, _DEFAULT_SID), not a placeholder. Built
-            # per agent name rather than hoisted once: `build_active_
-            # predicate`'s own record fetch is incremental/cached (#2939),
-            # so this is O(rewind records) per agent, not O(WAL) — the
-            # #2941 quadratic-WAL-scan concern this loop's own comment used
-            # to cite no longer applies (only the seq-independent
-            # DERIVATION was ever the expensive part; that stays cached
-            # regardless of how many times a scope filter runs over it).
-            is_active = build_active_predicate(
-                self._state_log, scope=(name, _DEFAULT_SID),
-            )
-            for s in self._store_for(name).seqs():
-                if oldest_seq is not None and s < oldest_seq:
-                    continue  # #2236: truncated out of WAL — not reachable
-                if include_abandoned or is_active(s):
-                    seqs.add(s)
+            # #5769 stage 3: every sid this agent has (main + loaded +
+            # on-disk spawned — the SAME discovery the rewind materialiser
+            # already depends on, `_discover_session_ids`'s own docstring),
+            # not only `_DEFAULT_SID`. Built per (name, sid) rather than
+            # hoisted once: `build_active_predicate`'s own record fetch is
+            # incremental/cached (#2939), so this is O(rewind records) per
+            # (agent, sid), not O(WAL) — the #2941 quadratic-WAL-scan
+            # concern this loop's own comment used to cite no longer
+            # applies (only the seq-independent DERIVATION was ever the
+            # expensive part; that stays cached regardless of how many
+            # times a scope filter runs over it).
+            for sid in self._discover_session_ids(name):
+                is_active = build_active_predicate(
+                    self._state_log, scope=(name, sid),
+                )
+                for s in self._store_for(name, sid).seqs():
+                    if oldest_seq is not None and s < oldest_seq:
+                        continue  # #2236: truncated out of WAL — not reachable
+                    if include_abandoned or is_active(s):
+                        seqs.add(s)
+                        # A boundary seq is the origin of exactly one (name,
+                        # sid) pair by construction (see this method's own
+                        # docstring) — this SHOULD never fire. #5769 stage 3
+                        # ④ (architect's re-written acceptance item, #5782
+                        # review): a seq without EXACTLY one owner must be
+                        # represented AS SUCH — never a fabricated value, not
+                        # even a first-seen-wins guess. So a second, DIFFERING
+                        # claim flips the entry to ``None`` rather than
+                        # keeping either owner.
+                        claim = (name, sid)
+                        if s not in seq_owner:
+                            seq_owner[s] = claim
+                        elif seq_owner[s] is not None and seq_owner[s] != claim:
+                            logger.warning(
+                                "list_rewind_points: seq %d claimed by both "
+                                "%r and %r — this should be structurally "
+                                "impossible; reporting no owner rather than "
+                                "either guess (see #5769 stage 3 ④)",
+                                s, seq_owner[s], claim,
+                            )
+                            seq_owner[s] = None
         if not seqs:
             return []
 
@@ -2396,6 +2465,19 @@ class AgentRegistry:
         rows: list[dict] = []
         for s in sorted(seqs):
             entry = wal_at.get(s, {})
+            # #5769 stage 3 ③ (re-fixed per #5782 review, architect
+            # BLOCKING): the (name, sid) pair that cut this generation —
+            # carried TOGETHER, off the SAME lookup, never ``sid`` alone
+            # (a consumer sourcing ``name`` separately could otherwise
+            # present a pair that never actually owned this seq). ``None``
+            # for BOTH when ``seq_owner`` never saw exactly one claim for
+            # this seq (structurally shouldn't happen — see the method's
+            # own docstring) — an admitted "don't know", never the old
+            # ``.get(s, _DEFAULT_SID)`` fallback, which fabricated a REAL
+            # session's name ("main") for a row the operator clicks to
+            # choose which session to rewind.
+            owner = seq_owner.get(s)
+            owner_name, owner_sid = owner if owner is not None else (None, None)
             rows.append({
                 "seq": s,
                 "ts": entry.get("ts", ""),
@@ -2406,6 +2488,8 @@ class AgentRegistry:
                 "anchor": anchors.get(s) if anchors is not None else "",
                 # #1533 2a→2b: the branch this checkpoint belongs to (group by this).
                 "branch_id": branch_of.get(s, 0),
+                "name": owner_name,
+                "sid": owner_sid,
             })
         return rows
 
