@@ -512,8 +512,13 @@ def _validate() -> None:
     # (policy_unknown, on the merged policy-tier view); this second
     # read's own job is the mcp-placement/rename check, unrelated to the
     # key vocabulary.
+    # #5801: same map every other project-wide-tier _load_yaml call uses.
+    _mcp_diag_token_map = {"REYN_PROJECT_DIR": str(project_root)}
     for label, path in static_mcp_sources.items():
-        raw = _load_yaml(path, vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE)
+        raw = _load_yaml(
+            path, vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+            token_map=_mcp_diag_token_map,
+        )
         mcp_section = raw.get("mcp")
         misplaced_found = _mcp_misplaced_server_entries(mcp_section)
         if misplaced_found:
@@ -526,6 +531,7 @@ def _validate() -> None:
     dynamic_mcp_raw = _load_yaml(
         project_root / ".reyn" / "config" / "mcp.yaml",
         vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+        token_map=_mcp_diag_token_map,
     )
     dynamic_mcp_section = dynamic_mcp_raw.get("mcp")
     dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_section)
@@ -563,8 +569,14 @@ def _validate() -> None:
             # #5455 ②: CHECKED_BY_CALLER — the very next lines run
             # unknown_profile_keys/retired_profile_keys_present on this
             # exact return value.
+            # #5801: same per-agent map AgentProfile.load itself uses —
+            # this diagnostic reads profile.yaml through the same
+            # structural gate, not a second, unexpanded copy of it.
             raw_profile = _load_yaml(
                 profile_path, vocabulary=_CheckedElsewhere.CHECKED_BY_CALLER,
+                token_map={
+                    "REYN_PROJECT_DIR": str(project_root), "REYN_AGENT_NAME": agent_dir.name,
+                },
             )
             retired_found = retired_profile_keys_present(raw_profile)
             if retired_found:

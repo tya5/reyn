@@ -271,3 +271,49 @@ def find_unresolved_reyn_tokens(obj: Any) -> list[str]:
             found.extend(find_unresolved_reyn_tokens(v))
         return found
     return []
+
+
+def expand_yaml_tokens_or_refuse(
+    obj: Any, token_map: dict[str, str], *, source: object,
+) -> Any:
+    """#5801: the ONE expand-then-fail-closed rule every reyn-token-aware
+    YAML face applies — :func:`expand_with_map` then
+    :func:`find_unresolved_reyn_tokens` on the result, WARN + refuse
+    (``None``) on any remainder, exactly the shape
+    ``config/loader.py``'s ``read_and_expand_hooks_yaml`` established for
+    hooks.yaml (#5140/#5166) before this function existed to name it
+    once. Before this, each face (config cascade, hooks.yaml,
+    profile.yaml) called ``expand_with_map``/``find_unresolved_reyn_tokens``
+    by hand or not at all — profile.yaml called neither (#5801's own
+    finding: coder-brown's ``${REYN_PROJECT_DIR}`` context_path never
+    expanded, AGENTS.md silently never read). A face's *vocabulary*
+    still varies (hooks.yaml/profile.yaml know ``REYN_AGENT_NAME``, the
+    project-wide config cascade does not) — that lives entirely in
+    *token_map*, which every caller supplies for itself (req③: one
+    entry point per face, not one map broadcast to all); this function
+    is the one thing every face shares.
+
+    ``source`` is whatever the caller wants named in the warning (a
+    ``Path``, or a string like ``"reyn.yaml/reyn.local.yaml"`` for a
+    caller that already merged several files before this check runs) —
+    only ever ``str()``-ed, never opened.
+
+    Returns the expanded structure, or ``None`` on refusal — callers
+    already treat ``None``/``{}`` as "this file/layer contributes
+    nothing" (the same fallback every face used before this existed),
+    so refusing composes without a new caller-side branch."""
+    expanded = expand_with_map(obj, token_map)
+    unresolved = find_unresolved_reyn_tokens(expanded)
+    if unresolved:
+        import warnings
+
+        warnings.warn(
+            f"{source} left reyn token(s) {sorted(set(unresolved))} "
+            "unresolved -- refusing to use this content (this is reyn's "
+            "own bug -- it could not supply a value it owns -- not a "
+            "config choice to honor).",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    return expanded

@@ -86,9 +86,12 @@ class _CheckedElsewhere(enum.Enum):
 
 
 def _load_yaml(
-    path: Path, *, vocabulary: "Callable[[dict], dict] | _CheckedElsewhere",
+    path: Path, *,
+    vocabulary: "Callable[[dict], dict] | _CheckedElsewhere",
+    token_map: dict[str, str],
 ) -> dict:
-    """Read *path* as YAML, returning ``{}`` if absent or unparseable.
+    """Read *path* as YAML, returning ``{}`` if absent, unparseable, OR
+    refused for an unresolved reyn token (see ``token_map`` below).
 
     #5455 ②: ``vocabulary`` is REQUIRED (no default) — every call site
     must actively choose. Architect's own design for this issue: the
@@ -105,6 +108,23 @@ def _load_yaml(
     falsifiable claim a reviewer can question — the structural guarantee
     is that NO call site can decide silently, and no two DIFFERENT
     reasons can look like the same value.
+
+    #5801: ``token_map`` is REQUIRED too, same shape and same reasoning —
+    this is the ONE function every config-cascade YAML file is read
+    through, so making token expansion a required parameter here (not a
+    separate pass a caller might forget to run afterward, the #5801 gap:
+    profile.yaml was read via a totally different path with no expansion
+    call anywhere) is what makes "read but never expanded" impossible to
+    write for any file that goes through THIS function. Applied via
+    :func:`reyn.plugins.tokens.expand_yaml_tokens_or_refuse` — reyn's own
+    ``${REYN_*}``/``${CLAUDE_*}`` vocabulary left unresolved after this
+    call's own map is applied is reyn's bug (fail-closed, this file
+    contributes nothing, matching the existing malformed-file fallback);
+    an unrelated ``${VAR}`` (an MCP server's own env token, say) is left
+    untouched for ``expand_env`` (ADR-0030) to resolve later, same as
+    always. Pass ``{}`` for a file this face has genuinely no reyn-token
+    value to offer (still required — an empty map is a real, visible
+    choice; omitting the parameter is not).
     """
     if not path.exists():
         return {}
@@ -113,6 +133,10 @@ def _load_yaml(
         with path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         data = data if isinstance(data, dict) else {}
+        if data:
+            from reyn.plugins.tokens import expand_yaml_tokens_or_refuse
+            expanded = expand_yaml_tokens_or_refuse(data, token_map, source=path)
+            data = expanded if expanded is not None else {}
         if callable(vocabulary) and data:
             unknown = vocabulary(data)
             if unknown:
@@ -398,6 +422,16 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     from reyn.builtin.registry import build_builtin_config
     merged = _merge(merged, build_builtin_config(), tier_label="builtin")
 
+    # #5801: project_root is computed FIRST now (used to be after
+    # user_global's own read) so every _load_yaml call in this function,
+    # user_global included, can supply the SAME REYN_PROJECT_DIR token
+    # map -- ${REYN_PROJECT_DIR} in ~/.reyn/config.yaml is as legitimate
+    # as in reyn.yaml (a user-global agent default naming a project-
+    # relative path), and there is no reason this one file alone should
+    # be unable to use reyn's own token vocabulary.
+    project_root = _find_project_root(cwd)
+    _policy_tier_token_map = {"REYN_PROJECT_DIR": str(project_root or cwd)}
+
     # #5455 ②: CHECKED_BY_CONFIG_VALIDATE for all 3 policy-tier files
     # here — checked downstream on the MERGED view by load_config's own
     # _warn_unknown_config_keys(merged) call (see that call site's
@@ -406,19 +440,21 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     user_global = _load_yaml(
         Path.home() / ".reyn" / "config.yaml",
         vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+        token_map=_policy_tier_token_map,
     )
     merged = _merge(merged, user_global, tier_label="user_global")
 
-    project_root = _find_project_root(cwd)
     if project_root:
         project = _load_yaml(
             project_root / "reyn.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+            token_map=_policy_tier_token_map,
         )
         merged = _merge(merged, project, tier_label="project")
         project_local = _load_yaml(
             project_root / "reyn.local.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_BY_CONFIG_VALIDATE,
+            token_map=_policy_tier_token_map,
         )
         merged = _merge(merged, project_local, tier_label="project_local")
 
@@ -926,6 +962,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # at their own load points (runtime.hot_reload.validate_in_set),
         # not duplicated here.
         unknown_config_keys_found = _warn_unknown_config_keys(merged)
+        # #5801: same map every _load_yaml call in build_policy_tier_config
+        # already uses — these 5 dynamic ``.reyn/config/*.yaml`` files are
+        # the SAME face (project-wide, no per-agent identity) as
+        # reyn.yaml/reyn.local.yaml, just a different physical file.
+        _dynamic_token_map = {"REYN_PROJECT_DIR": str(project_root)}
 
         # Issue #470: dynamic MCP registry separated from static config.
         # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
@@ -938,6 +979,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_mcp = _load_yaml(
             project_root / ".reyn" / "config" / "mcp.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+            token_map=_dynamic_token_map,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_mcp)
 
@@ -953,6 +995,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_cron = _load_yaml(
             project_root / ".reyn" / "config" / "cron.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+            token_map=_dynamic_token_map,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_cron)
 
@@ -967,6 +1010,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_skills = _load_yaml(
             project_root / ".reyn" / "config" / "skills.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+            token_map=_dynamic_token_map,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_skills, tier_label="dynamic")
 
@@ -981,6 +1025,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_pipelines = _load_yaml(
             project_root / ".reyn" / "config" / "pipelines.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+            token_map=_dynamic_token_map,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_pipelines)
 
@@ -996,6 +1041,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         dynamic_presentations = _load_yaml(
             project_root / ".reyn" / "config" / "presentations.yaml",
             vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+            token_map=_dynamic_token_map,
         )  # #5455 ②: checked downstream on the merged IN-set by validate_in_set
         merged = _merge(merged, dynamic_presentations)
 
@@ -1009,68 +1055,27 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # key should not go unreported just because there's no project).
         unknown_config_keys_found = _warn_unknown_config_keys(merged)
 
-    # #5166: reyn's OWN token vocabulary (${REYN_PROJECT_DIR} — the only one
-    # this project-wide, agent-less load has a real value for;
-    # ${REYN_AGENT_NAME} has no meaning here and is deliberately NOT in this
-    # map, same as any other token this pass does not recognise) is expanded
-    # FIRST, via expand_with_map — never os.environ, the same reasoning
-    # load_per_agent_hooks/read_and_expand_hooks_yaml use. ORDER MATTERS:
-    # this must run BEFORE expand_env below. expand_with_map's own contract
-    # leaves anything absent from its map untouched (an MCP server's
-    # ${API_KEY} is not a reyn token, so this pass never touches it) — doing
-    # it in the other order would let expand_env's os.environ lookup consume
-    # ${REYN_PROJECT_DIR} first (undefined there, silently degrading to ""),
-    # exactly the #5140 failure shape one layer up. No fail-close here
-    # (unlike the per-agent/per-session hooks.yaml layers): an unresolved
-    # ${REYN_AGENT_NAME} in reyn.yaml itself has no agent context to supply
-    # it at this project-wide load — refusing the WHOLE config over one
-    # per-agent token would be a disproportionate blast radius this
-    # project-wide layer was never asked to take on (architect ruling on
-    # #5166 scopes fail-close to the 4 enumerated hooks.yaml layers only).
-    # #5351: see the check right after this expansion for why a SEPARATE
-    # reyn-token warning runs here even though expand_env (further below,
-    # ADR-0030) already warns on any undefined ${VAR} it can't resolve.
-    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
-    merged = expand_with_map(merged, {"REYN_PROJECT_DIR": str(project_root or cwd)})
-
-    # #5351 witness 4 (lead-coder measurement, issue thread) + architect
-    # BLOCKING on the first version of this fix (PR #5503, head
-    # 0237874a0): an operator who writes ${REYN_AGENT_NAME} in the shared
-    # reyn.yaml was NOT met with silence -- expand_env (below) already
-    # warns "Config references undefined environment variable:
-    # ${REYN_AGENT_NAME}" and degrades it to "" (verified directly: the
-    # token is not left literal). The real defect is that this EXISTING
-    # signal points at the WRONG fix: it reads exactly like a genuine
-    # unset env var, so an operator who "fixes" it by `export
-    # REYN_AGENT_NAME=...` succeeds -- expand_env's warning disappears,
-    # the token resolves to whichever value happens to be in THIS
-    # process's env, and the shared, project-wide config is now silently
-    # pinned to one agent's name with zero remaining signal. This check
-    # runs BEFORE expand_env and BEFORE any os.environ lookup, so it
-    # fires on reyn's own token vocabulary regardless of whether the
-    # operator already "fixed" it via export -- catching exactly the
-    # failure mode the existing warning's own wrong fix produces. Never
-    # refuses (#5166's fail-close scoping to the 4 hooks.yaml layers only
-    # stands unchanged) -- this adds a correctly-aimed signal, it does
-    # not change what happens to the value.
-    _unresolved_policy_tokens = find_unresolved_reyn_tokens(merged)
-    if _unresolved_policy_tokens:
-        import warnings
-        warnings.warn(
-            f"reyn.yaml/reyn.local.yaml references reyn token(s) "
-            f"{sorted(set(_unresolved_policy_tokens))} that this layer "
-            "has no per-agent context to resolve (config is loaded once, "
-            "project-wide, before any agent is resolved). Do NOT "
-            "`export` it as an environment variable to silence the "
-            "'undefined environment variable' warning that follows this "
-            "one; that pins this shared config to whichever agent's name "
-            "happens to be in this process's env, with no further "
-            "signal. Move a per-agent value to that agent's own "
-            ".reyn/agents/<name>/hooks.yaml, or use ${REYN_PROJECT_DIR} "
-            "if a project-relative path was intended.",
-            UserWarning,
-            stacklevel=2,
-        )
+    # #5801: reyn's OWN token vocabulary (${REYN_PROJECT_DIR} — the only
+    # one this project-wide, agent-less load has a real value for;
+    # ${REYN_AGENT_NAME} has no meaning here, same as any other token
+    # this face's map does not carry) is now expanded PER FILE, inside
+    # every _load_yaml call above (required `token_map` parameter) —
+    # not as one extra pass over the already-merged dict. ORDER (must
+    # run before expand_env below) is preserved the same way: every
+    # _load_yaml call happens before this point. #5166's own file-level
+    # scoping question ("does an unresolved ${REYN_AGENT_NAME} here
+    # refuse the whole file, or only warn?") is answered uniformly now
+    # (owner ruling, #5801: "環境変数の展開ルールを yaml 内で統一して
+    # 構造化" — one rule, applied by every reyn-token-aware face's own
+    # _load_yaml call, not a second hand-written check here that could
+    # itself be forgotten for the NEXT face). See
+    # reyn.plugins.tokens.expand_yaml_tokens_or_refuse's own docstring
+    # for the shared expand-then-fail-closed rule + its warning text
+    # (which already names the exact unresolved token — an operator who
+    # `export`s ${REYN_AGENT_NAME} to silence expand_env's OWN separate
+    # "undefined environment variable" warning below gets no help from
+    # that; THIS warning already fired, and fires again on every load
+    # until the profile.yaml/reyn.yaml source is actually fixed).
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
@@ -1293,7 +1298,11 @@ def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
         # _warn_unknown_hot_reload_keys call — see _load_yaml's docstring.
         merged = _merge(
             merged,
-            _load_yaml(root / ".reyn" / fname, vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT),
+            _load_yaml(
+                root / ".reyn" / fname,
+                vocabulary=_CheckedElsewhere.CHECKED_AT_LOAD_POINT,
+                token_map={"REYN_PROJECT_DIR": str(root)},
+            ),
         )
     from reyn.security.secrets.interpolation import expand_env
     return expand_env(merged)
@@ -1339,14 +1348,17 @@ def read_and_expand_hooks_yaml(
     unified all 4 onto one implementation.
 
     Expands reyn's OWN token vocabulary via
-    :func:`reyn.plugins.tokens.expand_with_map` with an explicit
-    ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — never ``os.environ``
-    (``expand_env``, ADR-0030): that expander is for a SPAWNED CHILD
-    process's own config-time env-injection, and ``REYN_AGENT_NAME`` is
-    only ever set on a child's env, never on THIS process's own
-    ``os.environ`` — so it is always undefined here regardless of layer
-    (#5140's original finding). Fails closed via
-    :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` on any
+    :func:`reyn.plugins.tokens.expand_yaml_tokens_or_refuse` (#5801 — the
+    ONE expand-then-fail-closed rule every reyn-token-aware yaml face
+    now shares; this function was that rule's ORIGINAL, hand-written
+    home before #5801 pulled it out so ``_load_yaml``/``AgentProfile.
+    load`` could reuse it verbatim instead of re-deriving it) with an
+    explicit ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — never
+    ``os.environ`` (``expand_env``, ADR-0030): that expander is for a
+    SPAWNED CHILD process's own config-time env-injection, and
+    ``REYN_AGENT_NAME`` is only ever set on a child's env, never on THIS
+    process's own ``os.environ`` — so it is always undefined here
+    regardless of layer (#5140's original finding). Fails closed on any
     REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token (reyn's own bug, not an
     operator's config choice) — returns ``None`` (never ``{}``, so a
     caller can tell "genuinely absent" from "refused" if it ever needs
@@ -1363,21 +1375,11 @@ def read_and_expand_hooks_yaml(
     raw = _load_hooks_yaml(path)
     if not raw:
         return None
-    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
-    data = expand_with_map(
-        raw, {"REYN_PROJECT_DIR": str(project_root), "REYN_AGENT_NAME": agent_name}
+    from reyn.plugins.tokens import expand_yaml_tokens_or_refuse
+    data = expand_yaml_tokens_or_refuse(
+        raw, {"REYN_PROJECT_DIR": str(project_root), "REYN_AGENT_NAME": agent_name},
+        source=path,
     )
-    unresolved = find_unresolved_reyn_tokens(data)
-    if unresolved:
-        import warnings
-        warnings.warn(
-            f"{path} left reyn token(s) {sorted(set(unresolved))} "
-            "unresolved -- refusing to load this hooks.yaml layer (this "
-            "is reyn's own bug, not a config choice to honor).",
-            UserWarning,
-            stacklevel=2,
-        )
-        return None
     return data if isinstance(data, dict) else None
 
 
