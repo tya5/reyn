@@ -43,6 +43,8 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 
 6. **Agent-level lifecycle is global; only session-level state is scoped.** A session-scoped rewind never creates, drops, archives, purges or un-archives an **agent** — those facts are agent-wide (`agent_created` / `agent_archived` / `agent_purged` carry `entity_kind="agent", name=…` and no session; the `.archived` tombstone is one marker per agent directory; archiving preserves every session, #1954). One session rewinding must not change the workspace's topology for every other session. What a scoped rewind does move is session-level state: session create / vanish, and the conversation and agent state of that `(name, sid)`. In code this is the split `_materialize_rewind` now makes — `GLOBAL_SCOPE` for the agent existence checks, `scope=(name, sid)` built inside the session loop. **This resolves `_reconcile_archived_as_of_cut`, which stage 2 left on hold**: archival is agent-wide, so `GLOBAL_SCOPE` is its final answer, not a placeholder. Decision 4 is the same rule applied to config generations, which have no session notion at all.
 
+7. **A consumer that cannot name a seq's owner must not answer from the global chain.** `GLOBAL_SCOPE` does not mean "apply every reset-record"; it means "apply only the UNSCOPED ones" (decision 2's filter). So a consumer that falls back to `GLOBAL_SCOPE` because it failed to determine the owner **ignores every scoped rewind** — it retains, or re-wakes, exactly the state the user rewound away, silently. Measured instance: `_rewake_pipeline_runs` derives its scope from `invocation.json`; a run whose `invocation.json` is unreadable has no nameable owner. **The rule: skip the item and make the skip observable, rather than defaulting to global.** An un-rewoken pipeline run is parked, visible and recoverable; a re-woken one spends budget on work the user discarded, and cost/budget bounding is a band member. This fires only once a writer for a non-`None` scope exists — stage 3 — but it is a decision, not an implementation detail, because the alternative reads as a harmless default at every site that takes it.
+
 ## Alternatives considered
 
 | Alternative | Why not |
@@ -67,17 +69,20 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 
 ## Acceptance (for raising to ACCEPTED)
 
-- [ ] `scope=None` checkout leaves every existing rewind test green and unmodified.
-- [ ] `checkout(N, scope=(A, s))` puts `A/s` as-of-N and leaves every other session at head.
-- [ ] A WAL containing an A→B message, A rewound alone: A forgets sending, B keeps receiving — pinned as the intended property.
-- [ ] A legacy reset-record (no scope field) reads as global.
-- [ ] Calling `build_active_predicate` without `scope` fails.
-- [ ] Crash mid-scoped-rewind, then recover: only the scoped session is as-of-N (truncate-falsify form).
-- [ ] A target below the global WAL floor is rejected for a scoped checkout too.
-- [ ] No collaborator takes a caller-built `is_active` predicate: `git grep -nE 'is_active: .*Callable' -- src/` is empty.
-- [ ] A predicate is never built above a loop whose variables are the scope (`_materialize_rewind`'s session predicate is built inside the `sid` loop).
-- [ ] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6).
-- [ ] ADR-0038 is byte-identical.
+Checked against `origin/main` on **2026-09-05**, after #5772 (stage 1) and #5775 (stage 2) merged. **Decisions 3, 5 and 7 have no implementation yet — stage 3 carries the writer — so this ADR stays PROPOSED.** The unchecked boxes below are the reason, not an oversight.
+
+- [x] `scope=None` checkout leaves every existing rewind test green and unmodified.
+- [ ] `checkout(N, scope=(A, s))` puts `A/s` as-of-N and leaves every other session at head. — **stage 3**: `checkout(state_log, *, target_seq, supersedes)` and `AgentRegistry.checkout(seq)` on `origin/main` take no `scope`.
+- [ ] A WAL containing an A→B message, A rewound alone: A forgets sending, B keeps receiving — pinned as the intended property. — **stage 3** (needs the writer).
+- [x] A legacy reset-record (no scope field) reads as global.
+- [x] Calling `build_active_predicate` without `scope` fails.
+- [ ] Crash mid-scoped-rewind, then recover: only the scoped session is as-of-N (truncate-falsify form). — **stage 3**.
+- [ ] A target below the global WAL floor is rejected for a scoped checkout too. — **stage 3**.
+- [x] No collaborator takes a caller-built `is_active` predicate. Census on `origin/main`: `git grep -nE 'is_active: .*Callable' -- src/` returns **one** hit, `Session._filter_visible_on_active_branch` — a private static helper shared by two methods that each build their own predicate first, not a cross-owner seam. Disclosed, not empty.
+- [x] A predicate is never built above a loop whose variables are the scope (`_materialize_rewind`'s session predicate is built inside the `sid` loop).
+- [ ] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6). — **stage 3**: the rule is implemented (`GLOBAL_SCOPE` on the agent-level checks), but nothing can perform a session-scoped rewind yet to witness it.
+- [ ] An item whose owner cannot be named is skipped observably, not answered globally (decision 7). — **stage 3**.
+- [x] ADR-0038 is byte-identical.
 
 ## References
 
