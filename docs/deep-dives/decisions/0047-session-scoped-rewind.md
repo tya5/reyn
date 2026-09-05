@@ -1,6 +1,6 @@
 # ADR-0047 (#5769) — rewind gains a session scope; the global cut becomes the `scope=None` case
 
-**Status**: **PROPOSED** (owner ruling 2026-09-05, verbatim 「両方YES」 to the two questions in [#5769](https://github.com/tya5/reyn/issues/5769); to be raised to ACCEPTED only after the implementing PR lands and each decision below is checked against `origin/main`, the same procedure ADR-0045 followed).
+**Status**: **ACCEPTED** (2026-09-05). Raised by the procedure this line originally set out — the implementing PRs landed and **each decision below was checked against `origin/main` at `51a03a377`**, item by item, by the architect session that wrote the ADR; the pass and its witnesses are in the Acceptance section. Two earlier passes deliberately did NOT raise it: on 2026-09-05 after stage 2 (decisions 3, 5, 7 had no implementation) and again after stage 3 (11 of 12 — decision 7's property was asserted only by prose until #5807 pinned it). Owner ruling behind the ADR, verbatim 「両方YES」 to the two questions in [#5769](https://github.com/tya5/reyn/issues/5769); the user-facing default is the owner's own 「規定はローカルがよいな」 (decision 3).
 
 **Supersedes**: [ADR-0038](0038-user-facing-time-travel-rewind.md) — **its rejected alternative "Per-agent scoped rewind" only**. D2's global consistent cut stays as the **default** and as one of the two shapes this ADR defines; nothing else in 0038 (D3's append-only reset-record, D8's checkout, the retention guard) changes.
 
@@ -76,7 +76,7 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 
 ## Acceptance (for raising to ACCEPTED)
 
-Re-checked against `origin/main` at **b659b55de**, 2026-09-05, after every stage-3 PR merged (#5778 #5782 #5784 #5785 #5788 #5792 #5795). **11 of 12 hold. One does not, and it is the only thing keeping this ADR PROPOSED** — see the last box.
+Final pass: **12 of 12**, checked against `origin/main` at **`51a03a377`**, 2026-09-05, after every stage-3 PR merged (#5778 #5782 #5784 #5785 #5788 #5792 #5795) and the last witness (#5807). Every box below names the witness that would go red, not the change that was made.
 
 Items 8 and 9 were re-measured rather than carried over: #5795 changed `is_active_seq` and `earliest_relevant_wal_seq`'s signatures, and a verdict does not survive a change to the set it was measured against.
 
@@ -90,7 +90,7 @@ Items 8 and 9 were re-measured rather than carried over: #5795 changed `is_activ
 - [x] No collaborator takes a caller-built `is_active` predicate. Census at b659b55de: `git grep -nE 'is_active: .*Callable' -- src/` returns **one** hit, `Session._filter_visible_on_active_branch` — a private static helper shared by two methods that each build their own scoped predicate first, not a cross-owner seam. Disclosed, not empty.
 - [x] A predicate is never built above a loop whose variables are the scope. Every `build_active_predicate` call in `registry.py` re-measured: the two inside owner loops name `(name, sid)` / the run's own driver pair; the rest name `GLOBAL_SCOPE` for the agent-level and workspace-level facts decision 6 makes global.
 - [x] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6) — `test_5769_adr0047_acceptance_10.py::test_scoped_rewind_leaves_another_agents_archived_state_untouched`.
-- [ ] 🔴 **An item whose owner cannot be named is skipped observably, not answered globally (decision 7).** The mechanism is on `main` — `AgentRegistry._rewake_pipeline_runs` logs and `continue`s a run whose `invocation.json` is unreadable — but **nothing pins it**: a census of `tests/` finds no test that exercises that branch, so replacing the `continue` with a global fallback would go green. Decision 7 is the one decision in this ADR whose property is asserted only by prose. **This is the remaining blocker.** What closes it: a test that a run dir with an unreadable or absent `invocation.json` is left parked (not re-woken) and that the skip is observable — red if the branch is replaced by a global answer.
+- [x] An item whose owner cannot be named is skipped observably, not answered globally (decision 7) — `test_5769_adr0047_decision7_unreadable_invocation_parked.py`, both halves (`invocation.json` absent, and present-but-corrupt). Was the last box to close, and the only decision here whose property lived in prose alone until it did: the mechanism had been on `main` since before this arc, with no test exercising the branch, so replacing the skip with a global fallback would have gone green. The witness strips exactly that — the `continue` replaced by a synthetic default work order, the shape decision 7 names — and asserts the run is left parked on four independent surfaces (not re-woken, no result, resume counter not bumped, no identity invented) plus the logged skip, which doubles as the population witness: had the scan never visited the run dir, no warning would exist and the "not re-woken" assertion could not pass vacuously.
 - [x] ADR-0038 is byte-identical — untouched throughout this arc.
 
 ## References
