@@ -419,9 +419,18 @@ it explicitly.
 | iOS (TCC + Entitlements) | `Info.plist` capability + purpose string | First-use prompt | Capability axis | OS kernel + signed entitlements |
 | Android (≥ M) | `AndroidManifest.xml` `uses-permission` | First-use prompt for "dangerous" tier | Permission class + scoped storage | OS kernel + per-app UID |
 | Web Permissions API | Per-feature query | Per-permission prompt | Origin-scoped (= per-domain capability) | Browser sandbox |
-| Anthropic Claude Code | Tool list (Bash / Edit / Read / Write) | None at default; sandbox-mode optional | Tool name (no path scope) | Seatbelt (sandbox-mode) or trust |
+| Anthropic Claude Code | No declaration; `permissions.allow/ask/deny` rules + a mode (`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`) | Prompt on first use per tool, per mode; `auto` sends it to a classifier instead | Tool name **plus** specifier — path globs (`Edit(src/**)`), command prefixes (`Bash(npm run test:*)`), domains | OS sandbox for Bash (optional) + deny rules; deny at any settings level wins |
+| OpenAI Codex | No declaration; `approval_policy` × `sandbox_mode`, named presets | Prompt per policy (`untrusted`/`on-request`/`never`) | Sandbox scope (workspace), protected paths, domain allowlist | Seatbelt / Landlock; network off by default |
+| OpenClaw | No declaration; `tools.exec.mode` (`deny`/`allowlist`/`ask`/`auto`/`full`) | Allowlist miss → human, or auto-reviewer in `auto` | Binary-path or command-name glob + optional argv regex; approvals bind argv + cwd | Container + host floor; effective policy is the stricter of tool policy and approvals |
+| Hermes Agent | No declaration; `approvals.mode` (`smart`/`manual`/`off`) + sandbox backend | Dangerous-command check on the `local` backend only; `smart` asks an auxiliary LLM first | Command pattern only — **no per-path or per-tool scope** | Container backends are the boundary (checks skipped there); unoverridable hardline blocklist |
 | MCP servers | Server-side tool list exposed to client | Server owns its boundary | Per-tool, server-defined | Process boundary |
 | **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`) | startup_guard + interactive on first use | per-path / per-host / per-server (resource scope) | AST + `reyn.api.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
+
+A per-system breakdown of the four coding agents above — their mode dials, what persists, and where Reyn sits — is in
+[research/competitive/permission-modes.md](../../deep-dives/research/competitive/permission-modes.md) (measured 2026-09-06).
+The one shape all four share and Reyn does not: **a single named posture dial**, 3-6 values, ordered strict-to-permissive,
+switchable at runtime. Reyn has the machinery under it (the three grant layers plus the conjunctive restrict layers) and no
+such dial over it.
 
 Reyn deviates from the iOS / Android "capability + first-use prompt" pattern on two axes:
 
