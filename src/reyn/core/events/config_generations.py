@@ -16,9 +16,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import yaml
+
+from reyn.core.events.snapshot_generations import build_active_predicate
+
+if TYPE_CHECKING:
+    from reyn.core.events.state_log import StateLog
 
 _GEN_RE = re.compile(r"^(?P<rel>.+)@(?P<seq>\d+)\.yaml$")
 
@@ -119,23 +124,25 @@ class ConfigGenerationStore:
         return seq, content if isinstance(content, dict) else {}
 
     def latest_active(
-        self, rel_path: str, is_active: "Callable[[int], bool]",
+        self, rel_path: str, state_log: "StateLog", *, scope: "tuple[str, str] | None",
     ) -> "tuple[int, dict] | None":
         """The (seq, content) of the highest generation for `rel_path` on the ACTIVE WAL
         branch, or None when no active generation exists.
 
-        ``is_active`` is the caller-supplied membership predicate (``is_active_seq``'s
-        derivation is seq-independent — see ``build_active_predicate``). A caller
-        reconciling MANY rel_paths in one pass (e.g.
-        ``AgentRegistry._reconcile_config_as_of_cut``) MUST hoist ONE
-        ``build_active_predicate(state_log, scope=GLOBAL_SCOPE)`` (#5769 stage 1:
-        ``scope`` is now required, no default — ``GLOBAL_SCOPE`` is the named
-        constant for "this call site's own scope is genuinely global", not a
-        placeholder) and reuse it here per rel_path — passing
-        ``is_active_seq`` re-bound per call would re-scan the whole WAL once per
-        rel_path (the #2941 sibling quadratic-cold-start shape this signature exists to
-        prevent). A single-path caller may pass
-        ``lambda s: is_active_seq(state_log, s)`` directly.
+        #5769 stage 2: takes ``(state_log, scope)`` directly rather than a
+        caller-hoisted ``is_active`` predicate — this store builds its OWN
+        predicate internally (via ``build_active_predicate``), once per
+        call, so a caller reconciling MANY rel_paths in one pass (e.g.
+        ``AgentRegistry._reconcile_config_as_of_cut``) states its scope
+        (today always ``GLOBAL_SCOPE`` — config generations have no
+        session notion, ADR-0047 decision 4) as a plain fact per call
+        instead of hoisting an opaque predicate outside its own loop.
+        ``build_active_predicate``'s own record fetch is incremental/
+        cached (#2939), so a fresh build per rel_path is O(rewind
+        records), not O(WAL) — the quadratic-cold-start shape this
+        signature originally existed to prevent no longer applies to that
+        axis (it never re-scans per SEQ within one call, only once per
+        call, exactly as the prior caller-hoisted shape did).
 
         #2405: ``latest_at_or_below(cut=N)`` has the symmetric gap — post-rewind active
         generations (seq > R > N) are excluded, reverting config to as-of-N on crash
@@ -143,6 +150,7 @@ class ConfigGenerationStore:
         • Pre-target (seq ≤ N): active=True → applied.
         • Abandoned branch (N < seq < R): active=False → skipped.
         • Post-rewind active (seq > R): active=True → applied."""
+        is_active = build_active_predicate(state_log, scope=scope)
         seqs = [s for s in self._entries().get(rel_path, ()) if is_active(s)]
         if not seqs:
             return None

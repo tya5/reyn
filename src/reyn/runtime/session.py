@@ -4412,13 +4412,16 @@ class Session:
         # per-message seq — so it is computed ONCE per call (one WAL scan) and
         # reused for every message, instead of re-scanning the whole WAL per
         # message (was O(N messages x M WAL entries) per turn; now O(N + M)).
-        # TODO(#5769 stage 2): this reads ONLY self.history — one session's
-        # own seqs, never another agent's or session's — so `None` here is
-        # NOT `GLOBAL_SCOPE` (architect's #5772 finding: this method has no
-        # multi-agent scan to justify that label). Undecided whether stage
-        # 2 narrows this to scope=(self.agent_name, self.session_id) or
-        # keeps it global on purpose; do not read this as a settled choice.
-        is_active = build_active_predicate(self._state_log, scope=None)
+        # #5769 stage 2: every seq this predicate is ever asked about comes
+        # from self.history — THIS session's own messages, never another
+        # session's — so its real, nameable scope is (self.agent_name,
+        # self.session_id), not a placeholder. Its chain is "global records
+        # UNION this session's own" (ADR-0047 decision 2); with no scoped
+        # writer yet (checkout() stage 3), this remains behaviorally
+        # identical to the prior global read.
+        is_active = build_active_predicate(
+            self._state_log, scope=(self.agent_name, self.session_id),
+        )
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
@@ -4525,11 +4528,12 @@ class Session:
             return parsed, truncated
         from reyn.core.events.snapshot_generations import build_active_predicate
 
-        # TODO(#5769 stage 2): reads self.history_path -- ONE session's own
-        # file -- never another session's, so this is NOT a confirmed
-        # GLOBAL_SCOPE decision (architect's #5772 finding, same shape as
-        # _active_branch_history above). Undecided.
-        is_active = build_active_predicate(self._state_log, scope=None)
+        # #5769 stage 2: reads self.history_path -- THIS session's own
+        # file, never another's -- so its real scope is (self.agent_name,
+        # self.session_id), same reasoning as _active_branch_history above.
+        is_active = build_active_predicate(
+            self._state_log, scope=(self.agent_name, self.session_id),
+        )
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)

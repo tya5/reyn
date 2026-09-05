@@ -48,7 +48,8 @@ from typing import Any
 
 import pytest
 
-from reyn.core.events.pipeline_recovery import latest_pipeline_state
+from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
+from reyn.core.events.snapshot_generations import REWIND_KIND
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import (
     Pipeline,
@@ -717,3 +718,86 @@ async def test_async_launch_does_not_emit_bridge_marker(
     # async lifecycle, not just the launch instant.
     await _wait_for(lambda: scripted.calls >= 1)
     assert not any(e.type == "pipeline_run_attached" for e in caller_events)
+
+
+# ── #5769 stage 2: _rewake_pipeline_runs' rewind guard is scoped per-run ──────
+
+
+@pytest.mark.asyncio
+async def test_rewake_pipeline_runs_blocks_resurrection_scoped_to_its_own_driver(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5769 stage 2 -- architect's own flagged suspicion for #5772
+    (that this call site could NOT name its seq's owner) was refuted by
+    real investigation: `work_order.driver_agent`/`driver_sid` are read
+    from the SAME work_order object right after the `is_active` check --
+    this test drives that end to end. A rewind SCOPED to the run's OWN
+    driver (worker, sid) abandons its spawn_seq for that scope and must
+    block resurrection, exactly as an (unscoped) global rewind already
+    did before #5769."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+
+    sid = await reg.spawn_session_recorded(
+        "worker", mode="persistent", presentation_consumer=None, intervention_bridge=None,
+    )
+    spawn_seq = state_log.current_seq
+    from reyn.core.pipeline.serde import pipeline_to_dict
+    pipeline = _steps(1)
+    wo = PipelineWorkOrder(
+        run_id="run-scope-own", pipeline_name="p", pipeline=pipeline_to_dict(pipeline),
+        input=None, reply_to_agent="worker", reply_to_sid="main",
+        driver_agent="worker", driver_sid=sid, spawn_seq=spawn_seq,
+    )
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "run-scope-own")
+    write_invocation(run_dir, wo)
+    await record_pipeline_state(state_log, "run-scope-own", {"step_index": 0}, durable=True)
+
+    # Scoped to the run's OWN driver -- abandons spawn_seq FOR THAT SCOPE.
+    await state_log.append(
+        REWIND_KIND, target_n=0, supersedes=None, scope=["worker", sid],
+    )
+
+    rewoken = await reg._rewake_pipeline_runs()
+
+    assert "run-scope-own" not in rewoken
+
+
+@pytest.mark.asyncio
+async def test_rewake_pipeline_runs_ignores_a_rewind_scoped_to_a_different_driver(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5769 stage 2 -- the discriminating half of the sibling test
+    above. The IDENTICAL numeric rewind (target_n=0, abandoning the same
+    seq range) is now scoped to a DIFFERENT (agent, sid) -- it must NOT
+    block resurrection of a run whose own driver is unrelated. If this
+    went RED (the run failed to resurrect), the per-run scoped predicate
+    would be leaking an unrelated session's rewind into this run's own
+    evaluation -- the exact silent cross-run mixing #5769 stage 2 exists
+    to prevent."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = _agent_registry(tmp_path, state_log, None)
+
+    sid = await reg.spawn_session_recorded(
+        "worker", mode="persistent", presentation_consumer=None, intervention_bridge=None,
+    )
+    spawn_seq = state_log.current_seq
+    from reyn.core.pipeline.serde import pipeline_to_dict
+    pipeline = _steps(1)
+    wo = PipelineWorkOrder(
+        run_id="run-scope-other", pipeline_name="p", pipeline=pipeline_to_dict(pipeline),
+        input=None, reply_to_agent="worker", reply_to_sid="main",
+        driver_agent="worker", driver_sid=sid, spawn_seq=spawn_seq,
+    )
+    run_dir = pipeline_run_dir(tmp_path / ".reyn", "run-scope-other")
+    write_invocation(run_dir, wo)
+    await record_pipeline_state(state_log, "run-scope-other", {"step_index": 0}, durable=True)
+
+    # Scoped to an UNRELATED (agent, sid) -- must not affect this run.
+    await state_log.append(
+        REWIND_KIND, target_n=0, supersedes=None, scope=["someone-else", "sidZ"],
+    )
+
+    rewoken = await reg._rewake_pipeline_runs()
+
+    assert "run-scope-other" in rewoken

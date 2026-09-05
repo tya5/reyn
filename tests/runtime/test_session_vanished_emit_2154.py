@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import rewind
+from reyn.core.events.snapshot_generations import REWIND_KIND, rewind
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -136,3 +136,50 @@ async def test_session_vanished_after_cut_survives_reconstruction(tmp_path):
     await reg._materialize_rewind(reconstruct_seq=R, workspace_at_or_below=cut)
 
     assert sid in reg.session_ids("alice")                         # existed as-of-cut → kept
+
+
+@pytest.mark.asyncio
+async def test_session_vanished_protected_by_a_rewind_scoped_to_its_own_session(tmp_path):
+    """Tier 2: #5769 stage 2 -- the SAME abandoned-interval shape as the
+    sibling test above, but the rewind record is SCOPED to (alice, sid)
+    instead of global. `_materialize_rewind`'s session-level check now
+    builds a per-(name, sid) predicate rather than reusing one hoisted
+    GLOBAL_SCOPE predicate -- this must produce the SAME outcome (the
+    session survives) when the scoped record matches its own (name, sid)."""
+    reg = _make_registry(tmp_path)
+    reg.get_or_load("alice")
+    log = reg.state_log
+    sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
+    cut = log.current_seq
+    await log.append("session_vanished", entity_kind="session", name="alice", sid=sid)  # V = cut+1
+    r_seq = await log.append(REWIND_KIND, target_n=cut, supersedes=None, scope=["alice", sid])  # R, scoped
+
+    await reg._materialize_rewind(reconstruct_seq=r_seq, workspace_at_or_below=cut)
+
+    assert sid in reg.session_ids("alice")  # V is in the abandoned interval FOR THIS SCOPE → kept
+
+
+@pytest.mark.asyncio
+async def test_session_vanished_not_protected_by_a_rewind_scoped_elsewhere(tmp_path):
+    """Tier 2: #5769 stage 2 -- the discriminating half of the sibling test
+    above. The IDENTICAL vanish is now paired with a rewind scoped to a
+    DIFFERENT (agent, sid) -- it must NOT protect this session's vanish
+    (global default: nothing is abandoned for this session's own scope),
+    so the session reconstructs GONE, same as the unscoped-vanish
+    baseline (`test_session_vanished_before_cut_reconstructs_gone`). If
+    this went RED with sid unexpectedly surviving, the per-session
+    predicate would be leaking a different session's rewind into this
+    one's evaluation."""
+    reg = _make_registry(tmp_path)
+    reg.get_or_load("alice")
+    log = reg.state_log
+    sid = await reg.spawn_session_recorded("alice", mode="persistent", presentation_consumer=None, intervention_bridge=None)
+    cut = log.current_seq
+    await log.append("session_vanished", entity_kind="session", name="alice", sid=sid)  # V = cut+1
+    r_seq = await log.append(
+        REWIND_KIND, target_n=cut, supersedes=None, scope=["someone-else", "sidZ"],
+    )  # R, scoped to an unrelated (agent, sid)
+
+    await reg._materialize_rewind(reconstruct_seq=r_seq, workspace_at_or_below=cut)
+
+    assert sid not in reg.session_ids("alice")  # unaffected by a differently-scoped rewind → gone

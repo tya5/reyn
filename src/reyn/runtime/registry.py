@@ -1813,9 +1813,6 @@ class AgentRegistry:
         if not state_root.is_dir():
             return []
         rewoken: "list[str]" = []
-        # Hoisted once for the whole scan (not per run_dir): the seq-independent
-        # derivation otherwise re-scans the WAL once per pipeline run dir (#2941/#2944).
-        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
         for run_dir in sorted(state_root.iterdir()):
             if not run_dir.is_dir() or has_result(run_dir):
                 continue
@@ -1826,6 +1823,21 @@ class AgentRegistry:
                     "— skipping (nothing to resume from)", run_dir,
                 )
                 continue
+            # #5769 stage 2: work_order.spawn_seq is the WAL seq of the
+            # driver session's own spawn call — its real, nameable owner is
+            # (driver_agent, driver_sid), read from the SAME work_order
+            # right here (architect's #5772-review-triggered finding: this
+            # was earlier suspected NOT nameable at this call site; it is —
+            # no extra lookup needed, just this reordering). Built per
+            # run_dir rather than hoisted once: `build_active_predicate`'s
+            # own record fetch is incremental/cached (#2939), so a fresh
+            # build per run costs O(rewind records), not O(WAL) — the
+            # #2941/#2944 quadratic-WAL-scan concern this loop's own
+            # comment used to cite no longer applies to this call.
+            is_active = build_active_predicate(
+                self._state_log,
+                scope=(work_order.driver_agent, work_order.driver_sid),
+            )
             if work_order.spawn_seq is not None and not is_active(
                 work_order.spawn_seq,
             ):
@@ -2305,12 +2317,21 @@ class AgentRegistry:
 
         # Union of generation boundary seqs across every known agent. Default =
         # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
-        # Hoisted once for the whole (names x seqs) scan — the same fix-class as
-        # restore_all/#2941: the seq-independent derivation must not re-scan the
-        # WAL per candidate seq.
-        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
         seqs: set[int] = set()
         for name in self.list_names():
+            # #5769 stage 2: `_store_for(name)` (no sid) is today's own
+            # implicit "main" session — this loop's real, nameable owner
+            # per agent is (name, _DEFAULT_SID), not a placeholder. Built
+            # per agent name rather than hoisted once: `build_active_
+            # predicate`'s own record fetch is incremental/cached (#2939),
+            # so this is O(rewind records) per agent, not O(WAL) — the
+            # #2941 quadratic-WAL-scan concern this loop's own comment used
+            # to cite no longer applies (only the seq-independent
+            # DERIVATION was ever the expensive part; that stays cached
+            # regardless of how many times a scope filter runs over it).
+            is_active = build_active_predicate(
+                self._state_log, scope=(name, _DEFAULT_SID),
+            )
             for s in self._store_for(name).seqs():
                 if oldest_seq is not None and s < oldest_seq:
                     continue  # #2236: truncated out of WAL — not reachable
@@ -2545,6 +2566,13 @@ class AgentRegistry:
         # Hoisted once for the whole archived.items() scan (fix-class sibling of
         # #2941/restore_all — the seq-independent derivation must not re-scan the
         # WAL once per archived agent).
+        # TODO(#5769): archival's own attribution is unsettled — `name` (the
+        # agent) is nameable at the point `is_active(aseq)` is called below,
+        # but whether archival belongs to one particular SESSION (as
+        # opposed to being an agent-wide fact, like agent create/drop in
+        # _materialize_rewind above) is architect's judgment to make, not
+        # this PR's. Left at GLOBAL_SCOPE deliberately, on hold — this
+        # comment is the witness that the question was READ, not missed.
         is_active = (
             build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
@@ -2752,18 +2780,16 @@ class AgentRegistry:
         import yaml  # noqa: PLC0415 — local, matching the file convention
 
         store = self._config_generation_store()
-        # Hoisted once for the whole store.paths() scan — same fix-class sibling as
-        # above: `latest_active` takes the predicate directly so this loop doesn't
-        # re-derive (and re-scan the whole WAL for) `is_active_seq` once per rel_path.
-        is_active = (
-            build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
-            if self._state_log is not None
-            else None
-        )
+        # #5769 stage 2: `ConfigGenerationStore.latest_active` now takes
+        # (state_log, scope) directly and builds its own predicate — no
+        # caller-side hoist needed (see that method's own docstring for
+        # why a fresh build per rel_path is still cheap). GLOBAL_SCOPE:
+        # config generations have no session notion at all (ADR-0047
+        # decision 4) — not a placeholder pending a later real scope.
         for rel_path in store.paths():
             latest = (
-                store.latest_active(rel_path, is_active)
-                if is_active is not None
+                store.latest_active(rel_path, self._state_log, scope=GLOBAL_SCOPE)
+                if self._state_log is not None
                 else store.latest_at_or_below(rel_path, cut)
             )
             abs_path = (self._project_root / ".reyn" / rel_path).resolve()
@@ -3001,7 +3027,13 @@ class AgentRegistry:
         # per (created-agent, agent, session) triple; without hoisting, each call
         # re-scans the entire WAL (`is_active_seq` → `_rewind_records` →
         # `iter_from(1)`), turning this cold-start/rewind path quadratic in WAL size.
-        is_active = (
+        # #5769 stage 2: this one stays GLOBAL_SCOPE — an agent's own
+        # existence (create/drop) is not owned by any ONE of its sessions;
+        # every session lives or dies with the agent, so a single
+        # session-scoped rewind must never selectively resurrect or
+        # destroy the agent itself. Only the PER-SESSION checks below (the
+        # session loop) get a real per-(name, sid) scope.
+        agent_is_active = (
             build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
             if self._state_log is not None
             else None
@@ -3012,7 +3044,7 @@ class AgentRegistry:
         for _rname, (_rcseq, _rpayload, _rparent, _rpseq) in ag_created.items():
             if _rname in ag_purged:
                 continue  # fork A: purged = permanent, never re-materialised
-            _is_active = is_active is None or is_active(_rcseq)
+            _is_active = agent_is_active is None or agent_is_active(_rcseq)
             if _is_active and not (self._dir / _rname).is_dir():
                 self._rematerialise_agent(_rname, _rpayload)
         for name in self.list_names():
@@ -3023,13 +3055,23 @@ class AgentRegistry:
             agent_seq = created_at.get(("agent", name, ""))
             _on_abandoned = (
                 agent_seq is not None
-                and is_active is not None
-                and not is_active(agent_seq)
+                and agent_is_active is not None
+                and not agent_is_active(agent_seq)
             )
             if name in ag_purged or _on_abandoned:
                 self._drop_agent(name)
                 continue
             for sid in self._discover_session_ids(name):
+                # #5769 stage 2: a session's own spawn/vanish seq IS owned
+                # by exactly this (name, sid) — its real, nameable scope,
+                # built per session (cheap: build_active_predicate's own
+                # record fetch is incremental/cached, #2939 — not a WAL
+                # re-scan per session).
+                session_is_active = (
+                    build_active_predicate(self._state_log, scope=(name, sid))
+                    if self._state_log is not None
+                    else None
+                )
                 # A session on an abandoned branch → drop just that session.
                 # #2154: OR a session that VANISHED at-or-before the cut (it was gone
                 # as-of-cut) — the destroy-side mirror of the spawn-cut. A genuine
@@ -3040,13 +3082,13 @@ class AgentRegistry:
                 van_seq = sess_vanished.get((name, sid))
                 spawned_after_cut = (
                     sess_seq is not None
-                    and is_active is not None
-                    and not is_active(sess_seq)
+                    and session_is_active is not None
+                    and not session_is_active(sess_seq)
                 )
                 vanished_by_cut = (
                     van_seq is not None
-                    and is_active is not None
-                    and is_active(van_seq)
+                    and session_is_active is not None
+                    and session_is_active(van_seq)
                 )
                 if spawned_after_cut or vanished_by_cut:
                     # #2125: detach now (quiesce in-flight writes); defer the

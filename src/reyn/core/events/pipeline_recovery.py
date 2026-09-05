@@ -26,18 +26,34 @@ Two entry points:
   - ``latest_pipeline_state`` — the reader seam ``resume`` calls: the latest
     generation for a run ON THE ACTIVE WAL BRANCH, mirroring
     ``ConfigGenerationStore.latest_active``'s semantics exactly (active-branch
-    membership, latest-wins, no forward-replay), down to the predicate-taking
-    signature: ``PipelineStateStore.latest_active`` takes a caller-hoisted
-    ``is_active`` so no reader can re-scan the WAL once per generation seq.
+    membership, latest-wins, no forward-replay).
+
+#5769 stage 2: ``PipelineStateStore.latest_active`` now takes ``(state_log,
+scope)`` directly rather than a caller-hoisted ``is_active`` predicate — the
+derivation moves INSIDE the store, so a caller states its scope as a plain
+fact instead of building (and potentially mis-scoping) the predicate itself.
+This is not a re-scan-the-WAL-per-seq regression: ``build_active_predicate``'s
+own record fetch is incremental/cached (#2939) — the seq-independent
+derivation this module's own #2941-era comment worried about re-doing per
+call was never about the WAL scan cost (that stays cached regardless), only
+about the DERIVATION being seq-independent so it isn't rebuilt per SEQ within
+one call.
 """
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from reyn.core.events.config_recovery import reyn_root
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, build_active_predicate
+
+# `reyn.core.pipeline.work_order` imports `pipeline_state_dir` FROM this
+# module — a module-level import of `load_invocation` here would be
+# circular. Imported locally inside `latest_pipeline_state` instead,
+# matching `AgentRegistry._rewake_pipeline_runs`'s own existing lazy
+# import of the same name for the same reason.
 
 if TYPE_CHECKING:
     from reyn.core.events.state_log import StateLog
@@ -94,23 +110,28 @@ class PipelineStateStore:
         return seq, content
 
     def latest_active(
-        self, is_active: "Callable[[int], bool]",
+        self, state_log: "StateLog", *, scope: "tuple[str, str] | None",
     ) -> "tuple[int, dict] | None":
         """The (seq, content) of the highest generation on the ACTIVE WAL branch, or
         None if no active generation exists. Mirrors
         ``ConfigGenerationStore.latest_active`` exactly — same active-branch
         membership / latest-wins / no-forward-replay semantics, and the same
-        predicate-taking signature.
+        ``(state_log, scope)`` signature.
 
-        ``is_active`` is the caller-supplied membership predicate (its derivation is
-        seq-independent — see ``build_active_predicate``). Taking a ``state_log`` here
-        would force an internal ``is_active_seq`` call per generation seq, re-scanning
-        the whole WAL each time: O(generations x WAL) per read, and quadratic BY
-        CONSTRUCTION for any caller that ever loops over runs — a shape no caller-side
-        hoist could fix. That is exactly how the config store's defect arose (it was
-        census-safe until ``AgentRegistry._reconcile_config_as_of_cut`` grew a rel_path
-        loop), so this store takes the predicate too rather than relying on today's
-        one-run-per-caller census holding forever."""
+        #5769 stage 2: takes ``(state_log, scope)`` directly rather than a
+        caller-hoisted predicate — this store builds its OWN ``is_active``
+        internally (via ``build_active_predicate``), once per call, so a
+        caller states its real scope as a plain fact instead of building
+        (and potentially mis-scoping) an opaque predicate elsewhere. This
+        is still one derivation per call, never per generation seq: the
+        list comprehension below calls the SAME already-built predicate
+        for every seq, exactly as the prior caller-hoisted shape did —
+        only WHO builds it moved. ``build_active_predicate``'s own record
+        fetch is incremental/cached (#2939), so building it here per call
+        (rather than once outside a caller's run-loop) is O(rewind
+        records), not O(WAL) — the quadratic-WAL-scan shape this
+        docstring used to warn against no longer applies to that axis."""
+        is_active = build_active_predicate(state_log, scope=scope)
         seqs = [s for s in self._seqs() if is_active(s)]
         if not seqs:
             return None
@@ -169,22 +190,30 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     active WAL branch, or None if no generation was ever recorded (a fresh
     run — `resume` should treat this as run-from-scratch).
 
-    Builds the active-branch predicate ONCE and hands it to the store — the hoist
-    ``PipelineStateStore.latest_active``'s signature obliges. A caller resolving MANY
-    runs should hoist ``build_active_predicate`` above its loop and drive the store
-    directly rather than calling this per run."""
-    from reyn.core.events.snapshot_generations import (  # noqa: PLC0415
-        build_active_predicate,
-    )
+    #5769 stage 2: this run's own owner is NOT "unrecorded" (architect's
+    #5772 finding was the earlier, wrong framing) — it is recorded right
+    alongside the generations this function already reads, in
+    ``invocation.json`` (``PipelineWorkOrder.driver_agent``/``driver_sid``,
+    read the same way ``AgentRegistry._rewake_pipeline_runs`` already
+    reads it). One extra file read here is not a new cost class: this
+    function is called once per resume, on the crash-recovery path, never
+    in a hot per-message loop. A missing/unreadable ``invocation.json``
+    (should not happen for a run with generations, but is not proven
+    impossible) falls back to ``GLOBAL_SCOPE`` — the safe side, matching
+    every other fail-closed-to-broad default in this stage."""
+    from reyn.core.pipeline.work_order import load_invocation, pipeline_run_dir
     store = _store(state_log, run_id)
     if store is None:
         return None
-    # TODO(#5769 stage 2): this call is scoped to ONE run_id -- the issue's
-    # own "unconfirmed" list flags whether a pipeline run maps 1:1 to an
-    # (agent, session) -- so `None` here is NOT a confirmed GLOBAL_SCOPE
-    # decision (architect's #5772 finding). Undecided until that mapping
-    # is resolved.
-    latest = store.latest_active(build_active_predicate(state_log, scope=None))
+    root = reyn_root(state_log.path)
+    run_dir = pipeline_run_dir(root, run_id) if root is not None else None
+    work_order = load_invocation(run_dir) if run_dir is not None else None
+    scope = (
+        (work_order.driver_agent, work_order.driver_sid)
+        if work_order is not None
+        else GLOBAL_SCOPE
+    )
+    latest = store.latest_active(state_log, scope=scope)
     if latest is None:
         return None
     _seq, content = latest
