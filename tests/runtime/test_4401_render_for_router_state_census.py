@@ -32,6 +32,19 @@ does not say "add it here" — it says "prove it's downstream of run()'s
 await FIRST", because that proof is the actual content of what this test
 protects, not the set membership itself.
 
+★ lead-coder BLOCKING (PR #5763): the first cut of this test keyed each
+site on ``(file, lineno)``. A line number is NOT a closed target — any
+unrelated edit landing ABOVE line 802 in `router_tools.py` shifts every
+declared entry at once, so all 9 sites go "undeclared" together though not
+one new call site was added. A reviewer who sees that shape once learns
+"just fix the numbers, no proof needed" — the exact operation the R3
+failure message above forbids — and the SAME reflex then silences a real
+new site the next time one appears. The key is now
+``(file, enclosing_function_name, receiver_variable_name)`` — e.g.
+``("...router_tools.py", "build_tools", "_call_mcp_tool_def")`` — stable
+under any line-number churn, and still fully AST-derived (no hand-typed
+string beyond what the source itself names the receiver).
+
 AST-based (not a grep), same closed-target reasoning
 ``test_3595_s4_slash_handler_seam.py``'s own ``_ResidueCollector`` gives —
 ``state=`` is a keyword argument, syntactically closed, so the walk finds
@@ -44,47 +57,81 @@ from tests._support.paths import REPO_ROOT
 
 _SRC_ROOT = REPO_ROOT / "src"
 
+class _RenderForRouterStateCallCollector(ast.NodeVisitor):
+    """Walks one module, tracking the innermost enclosing function/method
+    name, and records every ``<name>.render_for_router(..., state=..., ...)``
+    call as ``(enclosing_function, receiver_name)``. Only a plain-Name
+    receiver is recorded (every known call site today has this shape,
+    ``<tool>_def.render_for_router(...)``) — a call through some other
+    expression shape (e.g. a subscript or a call result) would need this
+    walk extended, not silently ignored, so such a shape raises rather
+    than being dropped."""
 
-def _find_state_passing_render_for_router_calls() -> "set[tuple[str, int]]":
-    """Every ``<expr>.render_for_router(..., state=..., ...)`` call in
-    ``src/`` — ``(module-relative-path, lineno)`` pairs. The population
-    this test reasons about is derived STRUCTURALLY (an AST walk over
-    every call site), never a hand-maintained enumeration — only the
-    DECLARED (expected) side below is a maintained list; the FOUND side
-    always reflects the actual code."""
-    found: "set[tuple[str, int]]" = set()
+    def __init__(self) -> None:
+        self._func_stack: "list[str]" = []
+        self.found: "set[tuple[str, str]]" = set()
+
+    def _enclosing(self) -> str:
+        return self._func_stack[-1] if self._func_stack else "<module>"
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._func_stack.append(node.name)
+        self.generic_visit(node)
+        self._func_stack.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "render_for_router":
+            if any(kw.arg == "state" for kw in node.keywords):
+                if not isinstance(func.value, ast.Name):
+                    raise AssertionError(
+                        f"render_for_router(state=...) called through a non-Name "
+                        f"receiver ({ast.dump(func.value)!r}) at line {node.lineno} — "
+                        "this walk's (function, receiver-name) key assumes every "
+                        "call site is `<name>.render_for_router(...)`; extend the "
+                        "key shape here rather than silently dropping this call."
+                    )
+                self.found.add((self._enclosing(), func.value.id))
+        self.generic_visit(node)
+
+
+def _find_state_passing_render_for_router_calls() -> "set[tuple[str, str, str]]":
+    """Every ``<name>.render_for_router(..., state=..., ...)`` call in
+    ``src/`` — ``(module-relative-path, enclosing_function, receiver_name)``
+    triples. The population this test reasons about is derived
+    STRUCTURALLY (an AST walk over every call site), never a hand-
+    maintained enumeration — only the DECLARED (expected) side below is a
+    maintained list; the FOUND side always reflects the actual code."""
+    found: "set[tuple[str, str, str]]" = set()
     for path in sorted(_SRC_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if not (isinstance(func, ast.Attribute) and func.attr == "render_for_router"):
-                continue
-            if any(kw.arg == "state" for kw in node.keywords):
-                found.add((str(path.relative_to(REPO_ROOT)), node.lineno))
+        collector = _RenderForRouterStateCallCollector()
+        collector.visit(tree)
+        rel = str(path.relative_to(REPO_ROOT))
+        for func_name, receiver in collector.found:
+            found.add((rel, func_name, receiver))
     return found
 
 
 #: Every call site KNOWN to pass ``state=`` today — all 9 are the MCP tool
 #: definitions (D3/D4 call_mcp_tool/describe_mcp_tool + the 7 resource/
-#: prompt verbs) inside ``router_tools.py``'s ``build_tools()`` (lines
-#: 264-988; the file's only OTHER top-level function,
-#: ``_build_tools_via_registry``, starts at line 990 and does not appear
-#: here). `build_tools()` is called only from `RouterLoop.present`/
-#: `base_tools()` (#4401's own trace, issue #4401 R2 comment), which are
-#: reachable only from inside `RouterLoop.run()` — the boundary #4401 ①'s
-#: await sits at the top of.
-_DECLARED_SITES: "set[tuple[str, int]]" = {
-    ("src/reyn/runtime/router_tools.py", 802),   # D3 call_mcp_tool
-    ("src/reyn/runtime/router_tools.py", 815),   # D4 describe_mcp_tool
-    ("src/reyn/runtime/router_tools.py", 844),   # list_mcp_resources
-    ("src/reyn/runtime/router_tools.py", 857),   # list_mcp_resource_templates
-    ("src/reyn/runtime/router_tools.py", 870),   # read_mcp_resource
-    ("src/reyn/runtime/router_tools.py", 883),   # subscribe_mcp_resource
-    ("src/reyn/runtime/router_tools.py", 896),   # unsubscribe_mcp_resource
-    ("src/reyn/runtime/router_tools.py", 909),   # list_mcp_prompts
-    ("src/reyn/runtime/router_tools.py", 922),   # get_mcp_prompt
+#: prompt verbs) inside ``router_tools.py``'s ``build_tools()``. That
+#: function is called only from `RouterLoop.present`/`base_tools()`
+#: (#4401's own trace, issue #4401 R2 comment), which are reachable only
+#: from inside `RouterLoop.run()` — the boundary #4401 ①'s await sits at
+#: the top of.
+_DECLARED_SITES: "set[tuple[str, str, str]]" = {
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_call_mcp_tool_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_describe_mcp_tool_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_list_mcp_resources_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_list_mcp_resource_templates_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_read_mcp_resource_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_subscribe_mcp_resource_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_unsubscribe_mcp_resource_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_list_mcp_prompts_def"),
+    ("src/reyn/runtime/router_tools.py", "build_tools", "_get_mcp_prompt_def"),
 }
 
 
@@ -104,7 +151,11 @@ def test_every_state_passing_call_site_is_declared_and_known() -> None:
     """Tier 2: the ratchet — a NEW ``render_for_router(state=...)`` call
     site outside the declared set is exactly the shape #4401 ①'s await
     stops covering (a partial mcp catalog could then reach an LLM-facing
-    enum without ever passing through `RouterLoop.run()`'s own await)."""
+    enum without ever passing through `RouterLoop.run()`'s own await).
+    Keyed on (file, enclosing function, receiver variable name) — NOT
+    line number (see this module's own docstring, lead-coder's BLOCKING on
+    PR #5763, for why a line-number key makes every unrelated edit above
+    line 802 a false "undeclared" alarm for all 9 sites at once)."""
     found = _find_state_passing_render_for_router_calls()
     undeclared = found - _DECLARED_SITES
     assert not undeclared, (
@@ -124,16 +175,17 @@ def test_every_state_passing_call_site_is_declared_and_known() -> None:
 
 def test_no_declared_site_is_stale() -> None:
     """Tier 2: the standing positive control — every declared site is still
-    FOUND. A site that's genuinely gone (code moved/removed) needs its
-    entry deleted here, not left stale; more importantly, a REGRESSED walk
-    (a lost AST shape) would make declared sites vanish from the found set,
-    which would otherwise read as "the census got smaller" — the most
-    flattering possible way for this gate to break silently."""
+    FOUND. A site that's genuinely gone (code moved/removed/renamed) needs
+    its entry deleted (or updated) here, not left stale; more importantly,
+    a REGRESSED walk (a lost AST shape) would make declared sites vanish
+    from the found set, which would otherwise read as "the census got
+    smaller" — the most flattering possible way for this gate to break
+    silently."""
     found = _find_state_passing_render_for_router_calls()
     stale = _DECLARED_SITES - found
     assert not stale, (
         f"_DECLARED_SITES declares site(s) the walk no longer finds: {sorted(stale)!r}. "
-        "If genuinely gone, delete the entry and say so in the PR. If not, "
-        "the walk regressed and the 'no undeclared site' result above is "
-        "understated."
+        "If genuinely gone (or renamed), update the entry and say so in "
+        "the PR. If not, the walk regressed and the 'no undeclared site' "
+        "result above is understated."
     )
