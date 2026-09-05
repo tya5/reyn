@@ -3176,7 +3176,7 @@ class AgentRegistry:
             store = self._store_for(name, sid)
             snap = reconstruct(
                 name, store, self._state_log,
-                target_seq=reconstruct_seq, session_id=sid,
+                target_seq=reconstruct_seq, session_id=sid, scope=scope,
             )
             snap.applied_seq = reconstruct_seq
             snap.save(self._session_snapshot_path(name, sid))
@@ -3294,7 +3294,7 @@ class AgentRegistry:
                 store = self._store_for(name, sid)
                 snap = reconstruct(
                     name, store, self._state_log,
-                    target_seq=reconstruct_seq, session_id=sid,
+                    target_seq=reconstruct_seq, session_id=sid, scope=(name, sid),
                 )
                 # Self-contained: the reset-record carries no agent target, so
                 # reconstruct leaves applied_seq at the last active entry. Pin it to

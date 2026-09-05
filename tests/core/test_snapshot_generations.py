@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
-from reyn.core.events.snapshot_generations import SnapshotGenerationStore, reconstruct
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, SnapshotGenerationStore, reconstruct
 from reyn.core.events.state_log import StateLog
 
 AGENT = "alpha"
@@ -59,7 +59,7 @@ async def test_reconstruct_matches_full_replay_at_every_seq(tmp_path):
     store.record(_full_replay(log, 4))
 
     for n in range(0, 7):
-        got = reconstruct(AGENT, store, log, n)
+        got = reconstruct(AGENT, store, log, n, scope=GLOBAL_SCOPE)
         expected = _full_replay(log, n)
         assert got == expected, f"reconstruct({n}) diverged from full replay"
 
@@ -71,7 +71,7 @@ async def test_reconstruct_head_is_crash_recovery(tmp_path):
     store = SnapshotGenerationStore(AGENT, tmp_path / AGENT / "generations")
     store.record(_full_replay(log, 4))
     head = log.current_seq
-    assert reconstruct(AGENT, store, log, head) == _full_replay(log, head)
+    assert reconstruct(AGENT, store, log, head, scope=GLOBAL_SCOPE) == _full_replay(log, head)
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,7 @@ async def test_reconstruct_with_no_generations_uses_empty_base(tmp_path):
     store = SnapshotGenerationStore(AGENT, tmp_path / AGENT / "generations")
     assert store.seqs() == []
     head = log.current_seq
-    assert reconstruct(AGENT, store, log, head) == _full_replay(log, head)
+    assert reconstruct(AGENT, store, log, head, scope=GLOBAL_SCOPE) == _full_replay(log, head)
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,7 @@ async def test_generation_base_is_used_not_just_empty(tmp_path):
     assert store.nearest_at_or_below(5) == 4
     assert store.nearest_at_or_below(3) == 1
     assert store.nearest_at_or_below(0) is None
-    assert reconstruct(AGENT, store, log, 5) == _full_replay(log, 5)
+    assert reconstruct(AGENT, store, log, 5, scope=GLOBAL_SCOPE) == _full_replay(log, 5)
 
 
 @pytest.mark.asyncio
@@ -114,4 +114,4 @@ async def test_prune_below_drops_old_generations(tmp_path):
     assert dropped == 1
     assert store.seqs() == [4, 6]
     # Surviving generations still reconstruct correctly.
-    assert reconstruct(AGENT, store, log, 6) == _full_replay(log, 6)
+    assert reconstruct(AGENT, store, log, 6, scope=GLOBAL_SCOPE) == _full_replay(log, 6)

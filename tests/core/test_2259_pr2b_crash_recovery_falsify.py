@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import SnapshotGenerationStore, reconstruct
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, SnapshotGenerationStore, reconstruct
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
@@ -59,7 +59,7 @@ async def test_crash_between_wal_and_snapshot_replays_to_state_n(tmp_path):
     await journal.flush()  # WAL_2 becomes durable; the snapshot/generation are still at seq 1
 
     # recovery: reconstruct from the durable gen (seq 1) + replay the durable WAL in (1, head].
-    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq)
+    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq, scope=GLOBAL_SCOPE)
     texts = [m["payload"].get("text") for m in rebuilt.inbox]
     assert texts == ["a", "b"], (
         "crash mid-pair: WAL_2 (durable) must replay onto snap_1 → state 2 (consistent prefix); "
@@ -80,7 +80,7 @@ async def test_crash_before_wal_durable_loses_the_undurable_tail(tmp_path):
     # NO flush — the WAL_2 job never drains (the crash). The durable WAL stays at seq 1. There is
     # no await between the submit and the reconstruct, so the drainer cannot sneak the write in.
 
-    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq)
+    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq, scope=GLOBAL_SCOPE)
     texts = [m["payload"].get("text") for m in rebuilt.inbox]
     assert texts == ["a"], (
         "crash before durable: the un-durable mutation 2 must be LOST = state 1 (consistent "

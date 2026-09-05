@@ -15,6 +15,7 @@ import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.snapshot_generations import (
+    GLOBAL_SCOPE,
     RewindIntoAbandonedError,
     SnapshotGenerationStore,
     is_active_seq,
@@ -51,7 +52,7 @@ async def test_reconstruct_skips_abandoned_after_rewind(tmp_path):
     await _put(log, "c")          # seq 3
     await rewind(log, target_n=1)  # seq 4 — undo back to 1 (abandons 2,3)
     assert is_active_seq(log, 1) and not is_active_seq(log, 2) and not is_active_seq(log, 3)
-    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a"]   # b, c undone
 
 
@@ -67,7 +68,7 @@ async def test_post_rewind_work_yields_current_state(tmp_path):
     await _put(log, "b")          # seq 2
     await rewind(log, target_n=1)  # seq 3 — abandons 2
     await _put(log, "d")          # seq 4 — new work on the active branch
-    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a", "d"]   # b undone, d kept
 
 
@@ -83,8 +84,8 @@ async def test_crash_mid_rewind_idempotent(tmp_path):
     await _put(log, "a")          # seq 1
     await _put(log, "b")          # seq 2
     await rewind(log, target_n=1)  # seq 3 = head; crash here, no new work
-    first = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
-    second = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    first = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
+    second = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(first) == ["a"]          # b (abandoned future) not resurrected
     assert first == second                     # idempotent
 
@@ -98,7 +99,7 @@ async def test_nested_rewind_subsuming(tmp_path):
     await rewind(log, target_n=1)  # seq 3 — abandons 2
     await _put(log, "c")           # seq 4
     await rewind(log, target_n=1)  # seq 5 — back to 1 again, subsumes the 1st rewind
-    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a"]   # b and c both undone
 
 
@@ -116,7 +117,7 @@ async def test_nested_rewind_partial(tmp_path):
     await _put(log, "c")           # seq 4 (active, new branch)
     await _put(log, "d")           # seq 5 (active, new branch)
     await rewind(log, target_n=4)  # seq 6 — undo back to 4 (abandons 5), keeps c
-    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a", "c"]   # b abandoned (1st), d abandoned (2nd)
 
 
@@ -138,7 +139,7 @@ async def test_no_rewind_is_backward_compatible(tmp_path):
     await _put(log, "a")
     await _put(log, "b")
     assert is_active_seq(log, 1) and is_active_seq(log, 2)
-    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq)
+    snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a", "b"]
 
 
@@ -155,8 +156,8 @@ async def test_abandoned_branch_generation_not_used_as_base(tmp_path):
     await _put(log, "a")           # seq 1
     await _put(log, "b")           # seq 2
     # Cut a generation on what will become the abandoned branch (applied_seq 2).
-    store.record(reconstruct(AGENT, store, log, 2))
+    store.record(reconstruct(AGENT, store, log, 2, scope=GLOBAL_SCOPE))
     assert store.seqs() == [2]
     await rewind(log, target_n=1)  # seq 3 — abandons 2 (incl. the gen at seq 2)
-    snap = reconstruct(AGENT, store, log, log.current_seq)
+    snap = reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a"]   # the abandoned gen@2 (with 'b') is not the base
