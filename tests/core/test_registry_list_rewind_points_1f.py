@@ -254,7 +254,7 @@ async def test_list_rewind_points_default_sid_is_main(tmp_path) -> None:
     """Tier 2: #5769 stage 3 (③) -- backward compatibility. A generation
     recorded via the pre-existing helper (the implicit _DEFAULT_SID store,
     unchanged since before this stage) must still be listed, now carrying
-    ``"sid": "main"`` explicitly rather than the field being absent."""
+    ``"name"``/``"sid"`` explicitly rather than the fields being absent."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
@@ -264,6 +264,7 @@ async def test_list_rewind_points_default_sid_is_main(tmp_path) -> None:
 
     rows = reg.list_rewind_points()
     assert [r["seq"] for r in rows] == [s1]
+    assert rows[0]["name"] == "alpha"
     assert rows[0]["sid"] == "main"
 
 
@@ -275,10 +276,10 @@ async def test_list_rewind_points_includes_non_default_sid(tmp_path) -> None:
     this stage the loop only consulted ``_store_for(name)``'s implicit
     _DEFAULT_SID store, so a boundary owned by any other sid was silently
     absent from the output -- not merely unlabeled. The returned row's
-    "sid" must equal the real sid that owns the boundary, and the agent's
-    own default-sid boundary (still present) must keep its own "main" tag,
-    proving the two are enumerated and labelled independently, not
-    conflated into one."""
+    ``name``/``sid`` pair must equal the real owner of the boundary, and
+    the agent's own default-sid boundary (still present) must keep its own
+    ``"main"`` tag, proving the two are enumerated and labelled
+    independently, not conflated into one."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     log = reg.state_log
@@ -293,5 +294,39 @@ async def test_list_rewind_points_includes_non_default_sid(tmp_path) -> None:
     assert s_main in by_seq and s_sub in by_seq, (
         f"both the default-sid and the non-default-sid boundary must be listed; got {sorted(by_seq)}"
     )
-    assert by_seq[s_main]["sid"] == "main"
-    assert by_seq[s_sub]["sid"] == "sub-42"
+    assert (by_seq[s_main]["name"], by_seq[s_main]["sid"]) == ("alpha", "main")
+    assert (by_seq[s_sub]["name"], by_seq[s_sub]["sid"]) == ("alpha", "sub-42")
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_reports_no_owner_on_conflicting_claims(tmp_path) -> None:
+    """Tier 2: #5769 stage 3 (④, architect BLOCKING on #5782's own review) --
+    a seq claimed by two DIFFERING (name, sid) pairs must come back with
+    ``name`` AND ``sid`` both ``None``, never a fabricated guess (not even a
+    first-seen-wins one). This is architecturally impossible in production
+    (a WAL entry routes to exactly one session), so the setup forces the
+    conflict directly at the store layer -- the same shape a real defect
+    would take, without needing one.
+
+    Before this fix the lookup was ``seq_sid.get(s, _DEFAULT_SID)``: had the
+    invariant ever broken, it would have silently reported the row as
+    belonging to ``"main"`` -- a REAL session's own name wired into the very
+    row the operator clicks to choose which session to rewind."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    _seed_agent(tmp_path, "beta")
+    log = reg.state_log
+
+    shared_seq = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", shared_seq)
+    _record_gen(reg, "beta", shared_seq)  # same seq, a DIFFERENT (name, sid)
+
+    rows = reg.list_rewind_points()
+    by_seq = {r["seq"]: r for r in rows}
+    assert shared_seq in by_seq, "the seq itself is still listed -- only its owner is unresolved"
+    row = by_seq[shared_seq]
+    assert row["name"] is None, f"a conflicting claim must not fabricate an owner name; got {row}"
+    assert row["sid"] is None, f"a conflicting claim must not fabricate an owner sid; got {row}"
+    # Exactly one row for the seq -- a conflict collapses to one "unknown
+    # owner" row, it does not fan out into two.
+    assert [r["seq"] for r in rows].count(shared_seq) == 1
