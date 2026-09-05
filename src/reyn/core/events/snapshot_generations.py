@@ -120,16 +120,33 @@ design" vs "this consumer hasn't decided its own (agent, session) scope
 yet" (the same "one value, two facts" shape architect rejected reusing
 the cooldown map for in #5759). Runtime-identical to ``None`` (this
 constant IS ``None``) — the split is in the SPELLING, for the human
-reader, not the type. Every one of ``build_active_predicate``'s 9 real
-stage-1 call sites was individually read and confirmed to operate across
-EVERY (agent, session) in one pass (WAL-window purge, config-generation
-reconciliation, materialise-on-rewind, pipeline rewoken scan,
-``list_rewind_points`` itself) — this constant names THAT as the final
-decision. A future stage-2/3 call site that has NOT yet decided its own
-scope should never reach for this constant to look finished; it should
-say so out loud instead (e.g. a ``# TODO(#5769 stage 2): decide this
-consumer's own scope`` comment) rather than write a bare ``None`` that
-looks identical to one of these 9 settled decisions."""
+reader, not the type; per architect's own answer to whether the type
+needs to enforce it too (#5772 review): "naming suffices, the type is
+not required — the requirement is that the two spellings actually hold
+different SETS of call sites, not that every consumer picks one."
+
+Of ``build_active_predicate``'s 9 real stage-1 call sites, **6** were
+individually read and confirmed to genuinely evaluate seqs spanning
+MORE than one (agent, session) in a single pass, uncorrelated with any
+one session's own identity — ``list_rewind_points``, the archived-agent
+WAL-window purge, the topology-lifecycle reconcile (not even an
+agent-scoped concept), the config-generation reconcile (one shared
+predicate reused across every ``rel_path``, agent-owned or not),
+``_materialize_rewind``, and the pipeline rewoken scan (iterates every
+run dir project-wide). **These 6 use this constant.**
+
+The other **3** each evaluate seqs belonging to exactly ONE session's
+own history (``Session._active_branch_history``,
+``Session._durable_active_history_after``) or one pipeline run whose
+mapping to a session is itself unconfirmed
+(``pipeline_recovery.latest_pipeline_state``) — architect's own #5772
+finding on this docstring's FIRST draft, which wrongly claimed all 9 as
+settled. **These 3 keep a bare ``None`` with an explicit ``# TODO(#5769
+stage 2): decide this consumer's own scope`` comment** — the two
+spellings must hold genuinely different sets, or splitting them
+achieves nothing. A future stage-2/3 call site that has not yet decided
+its own scope should follow the same TODO pattern, never reach for this
+constant to look finished."""
 
 
 class RewindIntoAbandonedError(Exception):

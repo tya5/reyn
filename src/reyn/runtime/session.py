@@ -4388,7 +4388,6 @@ class Session:
         if self._state_log is None:
             return self.history
         from reyn.core.events.snapshot_generations import (
-            GLOBAL_SCOPE,
             build_active_predicate,
             earliest_relevant_wal_seq,
         )
@@ -4413,7 +4412,13 @@ class Session:
         # per-message seq — so it is computed ONCE per call (one WAL scan) and
         # reused for every message, instead of re-scanning the whole WAL per
         # message (was O(N messages x M WAL entries) per turn; now O(N + M)).
-        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
+        # TODO(#5769 stage 2): this reads ONLY self.history — one session's
+        # own seqs, never another agent's or session's — so `None` here is
+        # NOT `GLOBAL_SCOPE` (architect's #5772 finding: this method has no
+        # multi-agent scan to justify that label). Undecided whether stage
+        # 2 narrows this to scope=(self.agent_name, self.session_id) or
+        # keeps it global on purpose; do not read this as a settled choice.
+        is_active = build_active_predicate(self._state_log, scope=None)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
@@ -4518,9 +4523,13 @@ class Session:
         parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
         if self._state_log is None:
             return parsed, truncated
-        from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, build_active_predicate
+        from reyn.core.events.snapshot_generations import build_active_predicate
 
-        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
+        # TODO(#5769 stage 2): reads self.history_path -- ONE session's own
+        # file -- never another session's, so this is NOT a confirmed
+        # GLOBAL_SCOPE decision (architect's #5772 finding, same shape as
+        # _active_branch_history above). Undecided.
+        is_active = build_active_predicate(self._state_log, scope=None)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
