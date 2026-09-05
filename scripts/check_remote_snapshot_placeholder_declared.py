@@ -88,7 +88,28 @@ this gate's own enforcement — a FUTURE change to either that drops the
 axis check would not be caught here. Widening the AST walk to recurse
 into container literals is future work, not attempted in this PR (#5093's
 own scope: the placeholder shapes actually observed at #5009/#5034/#5094's
-own findings, all of which were shape (a)/(b), not a nested tuple)."""
+own findings, all of which were shape (a)/(b), not a nested tuple).
+
+## A second axis (#5771): does the OUTPUT KEY itself ride the wire at all
+
+The gap above — the ``usage``/``ctx_recent_usage`` tuples this gate
+cannot see the SHAPE of — turned out to be one symptom of a bigger,
+independent question :func:`find_unwired_key_violations` asks instead of
+trying to widen the AST walk into container literals: never mind what
+SHAPE a value is — is the dict KEY it is assigned to even a real
+``project_status`` key? ``"cost_usd": v.get("cost_agent", 0.0)`` passes
+EVERY remedy above (``"cost_agent"``, the ``.get()`` call's own key
+ARGUMENT, is genuinely on the wire per ``_WIRE_KEYS``) while the OUTPUT
+key ``"cost_usd"`` is not a real ``project_status`` key at all — an
+alias, not a placeholder, and invisible to remedies ①②③ because none of
+them ever look at the output key's own name against ``project_status``.
+#5098's own invariant ("one declaration, not two that can drift apart")
+is about exactly this — a SEPARATE, narrower promise than "is this
+value's placeholder-ness declared" — so :func:`find_unwired_key_
+violations` does not consult ①②③ at all; see its own docstring for the
+full reasoning and #5771's own issue thread for why this axis is
+deliberately reported wide (every unbacked key), not filtered down to
+an allowlisted few."""
 from __future__ import annotations
 
 import ast
@@ -334,10 +355,93 @@ def find_wire_keys_violations(agui_state_path: "Path | None" = None) -> "list[st
     ]
 
 
+def find_unwired_key_violations(
+    package_dir: "Path | None" = None, agui_state_path: "Path | None" = None,
+) -> "list[str]":
+    """#5771 stage ① — the axis #5093's own 2 existing checks do NOT cover:
+    a ``project_remote_snapshot`` OUTPUT key that is not itself a key
+    ``project_status`` (agui/state.py) emits, regardless of whether its
+    VALUE'S OWN placeholder-ness is properly declared.
+
+    #5093's existing :func:`find_violations` asks "is this value's
+    graceful-degrade nature honestly declared" (remedies ①②③, all keyed
+    off the VALUE's shape or the ``.get()`` call's own key ARGUMENT).
+    #5098's own invariant is a DIFFERENT, narrower promise: ``project_
+    status`` is "the SOLE declaration of which keys ride the wire" (that
+    function's own docstring, verbatim). Those two questions can give
+    opposite answers on the SAME key: ``"cost_usd": v.get("cost_agent",
+    0.0)`` passes remedy① today (``"cost_agent"`` — the ``.get()``
+    ARGUMENT — is genuinely, unconditionally on the wire, per
+    ``_WIRE_KEYS``) even though the OUTPUT key ``"cost_usd"`` itself is
+    not a real ``project_status`` key at all — the value is quietly
+    aliased from a DIFFERENT wire fact under a name that claims to be
+    its own. #5098's invariant is violated the moment ANY output key
+    lacks a same-named ``project_status`` entry, independent of whether
+    remedies ①②③ would separately excuse its placeholder-ness — so this
+    check does not consult them, deliberately: a key can be an honestly-
+    declared placeholder (passing #5093's own gate) and STILL be exactly
+    the drift #5098 exists to prevent.
+
+    Deliberately WIDE, deliberately un-filtered (#5771 stage ① scope,
+    lead-coder dispatch): this returns EVERY output key without a
+    same-named ``project_status`` entry, including ones that are
+    genuinely, permanently session-local (``cron_jobs``, ``tasks``,
+    etc. — these will likely never gain a ``project_status`` twin, and
+    that is fine; #5098's invariant was never "every key must be on the
+    wire", only "a key that name-claims to be one thing must not
+    silently be a different, unwired one"). Stage ① does not attempt to
+    tell the two apart with a per-key exemption list — see
+    ``test_5771_unwired_key_violations_expose_the_cost_tab_drift.py``
+    for the current disclosed list and #5771's own issue thread for the
+    triage split (cost tab keys fixed here; every other exposed key
+    filed as its own issue, not silenced by an allowlist invented for
+    this PR alone)."""
+    if package_dir is None:
+        package_dir = _PACKAGE_DIR
+    if agui_state_path is None:
+        agui_state_path = _AGUI_STATE_PATH
+
+    remote_dict, error = _find_function_return_dict(package_dir, "project_remote_snapshot")
+    if remote_dict is None:
+        return [error or "unknown error locating project_remote_snapshot"]
+    status_dict, error = _find_function_return_dict(agui_state_path, "project_status")
+    if status_dict is None:
+        return [error or "unknown error locating project_status"]
+
+    wire_keys = {
+        key_node.value
+        for key_node in status_dict.keys
+        if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)
+    }
+
+    violations: "list[str]" = []
+    for key_node in remote_dict.keys:
+        if key_node is None:  # a ``**spread`` entry -- not a literal output key
+            continue
+        if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
+            continue
+        dict_key = key_node.value
+        if dict_key in wire_keys:
+            continue
+        violations.append(
+            f'"{dict_key}": project_remote_snapshot maps this key, but '
+            f'project_status (agui/state.py) has no key of this name -- '
+            f'#5098\'s "one declaration, not two that can drift apart" is '
+            f'broken for this key regardless of whether its placeholder-ness '
+            f'is otherwise declared. Either add "{dict_key}" to '
+            f'project_status\'s own return dict (if it is genuinely '
+            f'real, per-connection wire data), or confirm it is intentionally '
+            f'session-local and file/track it separately -- this check does '
+            f'not accept a same-file exemption.'
+        )
+    return violations
+
+
 def main() -> int:
     violations = find_violations(_PACKAGE_DIR)
     wire_key_violations = find_wire_keys_violations(_AGUI_STATE_PATH)
-    if violations or wire_key_violations:
+    unwired_key_violations = find_unwired_key_violations(_PACKAGE_DIR, _AGUI_STATE_PATH)
+    if violations or wire_key_violations or unwired_key_violations:
         if violations:
             print(
                 "check_remote_snapshot_placeholder_declared: "
@@ -354,10 +458,20 @@ def main() -> int:
             )
             for v in wire_key_violations:
                 print(f"  - {v}")
+        if unwired_key_violations:
+            print(
+                "check_remote_snapshot_placeholder_declared: "
+                f"{len(unwired_key_violations)} project_remote_snapshot key(s) "
+                "not backed by a same-named project_status key (#5771):\n"
+            )
+            for v in unwired_key_violations:
+                print(f"  - {v}")
         return 1
     print("check_remote_snapshot_placeholder_declared: OK, every placeholder-shaped "
-          "key is covered by _WIRE_KEYS, a declared axis, or a cited exemption, and "
-          "_WIRE_KEYS is a verified subset of project_status's unconditional keys.")
+          "key is covered by _WIRE_KEYS, a declared axis, or a cited exemption, "
+          "_WIRE_KEYS is a verified subset of project_status's unconditional keys, "
+          "and every project_remote_snapshot output key is backed by a same-named "
+          "project_status key.")
     return 0
 
 

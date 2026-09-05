@@ -17,12 +17,25 @@ was a hand-typed ASSERTION with no producer code reading it — nothing
 checked that its members were genuinely, unconditionally on the wire.
 ``find_wire_keys_violations`` closes that by AST-checking ``_WIRE_KEYS ⊆``
 the keys ``agui/state.py``'s ``project_status`` unconditionally emits.
-"""
+
+``TestUnwiredKeyViolations`` (below) is #5771 stage ① (lead-coder dispatch,
+owner ruling "structural, not a feature"): a THIRD, independent question
+neither check above asks — is a ``project_remote_snapshot`` OUTPUT key
+itself backed by a same-named ``project_status`` key at all, regardless of
+whether its placeholder-ness is otherwise honestly declared.
+``find_unwired_key_violations`` closes that. Unlike the other 2 checks,
+this one is NOT asserted to be ``== []`` on the real source — #5098's own
+invariant ("one declaration, not two that can drift apart") is measurably
+broken today, for real, disclosed keys (``cost_usd``/``usage``/
+``session_cached_tokens`` are the 3 lead-coder's own dispatch named as the
+required witnesses; the rest are disclosed here per CLAUDE.md's test-review
+question 4, not silenced by an allowlist invented for this PR)."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from scripts.check_remote_snapshot_placeholder_declared import (
+    find_unwired_key_violations,
     find_violations,
     find_wire_keys_violations,
 )
@@ -167,6 +180,41 @@ def test_main_exits_nonzero_when_a_violation_exists(tmp_path: Path, monkeypatch)
     assert exit_code == 1
 
 
+def test_main_exits_nonzero_when_only_an_unwired_key_violation_exists(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: main()-level witness for #5771's own axis specifically —
+    isolates it from the other 2 checks (a fixture with a REAL wire key
+    read via ``.get()``, so ``find_violations`` sees nothing placeholder-
+    shaped to flag, paired with a synthetic ``project_status`` that omits
+    that key) to prove ``main()`` fails on THIS check's finding alone, not
+    only when one of the other 2 also happens to fire on the same
+    fixture (as ``test_main_exits_nonzero_when_a_violation_exists`` above
+    would, since its own fixture key is unwired too)."""
+    import scripts.check_remote_snapshot_placeholder_declared as gate_module
+
+    remote_fixture = _write_module(
+        tmp_path, '    return {"cost_usd": v.get("cost_agent")}\n',
+    )
+    # Every real _WIRE_KEYS member, so find_wire_keys_violations (a
+    # DIFFERENT check, module-level _WIRE_KEYS unaffected by this fixture)
+    # stays clean and this test isolates #5771's own axis alone.
+    status_fixture = _write_status_module(
+        tmp_path,
+        ["model", "cost_agent", "cost_total", "agent_tokens", "ctx_used",
+         "ctx_window", "queue", "turn_active", "queue_seq"],
+    )
+    monkeypatch.setattr(gate_module, "_PACKAGE_DIR", remote_fixture)
+    monkeypatch.setattr(gate_module, "_AGUI_STATE_PATH", status_fixture)
+
+    assert gate_module.find_violations(remote_fixture) == []
+    assert gate_module.find_wire_keys_violations(status_fixture) == []
+
+    exit_code = gate_module.main()
+
+    assert exit_code == 1
+
+
 # ── _WIRE_KEYS ⊆ project_status's unconditional keys (architect blocking
 # finding, issuecomment-5385179961) ───────────────────────────────────────
 
@@ -223,3 +271,91 @@ def test_project_status_emitting_every_wire_key_is_not_flagged(tmp_path: Path) -
     )
 
     assert find_wire_keys_violations(fixture) == []
+
+
+# ── #5771 stage ① — is a project_remote_snapshot output key itself backed
+# by a same-named project_status key, independent of ①②③ above ──────────
+
+
+class TestUnwiredKeyViolations:
+    def test_the_real_source_exposes_the_known_cost_tab_drift(self) -> None:
+        """Tier 2: #5771 acceptance — the 3 keys lead-coder's own dispatch
+        named as the required witnesses (a bare literal that never reads
+        the wire at all, a tuple built from an unrelated wire key, and an
+        alias reading a DIFFERENT wire key under this key's own name) must
+        all appear in ``find_unwired_key_violations``'s real-source output.
+        This does NOT assert the list is empty (#5098's own invariant is
+        genuinely broken today, not a false positive this test should
+        silence) — it asserts these 3 specific, already-diagnosed keys are
+        present, which is what proves the axis actually fires rather than
+        being a check nothing reaches.
+
+        Disclosed (CLAUDE.md test-review question 4): as of this PR the
+        real source also exposes 16 further keys with the SAME shape —
+        ``ctx_recent_usage``, ``ctx_source``, ``ctx_compaction_status_fn``,
+        ``compaction_progress_raw``, ``turn_usage_fn``, ``cron_jobs``,
+        ``mcp_servers``, ``hooks``, ``skills``, ``hook_items``,
+        ``mcp_probe_states``, ``pipelines``, ``unknown_config_key_count``,
+        ``unknown_config_keys``, ``hooks_config_warnings``, ``tasks``. Per
+        #5771's own dispatch these are reported (lead-coder files them as
+        separate issues), not fixed in this PR — a future PR that fixes one
+        removes it from the real-source output; this test does not pin the
+        total count for that reason, only the 3 required witnesses."""
+        violations = find_unwired_key_violations()
+        found_keys = {v.split('"')[1] for v in violations}
+        for required in ("cost_usd", "usage", "session_cached_tokens"):
+            assert required in found_keys, (
+                f'"{required}" must be exposed as unwired-key drift; got '
+                f"{sorted(found_keys)!r}"
+            )
+
+    def test_an_output_key_with_no_matching_project_status_key_is_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: acceptance② — a synthetic ``project_remote_snapshot``
+        mapping a key ``project_status`` never emits must be flagged,
+        independent of the value's own shape (a bare literal here, the
+        simplest case)."""
+        remote_fixture = _write_module(tmp_path, '    return {"not_on_the_wire": 0}\n')
+        status_fixture = _write_status_module(tmp_path, ["model", "cost_agent"])
+
+        violations = find_unwired_key_violations(remote_fixture, status_fixture)
+
+        assert any('"not_on_the_wire"' in v for v in violations), violations
+
+    def test_an_alias_reading_a_different_real_wire_key_is_still_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: acceptance② (the exact #5771 root cause) — an output key
+        whose value reads a DIFFERENT, genuinely-real wire key under a
+        mismatched name (``cost_usd``'s own real shape:
+        ``v.get("cost_agent", 0.0)``) is flagged by its OWN name, not
+        excused by the wire key it happens to alias. This is precisely what
+        #5093's original ``find_violations`` cannot see (remedy① there
+        matches on the ``.get()`` call's own key ARGUMENT, "cost_agent",
+        not the output key "cost_usd")."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {"cost_usd": v.get("cost_agent", 0.0)}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model", "cost_agent"])
+
+        violations = find_unwired_key_violations(remote_fixture, status_fixture)
+
+        assert any('"cost_usd"' in v for v in violations), violations
+        # #5093's OWN gate, unmodified, must NOT catch this shape -- it is
+        # the exact gap #5771 exists to close, not a duplicate of it.
+        assert find_violations(remote_fixture) == []
+
+    def test_an_output_key_backed_by_a_same_named_project_status_key_is_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: falsification contrast — an output key whose name
+        genuinely matches a real ``project_status`` key produces zero
+        violations for that key, proving this is a same-name membership
+        test, not something that flags every key unconditionally."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {"cost_agent": v.get("cost_agent", 0.0)}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model", "cost_agent"])
+
+        assert find_unwired_key_violations(remote_fixture, status_fixture) == []
