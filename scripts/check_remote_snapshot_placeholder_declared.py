@@ -470,25 +470,79 @@ def find_unwired_key_violations(
     if agui_state_path is None:
         agui_state_path = _AGUI_STATE_PATH
 
-    remote_dict, error = _find_function_return_dict(package_dir, "project_remote_snapshot")
-    if remote_dict is None:
-        return [error or "unknown error locating project_remote_snapshot"]
+    examined, unanalyzable = _examine_remote_output_keys(package_dir)
+    if examined is None:
+        return unanalyzable
+
     status_dict, error = _find_function_return_dict(agui_state_path, "project_status")
     if status_dict is None:
         return [error or "unknown error locating project_status"]
-
     wire_keys = {
         key_node.value
         for key_node in status_dict.keys
         if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)
     }
 
-    violations: "list[str]" = []
+    violations: "list[str]" = list(unanalyzable)
+    for dict_key, via_spread in examined:
+        if dict_key in wire_keys:
+            continue
+        if via_spread:
+            violations.append(
+                f'"{dict_key}" (via **reported_snapshot_keys(...)): '
+                f'project_remote_snapshot maps this key through the '
+                f'ChatReadModelCapabilities spread, but project_status '
+                f'(agui/state.py) has no key of this name -- same #5098 '
+                f'drift as a literal key, just reached through the '
+                f'spread instead of a direct dict entry.'
+            )
+        else:
+            violations.append(
+                f'"{dict_key}": project_remote_snapshot maps this key, but '
+                f'project_status (agui/state.py) has no key of this name -- '
+                f'#5098\'s "one declaration, not two that can drift apart" is '
+                f'broken for this key regardless of whether its placeholder-ness '
+                f'is otherwise declared. Either add "{dict_key}" to '
+                f'project_status\'s own return dict (if it is genuinely '
+                f'real, per-connection wire data), or confirm it is intentionally '
+                f'session-local and file/track it separately -- this check does '
+                f'not accept a same-file exemption.'
+            )
+    return violations
+
+
+def _examine_remote_output_keys(
+    package_dir: "Path | None" = None,
+) -> "tuple[list[tuple[str, bool]] | None, list[str]]":
+    """#5771/#5773: every output key ``project_remote_snapshot``'s return
+    dict actually has, as ``(key_name, via_spread)`` pairs — independent
+    of whether each is a violation. Split out of :func:`find_unwired_key_
+    violations` so a caller can ask "how many keys did this walk even
+    examine" (lead-coder BLOCKING, PR #5773: a NON-EXPIRING non-vacuity
+    witness — the walk finding SOME keys is true today and stays true
+    after stage② fixes the 3 cost-tab keys, unlike asserting those 3
+    SPECIFIC keys are still violations, which stops being true the moment
+    they're fixed — see :func:`count_examined_output_keys`).
+
+    Returns ``(None, [error])`` if ``project_remote_snapshot`` itself
+    could not be parsed. The 2nd element is always the list of entries
+    this walk could NOT resolve to a key name at all (an unrecognized
+    ``**spread``, a non-literal key) — never silently dropped; these are
+    always violations in :func:`find_unwired_key_violations`, but they
+    are not key NAMES so they cannot appear in the 1st element."""
+    if package_dir is None:
+        package_dir = _PACKAGE_DIR
+    remote_dict, error = _find_function_return_dict(package_dir, "project_remote_snapshot")
+    if remote_dict is None:
+        return None, [error or "unknown error locating project_remote_snapshot"]
+
+    examined: "list[tuple[str, bool]]" = []
+    unanalyzable: "list[str]" = []
     for key_node, value_node in zip(remote_dict.keys, remote_dict.values):
         if key_node is None:  # a ``**spread`` entry
             spread_keys = _resolve_reported_snapshot_keys_spread(value_node)
             if spread_keys is None:
-                violations.append(
+                unanalyzable.append(
                     "an unrecognized `**spread` entry in project_remote_"
                     "snapshot's return dict cannot be statically analyzed by "
                     "this check -- #5773 (architect BLOCKING finding): a "
@@ -500,20 +554,10 @@ def find_unwired_key_violations(
                     "same-named project_status key."
                 )
                 continue
-            for spread_key in spread_keys:
-                if spread_key in wire_keys:
-                    continue
-                violations.append(
-                    f'"{spread_key}" (via **reported_snapshot_keys(...)): '
-                    f'project_remote_snapshot maps this key through the '
-                    f'ChatReadModelCapabilities spread, but project_status '
-                    f'(agui/state.py) has no key of this name -- same #5098 '
-                    f'drift as a literal key, just reached through the '
-                    f'spread instead of a direct dict entry.'
-                )
+            examined.extend((k, True) for k in spread_keys)
             continue
         if not (isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)):
-            violations.append(
+            unanalyzable.append(
                 f"project_remote_snapshot's return dict has a key at line "
                 f"{key_node.lineno} that is not a string literal -- this "
                 f"check cannot verify a computed key against project_status "
@@ -521,21 +565,25 @@ def find_unwired_key_violations(
                 f"census gap, not a pass)."
             )
             continue
-        dict_key = key_node.value
-        if dict_key in wire_keys:
-            continue
-        violations.append(
-            f'"{dict_key}": project_remote_snapshot maps this key, but '
-            f'project_status (agui/state.py) has no key of this name -- '
-            f'#5098\'s "one declaration, not two that can drift apart" is '
-            f'broken for this key regardless of whether its placeholder-ness '
-            f'is otherwise declared. Either add "{dict_key}" to '
-            f'project_status\'s own return dict (if it is genuinely '
-            f'real, per-connection wire data), or confirm it is intentionally '
-            f'session-local and file/track it separately -- this check does '
-            f'not accept a same-file exemption.'
-        )
-    return violations
+        examined.append((key_node.value, False))
+    return examined, unanalyzable
+
+
+def count_examined_output_keys(package_dir: "Path | None" = None) -> int:
+    """#5771 (lead-coder BLOCKING, PR #5773): the non-expiring non-vacuity
+    witness for the ratchet below. Counting VIOLATIONS (as the original
+    version of this PR's own test did, asserting the 3 known cost-tab
+    keys are present) has an expiry date built in: stage② fixing those 3
+    keys makes them vanish from the violation list, and a test pinned to
+    "these 3 specific keys are still violations" would then have to be
+    deleted or weakened — losing the non-vacuity guard at exactly the
+    moment a silently-broken walk would look identical to "everything got
+    fixed". Counting EXAMINED keys instead never expires: this is > 0
+    today, stays > 0 after every currently-known violation is fixed
+    (project_remote_snapshot will always have SOME output keys), and only
+    goes to 0 if the walk itself regresses."""
+    examined, _unanalyzable = _examine_remote_output_keys(package_dir)
+    return len(examined) if examined is not None else 0
 
 
 def _resolve_reported_snapshot_keys_spread(node: "ast.expr") -> "list[str] | None":
@@ -566,11 +614,175 @@ def _resolve_reported_snapshot_keys_spread(node: "ast.expr") -> "list[str] | Non
     return sorted(reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES))
 
 
+#: A key's declared DISPOSITION in :data:`_UNWIRED_KEY_VIOLATIONS_BASELINE`
+#: — ``LOCAL`` (permanently session-local; no ``project_status`` twin is
+#: ever planned) or ``PENDING`` (real, per-connection data that genuinely
+#: could/should ride the wire — tracked for triage on #5774, or, for the 3
+#: cost-tab keys, committed to #5771's own stage②). #5771 (lead-coder
+#: BLOCKING, PR #5773): a bare set of key NAMES let ``cron_jobs`` (never
+#: wired, ever) and ``cost_usd`` (a real fact this PR's own issue commits
+#: to wiring) sit as the identical shape — architect's own #5772 finding,
+#: "one spelling, two facts", recurring here. The disposition is what
+#: makes the repair-obligation message in :func:`find_new_unwired_key_
+#: violations` mechanically askable per key, not just a generic reminder.
+_LOCAL = "LOCAL"
+_PENDING = "PENDING"
+
+#: #5771 (lead-coder BLOCKING, PR #5773 head 2c59bbfc0): "①に無い key を②が
+#: map *できない* 形にする" means DETECTING drift is not enough — something
+#: must actually STOP a NEW one from landing unnoticed. Without this,
+#: :func:`find_unwired_key_violations` only ever produces a number someone
+#: has to remember to re-check by hand; stage②'s own 8 new wire keys could
+#: introduce a 41st drifted key and nothing here would say so — the exact
+#: "adding ② before ① is closed becomes a 4th drift" architect warned about
+#: (agreed by lead-coder). This is the KNOWN, currently-reported violation
+#: set as of THIS baseline's own last update (:func:`find_new_unwired_key_
+#: violations` below is the actual ratchet: real-source violations must be
+#: a SUBSET of this set's keys, new is red). SHRINKING this dict (dropping
+#: a key once it is genuinely fixed) is always safe and never itself
+#: flagged — encouraged, not required, so a fix elsewhere never needs to
+#: touch this file.
+#:
+#: 40 entries. PENDING (3): the cost-tab keys this PR's own stage① exists
+#: to eventually fix — #5771's own issue body commits to wiring these in
+#: stage②, reusing ``CostBreakdown.to_dict()``. LOCAL (37): 16 literal
+#: output keys whose OWN inline comment in ``project_remote_snapshot``
+#: already says the underlying data is session-local/client-local by
+#: construction (``skills``/``mcp_servers``/``turn_usage_fn`` already sit
+#: in ``_CLEARED_NON_FABRICATING_KEYS`` above for the same reason;
+#: ``unknown_config_key_count``/``unknown_config_keys`` name the CLIENT's
+#: own reyn.yaml, structurally absent on a remote connection; ``ctx_
+#: source`` is a label, not fabricatable figure; ``tasks`` is explicitly
+#: "never on the wire" per its own comment) — plus all 21
+#: ``ChatReadModelCapabilities`` field names reached through the
+#: ``**reported_snapshot_keys(...)`` spread, LOCAL by DESIGN rather than
+#: by accident: a ``*_reported`` flag is a CLIENT-side declaration about
+#: what the wire carries, never wire data itself, so it was never
+#: expected to have its own ``project_status`` twin (true even for the 5
+#: fields already ``True`` for remote — ``intervention_head``/``agent_
+#: roster_reported``/``model_catalog_reported``/``attached_name_
+#: reported``/``visibility_items_reported``/``mcp_subscriptions_
+#: reported`` — since what they report reflects reaches the wire under
+#: OTHER, real key names, e.g. ``agent_names``/``session_tree``, never
+#: under the flag's own name). ``hooks_config_warnings`` and ``mcp_probe_
+#: states`` are marked PENDING, not LOCAL, DESPITE looking like the other
+#: session-local literal keys above — their own inline comments in
+#: ``project_remote_snapshot`` explicitly say "not wired onto the wire
+#: YET" (not "structurally cannot exist"), the opposite framing the LOCAL
+#: entries' own comments use — genuinely different from the other 35,
+#: filed on #5774 for real triage rather than guessed here.
+_UNWIRED_KEY_VIOLATIONS_BASELINE: "dict[str, str]" = {
+    # PENDING — #5771 stage② commits to wiring these for real.
+    "cost_usd": _PENDING,
+    "usage": _PENDING,
+    "session_cached_tokens": _PENDING,
+    # PENDING — real session data, explicitly "not wired onto the wire
+    # YET" per project_remote_snapshot's own inline comment (unlike the
+    # LOCAL entries below, whose own comments say the opposite) -- #5774
+    # triage, not guessed here.
+    "hooks_config_warnings": _PENDING,
+    "mcp_probe_states": _PENDING,
+    # LOCAL — genuinely, permanently session-local per each key's own
+    # inline comment in project_remote_snapshot.
+    "ctx_recent_usage": _LOCAL,
+    "ctx_source": _LOCAL,
+    "ctx_compaction_status_fn": _LOCAL,
+    "compaction_progress_raw": _LOCAL,
+    "turn_usage_fn": _LOCAL,
+    "cron_jobs": _LOCAL,
+    "mcp_servers": _LOCAL,
+    "hooks": _LOCAL,
+    "skills": _LOCAL,
+    "hook_items": _LOCAL,
+    "pipelines": _LOCAL,
+    "unknown_config_key_count": _LOCAL,
+    "unknown_config_keys": _LOCAL,
+    "tasks": _LOCAL,
+    # LOCAL by DESIGN — every ChatReadModelCapabilities field name (via
+    # the **reported_snapshot_keys(...) spread): a client-side capability
+    # DECLARATION, never wire data, so none of these was ever expected to
+    # have its own project_status twin (see the block comment above).
+    "completion_source": _LOCAL,
+    "intervention_head": _LOCAL,
+    "pending_command_ui": _LOCAL,
+    "has_command_ui_region": _LOCAL,
+    "conversation_history": _LOCAL,
+    "load_older_conversation_history": _LOCAL,
+    "cache_usage_reported": _LOCAL,
+    "cron_jobs_reported": _LOCAL,
+    "usage_breakdown_reported": _LOCAL,
+    "ctx_compaction_reported": _LOCAL,
+    "hooks_reported": _LOCAL,
+    "pipelines_reported": _LOCAL,
+    "agent_roster_reported": _LOCAL,
+    "model_catalog_reported": _LOCAL,
+    "attached_name_reported": _LOCAL,
+    "visibility_items_reported": _LOCAL,
+    "mcp_subscriptions_reported": _LOCAL,
+    "mcp_probe_states_reported": _LOCAL,
+    "hooks_config_warnings_reported": _LOCAL,
+    "compaction_progress_reported": _LOCAL,
+    "tasks_reported": _LOCAL,
+}
+
+
+def _unwired_key_names(
+    package_dir: "Path | None" = None, agui_state_path: "Path | None" = None,
+) -> "set[str]":
+    """The bare key-name set behind :func:`find_unwired_key_violations`'s
+    own messages — the ONE place that parses them back out, so the
+    ratchet below and any future consumer never re-derive the "first
+    `"..."`-quoted token" convention independently."""
+    violations = find_unwired_key_violations(package_dir, agui_state_path)
+    names: "set[str]" = set()
+    for v in violations:
+        if v.startswith('"'):
+            names.add(v.split('"')[1])
+    return names
+
+
+def find_new_unwired_key_violations(
+    package_dir: "Path | None" = None, agui_state_path: "Path | None" = None,
+) -> "list[str]":
+    """#5771's own ratchet (lead-coder BLOCKING): a key ``find_unwired_key_
+    violations`` reports that is NOT already a key of :data:`_UNWIRED_KEY_
+    VIOLATIONS_BASELINE`. Real-source violations that ARE in the baseline
+    are known, disclosed debt (tracked on PR #5773's own comment thread,
+    not re-flagged here every run); a NEW one is exactly the "stage② adds
+    a key, nothing notices" hole the BLOCKING named — this is what
+    actually stops it, not just reports it.
+
+    Same "repair obligation, not a silencing knob" shape as ``_DECLARED_
+    SITES``'s own ratchet test in ``test_4401_render_for_router_state_
+    census.py``: adding a key to the baseline WITHOUT first either wiring
+    it onto ``project_status`` for real (PENDING) or confirming it is
+    genuinely, permanently session-local (LOCAL) does not close the gap
+    #5098/#5771 exist to close — it only silences this one check."""
+    found = _unwired_key_names(package_dir, agui_state_path)
+    new = found - set(_UNWIRED_KEY_VIOLATIONS_BASELINE)
+    return [
+        f'"{key}": a NEW project_remote_snapshot key with no same-named '
+        f'project_status entry, not already a key of _UNWIRED_KEY_'
+        f'VIOLATIONS_BASELINE. Before adding "{key}" there: if it is '
+        f'genuinely, permanently session-local, add it with disposition '
+        f'LOCAL and cite the reason (mirroring an existing LOCAL entry\'s '
+        f'own comment); if it is real, per-connection data that should '
+        f'ride the wire, either add the real key to project_status instead '
+        f'of baselining this one, or add it with disposition PENDING and '
+        f'cite the issue/PR that will wire it. Adding it to the baseline '
+        f'without one of those does not close #5098\'s own "one '
+        f'declaration, not two that can drift apart" hole -- it only '
+        f'silences this check.'
+        for key in sorted(new)
+    ]
+
+
 def main() -> int:
     violations = find_violations(_PACKAGE_DIR)
     wire_key_violations = find_wire_keys_violations(_AGUI_STATE_PATH)
     unwired_key_violations = find_unwired_key_violations(_PACKAGE_DIR, _AGUI_STATE_PATH)
-    if violations or wire_key_violations or unwired_key_violations:
+    new_unwired_key_violations = find_new_unwired_key_violations(_PACKAGE_DIR, _AGUI_STATE_PATH)
+    if violations or wire_key_violations or new_unwired_key_violations:
         if violations:
             print(
                 "check_remote_snapshot_placeholder_declared: "
@@ -591,16 +803,26 @@ def main() -> int:
             print(
                 "check_remote_snapshot_placeholder_declared: "
                 f"{len(unwired_key_violations)} project_remote_snapshot key(s) "
-                "not backed by a same-named project_status key (#5771):\n"
+                "not backed by a same-named project_status key (#5771, "
+                f"{len(new_unwired_key_violations)} of them NEW, not yet "
+                "baselined):\n"
             )
             for v in unwired_key_violations:
+                print(f"  - {v}")
+        if new_unwired_key_violations:
+            print(
+                "check_remote_snapshot_placeholder_declared: "
+                f"{len(new_unwired_key_violations)} NEW unwired-key "
+                "violation(s), not in _UNWIRED_KEY_VIOLATIONS_BASELINE:\n"
+            )
+            for v in new_unwired_key_violations:
                 print(f"  - {v}")
         return 1
     print("check_remote_snapshot_placeholder_declared: OK, every placeholder-shaped "
           "key is covered by _WIRE_KEYS, a declared axis, or a cited exemption, "
           "_WIRE_KEYS is a verified subset of project_status's unconditional keys, "
           "and every project_remote_snapshot output key is backed by a same-named "
-          "project_status key.")
+          "project_status key or already-baselined disclosed debt.")
     return 0
 
 

@@ -35,6 +35,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.check_remote_snapshot_placeholder_declared import (
+    count_examined_output_keys,
+    find_new_unwired_key_violations,
     find_unwired_key_violations,
     find_violations,
     find_wire_keys_violations,
@@ -190,11 +192,17 @@ def test_main_exits_nonzero_when_only_an_unwired_key_violation_exists(
     that key) to prove ``main()`` fails on THIS check's finding alone, not
     only when one of the other 2 also happens to fire on the same
     fixture (as ``test_main_exits_nonzero_when_a_violation_exists`` above
-    would, since its own fixture key is unwired too)."""
+    would, since its own fixture key is unwired too).
+
+    Uses a key name NOT in ``_UNWIRED_KEY_VIOLATIONS_BASELINE`` (unlike
+    ``cost_usd``, now a KNOWN, baselined violation as of #5771's own
+    ratchet fix) — ``main()``'s own exit code is gated on ``find_new_
+    unwired_key_violations`` specifically, so a baselined violation alone
+    must NOT fail it; only a genuinely NEW one does."""
     import scripts.check_remote_snapshot_placeholder_declared as gate_module
 
     remote_fixture = _write_module(
-        tmp_path, '    return {"cost_usd": v.get("cost_agent")}\n',
+        tmp_path, '    return {"brand_new_unbaselined_key": v.get("cost_agent")}\n',
     )
     # Every real _WIRE_KEYS member, so find_wire_keys_violations (a
     # DIFFERENT check, module-level _WIRE_KEYS unaffected by this fixture)
@@ -284,6 +292,16 @@ class TestUnwiredKeyViolations:
         the wire at all, a tuple built from an unrelated wire key, and an
         alias reading a DIFFERENT wire key under this key's own name) must
         all appear in ``find_unwired_key_violations``'s real-source output.
+
+        EXPIRES when #5771's own stage② wires these 3 for real — at that
+        point this test needs deleting (or updating to different, still-
+        unfixed witnesses), not weakening; it does NOT serve as this
+        file's non-vacuity guard (that role belongs permanently to
+        ``TestCountExaminedOutputKeys``, which never expires — see lead-
+        coder's own BLOCKING finding on PR #5773 for why counting
+        VIOLATIONS rather than EXAMINED keys was the wrong shape for that
+        role).
+
         This does NOT assert the list is empty (#5098's own invariant is
         genuinely broken today, not a false positive this test should
         silence) — it asserts these 3 specific, already-diagnosed keys are
@@ -455,3 +473,94 @@ class TestFindFunctionReturnDictGuards:
         violations = find_unwired_key_violations(path, status_fixture)
 
         assert any("EMPTY dict" in v for v in violations), violations
+
+
+# ── #5771 — the ratchet: real-source violations must be a SUBSET of the
+# baseline; a genuinely NEW one is red, no matter how many baselined ones
+# already exist ─────────────────────────────────────────────────────────
+
+
+class TestNewUnwiredKeyViolationsRatchet:
+    def test_the_real_source_has_no_new_unwired_key_violations(self) -> None:
+        """Tier 2: acceptance① — every unwired-key violation on the real
+        tree is already accounted for in ``_UNWIRED_KEY_VIOLATIONS_
+        BASELINE``. This is the actual merge-blocking ratchet (lead-coder
+        BLOCKING, PR #5773): stage②'s own 8 new wire keys can freely be
+        ADDED without this test needing to change, but a key that stays
+        unwired by ACCIDENT — the exact "nothing stops a 41st drifted key"
+        gap the BLOCKING named — fails here immediately."""
+        assert find_new_unwired_key_violations() == []
+
+    def test_a_key_outside_the_baseline_is_flagged_as_new(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: acceptance② — a synthetic unwired key with a name that
+        does not appear anywhere in the real baseline is flagged by
+        ``find_new_unwired_key_violations``, proving the subset check
+        actually fires rather than accepting everything unconditionally."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {"a_key_nobody_has_ever_seen_before": 0}\n',
+        )
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        violations = find_new_unwired_key_violations(remote_fixture, status_fixture)
+
+        assert any(
+            '"a_key_nobody_has_ever_seen_before"' in v for v in violations
+        ), violations
+
+    def test_a_baselined_key_alone_is_not_flagged_as_new(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: falsification contrast — a real, already-baselined key
+        (``cron_jobs``, disposition LOCAL) alone produces zero NEW
+        violations, proving the ratchet distinguishes disclosed debt from
+        genuinely new drift rather than flagging every unwired key."""
+        remote_fixture = _write_module(tmp_path, '    return {"cron_jobs": []}\n')
+        status_fixture = _write_status_module(tmp_path, ["model"])
+
+        assert find_new_unwired_key_violations(remote_fixture, status_fixture) == []
+
+
+# ── #5771 — a non-expiring non-vacuity witness: stage② fixing the 3
+# required cost-tab keys must not silently remove the ONLY thing proving
+# this walk still examines something real ───────────────────────────────
+
+
+class TestCountExaminedOutputKeys:
+    def test_the_real_source_examines_more_than_zero_output_keys(self) -> None:
+        """Tier 2: the non-expiring non-vacuity guard (lead-coder
+        BLOCKING, PR #5773): asserting specific KEYS are still violations
+        (the original version of this PR's own witness) expires the
+        moment those keys are fixed — a silently-broken walk and a
+        genuinely-clean population would then look identical (0
+        violations either way). Counting EXAMINED keys instead of
+        VIOLATIONS never expires: ``project_remote_snapshot`` will always
+        have SOME output keys, so this stays true forever unless the walk
+        itself regresses."""
+        assert count_examined_output_keys() > 0
+
+    def test_a_return_with_only_wired_keys_still_counts_them(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: falsification contrast — a fixture with zero
+        violations (every key genuinely wired) still reports a nonzero
+        examined-key count, proving this witness measures "did the walk
+        see keys at all", not "how many violations exist"."""
+        remote_fixture = _write_module(
+            tmp_path, '    return {"cost_agent": v.get("cost_agent", 0.0)}\n',
+        )
+
+        assert count_examined_output_keys(remote_fixture) == 1
+
+    def test_an_empty_return_reports_zero_examined_keys(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: falsification contrast — the exact regressed-walk shape
+        this witness exists to catch: an empty return dict (refused
+        elsewhere as a mis-resolution, see ``TestFindFunctionReturnDict
+        Guards``) reports 0 examined keys, proving this witness would
+        actually go red if the real walk ever silently found nothing."""
+        remote_fixture = _write_module(tmp_path, '    return {}\n')
+
+        assert count_examined_output_keys(remote_fixture) == 0
