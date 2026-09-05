@@ -300,6 +300,59 @@ def is_compaction_eligible_including_summary(m: Any) -> bool:
     )
 
 
+def is_seq_still_active(
+    seq: int, *, covers_from: "int | None", covers_through: int,
+) -> bool:
+    """#5765 — THE single predicate for "is this turn still active" (kept
+    on the wire / in an untrusted-taint scan) vs "compacted out" (folded
+    into the latest summary, permanently hidden). Replaces 2 literal-copy
+    predicates (``router_history_buffer.py``'s own ``_apply_watermark_
+    filter`` and ``session.py``'s ``_update_untrusted_taint_on_append``)
+    that both hand-typed ``seq == 0 or seq > watermark`` independently
+    (lead-coder finding, PR review on #5765) — a THIRD, INDEPENDENT copy
+    is exactly the shape #4954(2)/#5612 already closed twice for this
+    same predicate, so this is the one place it may be written.
+
+    #5765's own root cause (architect, issue #5765): the pre-fix scalar
+    watermark answered "is seq <= covers_through" — TRUE for a turn that
+    was head-PROTECTED (never folded, `trim_head`'s own #5719 guard) but
+    numerically below the LATEST fold's `covers_through_seq` — silently
+    hiding it from the wire though it was never summarised either. The
+    fix is a RANGE, not a scalar: a turn is compacted out only if it
+    falls inside ``[covers_from, covers_through]`` — the range the latest
+    summary ACTUALLY folded, never "everything below the ceiling".
+
+    ``seq == 0`` is always active (#3704's own "no coordinate assigned"
+    sentinel, pre-#3704 legacy history — never a compaction candidate
+    either, so never foldable and never hidden by this predicate).
+    ``covers_through <= 0`` (no summary yet) — always active, nothing to
+    hide.
+
+    ``covers_from is None`` (a summary persisted BEFORE #5765 — no
+    recorded fold-start boundary) — SAFE SIDE: never hide anything based
+    on this summary. Driven reasoning (not merely risk-averse): the raw
+    turns this would otherwise hide are NOT actually gone — history.jsonl
+    is append-only, so they are still genuinely on disk; a pre-#5765
+    summary's own `covers_through_seq` scalar cannot distinguish "folded"
+    from "head-protected", so hiding by it would silently repeat #5765's
+    own defect for every summary written before this fix landed. The
+    alternative (preserve the old scalar behavior for legacy summaries)
+    would leave the exact damage this fix exists to close in place for
+    every session with pre-existing history — the field is retroactively
+    inferrable as "unknown", never as 0 (which would hide everything) or
+    as `covers_through` (which reproduces the bug). A resulting larger
+    wire payload is not a new failure mode — the existing overflow-
+    recovery ladder (spill/shrink/retry, `engine.py`) already handles an
+    oversized turn payload from many other causes; this is bounded by the
+    SAME mechanism, and self-heals the next time compaction runs (which
+    now always records a real `covers_from`)."""
+    if seq == 0 or covers_through <= 0:
+        return True
+    if covers_from is None:
+        return True
+    return not (covers_from <= seq <= covers_through)
+
+
 def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosure | None":
     """#5678: the ONE normalization point for ``disclosure`` — every
     construction path funnels through here, including

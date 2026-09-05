@@ -225,6 +225,17 @@ def test_compaction_still_clears_narrowing_once_it_genuinely_covers_the_tainted_
     s = _make_session(tmp_path, monkeypatch, max_bytes=10_000_000)
     _script_compaction_llm(monkeypatch)
 
+    # #5765: push enough small filler BEFORE the tainted entry to exhaust
+    # trim_head's own token budget on its own — otherwise the tainted entry
+    # (were it the very FIRST turn in history) would itself be
+    # head-protected and genuinely never folded, which is a different,
+    # legitimate scenario test_4470_... covers elsewhere, not "genuinely
+    # covers it". Without this the #5765 fix (a head-protected turn is
+    # correctly no longer treated as compacted) would make this specific
+    # fixture assert the wrong thing for the wrong reason.
+    for _ in range(4):
+        s._append_history(ChatMessage(role="user", content="head filler " + "x" * 300, ts=_now()))
+
     s._append_history(
         ChatMessage(
             role="user", content="<<<EXTERNAL>>> untrusted payload", ts=_now(),

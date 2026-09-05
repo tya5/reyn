@@ -76,6 +76,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     Spillability,
     _migrate_legacy_chat_message,
     _now_iso,
+    is_seq_still_active,
 )
 from reyn.runtime.error_format import classify_router_error
 from reyn.runtime.errors import AgentStepError, RouterCapExceeded, StructuredOutputError
@@ -4078,6 +4079,21 @@ class Session:
         # ``self.history`` here — see the class attribute's own docstring
         # and ``_update_untrusted_taint_on_append`` for where it is kept
         # current.
+        # #5765 (explicit scope decision, security band — do not range-ify
+        # by analogy with the terms above): this THIRD term is deliberately
+        # kept scalar. It does not ask "is this specific seq inside the
+        # folded range" (the per-turn ELIGIBILITY question #5765 fixed
+        # elsewhere) — it asks "has real, SEMANTIC compaction progressed
+        # far enough in time that a RESOURCE-evicted untrusted entry is now
+        # also covered by an actual fold", i.e. a monotonic time/progress
+        # comparison against the ceiling alone. A head-protected-but-never-
+        # folded turn (#5765's own bug) never enters this comparison in the
+        # first place — it is never evicted for residency reasons just
+        # because it sits below the ceiling — so the range/ceiling
+        # distinction #5765 fixes elsewhere does not apply here. Left as a
+        # scalar `>` against `watermark` (`_compaction_watermark()`,
+        # `covers_through_seq` only) after being read and judged, not left
+        # untouched by omission.
         if not (
             self._untrusted_taint_active
             or self._in_flight_untrusted_this_turn
@@ -4240,11 +4256,21 @@ class Session:
         :meth:`_append_history` at all (:meth:`load_history`,
         :meth:`restore_state`) — a bare re-append there cannot rely on the
         incremental append-time check ever having run.
+
+        #5765: was its own literal copy of the compacted-out predicate
+        (``m.seq == 0 or m.seq > watermark``) — now the single shared
+        :func:`~reyn.runtime.chat_message.is_seq_still_active`, driven by
+        the full ``(covers_from, covers_through)`` range so a turn inside
+        a head-protected gap (never actually folded, #5765) is not wrongly
+        un-tainted just because its ``seq`` sits below the ceiling.
         """
         from reyn.security.permissions.capability_profile import metas_have_untrusted
 
-        watermark = self._compaction_watermark()
-        active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
+        covers_from, covers_through = self._compaction_coverage()
+        active = (
+            m for m in self.history
+            if is_seq_still_active(m.seq, covers_from=covers_from, covers_through=covers_through)
+        )
         self._untrusted_taint_active = metas_have_untrusted(m.meta for m in active)
 
     def _evict_oldest_resident_entries(self) -> int:
@@ -6353,11 +6379,18 @@ class Session:
             latest_summary=self._latest_summary,
             compaction_engine_factory=_build_chat_compaction_engine,
             history_appender=self._append_history,
-            make_summary_message=lambda rendered, structured, covers: ChatMessage(
+            make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
                 role="summary",
                 content=rendered,
                 ts=_now_iso(),
-                meta={"structured": structured, "covers_through_seq": covers},
+                meta={
+                    "structured": structured,
+                    "covers_through_seq": covers,
+                    # #5765: the range's own lower bound — see
+                    # `is_seq_still_active`'s own docstring for why a
+                    # bare ceiling silently hid head-protected turns.
+                    "covers_from_seq": covers_from_seq,
+                },
             ),
             render_summary=render_summary_for_storage,
         )
@@ -9021,9 +9054,31 @@ class Session:
         ``covers_through_seq`` lookup inline. (#4552: its original second
         caller, the hot-list feature's ``_uncompacted_tool_call_records``,
         was removed — owner directive: discarded — but this method itself
-        has an independent live caller and stays.)"""
-        latest = self._latest_summary()
-        return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
+        has an independent live caller and stays.)
+
+        #5765: the actual field-parsing (reading ``covers_through_seq``/
+        ``covers_from_seq`` off the latest summary's ``meta``) used to be
+        re-implemented here independently of
+        :meth:`RouterHistoryBuffer._compaction_coverage`'s own copy —
+        now a thin delegate to that ONE accessor. Deliberately passes
+        ``self.history`` (this method's own pre-existing scan target, via
+        :meth:`_latest_summary` above) rather than omitting the argument —
+        omitting it would make ``RouterHistoryBuffer`` scan its OWN
+        ``history_fn`` (``Session._active_branch_history``, the rewind-
+        aware branch view), which is a different, untested semantic change
+        this consolidation is not the place to make. Only the duplicate
+        meta-parsing is removed; which history is scanned is unchanged.
+        """
+        return self._history_buffer._compaction_watermark(self.history)
+
+    def _compaction_coverage(self) -> "tuple[int | None, int]":
+        """The latest summary's full ``(covers_from_seq, covers_through_seq)``
+        pair — see :meth:`_compaction_watermark`'s own docstring for why
+        ``self.history`` is passed explicitly rather than omitted. The ONE
+        Session-side accessor for the range :func:`~reyn.runtime.
+        chat_message.is_seq_still_active` needs; callers that only need the
+        scalar ceiling keep using :meth:`_compaction_watermark`."""
+        return self._history_buffer._compaction_coverage(self.history)
 
     # ── router ──────────────────────────────────────────────────────────────────
 

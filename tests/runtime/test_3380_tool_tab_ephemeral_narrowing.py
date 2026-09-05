@@ -159,7 +159,10 @@ def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
     s._append_history(
         ChatMessage(
             role="summary", content="summarised",
-            meta={"structured": {}, "covers_through_seq": tainted_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": tainted_seq,
+            },
         )
     )
 
@@ -201,7 +204,10 @@ def test_narrowing_self_clears_when_a_real_compaction_covers_the_taint(
     s._append_history(
         ChatMessage(
             role="summary", content="summarised",
-            meta={"structured": {}, "covers_through_seq": tainted_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": tainted_seq,
+            },
         )
     )
 

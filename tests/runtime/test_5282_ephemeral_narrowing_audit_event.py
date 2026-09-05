@@ -108,7 +108,10 @@ def _compact_out_untrusted(s: Session) -> None:
         ChatMessage(
             role="summary",
             content="<<<SUMMARY>>>",
-            meta={"structured": {}, "covers_through_seq": covers_through_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": covers_through_seq,
+            },
         )
     )
 

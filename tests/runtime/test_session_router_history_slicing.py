@@ -79,7 +79,11 @@ def test_watermark_excludes_covered_turns_even_when_conversation_fits_budget(
     session = _make_session(tmp_path, t_max=1_000_000, monkeypatch=monkeypatch)
     session.history.append(ChatMessage(
         role="summary", content="summary of the first exchange", ts=_now(),
-        meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 2},
+        meta={
+            "structured": {"topic_arc": "test"},
+            "covers_from_seq": 1,
+            "covers_through_seq": 2,
+        },
     ))
     covered = ["covered-1", "covered-2"]
     uncovered = ["uncovered-3", "uncovered-4"]
@@ -144,15 +148,20 @@ def test_seq_zero_sentinel_turn_is_never_excluded_by_a_watermark(tmp_path, monke
     (``compaction_controller.py``'s own filter is ``t.seq > prev_cover``,
     always false at seq=0), so it was never summarised: dropping it here
     would be silent, PERMANENT content loss with no other place that ever
-    stops sending it. The fix (``m.seq == 0 or m.seq > watermark``) must
-    keep such a turn in the projection regardless of the watermark's
-    value — matching the exact predicate ``Session``'s own #4468
-    security-latch scan already uses (session.py, same
-    ``_compaction_watermark()`` value)."""
+    stops sending it. The fix keeps such a turn in the projection
+    regardless of the watermark's value — #5765 replaced the bare
+    ``m.seq == 0 or m.seq > watermark`` ceiling check with the shared
+    :func:`~reyn.runtime.chat_message.is_seq_still_active` (range-aware,
+    ``covers_from``/``covers_through``), which preserves this exact
+    ``seq == 0`` carve-out unconditionally."""
     session = _make_session(tmp_path, t_max=1_000_000, monkeypatch=monkeypatch)
     session.history.append(ChatMessage(
         role="summary", content="summary of the first exchange", ts=_now(),
-        meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 5},
+        meta={
+            "structured": {"topic_arc": "test"},
+            "covers_from_seq": 1,
+            "covers_through_seq": 5,
+        },
     ))
     # A legacy, pre-#3704 turn — seq defaults to 0 (never explicitly set).
     session.history.append(ChatMessage(
@@ -197,7 +206,7 @@ def test_watermark_follows_whichever_history_the_producer_returns(tmp_path, monk
     def _history_with_watermark(covers: int) -> list:
         h: list = [ChatMessage(
             role="summary", content="s", ts=_now(),
-            meta={"covers_through_seq": covers},
+            meta={"covers_from_seq": 1, "covers_through_seq": covers},
         )]
         for i in range(3):
             h.append(ChatMessage(role="user", content=f"t{i + 1}", ts=_now(), seq=i + 1))
@@ -282,7 +291,11 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path, monkeypatch
         role="summary",
         content="summary of earlier",
         ts=_now(),
-        meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 5},
+        meta={
+            "structured": {"topic_arc": "test"},
+            "covers_from_seq": 1,
+            "covers_through_seq": 5,
+        },
     ))
     # 35 turns × 80 tokens, 5 covered by the summary above (excluded from
     # the projection by #4954(2)) leaves 30 uncovered turns — size is not

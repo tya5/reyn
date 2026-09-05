@@ -35,6 +35,7 @@ from reyn.runtime.chat_message import (
     Spillability,
     is_compaction_eligible,
     is_compaction_eligible_including_summary,
+    is_seq_still_active,
 )
 
 if TYPE_CHECKING:
@@ -634,19 +635,47 @@ class RouterHistoryBuffer:
                 return m
         return None
 
+    def _compaction_coverage(
+        self, history: "list | None" = None,
+    ) -> "tuple[int | None, int]":
+        """#5765: the ONE accessor for the latest summary's ``(covers_from_
+        seq, covers_through_seq)`` pair — ``(None, 0)`` if no summary yet.
+        ``covers_from_seq`` is ``None`` for a summary persisted before
+        #5765 added the field (no recorded fold-start boundary) — see
+        :func:`~reyn.runtime.chat_message.is_seq_still_active`'s own
+        docstring for how that case is handled (SAFE SIDE, driven
+        reasoning, not a silent default).
+
+        Consolidates what used to be independently re-derived in 4+
+        places (this method's own pre-#5765 scalar-only form, plus
+        ``Session._compaction_watermark``'s own separate ``_latest_
+        summary``-based copy) — every watermark/coverage read in this
+        codebase now routes through here or through ``Session._
+        compaction_watermark``'s own thin delegate to it."""
+        latest = self._latest_summary(history)
+        if latest is None:
+            return None, 0
+        meta = latest.meta or {}
+        covers_through = int(meta.get("covers_through_seq", 0))
+        covers_from_raw = meta.get("covers_from_seq")
+        covers_from = int(covers_from_raw) if covers_from_raw is not None else None
+        return covers_from, covers_through
+
     def _compaction_watermark(self, history: "list | None" = None) -> int:
         """#4954(2): the latest summary's ``covers_through_seq`` (0 if none
-        yet) — seqs at or below this are considered compacted out of the
-        LLM-facing projection. Consumes ``Session._compaction_watermark``'s
-        own concept (``session.py:7042-7052``) via THIS class's own
-        ``_latest_summary`` rather than re-deriving a second "what counts
-        as compacted" notion — same ``(latest.meta or {}).get(
-        "covers_through_seq", 0)`` read, same branch/rewind safety (both
-        route through ``history``, which callers here already resolve via
-        ``self._history_fn()`` — ``Session._active_branch_history``, fresh
-        per call)."""
-        latest = self._latest_summary(history)
-        return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
+        yet) — the UPPER bound only. #5765: a thin forwarder to
+        :meth:`_compaction_coverage` — kept for callers that genuinely
+        want "has real compaction progressed past seq X" (a monotonic
+        PROGRESS question, e.g. ``Session``'s own narrowing-taint latch
+        comparing ``self._max_evicted_untrusted_seq`` against this value
+        — see that call site's own comment for why it stays scalar,
+        deliberately NOT range-ified). Anything asking "is THIS turn
+        compacted out" must use :func:`~reyn.runtime.chat_message.
+        is_seq_still_active` with the FULL pair from
+        :meth:`_compaction_coverage` instead — that is the per-turn
+        ELIGIBILITY question #5765 fixed, and it needs the range, not
+        just the ceiling."""
+        return self._compaction_coverage(history)[1]
 
     def _spill_supersede_map(self, history: "list | None" = None) -> "dict[str, str]":
         """#5612/#5628: content_hash -> offloaded preview text.
@@ -885,17 +914,20 @@ class RouterHistoryBuffer:
         )
 
     def _elide_candidate_turns(self, history: list) -> "tuple[list, int]":
-        """Return ``(turns, watermark)`` — role-filtered (E-full #383 —
-        user/assistant/tool/agent, plus #5678: a ``role="system"`` entry
+        """Return ``(turns, covers_through)`` — role-filtered (E-full #383
+        — user/assistant/tool/agent, plus #5678: a ``role="system"`` entry
         declared ``Disclosure.MODEL`` — see ``is_compaction_eligible``;
         ``summary`` and every OTHER ``system`` entry stay Reyn-internal),
-        then PERMANENTLY watermark-filtered (#4954(2) — a compacted turn
-        never re-enters this projection). *watermark* is also returned
-        (not just consumed here) because :meth:`build_history` needs the
-        SAME value again afterward, to decide whether to attach the
-        summary bridge — returning it avoids a second
-        ``_compaction_watermark`` call computing the identical value the
-        filter above already derived.
+        then PERMANENTLY compaction-range-filtered (#4954(2)/#5765 — a
+        compacted turn never re-enters this projection, and #5765: only a
+        turn actually INSIDE the latest summary's own folded range is
+        "compacted", never merely below its ceiling — see
+        :meth:`_apply_watermark_filter`'s own docstring). ``covers_through``
+        (the range's own upper bound) is also returned (not just consumed
+        here) because :meth:`build_history` needs the SAME value again
+        afterward, to decide whether to attach the summary bridge —
+        returning it avoids a second :meth:`_compaction_coverage` call
+        computing the identical value the filter above already derived.
 
         #5367: this used to also be shared with :meth:`elide_total_and_
         trigger` (#4977, retired — see :meth:`build_history`'s own
@@ -921,39 +953,49 @@ class RouterHistoryBuffer:
         # condition does; do not read this comment as "confirmed
         # reachable" (#4941's declaration≠guarantee caution).
         #
-        # NOT a new predicate: ``m.seq == 0 or m.seq > watermark`` is the
-        # EXACT expression ``Session``'s own #4468 security-latch scan
-        # already uses (session.py:3074, same
-        # ``self._compaction_watermark()`` value) — sharing the VALUE
-        # without sharing how it's READ is exactly how this drifted.
-        # #5612 (lead-coder finding, PR review): a 3rd copy appeared in
-        # :meth:`decompose_history_for_retry` — the trigger condition
-        # this comment itself named. Factored into
-        # :meth:`_apply_watermark_filter` below; both callers now share
-        # the ONE predicate expression instead of two comment-synced
-        # copies (the role allow-list stays separate per caller — it
-        # genuinely differs, ``decompose_history_for_retry`` also keeps
-        # ``summary``-role turns — only the watermark predicate itself
-        # needs one source).
-        watermark = self._compaction_watermark(history)
-        turns = self._apply_watermark_filter(turns, watermark)
-        return turns, watermark
+        # #5765 (architect finding): ``m.seq == 0 or m.seq > watermark``
+        # (the pre-#5765 form of this predicate) is NOT the same question
+        # as "was this turn actually folded" — a turn head-PROTECTED by
+        # `trim_head` (#5719's own guard) is never folded, yet numerically
+        # sits BELOW the latest summary's `covers_through_seq`, so the old
+        # scalar form silently hid it here even though no summary ever
+        # covered its content. #4468's own security-latch scan
+        # (``session.py``'s ``_update_untrusted_taint_on_append``) used
+        # the IDENTICAL hand-typed scalar expression — a genuine 3rd,
+        # independent copy of the same predicate (#5612 already closed a
+        # 2nd one, `decompose_history_for_retry`, the SAME way this one
+        # is closed now). Both call sites now route through
+        # ``is_seq_still_active`` (below) with the FULL ``(covers_from,
+        # covers_through)`` pair from :meth:`_compaction_coverage` —
+        # a RANGE, never a bare ceiling — so a head-protected turn is
+        # correctly kept, and the predicate itself cannot drift into a
+        # 4th independent copy the way it drifted into a 3rd.
+        covers_from, covers_through = self._compaction_coverage(history)
+        turns = self._apply_watermark_filter(turns, covers_from, covers_through)
+        return turns, covers_through
 
     @staticmethod
-    def _apply_watermark_filter(turns: list, watermark: int) -> list:
-        """The ONE #5612/#4954(2) watermark predicate, shared by
+    def _apply_watermark_filter(
+        turns: list, covers_from: "int | None", covers_through: int,
+    ) -> list:
+        """The ONE #5612/#4954(2)/#5765 watermark predicate, shared by
         :meth:`_elide_candidate_turns` (``build_history``'s own caller)
-        and :meth:`decompose_history_for_retry`. ``m.seq == 0`` is the
-        #3704 "no coordinate assigned" sentinel (pre-#3704 legacy
-        history, or the summary bridge before its own seq exists) — see
-        :meth:`_elide_candidate_turns`'s own docstring for why treating
-        it as "oldest" would silently, permanently drop legacy turns.
-        A no-op when ``watermark <= 0`` (every real turn already has
-        ``seq > 0``, so the predicate keeps everything either way — the
-        early-return is a micro-optimisation, not a behaviour change)."""
-        if watermark <= 0:
+        and :meth:`decompose_history_for_retry` — both routing through
+        :func:`~reyn.runtime.chat_message.is_seq_still_active` (see that
+        function's own docstring for the RANGE semantics and the #5765
+        root-cause it fixes, and for the legacy-summary SAFE-SIDE
+        fallback when ``covers_from`` is ``None``). A no-op when
+        ``covers_through <= 0`` (every real turn already has ``seq > 0``,
+        so the predicate keeps everything either way — the early-return
+        is a micro-optimisation, not a behaviour change)."""
+        if covers_through <= 0:
             return turns
-        return [m for m in turns if m.seq == 0 or m.seq > watermark]
+        return [
+            m for m in turns
+            if is_seq_still_active(
+                m.seq, covers_from=covers_from, covers_through=covers_through,
+            )
+        ]
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -1156,11 +1198,12 @@ class RouterHistoryBuffer:
         history = self._history_fn()
         # #5612: watermark-filtered — see this method's own docstring for
         # why this is now required (was harmless to omit pre-#5612, is
-        # not any more). Shared predicate — see
-        # :meth:`_apply_watermark_filter`'s own docstring.
-        watermark = self._compaction_watermark(history)
+        # not any more). #5765: RANGE-filtered now (a bare ceiling would
+        # repeat #5765's own head-protected-turn loss here too — see
+        # :meth:`_apply_watermark_filter`'s own docstring).
+        covers_from, covers_through = self._compaction_coverage(history)
         turns = [m for m in history if is_compaction_eligible_including_summary(m)]
-        turns = self._apply_watermark_filter(turns, watermark)
+        turns = self._apply_watermark_filter(turns, covers_from, covers_through)
 
         # Resolve token budgets from the compaction engine (same as build_history).
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()

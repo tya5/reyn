@@ -96,7 +96,10 @@ def test_self_clears_when_taint_removed(tmp_path):
     s._append_history(
         ChatMessage(
             role="summary", content="summarised",
-            meta={"structured": {}, "covers_through_seq": tainted_seq},
+            meta={
+                "structured": {}, "covers_from_seq": 1,
+                "covers_through_seq": tainted_seq,
+            },
         )
     )
     eff = s._effective_contextual_for_turn()
