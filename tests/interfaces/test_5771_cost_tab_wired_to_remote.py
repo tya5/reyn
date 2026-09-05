@@ -63,9 +63,17 @@ def test_turn_usage_fn_never_reaches_project_status_output() -> None:
     """Tier 2: turn_usage_fn is a callable (Session.turn_usage, keyed
     per-chain_id) — architect's explicit instruction: it must never ride
     the wire. project_status's own dict literal simply never reads this
-    key off snap; this proves that structurally, not by trusting the
-    absence."""
+    key off snap.
+
+    lead-coder BLOCKING (PR #5773, head 01bb92cbc): the negative
+    membership assert alone would stay green even if project_status
+    returned ``{}`` — indistinguishable from "the callable stopped
+    leaking" and "this test is looking at nothing". ``assert "cost_usd"
+    in out`` first is this test's OWN witness that the population is
+    non-empty (not borrowed from a sibling test, which could be skipped
+    or deleted later without this one noticing)."""
     out = project_status(_local_snapshot())
+    assert "cost_usd" in out
     assert "turn_usage_fn" not in out
 
 
@@ -113,9 +121,15 @@ def test_turn_usage_fn_never_reaches_project_remote_snapshot_output_either() -> 
     ``"turn_usage_fn": None`` entry is a deliberate, PERMANENT LOCAL
     placeholder (#3283 ④: "a callable slot, always None remotely"), never
     read from ``v``. Confirms it stays exactly that: never the caller's
-    OWN real callable smuggled through."""
+    OWN real callable smuggled through.
+
+    lead-coder BLOCKING (PR #5773, head 01bb92cbc): same fix as this
+    file's ``test_turn_usage_fn_never_reaches_project_status_output`` —
+    a non-empty-population witness this test owns itself, not borrowed
+    from a sibling."""
     wire_values = project_status(_local_snapshot())
     remote_snap = project_remote_snapshot(wire_values)
+    assert "cost_usd" in remote_snap
     assert remote_snap["turn_usage_fn"] is None
 
 
