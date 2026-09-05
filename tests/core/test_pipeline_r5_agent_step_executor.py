@@ -294,11 +294,13 @@ async def test_resume_replays_completed_agent_step_without_rerunning_llm_turn(
     )
 
     full_pipeline = Pipeline(steps=[step0, step1, step2])
+    from reyn.core.events.pipeline_recovery import latest_pipeline_state
     from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+    snapshot = latest_pipeline_state("run-agent-truncate", state_log, scope=GLOBAL_SCOPE)
     resumed = await executor.resume(
         "run-agent-truncate", pipeline=full_pipeline,
         tool_dispatch=lambda *_a, **_k: None,
-        state_log=state_log, registry=reg, scope=GLOBAL_SCOPE,
+        state_log=state_log, registry=reg, snapshot=snapshot,
     )
 
     assert scripted.calls == 1, (

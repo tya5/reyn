@@ -1,29 +1,30 @@
-"""Tier 2: OS invariant -- #5769 stage 3, ADR-0047 decision 7, architect's
-(c) ruling on PR #5778's review (superseding an earlier, disclosed
-(a)/(b)-shaped deviation).
+"""Tier 2: OS invariant -- #5769 stage 3 (ADR-0047 decision 7) + #5781.
 
 `latest_pipeline_state(run_id, state_log, *, scope)` no longer discovers
-its own owner by re-reading `invocation.json` -- both real callers
-(`PipelineExecutorDriver.run_turn`'s direct call, and
-`PipelineExecutor.resume`, which now forwards its own `scope` parameter)
-already hold the run's own `PipelineWorkOrder` when they call this, so
-`scope` is simply handed over as a fact, never re-derived. This closes
-the whole class of problem the earlier version had (an `invocation.json`
-read, a warning log, a `GLOBAL_SCOPE` fallback, and a disclosed decision-7
-exception) -- there is now exactly one path, no cases to reconcile.
+its own owner by re-reading `invocation.json` (architect's (c) ruling on
+PR #5778's review, superseding an earlier, disclosed (a)/(b)-shaped
+deviation): its one real caller (`PipelineExecutorDriver.run_turn`)
+already holds the run's own `PipelineWorkOrder`, so `scope` is simply
+handed over as a fact, never re-derived.
 
-Real `StateLog` + real `PipelineStateStore` (no mocks). Covers: `scope`
-is a required keyword-only argument on BOTH `latest_pipeline_state` and
-`resume()` (no default, no silent fallback, at either layer -- a round-1
-draft of this PR gave `resume()`'s own `scope` a `GLOBAL_SCOPE` default,
-which silently reopened decision 7's hole one layer OUT; lead-coder-30's
-review caught it, architect confirmed no default is justified here since
-every real caller already knows its own answer). `resume()` forwards its
-own `scope` straight through to `latest_pipeline_state`; every owner-less
-R3/R4/primitive-mechanics test call site now passes `scope=GLOBAL_SCOPE`
-explicitly (honest, not silently-forgotten -- nothing in this codebase
-can yet write a scoped pipeline-state record without going through the
-one real production caller, which always passes its real scope).
+#5781: `PipelineExecutor.resume` no longer calls `latest_pipeline_state`
+at all -- it used to (forwarding its own `scope` parameter through), so
+`run_turn`'s one real call site read the SAME generation twice per
+resume (once directly to decide run-vs-resume, once again inside
+`resume`, discarding the first read). `resume` now takes the
+already-looked-up `snapshot` directly, removing both the second read and
+the `scope` parameter (which existed only to make that internal lookup).
+
+Real `StateLog` + real `PipelineStateStore` (no mocks). Covers:
+`latest_pipeline_state`'s `scope` remains a required keyword-only
+argument (no default, no silent fallback -- unaffected by #5781, since
+`scope` only ever existed to make `resume`'s now-removed internal lookup,
+never `latest_pipeline_state`'s own contract); `resume`'s new `snapshot`
+parameter is ALSO required, no default (matching decision 2/7's own
+no-silent-default precedent -- a `None` default would be indistinguishable
+from an intentional "always run from scratch"), and `resume` uses
+EXACTLY the `snapshot` its caller passes, never re-deriving one from
+`state_log` itself (the #5781 witness below).
 """
 from __future__ import annotations
 
@@ -54,15 +55,15 @@ async def test_latest_pipeline_state_requires_scope_kwarg(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_resume_requires_scope_kwarg(tmp_path):
-    """Tier 2: no default -- same shape as
-    `test_latest_pipeline_state_requires_scope_kwarg` above, one layer OUT.
-    Pins OUR signature decision (decision 2/7: no silent GLOBAL_SCOPE
-    default), not a language behaviour -- a round-1 draft of this PR gave
-    `resume()`'s own `scope` a `GLOBAL_SCOPE` default, silently reopening
-    the same hole `latest_pipeline_state`'s required kwarg already closed
-    one layer in (lead-coder-30 review, PR #5778). A call site that forgets
-    `scope` must fail at the call, not silently resume as GLOBAL_SCOPE."""
+async def test_resume_requires_snapshot_kwarg(tmp_path):
+    """Tier 2: no default -- #5781 replaced `resume()`'s `scope` parameter
+    with `snapshot` (the caller's own already-looked-up
+    `latest_pipeline_state` result); this pins the same no-silent-default
+    contract onto the new parameter (decision 2/7's own precedent: two real
+    meanings -- "here is the run's state" vs "this is a fresh run" -- and
+    the one real caller always knows which one applies, so a default would
+    only ever paper over a forgotten call, not serve a caller with nothing
+    to say). A call site that forgets `snapshot` must fail at the call."""
     log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     pipeline = Pipeline(steps=[TransformStep(value="1 + 1", output="x")])
 
@@ -167,24 +168,24 @@ def _bare_ctx():
 
 
 @pytest.mark.asyncio
-async def test_resume_forwards_its_scope_real_witness(tmp_path, monkeypatch):
-    """Tier 2: `PipelineExecutor.resume`'s own `scope` parameter really
-    reaches `latest_pipeline_state` -- proven by a REAL, observable
-    behavioral difference (no patch of any collaborator this test itself
-    depends on -- the only monkeypatch here registers a genuine tool
-    handler, the same idiom test_pipeline_is6_attached.py's own sibling
-    helper uses, not a stand-in for the thing under test).
+async def test_resume_uses_exactly_the_snapshot_the_caller_passes(tmp_path, monkeypatch):
+    """Tier 2: #5781's own witness -- `resume()` uses EXACTLY the `snapshot`
+    its caller hands it, and never re-derives one from `state_log` itself
+    (the double-read #5781 removed). Proven by a REAL, observable behavioral
+    difference (no patch of any collaborator this test itself depends on --
+    the only monkeypatch here registers a genuine tool handler, the same
+    idiom test_pipeline_is6_attached.py's own sibling helper uses, not a
+    stand-in for the thing under test).
 
-    A recorded generation carries an impossible `step_index` (5, for a
-    1-step pipeline where only 0/1 are ever real) and is then hidden by a
-    rewind scoped to EXACTLY the scope this test passes to `resume()`. If
-    `resume()` genuinely forwarded that scope to `latest_pipeline_state`,
-    the impossible generation is invisible -> resume() falls through to a
-    fresh run -> the one real step executes for real (the counting file
-    gets exactly one line) -> `step_index == 1`. If scope were silently
-    dropped (always seeing the record), resume() would instead try to
-    replay from the impossible snapshot -- observably NOT "one real
-    execution, step_index == 1"."""
+    A real generation carrying an impossible `step_index` (5, for a 1-step
+    pipeline where only 0/1 are ever real) is recorded and durably on disk.
+    `resume()` is then called with `snapshot=None` anyway -- if `resume`
+    still consulted `state_log` on its own (the pre-#5781 shape), it would
+    find that impossible generation and try to replay from it. Because it
+    now trusts ONLY the `snapshot` argument, it falls through to a genuine
+    fresh run instead: the one real step executes for real (the counting
+    file gets exactly one line) and `step_index == 1` -- not the impossible
+    on-disk 5, and not a second read of it."""
     out_file = tmp_path / "out.txt"
     _install_counting_tool(monkeypatch, out_file)
     log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
@@ -192,22 +193,54 @@ async def test_resume_forwards_its_scope_real_witness(tmp_path, monkeypatch):
     dispatch = _make_tool_dispatch(_bare_ctx())
 
     await _put(log, "worker")
-    await record_pipeline_state(log, "run-scope-check", {"step_index": 5}, durable=True)
-
-    # Scoped to hide the impossible generation FOR EXACTLY (worker, sidA).
-    await log.append(
-        REWIND_KIND, target_n=0, supersedes=None, scope=["worker", "sidA"],
-    )
+    await record_pipeline_state(log, "run-snapshot-check", {"step_index": 5}, durable=True)
 
     result = await PipelineExecutor().resume(
-        "run-scope-check",
+        "run-snapshot-check",
         pipeline=pipeline,
         tool_dispatch=dispatch,
         state_log=log,
-        scope=("worker", "sidA"),
+        snapshot=None,
     )
 
-    # Hidden for (worker, sidA) -> resume() fell through to a genuine
-    # fresh run -> the one real step executed once -> step_index == 1.
+    # A real (step_index=5) generation sits on disk for this run_id, but
+    # `resume` was told `snapshot=None` -- it must honor THAT, not go look.
     assert result.step_index == 1
     assert out_file.read_text(encoding="utf-8").splitlines() == ["x"]
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_from_the_snapshot_the_caller_passes(tmp_path, monkeypatch):
+    """Tier 2: the complementary half of the witness above -- when the
+    caller DOES pass a real snapshot (its own `latest_pipeline_state`
+    lookup, exactly as `PipelineExecutorDriver.run_turn` does), `resume`
+    replays from it (exactly-once: the completed step is NOT re-executed;
+    only `step_index` advances)."""
+    out_file = tmp_path / "out.txt"
+    _install_counting_tool(monkeypatch, out_file)
+    log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
+    pipeline = _one_step_pipeline()
+    dispatch = _make_tool_dispatch(_bare_ctx())
+
+    await _put(log, "worker")
+    await record_pipeline_state(
+        log, "run-replay-check",
+        {"step_index": 1, "pipe_data": None, "named_stores": {}, "completed_step_results": {"0": {}}},
+        durable=True,
+    )
+    snapshot = latest_pipeline_state("run-replay-check", log, scope=GLOBAL_SCOPE)
+    assert snapshot is not None  # the fixture above; a real lookup, not asserted-as-given
+
+    result = await PipelineExecutor().resume(
+        "run-replay-check",
+        pipeline=pipeline,
+        tool_dispatch=dispatch,
+        state_log=log,
+        snapshot=snapshot,
+    )
+
+    # Already at step_index 1 (the pipeline's only step) -> resume is a
+    # replay-to-completion with ZERO new tool executions -- the counting
+    # tool's own side effect (creating out_file) never fires.
+    assert result.step_index == 1
+    assert not out_file.exists()

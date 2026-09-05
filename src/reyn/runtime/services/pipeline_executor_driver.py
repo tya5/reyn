@@ -244,12 +244,15 @@ class PipelineExecutorDriver:
         pipeline_registry = self._pipeline_registry()
         # #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling): this
         # run's own owner is a fact already in hand (`wo`), not something
-        # to re-derive from invocation.json — passed straight through to
-        # both latest_pipeline_state (direct call, below) and
-        # executor.resume (which forwards it to the same function).
+        # to re-derive from invocation.json.
+        # #5781: read ONCE and hand the result to resume() below (rather than
+        # re-deriving inside resume() a second time, which was the earlier
+        # #5769-stage-3 shape) — this is also why resume() no longer takes a
+        # `scope` parameter at all: the caller already did the lookup.
         scope = (wo.driver_agent, wo.driver_sid)
+        snapshot = latest_pipeline_state(wo.run_id, self._state_log, scope=scope)
         try:
-            if latest_pipeline_state(wo.run_id, self._state_log, scope=scope) is None:
+            if snapshot is None:
                 # Fresh run (or crashed before the first R4 snapshot): seed the
                 # ORIGINAL work-order input — resume()'s fallback would lose it.
                 result = await executor.run(
@@ -281,7 +284,7 @@ class PipelineExecutorDriver:
                     pipeline=pipeline,
                     tool_dispatch=await self._make_dispatch(),
                     state_log=self._state_log,
-                    scope=scope,
+                    snapshot=snapshot,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
                     pipeline_registry=pipeline_registry,

@@ -188,17 +188,24 @@ def latest_pipeline_state(
 
     #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling on the PR
     #5778 review, replacing an earlier, disclosed (a)/(b)-shaped deviation
-    this docstring used to carry): ``scope`` is now the CALLER's own
+    this docstring used to carry): ``scope`` is the CALLER's own
     responsibility, not something this function discovers by re-reading
-    ``invocation.json``. Both real call sites already hold the run's own
-    ``PipelineWorkOrder`` when they call this — ``PipelineExecutorDriver.
-    run_turn`` (direct call) and ``PipelineExecutor.resume`` (which now
-    forwards its own ``scope`` parameter here) — so passing ``scope`` is
-    "hand over a fact you already have", not a new derivation. This
-    removes the whole class of problem the earlier version had: no
-    ``invocation.json`` re-read, no warning log, no ``GLOBAL_SCOPE``
-    fallback, no decision-7 exception to disclose — the caller's own
-    scope is simply the truth, always, with no cases to reconcile.
+    ``invocation.json``. The one real caller (``PipelineExecutorDriver.
+    run_turn``) already holds the run's own ``PipelineWorkOrder`` when it
+    calls this, so passing ``scope`` is "hand over a fact you already
+    have", not a new derivation. This removes the whole class of problem
+    the earlier version had: no ``invocation.json`` re-read, no warning
+    log, no ``GLOBAL_SCOPE`` fallback, no decision-7 exception to
+    disclose — the caller's own scope is simply the truth, always, with
+    no cases to reconcile.
+
+    #5781: ``PipelineExecutor.resume`` no longer calls this function at
+    all — it used to (forwarding its own ``scope`` parameter straight
+    through), making ``run_turn``'s one real call site read this SAME
+    generation twice per resume (once directly, once again inside
+    ``resume``, which then discarded the first read). ``resume`` now
+    takes the already-looked-up ``snapshot`` as a parameter instead, so
+    this function has exactly one caller.
     """
     store = _store(state_log, run_id)
     if store is None:

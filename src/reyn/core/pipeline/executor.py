@@ -117,7 +117,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
-from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
+from reyn.core.events.pipeline_recovery import record_pipeline_state
 from reyn.core.offload.canonical import (
     CANONICAL_DEGRADED_EVENT,
     CANONICAL_FALLBACK_EVENT,
@@ -1905,7 +1905,7 @@ class PipelineExecutor:
         pipeline: Pipeline,
         tool_dispatch: ToolDispatch,
         state_log: "StateLog",
-        scope: "tuple[str, str] | None",
+        snapshot: "dict[str, Any] | None",
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
@@ -1916,38 +1916,31 @@ class PipelineExecutor:
         max_pipeline_spawns: "int | None" = None,
         invoker_session: "Any | None" = None,
     ) -> PipelineResult:
-        """Resume `run_id`: load the latest recorded generation (R4) and replay every
-        step already in ``completed_step_results`` (no re-execution — exactly-once).
-        For a mid-``call`` crash this means resuming at the ``call`` step's index and
+        """Resume `run_id` from `snapshot` — the caller's own `latest_pipeline_state(
+        run_id, state_log, scope=...)` lookup, handed over. Replays every step already
+        in `snapshot["completed_step_results"]` (no re-execution — exactly-once). For a
+        mid-``call`` crash this means resuming at the ``call`` step's index and
         replaying the finished callee sub-steps from their dotted keys (the callee's
-        side effects do not re-fire), executing only the remainder. With no snapshot
-        at all, resume == run from scratch.
+        side effects do not re-fire), executing only the remainder. `snapshot=None`
+        (no generation was ever recorded for this run) == run from scratch.
 
         `pipeline_registry` (R7) is required only if the resumed run re-enters a
         `CallStep` — the callee is re-resolved by name and re-walked to reconstruct
         its local state from the dotted keys. `events` / `cancel_check` behave as in
         :meth:`run`.
 
-        #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling): `scope`
-        is forwarded straight to `latest_pipeline_state` — this run's own
-        (agent, sid) is a FACT, not a caller decision, so the one real
-        production caller (`PipelineExecutorDriver.run_turn`, which always
-        holds its own `PipelineWorkOrder`) always passes its real
-        `(wo.driver_agent, wo.driver_sid)`.
-
-        No default (required keyword-only), matching `latest_pipeline_state`'s
-        own required-kwarg contract one layer down — a first cut of this PR
-        gave `scope` a `GLOBAL_SCOPE` default here, but that quietly re-opened
-        the exact hole decision 7 exists to close one layer OUT: a NEW test
-        call site that simply forgets `scope` would silently get GLOBAL_SCOPE
-        with no red, rather than a `TypeError` at the call (ADR-0047's own
-        Alternatives wording: "one forgotten call site silently behaves
-        globally ... with no red"). The many pre-existing R3/R4 executor
-        tests with no owning-driver concept at all now pass `scope=GLOBAL_SCOPE`
-        EXPLICITLY — an honest spelling of "no scoped-rewind concern applies
-        here", not a silently-inferred one. The one real production caller is
-        unaffected: it already passes its real `(wo.driver_agent, wo.driver_sid)`."""
-        snapshot = latest_pipeline_state(run_id, state_log, scope=scope)
+        #5781: takes `snapshot` directly rather than a `scope` it would use to
+        look the snapshot up itself. #5769 stage 3 first had this function call
+        `latest_pipeline_state(run_id, state_log, scope=scope)` here — but the
+        one real caller (`PipelineExecutorDriver.run_turn`) ALREADY calls that
+        same function first, to decide run-vs-resume, then discarded the
+        result and let `resume` read it again: one resume, two identical
+        reads. Taking `snapshot` instead removes the second read AND the
+        `scope` parameter this function never otherwise needed (`scope` only
+        ever existed to make that internal lookup) — no `scope`-forgotten
+        default to get wrong (the #5778 review history this function's
+        docstring used to carry no longer applies: there is no lookup left
+        inside `resume` for a forgotten `scope` to silently misdirect)."""
         if snapshot is None:
             return await self.run(
                 pipeline,
