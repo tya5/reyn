@@ -118,7 +118,6 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
-from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 from reyn.core.offload.canonical import (
     CANONICAL_DEGRADED_EVENT,
     CANONICAL_FALLBACK_EVENT,
@@ -1906,7 +1905,7 @@ class PipelineExecutor:
         pipeline: Pipeline,
         tool_dispatch: ToolDispatch,
         state_log: "StateLog",
-        scope: "tuple[str, str] | None" = GLOBAL_SCOPE,
+        scope: "tuple[str, str] | None",
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
@@ -1934,16 +1933,20 @@ class PipelineExecutor:
         (agent, sid) is a FACT, not a caller decision, so the one real
         production caller (`PipelineExecutorDriver.run_turn`, which always
         holds its own `PipelineWorkOrder`) always passes its real
-        `(wo.driver_agent, wo.driver_sid)`. Defaults to `GLOBAL_SCOPE` for
-        the many existing lower-level executor tests that exercise pure
-        R3/R4 mechanics with no owning driver-session concept at all — for
-        those, GLOBAL_SCOPE is the honestly correct answer (there is no
-        scoped-rewind concern in play), not a silently-forgotten one; this
-        default carries none of the "read the wrong branch" risk stage 1
-        made `build_active_predicate`'s own `scope` required to close,
-        since NOTHING in this codebase can yet write a scoped record for a
-        pipeline run's own generations without going through the one real
-        caller above, which never omits its real scope."""
+        `(wo.driver_agent, wo.driver_sid)`.
+
+        No default (required keyword-only), matching `latest_pipeline_state`'s
+        own required-kwarg contract one layer down — a first cut of this PR
+        gave `scope` a `GLOBAL_SCOPE` default here, but that quietly re-opened
+        the exact hole decision 7 exists to close one layer OUT: a NEW test
+        call site that simply forgets `scope` would silently get GLOBAL_SCOPE
+        with no red, rather than a `TypeError` at the call (ADR-0047's own
+        Alternatives wording: "one forgotten call site silently behaves
+        globally ... with no red"). The many pre-existing R3/R4 executor
+        tests with no owning-driver concept at all now pass `scope=GLOBAL_SCOPE`
+        EXPLICITLY — an honest spelling of "no scoped-rewind concern applies
+        here", not a silently-inferred one. The one real production caller is
+        unaffected: it already passes its real `(wo.driver_agent, wo.driver_sid)`."""
         snapshot = latest_pipeline_state(run_id, state_log, scope=scope)
         if snapshot is None:
             return await self.run(

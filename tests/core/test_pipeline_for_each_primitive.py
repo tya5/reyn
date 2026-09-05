@@ -395,7 +395,7 @@ async def test_truncate_falsify_mid_fan_out_replays_items_exactly_once(tmp_path:
     crash.discard("COLLECT")
     resumed = await PipelineExecutor().resume(
         "run-fe-tf", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     lines = out_file.read_text(encoding="utf-8").splitlines()
@@ -427,9 +427,10 @@ async def test_resume_after_full_fan_out_replays_with_zero_new_side_effects(tmp_
     before = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert before == ["A", "B", "C", "COLLECT", "D"]
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-fe-done", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
     after = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert after == before, "a fully-completed fan-out must replay with zero side effects"
@@ -510,6 +511,7 @@ async def test_truncate_falsify_compositional_do_sub_step_survives_mid_item_cras
     await PipelineExecutor().resume(
         "run-fe-comp-tf", pipeline=pipeline,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
     lines = out_file.read_text(encoding="utf-8").splitlines()
     assert lines == ["X-a", "X-b"], (

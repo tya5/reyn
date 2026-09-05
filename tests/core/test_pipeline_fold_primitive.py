@@ -235,7 +235,7 @@ async def test_truncate_falsify_fold_resumes_completed_iterations_exactly_once(t
     crash.clear()
     resumed = await PipelineExecutor().resume(
         "run-fold-tf", pipeline=outer,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     # Exactly-once: A appears ONCE (replayed, not re-executed); B once (resumed).
@@ -278,9 +278,10 @@ async def test_fold_resume_after_full_run_replays_with_zero_new_side_effects(tmp
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-fold-done", pipeline=outer,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
     assert resumed.named_stores["joined"] == {"text": "AB"}

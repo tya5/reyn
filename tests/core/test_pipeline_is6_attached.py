@@ -398,6 +398,7 @@ async def test_executor_cancel_at_boundary_leaves_resumable_journal(
     # Explicit resume (no cancel): completes exactly-once — step 0 NOT re-run.
     result = await PipelineExecutor().resume(
         "run-cancel", pipeline=pipeline, tool_dispatch=dispatch, state_log=state_log,
+        scope=GLOBAL_SCOPE,
     )
     assert result.step_index == 3
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
@@ -456,6 +457,7 @@ async def test_driver_cancel_writes_terminal_marker_recovery_skips(
     result = await PipelineExecutor().resume(
         "run-dcancel", pipeline=pipeline,
         tool_dispatch=_make_tool_dispatch(_bare_ctx(state_log)), state_log=state_log,
+        scope=GLOBAL_SCOPE,
     )
     assert result.step_index == 3
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]

@@ -267,9 +267,11 @@ async def test_truncate_falsify_call_resumes_callee_substeps_exactly_once(tmp_pa
     # RESUME with the crash DISARMED: the finished sub-step replays from the gen
     # FILE (no re-write of A), only sub-step 1 executes (writes B once).
     crash.clear()
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-tf", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
 
     # Exactly-once: A appears ONCE (replayed, not re-executed); B once (resumed).
@@ -303,9 +305,11 @@ async def test_call_resume_after_full_run_replays_with_zero_new_side_effects(tmp
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-done", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
     # No new lines — a fully-completed run replays with zero side effects.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
