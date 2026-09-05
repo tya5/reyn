@@ -2334,7 +2334,10 @@ class AgentRegistry:
             )
         return await self.checkout(target_n, scope=GLOBAL_SCOPE)
 
-    def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
+    def list_rewind_points(
+        self, *, include_abandoned: bool = False,
+        scope: "tuple[str, str] | None" = None,
+    ) -> list[dict]:
         """Enumerate rewind targets for the time-travel UI (1f / Phase-2 fork).
 
         Returns one row per snapshot-generation boundary, ascending by seq::
@@ -2374,24 +2377,33 @@ class AgentRegistry:
         disk+in-memory discovery the rewind materialiser already depends
         on for crash recovery) now supplies every sid to fold in.
 
-        A boundary seq is *architecturally* the origin of exactly one
-        ``(name, sid)`` pair (a WAL entry belongs to one session's own
-        turn/step by construction — the same "seq is globally unique per
-        event" property today's per-agent union already relies on).
-        **Architecturally guaranteed is not the same as checked** (#5782
-        review, architect BLOCKING): this method used to look the pair up
-        with ``.get(s, _DEFAULT_SID)``, which — had the invariant ever been
-        violated by a future bug — would have silently handed back
-        ``"main"``: not a placeholder, a REAL session's own name, wired
-        straight into the row the operator clicks to choose which session
-        to rewind. That is the exact "answer from a fallback instead of
-        admitting the owner can't be named" shape decision 7 (ADR-0047)
-        already forbids — it had simply reappeared inside this row instead
-        of a scope predicate. So the lookup is now checked, not assumed:
-        a seq claimed by two DIFFERING ``(name, sid)`` pairs is logged
-        (this should never happen) and ``name``/``sid`` come back ``None``
-        for that row rather than either owner's real value — an admitted
-        "don't know", never a fabricated one. The pair also travels
+        #5815 (real-world correction, owner incident): a boundary seq is
+        NOT the origin of exactly one ``(name, sid)`` pair — that was
+        this docstring's own false claim until measured otherwise.
+        ``applied_seq`` records the WAL POSITION at the moment a
+        generation was written, not an event this ROW's own agent
+        uniquely owns; a THIRD agent's unrelated WAL entry at that same
+        position is a routine coincidence, not a violation, and any
+        number of agents recording a generation at that same position is
+        exactly as routine (confirmed: ``gen-<seq>.json`` existed for
+        BOTH ``coder-brown`` and ``coder-smith`` at the SAME seq, whose
+        WAL entry belonged to a third agent, ``default``, entirely).
+        **This method used to look the pair up with ``.get(s,
+        _DEFAULT_SID)``** (#5782 review, architect BLOCKING), which — on
+        one of these genuinely routine multi-owner seqs — would have
+        silently handed back ``"main"``: not a placeholder, a REAL
+        session's own name, wired straight into the row the operator
+        clicks to choose which session to rewind. That is the exact
+        "answer from a fallback instead of admitting the owner can't be
+        named" shape decision 7 (ADR-0047) already forbids. So the lookup
+        is checked, not assumed: a seq claimed by two DIFFERING ``(name,
+        sid)`` pairs (routine, #5815 — not an anomaly) is logged and
+        ``name``/``sid`` come back ``None`` for that row rather than
+        either owner's real value — an admitted "don't know", never a
+        fabricated one. (Which row's OWNER derivation should read here
+        instead — e.g. keying by ``(agent, sid, seq)`` — is #5815's own
+        open design question; this docstring only stops asserting a
+        uniqueness that measurement disproved.) The pair also travels
         TOGETHER on one row (not ``sid`` alone) — a consumer that obtained
         ``name`` from a different source (e.g. "whichever agent tab is
         open") could otherwise present a ``(name, sid)`` combination that
@@ -2403,6 +2415,23 @@ class AgentRegistry:
         a column, a filter) is a presentation decision left to whoever
         wires the timeline UI to it (owner-gated) — not decided here.
 
+        #5815 (2): ``scope`` (optional, ``None`` = today's cross-agent
+        union, unchanged) lets a caller ask for ONE session's own rows
+        directly — sourced from THAT session's own generation store alone,
+        never a cross-store union. The row unit for a scoped call is
+        genuinely ``(agent, sid, seq)``: every seq that store ever
+        recorded, each row's owner being ``scope`` itself, by
+        construction — there is no second store's claim to disagree with,
+        so the multi-owner ambiguity below cannot arise for a scoped call
+        at all (architect ruling, #5815: "``applied_seq`` は位置であって
+        持ち主ではない。位置から持ち主を引く読み手を作らない" — a scoped
+        call never asks "who owns position N", only "what did MY store
+        record"). No existing caller passes ``scope`` yet — which view
+        (global vs session-local) the UI shows is the owner-gated
+        presentation decision this docstring's own scope boundary already
+        names; this parameter only makes the session-local shape
+        available to whoever that decision lands with.
+
         Empty when there is no WAL or no generations.
         """
         if self._state_log is None:
@@ -2413,6 +2442,24 @@ class AgentRegistry:
         # construction. Points below this floor would always be
         # rejected by checkout — advertising them is misleading.
         oldest_seq = self._oldest_kept_seq()
+
+        if scope is not None:
+            # #5815 (1)(2): sourced from ONE store -- see this method's
+            # own docstring for why this branch structurally cannot hit
+            # the multi-owner ambiguity the unscoped branch below still
+            # has to detect.
+            name, sid = scope
+            is_active = build_active_predicate(self._state_log, scope=scope)
+            scoped_seqs = {
+                s for s in self._store_for(name, sid).seqs()
+                if not (oldest_seq is not None and s < oldest_seq)
+                and (include_abandoned or is_active(s))
+            }
+            if not scoped_seqs:
+                return []
+            return self._rewind_rows(
+                scoped_seqs, dict.fromkeys(scoped_seqs, scope), oldest_seq,
+            )
 
         # Union of generation boundary seqs across every known agent AND every
         # sid of each (#5769 stage 3 ③ — was agent-default-sid-only through
@@ -2444,29 +2491,49 @@ class AgentRegistry:
                         continue  # #2236: truncated out of WAL — not reachable
                     if include_abandoned or is_active(s):
                         seqs.add(s)
-                        # A boundary seq is the origin of exactly one (name,
-                        # sid) pair by construction (see this method's own
-                        # docstring) — this SHOULD never fire. #5769 stage 3
+                        # #5815: a boundary seq CAN be claimed by more than
+                        # one (name, sid) pair — this fires ROUTINELY
+                        # (measured: multiple agents recording a generation
+                        # at the same WAL position, itself often a THIRD
+                        # agent's unrelated event; see this method's own
+                        # docstring for the real incident). #5769 stage 3
                         # ④ (architect's re-written acceptance item, #5782
                         # review): a seq without EXACTLY one owner must be
                         # represented AS SUCH — never a fabricated value, not
                         # even a first-seen-wins guess. So a second, DIFFERING
                         # claim flips the entry to ``None`` rather than
-                        # keeping either owner.
+                        # keeping either owner. (A caller that can name its
+                        # own scope avoids this branch entirely — see the
+                        # ``scope=`` parameter above.)
                         claim = (name, sid)
                         if s not in seq_owner:
                             seq_owner[s] = claim
                         elif seq_owner[s] is not None and seq_owner[s] != claim:
                             logger.warning(
                                 "list_rewind_points: seq %d claimed by both "
-                                "%r and %r — this should be structurally "
-                                "impossible; reporting no owner rather than "
-                                "either guess (see #5769 stage 3 ④)",
+                                "%r and %r — routine (#5815: applied_seq is a "
+                                "WAL position, not a uniquely-owned event), "
+                                "reporting no owner rather than either guess "
+                                "(see #5769 stage 3 ④)",
                                 s, seq_owner[s], claim,
                             )
                             seq_owner[s] = None
         if not seqs:
             return []
+        return self._rewind_rows(seqs, seq_owner, oldest_seq)
+
+    def _rewind_rows(
+        self, seqs: "set[int]", seq_owner: "dict[int, tuple[str, str] | None]",
+        oldest_seq: "int | None",
+    ) -> list[dict]:
+        """The shared row-assembly tail both branches of
+        :meth:`list_rewind_points` use — ``seq_owner`` already carries
+        each seq's owner (unambiguous by construction for the scoped
+        branch; possibly ``None`` for the unscoped branch's genuinely
+        ambiguous case, #5815). This function owns none of the ambiguity
+        logic itself, only the WAL/anchor/branch-id assembly common to
+        both."""
+        assert self._state_log is not None  # both callers already checked
 
         # One pass over the WAL to map boundary seq → (ts, kind). The audit
         # EventStore is NOT consulted — keeping WAL and audit decoupled.
@@ -2484,11 +2551,12 @@ class AgentRegistry:
         # scoped records), never one global tree blindly applied to every
         # owner's seqs (the same class of bug #5786 fixed for
         # `reconstruct`). `seq_owner` already has each seq's real owner
-        # (or `None` for the structurally-impossible ambiguous case, see
-        # above) -- grouped here and called once per owner, merged into
-        # one dict. An unresolved (`None`) owner gets `GLOBAL_SCOPE`: with
-        # no nameable owner to ask for, the global-only view is the
-        # honest "don't know" answer, not a guess (ADR-0047 decision 7).
+        # (or `None` for the ambiguous multiple-owner case -- routine,
+        # #5815, see the caller's own docstring) -- grouped here and
+        # called once per owner, merged into one dict. An unresolved
+        # (`None`) owner gets `GLOBAL_SCOPE`: with no nameable owner to
+        # ask for, the global-only view is the honest "don't know" answer,
+        # not a guess (ADR-0047 decision 7).
         by_owner: "dict[tuple[str, str] | None, list[int]]" = {}
         for s in seqs:
             by_owner.setdefault(seq_owner.get(s), []).append(s)
@@ -2509,11 +2577,11 @@ class AgentRegistry:
             # (a consumer sourcing ``name`` separately could otherwise
             # present a pair that never actually owned this seq). ``None``
             # for BOTH when ``seq_owner`` never saw exactly one claim for
-            # this seq (structurally shouldn't happen — see the method's
-            # own docstring) — an admitted "don't know", never the old
-            # ``.get(s, _DEFAULT_SID)`` fallback, which fabricated a REAL
-            # session's name ("main") for a row the operator clicks to
-            # choose which session to rewind.
+            # this seq -- routine for the unscoped caller (#5815, not a
+            # structural impossibility) -- an admitted "don't know", never
+            # the old ``.get(s, _DEFAULT_SID)`` fallback, which fabricated
+            # a REAL session's name ("main") for a row the operator clicks
+            # to choose which session to rewind.
             owner = seq_owner.get(s)
             owner_name, owner_sid = owner if owner is not None else (None, None)
             rows.append({
