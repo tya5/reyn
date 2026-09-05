@@ -744,15 +744,16 @@ class AgUiTransport(ClientTransport):
         return bool(await self._send({"type": "cancel_queued", "msg_id": msg_id}))
 
     async def request_mcp_retry(self, server: str) -> bool:
-        # #4401 ③: NOT wired to a real server op yet — #4401 ②'s own
-        # `mcp_probe_states` never reaches this wire either
-        # (`mcp_probe_states_reported=False` for REMOTE, read_model.py),
-        # so a remote client's mcp pane never shows the retry row that
-        # would call this in the first place; only someone typing the
-        # command by hand on a --connect client reaches here. ``False`` —
-        # "did not happen here" — same disclosed-gap shape #4401 ②
-        # already committed to for remote, not a silent no-op invented
-        # for this method alone.
+        # #4401 ③: NOT wired to a real server op yet. #5774 wired #4401
+        # ②'s own `mcp_probe_states` data onto the wire for real
+        # (`mcp_probe_states_reported=True` for REMOTE, read_model.py) —
+        # a remote client's mcp pane DOES now show the real per-server
+        # probe state, including a genuinely "failed" row with its own
+        # retry affordance. Calling THIS method from that row is still a
+        # no-op, though: the retry ACTION itself has no real server-side
+        # RPC on this transport yet, a separate gap from the DATA gap
+        # #5774 closed. ``False`` — "did not happen here" — same
+        # disclosed-gap shape as before, now scoped to the action only.
         return False
 
     async def clear_pending_command_ui(self) -> None:

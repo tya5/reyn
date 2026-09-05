@@ -144,8 +144,12 @@ def test_the_8_reported_axes_flip_true_for_remote_once_wired() -> None:
     remote_snap = project_remote_snapshot(wire_values)
     assert remote_snap["usage_breakdown_reported"] is True
     assert remote_snap["session_cache_usage_reported"] is True
-    # ctx_recent_usage's own axis is UNCHANGED by this stage — still False.
-    assert remote_snap["cache_usage_reported"] is False
+    # #5774: ctx_recent_usage (this axis's own sole remaining consumer
+    # after this stage's own split) is wired for real too, on a LATER PR
+    # — see test_5774_mcp_hooks_ctx_wired_to_remote.py for that stage's
+    # own assertions; this file's own claim here is scoped to what THIS
+    # stage (#5771) actually flipped.
+    assert remote_snap["cache_usage_reported"] is True
 
 
 def test_an_old_server_that_never_sent_the_new_keys_degrades_gracefully() -> None:

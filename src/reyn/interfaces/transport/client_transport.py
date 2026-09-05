@@ -255,11 +255,13 @@ class ClientTransport(ABC):
         (the slash handler) needs the real outcome to report.
 
         ``False`` means "did not happen here" (no attached session locally,
-        or not yet supported on this transport — #4401's own scope: remote/
-        AG-UI does not carry `mcp_probe_states` on the wire yet either, so a
-        remote client's mcp pane never shows the retry row in the first
-        place; this only matters for someone typing the command by hand) —
-        mirrors :meth:`cancel_queued`'s own convention.
+        or not yet supported on this transport — #5774 wired `mcp_probe_
+        states` itself onto the AG-UI wire for real, so a remote mcp pane
+        DOES now show a genuinely "failed" row with its own retry
+        affordance; the RETRY ACTION here is a separate, still-unwired
+        gap — no real server-side RPC on this transport yet, #4401 ③'s
+        own remaining scope) — mirrors :meth:`cancel_queued`'s own
+        convention.
 
         Abstract: the no-op-``False`` default body lives on
         :class:`ClientTransportStub`; ``InProcessTransport`` overrides it

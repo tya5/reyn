@@ -430,11 +430,13 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     has_command_ui_region=False,
     conversation_history=False,
     load_older_conversation_history=False,
-    # #5771 stage②: ctx_recent_usage (this field's own sole remaining
-    # consumer, the Ctx pane's recent-call cache line — see the field's
-    # own docstring for the split) is NOT one of stage②'s 8 wired keys —
-    # stays False.
-    cache_usage_reported=False,
+    # #5774: ctx_recent_usage (this field's own sole remaining consumer
+    # after #5771 stage②'s split — the Ctx pane's recent-call cache
+    # line) is wired for real now too — True, not False. (lead-coder's
+    # own correction: this key had been read as "the gate's shape-
+    # detector can't parse a tuple, so no wiring is needed" — the
+    # detector gap and the wiring gap were never the same question.)
+    cache_usage_reported=True,
     cron_jobs_reported=False,
     # #5771 stage②: usage (prompt/completion/total) is now genuinely
     # wired — was a fixed (0, 0, agent_tokens) placeholder before this PR.
@@ -447,13 +449,19 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     attached_name_reported=True,
     visibility_items_reported=True,
     mcp_subscriptions_reported=True,
-    # #4401 ②: not yet wired onto the AG-UI wire (see the field's own
-    # docstring) — False, not True.
-    mcp_probe_states_reported=False,
-    # #5100/#5272: not yet wired onto the AG-UI wire (no producer projects
-    # the server session's real hooks_config_warnings for a remote
-    # client to read) -- False, not True; see the field's own docstring.
-    hooks_config_warnings_reported=False,
+    # #5774: wired onto the AG-UI wire for real now (project_remote_
+    # snapshot's own "mcp_probe_states" reads the real key) — True, not
+    # False. NOTE: the RETRY ACTION itself (AgUiTransport.
+    # request_mcp_retry) is a SEPARATE, still-unwired gap (no real server
+    # op yet) — a remote mcp pane now shows the real probe state,
+    # including a genuinely "failed" row, but retrying it from a remote
+    # client is still a no-op on this transport; see that method's own
+    # docstring.
+    mcp_probe_states_reported=True,
+    # #5774: wired onto the AG-UI wire for real now (project_remote_
+    # snapshot's own "hooks_config_warnings" reads the real key) — True,
+    # not False.
+    hooks_config_warnings_reported=True,
     compaction_progress_reported=False,
     tasks_reported=False,
     # #5771 stage②: session_cached_tokens is now genuinely wired — see
@@ -931,6 +939,10 @@ _WIRE_KEYS = frozenset({
     "ctx_window", "queue", "turn_active", "queue_seq",
     "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
     "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens",
+    # #5774: mcp_probe_states/hooks_config_warnings/ctx_recent_usage all
+    # joined the same way — real data, project_status now unconditionally
+    # emits every one of them.
+    "mcp_probe_states", "hooks_config_warnings", "ctx_recent_usage",
 })
 
 
@@ -1032,19 +1044,22 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # below is not). Consulted by `chrome.py`'s cost-pane cache line
         # only; the ctx-pane one keeps reading ``cache_usage_reported``.
         "session_cached_tokens": v.get("session_cached_tokens", 0),
-        # `(0, 0)` below is the correct graceful-degrade VALUE (neither
-        # is projected onto the AG-UI wire — cache-hit accounting is
-        # session-local); gated by ``cache_usage_reported`` above,
-        # consulted by `chrome.py`'s `_cache_hit_line` for the Ctx pane's
-        # recent-call line, so it renders a "not reported" line instead
-        # of a fabricated "0% hit (0 / 0)".
-        #
-        # Scope, explicit (architect, #5009): this is NOT the owner's actual
-        # "cache stuck at 0%" observation — that was measured on a LOCAL
-        # session (owner-confirmed) and is a separate, still-unresolved
-        # symptom this key does not touch. This key only makes the REMOTE
-        # "0 could mean unsupported" case honestly say so.
-        "ctx_recent_usage": (0, 0),
+        # #5774: real wire data now — (recent_prompt, recent_cached), the
+        # single most-recent call's own cache figures (Session.
+        # last_call_usage). Was the LAST key #5773's own axis-split left
+        # behind: cache_usage_reported used to cover this key AND
+        # session_cached_tokens together (#5009); #5771 stage② wired only
+        # the latter for real and split off session_cache_usage_reported
+        # for it, leaving cache_usage_reported (this key's own, now sole,
+        # axis) still False — the exact "same cache stat reaches the Cost
+        # pane as real data, stays 'not reported' on the Ctx pane" gap
+        # lead-coder's own #5774 follow-up named (correcting an earlier
+        # "the gate's shape-detector can't parse a tuple" read as "no
+        # wiring needed" — the detector gap and the wiring gap were never
+        # the same question). Gated by ``cache_usage_reported`` above,
+        # now ``True`` for remote, consulted by `chrome.py`'s
+        # `_cache_hit_line` for the Ctx pane's recent-call line.
+        "ctx_recent_usage": v.get("ctx_recent_usage", (0, 0)),
         "ctx_source": "remote",
         # #5771 stage②: the current/most-recent turn's own total — real
         # wire data (agui/state.py's own ``project_status``), ``None``
@@ -1117,12 +1132,16 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # so `[]` is the correct default for BOTH "genuinely no
         # subscriptions" and "key not yet on the wire" here.
         "mcp_subscriptions": v.get("mcp_subscriptions", []),
-        # `[]` below is correct (per-server probe state is not on the wire
-        # yet — RouterHostAdapter.mcp_probe_snapshot() is session-local,
-        # #4401 ②); gated by ``mcp_probe_states_reported`` above so the mcp
-        # pane renders "not reported" instead of a fabricated "not_probed"
-        # row for every server.
-        "mcp_probe_states": [],
+        # #5774: real wire data now — RouterHostAdapter.mcp_probe_
+        # snapshot() (#4401 ②③) rides the wire the same way agent_names/
+        # session_tree do (#5094's own pattern); gated by
+        # ``mcp_probe_states_reported`` above, now ``True`` for remote
+        # (see REMOTE_CHAT_READ_CAPABILITIES) so the mcp pane renders the
+        # real per-server state instead of "not reported". Owner's own
+        # stated purpose for #4401 ("tui mcp tab でユーザは気付けて対処
+        # できる") was silently unmet for a remote attach until this key
+        # rode the wire — a probe failure was invisible there.
+        "mcp_probe_states": v.get("mcp_probe_states", []),
         # `[]` below is correct (pipeline registry is not on the wire);
         # gated by ``pipelines_reported`` above so `pipe_pane_lines`
         # renders "not reported" instead of its own `["(none)"]` fallback
@@ -1151,14 +1170,14 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # count-only (here, no-indicator-at-all) fallback in
         # config_warning_text, never a fabricated key list.
         "unknown_config_keys": {},
-        # `[]` below is correct (per-session hooks.yaml parsing lives on the
-        # SERVER's Session, not projected onto the wire); gated by
-        # `hooks_config_warnings_reported` above so `config_warning_text`
-        # can tell "genuinely no warnings" apart from "this connection
-        # can't report them" — unlike `unknown_config_key_count`/
+        # #5774: real wire data now — Session.hooks_config_warnings is
+        # per-session SERVER state (unlike `unknown_config_key_count`/
         # `unknown_config_keys` just above, which name the CLIENT's own
-        # reyn.yaml and are structurally absent on a remote connection.
-        "hooks_config_warnings": [],
+        # reyn.yaml and stay structurally absent on a remote connection);
+        # gated by `hooks_config_warnings_reported` above, now ``True``
+        # for remote so `config_warning_text` shows the real warnings
+        # instead of degrading to "not reported".
+        "hooks_config_warnings": v.get("hooks_config_warnings", []),
         # `[]` below is correct (task substrate is session-local, never on
         # the wire); gated by ``tasks_reported`` above so the Task pane
         # renders "not reported" instead of a `[]` that would be
