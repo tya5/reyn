@@ -27,7 +27,7 @@ Three control-flow guards were considered. All three are rejected below, and two
 
 | Alternative | Why not |
 |---|---|
-| **A raw count of hook-driven turns** (`safety.loop.max_hook_driven_turns`, default 25) | Already abolished, #5561, owner ruling 2026-08-30. Owner verbatim: 「hook 起動を回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も判断できない」. The default was, in the concept doc's own words, 「意図的な決定を装った事実上の未検討回答」. |
+| **A raw count of hook-driven turns** (`safety.loop.max_hook_driven_turns`, default 25) | Already abolished, #5561, owner ruling 2026-08-30. Owner verbatim: 「hook 起動を回数で制限なんて誰も設定できないでしょ。どんな回数が妥当か誰も判断できない」. The default was never derived from reyn's own data — no operator could state the correct count, so it stood in for a decision without being one (`docs/concepts/runtime/hooks.ja.md` § ループバルブ records the ruling and its reasoning). |
 | **A predicate detecting a true self-continuation cycle** | Considered and rejected in the same #5561 ruling: no such cycle has ever been observed. |
 | **A static partition of hook points by "can a running turn cause this point to fire"** (architect, #5747) | **Withdrawn by its author.** It is a variant of the already-rejected cycle predicate, and strictly worse: cycle detection costs no expressiveness, while a static partition forbids legitimate watch/build workflows outright. Owner verbatim: 「あなたの考えた機構によってユーザによる決定論的ワークフローのできることを狭めるという弊害が許容できるのかという問題に差し代わるだけ」／「これは、再帰無限を単純に禁止すれば良いという問題ではなさそうに思える」. |
 
