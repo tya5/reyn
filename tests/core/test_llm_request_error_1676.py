@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import litellm
 import pytest
 
+import reyn.llm.llm
 from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.llm.llm import recorded_acompletion
 from tests._support.events import collect_events, settle
@@ -27,7 +28,7 @@ from tests._support.events import collect_events, settle
 class _FakeProviderError(Exception):
     """Real fake mirroring a litellm provider exception (no Mock)."""
 
-    def __init__(self, message: str, status_code: int, body, response_text: str):
+    def __init__(self, message: str, status_code: "int | None", body, response_text: str):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
@@ -40,7 +41,9 @@ def _reset_ambient_event_log():
     set_llm_request_event_log(None)
 
 
-def _raising_acompletion(message="Boom", status_code=405, body=None, response_text=""):
+def _raising_acompletion(
+    message="Boom", status_code: "int | None" = 405, body=None, response_text="",
+):
     async def _fn(**_kwargs):
         raise _FakeProviderError(message, status_code, body, response_text)
     return _fn
@@ -51,6 +54,29 @@ async def _run_and_settle(coro, log):
         return await coro
     finally:
         await settle(log)
+
+
+class _FakeClock:
+    """#5797: a real, deterministic stand-in for the ``time`` module's own
+    ``monotonic()`` -- not a Mock, a plain object with the one method
+    ``llm.py`` actually calls. Rebinds ``reyn.llm.llm``'s own ``time`` NAME
+    (not the shared ``time`` module's ``monotonic`` attribute in place,
+    which would also break asyncio's own event-loop clock -- confirmed the
+    hard way: a global monkeypatch of ``time.monotonic`` hangs the test
+    runner)."""
+
+    def __init__(self, *values: float) -> None:
+        self._it = iter(values)
+
+    def monotonic(self) -> float:
+        return next(self._it)
+
+
+def _inject_monotonic_clock(monkeypatch, *values: float) -> None:
+    """#5797: per CLAUDE.md's testing policy, a duration-carrying test
+    supplies the clock as an input rather than waiting out a real
+    ``sleep()`` the assertion would then depend on as a floor."""
+    monkeypatch.setattr(reyn.llm.llm, "time", _FakeClock(*values))
 
 
 def _call(monkeypatch, log=None, **extra_kwargs):
@@ -145,3 +171,74 @@ def test_no_event_when_ambient_log_unset_but_still_raises(monkeypatch) -> None:
 
     with pytest.raises(_FakeProviderError):
         _call(monkeypatch)
+
+
+# ── #5797: litellm_retries + elapsed_s ──────────────────────────────────────
+
+
+def test_error_event_parses_litellm_retry_count_from_exception_text(monkeypatch) -> None:
+    """Tier 2: #5797 — litellm appends "LiteLLM Retried: N times" to an
+    exception's own message once ITS internal retry mechanism (invisible
+    to reyn) is exhausted (real litellm behaviour, not a hand-mirrored
+    string -- litellm owns that format; a copy of it would stay green if
+    litellm ever changed it, silently losing the observability #5797
+    exists to add). `llm_request_error` now surfaces it as a structured
+    `litellm_retries` field instead of leaving it buried in free text."""
+    real_exc = litellm.Timeout(
+        message="Request timed out.", model="gpt-5.4", llm_provider="openai",
+        num_retries=3,
+    )
+
+    async def _raise_real_litellm_timeout(**_kwargs):
+        raise real_exc
+
+    monkeypatch.setattr(litellm, "acompletion", _raise_real_litellm_timeout)
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+
+    with pytest.raises(litellm.Timeout):
+        _call(monkeypatch, log=log)
+
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
+    assert err.data["litellm_retries"] == 3
+
+
+def test_error_event_litellm_retries_none_when_litellm_never_retried(monkeypatch) -> None:
+    """Tier 2: #5797 — a straight failure (e.g. a 4xx litellm never retries)
+    must NOT claim "0 retries" (a false "litellm tried and gave up
+    immediately" claim); the field is `None` -- genuinely absent, not a
+    fabricated zero."""
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _raising_acompletion(message="Method Not Allowed", status_code=405),
+    )
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+
+    with pytest.raises(_FakeProviderError):
+        _call(monkeypatch, log=log)
+
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
+    assert err.data["litellm_retries"] is None
+
+
+def test_error_event_carries_real_elapsed_time(monkeypatch) -> None:
+    """Tier 2: #5797 — `elapsed_s` reflects a genuine measurement, not a
+    hardcoded stand-in. A real (injected, not slept-out per CLAUDE.md's
+    testing policy) clock advancing by exactly 5.5s between the call's
+    start and its failure must show up as exactly 5.5 on the event —
+    proving the field is wired to a REAL timer read at both ends, not a
+    constant."""
+    monkeypatch.setattr(litellm, "acompletion", _raising_acompletion())
+    _inject_monotonic_clock(monkeypatch, 100.0, 105.5)
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+
+    with pytest.raises(_FakeProviderError):
+        _call(monkeypatch, log=log)
+
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
+    assert err.data["elapsed_s"] == pytest.approx(5.5)

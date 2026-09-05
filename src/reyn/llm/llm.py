@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sys
+import time
 import uuid
 import weakref
 from dataclasses import dataclass
@@ -1950,24 +1951,58 @@ def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) 
     return out
 
 
+_LITELLM_RETRIED_RE = re.compile(r"LiteLLM Retried:\s*(\d+)\s*times?", re.IGNORECASE)
+
+
+def _parse_litellm_retry_count(error_message: str) -> "int | None":
+    """#5797: litellm appends ``"LiteLLM Retried: N times"`` to an exception's
+    own message when its internal retry mechanism ran and was exhausted
+    (owner's own real proxy incident, #5793: ``"... LiteLLM Retried: 3
+    times"``) — reyn's own retry loop never sees those attempts (they
+    happen entirely inside ``litellm.acompletion`` before it ever raises),
+    so this is the ONLY place that count is available: parsed from what
+    litellm itself already reported, not re-counted by reyn (#5797,
+    lead-coder's own ruling: "数えるのは litellm、記録するのが reyn").
+    ``None`` when the substring is absent — a call that failed WITHOUT any
+    litellm-internal retry (e.g. a straight 4xx) has nothing to report
+    here, distinct from "0" (which would falsely claim litellm tried and
+    gave up immediately)."""
+    m = _LITELLM_RETRIED_RE.search(error_message)
+    return int(m.group(1)) if m else None
+
+
 def _emit_llm_request_error(
     model: str, purpose: str, exc: BaseException, base_kwargs: dict, messages: list,
+    *, elapsed_s: "float | None" = None,
 ) -> None:
     """#1676: emit a P6 ``llm_request_error`` with the FULL provider error detail
     (status_code + whole message/body, NOT truncated — the owner's 405 root-cause
     signal) so an LLM-call failure is visible in the event tab. Same ambient
     EventLog (ContextVar) + ``model``/``purpose`` context as ``llm_request``
     (#1669). Wrapped so the audit emit can never mask the real exception (the
-    caller re-raises regardless)."""
+    caller re-raises regardless).
+
+    #5797: this is the terminal-failure chokepoint the owner's proxy-log
+    reading (#5793: "200 OK x3", reconstructed by hand) exists to replace.
+    ``litellm_retries`` (parsed from the caught exception's own text via
+    ``_parse_litellm_retry_count``) and ``elapsed_s`` (measured by the
+    caller, spanning the full ``_once``/response-format-fallback attempt
+    that ultimately failed) turn what used to require reading a THIRD
+    party's proxy log by hand into fields on reyn's own audit-event —
+    model, why (``error_type``/``error_message``), how many times litellm
+    itself retried, and how long it took, all in one place."""
     try:
         from reyn.core.events.events import get_llm_request_event_log
         log = get_llm_request_event_log()
         if log is None:
             return
+        error_message = str(exc)
         detail: dict = {
             "error_type": type(exc).__name__,
-            "error_message": str(exc),
+            "error_message": error_message,
             "status_code": getattr(exc, "status_code", None),
+            "litellm_retries": _parse_litellm_retry_count(error_message),
+            "elapsed_s": elapsed_s,
         }
         # litellm exceptions carry the provider body on ``.body`` (often the parsed
         # error dict) and/or ``.response`` (an httpx.Response). Capture BOTH, whole
@@ -3066,6 +3101,11 @@ async def recorded_acompletion(
     # provider detail incl status_code + whole body) at this single chokepoint,
     # then RE-RAISE (never swallow). Wraps the response_format-fallback retry so a
     # final failure (no fallback, or the fallback also failed) emits exactly once.
+    # #5797: ``_call_start`` spans the WHOLE attempt (including the
+    # response_format-fallback retry, if it runs) — "how long reyn waited
+    # before finally giving up" from the caller's own perspective, matching
+    # what the owner read off the proxy log by hand (#5793's own incident).
+    _call_start = time.monotonic()
     try:
         try:
             response = await _once(response_format)
@@ -3079,7 +3119,10 @@ async def recorded_acompletion(
         # api_key to litellm since #4348, so there was nothing of reyn's
         # left for this boundary to scrub — litellm's own error text is
         # already provider-scrubbed (#4343).
-        _emit_llm_request_error(effective_model, purpose, exc, base_kwargs, messages)
+        _emit_llm_request_error(
+            effective_model, purpose, exc, base_kwargs, messages,
+            elapsed_s=time.monotonic() - _call_start,
+        )
         # #1678, delegated to litellm at #3288-follow-up: this call shape
         # (reasoning_effort + tools, resolved to the openai/azure provider —
         # see the comment above ``_needs_responses_endpoint`` and
