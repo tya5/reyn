@@ -137,14 +137,30 @@ def test_no_source_file_rewrites_op_context_sandbox_config() -> None:
     (whose ``sandbox_config`` may already carry a real declared policy) and
     swaps that ONE field for something else — ``_with_sandbox_config``'s
     own #5820 root cause, exactly this shape. A reintroduced instance of it
-    anywhere in ``src/reyn`` fails this, naming file:line."""
+    anywhere in ``src/reyn`` fails this, naming file:line.
+
+    #5826 BLOCKING (lead-coder review of this PR's own first pass): the
+    scan must carry its OWN population witness — a ``src.rglob`` that
+    silently returned 0 files (or an ``is_replace`` branch that never once
+    matched) would leave ``offenders`` vacuously empty, green for the
+    wrong reason. Both are asserted inline, not delegated to a separate,
+    independently-mechanised test (a prior draft did that, and lead-coder
+    correctly rejected it — a DIFFERENT scan, e.g. off ``inspect.
+    getsource``, cannot witness THIS scan's own emptiness)."""
     import ast
 
     from tests._support.paths import REPO_ROOT
 
     src = REPO_ROOT / "src" / "reyn"
+    files_walked = 0
+    replace_calls_seen = 0  # #5826 BLOCKING (lead-coder): the population
+    # witness this scan's own detection branch actually fired, not merely
+    # that files were walked — a scan whose `is_replace` never once
+    # matched True anywhere would stay vacuously green even with files > 0,
+    # since `offenders` only grows past that branch.
     offenders: list[str] = []
     for py in sorted(src.rglob("*.py")):
+        files_walked += 1
         rel = str(py.relative_to(src))
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -155,31 +171,25 @@ def test_no_source_file_rewrites_op_context_sandbox_config() -> None:
             ) or (isinstance(node.func, ast.Name) and node.func.id == "replace")
             if not is_replace:
                 continue
+            replace_calls_seen += 1
             for kw in node.keywords:
                 if kw.arg == "sandbox_config":
                     offenders.append(f"{rel}:{node.lineno}")
+    assert files_walked > 0, (
+        f"src.rglob('*.py') under {src} returned 0 files — this scan "
+        "cannot be trusted, its own offenders list would stay empty "
+        "regardless of what the codebase actually contains"
+    )
+    assert replace_calls_seen > 0, (
+        "0 dataclasses.replace(...) call sites detected anywhere in "
+        "src/reyn — the is_replace detection branch itself never fired, "
+        "so a green offenders list here proves nothing (this repo has "
+        "real replace() call sites, e.g. tools/exec.py's own backend-"
+        "instance injection; if this count is 0, the AST matcher itself "
+        "is broken, not the codebase)"
+    )
     assert not offenders, (
         "a dataclasses.replace(...) site passes sandbox_config= -- this "
         "reopens #5820's own class ('display source rewritable "
         f"independent of enforcement source'): {offenders}"
     )
-
-
-def test_dataclasses_replace_import_still_present_where_expected() -> None:
-    """Tier 1: a plain sanity pin — dataclasses.replace is still importable
-    the way this module's own AST-scan test above assumes (``import
-    dataclasses`` + ``dataclasses.replace``, the attribute form), so that
-    scan's own "is_replace" detection has a real positive case to prove it
-    is not vacuously green over zero matches anywhere in the tree."""
-    import inspect
-
-    import reyn.tools.exec as exec_module
-
-    src_text = inspect.getsource(exec_module)
-    assert "dataclasses.replace(" in src_text, (
-        "no dataclasses.replace( call found in tools/exec.py at all — the "
-        "AST scan's own is_replace branch would never be exercised by "
-        "this file, making its own green a vacuous one"
-    )
-    # And that ONE call site must not carry sandbox_config= any more.
-    assert "dataclasses.replace(legacy_ctx, sandbox_config=" not in src_text
