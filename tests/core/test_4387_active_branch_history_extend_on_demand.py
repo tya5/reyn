@@ -183,3 +183,43 @@ async def test_extend_backward_survives_wal_truncation_below_the_rewind_record(
         "STILL correctly recovered by extend-backward, using the "
         "truncated-but-REWIND_KIND-protected WAL"
     )
+
+
+@pytest.mark.asyncio
+async def test_rewind_scoped_to_this_session_alone_still_extends_backward(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: #5789/#5795 regression -- architect caught this direction
+    error in review (the fix's own round-1 draft passed `GLOBAL_SCOPE` to
+    `earliest_relevant_wal_seq`, reasoning it was a safe, merely-accidental
+    conservative bound; the reasoning had the direction backwards). A
+    session using ONLY its own session-scoped rewind (the common case
+    since #5785 made `/rewind` default to session-local) has ZERO
+    global-scope reset-records -- `earliest_relevant_wal_seq(scope=
+    GLOBAL_SCOPE)` would see an EMPTY `abandoned` set and return `None`,
+    skipping the backward-load-extension loop ENTIRELY, even though this
+    session's own scoped rewind genuinely hid older turns that the
+    properly-scoped `is_active` filter (run right after) needs the
+    extended prefix to correctly classify. Scoping the bound to THIS
+    session's own `(agent_name, session_id)` -- the same scope the
+    sibling `is_active` filter already uses -- fixes it: same interval
+    set, so the bound is conservative by construction."""
+    monkeypatch.chdir(tmp_path)
+    state_log = StateLog(tmp_path / "state.wal")
+    s = _session(tmp_path, state_log)
+    anchors = [await _turn(s, state_log, f"turn {i}") for i in range(1, 11)]
+    s.history = s.history[-3:]  # bounded load: only turns 8-10 in memory
+
+    # SESSION-SCOPED rewind only -- zero global-scope reset-records exist.
+    await checkout(
+        state_log, target_seq=anchors[2], scope=(s.agent_name, s.session_id),
+    )  # hide turns 4-10, scoped to this session alone
+
+    assert _visible_texts(s) == ["turn 1", "turn 2", "turn 3"], (
+        "the active branch (turns 1-3) must be visible even though none of "
+        "them were in the bounded self.history before the rewind, AND the "
+        "rewind was scoped (not global) -- a regression here would show "
+        "['turn 8', 'turn 9', 'turn 10'] (the stale bounded prefix, "
+        "backward extension never triggered)"
+    )
+    assert [m.content for m in s.history[:3]] == ["turn 1", "turn 2", "turn 3"]

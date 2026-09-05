@@ -4388,19 +4388,30 @@ class Session:
         if self._state_log is None:
             return self.history
         from reyn.core.events.snapshot_generations import (
-            GLOBAL_SCOPE,
             build_active_predicate,
             earliest_relevant_wal_seq,
         )
 
-        # #5789: `earliest_relevant_wal_seq` is GLOBAL-BY-DESIGN, not
-        # scoped to (self.agent_name, self.session_id) -- see its own
-        # docstring for the disclosed, measured caveat this default
-        # carries now that a scoped writer (checkout()) exists: this
-        # function is a conservative LOAD-EXTENSION bound only, the
-        # actual correctness filter is the properly-scoped `is_active`
-        # built below.
-        threshold = earliest_relevant_wal_seq(self._state_log, scope=GLOBAL_SCOPE)
+        # #5789 correction (architect-caught, PR #5795): `GLOBAL_SCOPE` here
+        # was WRONG, not merely "safe but accidental" -- self-corrected
+        # direction: `earliest_relevant_wal_seq` returns
+        # `min(lo for lo, _hi in abandoned)` -- FEWER abandoned intervals
+        # means a HIGHER (not lower) threshold, and `if not abandoned:
+        # return None` means a session with ZERO global-scope rewind
+        # records (the common case now that #5785 made `/rewind` default
+        # to session-local) gets `threshold=None` -> the backward-load
+        # loop below NEVER RUNS AT ALL for that session's own scoped
+        # rewinds -- exactly the #5786 class of bug (a scope mismatch
+        # silently produces a wrong-but-plausible answer), reached via the
+        # now-common session-local path, not an edge case. Scoped to
+        # `(self.agent_name, self.session_id)` -- the SAME scope the
+        # sibling `is_active` check below already uses -- so the
+        # abandoned-interval SET this bound is derived from is the same
+        # set that check filters against: "conservative" becomes true by
+        # construction, not accidental.
+        threshold = earliest_relevant_wal_seq(
+            self._state_log, scope=(self.agent_name, self.session_id),
+        )
         if threshold is not None:
             while True:
                 loaded_wal_seqs: "list[int]" = [

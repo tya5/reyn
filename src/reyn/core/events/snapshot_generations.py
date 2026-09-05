@@ -359,23 +359,31 @@ def earliest_relevant_wal_seq(
     construction, off every interval it could possibly be inside, so
     nothing OLDER than the lowest ``lo`` changes the answer for it.
 
-    #5789: ``scope`` is required, no default. GLOBAL_SCOPE at the one real
-    call site (``Session._active_branch_history``) — safe, but only
-    because this function's OWN role is a conservative LOAD-EXTENSION
-    bound, not the correctness filter itself (the sibling `is_active`
-    check right after it in that same method is properly scoped to
-    ``(self.agent_name, self.session_id)``). Disclosed, not silently
-    inherited: `GLOBAL_SCOPE` here sees strictly FEWER abandoned intervals
-    than a query scoped to this session's own `(agent, sid)` would (global
-    records only, excluding this session's own scoped ones per decision
-    7's "GLOBAL_SCOPE means apply only the unscoped ones") — meaning it is
-    a **lower**, not higher, threshold whenever this session has its own
-    scoped rewind records. `GLOBAL_SCOPE` was safe here before ANY scoped
-    writer existed (stage 1-2); #5778 made scoped `checkout()` real. This
-    is exactly the "safe but accidental" case #5789 exists to convert into
-    a stated decision, not the closed-out consequence of one: if a
-    session's own scoped rewind is ever observed under-loading history
-    here, this comment is where that regression should be chased first."""
+    #5789/#5795 correction (architect-caught): ``scope`` is required, no
+    default, and the one real call site (``Session._active_branch_
+    history``) must pass ``(self.agent_name, self.session_id)`` — the
+    SAME scope its sibling `is_active` check already uses — NOT
+    `GLOBAL_SCOPE`. A round-1 draft of this fix passed `GLOBAL_SCOPE`
+    here, reasoning it was merely a "safe but accidental" conservative
+    bound; that reasoning had the DIRECTION backwards. Trace the math:
+    `threshold = min(lo for lo, _hi in abandoned)` over a query's own
+    `abandoned` set — a query that sees FEWER abandoned intervals (as
+    `GLOBAL_SCOPE` does whenever a session has its own scoped rewinds,
+    which excludes them) produces a **higher** `min`, not lower (removing
+    candidates from a min can only raise or hold it, never lower it). The
+    caller's loop is `if earliest_loaded <= threshold: break` — a HIGHER
+    threshold satisfies that sooner, extending history LESS far backward,
+    not more. Worse: `if not abandoned: return None` — a session using
+    ONLY session-local scoped rewinds (the common case since #5785 made
+    `/rewind` default to session-local) has ZERO global-scope records, so
+    `GLOBAL_SCOPE` returns `None` and the caller's entire backward-load
+    loop never runs AT ALL, even though that session's own scoped rewind
+    genuinely needs history extended to be classified correctly by the
+    properly-scoped `is_active` filter run afterward. Passing the SAME
+    scope as that filter makes "this bound is conservative for what the
+    filter will need" true BY CONSTRUCTION (same set, same or looser
+    interval boundaries), not an accident resting on no scoped writer
+    existing yet."""
     abandoned = _abandoned_intervals(_rewind_records_for_scope(state_log, scope=scope))
     if not abandoned:
         return None
