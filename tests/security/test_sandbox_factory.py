@@ -76,10 +76,21 @@ def test_config_accepts_compat_mode():
 
 def test_config_accepts_strict_mode_and_resolves_it() -> None:
     """Tier 2: #3823 — 'strict' is now WIRED (was: raised "not implemented
-    yet" — the earlier #3823 ② stub). Real end-to-end: a SandboxConfig with
-    mode='strict' validates, AND resolve_sandbox_policy actually applies the
-    strict defaults (network off, subprocess denied, env allow-list empty) —
-    not just "the enum accepts the string"."""
+    yet" — the earlier #3823 ② stub): a SandboxConfig with mode='strict'
+    validates, AND resolve_sandbox_policy actually applies the strict
+    defaults (network off, subprocess denied, env allow-list empty) — not
+    just "the enum accepts the string".
+
+    #5818 (BLOCKING correction, architect + lead-coder review): this
+    test's docstring used to claim "Real end-to-end" — false. This test's
+    OWN line below (`mode=cfg.mode`) is what connects `cfg` to the
+    resolver; no PRODUCTION call site was ever exercised here, so deleting
+    every real caller of `resolve_sandbox_policy` in `src/` would leave
+    this test green. It is a genuine, valuable Tier 2 unit test of
+    `resolve_sandbox_policy`'s OWN mode-handling contract — but that is
+    ALL it is. The real end-to-end witness (a production op context, strip-
+    falsifiable) is
+    ``test_router_op_context_strict_mode_wiring.py``'s own test."""
     from reyn.security.sandbox.policy import resolve_sandbox_policy
 
     cfg = SandboxConfig(mode="strict")

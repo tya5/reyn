@@ -524,9 +524,24 @@ def _warn_unknown_config_keys(
             policy_raw if isinstance(policy_raw, dict) else None,
             write_paths=[], mode=str(mode),
         )
+        # #5818 (owner-hit, security): was "... in force right now" — a claim
+        # this function cannot actually back. `write_paths=[]` above is a
+        # diagnostic stand-in (this loader has no op in flight to read a
+        # real workspace floor from — the SAME "a context-free reader must
+        # not fabricate a per-op value" reasoning `router_op_context.py`'s
+        # own `sandbox_config` docstring states, #5012-A), so the write axis
+        # in `resolved` never reflects what any real op actually gets. Worse,
+        # before #5818 this message's own claim was false for EVERY axis:
+        # `sandbox.mode: strict` validated and reached this message, but
+        # never reached the production resolver at all — an operator could
+        # read "in force right now" here while the real op context ran
+        # under `compat`. Reworded to describe what this CONFIG resolves
+        # to, never what is live.
         lines.append(
-            f"Effective sandbox policy in force right now (unknown keys "
-            f"above are excluded from it): {resolved!r}"
+            f"Sandbox policy this config resolves to (unknown keys above are "
+            f"excluded from it; write_paths shown as [] here — the real "
+            f"per-op value is assigned at runtime, not visible to this "
+            f"loader): {resolved!r}"
         )
 
     log.warning("Unrecognized config key(s) found:\n" + "\n".join(f"  - {line}" for line in lines))
