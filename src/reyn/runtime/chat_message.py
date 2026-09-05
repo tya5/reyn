@@ -353,6 +353,40 @@ def is_seq_still_active(
     return not (covers_from <= seq <= covers_through)
 
 
+def compaction_coverage_from_summary(
+    summary: "ChatMessage | None",
+) -> "tuple[int | None, int]":
+    """#5765: the ONE place that parses a summary message's ``meta`` into
+    the ``(covers_from_seq, covers_through_seq)`` pair
+    :func:`is_seq_still_active` needs — ``(None, 0)`` if *summary* is
+    ``None`` (no compaction has ever run).
+
+    A pure function, not a method on either ``Session`` or
+    ``RouterHistoryBuffer``, deliberately: both need this exact parsing,
+    but each already has its OWN way to find "the latest summary"
+    (``Session._latest_summary`` scans ``self.history``;
+    ``RouterHistoryBuffer._latest_summary`` scans whatever ``history``
+    its caller already fetched, #2939). A method on either side would
+    force the OTHER side to either duplicate the parsing (the #5765
+    drift this whole consolidation exists to close) or reach across the
+    object boundary for it — which for ``Session`` specifically would
+    mean calling into ``self._history_buffer``, an attribute NOT YET SET
+    on a ``Session`` built via ``Session.__new__`` + manual field
+    assignment (the exact shape ``test_load_history_migrates_legacy_
+    lines`` uses to exercise ``load_history`` without booting a full
+    session) or, during real construction, before ``_build_history_
+    compaction_bundle`` returns (see that builder's own ★★ docstring).
+    Neither caller needs the other's object at all for this — only the
+    already-resolved summary message."""
+    if summary is None:
+        return None, 0
+    meta = summary.meta or {}
+    covers_through = int(meta.get("covers_through_seq", 0))
+    covers_from_raw = meta.get("covers_from_seq")
+    covers_from = int(covers_from_raw) if covers_from_raw is not None else None
+    return covers_from, covers_through
+
+
 def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosure | None":
     """#5678: the ONE normalization point for ``disclosure`` — every
     construction path funnels through here, including

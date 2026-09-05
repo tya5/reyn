@@ -33,6 +33,7 @@ from reyn.runtime.chat_message import (
     SPILL_TARGET_SEQ_META_KEY,
     SPILLED_META_KEY,
     Spillability,
+    compaction_coverage_from_summary,
     is_compaction_eligible,
     is_compaction_eligible_including_summary,
     is_seq_still_active,
@@ -638,28 +639,23 @@ class RouterHistoryBuffer:
     def _compaction_coverage(
         self, history: "list | None" = None,
     ) -> "tuple[int | None, int]":
-        """#5765: the ONE accessor for the latest summary's ``(covers_from_
-        seq, covers_through_seq)`` pair — ``(None, 0)`` if no summary yet.
-        ``covers_from_seq`` is ``None`` for a summary persisted before
-        #5765 added the field (no recorded fold-start boundary) — see
-        :func:`~reyn.runtime.chat_message.is_seq_still_active`'s own
-        docstring for how that case is handled (SAFE SIDE, driven
-        reasoning, not a silent default).
+        """#5765: this buffer's own accessor for the latest summary's
+        ``(covers_from_seq, covers_through_seq)`` pair — ``(None, 0)`` if
+        no summary yet. ``covers_from_seq`` is ``None`` for a summary
+        persisted before #5765 added the field (no recorded fold-start
+        boundary) — see :func:`~reyn.runtime.chat_message.
+        is_seq_still_active`'s own docstring for how that case is
+        handled (SAFE SIDE, driven reasoning, not a silent default).
 
-        Consolidates what used to be independently re-derived in 4+
-        places (this method's own pre-#5765 scalar-only form, plus
-        ``Session._compaction_watermark``'s own separate ``_latest_
-        summary``-based copy) — every watermark/coverage read in this
-        codebase now routes through here or through ``Session._
-        compaction_watermark``'s own thin delegate to it."""
-        latest = self._latest_summary(history)
-        if latest is None:
-            return None, 0
-        meta = latest.meta or {}
-        covers_through = int(meta.get("covers_through_seq", 0))
-        covers_from_raw = meta.get("covers_from_seq")
-        covers_from = int(covers_from_raw) if covers_from_raw is not None else None
-        return covers_from, covers_through
+        The actual meta-parsing is a thin delegate to
+        :func:`~reyn.runtime.chat_message.compaction_coverage_from_
+        summary` — the ONE place that logic lives, shared with
+        ``Session._compaction_coverage`` (session.py) — this method's
+        own job is only to resolve WHICH summary via this buffer's own
+        :meth:`_latest_summary` (``history``-aware, #2939). See that
+        shared function's own docstring for why it takes a resolved
+        summary rather than being a method either side calls into."""
+        return compaction_coverage_from_summary(self._latest_summary(history))
 
     def _compaction_watermark(self, history: "list | None" = None) -> int:
         """#4954(2): the latest summary's ``covers_through_seq`` (0 if none

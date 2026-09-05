@@ -76,6 +76,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     Spillability,
     _migrate_legacy_chat_message,
     _now_iso,
+    compaction_coverage_from_summary,
     is_seq_still_active,
 )
 from reyn.runtime.error_format import classify_router_error
@@ -9059,26 +9060,33 @@ class Session:
         #5765: the actual field-parsing (reading ``covers_through_seq``/
         ``covers_from_seq`` off the latest summary's ``meta``) used to be
         re-implemented here independently of
-        :meth:`RouterHistoryBuffer._compaction_coverage`'s own copy —
-        now a thin delegate to that ONE accessor. Deliberately passes
-        ``self.history`` (this method's own pre-existing scan target, via
-        :meth:`_latest_summary` above) rather than omitting the argument —
-        omitting it would make ``RouterHistoryBuffer`` scan its OWN
-        ``history_fn`` (``Session._active_branch_history``, the rewind-
-        aware branch view), which is a different, untested semantic change
-        this consolidation is not the place to make. Only the duplicate
-        meta-parsing is removed; which history is scanned is unchanged.
+        ``RouterHistoryBuffer._compaction_coverage``'s own copy — both now
+        delegate to the ONE shared pure function,
+        :func:`~reyn.runtime.chat_message.compaction_coverage_from_
+        summary`. Deliberately NOT routed through
+        ``self._history_buffer`` (a PR review finding, #5765): this
+        method is reachable via :meth:`load_history` on a ``Session``
+        built with ``Session.__new__`` + manual field assignment — the
+        exact shape ``test_load_history_migrates_legacy_lines`` uses to
+        exercise ``load_history`` without booting a full session, and
+        also true early in real ``__init__``, before ``_build_history_
+        compaction_bundle`` returns (see that builder's own ★★
+        docstring) — ``self._history_buffer`` is not guaranteed to exist
+        at either call site. Reaching for it here was the actual defect
+        this consolidation shipped with; the shared pure function needs
+        no ``RouterHistoryBuffer`` at all, only the already-resolved
+        summary message.
         """
-        return self._history_buffer._compaction_watermark(self.history)
+        return self._compaction_coverage()[1]
 
     def _compaction_coverage(self) -> "tuple[int | None, int]":
         """The latest summary's full ``(covers_from_seq, covers_through_seq)``
-        pair — see :meth:`_compaction_watermark`'s own docstring for why
-        ``self.history`` is passed explicitly rather than omitted. The ONE
-        Session-side accessor for the range :func:`~reyn.runtime.
-        chat_message.is_seq_still_active` needs; callers that only need the
-        scalar ceiling keep using :meth:`_compaction_watermark`."""
-        return self._history_buffer._compaction_coverage(self.history)
+        pair — the ONE Session-side accessor for the range
+        :func:`~reyn.runtime.chat_message.is_seq_still_active` needs;
+        callers that only need the scalar ceiling keep using
+        :meth:`_compaction_watermark`. See that method's own docstring
+        for why this deliberately does not touch ``self._history_buffer``."""
+        return compaction_coverage_from_summary(self._latest_summary())
 
     # ── router ──────────────────────────────────────────────────────────────────
 
