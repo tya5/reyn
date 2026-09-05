@@ -51,7 +51,7 @@ async def test_reconstruct_skips_abandoned_after_rewind(tmp_path):
     await _put(log, "b")          # seq 2
     await _put(log, "c")          # seq 3
     await rewind(log, target_n=1)  # seq 4 — undo back to 1 (abandons 2,3)
-    assert is_active_seq(log, 1) and not is_active_seq(log, 2) and not is_active_seq(log, 3)
+    assert is_active_seq(log, 1, scope=GLOBAL_SCOPE) and not is_active_seq(log, 2, scope=GLOBAL_SCOPE) and not is_active_seq(log, 3, scope=GLOBAL_SCOPE)
     snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a"]   # b, c undone
 
@@ -138,7 +138,7 @@ async def test_no_rewind_is_backward_compatible(tmp_path):
     log = StateLog(tmp_path / "wal")
     await _put(log, "a")
     await _put(log, "b")
-    assert is_active_seq(log, 1) and is_active_seq(log, 2)
+    assert is_active_seq(log, 1, scope=GLOBAL_SCOPE) and is_active_seq(log, 2, scope=GLOBAL_SCOPE)
     snap = reconstruct(AGENT, _empty_store(tmp_path), log, log.current_seq, scope=GLOBAL_SCOPE)
     assert _inbox_ids(snap) == ["a", "b"]
 

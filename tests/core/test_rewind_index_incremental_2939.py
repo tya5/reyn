@@ -121,11 +121,11 @@ async def test_rewind_appended_after_warm_index_takes_effect(tmp_path):
     anchor = await _grow_wal(state_log, 10)
     abandoned_seq = await _grow_wal(state_log, 5)
 
-    assert is_active_seq(state_log, abandoned_seq), "sanity: active before any rewind"
+    assert is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), "sanity: active before any rewind"
 
     await checkout(state_log, target_seq=anchor, scope=GLOBAL_SCOPE)
 
-    assert not is_active_seq(state_log, abandoned_seq), (
+    assert not is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), (
         "a rewind appended after the derivation was first built must abandon the "
         "seqs it rewound past — a frozen index would still call them active"
     )
@@ -150,7 +150,7 @@ async def test_truncation_dropping_a_rewind_record_does_not_serve_a_stale_interv
     head = await _grow_wal(state_log, 5)
 
     # Warm the derivation while the reset-record is present.
-    assert not is_active_seq(state_log, abandoned_seq), "sanity: abandoned pre-truncation"
+    assert not is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), "sanity: abandoned pre-truncation"
 
     # Retention rewrite WITHOUT always_keep_kinds → the reset-record is dropped.
     await state_log.truncate_below(head)
@@ -161,7 +161,7 @@ async def test_truncation_dropping_a_rewind_record_does_not_serve_a_stale_interv
         "otherwise it cannot witness staleness"
     )
 
-    assert is_active_seq(state_log, abandoned_seq), (
+    assert is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), (
         "after the reset-record was truncated away, the branch model must reflect "
         "the WAL that now exists (nothing abandoned) — still reporting the seq as "
         "abandoned means a stale interval was served from a cache the truncation "
@@ -181,12 +181,12 @@ async def test_truncation_preserving_rewind_records_keeps_them_active(tmp_path):
     await checkout(state_log, target_seq=anchor, scope=GLOBAL_SCOPE)
     head = await _grow_wal(state_log, 5)
 
-    assert not is_active_seq(state_log, abandoned_seq), "sanity: abandoned pre-truncation"
+    assert not is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), "sanity: abandoned pre-truncation"
 
     await state_log.truncate_below(head, always_keep_kinds=frozenset({REWIND_KIND}))
     await state_log.flush()
 
-    assert not is_active_seq(state_log, abandoned_seq), (
+    assert not is_active_seq(state_log, abandoned_seq, scope=GLOBAL_SCOPE), (
         "a truncation that keeps the reset-record must keep its abandoned interval "
         "— dropping it here would resurrect rewound-past turns into the LLM context"
     )

@@ -67,11 +67,11 @@ async def test_scope_none_reproduces_identical_behavior_to_pre_5769(tmp_path):
     # Positive control: the reset-record was genuinely appended, and it
     # genuinely abandoned something.
     assert log.current_seq == 4
-    assert is_active_seq(log, 2) is False
+    assert is_active_seq(log, 2, scope=GLOBAL_SCOPE) is False
 
     is_active = build_active_predicate(log, scope=GLOBAL_SCOPE)
     for seq in (1, 2, 3, 4):
-        assert is_active(seq) == is_active_seq(log, seq), seq
+        assert is_active(seq) == is_active_seq(log, seq, scope=GLOBAL_SCOPE), seq
 
 
 def test_build_active_predicate_requires_scope_kwarg(tmp_path):

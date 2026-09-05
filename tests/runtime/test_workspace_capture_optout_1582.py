@@ -83,6 +83,6 @@ async def test_rewind_reverts_runtime_not_workspace(tmp_path) -> None:
     await reg.checkout(seq_a, scope=GLOBAL_SCOPE)
     markers = [m["payload"]["turn"] for m in session.current_snapshot.inbox]
     assert markers == ["A"]                                  # runtime reverted
-    assert is_active_seq(reg.state_log, seq_a)               # cut landed on the runtime substrate
+    assert is_active_seq(reg.state_log, seq_a, scope=GLOBAL_SCOPE)  # cut landed on the runtime substrate
     # Workspace NOT reverted — repo files are the user's work product, not rewound.
     assert (tmp_path / _WS_FILE).read_text(encoding="utf-8") == "vB"

@@ -456,8 +456,8 @@ async def test_restore_all_triggers_crash_recovery(tmp_path):
     R = await rewind(log, target_n=1)       # seq 3 — abandons (1,3); crash before materialise
 
     # pre-recovery: the active-branch rewind target is outstanding.
-    from reyn.core.events.snapshot_generations import active_rewind_target
-    assert active_rewind_target(log) == 1
+    from reyn.core.events.snapshot_generations import active_rewind_target_with_scope
+    assert active_rewind_target_with_scope(log) == (1, None)
 
     await reg.restore_all()                 # production seam — must trigger recovery
 

@@ -13,6 +13,7 @@ import pytest
 
 from reyn.core.events.snapshot_generations import (
     ACTIVE_BRANCH_ID,
+    GLOBAL_SCOPE,
     branch_ids_for,
     list_branches,
     rewind,
@@ -46,7 +47,7 @@ async def test_branch_membership_over_include_repro(tmp_path):
     await _put(log, "m12")                      # seq 12
     await _put(log, "m13")                      # seq 13
 
-    ids = branch_ids_for(log, [3, 6, 9, 12])
+    ids = branch_ids_for(log, [3, 6, 9, 12], scope=GLOBAL_SCOPE)
     assert ids[3] == ACTIVE_BRANCH_ID           # active (<=6, on the live line)
     assert ids[6] == ACTIVE_BRANCH_ID           # the rewind target is active
     assert ids[12] == ACTIVE_BRANCH_ID          # post-rewind continuation = active
@@ -67,7 +68,7 @@ async def test_no_rewind_all_active(tmp_path):
     log = StateLog(tmp_path / "wal")
     for i in range(1, 4):
         await _put(log, f"m{i}")
-    assert branch_ids_for(log, [1, 2, 3]) == {1: 0, 2: 0, 3: 0}
+    assert branch_ids_for(log, [1, 2, 3], scope=GLOBAL_SCOPE) == {1: 0, 2: 0, 3: 0}
 
 
 # ── list_branches: tree topology ───────────────────────────────────────────────
@@ -83,7 +84,7 @@ async def test_list_branches_single_undo(tmp_path):
     await _put(log, "m12")
     head = log.current_seq
 
-    branches = list_branches(log)
+    branches = list_branches(log, scope=GLOBAL_SCOPE)
     active = next(b for b in branches if b.is_active)
     dead = [b for b in branches if not b.is_active]
     assert active.branch_id == ACTIVE_BRANCH_ID and active.fork_point_seq == 0
@@ -112,7 +113,7 @@ async def test_list_branches_nested_dead_branches_parent_edges(tmp_path):
     await _put(log, "d")                    # seq 5
     r2 = await rewind(log, target_n=4)      # seq 6 — abandons (4,6) = {5}
 
-    branches = list_branches(log)
+    branches = list_branches(log, scope=GLOBAL_SCOPE)
     by_id = {b.branch_id: b for b in branches}
     assert by_id[ACTIVE_BRANCH_ID].is_active
     assert by_id[r1].fork_point_seq == 1 and by_id[r1].head_seq == r1 - 1
@@ -127,7 +128,7 @@ async def test_list_branches_nested_dead_branches_parent_edges(tmp_path):
 async def test_empty_wal_no_branches(tmp_path):
     """Tier 2: empty WAL → no branches."""
     log = StateLog(tmp_path / "wal")
-    assert list_branches(log) == []
+    assert list_branches(log, scope=GLOBAL_SCOPE) == []
 
 
 @pytest.mark.asyncio
@@ -141,7 +142,7 @@ async def test_derivation_robust_without_supersedes(tmp_path):
     for i in range(1, 6):
         await _put(log, f"m{i}")
     r = await rewind(log, target_n=2)       # supersedes NOT passed
-    branches = list_branches(log)
+    branches = list_branches(log, scope=GLOBAL_SCOPE)
     dead = [b for b in branches if not b.is_active]
     assert {b.branch_id for b in dead} == {r}   # exactly the orphaning record
     assert dead[0].fork_point_seq == 2
@@ -205,6 +206,6 @@ async def test_list_rewind_points_branch_id_and_include_abandoned(tmp_path):
     assert by_seq[12]["branch_id"] == ACTIVE_BRANCH_ID
 
     # reg.list_branches(): active + the dead branch.
-    branches = reg.list_branches()
+    branches = reg.list_branches(scope=GLOBAL_SCOPE)
     assert any(b.is_active and b.branch_id == ACTIVE_BRANCH_ID for b in branches)
     assert any(b.branch_id == r and not b.is_active and b.fork_point_seq == 6 for b in branches)
