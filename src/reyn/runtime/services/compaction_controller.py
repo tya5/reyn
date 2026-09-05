@@ -313,7 +313,7 @@ class CompactionController:
 
     def _select_candidates(
         self,
-        turns: "list[ChatMessage]",
+        messages: "list[ChatMessage]",
         prev_cover: int,
     ) -> "list[ChatMessage]":
         """Select compaction candidates: token-budget HEAD/TAIL protect,
@@ -358,12 +358,12 @@ class CompactionController:
             head_budget = tail_budget = fallback // 4
             main_M_room = fallback - head_budget - tail_budget
 
-        head_turns = trim_head(turns, head_budget, model, use_chars4=use_chars4)
-        tail_turns = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
-        head_id_set = {id(t) for t in head_turns}
-        tail_id_set = {id(t) for t in tail_turns}
+        head_messages = trim_head(messages, head_budget, model, use_chars4=use_chars4)
+        tail_messages = trim_tail(messages, tail_budget, model, use_chars4=use_chars4)
+        head_id_set = {id(t) for t in head_messages}
+        tail_id_set = {id(t) for t in tail_messages}
         unprotected = [
-            t for t in turns
+            t for t in messages
             if id(t) not in head_id_set
             and id(t) not in tail_id_set
             and t.seq > prev_cover
@@ -482,29 +482,36 @@ class CompactionController:
         # ladder's own raw_middle DOES include it (decompose_history_for_
         # retry). Same shared predicate as those two call sites, imported
         # rather than re-derived, so this can never drift from them again.
-        turns = [m for m in history if is_compaction_eligible(m)]
-        if not turns:
+        eligible_messages = [m for m in history if is_compaction_eligible(m)]
+        if not eligible_messages:
+            # #5806: outcome string left UNCHANGED — a real audit-event value
+            # consumed outside this module (slash/compact.py's own rendering,
+            # scripts/compaction_outcome_dist.py, docs/reference/runtime/
+            # events.md, and 2 test files match it literally). Renaming it
+            # would be a wire-facing break, not the local rename this issue
+            # scopes; the misleading `turns` NAME it was built from is fixed
+            # everywhere else in this file instead.
             outcome = "forced_sync_no_turns"
             self._events.emit("compaction_check", outcome=outcome)
             return ForceCompactResult(outcome=outcome)
         # #4472 architect review, point ③: NOT a normal branch — a defensive
         # invariant, not a routine outcome. The durable read always starts
         # its batch immediately after `prev_cover` (only the END of the
-        # batch is capped, never the beginning skipped), so `turns`'s
-        # earliest real seq should always be exactly `prev_cover + 1` (or
-        # the file's own first entry, if prev_cover is 0). A hit here means
-        # something ELSE narrowed the durable read out from under this
-        # method — #4470's silent-coverage-claim defect would otherwise
-        # reopen through that new path. Kept as a LOUD, named audit outcome
-        # (not a silent skip) so a future regression that reintroduces a
-        # bound is caught immediately, not rediscovered the way #4470
-        # itself was.
-        resident_seqs = [t.seq for t in turns if t.seq > 0]
+        # batch is capped, never the beginning skipped), so `eligible_
+        # messages`'s earliest real seq should always be exactly
+        # `prev_cover + 1` (or the file's own first entry, if prev_cover is
+        # 0). A hit here means something ELSE narrowed the durable read out
+        # from under this method — #4470's silent-coverage-claim defect
+        # would otherwise reopen through that new path. Kept as a LOUD,
+        # named audit outcome (not a silent skip) so a future regression
+        # that reintroduces a bound is caught immediately, not rediscovered
+        # the way #4470 itself was.
+        resident_seqs = [t.seq for t in eligible_messages if t.seq > 0]
         if resident_seqs and min(resident_seqs) > prev_cover + 1:
             outcome = "compaction_input_gap_invariant_violated"
             self._events.emit("compaction_check", outcome=outcome)
             return ForceCompactResult(outcome=outcome)
-        candidates = self._select_candidates(turns, prev_cover)
+        candidates = self._select_candidates(eligible_messages, prev_cover)
 
         outcome = "forced_sync"
         self._events.emit(
@@ -675,11 +682,12 @@ class CompactionController:
                 from reyn.security.secret_redaction import redact_secrets
                 _redact = redact_secrets
             # #5531 condition③: this caller is always tail-side — `candidates`
-            # comes from `_select_candidates(turns, prev_cover)`, which only
-            # ever returns turns chronologically AFTER `prev_cover` (the prior
-            # summary's own covers_through_seq) — so the order is always
-            # summary-then-new-turns, never the reverse (that only happens in
-            # retry_loop's own head-shrink path, engine.py).
+            # comes from `_select_candidates(eligible_messages, prev_cover)`,
+            # which only ever returns messages chronologically AFTER
+            # `prev_cover` (the prior summary's own covers_through_seq) — so
+            # the order is always summary-then-new-messages, never the
+            # reverse (that only happens in retry_loop's own head-shrink
+            # path, engine.py).
             _summary_messages = (
                 [wrap_summary_as_message(prev_structured)] if prev_structured else []
             )
@@ -860,26 +868,26 @@ class CompactionController:
                     )
                     continue
                 raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
-        # #5791 (BLOCKING correction, lead-coder review of this PR's own
-        # first pass): NOT a genuine turn count — `turns` (built above from
-        # `[m for m in history if is_compaction_eligible(m)]`) is a list of
+        # #5791 (BLOCKING correction, lead-coder review of that PR's own
+        # first pass): NOT a genuine turn count — this is a list of
         # individual `ChatMessage` entries, one per wire message, never
         # grouped into conversational turns anywhere in this method or in
-        # `_select_candidates`. The `turns` NAME is the defect: the same
-        # misreading it produced here (my own first-pass claim that this
-        # WAS a genuine turn count) is the third instance of the exact
-        # shape #5592 and this issue's own owner-hit already are — a
-        # message list, misnamed, misleading a reader who trusts the name
-        # instead of the code. `new_message_count` — the SAME quantity, and
-        # now the SAME name, as `engine.py`'s own field on
-        # `compaction_started` (they were never actually different
-        # quantities; they were the SAME quantity under one shared,
-        # incorrect name — see that method's own docstring for the fuller
-        # #5791 account). The local variable name `turns` itself is left
-        # unrenamed here (out of this fix's own scope — it threads through
-        # `_select_candidates`'s own parameter and several docstrings/
-        # comments this method shares no wire boundary with); only the
-        # WIRE-FACING field name is corrected.
+        # `_select_candidates`. `new_message_count` — the SAME quantity, and
+        # the SAME name, as `engine.py`'s own field on `compaction_started`
+        # (they were never actually different quantities; they were the
+        # SAME quantity under one shared, incorrect name — see that
+        # method's own docstring for the fuller #5791 account).
+        #
+        # #5806 (follow-up — #5791's own comment, above, had deferred this
+        # exact rename as "out of that fix's scope"): the local variable
+        # this quantity was built from used to be named `turns` throughout
+        # this file — the name #5791's own account says misled 3 readers in
+        # a row (lead-coder/#5592, the owner/"3925 turns", and tui-coder
+        # mid-#5804-fix, all reading the NAME instead of the code). Renamed
+        # to `eligible_messages` (and `_select_candidates`'s own parameter
+        # to `messages`) everywhere in this file; `forced_sync_no_turns`
+        # (the one wire-facing outcome string built from it) is
+        # deliberately left as-is — see that literal's own comment.
         new_message_count = _n_candidates_offered
         try:
             structured = chat_summary.to_dict()
