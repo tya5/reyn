@@ -28,6 +28,7 @@ Filesystem isolation: allowlist tests point at a tmp_path file so
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -281,6 +282,71 @@ async def test_nonapproved_command_nontty_refused(
 
     # Refused — fail-closed.
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# #5803: a failed hook's stderr must not lose its own exception's type+message
+# ---------------------------------------------------------------------------
+
+
+def _deeply_nested_traceback_script(tmp_path: Path) -> Path:
+    """A real .py file whose uncaught exception's traceback has enough
+    stack frames (each carrying this file's own long tmp_path) to exceed
+    200 bytes BEFORE the final ``ExceptionType: message`` line -- a bare
+    ``python -c`` one-liner's traceback is usually too short (1-2 frames)
+    to reproduce the real #5803 shape."""
+    lines = []
+    for i in range(12):
+        lines.append(f"def f{i}():")
+        lines.append(f"    return f{i + 1}()" if i < 11 else "    raise BrokerDrainError('the drain queue is wedged')")
+        lines.append("")
+    script = (
+        "class BrokerDrainError(Exception):\n"
+        "    pass\n\n"
+        + "\n".join(lines)
+        + "\nf0()\n"
+    )
+    path = tmp_path / "broker_drain.py"
+    path.write_text(script, encoding="utf-8")
+    return path
+
+
+@pytest.mark.asyncio
+async def test_failed_hook_stderr_snippet_keeps_the_exceptions_own_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 1: #5803 -- a real subprocess that dies with an uncaught
+    exception, whose traceback exceeds 200 bytes before its own final
+    ``ExceptionType: message`` line, must still show that exception's
+    TYPE NAME in the logged stderr snippet.
+
+    "stderr is non-empty" is NOT the witness (it was always non-empty,
+    #5803's own root cause) -- this asserts the STRUCTURED content (the
+    type name) that the prior head-only ``[:200]`` cap dropped for any
+    traceback longer than that."""
+    from reyn.hooks.shell_runner import run_shell_hook
+
+    allowlist = tmp_path / "allowlist.json"
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    script_path = _deeply_nested_traceback_script(tmp_path)
+    argv = [_PY, str(script_path)]
+
+    with caplog.at_level(logging.WARNING, logger="reyn.hooks.shell_runner"):
+        result = await run_shell_hook(
+            argv,
+            event_context={"event": "turn_end"},
+            timeout_seconds=10,
+            sandbox_backend=_noop_backend(),
+            sandbox_policy=_policy(temp_dir=str(tmp_path)),
+            allowlist_path=allowlist,
+        )
+
+    assert result is None  # a failed exec run yields no push-directive
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("BrokerDrainError" in msg for msg in warnings), (
+        f"the failing subprocess's own exception type must appear in the "
+        f"logged stderr snippet -- got {warnings!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
