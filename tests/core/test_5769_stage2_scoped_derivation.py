@@ -132,12 +132,33 @@ async def test_latest_pipeline_state_falls_back_to_global_without_invocation(tmp
     """Tier 2: fail-closed to the SAFE side -- a run with generations but
     no readable invocation.json (should not happen in practice, not
     proven impossible) falls back to GLOBAL_SCOPE rather than raising or
-    silently returning stale/wrong content."""
+    silently returning stale/wrong content.
+
+    lead-coder-30 BLOCKING (#5775 review): without a rewind record in the
+    log, this test cannot tell "falls back to GLOBAL_SCOPE" from "scope
+    was never applied at all" -- both look identical (nothing is ever
+    abandoned). Fixed the same way `test_latest_pipeline_state_derives_
+    owner_and_narrows_to_it` above already does: add a rewind SCOPED to
+    an unrelated session and assert it is IGNORED -- GLOBAL_SCOPE's own
+    contract (`record_scope is None or record_scope == scope`,
+    snapshot_generations.py) means a global query never sees a
+    differently-scoped record. That is now an observable, asserted fact,
+    not merely a docstring claim."""
     reyn_dir = tmp_path / ".reyn"
     log = StateLog(reyn_dir / "state" / "wal.jsonl")
     s1 = await _put(log, "worker")
     await record_pipeline_state(log, "run-2", {"step_index": 1}, durable=True)
     # No write_invocation call -- invocation.json genuinely absent.
+
+    # Real witness: a rewind scoped to a DIFFERENT session must be
+    # invisible to the GLOBAL_SCOPE fallback this function computes.
+    # target_n=0 abandons (0, R) -- which genuinely includes s1 (the
+    # generation's own seq), so a broken implementation that ignored
+    # scope (saw this record under a global query) WOULD hide the
+    # generation -- a real discriminator, not a no-op interval.
+    await log.append(
+        REWIND_KIND, target_n=0, supersedes=None, scope=["someone-else", "sidZ"],
+    )
 
     result = latest_pipeline_state("run-2", log)
 
