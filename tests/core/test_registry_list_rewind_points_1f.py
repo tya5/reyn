@@ -202,3 +202,36 @@ async def test_list_rewind_points_keeps_seqs_at_or_above_wal_floor(tmp_path) -> 
     assert s1 not in listed_seqs, f"truncated seq {s1} must not be advertised"
     assert s2 in listed_seqs, f"seq {s2} at WAL floor must still be advertised"
     assert s3 in listed_seqs, f"seq {s3} above WAL floor must still be advertised"
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_scopes_abandonment_per_agent(tmp_path) -> None:
+    """Tier 2: #5769 stage 2 -- each agent's own listed points are governed
+    by that agent's own (name, "main") scope, not one hoisted GLOBAL_SCOPE
+    predicate reused unchanged across every agent in the scan. A rewind
+    record SCOPED to alpha's own session must abandon only alpha's own
+    boundary; beta's boundary, evaluated under a DIFFERENT scope
+    ("beta", "main"), must be completely untouched by it -- the
+    architect-mandated witness that per-owner narrowing actually took
+    effect in this loop, not just that the loop still runs."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    _seed_agent(tmp_path, "beta")
+    log = reg.state_log
+
+    a1 = await log.append("inbox_consume", target="alpha", msg_id="a1")
+    _record_gen(reg, "alpha", a1)
+    b1 = await log.append("inbox_consume", target="beta", msg_id="b1")
+    _record_gen(reg, "beta", b1)
+
+    # Injected directly (no production writer emits a scoped record yet,
+    # #5769 stage 3) -- scoped to (alpha, main), targeting seq 0: abandons
+    # every seq in (0, R) FOR THAT SCOPE ONLY, which includes both a1 and
+    # b1's raw seq values -- a real discriminator, not a vacuous one,
+    # since only the scope filter (not the seq range) keeps beta safe.
+    await log.append("rewind", target_n=0, supersedes=None, scope=["alpha", "main"])
+
+    rows = reg.list_rewind_points()
+    listed_seqs = [r["seq"] for r in rows]
+    assert a1 not in listed_seqs, "alpha's own boundary must be abandoned by its own scoped rewind"
+    assert b1 in listed_seqs, "beta's boundary must be untouched by a rewind scoped to a different agent"
