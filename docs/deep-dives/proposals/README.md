@@ -127,3 +127,4 @@ Links to related ADRs, PRs, and docs.
 | [0065](0065-orchestration-foundation.md) | Orchestration foundation — external-event plugins as a first-class unit | Proposed (awaiting owner review, 2026-07-20) | LARGE |
 | [0066](0066-retrieval-two-groups-two-axes.md) | Retrieval redesign: two groups (action / knowledge) × two axes (scheme × transport) | Proposed — owner design-of-record (2026-07-24/25), awaiting owner GO to phase-implement | LARGE |
 | [0067](0067-task-model-and-arbiter.md) | Task model and the inbox arbiter — sequencing and interface for [ADR-0040](../decisions/0040-task-as-os-concept.md) | Accepted (2026-08-10, owner) — **not yet implemented**; tracking #3978 | LARGE |
+| [0069](0069-permission-posture-dial.md) | Permission posture dial — align with the shape all four competing agents share (measured 2026-09-06) | Proposed (owner asked for the proposal 2026-09-06; **not ruled on**) | MEDIUM |
