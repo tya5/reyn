@@ -1795,6 +1795,26 @@ class Session:
         # router_host, which THIS call builds -- so this one eager pre-waist consumer is threaded
         # the local var explicitly rather than reading a not-yet-constructed self._capability_visibility).
         self._router_host = self._build_router_waist(contextual_permission=contextual_permission)
+        # #4401 A-4 (owner-ratified, approved by architect+lead-coder after
+        # 2 rounds of co-vet, issue #4401): kick off the MCP tools probe
+        # now, in the background — never awaited here. A probe is a
+        # precondition for the LLM NAMING an mcp tool (the schema's
+        # `mcp_tool_name` enum), never for executing one (roster +
+        # connection pool only) — so starting it this early costs nothing
+        # a turn would otherwise pay later, and a hook-woken turn 1 (which
+        # never reaches this Session.__init__ → first-turn gap the old
+        # lazy design left unable to name any mcp tool) gets the same head
+        # start as a normal turn. See `RouterHostAdapter.start_mcp_probe`/
+        # `await_mcp_probe_ready` for the consumption-point half of this
+        # design, and the empirical trace in issue #4401's own comments
+        # for why `RouterLoop.run()`'s own top is the sufficient single
+        # await point (every `render_for_router(state=...)` call site that
+        # can inject the mcp enum sits downstream of it today — pinned by
+        # `test_4401_render_for_router_state_census.py`).
+        self._router_host.start_mcp_probe(
+            per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+            spawn=self._background_tasks.spawn,
+        )
 
         # Owns the per-session capability/skill visibility override + the envelope-composed
         # contextual_permission/excluded_categories it derives (#2285, see #3121 step3 Extract Class);
@@ -5204,7 +5224,13 @@ class Session:
         try:
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-            await self._router_host.ensure_mcp_tools_cached(
+            # #4401 A-4: same seam the 2 real consumption points now route
+            # through (RouterLoop.run / mcp_list_servers) — an explicit
+            # `reyn mcp refresh` still genuinely waits (operator-triggered,
+            # synchronous-by-design, unlike the turn-boundary wait A-4
+            # removes), it just no longer duplicates `ensure_mcp_tools_cached`
+            # as a second, independent call shape.
+            await self._router_host.await_mcp_probe_ready(
                 per_server_timeout=self._safety.timeout.mcp_probe_seconds,
             )
         except Exception as exc:  # noqa: BLE001
@@ -11162,11 +11188,17 @@ class Session:
             # NEW turn — never cleared mid-turn (see the flag's own
             # docstring in __init__).
             self._in_flight_untrusted_this_turn = False
+            # #4401 A-4: the probe itself is no longer awaited HERE — every
+            # turn used to pay for it unconditionally, including a turn
+            # that never touches the mcp catalog at all (a named op call,
+            # a hook dispatch with no schema-building step). The 2 real
+            # catalog CONSUMPTION points (`RouterLoop.run`'s own
+            # turn-start, `RouterHostAdapter.mcp_list_servers`) each await
+            # `await_mcp_probe_ready` themselves now — a turn that never
+            # reaches either one pays nothing. The yaml/disk steps below
+            # stay unconditional (FP-0037 S1/S2, cheap, orthogonal to A-4).
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-            await self._router_host.ensure_mcp_tools_cached(
-                per_server_timeout=self._safety.timeout.mcp_probe_seconds,
-            )
             with active_turn(chain_id):
                 await self._loop_driver.run_turn(user_text, chain_id)
             _turn_completed = True

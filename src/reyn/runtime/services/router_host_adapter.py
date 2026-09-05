@@ -534,7 +534,72 @@ class RouterHostAdapter:
         # apart from "not measured", and absence is what makes the unmeasured
         # server re-probed on the next turn instead of being frozen as a
         # capability the model is never told about.
-        self._mcp_tools_cache: dict[str, ToolsAnswered] | None = None
+        # #4401 A-4 (co-vet, architect+lead-coder, approved): the cache
+        # container is NEVER ``None`` — "not yet probed" lives INSIDE the
+        # value, as key absence, never as the whole container being a
+        # second, structurally different type. This matters once a probe
+        # can run concurrently with an invalidate/reload (A-4's
+        # construction-time background kickoff, below): a bare
+        # ``self._mcp_tools_cache = None`` mid-probe used to make the
+        # in-flight probe's own merge (``{**None, **answers}``) raise
+        # ``TypeError`` the instant it resolved — a real, measured tear,
+        # not a hypothetical one. ``_mcp_disk_warm_start_attempted``
+        # replaces the old "``is None`` = never touched" test in
+        # ``ensure_mcp_tools_cached`` (gates the disk-read attempt, once);
+        # ``_mcp_cache_populated`` is the SEPARATE flag
+        # ``mcp_tools_cache_snapshot`` reads for its own "None = never
+        # populated" contract — separate because a warm-start-attempted
+        # flag says nothing about whether `maybe_reload_mcp_tools_cache_
+        # from_disk` populated the cache WITHOUT `ensure_mcp_tools_cached`
+        # ever running at all (a real, achievable order: an explicit
+        # `reyn mcp refresh` write landing before this session's first
+        # turn). Both are set/cleared alongside the cache itself, by
+        # `_apply_mcp_cache`/`invalidate_mcp_tools_cache` — never
+        # independently.
+        self._mcp_tools_cache: "dict[str, ToolsAnswered]" = {}
+        self._mcp_disk_warm_start_attempted: bool = False
+        self._mcp_cache_populated: bool = False
+        # #4401 A-4 co-vet (F1): the (cache, mtime) PAIR is the unit of
+        # atomicity, not the cache alone — a write that advances the dict
+        # but not the mtime (or vice versa) is exactly what let one
+        # concurrent writer's result get silently discarded by another's
+        # staleness check. Both fields — and, when the write REPLACES
+        # rather than adds, the epoch below — are assigned together by
+        # `_apply_mcp_cache`, the ONE method every writer (the probe's own
+        # merge, `invalidate_mcp_tools_cache`, the disk hot-swap in
+        # `maybe_reload_mcp_tools_cache_from_disk`) routes through — see
+        # that method's own docstring.
+        self._mcp_tools_cache_mtime: float | None = None
+        # #4401 A-4 co-vet (F2/F5): bumped by EVERY REPLACE (invalidate,
+        # disk hot-swap) — never by the probe-merge itself, which only
+        # ADDS. A probe captures the epoch at its OWN start
+        # (`ensure_mcp_tools_cached`'s `epoch_at_start`) and discards
+        # (never merges into memory, never persists to disk) its results
+        # if the epoch has moved by the time they are ready — the one
+        # uniform "is this measurement still about the state I started
+        # against" check every writer needs, rather than a bespoke guard
+        # per writer.
+        #
+        # F2 — this epoch is per-ADAPTER (per Session), but the on-disk
+        # cache file is per-WORKSPACE, shared by every session in the same
+        # process (`_state_dir` defaults to `cwd/.reyn/state`) — N sessions,
+        # N independent epochs, 1 file. "every writer reads the disk's
+        # current mtime before writing" (true today: `maybe_reload_mcp_
+        # tools_cache_from_disk` always re-reads `file_mtime`; the persist
+        # step below does too) does NOT by itself prevent a lost update
+        # across that shared file — two sessions can both read, then the
+        # later write clobbers the earlier one's answers. What actually
+        # bounds the damage is `mcp_cache_file.py`'s own FP-0037 design:
+        # an absent server is simply re-probed the next time it's needed,
+        # so a clobbered answer is not silently wrong forever, only
+        # temporarily missing — self-healing, not correctness. See that
+        # module's own docstring for the load-bearing statement (cross-
+        # referenced from here, not restated, so it cannot drift out of
+        # sync) and its own warning against ever persisting `ToolsUnknown`
+        # as a future "optimization" — doing so would silently remove the
+        # exact property this epoch's own tolerance for cross-session lost
+        # updates depends on.
+        self._mcp_cache_epoch: int = 0
         self._mcp_probe_cooldown_until: dict[str, float] = {}
         # #4401 ②: the LAST ToolsUnknown outcome per server, so the TUI can
         # tell "probed, did not answer" (this dict) apart from "never
@@ -544,24 +609,32 @@ class RouterHostAdapter:
         # transient failure does not linger as "failed" after a successful
         # retry. Not persisted (unlike `_mcp_tools_cache`) — this is a
         # display aid, not the FP-0037 permanence guarantee; a restart
-        # legitimately forgets it and re-probes fresh.
+        # legitimately forgets it and re-probes fresh. Same epoch
+        # discipline as the cache itself — a stale probe cycle's failures
+        # are dropped, not recorded, alongside its (also dropped) answers.
         self._mcp_last_unknown: "dict[str, ToolsUnknown]" = {}
         # #4401 ③: the server a manual retry is currently in flight for, if
         # any — `mcp_probe_snapshot` reports it as ``"retrying"`` rather
         # than falling through to "failed" (the in-flight retry hasn't
         # cleared the old failure yet) or "not_probed" (misleading — a
-        # probe genuinely IS running). `retry_mcp_probe` is a single
-        # synchronously-awaited call (not backgrounded — #4401 A-4's own
-        # co-vet found real concurrent-cache-mutation hazards a background
-        # probe introduces; ③ deliberately stays out of that scope, see
-        # `retry_mcp_probe`'s own docstring), so at most ONE retry is ever
-        # in flight for THIS session at a time — a set, not a per-server
-        # dict, is enough.
+        # probe genuinely IS running). `retry_mcp_probe` stays a single
+        # synchronously-awaited call (unchanged by A-4 landing — it never
+        # needed the epoch machinery itself, only benefits from
+        # `ensure_mcp_tools_cached`'s own protection now covering it too),
+        # so at most ONE retry is ever in flight for THIS session at a
+        # time — a set, not a per-server dict, is enough.
         self._mcp_retry_in_flight: "set[str]" = set()
-        # FP-0037 S1: mtime of the cache file when we last loaded from it.
-        # None = never loaded from disk. Used by maybe_reload_mcp_tools_cache_from_disk
-        # to detect when the CLI has written a fresher version.
-        self._mcp_tools_cache_mtime: float | None = None
+        # #4401 A-4: the background probe task kicked off at Session
+        # construction (`start_mcp_probe`, called by `Session.__init__`
+        # right after this adapter is built) — None until `start_mcp_probe`
+        # runs, and again once `await_mcp_probe_ready` has consumed it (see
+        # that method's own docstring for why it is consumed exactly
+        # once). A construction-time kickoff that could not start (no
+        # running loop yet — a sync/test construction path) leaves this
+        # None permanently; `await_mcp_probe_ready` degrades to running the
+        # probe inline in that case, same as every call site behaved
+        # before A-4.
+        self._mcp_probe_task: "asyncio.Task[None] | None" = None
         # FP-0037 S1: state dir for the persistent cache file.
         # #3705: was a MODULE-LEVEL constant frozen at import time (whatever
         # cwd happened to be at first `import router_host_adapter`, not even
@@ -2443,7 +2516,15 @@ class RouterHostAdapter:
         return result
 
     async def mcp_list_servers(self) -> list[dict]:
-        """Returns the configured MCP server list with descriptions."""
+        """Returns the configured MCP server list with descriptions.
+
+        #4401 A-4: one of the 2 real catalog CONSUMPTION points (the LLM
+        naming an mcp tool via `describe_mcp_tool`/`list_mcp_tools` reads
+        this list first, op D1) — awaits the background probe before
+        reading the cache so the returned `tools=` shape is decided, not
+        mid-flight.
+        """
+        await self.await_mcp_probe_ready(per_server_timeout=_DEFAULT_MCP_PROBE_SECONDS)
         return self._get_mcp_servers_for_router()
 
     async def mcp_list_subscriptions(self) -> list[dict]:
@@ -2703,14 +2784,31 @@ class RouterHostAdapter:
         # FP-0037 S1: warm-start from persistent cache file when available.
         # Only on the very first call — once the in-memory cache exists, the
         # disk file is the business of maybe_reload_mcp_tools_cache_from_disk.
-        if self._mcp_tools_cache is None:
+        # #4401 A-4: gated on `_mcp_disk_warm_start_attempted`, not
+        # `self._mcp_tools_cache is None` — the cache container is never
+        # None (see that flag's own __init__ comment). Routes through
+        # `_apply_mcp_cache` (a REPLACE, bumps epoch) like every other
+        # writer — a warm-start IS a fresh view of the world, exactly like
+        # a disk hot-swap, not an addition to what was already there
+        # (there is nothing there yet on this branch).
+        if not self._mcp_disk_warm_start_attempted:
+            self._mcp_disk_warm_start_attempted = True
             disk_cache = read_cache(cache_path)
             if disk_cache is not None:
-                self._mcp_tools_cache = disk_cache
-                self._mcp_tools_cache_mtime = file_mtime(cache_path)
-            else:
-                self._mcp_tools_cache = {}
+                self._apply_mcp_cache(disk_cache, mtime=file_mtime(cache_path), bump_epoch=True)
 
+        # #4401 A-4 (F2/F3/F5): captured BEFORE `unanswered` is computed
+        # (which itself reads `self._mcp_tools_cache`) — this probe cycle's
+        # results are applied (both the in-memory merge AND the disk
+        # persist, F5) ONLY if the epoch is UNCHANGED when they're ready.
+        # An invalidate/reload that lands after this line makes this whole
+        # cycle's eventual results stale, discarded rather than merged
+        # over state this cycle never saw. A stale cycle is not an error:
+        # the next turn (or a waiter still awaiting THIS cycle, F3) reads
+        # whatever the CURRENT cache holds and proceeds — see
+        # `await_mcp_probe_ready`'s own docstring for why a waiter does
+        # not itself re-wait for a fresher epoch.
+        epoch_at_start = self._mcp_cache_epoch
         servers = self._mcp_servers_flat()
         unanswered = [
             name for name in servers
@@ -2785,6 +2883,16 @@ class RouterHostAdapter:
             *(_probe_one(name) for name in unanswered),
             return_exceptions=False,  # _probe_one handles its own errors
         )
+        # #4401 A-4 (F3/F5): this cycle's results are STALE the moment
+        # something else replaced the cache while the probes above were in
+        # flight — discard EVERYTHING this cycle would otherwise do (the
+        # failure bookkeeping, the in-memory merge, AND the disk persist)
+        # rather than act on state this cycle never saw. Checked once,
+        # synchronously, before any of the three — no `await` between here
+        # and the merge below, so nothing can invalidate mid-application
+        # (asyncio's single-threaded, interleaves-only-at-await guarantee).
+        if epoch_at_start != self._mcp_cache_epoch:
+            return
         # #4401 ②: record/clear the per-server failure state BEFORE the
         # early return below — a cycle where every probe fails still needs
         # its failures recorded, even though nothing gets written to the
@@ -2800,19 +2908,55 @@ class RouterHostAdapter:
             # nothing to record. Rewriting the file here would only advance its
             # mtime and make every following turn reload an unchanged cache.
             return
-        self._mcp_tools_cache = {**self._mcp_tools_cache, **new_answers}
+        # #4401 A-4 (F1/②): the ONE place this cycle assigns the cache — a
+        # plain merge (ADD, never replace), so it does NOT bump the epoch
+        # (only a REPLACE does — see `_mcp_cache_epoch`'s own comment).
+        merged = {**self._mcp_tools_cache, **new_answers}
 
         # FP-0037 S1: persist the live-probe result so subsequent sessions
         # and turns can warm-start from disk. Failures are opportunistic
-        # and must NOT abort the session.
+        # and must NOT abort the session. #4401 A-4 (F1): `write_cache` is
+        # the I/O step, deliberately BEFORE `_apply_mcp_cache` — if it
+        # raises, the in-memory cache still advances (session correctness
+        # over disk durability, unchanged from before A-4) but the mtime
+        # passed to `_apply_mcp_cache` stays the LAST KNOWN GOOD value
+        # (never the value a failed write did not actually produce), so a
+        # later `maybe_reload_mcp_tools_cache_from_disk` still correctly
+        # reads "still stale" instead of skipping a reload it should do.
+        mtime = self._mcp_tools_cache_mtime
         try:
-            write_cache(cache_path, self._mcp_tools_cache)
-            self._mcp_tools_cache_mtime = file_mtime(cache_path)
+            write_cache(cache_path, merged)
+            mtime = file_mtime(cache_path)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "ensure_mcp_tools_cached: could not write cache to %s: %r",
                 cache_path, exc,
             )
+        self._apply_mcp_cache(merged, mtime=mtime, bump_epoch=False)
+
+    def _apply_mcp_cache(
+        self, value: "dict[str, ToolsAnswered]", *, mtime: "float | None", bump_epoch: bool,
+    ) -> None:
+        """#4401 A-4 (F1/F2/②): the ONLY place ``self._mcp_tools_cache`` /
+        ``self._mcp_tools_cache_mtime`` / ``self._mcp_cache_epoch`` are
+        assigned — every external driver of the cache (the probe's own
+        merge in ``ensure_mcp_tools_cached``, ``invalidate_mcp_tools_cache``,
+        the disk hot-swap in ``maybe_reload_mcp_tools_cache_from_disk``)
+        routes through here.
+
+        The three assignments are ONE synchronous statement group — no
+        ``await`` between them, so nothing else on this event loop can
+        observe a torn state (dict advanced but mtime/epoch not yet, or
+        vice versa). ``bump_epoch=True`` for a REPLACE (invalidate, disk
+        hot-swap, the FIRST disk warm-start); ``False`` for the probe's own
+        ADD-only merge, which does not invalidate anything an in-flight
+        reader might already be looking at.
+        """
+        self._mcp_tools_cache = value
+        self._mcp_tools_cache_mtime = mtime
+        self._mcp_cache_populated = True
+        if bump_epoch:
+            self._mcp_cache_epoch += 1
 
     def invalidate_mcp_tools_cache(self, server: str) -> None:
         """Invalidate the lazy MCP tools cache (#2597 S2b) so the next
@@ -2842,10 +2986,21 @@ class RouterHostAdapter:
         wasn't itself refreshed, invalidation still warm-starts from it (stale)
         instead of forcing a live probe. This mirrors the disk-cache's own existing
         staleness window (``reyn mcp refresh`` is the operator-driven cache-buster)
-        and is out of scope for #2597 S2b to close.
+        and is out of scope for #2597 S2b to close. #4401 A-4: preserved verbatim —
+        resetting ``_mcp_disk_warm_start_attempted`` here (alongside the cache
+        itself) is what makes the NEXT ``ensure_mcp_tools_cached`` call re-consult
+        disk, same as the pre-A-4 ``is None`` check did.
+
+        #4401 A-4: routes through ``_apply_mcp_cache`` (a REPLACE, bumps epoch)
+        like every other writer — see that method's own docstring. Unlike
+        every other driver, THIS one resets ``_mcp_cache_populated`` back to
+        False right after (invalidate is the one operation whose whole
+        point is "forget everything", the one case `_apply_mcp_cache`'s own
+        unconditional "populated" mark is wrong for).
         """
-        self._mcp_tools_cache = None
-        self._mcp_tools_cache_mtime = None
+        self._mcp_disk_warm_start_attempted = False
+        self._apply_mcp_cache({}, mtime=None, bump_epoch=True)
+        self._mcp_cache_populated = False
 
     def maybe_reload_mcp_tools_cache_from_disk(self) -> None:
         """Reload the in-memory MCP tools cache if the on-disk file is newer.
@@ -2861,6 +3016,9 @@ class RouterHostAdapter:
         - File mtime unchanged since last load → no-op.
         - File mtime advanced → replace in-memory cache + update mtime record.
         Never raises.
+
+        #4401 A-4: routes through ``_apply_mcp_cache`` (a REPLACE, bumps
+        epoch) like every other writer — see that method's own docstring.
         """
         from reyn.runtime.services.mcp_cache_file import (
             cache_file_path,
@@ -2880,8 +3038,7 @@ class RouterHostAdapter:
         fresh = read_cache(cache_path)
         if fresh is None:
             return
-        self._mcp_tools_cache = fresh
-        self._mcp_tools_cache_mtime = current_mtime
+        self._apply_mcp_cache(fresh, mtime=current_mtime, bump_epoch=True)
 
     @property
     def mcp_tools_cache_snapshot(self) -> dict[str, list[dict]] | None:
@@ -2898,8 +3055,22 @@ class RouterHostAdapter:
         that was measured, so ``[]`` in this snapshot means "measured, zero
         tools". A server that could not be measured is ABSENT — read a missing
         key as "unknown", never as "no tools".
+
+        #4401 A-4: the cache container is never ``None`` (see that field's
+        own __init__ comment) — gated on ``_mcp_cache_populated`` instead,
+        which is False in EXACTLY the same situations the old ``is None``
+        check was: before the cache has EVER been written by any driver
+        (the probe's own merge, a disk warm-start OR hot-swap), and again
+        right after ``invalidate_mcp_tools_cache`` (which resets it, same
+        as it used to reset the cache to ``None``) — this method's own
+        external contract is unchanged. (NOT
+        ``_mcp_disk_warm_start_attempted`` — that flag only tracks whether
+        ``ensure_mcp_tools_cached``'s own once-per-session disk-read
+        attempt has run, which stays False if `maybe_reload_mcp_tools_
+        cache_from_disk` populates the cache on its own, before any turn
+        ever calls `ensure_mcp_tools_cached` at all.)
         """
-        if self._mcp_tools_cache is None:
+        if not self._mcp_cache_populated:
             return None
         return {name: entry.tools for name, entry in self._mcp_tools_cache.items()}
 
@@ -2993,6 +3164,82 @@ class RouterHostAdapter:
             await self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout)
         finally:
             self._mcp_retry_in_flight.discard(server)
+
+    def start_mcp_probe(self, *, per_server_timeout: float, spawn: "Callable[..., Any]") -> None:
+        """#4401 A-4 step 1: kick off the MCP tools probe in the BACKGROUND
+        at Session construction (never awaited here) — ``spawn`` is
+        ``Session._background_tasks.spawn`` (``TrackedTaskSet``, #4759),
+        threaded in rather than imported so this module stays independent
+        of Session's own construction plumbing.
+
+        Requires a running event loop (``asyncio.get_running_loop()``) —
+        true for every PRODUCTION construction path (`AgentRegistry.attach`/
+        `restore_all`, both `async def`, are the only callers of the sole
+        production `Session(` construction site,
+        `scoped_session_factory.py`), verified before implementing this.
+        A sync/test-only construction path (no running loop yet) leaves
+        `_mcp_probe_task` `None` — `await_mcp_probe_ready` below degrades
+        to running the probe inline in that case, i.e. exactly the
+        pre-A-4 behaviour, never a crash.
+
+        #4401 A-4 co-vet (F3, condition): ``disposition="await"`` —
+        deliberately NOT ``"cancel_join"``. A tracked task with
+        `cancel_join` gets externally CANCELLED on session shutdown
+        (`TrackedTaskSet.aclose`); if a turn were still awaiting this exact
+        task via `await_mcp_probe_ready` when that happened, the
+        cancellation would propagate into the turn as an unhandled
+        `CancelledError` instead of the turn completing normally. `"await"`
+        makes shutdown wait for the probe to finish instead (bounded by
+        `per_server_timeout` — a few seconds at most, never unbounded), so
+        the task always resolves normally and a waiter never sees an
+        exception or a hang from this source.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._mcp_probe_task = spawn(
+            self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout),
+            disposition="await", appends_wal=False, name="mcp-tools-probe-construction",
+        )
+
+    async def await_mcp_probe_ready(self, *, per_server_timeout: float) -> None:
+        """#4401 A-4 step 3: the ONE seam both catalog-consuming call sites
+        (`RouterLoop.run`'s turn start, and `mcp_list_servers` — the LLM-
+        naming-a-tool consumers) route through, in place of the old
+        turn-boundary ``await ensure_mcp_tools_cached(...)``.
+
+        Awaits the background task `start_mcp_probe` kicked off at
+        construction, if it is still around; runs the probe inline
+        otherwise (task never started — no loop at construction time; or
+        this is a later turn and the construction-time task already
+        finished and was consumed). Consumed exactly ONCE — the reference
+        is cleared the moment it is awaited, so a later call in the SAME
+        session always re-checks `ensure_mcp_tools_cached`'s own per-server
+        cache/cooldown gate (already a cheap no-op once every server has
+        answered) rather than re-awaiting an already-done Task forever.
+
+        #4401 A-4 co-vet (F3): does NOT re-wait if the epoch moves while
+        this call is itself awaiting — a single `await`, never a loop. If
+        the in-flight probe's own results get discarded as stale
+        (`ensure_mcp_tools_cached`'s own epoch check), this call still
+        returns normally once that probe settles; the CURRENT cache (as
+        of whenever this returns) is what the caller reads next, not a
+        guarantee that it reflects this exact call's own epoch. The next
+        turn/consumption point sees the newer epoch and probes again then.
+
+        Deliberately NOT called from the status-bar preview
+        (`capability_visibility.py`'s `_VisibilityProbeOps.present`/
+        `base_tools`, every render frame, sync) — that caller reads
+        whatever `get_mcp_servers()` currently has cached, unblocked, by
+        design (lead-coder ruling, #4401: a preview is not "the LLM naming
+        a tool", so it never waits on the catalog)."""
+        task = self._mcp_probe_task
+        if task is not None:
+            self._mcp_probe_task = None
+            await task
+            return
+        await self.ensure_mcp_tools_cached(per_server_timeout=per_server_timeout)
 
     @property
     def yaml_mtimes_snapshot(self) -> dict[Path, float]:

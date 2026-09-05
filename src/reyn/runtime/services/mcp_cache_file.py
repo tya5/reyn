@@ -19,6 +19,26 @@ simply absent from the mapping, so it is naturally re-probed the next
 time it is needed. An empty ``ToolsAnswered.tools`` means, and only
 means, "measured: this server exposes zero tools".
 
+#4401 A-4 co-vet (F2, load-bearing — read this before "optimizing" what
+gets persisted here) — **this file is shared by every session in the same
+workspace** (``RouterHostAdapter._state_dir`` defaults to
+``cwd/.reyn/state``, one file, N sessions, N independent in-memory
+epochs). "Every writer re-reads the file's current mtime before writing"
+(true of both writers today) does NOT by itself prevent a LOST UPDATE
+across that shared file — two sessions can both read, then whichever
+writes second silently clobbers the answers the other just wrote. What
+actually keeps a clobbered answer from being silently wrong FOREVER is
+the property this module's own #3520 paragraph above states: **an absent
+server is simply re-probed the next time it's needed.** A clobbered
+answer is temporarily MISSING, not permanently wrong — self-healing, not
+correctness, and that distinction is exactly why the type-level "only
+``ToolsAnswered`` is storable" rule matters beyond #3520's own original
+motivation. If a future change ever persists ``ToolsUnknown`` too (e.g.
+as a "let's skip re-probing known-failed servers" optimization), it
+silently removes the ONE property this cross-session tolerance depends
+on — a lost update would then stay lost, not self-heal. Do not make that
+change without re-deriving this paragraph's own conclusion first.
+
 Format (version 2):
     {
         "version": 2,
