@@ -99,34 +99,69 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
     reached this way) expects.
 
     Used by :func:`_handle` (the ``exec`` tool) — the
-    router_state → legacy-OpContext bridge (sandbox_config derivation +
-    op_context_factory-or-minimal-synthesis). #3226 Phase 1: the ``shell``
-    tool (:mod:`reyn.tools.shell`, #2593), which used to share this bridge,
-    was removed outright — it was the sole `/bin/sh -c <str>`
-    shell-injection surface in the codebase.
+    router_state → legacy-OpContext bridge (sandbox backend-instance
+    resolution + op_context_factory-or-minimal-synthesis). #3226 Phase 1:
+    the ``shell`` tool (:mod:`reyn.tools.shell`, #2593), which used to
+    share this bridge, was removed outright — it was the sole
+    `/bin/sh -c <str>` shell-injection surface in the codebase.
+
+    #5820 (owner-hit, security, silent): this bridge used to derive a
+    policy-less ``SandboxConfig(backend=...)`` from ``RouterCallerState.
+    sandbox_backend`` (a NAME string) and OVERWRITE ``legacy_ctx.
+    sandbox_config`` wholesale with it — clobbering the operator's real
+    declared policy `legacy_ctx.sandbox_config` already carried (from
+    ``op_context_factory()``), which ``describe_session``'s ``write_scope``
+    field then read as "nothing declared", falsely, for every session with
+    a real (non-``None``) sandbox backend. Fixed by giving the backend
+    NAME its own existing seam instead: resolved to a real
+    :class:`~reyn.security.sandbox.backend.SandboxBackend` INSTANCE here,
+    it goes onto ``OpContext.sandbox_backend`` (that field's own docstring
+    already documents "an injected instance wins over name-based auto-
+    selection" as its purpose) — ``sandbox_config`` is never rewritten
+    post-construction anywhere in this bridge any more.
     """
     from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl
 
-    # Derive sandbox_config from RouterCallerState.sandbox_backend when
-    # available, otherwise fall back to None (= op_runtime auto-detects).
-    sandbox_config = None
+    # #5820 (owner-hit, security, silent): derive a resolved SandboxBackend
+    # INSTANCE from RouterCallerState.sandbox_backend (a NAME string — a
+    # DIFFERENT thing from OpContext.sandbox_backend below, same name, see
+    # that field's own docstring for the disambiguation) when available.
+    # This used to build a policy-less SandboxConfig(backend=backend) and
+    # OVERWRITE legacy_ctx.sandbox_config with it wholesale (_with_sandbox_
+    # config, now removed) — legacy_ctx.sandbox_config, when op_context_
+    # factory is used below, already carries the REAL operator-declared
+    # config (policy included); that whole-object overwrite silently
+    # clobbered the declared policy with this synthesized, policy-less
+    # stand-in, which describe_session's write_scope field then read as
+    # "nothing declared" — false, for every session with a real (non-None)
+    # sandbox_backend. sandbox_config is never touched post-construction
+    # any more (test_repo/test_5820_... pins this structurally); the
+    # resolved backend instance goes onto OpContext.sandbox_backend
+    # instead — the field's OWN docstring already names "an injected
+    # instance wins over name-based auto-selection" as its seam, this NAME-
+    # resolved instance is simply an earlier-resolved member of that same
+    # seam (see that field's own docstring, corrected in this PR, for why
+    # its 2 real readers never distinguish "genuinely stateful" from
+    # "resolved early").
+    resolved_backend = None
     rs = ctx.router_state
     if rs is not None:
-        backend = getattr(rs, "sandbox_backend", None)
-        if backend is not None:
+        backend_name = getattr(rs, "sandbox_backend", None)
+        if backend_name is not None:
             from reyn.config import SandboxConfig
+            from reyn.security.sandbox import get_default_backend
             try:
-                sandbox_config = SandboxConfig(backend=backend)
+                resolved_backend = get_default_backend(SandboxConfig(backend=backend_name))
             except ValueError:
-                sandbox_config = None
+                resolved_backend = None
 
     # Use op_context_factory if provided, else minimal synthesis.
     if rs is not None and rs.op_context_factory is not None:
         legacy_ctx = rs.op_context_factory()
-        # Inject derived sandbox_config so the handler uses the configured backend.
-        if sandbox_config is not None:
-            legacy_ctx = _with_sandbox_config(legacy_ctx, sandbox_config)
+        if resolved_backend is not None:
+            import dataclasses
+            legacy_ctx = dataclasses.replace(legacy_ctx, sandbox_backend=resolved_backend)
         return legacy_ctx
 
     # Minimal synthesis path (= test sites / narrow callers).
@@ -150,7 +185,14 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         intervention_bus=None,
         caller="direct",
         parent_run_id=None,
-        sandbox_config=sandbox_config,
+        # #5820: this path has no real config to populate sandbox_config
+        # with (see the comment on default_sandbox_policy below) — None,
+        # never the synthesized backend-only object the pre-#5820 code
+        # built here (that object's own None .policy is exactly what made
+        # describe_session's write_scope lie for the OTHER branch above;
+        # kept out of this field entirely now).
+        sandbox_config=None,
+        sandbox_backend=resolved_backend,
         # #3907①: this path had no access to reyn.yaml sandbox.policy at all
         # (no `rs`/op_context_factory here to read it through), so
         # ctx.default_sandbox_policy stayed None — the op_runtime handler's
@@ -163,21 +205,20 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         # computed from op fields alone.
         #
         # #5818 (owner-hit, security, lead-coder ruling): `mode="compat"` is
-        # explicit here, not read from `sandbox_config.mode` — this
+        # explicit here, never read from any config object — this
         # construction point (reached only when `rs is None` or `rs.op_
         # context_factory is None`, i.e. no real router/host context at
-        # all) never reaches reyn.yaml, so `sandbox_config` above is never
-        # more than a `SandboxConfig(backend=backend)` synthesized from a
-        # backend NAME alone; its `.mode` is always the dataclass default,
-        # never the operator's real setting. The construction point that
-        # DOES have the real config is `router_op_context.py`'s own
-        # `build_router_op_context` (already fixed this issue) — reached
-        # here too, first, via `rs.op_context_factory` above, whenever a
-        # real host exists. Naming `mode=sandbox_config.mode` here instead
-        # would make this ONE path claim to honor an operator's `strict`
-        # setting it structurally cannot see — the setting would silently
-        # stay unenforced while `default_sandbox_policy` reported "compat"
-        # as if that were the operator's real, deliberate choice.
+        # all) never reaches reyn.yaml (there is no operator config
+        # available here at all, #5820's own fix left `sandbox_config`
+        # above `None` rather than a synthesized stand-in). The
+        # construction point that DOES have the real config is
+        # `router_op_context.py`'s own `build_router_op_context` (fixed by
+        # #5818) — reached here too, first, via `rs.op_context_factory`
+        # above, whenever a real host exists. This path claiming `strict`
+        # would assert an operator setting it structurally cannot see — the
+        # setting would silently stay unenforced while `default_sandbox_
+        # policy` reported "compat" as if that were the operator's real,
+        # deliberate choice.
         default_sandbox_policy=resolve_sandbox_policy(None, mode="compat"),
     )
 
@@ -229,15 +270,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
     legacy_ctx = await op_context_from_tool_context(ctx)
     return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)
-
-
-def _with_sandbox_config(op_ctx: Any, sandbox_config: Any) -> Any:
-    """Return a copy of op_ctx with sandbox_config overridden.
-
-    OpContext is a dataclass; we replace() to avoid mutation.
-    """
-    import dataclasses
-    return dataclasses.replace(op_ctx, sandbox_config=sandbox_config)
 
 
 from reyn.core.offload.canonical import sandboxed_exec_to_canonical  # noqa: E402
