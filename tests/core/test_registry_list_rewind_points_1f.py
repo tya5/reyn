@@ -303,15 +303,25 @@ async def test_list_rewind_points_reports_no_owner_on_conflicting_claims(tmp_pat
     """Tier 2: #5769 stage 3 (④, architect BLOCKING on #5782's own review) --
     a seq claimed by two DIFFERING (name, sid) pairs must come back with
     ``name`` AND ``sid`` both ``None``, never a fabricated guess (not even a
-    first-seen-wins one). This is architecturally impossible in production
-    (a WAL entry routes to exactly one session), so the setup forces the
-    conflict directly at the store layer -- the same shape a real defect
-    would take, without needing one.
+    first-seen-wins one).
 
-    Before this fix the lookup was ``seq_sid.get(s, _DEFAULT_SID)``: had the
-    invariant ever broken, it would have silently reported the row as
-    belonging to ``"main"`` -- a REAL session's own name wired into the very
-    row the operator clicks to choose which session to rewind."""
+    #5815 (real owner incident, correcting this docstring's own earlier
+    claim): this is NOT "architecturally impossible in production" --
+    ``applied_seq`` is the WAL POSITION at record time, not an event a
+    row's own agent uniquely owns, so two agents recording a generation at
+    the same position is ROUTINE (measured: ``gen-<seq>.json`` existed for
+    both ``coder-brown`` and ``coder-smith`` at a seq whose WAL entry
+    belonged to a third agent entirely). The setup below is the real
+    shape, not a synthetic forcing of an otherwise-impossible case.
+
+    Before this fix the lookup was ``seq_sid.get(s, _DEFAULT_SID)``: on a
+    genuinely routine multi-owner seq like this one, it would have
+    silently reported the row as belonging to ``"main"`` -- a REAL
+    session's own name wired into the very row the operator clicks to
+    choose which session to rewind. See
+    ``test_list_rewind_points_scoped_avoids_the_conflicting_claim_ambiguity``
+    below for #5815's own fix: a caller that can name its own scope avoids
+    this ambiguity entirely."""
     reg = _make_registry(tmp_path)
     _seed_agent(tmp_path, "alpha")
     _seed_agent(tmp_path, "beta")
@@ -330,3 +340,68 @@ async def test_list_rewind_points_reports_no_owner_on_conflicting_claims(tmp_pat
     # Exactly one row for the seq -- a conflict collapses to one "unknown
     # owner" row, it does not fan out into two.
     assert [r["seq"] for r in rows].count(shared_seq) == 1
+
+
+# ── #5815: scope= (session-local rows, sourced from ONE store) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_scoped_returns_only_that_sessions_own_rows(tmp_path) -> None:
+    """Tier 2: #5815 (1)(2), architect ruling -- ``scope=(name, sid)`` builds
+    the row list directly from THAT session's own generation store, not a
+    cross-agent union. Another agent's own boundary (even a numerically
+    HIGHER seq) must not appear."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    _seed_agent(tmp_path, "beta")
+    log = reg.state_log
+
+    s_alpha = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", s_alpha)
+    s_beta = await log.append("inbox_consume", target="beta", msg_id="m2")
+    _record_gen(reg, "beta", s_beta)
+
+    rows = reg.list_rewind_points(scope=("alpha", "main"))
+    assert [r["seq"] for r in rows] == [s_alpha]
+    assert rows[0]["name"] == "alpha"
+    assert rows[0]["sid"] == "main"
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_scoped_avoids_the_conflicting_claim_ambiguity(tmp_path) -> None:
+    """Tier 2: #5815 (1)(2), the actual fix -- the SAME multi-owner seq that
+    forces ``name``/``sid`` to ``None`` for the unscoped caller (see
+    ``test_list_rewind_points_reports_no_owner_on_conflicting_claims``
+    above) comes back FULLY OWNED when the caller names its own scope: a
+    scoped call only ever reads its own store, so there is no second
+    store's claim to collide with. Real-content witness (not "no
+    warning"): the row's ``name``/``sid`` are the real scope, never
+    ``None``."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    _seed_agent(tmp_path, "beta")
+    log = reg.state_log
+
+    shared_seq = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", shared_seq)
+    _record_gen(reg, "beta", shared_seq)  # same seq, a DIFFERENT (name, sid)
+
+    rows = reg.list_rewind_points(scope=("alpha", "main"))
+    (row,) = rows
+    assert row["seq"] == shared_seq
+    assert row["name"] == "alpha", f"a scoped call must never report None -- got {row}"
+    assert row["sid"] == "main", f"a scoped call must never report None -- got {row}"
+
+
+@pytest.mark.asyncio
+async def test_list_rewind_points_scoped_empty_store_returns_empty(tmp_path) -> None:
+    """Tier 2: #5815 -- a scope with no generations of its own returns an
+    empty list, not another session's rows."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+    s = await log.append("inbox_consume", target="alpha", msg_id="m1")
+    _record_gen(reg, "alpha", s)
+
+    rows = reg.list_rewind_points(scope=("alpha", "sub-never-used"))
+    assert rows == []
