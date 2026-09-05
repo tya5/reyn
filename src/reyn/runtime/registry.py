@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 import logging
 import re
 import threading
@@ -1493,55 +1492,6 @@ class AgentRegistry:
                     tname, topo,
                 )
 
-    def recent_user_message(self, name: str) -> str:
-        """Return the most recent user-role text from the agent's history, or "".
-
-        Reads history.jsonl synchronously (read-only). Returns "" on any
-        failure or when no user message exists. Used by the right-panel
-        Agents tab to surface idle-state context.
-        """
-        history_path = self._dir / name / "history.jsonl"
-        if not history_path.is_file():
-            return ""
-        last_text: str = ""
-        try:
-            with history_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(entry, dict) and entry.get("role") == "user":
-                        last_text = str(entry.get("text", ""))
-        except OSError:
-            return ""
-        return last_text
-
-    def message_count(self, name: str) -> int:
-        """Return the total number of conversation messages in history, or 0."""
-        history_path = self._dir / name / "history.jsonl"
-        if not history_path.is_file():
-            return 0
-        count = 0
-        try:
-            with history_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(entry, dict) and entry.get("role") in ("user", "agent"):
-                        count += 1
-        except OSError:
-            return 0
-        return count
-
     def last_activity_at(self, name: str) -> datetime | None:
         """Last mtime across history.jsonl and any audit events file.
 
@@ -1988,6 +1938,31 @@ class AgentRegistry:
                 "straggler WAL append landing past it"
             ) from exc
 
+    def _oldest_kept_seq(self) -> "int | None":
+        """The WAL's own PHYSICAL oldest currently-retained seq, or
+        ``None`` if the WAL is empty/unwired.
+
+        #5759 stage 2 (lead-coder ruling): extracted from ``checkout()``'s
+        own retention guard and ``list_rewind_points()``'s identical
+        inline copy (#2236) — a third caller (the history.jsonl GC below)
+        would have made this a THIRD independently-typed copy of the same
+        expression. All three now call this one accessor, so a future
+        change to how "oldest kept" is determined cannot update two call
+        sites and silently miss the third — the exact "same guard,
+        second copy" shape this codebase already rejects elsewhere.
+
+        Deliberately reads the PHYSICAL floor (what the WAL file itself
+        still contains), not the last-computed retention-policy floor —
+        under a live policy nothing is truncated between turns, so recent
+        history stays reachable; only genuinely-truncated history is
+        rejected. See ``checkout()``'s own docstring for why this matters
+        (truncated-vs-not is the caller's real question, not the target
+        seq's raw numeric value)."""
+        if self._state_log is None:
+            return None
+        oldest = next(iter(self._state_log.iter_from(1)), None)
+        return oldest.get("seq") if oldest else None
+
     async def checkout(self, seq: int) -> dict:
         """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
 
@@ -2028,8 +2003,7 @@ class AgentRegistry:
         # Guard on the PHYSICAL oldest kept seq (not the policy floor): under a
         # live policy nothing is truncated between turns, so recent history stays
         # reachable; only genuinely-truncated history is rejected.
-        oldest = next(iter(self._state_log.iter_from(1)), None)
-        oldest_seq = oldest.get("seq") if oldest else None
+        oldest_seq = self._oldest_kept_seq()
         if oldest_seq is not None and seq < oldest_seq:
             raise RewindBeyondRetentionError(
                 f"checkpoint seq {seq} is outside the retained WAL (oldest "
@@ -2138,11 +2112,10 @@ class AgentRegistry:
             return []
 
         # #2236: compute the WAL retention floor using the SAME source as
-        # checkout() (lines 1044–1048) so the list and the checkout guard
-        # agree by construction.  Points below this floor would always be
+        # checkout() so the list and the checkout guard agree by
+        # construction. Points below this floor would always be
         # rejected by checkout — advertising them is misleading.
-        oldest = next(iter(self._state_log.iter_from(1)), None)
-        oldest_seq: int | None = oldest.get("seq") if oldest else None
+        oldest_seq = self._oldest_kept_seq()
 
         # Union of generation boundary seqs across every known agent. Default =
         # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
