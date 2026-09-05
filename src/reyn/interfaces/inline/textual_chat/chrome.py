@@ -1449,12 +1449,17 @@ def _cache_hit_line(
     9-char column every other cost/ctx line uses (it was misaligned when the label
     itself carried the qualifier, e.g. ``"cache (cumulative)"``).
 
-    ``reported`` (#5009, ``snap["cache_usage_reported"]``): a REMOTE client's
-    ``cached``/``prompt`` are always ``0`` (cache-hit accounting is
-    session-local, never on the AG-UI wire) — indistinguishable on their own
-    from a genuine 0% hit rate. ``False`` here renders an explicit "not
-    reported" line instead of computing a percentage off zeros, so this
-    reads as "unavailable", never as a fabricated real 0%."""
+    ``reported`` (#5009; #5771 stage② split this into 2 separate snapshot
+    keys, one per call site — the Cost pane's cumulative line passes
+    ``snap["session_cache_usage_reported"]``, the Ctx pane's recent-call
+    line passes ``snap["cache_usage_reported"]``, see each call site's own
+    comment): a REMOTE client's ``cached``/``prompt`` are ``0`` when NOT
+    reported (cache-hit accounting used to be session-local for both;
+    the Cost pane's own figures are genuinely wired now) —
+    indistinguishable on their own from a genuine 0% hit rate. ``False``
+    here renders an explicit "not reported" line instead of computing a
+    percentage off zeros, so this reads as "unavailable", never as a
+    fabricated real 0%."""
     if not reported:
         return f"{label:<9}not reported on this connection"
     pct = round(100 * cached / prompt) if prompt > 0 else 0
@@ -1693,7 +1698,12 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
         f"tokens   {prompt_completion} · total {agent_tokens:,}",
         _cache_hit_line(
             "cache", cached, p, note="cumulative",
-            reported=snap.get("cache_usage_reported", False),
+            # #5771 stage②: SPLIT from cache_usage_reported (this pane's
+            # own key, session_cached_tokens, is genuinely wired now —
+            # the Ctx pane's ctx_recent_usage below is not; see
+            # ChatReadModelCapabilities.session_cache_usage_reported's
+            # own docstring for the full split reasoning).
+            reported=snap.get("session_cache_usage_reported", False),
         ),
     ]
     # #3695: the status row can only afford a mark; this pane has room to say

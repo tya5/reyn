@@ -69,7 +69,10 @@ def test_cost_pane_cache_line_still_names_itself_cumulative():
         "usage": (12345, 6789, 19134),
         "agent_tokens": 19134,
         "session_cached_tokens": 5180,
-        "cache_usage_reported": True,
+        # #5771 stage②: the Cost pane's OWN split-off axis, not the Ctx
+        # pane's cache_usage_reported (see chrome.py's own comment at
+        # this pane's _cache_hit_line call site for the split).
+        "session_cache_usage_reported": True,
     }
     blob = "\n".join(cost_pane_lines(snap))
     assert "42% hit" in blob, blob

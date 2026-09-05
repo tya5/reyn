@@ -117,7 +117,13 @@ def test_cost_pane_shows_not_reported_instead_of_a_fabricated_zero_percent():
         "usage": (0, 0, 0),
         "agent_tokens": 0,
         "session_cached_tokens": 0,
-        "cache_usage_reported": False,
+        # #5771 stage②: the Cost pane's OWN split-off axis (see this
+        # file's own test_cost_pane_still_shows_a_real_percentage_when_
+        # reported for the split) — named explicitly here rather than
+        # relying on the key's own absence to default False, so this
+        # negative control bites on the SAME key the accept-side test
+        # flips to True.
+        "session_cache_usage_reported": False,
     }
     blob = "\n".join(cost_pane_lines(snap))
     assert "not reported on this connection" in blob, blob
@@ -136,7 +142,10 @@ def test_cost_pane_still_shows_a_real_percentage_when_reported():
         "usage": (12345, 6789, 19134),
         "agent_tokens": 19134,
         "session_cached_tokens": 5180,
-        "cache_usage_reported": True,
+        # #5771 stage②: the Cost pane's OWN split-off axis — see
+        # chrome.py's own comment at this pane's _cache_hit_line call
+        # site for why this is no longer cache_usage_reported.
+        "session_cache_usage_reported": True,
     }
     blob = "\n".join(cost_pane_lines(snap))
     assert "42% hit" in blob, blob

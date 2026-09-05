@@ -49,8 +49,11 @@ the gate is RED:
    the wire protocol automatically re-enters this gate's scope, no second
    edit needed) is the set of ``.get()`` KEY ARGUMENTS with no possible
    "not yet on the wire" state. Matched against the ``.get()`` call's own
-   key argument (not necessarily the dict's own output key — e.g.
-   ``cost_usd``'s call reads the ``"cost_agent"`` wire key).
+   key argument (not necessarily the dict's own output key — #5771 fixed
+   the one case that used to differ, ``cost_usd``'s call reading the
+   ``"cost_agent"`` wire key under a different name; see this module's
+   own "second axis" section below for why THAT shape needed a separate
+   check, not a fix to this remedy).
 2. **A declared axis exists.** ``ChatReadModelCapabilities`` has a field
    named ``f"{key}_reported"``, OR the key is one of the hand-maintained
    grouped pairings below (a boolean covering more than one dict key —
@@ -97,12 +100,15 @@ cannot see the SHAPE of — turned out to be one symptom of a bigger,
 independent question :func:`find_unwired_key_violations` asks instead of
 trying to widen the AST walk into container literals: never mind what
 SHAPE a value is — is the dict KEY it is assigned to even a real
-``project_status`` key? ``"cost_usd": v.get("cost_agent", 0.0)`` passes
-EVERY remedy above (``"cost_agent"``, the ``.get()`` call's own key
-ARGUMENT, is genuinely on the wire per ``_WIRE_KEYS``) while the OUTPUT
-key ``"cost_usd"`` is not a real ``project_status`` key at all — an
-alias, not a placeholder, and invisible to remedies ①②③ because none of
-them ever look at the output key's own name against ``project_status``.
+``project_status`` key? Before #5771 stage②, ``"cost_usd": v.get(
+"cost_agent", 0.0)`` passed EVERY remedy above (``"cost_agent"``, the
+``.get()`` call's own key ARGUMENT, was genuinely on the wire per
+``_WIRE_KEYS``) while the OUTPUT key ``"cost_usd"`` was not a real
+``project_status`` key at all — an alias, not a placeholder, invisible
+to remedies ①②③ because none of them ever look at the output key's own
+name against ``project_status`` (stage② later wired ``cost_usd`` for
+real, closing this SPECIFIC instance — the general question this axis
+asks stays live for every other key).
 #5098's own invariant ("one declaration, not two that can drift apart")
 is about exactly this — a SEPARATE, narrower promise than "is this
 value's placeholder-ness declared" — so :func:`find_unwired_key_
@@ -141,12 +147,16 @@ _GROUPED_AXIS_KEYS = {
     # #5094/#5097: one flag covers both halves of the model-class catalog.
     "model_classes": "model_catalog_reported",
     "model_active_class": "model_catalog_reported",
-    # #5009: cache-hit accounting shares 1 axis with "session_cached_tokens"
-    # below (the axis docstring's own "covers two snapshot() dict KEYS
-    # instead" note); "ctx_recent_usage" itself is a tuple-shaped value this
-    # gate's shape detector does not parse (see module docstring's own
-    # disclosed gap) so it never reaches this mapping today.
-    "session_cached_tokens": "cache_usage_reported",
+    # #5771 stage②: "session_cached_tokens" used to share this entry with
+    # "cache_usage_reported" (#5009) -- REMOVED, not updated to the new
+    # split field name, because the key is now genuinely, unconditionally
+    # on the wire (_WIRE_KEYS) and this remedy is unreachable for it: a
+    # dict entry here is only ever consulted by find_violations's remedy②,
+    # which remedy① (the _WIRE_KEYS membership check) already short-
+    # circuits before reaching. "ctx_recent_usage" itself is a tuple-
+    # shaped value this gate's shape detector does not parse (see module
+    # docstring's own disclosed gap) so it never reached this mapping
+    # either, before or after.
     # #5034: the hook-pane's 2nd dict key rides the same axis as "hooks".
     "hook_items": "hooks_reported",
     # #5009: the compaction-status callable slot is explicitly "gated by
@@ -438,18 +448,19 @@ def find_unwired_key_violations(
     #5098's own invariant is a DIFFERENT, narrower promise: ``project_
     status`` is "the SOLE declaration of which keys ride the wire" (that
     function's own docstring, verbatim). Those two questions can give
-    opposite answers on the SAME key: ``"cost_usd": v.get("cost_agent",
-    0.0)`` passes remedy① today (``"cost_agent"`` — the ``.get()``
-    ARGUMENT — is genuinely, unconditionally on the wire, per
-    ``_WIRE_KEYS``) even though the OUTPUT key ``"cost_usd"`` itself is
-    not a real ``project_status`` key at all — the value is quietly
-    aliased from a DIFFERENT wire fact under a name that claims to be
-    its own. #5098's invariant is violated the moment ANY output key
-    lacks a same-named ``project_status`` entry, independent of whether
-    remedies ①②③ would separately excuse its placeholder-ness — so this
-    check does not consult them, deliberately: a key can be an honestly-
-    declared placeholder (passing #5093's own gate) and STILL be exactly
-    the drift #5098 exists to prevent.
+    opposite answers on the SAME key — before #5771 stage②,
+    ``"cost_usd": v.get("cost_agent", 0.0)`` passed remedy① (``"cost_
+    agent"`` — the ``.get()`` ARGUMENT — was genuinely, unconditionally
+    on the wire, per ``_WIRE_KEYS``) even though the OUTPUT key
+    ``"cost_usd"`` itself was not a real ``project_status`` key at all —
+    the value was quietly aliased from a DIFFERENT wire fact under a
+    name that claimed to be its own (stage② later wired it for real,
+    closing this specific instance). #5098's invariant is violated the
+    moment ANY output key lacks a same-named ``project_status`` entry,
+    independent of whether remedies ①②③ would separately excuse its
+    placeholder-ness — so this check does not consult them, deliberately:
+    a key can be an honestly-declared placeholder (passing #5093's own
+    gate) and STILL be exactly the drift #5098 exists to prevent.
 
     Deliberately WIDE, deliberately un-filtered (#5771 stage ① scope,
     lead-coder dispatch): this returns EVERY output key without a
@@ -643,9 +654,15 @@ _PENDING = "PENDING"
 #: flagged — encouraged, not required, so a fix elsewhere never needs to
 #: touch this file.
 #:
-#: 40 entries. PENDING (3): the cost-tab keys this PR's own stage① exists
-#: to eventually fix — #5771's own issue body commits to wiring these in
-#: stage②, reusing ``CostBreakdown.to_dict()``. LOCAL (37): 16 literal
+#: 38 entries (was 40 — #5771 stage② wired ``cost_usd``/``usage``/
+#: ``session_cached_tokens`` for real and removed them here, then added 1
+#: new spread field, ``session_cache_usage_reported``, split off ``cache_
+#: usage_reported`` on the SAME PR; a wired key is no longer unwired-key
+#: drift at all, so a baseline entry for it would be a standing lie about
+#: the gate's own findings). PENDING (2): ``hooks_config_warnings``/
+#: ``mcp_probe_states`` — real session data, not yet wired, filed on
+#: #5774 for triage (see their own entries below for the citation).
+#: LOCAL (36): 14 literal
 #: output keys whose OWN inline comment in ``project_remote_snapshot``
 #: already says the underlying data is session-local/client-local by
 #: construction (``skills``/``mcp_servers``/``turn_usage_fn`` already sit
@@ -653,7 +670,7 @@ _PENDING = "PENDING"
 #: ``unknown_config_key_count``/``unknown_config_keys`` name the CLIENT's
 #: own reyn.yaml, structurally absent on a remote connection; ``ctx_
 #: source`` is a label, not fabricatable figure; ``tasks`` is explicitly
-#: "never on the wire" per its own comment) — plus all 21
+#: "never on the wire" per its own comment) — plus all 22
 #: ``ChatReadModelCapabilities`` field names reached through the
 #: ``**reported_snapshot_keys(...)`` spread, LOCAL by DESIGN rather than
 #: by accident: a ``*_reported`` flag is a CLIENT-side declaration about
@@ -669,13 +686,17 @@ _PENDING = "PENDING"
 #: session-local literal keys above — their own inline comments in
 #: ``project_remote_snapshot`` explicitly say "not wired onto the wire
 #: YET" (not "structurally cannot exist"), the opposite framing the LOCAL
-#: entries' own comments use — genuinely different from the other 35,
+#: entries' own comments use — genuinely different from the other 36,
 #: filed on #5774 for real triage rather than guessed here.
 _UNWIRED_KEY_VIOLATIONS_BASELINE: "dict[str, str]" = {
-    # PENDING — #5771 stage② commits to wiring these for real.
-    "cost_usd": _PENDING,
-    "usage": _PENDING,
-    "session_cached_tokens": _PENDING,
+    # #5771 stage②: "cost_usd"/"usage"/"session_cached_tokens" REMOVED —
+    # all 3 are now genuinely, unconditionally on the wire (project_status
+    # emits them for real); find_unwired_key_violations no longer flags
+    # them at all, so a baseline entry for them would be a standing lie
+    # (lead-coder's own instruction on the stage② dispatch: "残すと gate
+    # は緑のまま宣言が嘘になります" — leaving it would keep the gate green
+    # while the declaration itself became false).
+    #
     # PENDING — real session data, explicitly "not wired onto the wire
     # YET" per project_remote_snapshot's own inline comment (unlike the
     # LOCAL entries below, whose own comments say the opposite) -- #5774
@@ -723,6 +744,10 @@ _UNWIRED_KEY_VIOLATIONS_BASELINE: "dict[str, str]" = {
     "hooks_config_warnings_reported": _LOCAL,
     "compaction_progress_reported": _LOCAL,
     "tasks_reported": _LOCAL,
+    # #5771 stage②: new field (split from cache_usage_reported) — LOCAL
+    # by the same DESIGN reasoning as every other spread field above, a
+    # client-side declaration, never wire data.
+    "session_cache_usage_reported": _LOCAL,
 }
 
 

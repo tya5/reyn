@@ -429,6 +429,49 @@ class CostBreakdown:
             "cached_tokens": self.cached_tokens,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "CostBreakdown":
+        """Reconstruct from a dict produced by :meth:`to_dict` — #5771
+        stage②: the AG-UI wire's own decode side for ``cost_breakdown_
+        session``/``cost_breakdown_agent``/``cost_breakdown_project``
+        (``project_remote_snapshot``, read_model.py), reusing this ONE
+        encode/decode pair rather than inventing a second serialization
+        (architect's own explicit instruction on #5771).
+
+        ``total_cost``/``cache_hit_rate`` are DERIVED properties, not
+        constructor fields — :meth:`to_dict` includes them for a reader
+        that only wants the finished figures (the cost panel's own
+        table), but reconstructing from them here would either silently
+        drop them (they're not settable) or, worse, invite a future
+        edit to add them as fields and diverge from the property that
+        already computes them. Only the 7 real fields are read back;
+        the properties re-derive correctly from those alone.
+
+        Resilient to missing/malformed fields the same way ``TokenUsage.
+        from_dict`` is (older/hand-edited/corrupted data defaults each
+        field to its own dataclass default, never raises)."""
+        def _coerce_float(v: object, default: float) -> float:
+            try:
+                return float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        def _coerce_int(v: object, default: int) -> int:
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return default
+
+        return cls(
+            prompt_cost=_coerce_float(data.get("prompt_cost"), 0.0),
+            cache_read_cost=_coerce_float(data.get("cache_read_cost"), 0.0),
+            cache_creation_cost=_coerce_float(data.get("cache_creation_cost"), 0.0),
+            completion_cost=_coerce_float(data.get("completion_cost"), 0.0),
+            cache_savings=_coerce_float(data.get("cache_savings"), 0.0),
+            prompt_tokens=_coerce_int(data.get("prompt_tokens"), 0),
+            cached_tokens=_coerce_int(data.get("cached_tokens"), 0),
+        )
+
 
 def estimate_cost_breakdown(
     model: str,

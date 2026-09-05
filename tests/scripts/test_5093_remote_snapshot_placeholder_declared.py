@@ -195,10 +195,10 @@ def test_main_exits_nonzero_when_only_an_unwired_key_violation_exists(
     would, since its own fixture key is unwired too).
 
     Uses a key name NOT in ``_UNWIRED_KEY_VIOLATIONS_BASELINE`` (unlike
-    ``cost_usd``, now a KNOWN, baselined violation as of #5771's own
-    ratchet fix) — ``main()``'s own exit code is gated on ``find_new_
-    unwired_key_violations`` specifically, so a baselined violation alone
-    must NOT fail it; only a genuinely NEW one does."""
+    ``cron_jobs``, a real, currently-baselined LOCAL entry) —
+    ``main()``'s own exit code is gated on ``find_new_unwired_key_
+    violations`` specifically, so a baselined violation alone must NOT
+    fail it; only a genuinely NEW one does."""
     import scripts.check_remote_snapshot_placeholder_declared as gate_module
 
     remote_fixture = _write_module(
@@ -209,8 +209,10 @@ def test_main_exits_nonzero_when_only_an_unwired_key_violation_exists(
     # stays clean and this test isolates #5771's own axis alone.
     status_fixture = _write_status_module(
         tmp_path,
-        ["model", "cost_agent", "cost_total", "agent_tokens", "ctx_used",
-         "ctx_window", "queue", "turn_active", "queue_seq"],
+        ["model", "cost_agent", "cost_total", "cost_usd", "agent_tokens",
+         "ctx_used", "ctx_window", "queue", "turn_active", "queue_seq",
+         "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
+         "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens"],
     )
     monkeypatch.setattr(gate_module, "_PACKAGE_DIR", remote_fixture)
     monkeypatch.setattr(gate_module, "_AGUI_STATE_PATH", status_fixture)
@@ -274,8 +276,11 @@ def test_project_status_emitting_every_wire_key_is_not_flagged(tmp_path: Path) -
     a subset test, not an exact-set one) produces zero violations."""
     fixture = _write_status_module(
         tmp_path,
-        ["cost_agent", "cost_total", "agent_tokens", "ctx_used", "ctx_window",
-         "queue", "turn_active", "queue_seq", "some_unrelated_extra_key"],
+        ["cost_agent", "cost_total", "cost_usd", "agent_tokens", "ctx_used",
+         "ctx_window", "queue", "turn_active", "queue_seq",
+         "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
+         "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens",
+         "some_unrelated_extra_key"],
     )
 
     assert find_wire_keys_violations(fixture) == []
@@ -286,56 +291,13 @@ def test_project_status_emitting_every_wire_key_is_not_flagged(tmp_path: Path) -
 
 
 class TestUnwiredKeyViolations:
-    def test_the_real_source_exposes_the_known_cost_tab_drift(self) -> None:
-        """Tier 2: #5771 acceptance — the 3 keys lead-coder's own dispatch
-        named as the required witnesses (a bare literal that never reads
-        the wire at all, a tuple built from an unrelated wire key, and an
-        alias reading a DIFFERENT wire key under this key's own name) must
-        all appear in ``find_unwired_key_violations``'s real-source output.
-
-        EXPIRES when #5771's own stage② wires these 3 for real — at that
-        point this test needs deleting (or updating to different, still-
-        unfixed witnesses), not weakening; it does NOT serve as this
-        file's non-vacuity guard (that role belongs permanently to
-        ``TestCountExaminedOutputKeys``, which never expires — see lead-
-        coder's own BLOCKING finding on PR #5773 for why counting
-        VIOLATIONS rather than EXAMINED keys was the wrong shape for that
-        role).
-
-        This does NOT assert the list is empty (#5098's own invariant is
-        genuinely broken today, not a false positive this test should
-        silence) — it asserts these 3 specific, already-diagnosed keys are
-        present, which is what proves the axis actually fires rather than
-        being a check nothing reaches.
-
-        Disclosed (CLAUDE.md test-review question 4): as of this PR the
-        real source exposes 39 further keys. 16 are literal output keys
-        with the SAME shape as the 3 required witnesses — ``ctx_recent_
-        usage``, ``ctx_source``, ``ctx_compaction_status_fn``,
-        ``compaction_progress_raw``, ``turn_usage_fn``, ``cron_jobs``,
-        ``mcp_servers``, ``hooks``, ``skills``, ``hook_items``,
-        ``mcp_probe_states``, ``pipelines``, ``unknown_config_key_count``,
-        ``unknown_config_keys``, ``hooks_config_warnings``, ``tasks``. The
-        other 21 (architect BLOCKING finding, #5773) come through the
-        ``**reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)`` spread
-        — every ``ChatReadModelCapabilities`` field name (``completion_
-        source``, ``hooks_reported``, ``cache_usage_reported``, etc.),
-        since that dataclass's fields are declared-axis booleans, never
-        ``project_status`` wire keys; this is the "stage③'s own family is
-        invisible to this census" gap the architect finding named — #5771's
-        stage③ (flipping the relevant ``*_reported`` fields once real cost
-        data lands) touches exactly this family. Per #5771's own dispatch
-        these are reported (lead-coder files them as separate issues), not
-        fixed in this PR — a future PR that fixes one removes it from the
-        real-source output; this test does not pin the total count for
-        that reason, only the 3 required witnesses."""
-        violations = find_unwired_key_violations()
-        found_keys = {v.split('"')[1] for v in violations}
-        for required in ("cost_usd", "usage", "session_cached_tokens"):
-            assert required in found_keys, (
-                f'"{required}" must be exposed as unwired-key drift; got '
-                f"{sorted(found_keys)!r}"
-            )
+    # #5771 stage②: test_the_real_source_exposes_the_known_cost_tab_drift
+    # (the 3-witness test: cost_usd/usage/session_cached_tokens must
+    # appear in find_unwired_key_violations's real-source output) is
+    # DELETED here, exactly per its own documented fate — stage② just
+    # wired all 3 for real, so they no longer appear in that output at
+    # all. Its non-vacuity role was never this test's job in the first
+    # place (see TestCountExaminedOutputKeys, which never expires).
 
     def test_an_output_key_with_no_matching_project_status_key_is_flagged(
         self, tmp_path: Path,

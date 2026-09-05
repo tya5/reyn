@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from reyn.interfaces.repl.status import _snapshot
+from reyn.llm.pricing import CostBreakdown
 
 if TYPE_CHECKING:
     from reyn.data.skills.registry import SkillEntry
@@ -329,6 +330,22 @@ class ChatReadModelCapabilities:
     # currently-RUNNING task rows) — REMOTE/AG-UI does not put this on the
     # wire, same shape every other *_reported field here closes.
     tasks_reported: bool
+    # #5771 stage②: SPLIT from ``cache_usage_reported`` above, not a new
+    # concept — that field's own docstring already named it as covering
+    # "two snapshot() dict KEYS instead" (`session_cached_tokens` /
+    # `ctx_recent_usage`), a coupling this stage's own cost-tab fix broke
+    # apart: `session_cached_tokens` is genuinely wired now,
+    # `ctx_recent_usage` is not (#5771's own issue body scopes the wire
+    # additions to exactly 8 keys, and this is not one of them). Flipping
+    # the SHARED flag to True would have wrongly told the Ctx pane's
+    # `_cache_hit_line` (`ctx_recent_usage`'s own consumer, chrome.py)
+    # that ITS data is real too — the same "one spelling, two facts"
+    # shape architect flagged on #5773's baseline during this same PR's
+    # own review. `cache_usage_reported` keeps its EXISTING name and
+    # scope (the Ctx pane's recent-call line only, still False for
+    # remote); this new field covers ONLY the Cost pane's cumulative
+    # cache line (`chrome.py`'s OTHER `_cache_hit_line` call site).
+    session_cache_usage_reported: bool
 
 
 def reported_snapshot_keys(
@@ -388,6 +405,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     hooks_config_warnings_reported=True,
     compaction_progress_reported=True,
     tasks_reported=True,
+    session_cache_usage_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
@@ -412,9 +430,15 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     has_command_ui_region=False,
     conversation_history=False,
     load_older_conversation_history=False,
+    # #5771 stage②: ctx_recent_usage (this field's own sole remaining
+    # consumer, the Ctx pane's recent-call cache line — see the field's
+    # own docstring for the split) is NOT one of stage②'s 8 wired keys —
+    # stays False.
     cache_usage_reported=False,
     cron_jobs_reported=False,
-    usage_breakdown_reported=False,
+    # #5771 stage②: usage (prompt/completion/total) is now genuinely
+    # wired — was a fixed (0, 0, agent_tokens) placeholder before this PR.
+    usage_breakdown_reported=True,
     ctx_compaction_reported=False,
     hooks_reported=False,
     pipelines_reported=False,
@@ -432,6 +456,10 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     hooks_config_warnings_reported=False,
     compaction_progress_reported=False,
     tasks_reported=False,
+    # #5771 stage②: session_cached_tokens is now genuinely wired — see
+    # the field's own docstring for why this is a SPLIT from
+    # cache_usage_reported (which stays False above), not the same flag.
+    session_cache_usage_reported=True,
 )
 
 
@@ -882,19 +910,39 @@ class RegistryReadModel(ChatReadModel):
 #: removed from here automatically re-enters the gate's scope, no second
 #: edit required.
 #:
-#: ``cost_usd`` is NOT listed separately: its own ``.get(...)`` call reads
-#: the ``"cost_agent"`` wire key (an intentional alias, see the dict below),
-#: so the gate matches on the ``.get()`` call's own key ARGUMENT, not the
-#: dict's output key name — one membership check covers both.
-#:
 #: ``queue``/``turn_active``/``queue_seq`` (#3300 P2b/#5098) are the
 #: server-authoritative sent-queue state, folded onto the wire the same way
 #: the cost/ctx figures are — see ``project_remote_snapshot``'s own inline
 #: comment at those 3 keys for the citation.
+#:
+#: #5771 stage②: ``cost_usd`` used to be excluded from this set on purpose
+#: — its own ``.get(...)`` call read the ``"cost_agent"`` wire key (an
+#: ALIAS, not its own real key; #5773's own finding named this the exact
+#: drift #5098 exists to prevent). Now genuinely its own real,
+#: unconditional wire key, same as every other entry here — no alias, no
+#: special case. ``cost_breakdown_session``/``cost_breakdown_agent``/
+#: ``cost_breakdown_project``/``usage``/``session_cached_tokens``/
+#: ``turn_cost_usd``/``turn_tokens`` joined the same way (real data,
+#: project_status now unconditionally emits every one of them, even when
+#: the underlying VALUE is ``None`` — see that function's own inline
+#: comments at each key for what ``None`` means there).
 _WIRE_KEYS = frozenset({
-    "cost_agent", "cost_total", "agent_tokens", "ctx_used", "ctx_window",
-    "queue", "turn_active", "queue_seq",
+    "cost_agent", "cost_total", "cost_usd", "agent_tokens", "ctx_used",
+    "ctx_window", "queue", "turn_active", "queue_seq",
+    "cost_breakdown_session", "cost_breakdown_agent", "cost_breakdown_project",
+    "usage", "session_cached_tokens", "turn_cost_usd", "turn_tokens",
 })
+
+
+def _cost_breakdown_from_wire(data: "dict | None") -> "CostBreakdown | None":
+    """#5771 stage②: the wire-side decode half of the SAME encode/decode
+    pair agui/state.py's own ``_cost_breakdown_wire`` uses to encode —
+    ``CostBreakdown.from_dict()`` (llm/pricing.py), never a second,
+    hand-rolled deserialization. ``None`` passes through unchanged — a
+    server that never populated this key (an older, pre-#5771 server, or
+    a test double) degrades to "nothing to show", not a fabricated
+    all-zero breakdown."""
+    return CostBreakdown.from_dict(data) if data is not None else None
 
 
 def project_remote_snapshot(values: "dict | None") -> dict:
@@ -931,7 +979,26 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "all_sessions_status": v.get("all_sessions_status", []),
         "cost_agent": v.get("cost_agent", 0.0),
         "cost_total": v.get("cost_total", 0.0),
-        "cost_usd": v.get("cost_agent", 0.0),
+        # #5771 stage②: was ``v.get("cost_agent", 0.0)`` — a quiet ALIAS
+        # of a DIFFERENT wire fact under this key's own name (the #5773
+        # drift this stage exists to close). Now genuinely its own key —
+        # real per-connection wire data (agui/state.py's own
+        # ``project_status``), not a placeholder or an alias.
+        "cost_usd": v.get("cost_usd", 0.0),
+        # #5771 stage②: the 3-scope CostBreakdown table — decoded via
+        # CostBreakdown.from_dict() (llm/pricing.py), the wire-side half
+        # of the SAME encode/decode pair agui/state.py's own
+        # ``project_status`` uses to encode it (``_cost_breakdown_wire``,
+        # that module's own helper) — never a second serialization.
+        "cost_breakdown_session": _cost_breakdown_from_wire(v.get("cost_breakdown_session")),
+        "cost_breakdown_agent": _cost_breakdown_from_wire(v.get("cost_breakdown_agent")),
+        "cost_breakdown_project": _cost_breakdown_from_wire(v.get("cost_breakdown_project")),
+        # #5771 stage②: was a fixed ``(0, 0, v.get("agent_tokens", 0))``
+        # placeholder (invisible to #5093's own AST walk — a tuple, #5773's
+        # own finding) — now the real ``(prompt, completion, total)`` wire
+        # triple, gated by ``usage_breakdown_reported`` below exactly as
+        # before (that axis is now ``True`` for remote, see
+        # ``REMOTE_CHAT_READ_CAPABILITIES``).
         "agent_tokens": v.get("agent_tokens", 0),
         "ctx_used": v.get("ctx_used", 0),
         "ctx_window": v.get("ctx_window", 0),
@@ -951,27 +1018,42 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # that dataclass reaches every producer for free, no call-site
         # edit required.
         **reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES),
-        # The prompt/completion SPLIT below is `0`/`0` while the total is
-        # real wire data — an inconsistent breakdown (`0 + 0 != total`)
-        # the Cost pane never flags on its own; gated by
-        # ``usage_breakdown_reported`` above.
-        "usage": (0, 0, v.get("agent_tokens", 0)),
-        # `0`/`(0, 0)` below are the correct graceful-degrade VALUES for
-        # both cache figures (neither is projected onto the AG-UI wire —
-        # cache-hit accounting is session-local); gated by
-        # ``cache_usage_reported`` above, consulted by `chrome.py`'s
-        # `_cache_hit_line` so BOTH panes reading these 2 keys (Cost
-        # pane's cumulative line, Ctx pane's recent-call line) render a
-        # "not reported" line instead of a fabricated "0% hit (0 / 0)".
+        # #5771 stage②: was a fixed `(0, 0, agent_tokens)` placeholder
+        # (invisible to #5093's own AST walk, #5773's own finding) — now
+        # the real (prompt, completion, total) wire triple; gated by
+        # ``usage_breakdown_reported`` above, now ``True`` for remote
+        # (see ``REMOTE_CHAT_READ_CAPABILITIES``).
+        "usage": v.get("usage", (0, 0, v.get("agent_tokens", 0))),
+        # #5771 stage②: session_cached_tokens is now real wire data,
+        # gated by its OWN axis (``session_cache_usage_reported``,
+        # SPLIT from ``cache_usage_reported`` below on this same PR — the
+        # 2 keys that axis used to cover together no longer share ONE
+        # fact: this one is wired for real now, ``ctx_recent_usage``
+        # below is not). Consulted by `chrome.py`'s cost-pane cache line
+        # only; the ctx-pane one keeps reading ``cache_usage_reported``.
+        "session_cached_tokens": v.get("session_cached_tokens", 0),
+        # `(0, 0)` below is the correct graceful-degrade VALUE (neither
+        # is projected onto the AG-UI wire — cache-hit accounting is
+        # session-local); gated by ``cache_usage_reported`` above,
+        # consulted by `chrome.py`'s `_cache_hit_line` for the Ctx pane's
+        # recent-call line, so it renders a "not reported" line instead
+        # of a fabricated "0% hit (0 / 0)".
         #
         # Scope, explicit (architect, #5009): this is NOT the owner's actual
         # "cache stuck at 0%" observation — that was measured on a LOCAL
         # session (owner-confirmed) and is a separate, still-unresolved
         # symptom this key does not touch. This key only makes the REMOTE
         # "0 could mean unsupported" case honestly say so.
-        "session_cached_tokens": 0,
         "ctx_recent_usage": (0, 0),
         "ctx_source": "remote",
+        # #5771 stage②: the current/most-recent turn's own total — real
+        # wire data (agui/state.py's own ``project_status``), ``None``
+        # when there is no figure yet, same "never a fabricated 0"
+        # convention its own producer (status.py) already documents.
+        # ``turn_usage_fn`` (the KEYED per-row accessor the gutter uses
+        # locally) is a callable and stays OFF the wire — not read here.
+        "turn_cost_usd": v.get("turn_cost_usd"),
+        "turn_tokens": v.get("turn_tokens"),
         # `None` below is correct (no compaction-status source on the
         # wire); gated by ``ctx_compaction_reported`` above so the Ctx
         # pane renders "not reported" instead of the fabricated-looking
