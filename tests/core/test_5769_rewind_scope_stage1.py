@@ -7,10 +7,10 @@ yet (`checkout()`/`rewind()` are unchanged, byte-identical wire format).
 Covers the 3 stage-1 acceptance points lead-coder-30's dispatch named:
 
   (1) the existing global rewind behaviour does not change one bit
-      (the `scope=None` path)
+      (the `scope=GLOBAL_SCOPE` path)
   (2) `build_active_predicate` called without `scope` raises -- the
-      startup-time witness that catches a missed one of the 12 real
-      consumers
+      startup-time witness that catches a missed one of the 9 real
+      consumers (architect's own corrected count, #5772 review)
   (3) a legacy record (no `scope` key in the raw WAL entry -- what every
       record in existence today looks like) reads as `None` (global)
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.core.events.snapshot_generations import (
+    GLOBAL_SCOPE,
     REWIND_KIND,
     build_active_predicate,
     is_active_seq,
@@ -44,26 +45,43 @@ async def _put(log: StateLog, text: str) -> int:
 
 @pytest.mark.asyncio
 async def test_scope_none_reproduces_identical_behavior_to_pre_5769(tmp_path):
-    """Tier 2: acceptance point (1) -- strip-falsifier target. Global rewind (scope=None)
-    must see EXACTLY the same active/abandoned seqs `is_active_seq` (the
-    unchanged, scope-blind function) reports, for a real rewind chain."""
+    """Tier 2: acceptance point (1) -- strip-falsifier target. Global rewind
+    (scope=GLOBAL_SCOPE) must see EXACTLY the same active/abandoned seqs
+    `is_active_seq` (the unchanged, scope-blind function) reports, for a
+    real rewind chain.
+
+    architect BLOCKING (#5772): the ONLY test in this file driving a real
+    writer (`rewind()`) needs a POSITIVE CONTROL -- without one, a
+    silently no-op `rewind()` would leave everything active, and the
+    `==` comparison below would still pass (both sides trivially agree
+    on "nothing is abandoned"), so this whole stage's "global
+    non-regression" claim would have no real witness. Assert the write
+    actually happened, and that something is actually abandoned, BEFORE
+    trusting the equality check that follows."""
     log = StateLog(tmp_path / "wal")
     await _put(log, "a")   # seq 1
     await _put(log, "b")   # seq 2
     await _put(log, "c")   # seq 3
     await rewind(log, target_n=1)  # seq 4 -- abandons (1, 4), i.e. 2 and 3
 
-    is_active = build_active_predicate(log, scope=None)
+    # Positive control: the reset-record was genuinely appended, and it
+    # genuinely abandoned something.
+    assert log.current_seq == 4
+    assert is_active_seq(log, 2) is False
+
+    is_active = build_active_predicate(log, scope=GLOBAL_SCOPE)
     for seq in (1, 2, 3, 4):
         assert is_active(seq) == is_active_seq(log, seq), seq
 
 
 def test_build_active_predicate_requires_scope_kwarg(tmp_path):
-    """Tier 2: acceptance point (2) -- the startup-time witness for the 12 real consumers.
-    calling `build_active_predicate` with no `scope` at all must raise,
-    not silently default to global. This is what makes a missed call
-    site fail loudly instead of quietly reasoning about the wrong
-    (global, not its own session's) branch."""
+    """Tier 2: acceptance point (2) -- the startup-time witness for the 9
+    real production consumers (architect's own corrected count, #5772
+    review -- the issue's original "12" was an overcount). Calling
+    `build_active_predicate` with no `scope` at all must raise, not
+    silently default to global. This is what makes a missed call site
+    fail loudly instead of quietly reasoning about the wrong (global, not
+    its own session's) branch."""
     log = StateLog(tmp_path / "wal")
 
     with pytest.raises(TypeError):
@@ -72,12 +90,12 @@ def test_build_active_predicate_requires_scope_kwarg(tmp_path):
 
 @pytest.mark.asyncio
 async def test_legacy_record_with_no_scope_field_reads_as_global(tmp_path):
-    """Tier 2: acceptance point (3). A reset-record with no `scope` key at all (every record
-    written by today's `checkout()`/`rewind()`, and every record that
-    predates this field) is read back as scope=None -- global, visible to
-    EVERY query scope, not just `scope=None`. The absence of the field is
-    read as the SAFE side (global = broad reach), matching the issue's
-    own explicit ruling."""
+    """Tier 2: acceptance point (3). A reset-record with no `scope` key at
+    all (every record written by today's `checkout()`/`rewind()`, and
+    every record that predates this field) is read back as scope=None --
+    global, visible to EVERY query scope, not just `scope=GLOBAL_SCOPE`.
+    The absence of the field is read as the SAFE side (global = broad
+    reach), matching the issue's own explicit ruling."""
     log = StateLog(tmp_path / "wal")
     await _put(log, "a")   # seq 1
     await _put(log, "b")   # seq 2
@@ -85,7 +103,7 @@ async def test_legacy_record_with_no_scope_field_reads_as_global(tmp_path):
     # `scope` kwarg at all.
     await log.append(REWIND_KIND, target_n=1, supersedes=None)  # seq 3
 
-    global_view = build_active_predicate(log, scope=None)
+    global_view = build_active_predicate(log, scope=GLOBAL_SCOPE)
     scoped_view = build_active_predicate(log, scope=("someone-else", "some-sid"))
     for seq in (1, 2, 3):
         assert global_view(seq) == scoped_view(seq), seq
@@ -110,7 +128,7 @@ async def test_scoped_record_is_invisible_outside_its_own_scope(tmp_path):
 
     own_scope = build_active_predicate(log, scope=("agentA", "sid1"))
     other_scope = build_active_predicate(log, scope=("agentB", "sid2"))
-    global_scope = build_active_predicate(log, scope=None)
+    global_scope = build_active_predicate(log, scope=GLOBAL_SCOPE)
 
     assert own_scope(2) is False    # abandoned, from its own scope's view
     assert other_scope(2) is True   # untouched -- a different session's rewind

@@ -111,6 +111,26 @@ class SnapshotGenerationStore:
 
 REWIND_KIND = "rewind"
 
+GLOBAL_SCOPE: "tuple[str, str] | None" = None
+"""#5769 stage 1: the explicit spelling for "this call site's scope is
+genuinely, permanently global" — architect's own BLOCKING finding on
+#5772: a bare ``scope=None`` literal carries TWO different facts with no
+way to tell them apart on sight — "this consumer operates globally, by
+design" vs "this consumer hasn't decided its own (agent, session) scope
+yet" (the same "one value, two facts" shape architect rejected reusing
+the cooldown map for in #5759). Runtime-identical to ``None`` (this
+constant IS ``None``) — the split is in the SPELLING, for the human
+reader, not the type. Every one of ``build_active_predicate``'s 9 real
+stage-1 call sites was individually read and confirmed to operate across
+EVERY (agent, session) in one pass (WAL-window purge, config-generation
+reconciliation, materialise-on-rewind, pipeline rewoken scan,
+``list_rewind_points`` itself) — this constant names THAT as the final
+decision. A future stage-2/3 call site that has NOT yet decided its own
+scope should never reach for this constant to look finished; it should
+say so out loud instead (e.g. a ``# TODO(#5769 stage 2): decide this
+consumer's own scope`` comment) rather than write a bare ``None`` that
+looks identical to one of these 9 settled decisions."""
+
 
 class RewindIntoAbandonedError(Exception):
     """Phase-1 rewind target is on an abandoned branch.
@@ -337,10 +357,13 @@ def build_active_predicate(
     every record in existence until a later stage adds a writer for a
     non-``None`` scope — always visible, to everyone) OR equals ``scope``
     exactly (a session-scoped record, visible only to its own session's
-    query). Passing ``scope=None`` therefore composes the SAME chain as
-    before this field existed (only global records ever exist today, so
-    this filter is a no-op in stage 1 — the acceptance this stage must
-    prove) — a call site that forgets to pass ``scope`` at all raises
+    query). Passing ``scope=GLOBAL_SCOPE`` (see that constant's own
+    docstring — its spelling, not just ``None``, is the deliberate,
+    final "this call site is genuinely global" signal) therefore
+    composes the SAME chain as before this field existed (only global
+    records ever exist today, so this filter is a no-op in stage 1 —
+    the acceptance this stage must prove) — a call site that forgets to
+    pass ``scope`` at all raises
     ``TypeError`` at the call, not silently falls back to global, which
     is deliberate: a caller with a real ``(agent, sid)`` in hand that
     forgot to pass it would otherwise silently reason about the GLOBAL

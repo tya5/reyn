@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.snapshot_generations import (
+    GLOBAL_SCOPE,
     build_active_predicate,
     checkout,
     is_active_seq,
@@ -24,7 +25,7 @@ from reyn.core.events.state_log import StateLog
 
 
 def _assert_equivalent(state_log: StateLog, seqs: range) -> None:
-    predicate = build_active_predicate(state_log, scope=None)
+    predicate = build_active_predicate(state_log, scope=GLOBAL_SCOPE)
     for seq in seqs:
         assert predicate(seq) == is_active_seq(state_log, seq), (
             f"build_active_predicate diverges from is_active_seq at seq={seq}"
@@ -83,7 +84,7 @@ async def test_predicate_is_reusable_across_many_seqs(tmp_path: Path) -> None:
     state_log = StateLog(tmp_path / "state.wal")
     seqs = [await state_log.append("step_completed") for _ in range(20)]
     await checkout(state_log, target_seq=seqs[9])
-    predicate = build_active_predicate(state_log, scope=None)
+    predicate = build_active_predicate(state_log, scope=GLOBAL_SCOPE)
     expected = [is_active_seq(state_log, s) for s in range(1, state_log.current_seq + 1)]
     actual = [predicate(s) for s in range(1, state_log.current_seq + 1)]
     assert actual == expected

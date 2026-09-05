@@ -4388,6 +4388,7 @@ class Session:
         if self._state_log is None:
             return self.history
         from reyn.core.events.snapshot_generations import (
+            GLOBAL_SCOPE,
             build_active_predicate,
             earliest_relevant_wal_seq,
         )
@@ -4412,7 +4413,7 @@ class Session:
         # per-message seq — so it is computed ONCE per call (one WAL scan) and
         # reused for every message, instead of re-scanning the whole WAL per
         # message (was O(N messages x M WAL entries) per turn; now O(N + M)).
-        is_active = build_active_predicate(self._state_log, scope=None)
+        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
@@ -4517,9 +4518,9 @@ class Session:
         parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
         if self._state_log is None:
             return parsed, truncated
-        from reyn.core.events.snapshot_generations import build_active_predicate
+        from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, build_active_predicate
 
-        is_active = build_active_predicate(self._state_log, scope=None)
+        is_active = build_active_predicate(self._state_log, scope=GLOBAL_SCOPE)
 
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)

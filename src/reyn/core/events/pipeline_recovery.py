@@ -174,12 +174,13 @@ def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any]
     runs should hoist ``build_active_predicate`` above its loop and drive the store
     directly rather than calling this per run."""
     from reyn.core.events.snapshot_generations import (  # noqa: PLC0415
+        GLOBAL_SCOPE,
         build_active_predicate,
     )
     store = _store(state_log, run_id)
     if store is None:
         return None
-    latest = store.latest_active(build_active_predicate(state_log, scope=None))
+    latest = store.latest_active(build_active_predicate(state_log, scope=GLOBAL_SCOPE))
     if latest is None:
         return None
     _seq, content = latest
