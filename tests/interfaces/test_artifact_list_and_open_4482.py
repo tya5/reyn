@@ -150,8 +150,13 @@ async def test_open_artifact_end_to_end_resolves_the_real_ref_and_launches_the_o
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "opened.txt"
+    sink_tmp = tmp_path / "opened.txt.tmp"
     script = bindir / opener_name
-    script.write_text(f"#!/bin/sh\necho \"$1\" > {sink}\n")
+    # Atomic write (write to sink_tmp, then mv into place) so a poller's
+    # sink.exists() means "write complete", never "created, still being
+    # written" (#4482 CI flake: a non-atomic echo left a real window
+    # where exists()=True but the content was still empty).
+    script.write_text(f'#!/bin/sh\necho "$1" > {sink_tmp}\nmv {sink_tmp} {sink}\n')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
     monkeypatch.chdir(tmp_path)
@@ -223,8 +228,13 @@ async def test_inline_artifact_materializes_to_a_temp_file_and_launches_the_open
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "opened.txt"
+    sink_tmp = tmp_path / "opened.txt.tmp"
     script = bindir / opener_name
-    script.write_text(f"#!/bin/sh\necho \"$1\" > {sink}\n")
+    # Atomic write (write to sink_tmp, then mv into place) so a poller's
+    # sink.exists() means "write complete", never "created, still being
+    # written" (#4482 CI flake: a non-atomic echo left a real window
+    # where exists()=True but the content was still empty).
+    script.write_text(f'#!/bin/sh\necho "$1" > {sink_tmp}\nmv {sink_tmp} {sink}\n')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
 
@@ -268,9 +278,14 @@ async def test_inline_artifact_with_no_mappable_extension_reports_status_never_o
     bindir = tmp_path / "bin"
     bindir.mkdir()
     sink = tmp_path / "opened.txt"
+    sink_tmp = tmp_path / "opened.txt.tmp"
     opener_name = "open" if sys.platform == "darwin" else "xdg-open"
     script = bindir / opener_name
-    script.write_text(f"#!/bin/sh\necho \"$1\" > {sink}\n")
+    # Atomic write (write to sink_tmp, then mv into place) so a poller's
+    # sink.exists() means "write complete", never "created, still being
+    # written" (#4482 CI flake: a non-atomic echo left a real window
+    # where exists()=True but the content was still empty).
+    script.write_text(f'#!/bin/sh\necho "$1" > {sink_tmp}\nmv {sink_tmp} {sink}\n')
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
 
