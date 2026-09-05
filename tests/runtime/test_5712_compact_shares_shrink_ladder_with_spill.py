@@ -166,9 +166,13 @@ def _make_controller(
         latest_summary=_latest_summary,
         compaction_engine_factory=lambda: engine,
         history_appender=history.append,
-        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+        make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
             role="summary", content=rendered, seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
+            meta={
+                "structured": structured,
+                "covers_through_seq": covers,
+                "covers_from_seq": covers_from_seq,
+            },
         ),
         render_summary=lambda s: str(s),
     )

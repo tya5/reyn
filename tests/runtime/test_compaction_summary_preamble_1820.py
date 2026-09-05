@@ -60,7 +60,7 @@ def _make_controller(history: list[ChatMessage]) -> tuple[CompactionController, 
         latest_summary=lambda: None,
         compaction_engine_factory=_SucceedingEngine,
         history_appender=history.append,
-        make_summary_message=lambda rendered, structured, covers: ChatMessage(
+        make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
             role="summary", content=rendered, seq=0,
         ),
         render_summary=lambda s: str(s),
