@@ -1,6 +1,6 @@
 # FP-0069: A permission posture dial — aligning reyn with the industry shape
 
-**Status**: proposed (not ruled on)
+**Status**: partially ruled (owner 2026-09-06, verbatim 「ダイヤル入れる。宣言はoptin。3,4 解説して。あと plan モードは？」) — §2 and §5 are decided; §6 and the `reviewed` tier are open. See §10.
 **Proposed**: 2026-09-06
 **Author**: architect session
 **Track**: owner request 2026-09-06 —「reyn のパーミッションシステム仕様を業界標準に寄せたい」／「できるだけ寄せる案を作成できる？」
@@ -70,6 +70,26 @@ Competitors can delete the prompt precisely because their boundary is restrictiv
 
 **This is not a request to overturn #3901.** That ruling answers "what should a sandbox do behind an action the user already permitted." `bounded` asks a different question — "what may *replace* the permission question" — and the ruling's own rationale does not cover it. So `bounded` carries its **own** policy preset (write: workspace; network: deny unless declared; env/read: unchanged), leaving #3901's default in force wherever `sandboxed_exec` is launched outside the mode.
 
+### 6.1 What the preset actually has to close — the axis that decides it is **network**
+
+`bounded` runs commands **nobody was asked about**. So the question the preset answers is not "what could the launching shell do" but "what can an action nobody approved reach". Per axis:
+
+| Axis | In `bounded` | Why |
+|---|---|---|
+| **write** | workspace only (already the #3901 default) | unchanged |
+| 🔴 **network** | **deny unless declared** | The exfiltration path. If an unprompted command can reach the internet, the box has a hole and `bounded` is not a boundary — it is `unbounded` with a smaller write scope. This is exactly why Codex defaults network off. |
+| **subprocess** | open | A child inherits the same boundary (seccomp / Seatbelt bound the process tree), so it adds no reach. |
+| **env** | open | Safe **only because** network is closed: a command can read a secret but cannot send it. This is #1199's original argument, which `permission-model.md` records as having died when #3901 opened network — **under `bounded` it is restored**, because `bounded` closes network again. |
+| **read** | broad-allow | Unchanged; system paths are needed just to load a binary. |
+
+⭕ **The preset already exists and is already correct.** `sandbox.mode: strict` (#3823) resolves exactly these defaults — `_SANDBOX_STRICT_MODE_DEFAULTS = {"network": False, "deny_subprocess": True, "allow_env_names": []}`, with `write` deliberately excluded (zeroing it would block the op's own workspace, per #3823's co-vet correction). **`bounded` does not need a new preset; it needs to select this one.**
+
+🔴 **But it is not wired**: no production caller passes `mode=` to `resolve_sandbox_policy` — see #5818. Setting `sandbox.mode: strict` today changes only a warning message, which calls itself "in force right now". **#5818 is therefore a prerequisite for `bounded`, and worth doing on its own merits regardless of this proposal.** With it done, §6's cost falls from "new enforcement work" to "the mode selects an existing key".
+
+**Where the declaration lands:** reyn already has the axis — `permissions.http.get: [{host: …}]`. So "deny unless declared" costs no new mechanism, and it gives §5's now-optional declaration **one place where it still earns its keep**: in `bounded`, declaring your hosts is what buys you a prompt-free workspace.
+
+**The alternative, stated so it is a choice and not an omission:** leaving network open in `bounded` is cheaper and needs no preset — but then `bounded` deletes prompts without adding a boundary, which is the one thing the measurement says the industry did **not** do.
+
 **Consequence for sequencing:** `read_only`, `ask` and `unbounded` are naming + wiring over machinery that exists. `bounded` is the only one that needs enforcement work, and it is also the one that produces most of the UX gain.
 
 ## 7. Migration
@@ -90,9 +110,28 @@ Today's behaviour is exactly `ask` **with** a mandatory declaration. So:
 - [ ] `bounded` never runs an action outside its boundary without a prompt — the strip-falsifier is removing the boundary and watching the acceptance go red, not watching the prompt disappear.
 - [ ] Removing `unbounded` by config is possible, and a session cannot re-enable it.
 
+## 9. `plan` is a phase, not a posture
+
+Claude Code has `plan` on its mode dial. **This proposal deliberately does not**, and the reason is not that reyn shouldn't have planning.
+
+`plan` conflates two independent axes. "Read-only" is a **permission posture**. "Explore, propose, then act on approval" is a **workflow phase**. Claude Code can merge them because it has one agent in one loop, so "the planning phase" and "the read-only posture" are the same interval. reyn is a multi-agent OS: a phase belongs to a turn, a posture belongs to a session, and a pipeline can want a planning phase inside any posture. Putting `plan` on the dial makes it answer "is planning stricter or looser than `bounded`?" — a question with no meaning.
+
+**Measured:** reyn has no plan machinery today (`git grep -niE "plan_mode|exit_plan|propose.*approve" -- src/` returns zero), and it does have the approval seam a plan phase would need (`ask_user`, the intervention bus).
+
+**If planning is wanted, the reyn-shaped form is:** posture stays `read_only` for the duration, and the plan→execute transition is an intervention event on the existing bus — the same "spec vs binding" separation `CapabilityProfile` already uses for its two adapters. That is a separate proposal, not a value on this dial.
+
+## 10. Owner rulings so far
+
+**2026-09-06, verbatim** 「**ダイヤル入れる。宣言はoptin。3,4 解説して。あと plan モードは？**」
+
+- **§2 the dial — ACCEPTED.**
+- **§5 the declaration becomes opt-in — ACCEPTED.**
+- §6 (`bounded`'s boundary) and the `reviewed` tier — **explanation requested, not ruled.** §6.1 and §2's `reviewed` paragraph are that explanation.
+- `plan` — answered in §9.
+
 ## 9. Open questions — owner's, not this document's
 
-1. **Adopt the dial at all?** §2 is the whole alignment; everything else is detail.
-2. **Make the declaration optional (§5)?** The single biggest UX change, and the one real deviation from the standard.
-3. **`bounded`'s own sandbox preset (§6)?** Needed for the UX win; a new default in a place a prior ruling deliberately left open.
-4. **`reviewed` (§2, optional)?** Independent of 1-3. Puts an LLM in the gate path.
+1. ~~Adopt the dial at all?~~ **Ruled: yes** (§10).
+2. ~~Make the declaration optional (§5)?~~ **Ruled: opt-in** (§10).
+3. **`bounded`'s boundary (§6.1)** — open. The axis that decides it is **network**: deny-unless-declared makes `bounded` a boundary, open makes it `unbounded` with a smaller write scope. Prerequisite #5818.
+4. **`reviewed` (§2)** — open, and independent of 1-3. It is the only element of this proposal that **adds** a trust assumption rather than removing one.
