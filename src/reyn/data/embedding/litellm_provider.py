@@ -41,22 +41,30 @@ logger = logging.getLogger(__name__)
 # Per-attempt bound (#3043)
 # ---------------------------------------------------------------------------
 
-#: Per-attempt deadline for ONE ``litellm.aembedding`` call, in seconds.
-#: Matches ``chat.timeout.llm_call_seconds`` (``reyn.config.chat``): an embedding
-#: call is the same KIND of external call as a chat LLM call — one HTTP round-trip
-#: to a model provider — so it carries the same bound. (The MCP gateway's 120.0 is
-#: deliberately NOT the mirror target for the VALUE: an MCP call also pays a
-#: subprocess spawn, which an embedding call does not. It IS the mirror target for
-#: the SHAPE — see ``_bounded_timeout`` and the op-level cancel race.)
-#: Without a bound, litellm's own ``request_timeout`` default (6000.0 = 100 min per
-#: attempt, ~5h across ``max_retries``) is the only ceiling — a hang, to an operator.
-_DEFAULT_EMBED_TIMEOUT_SECONDS: float = 60.0
+#: #5793 (owner decision): NOT a default any more — reyn does not invent a
+#: per-attempt embedding timeout duplicating litellm/the OpenAI SDK's own.
+#: Kept only as the historical value this used to default to, referenced by
+#: this module's own docstring; no code reads it.
+#:
+#: Without ANY bound, litellm's own ``request_timeout`` default (6000.0 =
+#: 100 min per attempt, ~5h across ``max_retries``) is the ceiling unless
+#: the operator sets ``embedding.timeout`` explicitly.
+_FORMER_DEFAULT_EMBED_TIMEOUT_SECONDS: float = 60.0
 
 
 def resolve_embed_timeout(config: "dict[str, Any] | Any") -> "float | None":
-    """Per-attempt embedding timeout: the finite default, overridden by ``timeout``
-    (``embedding.timeout`` in reyn.yaml); ``<= 0`` opts out (no bound). A malformed
-    value falls back to the default — fail-safe, i.e. keep a finite bound.
+    """Per-attempt embedding timeout: ``None`` — whether the operator never
+    set ``embedding.timeout`` (#5793: NOT PASSED at all, litellm/the OpenAI
+    SDK's own timeout default applies — reyn does not invent a duplicate),
+    entered a malformed value (effectively unspecified, not a reason to
+    inject a reyn-chosen number either), or explicitly opted all the way
+    out with ``<= 0`` — means the same thing at the one call site that
+    consumes this (:meth:`LiteLLMEmbeddingProvider._aembedding_bounded`):
+    no ``timeout=`` kwarg, no ``asyncio.timeout`` wrap. All three cases
+    already resolved to identical behaviour before #5793 too (the ``<= 0``
+    branch never actually produced a MORE unbounded call than omitting the
+    kwarg does) — #5793 only changes what happens when the operator set
+    nothing at all.
 
     Mirrors :func:`reyn.mcp.gateway.resolve_call_timeout` (the same contract, so an
     operator who knows one knob knows the other), reading from either the
@@ -67,13 +75,13 @@ def resolve_embed_timeout(config: "dict[str, Any] | Any") -> "float | None":
         if isinstance(config, dict)
         else getattr(config, "timeout", None)
     )
-    timeout: "float | None" = _DEFAULT_EMBED_TIMEOUT_SECONDS
-    if raw is not None:
-        try:
-            timeout = float(raw)
-        except (TypeError, ValueError):
-            timeout = _DEFAULT_EMBED_TIMEOUT_SECONDS
-    if timeout is not None and timeout <= 0:
+    if raw is None:
+        return None
+    try:
+        timeout = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if timeout <= 0:
         return None
     return timeout
 
@@ -214,9 +222,11 @@ class LiteLLMEmbeddingProvider:
             self._max_retries: int = int(config.get("max_retries", 3))
             self._retry_backoff: float = float(config.get("retry_backoff", 2.0))
             self.tokenizer: str = config.get("tokenizer", "cl100k_base")
-        # #3043: resolved from EITHER config form by the same function, so the
-        # dict (legacy / test) path and the dataclass (production) path cannot
-        # disagree about the bound. None = operator opted out (`timeout <= 0`).
+        # #3043/#5793: resolved from EITHER config form by the same function,
+        # so the dict (legacy / test) path and the dataclass (production)
+        # path cannot disagree about the bound. None = unset, malformed, or
+        # explicit `timeout <= 0` opt-out — all three defer to litellm's own
+        # default (see resolve_embed_timeout's own docstring).
         self._timeout: "float | None" = resolve_embed_timeout(config)
 
     # ── Config read-only accessors ────────────────────────────────────────
@@ -243,7 +253,8 @@ class LiteLLMEmbeddingProvider:
 
     @property
     def timeout(self) -> "float | None":
-        """Per-attempt bound in seconds; ``None`` = operator opted out (#3043)."""
+        """Per-attempt bound in seconds; ``None`` = unset, malformed, or an
+        explicit opt-out (#3043/#5793 — see resolve_embed_timeout)."""
         return self._timeout
 
     # ── Model resolution ───────────────────────────────────────────────────
@@ -474,8 +485,10 @@ class LiteLLMEmbeddingProvider:
 
         The single place the bound is applied, so a future call site cannot reach
         ``aembedding`` unbounded by forgetting to wrap it (the swept-missed shape
-        that produced this bug). ``self._timeout is None`` = operator opted out
-        (``embedding.timeout <= 0``) → the historical unbounded call, unchanged.
+        that produced this bug). ``self._timeout is None`` (unset, malformed,
+        or an explicit ``embedding.timeout <= 0`` opt-out — #5793) → no
+        ``timeout=`` kwarg, no ``asyncio.timeout`` wrap; litellm's own
+        default applies.
 
         ``max_retries=0`` (#3047, measured): without it, litellm's
         ``llms/openai/openai.py::OpenAIChatCompletion.embedding``'s

@@ -82,6 +82,40 @@ def test_none_timeout_no_context_stays_none():
     assert timeout is None and retries == 1
 
 
+# ── #5793: unset config must resolve to None, not a reyn-chosen literal ────────
+
+
+def test_unset_ambient_context_stays_none_not_a_reyn_default():
+    """Tier 2: #5793 (owner decision, "わざわざ reyn が別に規定を持つ理由がわからん") —
+    an ambient context whose OWN `llm_call_timeout`/`llm_max_retries` are
+    `None` (the operator never set `safety.timeout.llm_call_seconds`/
+    `llm_max_retries` in reyn.yaml — TimeoutConfig's own new default) must
+    resolve BOTH bounds to `None`, not silently substitute a reyn-invented
+    number. This is the exact call shape `call_llm_tools`'s own now-`None`
+    default produces (see test_llm_call_bounds_omission_5793.py) — RED if a
+    future change reintroduces a fallback literal here."""
+    set_llm_call_limit_context(
+        _Bus(None), OnLimitConfig(), "run", False,
+        llm_call_timeout=None, llm_max_retries=None)
+    timeout, retries = _resolve_llm_call_bounds(None, None)
+    assert timeout is None, "an unset ambient timeout must stay None, never a reyn default"
+    assert retries is None, "an unset ambient max_retries must stay None, never a reyn default"
+
+
+def test_explicit_ambient_context_still_overrides_when_set():
+    """Tier 2: #5793 deny — the operator's own EXPLICIT
+    safety.timeout.llm_call_seconds/llm_max_retries (a real, non-None
+    ambient context) still wins over an unset per-call default, proving
+    #5793 only removed the INVENTED fallback, not the override path
+    itself."""
+    set_llm_call_limit_context(
+        _Bus(None), OnLimitConfig(), "run", False,
+        llm_call_timeout=17.0, llm_max_retries=6)
+    timeout, retries = _resolve_llm_call_bounds(None, None)
+    assert timeout == 17.0
+    assert retries == 6
+
+
 # ── HIGH: persistent-timeout → on_limit (framework integration) ───────────────
 
 

@@ -36,15 +36,17 @@ def add_limits_args(parser: argparse.ArgumentParser) -> None:
         default=None, metavar="SECONDS",
         help=(
             "Per-call LLM HTTP timeout (seconds). "
-            "Default: from reyn.yaml `safety.timeout.llm_call_seconds` or 60."
+            "Default: from reyn.yaml `safety.timeout.llm_call_seconds`, "
+            "or unset (litellm's own default) if that is also unset (#5793)."
         ),
     )
     parser.add_argument(
         "--llm-max-retries", dest="llm_max_retries", type=int,
         default=None, metavar="N",
         help=(
-            "Transient-error retries per LLM call (LiteLLM exponential backoff). "
-            "Default: from reyn.yaml `safety.timeout.llm_max_retries` or 3."
+            "Transient-error retries per LLM call (litellm's own retry, not reyn's). "
+            "Default: from reyn.yaml `safety.timeout.llm_max_retries`, "
+            "or unset (litellm's own default) if that is also unset (#5793)."
         ),
     )
 

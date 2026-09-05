@@ -593,12 +593,15 @@ def read_process_markers() -> "list[dict]":
 
 #: The beat's own polling resolution — derivation, not a guess: the
 #: longest "normal silence" a healthy turn can produce is one LLM call's
-#: own bound (``chat.py``'s ``llm_call_seconds = 60.0``,
-#: ``src/reyn/interfaces/cli/commands/chat.py``). 10s keeps the death
-#: window well inside that bound without being so fine-grained the writes
-#: themselves become a cost. Not a config key (architect ruling, #5709
-#: R4): no operator has a reason to change it today — the day one does,
-#: that need is the re-open trigger, not a guess made now.
+#: own bound. #5793: ``chat.py``'s ``llm_call_seconds`` no longer has a
+#: reyn-owned default (``None`` unless the operator sets
+#: ``safety.timeout.llm_call_seconds``, in which case litellm's own
+#: default bound applies — commonly minutes, not this comment's former
+#: 60s) — 10s is still well inside ANY of those, so the derivation's
+#: CONCLUSION is unaffected, only its former single-number premise. Not a
+#: config key (architect ruling, #5709 R4): no operator has a reason to
+#: change it today — the day one does, that need is the re-open trigger,
+#: not a guess made now.
 _LOOP_BEAT_INTERVAL_S: Final[float] = 10.0
 
 

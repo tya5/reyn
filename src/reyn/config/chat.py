@@ -78,9 +78,16 @@ class TimeoutConfig:
 
     Fields:
         llm_call_seconds:
-            Per-call timeout passed to ``litellm.acompletion``.
+            #5793: per-call timeout passed to ``litellm.acompletion``.
+            ``None`` (the default) means NOT PASSED at all — litellm has
+            its own default (an operator-tunable knob on litellm's own
+            surface); reyn does not invent a second one. Set this only to
+            OVERRIDE litellm's default with a reyn-specific bound.
         llm_max_retries:
-            Transient-error retry budget per call.
+            #5793: transient-error retry budget per call, forwarded to
+            litellm's ``num_retries``. ``None`` (the default) means NOT
+            PASSED — litellm's own retry default applies. Set this only
+            to override it.
         chain_seconds:
             How long a multi-agent pending chain waits for a delegate
             reply before the runtime synthesises an upstream error.
@@ -103,8 +110,12 @@ class TimeoutConfig:
             CPU load; it does not itself change the default.
     """
 
-    llm_call_seconds: float = field(default=60.0, metadata={"axis": Axis.BOUNDING})
-    llm_max_retries: int = field(default=3, metadata={"axis": Axis.BOUNDING})
+    # #5793 (owner decision, "わざわざ reyn が別に規定を持つ理由がわからん — 未指定な
+    # ら litellm 規定にして"): NOT PASSED when unset, not "0/None passed as a
+    # value" — see ``_resolve_llm_call_bounds`` in ``llm.py``, the one place
+    # that turns this into an actual litellm kwarg (or omits it).
+    llm_call_seconds: "float | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
+    llm_max_retries: "int | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
     chain_seconds: float = field(default=60.0, metadata={"axis": Axis.BOUNDING})
     mcp_probe_seconds: float = field(default=5.0, metadata={"axis": Axis.BOUNDING})
 
@@ -833,7 +844,8 @@ class CompactionConfig:
     # main-loop call already has `safety.timeout.llm_call_seconds`; this
     # one had nothing). `recorded_acompletion` (the #1190 single funnel)
     # now resolves an unset timeout for EVERY caller from that SAME
-    # `safety.timeout.llm_call_seconds` value (default 60s) — compaction
+    # `safety.timeout.llm_call_seconds` value (#5793: `None` unless the
+    # operator sets it — no longer a reyn-owned 60s) — compaction
     # already inherits it with NO config change (architect ruling: "新し
     # い数を作らない。routerの値をそのまま使う" — the output compaction
     # produces is `section_token_caps`-bounded, structurally SHORTER than
@@ -1336,12 +1348,20 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
     )
     timeout = TimeoutConfig(
-        llm_call_seconds=float(timeout_raw.get(
-            "llm_call_seconds", timeout_defaults.llm_call_seconds,
-        )),
-        llm_max_retries=int(timeout_raw.get(
-            "llm_max_retries", timeout_defaults.llm_max_retries,
-        )),
+        # #5793: unlike the other TimeoutConfig fields, these two defaults
+        # are ``None`` (not passed to litellm) — mirrors the compaction
+        # config's own ``llm_call_seconds`` loader just above, which
+        # already had this "None means None, not `float(None)`" shape.
+        llm_call_seconds=(
+            float(timeout_raw["llm_call_seconds"])
+            if timeout_raw.get("llm_call_seconds") is not None
+            else timeout_defaults.llm_call_seconds
+        ),
+        llm_max_retries=(
+            int(timeout_raw["llm_max_retries"])
+            if timeout_raw.get("llm_max_retries") is not None
+            else timeout_defaults.llm_max_retries
+        ),
         chain_seconds=float(timeout_raw.get(
             "chain_seconds", timeout_defaults.chain_seconds,
         )),

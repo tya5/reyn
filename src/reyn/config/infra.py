@@ -127,7 +127,12 @@ class RouterConfig:
     """
 
     use: bool = field(default=False, metadata={"axis": Axis.PROJECT})
-    num_retries: int = field(default=3, metadata={"axis": Axis.PROJECT})
+    # #5793 (owner decision): None by default — NOT PASSED to litellm.Router
+    # unless the operator sets it, matching the ``cooldown_time``/
+    # ``allowed_fails`` fields just below (both already ``None → litellm
+    # default``). Reyn does not invent a retry-count default duplicating
+    # litellm's own.
+    num_retries: "int | None" = field(default=None, metadata={"axis": Axis.PROJECT})
     # model_name → [fallback model_names]. Converted to litellm's
     # ``[{primary: [fallbacks]}]`` form when the Router is built. Empty → no
     # chain (single-deployment Router).
@@ -320,7 +325,13 @@ def _build_router_config(raw: object) -> RouterConfig:
         )
     return RouterConfig(
         use=bool(raw.get("use", d.use)),
-        num_retries=int(raw.get("num_retries", d.num_retries)),
+        # #5793: mirrors cooldown_time/allowed_fails just below — None
+        # unless the operator set it (raw.get returns None either way when
+        # the key is absent from reyn.yaml, so this collapses to the same
+        # ternary those two already use).
+        num_retries=(
+            int(raw["num_retries"]) if raw.get("num_retries") is not None else d.num_retries
+        ),
         fallbacks={
             str(k): [str(x) for x in (v or [])] for k, v in (fb or {}).items()
         },

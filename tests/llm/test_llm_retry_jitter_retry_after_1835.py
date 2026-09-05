@@ -41,6 +41,7 @@ import pytest
 from reyn.config.infra import RetryConfig
 from reyn.llm.llm import (
     _LLM_RETRY_MAX_BACKOFF_S,
+    EmptyLLMResponseError,
     _backoff_s,
     _extract_retry_after,
     _llm_call_with_retry,
@@ -94,6 +95,38 @@ def _make_exc_no_retry_after(status: int = 503):
         llm_provider="openai",
         model="openai/gpt-4o-mini",
     )
+
+
+def _make_empty_response_exc_with_retry_after(header_value: str, status: int = 503):
+    """#5793: the litellm ServiceUnavailableError-carrying tests below used to
+    exercise ``_llm_call_with_retry``'s backoff/Retry-After wiring via a
+    litellm infra exception — #5793 narrowed retryability to
+    EmptyLLMResponseError only (litellm's own num_retries now retries
+    ServiceUnavailableError, so it is no longer a real reyn-retried
+    exception, and using one here would no longer exercise the retry loop
+    at all). The backoff/Retry-After MECHANISM itself is unchanged — it is
+    generic over any exception `_is_retryable_exc` accepts — so this
+    carries the SAME real ``httpx.Response`` (Retry-After header included)
+    on a real EmptyLLMResponseError instance instead, the one kind #5793
+    keeps retried — via its own genuine ``response=`` constructor kwarg
+    (#5793 also added, precisely so a test never has to attach a fake
+    attribute to a real object; see that class's own docstring).
+    ``_extract_retry_after`` reads ``exc.response.headers`` via a
+    defensive ``getattr`` — it does not care which exception TYPE
+    carries the attribute, only that it does."""
+    response = httpx.Response(
+        status_code=status,
+        headers={"retry-after": header_value},
+        text="service unavailable",
+    )
+    return EmptyLLMResponseError("empty choices (test)", response=response)
+
+
+def _make_empty_response_exc_no_retry_after(status: int = 503):
+    """See :func:`_make_empty_response_exc_with_retry_after` — same switch,
+    no Retry-After header."""
+    response = httpx.Response(status_code=status, text="service unavailable")
+    return EmptyLLMResponseError("empty choices (test)", response=response)
 
 
 # ---------------------------------------------------------------------------
@@ -220,13 +253,16 @@ def test_extract_retry_after_unparseable_returns_none():
 async def test_retry_uses_retry_after_when_header_present():
     """Tier 2: retry loop honours Retry-After header when respect_retry_after=true.
 
-    Constructs a real ServiceUnavailableError with Retry-After: 7 on a real
-    httpx.Response. The first call raises it; the second succeeds (simulates a
-    transient 503). The recorded sleep must be ~7 (within float tolerance) and
-    NOT the jittered exponential (which for attempt=0 would be in [1.0, 2.0]).
+    #5793: uses EmptyLLMResponseError (the one exception kind reyn's retry
+    loop still retries — a ServiceUnavailableError would no longer be
+    retried by reyn at all, see test_llm_call_retry.py's own #5793
+    rewrites) carrying a real httpx.Response with Retry-After: 7. The first
+    call raises it; the second succeeds. The recorded sleep must be ~7
+    (within float tolerance) and NOT the jittered exponential (which for
+    attempt=0 would be in [1.0, 2.0]).
     """
     set_retry_config(RetryConfig(jitter=True, respect_retry_after=True))
-    exc = _make_exc_with_retry_after("7")
+    exc = _make_empty_response_exc_with_retry_after("7")
 
     # A real mock-free callable sequence: first call raises, second returns.
     class _FakeResponse:
@@ -255,12 +291,14 @@ async def test_retry_uses_retry_after_when_header_present():
 async def test_retry_uses_jittered_backoff_when_no_header():
     """Tier 2: retry loop uses jittered backoff when no Retry-After header.
 
-    The first call raises a real ServiceUnavailableError with no header.
-    The recorded sleep must fall in [1.0, 2.0] (= [base/2, base] for attempt=0,
-    base=2.0) — NOT the exact pure-exponential 2.0.
+    #5793: uses EmptyLLMResponseError, see
+    test_retry_uses_retry_after_when_header_present's own docstring for why.
+    The first call raises it, carrying no header. The recorded sleep must
+    fall in [1.0, 2.0] (= [base/2, base] for attempt=0, base=2.0) — NOT the
+    exact pure-exponential 2.0.
     """
     set_retry_config(RetryConfig(jitter=True, respect_retry_after=True))
-    exc = _make_exc_no_retry_after()
+    exc = _make_empty_response_exc_no_retry_after()
 
     class _FakeResponse:
         choices = [object()]
@@ -288,12 +326,14 @@ async def test_retry_uses_jittered_backoff_when_no_header():
 async def test_retry_ignores_retry_after_when_disabled():
     """Tier 2: retry loop ignores Retry-After header when respect_retry_after=false.
 
+    #5793: uses EmptyLLMResponseError, see
+    test_retry_uses_retry_after_when_header_present's own docstring for why.
     The exception carries Retry-After: 99. With respect_retry_after=false and
     jitter=false, the sleep must be the pure-exponential 2.0 (attempt=0),
     NOT 99.
     """
     set_retry_config(RetryConfig(jitter=False, respect_retry_after=False))
-    exc = _make_exc_with_retry_after("99")
+    exc = _make_empty_response_exc_with_retry_after("99")
 
     class _FakeResponse:
         choices = [object()]

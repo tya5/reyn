@@ -727,11 +727,12 @@ class LLMToolCallResult:
     reasoning: dict | None = None
 
 # ---------------------------------------------------------------------------
-# Infrastructure retry — exponential backoff on transient LLM API errors
+# Empty-choices retry — exponential backoff on the ONE case litellm can't
+# retry itself (#5793: every infra-exception kind reyn used to also retry
+# here is litellm's own job now — see ``_is_retryable_exc``'s own docstring).
 # ---------------------------------------------------------------------------
 
-# Retryable: infrastructure / transient errors where the same call may succeed.
-# Non-retryable: semantic / auth / quota errors (4xx) where retry won't help.
+# Retryable: EmptyLLMResponseError only (see ``_is_retryable_exc``, #5793).
 # Resolved lazily so importing this module does not trigger `import litellm`.
 # #3671 P1: single check-then-set on ONE global holding the complete tuple —
 # already the correct shape (see ``_get_retryable_litellm_exceptions``'s own
@@ -788,6 +789,24 @@ def _env_num(name: str, default: "int | float", lo: "int | float", hi: "int | fl
         return default
 
 
+def _env_int_or_none(name: str, lo: int, hi: int) -> "int | None":
+    """#5793: like ``_env_num``, but the unset/invalid case is ``None`` (don't
+    pass a value at all — litellm's own default applies), not a reyn-chosen
+    literal. A separate helper rather than widening ``_env_num`` itself: that
+    function's callers with a REAL numeric default (``_LLM_RETRY_MAX_ATTEMPTS``/
+    ``_LLM_RETRY_BASE_S`` — the one retry loop #5793 keeps, see llm.py:1320's
+    empty-choices case) must stay non-Optional; mixing the two contracts into
+    one signature would make every caller's return type ``T | None`` whether
+    it wanted that or not."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    try:
+        return max(lo, min(hi, int(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
 # Defaults preserve today's behaviour (3 attempts / 2s base); the env overrides let an
 # operator absorb a transient empty-generation / 5xx storm without editing code.
 _LLM_RETRY_MAX_ATTEMPTS: int = _env_num("REYN_LLM_RETRY_MAX_ATTEMPTS", 3, 1, 10, int)
@@ -822,7 +841,9 @@ def _env_router_config():
     return RouterConfig(
         use=os.environ.get("REYN_LLM_USE_ROUTER", "").strip().lower()
         in ("1", "true", "yes"),
-        num_retries=_env_num("REYN_LLM_ROUTER_NUM_RETRIES", 3, 0, 10, int),
+        # #5793: None unless the env var is set — the back-compat tail
+        # mirrors RouterConfig's own default now, not a reyn-invented "3".
+        num_retries=_env_int_or_none("REYN_LLM_ROUTER_NUM_RETRIES", 0, 10),
     )
 
 
@@ -1059,20 +1080,24 @@ def _is_llm_timeout_exc(exc: BaseException) -> bool:
 
 
 def _resolve_llm_call_bounds(
-    timeout: "float | None", max_retries: int, *, purpose: "str | None" = None,
-) -> "tuple[float | None, int]":
-    """#2210/#5597: resolve the per-call HTTP bounds for a ``recorded_acompletion``
-    call. An EXPLICIT ``timeout`` (the kernel path threads it via the
-    LLMCallRecorder; ``call_llm_tools`` resolves + passes its own before
-    this is ever reached) WINS — returned as-is, so kernel/router
-    behaviour is unchanged (regression-impossible by construction). Only
-    a ``None`` timeout (a caller that never resolved one itself — #5597's
-    own gap: ``CompactionEngine._acompletion`` passed neither ``timeout``
-    nor ``num_retries`` at all, so an upstream hang blocked forever) falls
-    back to the ambient per-LLM-call policy context (same
-    ``safety.timeout.*`` source `call_llm_tools` already uses). No
-    context → stays ``None`` (litellm default — the pre-#2210 behaviour,
-    no worse).
+    timeout: "float | None", max_retries: "int | None", *, purpose: "str | None" = None,
+) -> "tuple[float | None, int | None]":
+    """#2210/#5597/#5793: resolve the per-call HTTP bounds for a
+    ``recorded_acompletion`` call. An EXPLICIT ``timeout`` (the kernel path
+    threads it via the LLMCallRecorder; ``call_llm_tools`` resolves + passes
+    its own before this is ever reached) WINS — returned as-is, so
+    kernel/router behaviour is unchanged (regression-impossible by
+    construction). Only a ``None`` timeout (a caller that never resolved
+    one itself — #5597's own gap: ``CompactionEngine._acompletion`` passed
+    neither ``timeout`` nor ``num_retries`` at all, so an upstream hang
+    blocked forever) falls back to the ambient per-LLM-call policy context
+    (same ``safety.timeout.*`` source `call_llm_tools` already uses). No
+    context, or a context whose field is itself ``None`` (#5793: the
+    operator never set ``safety.timeout.llm_call_seconds``/
+    ``llm_max_retries``) → stays ``None``, meaning the caller must NOT pass
+    the corresponding litellm kwarg at all — litellm's own default applies
+    (owner decision, #5793: reyn does not invent a default duplicating
+    litellm's own).
 
     ``purpose`` (#5597): when the resolved ambient context carries a
     NON-``None`` ``compaction_llm_call_timeout`` (``chat.compaction.
@@ -1131,7 +1156,21 @@ class EmptyLLMResponseError(Exception):
     same backoff machinery retries it (the condition is transient), and on
     exhaustion the caller sees this named error instead of a cryptic
     IndexError.
+
+    ``response`` (#5793, optional, defaults to ``None``, unused by the
+    production raise site above — a 200-with-empty-choices condition has
+    no HTTP-level Retry-After to carry): a genuine constructor field, not
+    a post-hoc test attribute, so ``_extract_retry_after``'s generic
+    ``getattr(exc, "response", None)`` reads a REAL declared attribute
+    when a caller (a test, or a future producer) does supply one — #5793
+    narrowed retryable exceptions to this class alone, so it is now the
+    only kind whose Retry-After-handling path in ``_llm_call_with_retry``
+    is reachable at all.
     """
+
+    def __init__(self, message: str, *, response: object = None) -> None:
+        super().__init__(message)
+        self.response = response
 
 
 def _empty_response_diag(response: object) -> str:
@@ -1196,20 +1235,21 @@ def _get_retryable_litellm_exceptions() -> tuple:
 
 
 def _is_retryable_exc(exc: BaseException) -> bool:
-    """Return True for infrastructure errors that justify a retry attempt.
-
-    Catches litellm's typed exceptions for 5xx / timeout / connection failures.
-    Also catches httpx transport-level errors that LiteLLM may not wrap when
-    the request fails before reaching the provider's HTTP response logic.
+    """#5793 (owner decision, "自前の...汎用再試行は litellm に委ねる"): return True
+    ONLY for :class:`EmptyLLMResponseError` — a 200 response with an empty
+    ``choices`` list is a transient provider condition that is NOT an API
+    error, so litellm neither raises nor retries it. This is the one case
+    litellm structurally cannot handle (the sole exception #5793 keeps,
+    llm.py's own retry loop below). Every infra-exception kind this used to
+    also catch (litellm's typed 5xx/timeout/connection exceptions, raw
+    httpx transport errors) is now litellm's own job — passing
+    ``num_retries`` (chat) lets litellm/its Router retry those; reyn no
+    longer re-retries what litellm already retries (the pre-#5793 shape,
+    only ever a no-op savings on the Router path via the ``_use_llm_router``
+    guard below, was a genuine double-retry on the direct-``acompletion``
+    path when the Router was off).
     """
-    if isinstance(exc, EmptyLLMResponseError):
-        # #187 B1: 200 + choices=[] is a transient provider condition — retry.
-        return True
-    if isinstance(exc, _get_retryable_litellm_exceptions()):
-        return True
-    if isinstance(exc, _get_httpx_exc_types()):
-        return True
-    return False
+    return isinstance(exc, EmptyLLMResponseError)
 
 
 def _backoff_s(attempt: int) -> float:
@@ -1291,7 +1331,13 @@ async def _llm_call_with_retry(
     *,
     sleep_fn=None,
 ) -> object:
-    """Execute ``coro_fn()`` with infrastructure-error retry + backoff.
+    """Execute ``coro_fn()`` with retry + backoff — #5793: NARROWED to the one
+    case litellm structurally cannot handle (a 200 response with an empty
+    ``choices`` list, ``EmptyLLMResponseError``, not an API error so litellm
+    neither raises nor retries it). Every infra-exception kind (5xx/timeout/
+    connection) this used to also retry is litellm's own job now — reyn
+    passes ``num_retries`` and lets litellm/its Router retry those, instead
+    of duplicating the decision (owner decision, #5793: "車輪の再発明やめてよ").
 
     ``coro_fn`` must be a zero-arg async callable that returns the litellm
     response object.  It is called once per attempt.
@@ -1345,15 +1391,12 @@ async def _llm_call_with_retry(
         except BaseException as exc:
             if not _is_retryable_exc(exc):
                 raise
-            # #1829 S3a (#1835 fold): on the router path the litellm.Router has
-            # ALREADY retried infra exceptions (5xx / timeout / connect) with
-            # native Retry-After respect, so re-retrying them here would double
-            # (Router N × Reyn N). Only EmptyLLMResponseError (200 + empty choices,
-            # #187 B1) stays Reyn-owned — the Router does not retry a non-exception
-            # 200. Router OFF → unchanged (full exponential-backoff retry of all
-            # _is_retryable_exc kinds; byte-identical to pre-#1829).
-            if _use_llm_router() and not isinstance(exc, EmptyLLMResponseError):
-                raise
+            # #5793: the router-vs-direct guard that used to live here is
+            # gone — ``_is_retryable_exc`` now only ever returns True for
+            # ``EmptyLLMResponseError`` (every infra-exception kind is
+            # litellm's own retry job, chat's ``num_retries``), so there is
+            # no other kind left to double-retry against the Router's own
+            # native retry, on OR off.
             last_exc = exc
             retries_remaining = _LLM_RETRY_MAX_ATTEMPTS - attempt - 1
             if retries_remaining == 0:
@@ -1817,7 +1860,12 @@ def _single_deployment_router(model: str, *, original_model: "str | None" = None
         model_list: list = []
         for m in [model, *fb_targets]:
             model_list.extend(_deployments_for_model(m, rcfg))
-        kwargs: dict = {"model_list": model_list, "num_retries": rcfg.num_retries}
+        kwargs: dict = {"model_list": model_list}
+        # #5793: only set when the operator configured it — matches
+        # cooldown_time/allowed_fails just below (both already
+        # None → omitted → litellm.Router's own default).
+        if rcfg.num_retries is not None:
+            kwargs["num_retries"] = rcfg.num_retries
         if fb_targets:
             kwargs["fallbacks"] = [{model: fb_targets}]
         if rcfg.cooldown_time is not None:
@@ -2455,11 +2503,14 @@ async def recorded_acompletion(
     # forgets to set its own bound, by construction.
     if "timeout" not in base_kwargs:
         _resolved_timeout, _resolved_num_retries = _resolve_llm_call_bounds(
-            None, base_kwargs.get("num_retries", 1), purpose=purpose,
+            None, base_kwargs.get("num_retries"), purpose=purpose,
         )
         if _resolved_timeout is not None:
             base_kwargs["timeout"] = _resolved_timeout
-        if "num_retries" not in base_kwargs:
+        # #5793: an unresolved (None) num_retries must NOT become a
+        # reyn-chosen literal here either — omit the kwarg, litellm's own
+        # default applies (the same rule as ``call_llm_tools`` above).
+        if "num_retries" not in base_kwargs and _resolved_num_retries is not None:
             base_kwargs["num_retries"] = _resolved_num_retries
 
     # #1650: when an operator sets ``reasoning_effort`` on a model, the proxy
@@ -3126,7 +3177,11 @@ async def call_llm_tools(
     tools: list[dict],               # OpenAI-format tools array
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
     timeout: float | None = None,
-    max_retries: int = 1,
+    # #5793: None (not 1) — an unset caller must not force a reyn-invented
+    # retry count onto litellm; ``_resolve_llm_call_bounds`` only overrides
+    # this with a real number when the operator set
+    # ``safety.timeout.llm_max_retries``.
+    max_retries: "int | None" = None,
     prompt_cache_enabled: bool = True,
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
@@ -3316,7 +3371,11 @@ async def call_llm_tools(
     timeout, max_retries = _resolve_llm_call_bounds(timeout, max_retries)
     if timeout is not None:
         call_kwargs["timeout"] = timeout
-    call_kwargs["num_retries"] = max_retries
+    # #5793: only set when resolved to a real value — an unset operator
+    # config must not force ANY num_retries onto litellm (its own default
+    # applies), not even a reyn-chosen "safe-looking" one.
+    if max_retries is not None:
+        call_kwargs["num_retries"] = max_retries
 
     # Payload trace dump (request)
     _trace_rid = _dump_llm_request({
