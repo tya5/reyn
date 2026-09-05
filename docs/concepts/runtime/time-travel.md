@@ -79,7 +79,9 @@ The WAL is an **fsync-per-append log**: each entry is durably written via `Durab
 
 All WAL events share a **global single sequence namespace**. A consistent-cut rewind at seq N is well-defined: "the state of every substrate at the moment before seq N+1 was written". The global seq makes the cut precise — there is no per-substrate clock to reconcile.
 
-The cut is also **process-global across Sessions and Agents**: because there is one WAL, a single reset-record moves *every* loaded [Session](../multi-agent/sessions.md) and Agent to the target seq atomically — rewind is not scoped to one Session. Per-Session granularity lives in **persistence** (snapshots are re-keyed per Session) and crash-recovery replay, not in the rewind operation itself.
+The cut can be **process-global across Sessions and Agents** — because there is one WAL, a single UNSCOPED reset-record moves *every* loaded [Session](../multi-agent/sessions.md) and Agent to the target seq atomically — or **scoped to one Session** (`(agent_name, session_id)`), which cancels/quiesces, appends a reset-record, and materialises only that one session, leaving every other session at head. `checkout(seq, *, scope)` takes `scope` as a required keyword: `None` is the global cut (unchanged from before this existed); a `(name, sid)` pair is the scoped one. See [ADR-0047](../../deep-dives/decisions/0047-session-scoped-rewind.md) for the full design — including why a scoped rewind never touches the shared workspace or agent-level lifecycle (create/archive/purge stay global facts, decision 6), and why cross-session consistency is deliberately given up (decision 5).
+
+**The default the USER sees is session-local** (owner ruling 2026-09-05; ADR-0047 decision 3) — `/rewind <N>` with no further words rewinds only the invoking session, and `/rewind <N> global` opts into the whole-substrate cut explicitly. The **API** keeps no default of its own (`scope` is required-keyword, never defaulted) — the command layer is the one place that decides the user's intent and states it explicitly; the UI's default must never leak into being the API's default.
 
 ### Append-only reset-record and branch state
 

@@ -25,6 +25,9 @@ This opens an interactive checkpoint picker in the TUI, listing the checkpoints 
 | time | Timestamp when the checkpoint was created |
 | kind | Boundary type: `turn` / `plan-step` |
 | anchor | The first line of the human prompt active at that checkpoint (truncated to 80 characters), when one is known — a hint for which checkpoint to pick, not the full conversation |
+| owner | Shown only when relevant: `(owner unknown)` if the checkpoint's owning session couldn't be determined, or `(agent/sid)` if it belongs to a session other than the one you're rewinding — a checkpoint that already matches carries no marker |
+
+The picker's own title states which of the two rewind shapes below Enter will perform — session-local to your current session by default — before you pick a row.
 
 Navigate with **↑ / ↓**, select with **Enter** — selecting a row does exactly what typing `/rewind <seq>` for that row does. Press **Esc** to close without rewinding.
 
@@ -36,7 +39,15 @@ Over `--connect` (the remote client), the same checkpoints are printed as a plai
 /rewind <N>
 ```
 
-Rewinds directly to seq N without opening the picker. The agent's conversation state is restored to seq N. User workspace files remain at HEAD — Reyn time-travels its own `.reyn/` state only.
+Rewinds this session only: your conversation state is restored to seq N, every other session stays exactly where it was. This is the default — add `global` to rewind every session instead:
+
+```
+/rewind <N> global
+```
+
+A rewound-past future is never lost — it stays reachable as an abandoned branch (the picker's tree view still shows it, and typing its seq again switches back). What a rewind genuinely costs: a cancelled in-flight turn's re-run spends budget again, a target past the retention window is genuinely unreachable, and a `global` rewind stops every OTHER session's in-flight work too — not just this one's.
+
+User workspace files remain at HEAD either way — Reyn time-travels its own `.reyn/` state only.
 
 ## Rewind vs fork-switch
 

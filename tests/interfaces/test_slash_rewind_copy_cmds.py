@@ -31,11 +31,19 @@ def _ctx(session):
 
 
 class _FakeSession:
-    def __init__(self, *, registry=None) -> None:
+    def __init__(
+        self, *, registry=None,
+        agent_name: "str | None" = "agent", session_id: "str | None" = "main",
+    ) -> None:
         if registry is not None:
             self._registry = registry
         self._outbox: list[OutboxMessage] = []
         self.pending_ui_calls: list[dict] = []  # public — records set_pending_command_ui calls
+        # #5769 stage 3 ④: the same PUBLIC identity a real Session exposes
+        # (``Session.agent_name`` / ``Session.session_id``) — ``rewind_cmd``
+        # now reads these to build its default session-local scope.
+        self.agent_name = agent_name
+        self.session_id = session_id
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         self._outbox.append(msg)
@@ -200,9 +208,103 @@ async def test_rewind_direct_success_calls_checkout_with_parsed_int() -> None:
     session = _FakeSession(registry=registry)
     await rewind_cmd(_ctx(session), "42")
     assert registry.checkout_calls == [42]
-    # #5769: /rewind has no per-session UI yet (a separate, owner-gated arc
-    # per #5778's own explicit split) -- it names GLOBAL_SCOPE explicitly.
+    # #5769 stage 3 ④: the default is session-local, to the INVOKING
+    # session's own identity (`_FakeSession`'s own default here:
+    # agent_name="agent", session_id="main") -- not GLOBAL_SCOPE. This
+    # assertion is the witness that the UI default actually changed
+    # (previously every bare `/rewind <N>` named GLOBAL_SCOPE, #5784's own
+    # call site before this PR); the explicit-`global` and explicit-
+    # session-local paths are covered separately below.
+    assert registry.checkout_scopes == [("agent", "main")]
+
+
+# ── /rewind <N> [global] scope (#5769 stage 3 ④, ADR-0047 decision 3) ──────
+
+
+@pytest.mark.asyncio
+async def test_rewind_direct_defaults_to_session_local_scope() -> None:
+    """Tier 2: bare '/rewind <N>' (no 'global') passes the INVOKING session's
+    own (agent_name, session_id) as checkout's scope -- the UI default
+    (ADR-0047 decision 3), never a bare/unscoped call. The API keeps no
+    default of its own (checkout's ``scope`` is required-keyword); this
+    command layer is the one place that decides and always states it."""
+    registry = _FakeRegistry(checkout_result={"agents": [], "target_n": 5})
+    session = _FakeSession(registry=registry, agent_name="alpha", session_id="sess-9")
+    await rewind_cmd(_ctx(session), "5")
+    assert registry.checkout_scopes == [("alpha", "sess-9")]
+
+
+@pytest.mark.asyncio
+async def test_rewind_direct_global_keyword_passes_global_scope() -> None:
+    """Tier 2: '/rewind <N> global' explicitly requests the whole-substrate
+    cut -- GLOBAL_SCOPE, the architecture-enforced global shape unchanged
+    since before ADR-0047 (named explicitly per #5784, not a bare `None`
+    literal a forgetful caller could produce by accident)."""
+    registry = _FakeRegistry(checkout_result={"agents": [], "target_n": 5})
+    session = _FakeSession(registry=registry, agent_name="alpha", session_id="sess-9")
+    await rewind_cmd(_ctx(session), "5 global")
     assert registry.checkout_scopes == [GLOBAL_SCOPE]
+
+
+@pytest.mark.asyncio
+async def test_rewind_direct_states_scope_before_the_operation() -> None:
+    """Tier 2: #5769 stage 3 ④ (architect scope) -- which of the two shapes
+    a '/rewind <N>' is must be visible BEFORE checkout runs, not only in
+    the after-the-fact summary. A reply naming the scope must already be
+    in the outbox at the moment checkout() is invoked."""
+    seen_before_checkout: list[str] = []
+
+    class _WitnessRegistry(_FakeRegistry):
+        async def checkout(self, target: int, *, scope=None) -> dict:
+            # Captured INSIDE checkout(), so this proves order, not just
+            # eventual presence in the transcript.
+            seen_before_checkout.extend(session.system_text().split())
+            return await super().checkout(target, scope=scope)
+
+    session = _FakeSession(agent_name="alpha", session_id="sess-9")
+    registry = _WitnessRegistry(checkout_result={"agents": [], "target_n": 5})
+    session._registry = registry
+    await rewind_cmd(_ctx(session), "5")
+    assert "session-local" in " ".join(seen_before_checkout), (
+        f"scope must be visible in the reply BEFORE checkout runs; saw {seen_before_checkout!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rewind_direct_scope_reply_never_says_gone() -> None:
+    """Tier 2: the pre-flight scope reply must never describe the rewound
+    future as lost/gone (lead-coder/architect correction: it survives as
+    an inactive, re-selectable branch)."""
+    registry = _FakeRegistry(checkout_result={"agents": [], "target_n": 5})
+    session = _FakeSession(registry=registry, agent_name="alpha", session_id="sess-9")
+    await rewind_cmd(_ctx(session), "5")
+    text = session.system_text().lower()
+    # #5785 review (lead-coder BLOCKING ①): an EMPTY reply also passes every
+    # "forbidden word absent" check below -- assert the reply actually
+    # happened first, so the forbidden-word checks bite on real content.
+    assert text, "expected a non-empty pre-flight scope reply"
+    for forbidden in ("gone", "disappear", "lost", "delete"):
+        assert forbidden not in text, f"{forbidden!r} must not appear in the rewind reply: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_rewind_direct_unknown_identity_without_global_is_an_error() -> None:
+    """Tier 2: a session that cannot report its own agent_name/session_id
+    (defensive -- always true in production) cannot default to
+    session-local; the honest failure names the workaround rather than
+    silently falling back to a scope that was never asked for."""
+    registry = _FakeRegistry(checkout_result={"agents": [], "target_n": 5})
+    session = _FakeSession(registry=registry, agent_name=None, session_id=None)
+    await rewind_cmd(_ctx(session), "5")
+    assert registry.checkout_calls == [], "checkout must not run without a resolvable scope"
+    # #5785 review (lead-coder BLOCKING ②): the docstring's own claim is
+    # "the honest failure NAMES the workaround" -- assert an error reply
+    # actually happened (an empty checkout_calls list is also true if
+    # rewind_cmd crashed on its first line, so that assert alone is a
+    # green-on-empty witness) before checking what it names.
+    err = session.error_text()
+    assert err, "expected a non-empty error reply"
+    assert "global" in err, f"the error must name the workaround ('global'); got {err!r}"
 
 
 # ── /copy sentinel emitter ─────────────────────────────────────────────────

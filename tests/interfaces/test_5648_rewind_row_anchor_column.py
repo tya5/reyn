@@ -49,3 +49,58 @@ def test_row_never_re_truncates_an_already_truncated_anchor() -> None:
         "the row must carry the anchor text unmodified — truncation is "
         "truncate_anchor's own job, at capture time, never the row's"
     )
+
+
+# ── #5769 stage 3 ④: the owner marker (visible-before-the-operation scope) ──
+
+
+def test_no_default_scope_carries_no_owner_marker() -> None:
+    """Tier 1: deny — when the caller supplies no `default_scope` (the
+    --cui/no-session-context path today never calls with one from this
+    function's own perspective — the slash handler builds its OWN marker
+    text separately for that leg), the row is unchanged from before this
+    stage: no owner column appended."""
+    row = rewind_row_text({"seq": 1, "kind": "turn", "name": "alpha", "sid": "main"})
+    assert row == "seq 1 · turn"
+
+
+def test_point_matching_default_scope_carries_no_marker() -> None:
+    """Tier 1: a checkpoint that IS the invoking session's own — Enter on
+    this row rewinds exactly what the title already said it would — needs
+    no extra marker; adding one to every row would bury the ones that
+    matter."""
+    row = rewind_row_text(
+        {"seq": 1, "kind": "turn", "name": "alpha", "sid": "main"},
+        default_scope=("alpha", "main"),
+    )
+    assert row == "seq 1 · turn"
+
+
+def test_point_owned_by_a_different_session_is_named() -> None:
+    """Tier 1: a checkpoint belonging to a DIFFERENT (name, sid) than what
+    Enter would affect is marked with its real owner — so picking it does
+    not read as "obviously mine" when it is not."""
+    row = rewind_row_text(
+        {"seq": 1, "kind": "turn", "name": "beta", "sid": "sub-7"},
+        default_scope=("alpha", "main"),
+    )
+    assert row == "seq 1 · turn  (beta/sub-7)"
+
+
+def test_point_with_unresolved_owner_is_marked_unknown_not_fabricated() -> None:
+    """Tier 1: #5782's own fix — a point whose ``name``/``sid`` came back
+    ``None`` (an unresolved owner — the seq-owner conflict case) must be
+    marked "(owner unknown)", never silently rendered as if it matched
+    ``default_scope`` (which would repeat exactly the bug #5782 closed at
+    the data layer, one level up in the UI that consumes it)."""
+    row = rewind_row_text(
+        {"seq": 1, "kind": "turn", "name": None, "sid": None},
+        default_scope=("alpha", "main"),
+    )
+    # #5785 review (non-binding, lead-coder): asserted via `in`/`not in`
+    # rather than an exact-string pin — CLAUDE.md's "never pin exact
+    # whitespace", and the claim these lines carry survives unaffected by
+    # any future spacing change to the row's own separator.
+    assert "(owner unknown)" in row
+    # Deny: never collapses to matching default_scope by omission.
+    assert "alpha/main" not in row
