@@ -453,6 +453,33 @@ def _report_unapplied_agent_policy(
             _log.warning("shell-hook: emit_event failed for %r: %s", hook_label, exc)
 
 
+def _failure_stderr_snippet(stderr: bytes, *, head: int = 100, tail: int = 300) -> str:
+    """#5803: bound a FAILED hook's stderr for the diagnostic log line
+    without structurally dropping the part most likely to carry the actual
+    diagnosis.
+
+    The prior form (``stderr[:200]``, a head-only cap) reads correctly for
+    a short, single-line failure ("command not found") but a Python
+    traceback puts its own summary -- ``ExceptionType: message``, the one
+    line an operator actually needs -- LAST. A traceback longer than 200
+    bytes (routine: file paths + line numbers alone often exceed that)
+    always cut that line off; the log carried real bytes (never empty --
+    "stderr is non-empty" was never the right witness for this defect) but
+    never the part that explains WHY.
+
+    Keeps a small HEAD (which command, earliest context) and a larger TAIL
+    (where the traceback's own exception line lives), joined with an
+    explicit elision marker when the full text doesn't fit both -- #5210's
+    "never truncate the returned/parsed value" ruling is unaffected (this
+    is the LOGGED-only copy for a run that already failed, not the
+    ``exec_capture`` push-directive stdout that ruling governs)."""
+    text = stderr.decode("utf-8", errors="replace")
+    if len(text) <= head + tail:
+        return text.strip()
+    elided = len(text) - head - tail
+    return f"{text[:head]}...[{elided} chars elided]...{text[-tail:]}".strip()
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -857,7 +884,7 @@ async def run_shell_hook(
             )
 
         if result.returncode not in (0,):
-            stderr_snippet = result.stderr[:200].decode("utf-8", errors="replace").strip()
+            stderr_snippet = _failure_stderr_snippet(result.stderr)
             if denial_class == DENIAL_FORK:
                 # #2827/#2820-B: name the class and point at the fix. The raw
                 # stderr ("fork: Operation not permitted") reads as a broken
