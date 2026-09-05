@@ -29,27 +29,36 @@ realistic shape once a session is old/large enough to matter, since
 compaction keeps re-firing as the token budget refills) gets the bounded
 read.
 
-Older entries this reader doesn't return are NOT lost: ``history.jsonl`` is
-append-only, so anything left unread here is still on disk, reachable later
-via the extend-on-demand path (#4387 Phase B ②): ``Session.extend_history_backward``,
+Older entries this reader doesn't return are NOT lost while they remain on
+disk: ``history.jsonl`` was append-only through #4476 Phase 1, so anything
+left unread here was always still on disk, reachable later via the
+extend-on-demand path (#4387 Phase B ②): ``Session.extend_history_backward``,
 its async sibling ``Session.extend_history_backward_async``, and — for a
 caller on the other side of a transport —
-``ThreadedTransportProxy.extend_history_backward``.
+``ThreadedTransportProxy.extend_history_backward``. #5759 stage 2 (Phase 2,
+below) adds the first real exception: content already folded into a
+compaction summary AND already outside both the WAL's retention floor and
+this reader's own startup-hydration margin can be GC'd — the extend-on-
+demand path can therefore now legitimately return LESS than everything
+older than what's resident, for that specific, bounded, already-folded
+range only.
 
 #4476 Phase 1 adds a small, separate section at the end of this module:
 policy-independent measurement (bytes/line counts across every
-``history.jsonl``) that reads to no truncation path — see that section's
-own header comment for why it lives here rather than a new module.
+``history.jsonl``). #5759 stage 2 (Phase 2, same section) adds this
+module's first real truncation path — see that section's own header
+comment for the mechanism and its bound.
 """
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 def _iter_raw_lines_reverse(path: Path, *, chunk_size: int) -> "Iterator[str]":
@@ -348,18 +357,24 @@ def read_history_before(
 # ── #4476 Phase 1: read-only measurement, no truncation ─────────────────
 #
 # retention.py:84-87's own docstring states ``history.jsonl`` is "append-only
-# and never floor-truncated" — this file has NO deletion path today, by
-# design (branch visibility / compaction's own watermark / TUI scrollback
+# and never floor-truncated" — at Phase 1 this file had NO deletion path,
+# by design (branch visibility / compaction's own watermark / TUI scrollback
 # all depend on old lines still being readable, per #4476's own issue body).
 # The owner-measured 500MB figure (#4387) is a single point — one
-# environment, one moment — too thin to set a retention policy from. This
-# section exists ONLY to widen that single point into an actual measured
+# environment, one moment — too thin to set a retention policy from on its
+# own. This section widened that single point into an actual measured
 # population, same order as #4478/#4485: land the measurement, let evidence
-# accumulate, THEN an owner-set policy (never invented here) decides
-# anything. See this module's own docstring for why truncation isn't safe
-# to add casually, and :func:`read_history_after`'s docstring for the
-# ``covers_through_seq`` floor a Phase 2 truncation would eventually have to
-# respect.
+# accumulate, THEN an owner-set policy decides anything.
+#
+# #5759 stage 2 is that Phase 2: the owner-requested GC that removes ONLY
+# the bounded range this module's own :func:`read_history_after` docstring
+# named — content already folded into a compaction summary (bounded above
+# by ``covers_through_seq``, below by the sibling ``covers_from_seq`` field
+# #5765 introduces) AND already outside the WAL's own retention floor AND
+# outside the startup-hydration margin (see :func:`rewrite_history_dropping`
+# below and ``AgentRegistry._history_margin_boundary_seq``). Every other
+# line — including everything the Phase-1 measurement above still counts —
+# remains append-only exactly as this section originally documented.
 
 
 @dataclass(frozen=True)
@@ -406,6 +421,77 @@ def history_file_stats(path: Path) -> "tuple[int, int]":
     except FileNotFoundError:
         return 0, 0
     return total_bytes, lines
+
+
+def rewrite_history_dropping(
+    path: Path, *, should_drop: "Callable[[dict], bool]",
+) -> dict:
+    """#5759 stage 2 Phase 2: atomically rewrite *path* (a ``history.jsonl``),
+    dropping every well-formed line for which ``should_drop(entry)`` is
+    ``True``. This is the Phase 2 this module's own #4476 section header
+    above forecast — the first deletion path ``history.jsonl`` has ever had.
+
+    Unlike :meth:`StateLog.truncate_below` (whose caller drops a simple
+    ``seq < floor`` PREFIX), ``history.jsonl`` GC drops a BOUNDED MIDDLE
+    RANGE — the folded-and-out-of-margin span the caller's own 4-conjunct
+    predicate identifies (#5759 stage 2) — while everything before AND
+    after that range survives. So this function owns only the atomic
+    rewrite MECHANICS (mirroring ``StateLog._do_truncate``'s own strategy:
+    stream-read, write survivors to a ``.tmp``, ``fsync``, ``rename``); the
+    caller's ``should_drop`` predicate decides what a "survivor" is,
+    line by line.
+
+    **Fail-closed on anything this function cannot classify**: a line that
+    fails to parse as a JSON object, or whose ``seq`` is not an int, is
+    NEVER dropped — it is always written through unchanged. This is the
+    opposite default from ``StateLog._do_truncate``'s own "torn fragment"
+    handling (which always drops an unparseable WAL line): the WAL is a
+    replay log where a torn line can never recover meaning, but
+    ``history.jsonl`` is user-facing scrollback a human or the TUI may
+    still read — an unparseable line here is unknown content, not proven
+    garbage, and "don't delete what you can't classify" is the same
+    fail-closed posture #5759 stage 2 already requires for a summary
+    missing the shared ``covers_from_seq``/``covers_through_seq`` fields.
+
+    Returns ``{"dropped": int, "kept": int}``. A missing file is a no-op
+    returning zero counts — nothing to rewrite.
+
+    Runs synchronously; callers on the async path should offload via
+    ``asyncio.to_thread`` (matching ``StateLog.truncate_below``'s own
+    worker-thread rewrite, since ``history.jsonl`` can reach hundreds of
+    MB per the owner's own #4387 measurement — this must never block the
+    event loop).
+    """
+    if not path.is_file():
+        return {"dropped": 0, "kept": 0}
+
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    dropped = 0
+    kept = 0
+    with path.open("r", encoding="utf-8") as src, \
+            tmp.open("w", encoding="utf-8") as dst:
+        for raw in src:
+            line = raw.strip()
+            if not line:
+                dst.write(raw)
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                dst.write(raw)
+                continue
+            if not isinstance(entry, dict) or not isinstance(entry.get("seq"), int):
+                dst.write(raw)
+                continue
+            if should_drop(entry):
+                dropped += 1
+                continue
+            dst.write(raw)
+            kept += 1
+        dst.flush()
+        os.fsync(dst.fileno())
+    tmp.replace(path)
+    return {"dropped": dropped, "kept": kept}
 
 
 def aggregate_history_stats(project_root: Path) -> HistoryStorageStats:
