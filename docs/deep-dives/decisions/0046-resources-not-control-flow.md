@@ -21,6 +21,7 @@ Three control-flow guards were considered. All three are rejected below, and two
 - Each charter band member bounds **its own resource, cause-independently**: `CostConfig` bounds compute, the media store's project-wide cross-session cap bounds storage, the permission gate bounds outward side effects.
 - **Termination of an operator's own workflow is the operator's.** A recursive workflow that converges is legitimate — build systems and file watchers are exactly this shape — and the OS must not forbid the shape in order to prevent the non-converging case.
 - The OS retains two duties, **neither of which is a threshold**: a running loop must be **visible**, and it must be **stoppable**. "User responsibility" is only coherent when the user can see the thing they are responsible for.
+- **The OS bounds resources; it does not discard the user's own data.** A cache is the OS's to reclaim; a conversation is not. The distinction is not size or growth rate but authorship — `cache/` is derived, `events/` is a forensic record the OS writes, and `history.jsonl` **is the conversation itself**. Reclaiming the first two is resource bounding; deleting the third is taking something from the user, which this decision does not authorise. (Raised while drafting the #5759 countermeasures; the practical consequence there was that only turns **no `/rewind` the product will accept can still reach** are eligible, which is not a deletion of anything the user can still see.)
 
 ## Alternatives considered
 
@@ -51,7 +52,16 @@ The common defect in all three: they bound **how the workflow is shaped**, and n
 
 ## Falsification
 
-This decision is falsified by **a runaway that consumes a resource no band member bounds**. None was found while drafting, but the resource list was **not enumerated exhaustively** — the three above were reached by asking "what does a loop cost", not by walking a registry. A fourth resource with no cap would require either a new cap or a revisit of the whole line.
+This decision is falsified by **a runaway that consumes a resource no band member bounds**.
+
+**Two candidates were found after drafting** (2026-09-05, [#5759](https://github.com/tya5/reyn/issues/5759)), by walking `docs/reference/runtime/reyn-dir-layout.md`'s own tree rather than asking "what does a loop cost":
+
+- `agents/*/history.jsonl` — append-only and, in `core/events/retention.py`'s own words, **never floor-truncated**.
+- `events/` — the store supports size- and age-based rotation and is constructed with **both disabled** (`max_bytes=0, max_age_seconds=0`), splitting by date instead; rotation opens a new file and **deletes nothing**, so the daily files accumulate without bound.
+
+The project-wide storage cap (#4478) covers `media/` + `memory/history-content/` together and neither of these. `CostConfig` bounds compute, not a loop that writes without calling an LLM.
+
+**This does not settle the decision either way.** A cap could be added for each (making them band-covered, and the line holds), or their absence could be declared deliberate (and the line needs the qualification). **Deciding that is a precondition for raising this ADR out of PROPOSED**, and it is not decided here.
 
 ## References
 
