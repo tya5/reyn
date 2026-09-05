@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -91,6 +92,15 @@ def _seqs(path: Path) -> list[int]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _record_gen(reg: AgentRegistry, name: str, seq: int) -> None:
+    """Persist a generation for ``name`` cut at boundary ``seq`` -- the
+    same helper `test_registry_list_rewind_points_1f.py` uses to give
+    `list_rewind_points()` real candidates to return."""
+    snap = AgentSnapshot.empty(name)
+    snap.applied_seq = seq
+    reg._store_for(name).record(snap)
 
 
 def _pad_past_margin(start: int) -> list[dict]:
@@ -294,6 +304,118 @@ async def test_gc_frees_space_even_when_rewind_was_never_used(tmp_path):
     await reg._prune_generations_below(1)  # no checkout()/rewind_to() call anywhere
 
     assert path.stat().st_size < size_before
+
+
+def _summary_ranges(path: Path) -> "list[tuple[int, int]]":
+    """Every surviving summary's own (covers_from, covers_through) range,
+    read straight from the post-GC file -- ANY surviving summary counts,
+    not just the latest (mirrors the production predicate's own union,
+    #5759's architect-mandated correction)."""
+    ranges: list[tuple[int, int]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entry = json.loads(line)
+        if entry.get("role") != "summary":
+            continue
+        meta = entry.get("meta", {})
+        cf = meta.get("covers_from_seq")
+        ct = meta.get("covers_through_seq", 0)
+        if cf is not None and ct > 0:
+            ranges.append((cf, ct))
+    return ranges
+
+
+def _missing_conversation_seqs(
+    path: Path, *, up_to_seq: int, original_seqs: "set[int]",
+) -> "set[int]":
+    """Every seq that ORIGINALLY existed (<= up_to_seq) but, post-GC, is
+    neither present as a raw line NOR covered by any surviving summary's
+    own range -- a non-empty result means the conversation reconstructed
+    at that rewind point is missing content. Empty is the passing case."""
+    present = set(_seqs(path))
+    ranges = _summary_ranges(path)
+    missing: set[int] = set()
+    for s in original_seqs:
+        if s > up_to_seq:
+            continue
+        if s in present:
+            continue
+        if any(cf <= s <= ct for cf, ct in ranges):
+            continue
+        missing.add(s)
+    return missing
+
+
+@pytest.mark.asyncio
+async def test_every_listed_rewind_point_has_no_conversation_gap_after_gc(tmp_path):
+    """Tier 2: BLOCKING (lead-coder-30 + architect co-vet on #5767) -- the
+    CENTRAL acceptance point, distinct from the 8 tests above. Those check
+    GC's own INTERNAL per-condition logic (folded / floor / margin)
+    individually; this checks the *composition* actually matches what
+    `list_rewind_points()` -- the real, user-facing candidate list --
+    shows: for EVERY point a user could pick, the conversation
+    reconstructed up to it is not missing anything GC removed without a
+    surviving substitute.
+
+    Deliberately includes the geometry architect flagged as the risky,
+    non-obvious crossing (not claimed broken, but requiring a witness):
+    a generation boundary (seq 8) sitting STRICTLY INSIDE a fold's own
+    [covers_from, covers_through] range (4-15), where an EARLIER part of
+    that SAME range (4-5) has already been GC'd (below the floor) by the
+    time seq 8 is rewound to. Reconstructing the conversation up to seq 8
+    must find 4-5 via the SAME summary that also covers seq 8-15
+    (`_summary_ranges` checks every surviving summary, not just the
+    latest) -- if this were implemented against only the latest summary,
+    or if a summary could ever be dropped, this is exactly where it would
+    show up as a `list_rewind_points()` entry with no coherent history
+    behind it.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "kappa")
+    log = reg.state_log
+    for _ in range(30):
+        await _put(log, "kappa", "x")
+
+    lines = _raw_range(1, 3)              # head, never folded
+    lines += _raw_range(4, 15)             # will be (partially) folded + GC'd
+    lines += _raw_range(16, 24)            # unfolded, between the fold and its summary
+    lines.append(_summary(25, covers_from=4, covers_through=15))
+    lines += _pad_past_margin(26)          # unfolded tail, past the margin
+
+    path = _write_history(tmp_path, "kappa", lines)
+    original_seqs = {entry["seq"] for entry in lines}
+
+    # Generation boundaries: seq 3 (before the fold, will fall below the
+    # floor and be correctly excluded from the list), seq 8 (the risky
+    # crossing -- INSIDE the fold's range, but ITSELF at/above the floor
+    # below), seq 20 (after the fold, unfolded), seq 30 (well past
+    # everything).
+    for s in (3, 8, 20, 30):
+        _record_gen(reg, "kappa", s)
+
+    # Floor = 6: seq 4-5 (inside the fold's range, below floor) become
+    # GC-eligible; seq 6-15 (inside the SAME range, at/above floor) are
+    # protected by condition (1) and stay raw regardless of folding.
+    await _advance_floor_past(reg, 5)
+    await reg._prune_generations_below(1)
+
+    rows = reg.list_rewind_points()
+    listed_seqs = [r["seq"] for r in rows]
+    assert 3 not in listed_seqs  # below the floor -- correctly not offered
+    assert 8 in listed_seqs      # the risky crossing IS offered to the user
+    assert 20 in listed_seqs
+    assert 30 in listed_seqs
+
+    for r in rows:
+        missing = _missing_conversation_seqs(
+            path, up_to_seq=r["seq"], original_seqs=original_seqs,
+        )
+        assert not missing, (
+            f"rewind point seq={r['seq']!r} has a conversation gap: "
+            f"seqs {sorted(missing)} were removed with no surviving "
+            f"summary covering them"
+        )
 
 
 # Disclosure (CLAUDE.md six-questions #4): manually-verified point (3) --
