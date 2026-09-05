@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.events.snapshot_generations import SnapshotGenerationStore, reconstruct
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, SnapshotGenerationStore, reconstruct
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 
@@ -66,7 +66,7 @@ async def test_reconstruct_head_equals_live_snapshot(tmp_path):
     # durable head == live (the consistent-prefix parity; "reconstruct(current_seq) == live"
     # was the synchronous-durability assumption, correctly retired).
     await journal.flush()
-    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq)
+    rebuilt = reconstruct(AGENT, store, log, log.last_durable_seq, scope=GLOBAL_SCOPE)
     assert rebuilt == journal.snapshot
 
 

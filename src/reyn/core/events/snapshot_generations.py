@@ -636,6 +636,8 @@ def reconstruct(
     state_log: StateLog,
     target_seq: int,
     session_id: str = "main",
+    *,
+    scope: "tuple[str, str] | None",
 ) -> AgentSnapshot:
     """Reconstruct ``agent_name``'s state as-of WAL ``target_seq`` (PITR), on the
     **active branch**.
@@ -652,9 +654,26 @@ def reconstruct(
     durable state, so the un-durable tail is cleanly dropped = recover-to-last-durable)
     — which, after a rewind, yields the current active-branch state (and collapses to
     as-of-N when the rewind reset-record is itself head).
-    """
-    abandoned = _abandoned_intervals(_rewind_records(state_log))
-    is_active = _make_is_active(abandoned)
+
+    #5769 ADR-0047 acceptance-3 gap (real bug, found while building that
+    acceptance witness, not a design decision): this function used to
+    derive ``is_active`` from scope-BLIND ``_abandoned_intervals(
+    _rewind_records(state_log))`` — treating EVERY reset-record as global
+    regardless of its own ``scope`` field. Both real callers
+    (``AgentRegistry._materialize_rewind``'s scoped branch AND its GLOBAL
+    per-session loop) already build a correctly-scoped
+    ``build_active_predicate(state_log, scope=...)`` for their own
+    spawn/vanish gate checks one line above their call here — but the
+    computed predicate was discarded, and this function recomputed (and
+    used) the wrong, unscoped one instead. Effect: a session-scoped
+    checkout's reset-record was silently treated as a GLOBAL abandonment
+    when a DIFFERENT, unrelated agent/session was later reconstructed,
+    hiding that session's own real WAL entries — exactly the cross-session
+    corruption decision 5 exists to rule out. ``scope`` is now required,
+    no default, matching every other #5769 seam's own contract (`GLOBAL_
+    SCOPE` for the GLOBAL per-session loop's own per-`(name, sid)` call,
+    a real `(agent, sid)` for the scoped branch)."""
+    is_active = build_active_predicate(state_log, scope=scope)
 
     # Base = nearest ACTIVE generation <= target_seq (never an abandoned-branch
     # generation); empty if none.

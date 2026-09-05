@@ -14,6 +14,7 @@ import pytest
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.core.events.snapshot_generations import (
+    GLOBAL_SCOPE,
     SnapshotGenerationStore,
     reconstruct,
     rewind,
@@ -102,11 +103,11 @@ async def test_retained_checkpoints_reconstructable_after_clamped_truncate(tmp_p
     store = SnapshotGenerationStore(AGENT, tmp_path / "gens")
 
     await _put(log, "a")                                   # seq 1
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @1
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @1
     await _put(log, "b")                                   # seq 2
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @2
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @2
     await _put(log, "c")                                   # seq 3
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @3
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @3
 
     floor = compute_retention_floor(
         RetentionPolicy(keep_generations=2), live_floor=log.current_seq + 1,
@@ -116,8 +117,8 @@ async def test_retained_checkpoints_reconstructable_after_clamped_truncate(tmp_p
     await log.truncate_below(floor)                         # drops seq 1
 
     # retained checkpoints still reconstruct correctly (gen base bakes truncated history)
-    assert _ids(reconstruct(AGENT, store, log, 2)) == ["a", "b"]
-    assert _ids(reconstruct(AGENT, store, log, 3)) == ["a", "b", "c"]
+    assert _ids(reconstruct(AGENT, store, log, 2, scope=GLOBAL_SCOPE)) == ["a", "b"]
+    assert _ids(reconstruct(AGENT, store, log, 3, scope=GLOBAL_SCOPE)) == ["a", "b", "c"]
 
 
 @pytest.mark.asyncio
@@ -133,12 +134,12 @@ async def test_retained_checkpoints_reconstructable_across_rewind(tmp_path):
     store = SnapshotGenerationStore(AGENT, tmp_path / "gens")
 
     await _put(log, "a")                                   # seq 1
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @1
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @1
     await _put(log, "b")                                   # seq 2 (will be abandoned)
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @2
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @2
     await rewind(log, target_n=1)                          # seq 3 — abandons (1,3) incl b
     await _put(log, "d")                                   # seq 4 (active, new branch)
-    store.record(reconstruct(AGENT, store, log, log.current_seq))  # gen @4
+    store.record(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE))  # gen @4
 
     floor = compute_retention_floor(
         RetentionPolicy(keep_generations=2), live_floor=log.current_seq + 1,
@@ -150,4 +151,4 @@ async def test_retained_checkpoints_reconstructable_across_rewind(tmp_path):
     await log.flush()
 
     # active-branch reconstruct at head: a (kept) + d (post-rewind), b abandoned.
-    assert _ids(reconstruct(AGENT, store, log, log.current_seq)) == ["a", "d"]
+    assert _ids(reconstruct(AGENT, store, log, log.current_seq, scope=GLOBAL_SCOPE)) == ["a", "d"]
