@@ -704,7 +704,7 @@ class _HistoryCompactionBundle:
     among this family's OWN three components (history_buffer ↔
     compaction_controller ↔ budget_advisor) is therefore threaded through
     the builder's LOCAL variables (``history_buffer`` /
-    ``compaction_controller``), never ``self._X``. Three reference
+    ``compaction_controller``), never ``self._X``. Four reference
     classes, judged one at a time:
       - **intra-6b eager** (this family's own components referencing each
         other at CONSTRUCTION time): LOCAL variable —
@@ -729,6 +729,20 @@ class _HistoryCompactionBundle:
         ``self._non_interactive`` /
         ``self._reasoning`` / ``self._active_branch_history`` /
         ``self._append_history`` / ``self.agent_name``.
+      - **bypassed-``__init__`` reachable** (#5765, found via 2 CI round-
+        trips — the crash this warning exists to prevent, reached from a
+        4th direction the 3 classes above don't cover): a method that
+        can be called on a ``Session`` built via ``Session.__new__(Session)``
+        plus manual field assignment — the shape tests use to exercise
+        ``load_history``/``restore_state`` without booting a full
+        session — can rely on NEITHER ``self._history_buffer`` (this
+        builder never ran) NOR any other Family 6b ``self._X`` set only
+        by this same builder. Such a method's logic must be a pure
+        function taking already-resolved values, never a method on
+        ``Session`` or ``RouterHistoryBuffer`` that reaches for the
+        other's object — see :func:`~reyn.runtime.chat_message.
+        compaction_coverage_from_summary`, the fix this class of bug
+        produced.
 
     #4552: this builder used to also take an explicit ``merge_action_usage``
     LOCAL param (the ``_merge_action_usage_from_candidates`` closure, a
