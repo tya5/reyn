@@ -342,9 +342,20 @@ class ChatReadModelCapabilities:
     # that ITS data is real too — the same "one spelling, two facts"
     # shape architect flagged on #5773's baseline during this same PR's
     # own review. `cache_usage_reported` keeps its EXISTING name and
-    # scope (the Ctx pane's recent-call line only, still False for
-    # remote); this new field covers ONLY the Cost pane's cumulative
-    # cache line (`chrome.py`'s OTHER `_cache_hit_line` call site).
+    # scope (the Ctx pane's recent-call line only) — this new field
+    # covers ONLY the Cost pane's cumulative cache line (`chrome.py`'s
+    # OTHER `_cache_hit_line` call site).
+    #
+    # #5774 (lead-coder BLOCKING, PR #5780): both flags are `True` for
+    # REMOTE now (`cache_usage_reported`'s own `ctx_recent_usage` got
+    # wired too, on this same PR) — this does NOT make the split
+    # pointless. The two answer DIFFERENT questions (Ctx pane's
+    # most-recent-call figure vs. Cost pane's session-cumulative figure)
+    # and can go out of sync independently in the future — either one
+    # could regress to unwired on its own without the other moving. The
+    # split is a structural fact about what each flag MEANS, not a
+    # description of today's VALUES; do not re-merge them just because
+    # both happen to read `True` right now.
     session_cache_usage_reported: bool
 
 
@@ -466,7 +477,12 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     tasks_reported=False,
     # #5771 stage②: session_cached_tokens is now genuinely wired — see
     # the field's own docstring for why this is a SPLIT from
-    # cache_usage_reported (which stays False above), not the same flag.
+    # cache_usage_reported above, not the same flag. #5774 later wired
+    # cache_usage_reported's own key (ctx_recent_usage) too, so both now
+    # read True — that is a coincidence of TODAY's state, not a reason to
+    # merge them back: they answer different questions (Ctx pane
+    # most-recent-call vs. Cost pane session-cumulative) and can drift
+    # apart again independently — see the field's own docstring.
     session_cache_usage_reported=True,
 )
 
