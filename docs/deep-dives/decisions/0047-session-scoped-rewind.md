@@ -25,10 +25,23 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 ## The decision
 
 1. **A reset-record carries a scope.** `(R, target_n, scope)` where `scope` is `(agent_name, session_id)` or `None`. **`None` means global** — exactly today's record. A legacy record with no field reads as `None`, so existing WALs need no migration and existing behaviour is unchanged.
-2. **`is_active` is derived per scope.** For a given `(agent, sid)`, the rewind chain is the global records **plus** the records scoped to that pair; `_abandoned_intervals`' latest-first composition is reused unchanged over that set. `build_active_predicate(state_log, *, scope)` takes the scope as a **required keyword-only argument** — never defaulted, so a consumer that forgets it fails at the call rather than silently behaving globally. Every existing consumer already knows which `(agent, sid)` it is evaluating; it passes a fact it holds, it does not compute a decision.
+2. **`is_active` is derived per scope, and the derivation belongs where the scope is known.** For a given `(agent, sid)`, the rewind chain is the global records **plus** the records scoped to that pair; `_abandoned_intervals`' latest-first composition is reused unchanged over that set. `build_active_predicate(state_log, *, scope)` takes the scope as a **required keyword-only argument** — never defaulted, so a consumer that forgets it fails at the call rather than silently behaving globally.
+
+   **Revised 2026-09-05 (#5769 stage 2, after stage 1 landed in [#5772](https://github.com/tya5/reyn/pull/5772)).** The first form of this decision said only that the predicate takes a scope; it left the predicate itself as a value a caller could build once and pass around. That is not sufficient, and the reason is the decision:
+
+   > **Scope is a property of the seq, not of the predicate object.** Every WAL entry routes to exactly one `(agent_name, session_id)` (`event_route_key`), so the correct rewind chain for a seq is its OWNER's chain. A predicate built once and applied to seqs of several owners answers all of them from one owner's chain, and nothing in its type or name says which.
+
+   Stage 1 measured the shape this produces: at six call sites the predicate was hoisted **above the very loop whose variables are the scope** (`_materialize_rewind`: `is_active` built above `for name … for sid …`, then asked about `sess_seq`, whose owner is `(name, sid)`). Those sites read as "global" for a reason — the hoist — that is itself what stage 2 changes. A discriminant asked about the call's *aggregate* shape therefore passes exactly the sites that must move.
+
+   **Therefore: the derivation is built where the scope is known, and a consumer passes a scope, never a predicate.** Concretely — a collaborator that used to accept a caller-hoisted `is_active` (`ConfigGenerationStore.latest_active`, `PipelineStateStore.latest_active`) takes `(state_log, *, scope)` and builds its own; a loop over owners builds inside the loop. The mis-scoped-predicate failure mode is then **unwritable**, not merely discouraged — the shape this ADR prefers over a rule in a docstring.
+
+   **The performance premise the old shape rested on is gone.** Those call sites carry `#2941` comments requiring one hoisted predicate "so the WAL is not re-scanned per X". Since **#2939** the rewind-record fetch is an incremental, per-`StateLog` cached tail-reader (`_RewindIndex`), so a fresh `build_active_predicate` costs one fold over the rewind records — O(records), not O(WAL). Those comments describe a world that no longer exists and are rewritten with this change. (A structure adopted for a performance reason outlives the reason; the reason must be re-read, not inherited.)
+
 3. **`checkout(seq, *, scope)`.** `scope=None` is the existing five-step global cut, untouched. A scoped checkout applies the same retention guard (the WAL floor is global and stays so), cancels and quiesces **only** the target session, appends one scoped reset-record (fsync'd before any reconstruction — the crash-idempotence keystone from 0038 is unchanged), and materialises **only** that `(name, sid)`.
 4. **A session-scoped rewind rewinds conversation and agent state only.** It never touches the shared workspace's files (neither does the global cut today) and it does not touch config generations (`config_generations.py` has no session notion; `mcp.yaml` / `cron.yaml` are workspace-level SSoT, outside a session's scope by construction).
 5. **Cross-session consistency is deliberately given up by a scoped rewind.** An A→B message is B's WAL entry (routed by `target`). Rewinding A alone leaves B holding a message A no longer remembers sending. This is the feature's definition, accepted by the owner, not a defect. **A caller who needs the consistent cut uses `scope=None`.**
+
+6. **Agent-level lifecycle is global; only session-level state is scoped.** A session-scoped rewind never creates, drops, archives, purges or un-archives an **agent** — those facts are agent-wide (`agent_created` / `agent_archived` / `agent_purged` carry `entity_kind="agent", name=…` and no session; the `.archived` tombstone is one marker per agent directory; archiving preserves every session, #1954). One session rewinding must not change the workspace's topology for every other session. What a scoped rewind does move is session-level state: session create / vanish, and the conversation and agent state of that `(name, sid)`. In code this is the split `_materialize_rewind` now makes — `GLOBAL_SCOPE` for the agent existence checks, `scope=(name, sid)` built inside the session loop. **This resolves `_reconcile_archived_as_of_cut`, which stage 2 left on hold**: archival is agent-wide, so `GLOBAL_SCOPE` is its final answer, not a placeholder. Decision 4 is the same rule applied to config generations, which have no session notion at all.
 
 ## Alternatives considered
 
@@ -36,7 +49,8 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 |---|---|
 | Keep the global cut only (0038 as is) | The owner asked for session-local rewind; the rejection's premise ("requires splitting workspace + WAL") is not what the code does. |
 | Split the WAL per session | Unnecessary — entries are already session-routed on the one log, and a split would break the single seq axis that cross-agent ordering rides on. |
-| `scope=None` as a default argument on the predicate | Rejected: with 12 consumers, one forgotten call site silently behaves globally and session-local rewind stops working for exactly that consumer, with no red. Required keyword-only fails loudly instead. |
+| `scope=None` as a default argument on the predicate | Rejected: with 9 consumers (the count measured on `origin/main` during #5772 co-vet; an earlier "12" counted docstring mentions), one forgotten call site silently behaves globally and session-local rewind stops working for exactly that consumer, with no red. Required keyword-only fails loudly instead. |
+| The caller hoists one predicate and passes it to collaborators (stage 1's shape) | Rejected on measurement: it lets a predicate built for one owner be asked about another owner's seq, and the hoist is invisible at the place the wrong answer is produced. Passing a **scope** instead makes the mis-scoped question unwritable. See decision 2's revision. |
 | Revert workspace files for a scoped rewind | Impossible without per-session workspaces, which 0038 rejected for destroying the single-SSoT invariant — and the global cut does not revert files today either. |
 
 ## Consequences
@@ -60,6 +74,9 @@ The only globally-derived thing in the substrate is `is_active(seq)`: the reset-
 - [ ] Calling `build_active_predicate` without `scope` fails.
 - [ ] Crash mid-scoped-rewind, then recover: only the scoped session is as-of-N (truncate-falsify form).
 - [ ] A target below the global WAL floor is rejected for a scoped checkout too.
+- [ ] No collaborator takes a caller-built `is_active` predicate: `git grep -nE 'is_active: .*Callable' -- src/` is empty.
+- [ ] A predicate is never built above a loop whose variables are the scope (`_materialize_rewind`'s session predicate is built inside the `sid` loop).
+- [ ] A session-scoped rewind leaves every agent's existence and `.archived` state untouched (decision 6).
 - [ ] ADR-0038 is byte-identical.
 
 ## References
