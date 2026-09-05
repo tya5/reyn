@@ -860,13 +860,27 @@ class CompactionController:
                     )
                     continue
                 raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
-        # #5791: a genuine TURN count (from `_select_candidates(turns, ...)`
-        # above) — do not confuse with `engine.py`'s own `new_message_count`
-        # on `compaction_started` (a different producer, a different event,
-        # counting wire messages, not turns). The two used to share this
-        # field's name for two different quantities; see `engine.py`'s
-        # own `compact()` docstring for the full #5791 finding.
-        new_turn_count = _n_candidates_offered
+        # #5791 (BLOCKING correction, lead-coder review of this PR's own
+        # first pass): NOT a genuine turn count — `turns` (built above from
+        # `[m for m in history if is_compaction_eligible(m)]`) is a list of
+        # individual `ChatMessage` entries, one per wire message, never
+        # grouped into conversational turns anywhere in this method or in
+        # `_select_candidates`. The `turns` NAME is the defect: the same
+        # misreading it produced here (my own first-pass claim that this
+        # WAS a genuine turn count) is the third instance of the exact
+        # shape #5592 and this issue's own owner-hit already are — a
+        # message list, misnamed, misleading a reader who trusts the name
+        # instead of the code. `new_message_count` — the SAME quantity, and
+        # now the SAME name, as `engine.py`'s own field on
+        # `compaction_started` (they were never actually different
+        # quantities; they were the SAME quantity under one shared,
+        # incorrect name — see that method's own docstring for the fuller
+        # #5791 account). The local variable name `turns` itself is left
+        # unrenamed here (out of this fix's own scope — it threads through
+        # `_select_candidates`'s own parameter and several docstrings/
+        # comments this method shares no wire boundary with); only the
+        # WIRE-FACING field name is corrected.
+        new_message_count = _n_candidates_offered
         try:
             structured = chat_summary.to_dict()
             covers = chat_summary.covers_through_seq or _covers_through
@@ -884,7 +898,7 @@ class CompactionController:
             self._append_history(summary_msg)
             self._events.emit(
                 "compaction_completed",
-                new_turn_count=new_turn_count,
+                new_message_count=new_message_count,
                 covers_through_seq=covers,
                 section_lengths={
                     k: len(v) if isinstance(v, list) else len(str(v))
