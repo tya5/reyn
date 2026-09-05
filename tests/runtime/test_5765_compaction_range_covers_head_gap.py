@@ -256,3 +256,52 @@ def test_legacy_summary_missing_covers_from_seq_hides_nothing(tmp_path):
             f"hide NOTHING (safe-side fallback) — got survivors "
             f"{sorted(wire_turn_contents)!r}"
         )
+
+
+def test_covers_from_seq_range_boundary_is_inclusive_on_both_ends(tmp_path):
+    """Tier 2: #5765 co-vet (lead-coder) — the boundary correctness of
+    ``covers_from_seq <= seq <= covers_through_seq`` was measured only as
+    a pure-function table before this, never through the real
+    ``RouterHistoryBuffer.build_history`` path. A turn whose seq exactly
+    EQUALS either bound must still be treated as folded (hidden) — an
+    off-by-one on either side would either resurface a genuinely-folded
+    boundary turn or over-hide a turn just outside the range."""
+    history: list = [
+        ChatMessage(
+            role="summary", content="s", seq=0,
+            meta={"structured": {}, "covers_from_seq": 3, "covers_through_seq": 7},
+        ),
+    ]
+    for i in range(1, 11):
+        history.append(ChatMessage(
+            role="user" if i % 2 else "assistant", content=_turn_content(i), seq=i,
+        ))
+
+    buf = RouterHistoryBuffer(
+        history_fn=lambda: history,
+        compaction=CompactionConfig(use_chars4_estimate=True),
+        compaction_controller=None,
+        model_fn=lambda: "openai/gpt-4o",
+        events=None,
+        media_store=None,
+        router_host=None,
+        universal_wrappers_enabled=False,
+        non_interactive=False,
+    )
+
+    wire = buf.build_history()
+    wire_turn_contents = {
+        m["content"] for m in wire
+        if isinstance(m.get("content"), str) and m["content"].startswith("turn-")
+    }
+
+    for i in (3, 4, 5, 6, 7):  # inside [covers_from, covers_through], both ends inclusive
+        assert _turn_content(i) not in wire_turn_contents, (
+            f"turn-{i:03d} is inside the folded range [3, 7] (inclusive) and "
+            f"must be hidden; got survivors {sorted(wire_turn_contents)!r}"
+        )
+    for i in (1, 2, 8, 9, 10):  # strictly outside the range on either side
+        assert _turn_content(i) in wire_turn_contents, (
+            f"turn-{i:03d} is outside the folded range [3, 7] and must "
+            f"survive; got survivors {sorted(wire_turn_contents)!r}"
+        )
