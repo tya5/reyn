@@ -65,12 +65,19 @@ from reyn.interfaces.repl.read_model import (
 
 
 def test_capabilities_declare_the_3_closing_pass_keys():
-    """Tier 1: the declarations themselves."""
+    """Tier 1: the declarations themselves.
+
+    #5771 stage②: ``usage_breakdown_reported`` flips to ``True`` for
+    REMOTE here — ``usage`` (prompt/completion/total) is now genuinely
+    wired (see ``project_remote_snapshot``'s own inline comment at that
+    key); this is a deliberate, real capability change, not a regression
+    of this test's own #5009 finding. The other 2 are untouched by
+    stage② and stay exactly as #5009 declared them."""
     assert LOCAL_CHAT_READ_CAPABILITIES.cron_jobs_reported is True
     assert LOCAL_CHAT_READ_CAPABILITIES.usage_breakdown_reported is True
     assert LOCAL_CHAT_READ_CAPABILITIES.ctx_compaction_reported is True
     assert REMOTE_CHAT_READ_CAPABILITIES.cron_jobs_reported is False
-    assert REMOTE_CHAT_READ_CAPABILITIES.usage_breakdown_reported is False
+    assert REMOTE_CHAT_READ_CAPABILITIES.usage_breakdown_reported is True
     assert REMOTE_CHAT_READ_CAPABILITIES.ctx_compaction_reported is False
 
 
@@ -79,7 +86,11 @@ def test_the_shared_helper_derives_all_3_from_the_capabilities_given():
     these 3 fields specifically — see that function's own docstring, in
     read_model.py, for why ONE generic helper (not 4 near-identical
     single-field ones, the shape this PR replaced) is what both
-    producers derive every `*_reported` key from."""
+    producers derive every `*_reported` key from.
+
+    #5771 stage②: ``usage_breakdown_reported`` is ``True`` for remote now
+    — see ``test_capabilities_declare_the_3_closing_pass_keys`` above for
+    why."""
     local_keys = reported_snapshot_keys(LOCAL_CHAT_READ_CAPABILITIES)
     assert local_keys["cron_jobs_reported"] is True
     assert local_keys["usage_breakdown_reported"] is True
@@ -87,18 +98,23 @@ def test_the_shared_helper_derives_all_3_from_the_capabilities_given():
 
     remote_keys = reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)
     assert remote_keys["cron_jobs_reported"] is False
-    assert remote_keys["usage_breakdown_reported"] is False
+    assert remote_keys["usage_breakdown_reported"] is True
     assert remote_keys["ctx_compaction_reported"] is False
 
 
-def test_remote_snapshot_declares_all_3_unreported():
+def test_remote_snapshot_declares_2_of_the_3_unreported():
     """Tier 1: the real producer — `project_remote_snapshot` — carries
-    all 3 declarations through, paired with the existing graceful
-    degrade values those keys already carried."""
+    the declarations through, paired with the existing graceful degrade
+    values those keys already carried.
+
+    #5771 stage②: renamed from `..._declares_all_3_unreported` —
+    `usage`/`usage_breakdown_reported` is genuinely wired now (see
+    `test_capabilities_declare_the_3_closing_pass_keys` above), so only
+    2 of the original 3 stay unreported through this producer."""
     snap = project_remote_snapshot({})
     assert snap["cron_jobs_reported"] is False
     assert snap["cron_jobs"] == []
-    assert snap["usage_breakdown_reported"] is False
+    assert snap["usage_breakdown_reported"] is True
     assert snap["ctx_compaction_reported"] is False
     assert snap["ctx_compaction_status_fn"] is None
 

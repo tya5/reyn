@@ -32,6 +32,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from reyn.core.present.guard import get_neutralizer
+from reyn.llm.pricing import CostBreakdown
+
+
+def _cost_breakdown_wire(breakdown: "CostBreakdown | None") -> "dict | None":
+    """#5771 stage②: the ONE place ``project_status`` puts a ``CostBreakdown``
+    onto the wire — ``.to_dict()`` (llm/pricing.py), never a second,
+    hand-rolled serialization (architect's own explicit instruction on
+    #5771: a raw dataclass instance would otherwise reach ``json.dumps``
+    with no ``default=`` at the SSE emit boundary and raise ``TypeError``,
+    the exact failure the instruction names). ``None`` passes through
+    unchanged — a snapshot that never populated this key (a test double,
+    or a pre-#5771 producer) degrades to "nothing to show", never a
+    fabricated all-zero breakdown."""
+    return breakdown.to_dict() if breakdown is not None else None
 
 
 def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) -> dict:
@@ -92,9 +106,41 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "mcp_subscriptions": snap.get("mcp_subscriptions", []),
         "cost_agent": snap.get("cost_agent", 0.0),
         "cost_total": snap.get("cost_total", 0.0),
+        # #5771 stage②: the session-cumulative TOTAL (a different fact
+        # from cost_agent above — see this project's own #5773 finding,
+        # "cost_usd was aliased to cost_agent" — now genuinely wired
+        # under its own name, not read off a neighbour).
+        "cost_usd": snap.get("cost_usd", 0.0),
+        # #5771 stage②: the 3-scope CostBreakdown table (Input/Output/
+        # Saved/Saved% rows) the Cost pane already renders locally —
+        # encoded via CostBreakdown.to_dict() (llm/pricing.py), the ONE
+        # existing serialization, never a second one invented for the
+        # wire. None only if the local snapshot itself never populated
+        # the key (a test double, or a pre-#5771 producer) — never a
+        # graceful-degrade placeholder for a real absence, since the
+        # session-scope object is never None once #cost-panel-breakdown
+        # actually ran.
+        "cost_breakdown_session": _cost_breakdown_wire(snap.get("cost_breakdown_session")),
+        "cost_breakdown_agent": _cost_breakdown_wire(snap.get("cost_breakdown_agent")),
+        "cost_breakdown_project": _cost_breakdown_wire(snap.get("cost_breakdown_project")),
+        # #5771 stage②: (prompt, completion, total) — a plain int triple,
+        # already JSON-safe as-is (no CostBreakdown-style encode needed).
+        "usage": snap.get("usage", (0, 0, 0)),
         "agent_tokens": snap.get("agent_tokens", 0),
         "ctx_used": snap.get("ctx_used", 0),
         "ctx_window": snap.get("ctx_window", 0),
+        # #5771 stage②: cache-hit accounting is genuinely measured
+        # LOCALLY (status.py's own inline comment at this key) — now
+        # forwarded for real, the same pattern #5094/#5185 already used
+        # for the agent roster / visibility keys above.
+        "session_cached_tokens": snap.get("session_cached_tokens", 0),
+        # #5771 stage②: the current/most-recent turn's own total — None
+        # when there is no figure yet (status.py's own convention: never
+        # a fabricated 0). turn_usage_fn (the KEYED per-row accessor the
+        # gutter uses) is a callable and stays OFF the wire entirely —
+        # not read here, not forwarded by project_remote_snapshot either.
+        "turn_cost_usd": snap.get("turn_cost_usd"),
+        "turn_tokens": snap.get("turn_tokens"),
         "waiting_on": waiting_on,
         # #5050: the pending closed-set intervention (id/prompt/detail/
         # choices), or None — the source ``RemoteReadModel.
