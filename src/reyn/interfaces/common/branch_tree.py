@@ -62,7 +62,13 @@ def build_branch_tree_rows(
     checkpoint rows (newest seq first). Row shapes::
 
         {"row": "header", "branch_id", "label", "head_seq", "is_active", "depth"}
-        {"row": "checkpoint", "seq", "ts", "kind", "anchor", "branch_id", "depth"}
+        {"row": "checkpoint", "seq", "ts", "kind", "anchor", "branch_id", "depth",
+         "name", "sid"}
+
+    #5769 stage 3 ④: ``name``/``sid`` (the owning ``(agent, session)`` pair,
+    possibly both ``None`` — #5782) now ride through to the checkpoint row
+    unchanged, so a tree-view row can carry the same "is this my own
+    session's checkpoint" marker the flat picker already renders.
     """
     # Lineage-correct grouping: trust the substrate's per-checkpoint branch_id.
     cps_by_branch: dict[object, list[dict]] = defaultdict(list)
@@ -110,6 +116,11 @@ def build_branch_tree_rows(
                 "anchor": cp.get("anchor", ""),
                 "branch_id": branch["branch_id"],
                 "depth": depth + 1,
+                # #5769 stage 3 ④: carried through unchanged (possibly
+                # both None -- #5782) so a consumer can mark whether this
+                # checkpoint belongs to the invoking session.
+                "name": cp.get("name"),
+                "sid": cp.get("sid"),
             })
         for child in sorted(children.get(branch["branch_id"], []), key=_sibling_key):
             _emit(child, depth + 1)

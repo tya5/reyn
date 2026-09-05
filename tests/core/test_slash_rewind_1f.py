@@ -67,6 +67,10 @@ class _CapturingSession:
 
     def __init__(self, registry=None) -> None:
         self.agent_name = "test"
+        # #5769 stage 3 ④: ``rewind_cmd`` now reads this PUBLIC identity (the
+        # same shape ``Session.session_id`` exposes) to build its default
+        # session-local ``checkout`` scope.
+        self.session_id = "main"
         self._registry = registry
         self.outbox_msgs: list = []
         self._pending_command_ui = None

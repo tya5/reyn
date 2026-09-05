@@ -68,7 +68,9 @@ WAL は**同期耐久ログ**（追記ごとに fsync）であり、P6 監査イ
 
 すべての WAL イベントは**グローバル単一シーケンス名前空間**を共有します。seq N での一貫カット巻き戻しは明確に定義されます：「seq N+1 が書き込まれる直前のすべての基板の状態」。グローバル seq がカットを正確にします。基板ごとのクロックを調整する必要はありません。
 
-カットは**Session と Agent にまたがるプロセスグローバル**でもあります：1 つの WAL があるため、単一のリセットレコードがすべてのロード済み [Session](../multi-agent/sessions.md) と Agent を目標 seq にアトミックに移動させます。巻き戻しは 1 つの Session にスコープされません。Per-Session の粒度は**永続性**（スナップショットが Session ごとに再キー化）とクラッシュリカバリ再生にありますが、巻き戻し操作自体にはありません。
+カットは**Session と Agent にまたがるプロセスグローバル**にも、**1 つの Session にスコープ**することもできます — 1 つの WAL があるため、スコープなしのリセットレコードがすべてのロード済み [Session](../multi-agent/sessions.md) と Agent を目標 seq にアトミックに移動させる一方、`(agent_name, session_id)` にスコープされたリセットレコードはその 1 つの Session だけを cancel/quiesce・reset-record 追記・materialize し、他のすべての Session は head のままです。`checkout(seq, *, scope)` は `scope` を必須キーワードとして取ります：`None` が（この仕組み導入前と変わらない）グローバルカット、`(name, sid)` の対がスコープ付きカットです。設計の全体は [ADR-0047](../../deep-dives/decisions/0047-session-scoped-rewind.md) を参照してください — スコープ付き巻き戻しが共有ワークスペースや agent レベルのライフサイクル（create/archive/purge はグローバルな事実のまま、decision 6）に一切触れない理由、そしてクロスセッションの一貫性が意図的に犠牲にされる理由（decision 5）を含みます。
+
+**ユーザーが見る既定は session-local です**（owner 裁定 2026-09-05；ADR-0047 decision 3）— `/rewind <N>` は追加の語なしでは呼び出した Session のみを巻き戻し、`/rewind <N> global` が明示的に全体カットを選びます。**API 自体は既定を持ちません**（`scope` は必須キーワードで、既定値化されることはありません）— コマンド層がユーザーの意図を判断し、それを API に明示的に渡す唯一の場所です。UI の既定が API の既定になってはいけません。
 
 ### 追記専用リセットレコードとブランチ状態
 

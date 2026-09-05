@@ -4842,8 +4842,21 @@ class TextualChatApp(App):
             # merely existing. ``show_tree`` falls back to the flat list on its
             # own when there is only one branch — the App does not decide which
             # shape to draw, it hands over both facts.
+            # #5769 stage 3 ④: also hand over ``default_scope`` — the
+            # session-local target a bare Enter/typed ``/rewind <seq>``
+            # will use (ADR-0047 decision 3) — so the picker can state it
+            # BEFORE the operator picks a row, not just in the summary
+            # reply after. The slash handler is the one place that KNOWS
+            # this (the invoking session's own identity); the App only
+            # relays the fact, it does not derive it.
+            raw_scope = (request or {}).get("default_scope") or {}
+            raw_agent, raw_sid = raw_scope.get("agent"), raw_scope.get("sid")
+            default_scope: "tuple[str, str] | None" = (
+                (raw_agent, raw_sid) if raw_agent is not None and raw_sid is not None else None
+            )
             self._rewind_picker.show_tree(
                 list((request or {}).get("branches") or []), list(points),
+                default_scope=default_scope,
             )
             try:
                 await self._transport.clear_pending_command_ui()

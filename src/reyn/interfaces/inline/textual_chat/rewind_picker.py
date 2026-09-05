@@ -47,10 +47,10 @@ from reyn.interfaces.common.branch_tree import ROW_HEADER, build_branch_tree_row
 _TS_MAX = 40
 
 
-def rewind_row_text(point: "dict") -> str:
+def rewind_row_text(point: "dict", *, default_scope: "tuple[str, str] | None" = None) -> str:
     """The one-line label for one rewind point.
 
-    Carries the four columns the user guide documents for this picker
+    Carries the columns the user guide documents for this picker
     (``docs/guide/for-users/time-travel.md``) in that order — ``seq`` (also what
     the user would type as ``/rewind <seq>``), the checkpoint time, the
     OS-level boundary kind, and the anchor preview — off the keys
@@ -63,6 +63,22 @@ def rewind_row_text(point: "dict") -> str:
     exists on every point (the truncated last human prompt at that
     checkpoint, ``AnchorStore.truncate_anchor`` — already cut to 80 chars
     upstream, never re-truncated here); this was purely a rendering gap.
+
+    #5769 stage 3 ④ (architect scope: "global or session-local visible
+    BEFORE the operation"): ``default_scope`` is the ``(agent_name,
+    session_id)`` a bare ``Enter``/typed ``/rewind <seq>`` on THIS row will
+    use (the invoking session's own identity — ADR-0047 decision 3's
+    session-local default; picking a row never changes WHICH session gets
+    rewound, only WHICH seq). So the marker answers "is this row's own
+    checkpoint the same session Enter would affect": a point whose
+    ``name``/``sid`` came back ``None`` from ``list_rewind_points`` (an
+    unresolved owner — #5782's own fix) is marked ``(owner unknown)``,
+    never silently rendered as if it were this session's own; a point
+    genuinely owned by a DIFFERENT ``(name, sid)`` than ``default_scope``
+    is marked with that owner so picking it doesn't read as "obviously
+    mine". A point that already matches ``default_scope``, or when no
+    ``default_scope`` is given (the ``--cui``/no-session-context caller),
+    carries no marker.
 
     Pure and importable without Textual mounting anything, so the row content is
     testable on its own.
@@ -78,7 +94,14 @@ def rewind_row_text(point: "dict") -> str:
     anchor = point.get("anchor")
     if anchor:
         bits.append(f"「{anchor}」")
-    return " · ".join(bits)
+    text = " · ".join(bits)
+    if default_scope is not None:
+        owner_name, owner_sid = point.get("name"), point.get("sid")
+        if owner_name is None or owner_sid is None:
+            text += "  (owner unknown)"
+        elif (owner_name, owner_sid) != default_scope:
+            text += f"  ({owner_name}/{owner_sid})"
+    return text
 
 
 class RewindPicker(Vertical):
@@ -130,11 +153,13 @@ class RewindPicker(Vertical):
         #: parallel-list discipline the drawer's ``_pane_commands`` uses).
         self._seqs: "list[int | None]" = []
 
+    #: Base title text — unchanged from before #5769 stage 3 ④ when no
+    #: ``default_scope`` is known (defensive; the slash handler always
+    #: supplies one today).
+    _TITLE_BASE = "rewind to a checkpoint (enter to check out · esc to cancel)"
+
     def compose(self) -> ComposeResult:
-        yield Static(
-            "rewind to a checkpoint (enter to check out · esc to cancel)",
-            id="rewind-picker-title",
-        )
+        yield Static(self._TITLE_BASE, id="rewind-picker-title")
         yield OptionList(id="rewind-picker-options")
 
     def on_mount(self) -> None:
@@ -144,7 +169,30 @@ class RewindPicker(Vertical):
         """Whether the picker is currently offering any checkpoint."""
         return any(s is not None for s in self._seqs)
 
-    def show_points(self, points: "list[dict]") -> None:
+    def _set_title(self, default_scope: "tuple[str, str] | None") -> None:
+        """#5769 stage 3 ④ (architect scope): state which of the two rewind
+        shapes ``Enter``/typed ``/rewind <seq>`` will use, BEFORE the
+        operator picks a row — not only in the after-the-fact summary
+        reply. ADR-0047 decision 3: the default is session-local, to
+        ``default_scope`` itself (the invoking session); typing
+        ``/rewind <seq> global`` after picking a seq from here rewinds
+        every session instead."""
+        title = self._TITLE_BASE
+        if default_scope is not None:
+            name, sid = default_scope
+            title = (
+                f"rewind to a checkpoint — default: session-local ({name}/{sid}); "
+                f"'/rewind <seq> global' rewinds every session instead "
+                "(enter to check out · esc to cancel)"
+            )
+        try:
+            self.query_one("#rewind-picker-title", Static).update(title)
+        except Exception:
+            pass  # not composed yet
+
+    def show_points(
+        self, points: "list[dict]", *, default_scope: "tuple[str, str] | None" = None,
+    ) -> None:
         """Populate + reveal the picker from the command-UI request's points.
 
         Rows are built as ``Content`` LITERALS (never bare ``str``) for the same
@@ -152,11 +200,13 @@ class RewindPicker(Vertical):
         free-form text that can contain square brackets, which Textual would
         otherwise eat as console markup.
         """
+        self._set_title(default_scope)
         options = self.query_one("#rewind-picker-options", OptionList)
         options.clear_options()
         self._seqs = [int(p["seq"]) for p in points if p.get("seq") is not None]
         rows = [
-            Content(rewind_row_text(p)) for p in points if p.get("seq") is not None
+            Content(rewind_row_text(p, default_scope=default_scope))
+            for p in points if p.get("seq") is not None
         ]
         if not rows:
             self.hide()
@@ -166,7 +216,10 @@ class RewindPicker(Vertical):
         self.display = True
         options.focus()
 
-    def show_tree(self, branches: "list[dict]", points: "list[dict]") -> None:
+    def show_tree(
+        self, branches: "list[dict]", points: "list[dict]", *,
+        default_scope: "tuple[str, str] | None" = None,
+    ) -> None:
         """#3987 ②: populate from the branch TREE rather than a flat list.
 
         Falls back to :meth:`show_points` when there is nothing to show a tree
@@ -188,9 +241,10 @@ class RewindPicker(Vertical):
             # so the flat path restores it here. Getting this wrong would
             # silently flip the row order for every operator who never forked
             # — the exact case the deny criterion says must not change.
-            self.show_points(list(reversed(points)))
+            self.show_points(list(reversed(points)), default_scope=default_scope)
             return
 
+        self._set_title(default_scope)
         options = self.query_one("#rewind-picker-options", OptionList)
         options.clear_options()
         tree_rows = build_branch_tree_rows(branches, points)
@@ -208,7 +262,9 @@ class RewindPicker(Vertical):
                 continue
             if row.get("seq") is None:
                 continue
-            rendered.append(Option(Content(f"{indent}  {rewind_row_text(row)}")))
+            rendered.append(Option(Content(
+                f"{indent}  {rewind_row_text(row, default_scope=default_scope)}"
+            )))
             seqs.append(int(row["seq"]))
 
         if not any(s is not None for s in seqs):
