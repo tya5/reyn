@@ -860,6 +860,12 @@ class CompactionController:
                     )
                     continue
                 raise  # FATAL/RETRYABLE — bare, unchanged (#5633)
+        # #5791: a genuine TURN count (from `_select_candidates(turns, ...)`
+        # above) — do not confuse with `engine.py`'s own `new_message_count`
+        # on `compaction_started` (a different producer, a different event,
+        # counting wire messages, not turns). The two used to share this
+        # field's name for two different quantities; see `engine.py`'s
+        # own `compact()` docstring for the full #5791 finding.
         new_turn_count = _n_candidates_offered
         try:
             structured = chat_summary.to_dict()

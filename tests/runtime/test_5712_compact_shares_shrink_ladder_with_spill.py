@@ -84,7 +84,7 @@ def _emit_compaction_started(
     ]
     events.emit(
         "compaction_started",
-        new_turn_count=len(input_chunk.messages) - len(_summary_messages),
+        new_message_count=len(input_chunk.messages) - len(_summary_messages),
         covers_through_seq=covers_through if isinstance(covers_through, int) else None,
         covers_through_unavailable_reason=(
             None if isinstance(covers_through, int) else covers_through.value

@@ -9,7 +9,8 @@ display it.
 
 Pins:
   1. ``compaction_completed`` event → ``OutboxMessage(kind="system",
-     text="[↑ N turns compacted]")``.
+     text="[↑ N turns compacted]")``. ``new_turn_count`` there is a real
+     turn/candidate count (``CompactionController._select_candidates``).
   2. Pluralisation: ``N=1`` → "1 turn", ``N>1`` → "N turns".
   3. Missing ``new_turn_count`` falls back to a generic marker (=
      forward-compat with event-shape variation).
@@ -26,6 +27,15 @@ Pins:
      ``compaction_failed`` on raise — see ``engine.py``'s own comment on
      ``compact()``'s raise path) — the started marker is never left
      dangling.
+  6. #5791 (owner-hit): ``compaction_started``'s own count field is
+     ``new_message_count`` — a DIFFERENT quantity from pin 1's
+     ``new_turn_count`` (a different producer, ``engine.py``, counting
+     wire messages, not turns), despite sharing the "turn" word in pin
+     1's/pin 5's marker text where each genuinely means turns/messages.
+     The two used to share ONE field name for two different quantities —
+     the owner-visible incident (`[⟳ compacting 3925 turns]` against a
+     73-user-message history) this file's own #5791 tests pin the fix
+     for.
 """
 from __future__ import annotations
 
@@ -44,34 +54,42 @@ def _drain(q: asyncio.Queue) -> list[Any]:
 
 
 def test_compaction_started_emits_system_marker() -> None:
-    """Tier 2: #5633 — compaction_started with new_turn_count writes
-    [⟳ compacting N turns]. Before this handler, the event existed
+    """Tier 2: #5633 — compaction_started with new_message_count writes
+    [⟳ compacting N messages]. Before this handler, the event existed
     (engine.py's own compact() emits it, verified) but nothing in
     src/reyn/interfaces/ ever consumed it — completed/failed both had a
-    marker, started had none."""
+    marker, started had none.
+
+    #5791 (owner-hit): the field is ``new_message_count`` (a wire-message
+    count), never ``new_turn_count`` — that name belongs to a genuinely
+    different, turn-counting field on ``compaction_completed`` (a
+    different producer). Displaying this one as "turns" produced a real
+    owner-visible incident: `[⟳ compacting 3925 turns]` against a
+    73-user-message history."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(
         type="compaction_started",
-        data={"new_turn_count": 8, "covers_through_seq": 42, "had_previous": False},
+        data={"new_message_count": 8, "covers_through_seq": 42, "had_previous": False},
     ))
     msgs = _drain(q)
     (only,) = msgs
     assert only.kind == "system"
-    assert only.text == "[⟳ compacting 8 turns]"
+    assert only.text == "[⟳ compacting 8 messages]"
 
 
-def test_compaction_started_singular_turn_uses_singular_label() -> None:
-    """Tier 2: pluralisation — 1 turn is singular, mirrors completed's own."""
+def test_compaction_started_singular_message_uses_singular_label() -> None:
+    """Tier 2: pluralisation — 1 message is singular, same convention
+    completed's own turn-pluralisation uses."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
-    fwd(Event(type="compaction_started", data={"new_turn_count": 1}))
+    fwd(Event(type="compaction_started", data={"new_message_count": 1}))
     msgs = _drain(q)
-    assert msgs[0].text == "[⟳ compacting 1 turn]"
+    assert msgs[0].text == "[⟳ compacting 1 message]"
 
 
 def test_compaction_started_missing_count_uses_generic_marker() -> None:
-    """Tier 2: forward-compat fallback when new_turn_count is absent —
+    """Tier 2: forward-compat fallback when new_message_count is absent —
     mirrors compaction_completed's own established shape."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
@@ -83,12 +101,27 @@ def test_compaction_started_missing_count_uses_generic_marker() -> None:
 
 def test_compaction_started_zero_count_uses_generic_marker() -> None:
     """Tier 2: a 0-count event is treated as missing — never a spurious
-    "[⟳ compacting 0 turns]"."""
+    "[⟳ compacting 0 messages]"."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
-    fwd(Event(type="compaction_started", data={"new_turn_count": 0}))
+    fwd(Event(type="compaction_started", data={"new_message_count": 0}))
     msgs = _drain(q)
     assert msgs[0].text == "[⟳ compacting history]"
+
+
+def test_compaction_started_ignores_a_legacy_new_turn_count_field() -> None:
+    """Tier 2: #5791 deny — the OLD field name must not be silently
+    honoured any more (that would re-conflate the two producers' fields
+    the moment anything still emits the old name); a stray
+    ``new_turn_count`` on a ``compaction_started`` payload degrades to
+    the generic marker, same as any other absent/unrecognised count."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_started", data={"new_turn_count": 3925}))
+    msgs = _drain(q)
+    assert msgs[0].text == "[⟳ compacting history]", (
+        f"a legacy new_turn_count must not resurrect the old mislabel; got {msgs[0].text!r}"
+    )
 
 
 def test_compaction_completed_emits_system_marker() -> None:
@@ -481,10 +514,10 @@ def test_compaction_started_carries_the_episode_marker_meta() -> None:
     (e.g. AG-UI)."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
-    fwd(Event(type="compaction_started", data={"new_turn_count": 3}))
+    fwd(Event(type="compaction_started", data={"new_message_count": 3}))
     (only,) = _drain(q)
     assert only.meta.get("compaction_episode_marker") is True
-    assert only.text == "[⟳ compacting 3 turns]", "the marker text itself is unchanged"
+    assert only.text == "[⟳ compacting 3 messages]", "the marker text itself is unchanged"
 
 
 def test_compaction_completed_carries_the_episode_marker_meta() -> None:
