@@ -254,6 +254,21 @@ class OpContext:
     # DockerEnvironmentBackend bound to a specific container + host workspace)
     # that a name-based factory cannot construct. Generic: any caller owning such a resource may inject
     # one; None preserves the default name-based platform auto-selection.
+    #
+    # #5820 (scope correction, lead-coder review): this seam's own 2 real
+    # readers (``sandboxed_exec.py``, ``skill_install.py`` — both
+    # ``ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)``)
+    # never distinguish a genuinely stateful injected backend from one a
+    # caller resolved early by NAME through the SAME name-based table
+    # ``get_default_backend`` itself uses — "stateful" above names the
+    # motivating use case (why this seam exists at all), not a capability
+    # this field's readers gate on. ``tools/exec.py``'s bridge is such an
+    # early-resolved caller: it used to instead overwrite
+    # ``sandbox_config`` wholesale to thread a backend NAME through
+    # (#5820's own root cause — that overwrite clobbered the operator's
+    # declared policy `sandbox_config` also carries); it now resolves the
+    # name to an instance and sets THIS field instead, never touching
+    # ``sandbox_config`` post-construction.
     sandbox_backend: "SandboxBackend | None" = None
 
     # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy (dict of

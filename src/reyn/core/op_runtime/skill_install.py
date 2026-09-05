@@ -233,10 +233,13 @@ async def _shallow_clone(git_url: str, dest: Path, ctx: OpContext) -> str | None
     The destination directory is REMOVED before cloning so this function
     is idempotent (re-install overwrites the previous clone).
 
-    Uses ``ctx.sandbox_backend`` (an injected stateful backend) or
-    ``get_default_backend(ctx.sandbox_config)`` for backend SELECTION (so the
-    operator's configured enforcement mechanism governs it, same as
-    ``sandboxed_exec``) but a purpose-built ``SandboxPolicy`` for this specific
+    Uses ``ctx.sandbox_backend`` (an injected instance — #5820: either a
+    genuinely stateful backend, or one a caller resolved early by NAME
+    through the same table ``get_default_backend`` uses; this read never
+    distinguishes the two) or ``get_default_backend(ctx.sandbox_config)``
+    for backend SELECTION (so the operator's configured enforcement
+    mechanism governs it, same as ``sandboxed_exec``) but a purpose-built
+    ``SandboxPolicy`` for this specific
     operation: ``network=True`` is not overridable here because cloning over
     the network is what the operation IS — an operator policy that forces
     ``network: false`` globally would make every git-sourced skill install
