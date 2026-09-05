@@ -408,6 +408,27 @@ def active_rewind_target(state_log: StateLog) -> int | None:
     return max(records, key=lambda t: t[0])[1]
 
 
+def active_rewind_target_with_scope(
+    state_log: StateLog,
+) -> "tuple[int, tuple[str, str] | None] | None":
+    """``(target_n, scope)`` of the active reset-record, or ``None`` when no
+    rewind exists — #5769 stage 3's scope-aware sibling of
+    :func:`active_rewind_target` above.
+
+    Crash recovery needs not just WHERE the active rewind points but WHOSE
+    scope it was written under, to materialise only that ``(name, sid)`` on
+    a scoped crash-recovery (ADR-0047 decision 3's own recovery half) —
+    ``active_rewind_target`` itself stays unchanged (it still has its own
+    caller-independent contract; this is a genuinely new question, not a
+    replacement). Same latest-wins rule: the active reset-record is the
+    highest-seq one."""
+    records = _rewind_records_with_scope(state_log)
+    if not records:
+        return None
+    _r, n, scope = max(records, key=lambda t: t[0])
+    return n, scope
+
+
 # ── Phase-2 fork: derived branch tree (ADR-0038 D8, #1533) ─────────────────────
 #
 # Grounded in the SAME abandoned-interval machinery as is_active (inherits the
@@ -528,7 +549,9 @@ def lineage_predecessor(
 
 
 async def checkout(
-    state_log: StateLog, *, target_seq: int, supersedes: int | None = None,
+    state_log: StateLog, *, target_seq: int,
+    scope: "tuple[str, str] | None" = None,
+    supersedes: int | None = None,
 ) -> int:
     """Append a reset-record to ``target_seq`` UNCONDITIONALLY (Phase-2 D8 fork).
 
@@ -545,10 +568,28 @@ async def checkout(
 
     ``supersedes`` is **audit-only** (records the prior active pointer for the
     branch-tree audit trail); ``is_active`` derivation does not depend on it.
-    """
-    return await state_log.append(
-        REWIND_KIND, target_n=int(target_seq), supersedes=supersedes,
-    )
+
+    #5769 stage 3 (ADR-0047 decision 3): ``scope=None`` (the default) writes
+    the SAME record shape as before this parameter existed — no ``scope``
+    key at all in the WAL entry, byte-identical to every pre-#5769 call —
+    so every existing caller (``rewind()`` below, and the ~20 direct test
+    call sites across the suite) is completely unaffected. ``scope=(agent,
+    sid)`` writes that pair into the entry's own ``scope`` field, read back
+    by ``build_active_predicate``'s own scope filter (stage 1). Unlike
+    ``build_active_predicate``'s ``scope`` (required, no default — stage 1
+    made that required because a forgotten scope there silently reasons
+    about the WRONG branch for a real, already-known (agent, sid)), a
+    default here is safe: a caller that omits ``scope`` gets EXACTLY
+    today's well-understood global-rewind behavior, not a silent
+    misbehavior — there is no "wrong branch" to accidentally read on the
+    WRITE side, only "write global" (unchanged) vs. "write scoped" (new,
+    opt-in)."""
+    fields: "dict[str, object]" = {
+        "target_n": int(target_seq), "supersedes": supersedes,
+    }
+    if scope is not None:
+        fields["scope"] = list(scope)
+    return await state_log.append(REWIND_KIND, **fields)
 
 
 async def rewind(

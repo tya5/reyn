@@ -191,6 +191,7 @@ async def test_mid_call_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp_
     store does NOT appear in the persisted OUTER ``named_stores`` (pass:[...]
     isolation on the recovery axis)."""
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
@@ -207,7 +208,7 @@ async def test_mid_call_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp_
         )
     await state_log.flush()
 
-    snap = latest_pipeline_state("run-dotted", state_log)
+    snap = latest_pipeline_state("run-dotted", state_log, scope=GLOBAL_SCOPE)
     # The finished callee sub-step is present under the dotted key; the failed one
     # and the outer call's own key are absent (the call is not done).
     assert "1.call.0" in snap["completed_step_results"]
@@ -266,9 +267,11 @@ async def test_truncate_falsify_call_resumes_callee_substeps_exactly_once(tmp_pa
     # RESUME with the crash DISARMED: the finished sub-step replays from the gen
     # FILE (no re-write of A), only sub-step 1 executes (writes B once).
     crash.clear()
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-tf", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
 
     # Exactly-once: A appears ONCE (replayed, not re-executed); B once (resumed).
@@ -302,9 +305,11 @@ async def test_call_resume_after_full_run_replays_with_zero_new_side_effects(tmp
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-done", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
     # No new lines — a fully-completed run replays with zero side effects.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]

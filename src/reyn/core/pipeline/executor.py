@@ -1905,6 +1905,7 @@ class PipelineExecutor:
         pipeline: Pipeline,
         tool_dispatch: ToolDispatch,
         state_log: "StateLog",
+        scope: "tuple[str, str] | None",
         schema_registry: "SchemaRegistry | None" = None,
         registry: "AgentRegistry | None" = None,
         default_identity: "str | None" = None,
@@ -1925,8 +1926,28 @@ class PipelineExecutor:
         `pipeline_registry` (R7) is required only if the resumed run re-enters a
         `CallStep` — the callee is re-resolved by name and re-walked to reconstruct
         its local state from the dotted keys. `events` / `cancel_check` behave as in
-        :meth:`run`."""
-        snapshot = latest_pipeline_state(run_id, state_log)
+        :meth:`run`.
+
+        #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling): `scope`
+        is forwarded straight to `latest_pipeline_state` — this run's own
+        (agent, sid) is a FACT, not a caller decision, so the one real
+        production caller (`PipelineExecutorDriver.run_turn`, which always
+        holds its own `PipelineWorkOrder`) always passes its real
+        `(wo.driver_agent, wo.driver_sid)`.
+
+        No default (required keyword-only), matching `latest_pipeline_state`'s
+        own required-kwarg contract one layer down — a first cut of this PR
+        gave `scope` a `GLOBAL_SCOPE` default here, but that quietly re-opened
+        the exact hole decision 7 exists to close one layer OUT: a NEW test
+        call site that simply forgets `scope` would silently get GLOBAL_SCOPE
+        with no red, rather than a `TypeError` at the call (ADR-0047's own
+        Alternatives wording: "one forgotten call site silently behaves
+        globally ... with no red"). The many pre-existing R3/R4 executor
+        tests with no owning-driver concept at all now pass `scope=GLOBAL_SCOPE`
+        EXPLICITLY — an honest spelling of "no scoped-rewind concern applies
+        here", not a silently-inferred one. The one real production caller is
+        unaffected: it already passes its real `(wo.driver_agent, wo.driver_sid)`."""
+        snapshot = latest_pipeline_state(run_id, state_log, scope=scope)
         if snapshot is None:
             return await self.run(
                 pipeline,

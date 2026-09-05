@@ -242,6 +242,7 @@ async def test_mid_match_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp
     store does NOT appear in the persisted OUTER ``named_stores`` (pass:[...]
     isolation on the recovery axis)."""
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
@@ -258,7 +259,7 @@ async def test_mid_match_snapshot_uses_dotted_keys_and_isolates_outer_stores(tmp
         )
     await state_log.flush()
 
-    snap = latest_pipeline_state("run-match-dotted", state_log)
+    snap = latest_pipeline_state("run-match-dotted", state_log, scope=GLOBAL_SCOPE)
     assert "1.match.0" in snap["completed_step_results"]
     assert "1.match.1" not in snap["completed_step_results"]
     assert "1" not in snap["completed_step_results"]
@@ -305,9 +306,11 @@ async def test_truncate_falsify_match_resumes_case_substeps_exactly_once(tmp_pat
     assert all(s >= 40 for s in surviving), "the case sub-step's WAL entry is truncated away"
 
     crash.clear()
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-match-tf", pipeline=outer,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
 
     assert out_file.read_text(encoding="utf-8").splitlines() == ["A", "B"]

@@ -4,28 +4,27 @@ instead of building (and potentially mis-scoping) an opaque predicate.
 
 Real `StateLog` + real on-disk stores (no mocks). Covers the two store
 signature changes (`ConfigGenerationStore.latest_active`,
-`PipelineStateStore.latest_active` now take `(state_log, scope)` directly)
-and `latest_pipeline_state`'s own owner derivation (architect's #5772
-finding: the owner was recorded, just not read at that call site --
-fixed in the SAME PR per lead-coder-30's explicit ruling, not filed
-separately). `list_rewind_points`'s per-agent scoping is covered
-separately in `tests/core/test_registry_list_rewind_points_1f.py`'s own
-sibling additions -- see that file for the (agent, sid) narrowing
-witness; this file does not duplicate it.
+`PipelineStateStore.latest_active` now take `(state_log, scope)` directly).
+
+`latest_pipeline_state`'s own scoping test moved to
+`test_5769_stage3_pipeline_resume_scope.py` (#5769 stage 3, architect's
+(c) ruling on PR #5778 superseded the #5772/stage-2 invocation.json-
+reading design this file originally tested here -- that mechanism no
+longer exists; `latest_pipeline_state` now takes `scope` directly from
+its caller, who already holds it). `list_rewind_points`'s per-agent
+scoping is covered separately in
+`tests/core/test_registry_list_rewind_points_1f.py`'s own sibling
+additions -- see that file for the (agent, sid) narrowing witness; this
+file does not duplicate it.
 """
 from __future__ import annotations
 
 import pytest
 
 from reyn.core.events.config_generations import ConfigGenerationStore
-from reyn.core.events.pipeline_recovery import (
-    PipelineStateStore,
-    latest_pipeline_state,
-    record_pipeline_state,
-)
+from reyn.core.events.pipeline_recovery import PipelineStateStore
 from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND
 from reyn.core.events.state_log import StateLog
-from reyn.core.pipeline.work_order import PipelineWorkOrder, pipeline_run_dir, write_invocation
 
 
 async def _put(log: StateLog, agent: str) -> int:
@@ -84,82 +83,3 @@ async def test_pipeline_state_store_latest_active_new_signature(tmp_path):
     assert latest == (s1, {"step_index": 1})
 
 
-def _work_order(run_id: str, *, driver_agent: str, driver_sid: str, spawn_seq: int) -> PipelineWorkOrder:
-    return PipelineWorkOrder(
-        run_id=run_id, pipeline_name="p", pipeline={"steps": []}, input=None,
-        reply_to_agent=driver_agent, reply_to_sid="main",
-        driver_agent=driver_agent, driver_sid=driver_sid, spawn_seq=spawn_seq,
-    )
-
-
-@pytest.mark.asyncio
-async def test_latest_pipeline_state_derives_owner_and_narrows_to_it(tmp_path):
-    """Tier 2: strip-falsifier target for architect's #5772 finding.
-    `latest_pipeline_state` now reads the SAME `invocation.json`
-    `_rewake_pipeline_runs` already reads, deriving (driver_agent,
-    driver_sid) -- a rewind SCOPED to a DIFFERENT (agent, sid) must not
-    hide this run's own generation, and one scoped to THIS run's own
-    driver must."""
-    reyn_dir = tmp_path / ".reyn"
-    log = StateLog(reyn_dir / "state" / "wal.jsonl")
-    run_dir = pipeline_run_dir(reyn_dir, "run-1")
-    s1 = await _put(log, "worker")
-    write_invocation(run_dir, _work_order("run-1", driver_agent="worker", driver_sid="sidA", spawn_seq=s1))
-    await record_pipeline_state(log, "run-1", {"step_index": 1}, durable=True)
-    s2 = await _put(log, "worker")
-    await record_pipeline_state(log, "run-1", {"step_index": 2}, durable=True)
-
-    # A rewind scoped to a DIFFERENT (agent, sid) must not affect run-1.
-    await log.append(
-        REWIND_KIND, target_n=s1, supersedes=None, scope=["someone-else", "sidZ"],
-    )
-    still_visible = latest_pipeline_state("run-1", log)
-    assert still_visible == {"step_index": 2}
-
-    # A rewind scoped to run-1's OWN driver (worker, sidA) DOES abandon
-    # the later generation -- proving the owner was genuinely derived and
-    # applied, not silently defaulted to global (which would ALSO hide
-    # this, making the first assertion the only real witness).
-    await log.append(
-        REWIND_KIND, target_n=s1, supersedes=None, scope=["worker", "sidA"],
-    )
-    now_hidden = latest_pipeline_state("run-1", log)
-    assert now_hidden == {"step_index": 1}
-
-
-@pytest.mark.asyncio
-async def test_latest_pipeline_state_falls_back_to_global_without_invocation(tmp_path):
-    """Tier 2: fail-closed to the SAFE side -- a run with generations but
-    no readable invocation.json (should not happen in practice, not
-    proven impossible) falls back to GLOBAL_SCOPE rather than raising or
-    silently returning stale/wrong content.
-
-    lead-coder-30 BLOCKING (#5775 review): without a rewind record in the
-    log, this test cannot tell "falls back to GLOBAL_SCOPE" from "scope
-    was never applied at all" -- both look identical (nothing is ever
-    abandoned). Fixed the same way `test_latest_pipeline_state_derives_
-    owner_and_narrows_to_it` above already does: add a rewind SCOPED to
-    an unrelated session and assert it is IGNORED -- GLOBAL_SCOPE's own
-    contract (`record_scope is None or record_scope == scope`,
-    snapshot_generations.py) means a global query never sees a
-    differently-scoped record. That is now an observable, asserted fact,
-    not merely a docstring claim."""
-    reyn_dir = tmp_path / ".reyn"
-    log = StateLog(reyn_dir / "state" / "wal.jsonl")
-    s1 = await _put(log, "worker")
-    await record_pipeline_state(log, "run-2", {"step_index": 1}, durable=True)
-    # No write_invocation call -- invocation.json genuinely absent.
-
-    # Real witness: a rewind scoped to a DIFFERENT session must be
-    # invisible to the GLOBAL_SCOPE fallback this function computes.
-    # target_n=0 abandons (0, R) -- which genuinely includes s1 (the
-    # generation's own seq), so a broken implementation that ignored
-    # scope (saw this record under a global query) WOULD hide the
-    # generation -- a real discriminator, not a no-op interval.
-    await log.append(
-        REWIND_KIND, target_n=0, supersedes=None, scope=["someone-else", "sidZ"],
-    )
-
-    result = latest_pipeline_state("run-2", log)
-
-    assert result == {"step_index": 1}

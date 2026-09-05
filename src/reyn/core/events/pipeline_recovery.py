@@ -47,13 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from reyn.core.events.config_recovery import reyn_root
-from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, build_active_predicate
-
-# `reyn.core.pipeline.work_order` imports `pipeline_state_dir` FROM this
-# module — a module-level import of `load_invocation` here would be
-# circular. Imported locally inside `latest_pipeline_state` instead,
-# matching `AgentRegistry._rewake_pipeline_runs`'s own existing lazy
-# import of the same name for the same reason.
+from reyn.core.events.snapshot_generations import build_active_predicate
 
 if TYPE_CHECKING:
     from reyn.core.events.state_log import StateLog
@@ -185,34 +179,30 @@ async def record_pipeline_state(
         state_log.submit_durable_nowait(_record)
 
 
-def latest_pipeline_state(run_id: str, state_log: "StateLog") -> "dict[str, Any] | None":
+def latest_pipeline_state(
+    run_id: str, state_log: "StateLog", *, scope: "tuple[str, str] | None",
+) -> "dict[str, Any] | None":
     """The latest pipeline control-plane-state generation for `run_id` on the
     active WAL branch, or None if no generation was ever recorded (a fresh
     run — `resume` should treat this as run-from-scratch).
 
-    #5769 stage 2: this run's own owner is NOT "unrecorded" (architect's
-    #5772 finding was the earlier, wrong framing) — it is recorded right
-    alongside the generations this function already reads, in
-    ``invocation.json`` (``PipelineWorkOrder.driver_agent``/``driver_sid``,
-    read the same way ``AgentRegistry._rewake_pipeline_runs`` already
-    reads it). One extra file read here is not a new cost class: this
-    function is called once per resume, on the crash-recovery path, never
-    in a hot per-message loop. A missing/unreadable ``invocation.json``
-    (should not happen for a run with generations, but is not proven
-    impossible) falls back to ``GLOBAL_SCOPE`` — the safe side, matching
-    every other fail-closed-to-broad default in this stage."""
-    from reyn.core.pipeline.work_order import load_invocation, pipeline_run_dir
+    #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling on the PR
+    #5778 review, replacing an earlier, disclosed (a)/(b)-shaped deviation
+    this docstring used to carry): ``scope`` is now the CALLER's own
+    responsibility, not something this function discovers by re-reading
+    ``invocation.json``. Both real call sites already hold the run's own
+    ``PipelineWorkOrder`` when they call this — ``PipelineExecutorDriver.
+    run_turn`` (direct call) and ``PipelineExecutor.resume`` (which now
+    forwards its own ``scope`` parameter here) — so passing ``scope`` is
+    "hand over a fact you already have", not a new derivation. This
+    removes the whole class of problem the earlier version had: no
+    ``invocation.json`` re-read, no warning log, no ``GLOBAL_SCOPE``
+    fallback, no decision-7 exception to disclose — the caller's own
+    scope is simply the truth, always, with no cases to reconcile.
+    """
     store = _store(state_log, run_id)
     if store is None:
         return None
-    root = reyn_root(state_log.path)
-    run_dir = pipeline_run_dir(root, run_id) if root is not None else None
-    work_order = load_invocation(run_dir) if run_dir is not None else None
-    scope = (
-        (work_order.driver_agent, work_order.driver_sid)
-        if work_order is not None
-        else GLOBAL_SCOPE
-    )
     latest = store.latest_active(state_log, scope=scope)
     if latest is None:
         return None

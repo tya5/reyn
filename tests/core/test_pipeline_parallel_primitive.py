@@ -437,7 +437,8 @@ async def test_truncate_falsify_mid_parallel_replays_branches_exactly_once(tmp_p
     assert sorted(out_file.read_text(encoding="utf-8").splitlines()) == ["A", "B", "D"]
 
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
-    snap = latest_pipeline_state("run-par-tf", state_log)
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+    snap = latest_pipeline_state("run-par-tf", state_log, scope=GLOBAL_SCOPE)
     for name in ("a", "b", "c", "d"):
         assert f"0.parallel.{name}" in snap["completed_step_results"]
     assert snap["completed_step_results"]["0.parallel.c"]["__fan_out_dropped__"] is True
@@ -456,7 +457,7 @@ async def test_truncate_falsify_mid_parallel_replays_branches_exactly_once(tmp_p
     crash.discard("COLLECT")
     resumed = await PipelineExecutor().resume(
         "run-par-tf", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     lines = out_file.read_text(encoding="utf-8").splitlines()
@@ -488,9 +489,10 @@ async def test_resume_after_full_parallel_replays_with_zero_new_side_effects(tmp
     before = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert before == ["A", "B", "C", "COLLECT", "D"]
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await PipelineExecutor().resume(
         "run-par-done", pipeline=pipeline,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
     after = sorted(out_file.read_text(encoding="utf-8").splitlines())
     assert after == before, "a fully-completed fan-out must replay with zero side effects"
@@ -719,7 +721,8 @@ async def test_truncate_falsify_compositional_branch_sub_step_survives_mid_branc
     # durably present even though the branch — and the whole parallel — never
     # completed.
     from reyn.core.events.pipeline_recovery import latest_pipeline_state
-    snap = latest_pipeline_state("run-par-comp-tf", state_log)
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
+    snap = latest_pipeline_state("run-par-comp-tf", state_log, scope=GLOBAL_SCOPE)
     assert snap["completed_step_results"]["0.parallel.x.call.0"] == {
         "text": "", "structured": {"wrote": "X-a"},
     }
@@ -741,6 +744,7 @@ async def test_truncate_falsify_compositional_branch_sub_step_survives_mid_branc
     await PipelineExecutor().resume(
         "run-par-comp-tf", pipeline=pipeline,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
+        scope=GLOBAL_SCOPE,
     )
     lines = out_file.read_text(encoding="utf-8").splitlines()
     assert lines == ["X-a", "X-b"], (

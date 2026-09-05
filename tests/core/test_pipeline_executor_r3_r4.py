@@ -216,9 +216,10 @@ async def test_truncate_falsify_generation_survives_wal_truncation_below_its_seq
     )
 
     full_pipeline = Pipeline(steps=[step0, step1, step2, step3])
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await executor.resume(
         "run-truncate", pipeline=full_pipeline,
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     assert call_counts["count"] == 3, (
@@ -255,9 +256,10 @@ async def test_exactly_once_resume_does_not_replay_completed_tool_side_effect(tm
     assert crashed_result.step_index == 1
     assert call_counts["count"] == 1
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     resumed = await executor.resume(
         "run-exactly-once", pipeline=Pipeline(steps=[step0, step1]),
-        tool_dispatch=dispatch, state_log=state_log,
+        tool_dispatch=dispatch, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     assert call_counts["count"] == 2, "step0 must not be re-run; only step1 is new"
@@ -274,9 +276,10 @@ async def test_resume_with_no_snapshot_runs_from_scratch(tmp_path):
     executor = PipelineExecutor()
     pipeline = Pipeline(steps=[TransformStep(value="1 + 1", output="two")])
 
+    from reyn.core.events.snapshot_generations import GLOBAL_SCOPE
     result = await executor.resume(
         "never-run-before", pipeline=pipeline,
-        tool_dispatch=lambda *_a, **_k: None, state_log=state_log,
+        tool_dispatch=lambda *_a, **_k: None, state_log=state_log, scope=GLOBAL_SCOPE,
     )
 
     assert result.pipe_data == 2

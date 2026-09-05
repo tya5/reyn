@@ -242,8 +242,14 @@ class PipelineExecutorDriver:
         # tool resolves against). None-safe: a pipeline with no `call` step never
         # touches it; a `call` with no registry available fails the step cleanly.
         pipeline_registry = self._pipeline_registry()
+        # #5769 stage 3 (ADR-0047 decision 7, architect's (c) ruling): this
+        # run's own owner is a fact already in hand (`wo`), not something
+        # to re-derive from invocation.json — passed straight through to
+        # both latest_pipeline_state (direct call, below) and
+        # executor.resume (which forwards it to the same function).
+        scope = (wo.driver_agent, wo.driver_sid)
         try:
-            if latest_pipeline_state(wo.run_id, self._state_log) is None:
+            if latest_pipeline_state(wo.run_id, self._state_log, scope=scope) is None:
                 # Fresh run (or crashed before the first R4 snapshot): seed the
                 # ORIGINAL work-order input — resume()'s fallback would lose it.
                 result = await executor.run(
@@ -275,6 +281,7 @@ class PipelineExecutorDriver:
                     pipeline=pipeline,
                     tool_dispatch=await self._make_dispatch(),
                     state_log=self._state_log,
+                    scope=scope,
                     registry=self._registry,
                     default_identity=wo.reply_to_agent,
                     pipeline_registry=pipeline_registry,

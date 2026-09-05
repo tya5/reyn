@@ -49,7 +49,7 @@ from typing import Any
 import pytest
 
 from reyn.core.events.pipeline_recovery import latest_pipeline_state, record_pipeline_state
-from reyn.core.events.snapshot_generations import REWIND_KIND
+from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import (
     Pipeline,
@@ -392,12 +392,13 @@ async def test_executor_cancel_at_boundary_leaves_resumable_journal(
     # Only step 0 executed before the boundary cancel.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0"]
     # The R4 snapshot is the pre-cancel resume point.
-    snap = latest_pipeline_state("run-cancel", state_log)
+    snap = latest_pipeline_state("run-cancel", state_log, scope=GLOBAL_SCOPE)
     assert snap is not None and snap["step_index"] == 1
 
     # Explicit resume (no cancel): completes exactly-once — step 0 NOT re-run.
     result = await PipelineExecutor().resume(
         "run-cancel", pipeline=pipeline, tool_dispatch=dispatch, state_log=state_log,
+        scope=GLOBAL_SCOPE,
     )
     assert result.step_index == 3
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
@@ -445,7 +446,7 @@ async def test_driver_cancel_writes_terminal_marker_recovery_skips(
     assert has_result(run_dir)  # TERMINAL — recovery must treat it as done.
     # Only step 0 ran; the R4 snapshot preserves the resume point.
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0"]
-    assert latest_pipeline_state("run-dcancel", state_log)["step_index"] == 1
+    assert latest_pipeline_state("run-dcancel", state_log, scope=GLOBAL_SCOPE)["step_index"] == 1
 
     # Recovery scan does NOT resurrect a terminally-cancelled run.
     rewoken = await reg._rewake_pipeline_runs()
@@ -456,6 +457,7 @@ async def test_driver_cancel_writes_terminal_marker_recovery_skips(
     result = await PipelineExecutor().resume(
         "run-dcancel", pipeline=pipeline,
         tool_dispatch=_make_tool_dispatch(_bare_ctx(state_log)), state_log=state_log,
+        scope=GLOBAL_SCOPE,
     )
     assert result.step_index == 3
     assert out_file.read_text(encoding="utf-8").splitlines() == ["s0", "s1", "s2"]
