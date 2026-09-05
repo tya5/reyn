@@ -730,9 +730,22 @@ def resolve_sandbox_policy(
     write_paths: list[str] | None = None,
     temp_dir: str = "",
     temp_source: str = "inherited",
-    mode: str = "compat",
+    mode: str,
 ) -> dict:
     """Resolve the effective agent-level sandbox policy as a dict.
+
+    #5818 (owner-hit, security): ``mode`` has NO default — every caller must
+    pass it explicitly. It used to default to ``"compat"``, and both
+    production call sites (``router_op_context.py``, ``tools/exec.py``)
+    silently relied on that default instead of threading the operator's own
+    ``sandbox.mode``: ``sandbox.mode: strict`` validated, was documented,
+    and never once reached this function at runtime — the effective policy
+    was always ``compat`` regardless of what an operator configured. Making
+    the omission a ``TypeError`` (this repo's own established pattern for
+    "a silent fallback caused real harm" — #5772/#5784/#5778/#5783/#5788/
+    #5805 closed the identical shape 5 times the same night) is what makes
+    a FUTURE call site's own accidental omission impossible to write, not
+    merely unlikely.
 
     The concrete DEFAULT is a **floor** (never None) so the op_runtime handler
     always applies an operator-or-default policy and the LLM-supplied op fields

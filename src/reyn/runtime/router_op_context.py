@@ -189,11 +189,22 @@ def build_router_op_context(
         sandbox_backend=sandbox_backend,
         # #1339: resolve the operator-or-default sandbox policy (was None → the
         # op_runtime handler fell back to LLM-set op fields = sandbox-escape gap).
+        # #5818 (owner-hit, security): `mode=` is now REQUIRED on the callee (no
+        # default) — this is the fix. Before this, `sandbox.mode: strict`
+        # validated and was documented but never reached the resolver: this
+        # call site silently relied on `resolve_sandbox_policy`'s own former
+        # "compat" default regardless of what the operator configured.
+        # `sandbox_config` can genuinely be None (no operator sandbox config
+        # wired at all, e.g. a bare test session) — "compat" there is an
+        # explicit decision (nothing to read strict FROM), not a silent
+        # fallback: this ternary is the ONE place that decision is made, not
+        # a repeat of the callee's old default.
         default_sandbox_policy=resolve_sandbox_policy(
             sandbox_policy,
             write_paths=[str(workspace.base_dir)],
             temp_dir=child_temp_dir_fn() if child_temp_dir_fn is not None else child_temp_dir,
             temp_source="session",
+            mode=sandbox_config.mode if sandbox_config is not None else "compat",
         ),
         cancel_event=cancel_event,
         ephemeral=ephemeral,

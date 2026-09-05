@@ -84,10 +84,18 @@ def test_unknown_sandbox_policy_key_warning_names_the_effective_policy(
     tmp_path, caplog,
 ) -> None:
     """Tier 2: #4174 T0 — lead-coder's condition ①: an unknown sandbox.policy
-    key's warning names the EFFECTIVE resolved policy alongside the
-    unknown-key notice, since dropping a policy key makes the config
-    LOOSER (not silently inert like an ordinary dropped key) — an operator
-    relying on it must see what's actually in force."""
+    key's warning names the resolved policy alongside the unknown-key
+    notice, since dropping a policy key makes the config LOOSER (not
+    silently inert like an ordinary dropped key) — an operator relying on
+    it must see what this config resolves to.
+
+    #5818 (owner-hit, security): the message used to say "Effective
+    sandbox policy in force right now" — a claim this function cannot back
+    (write_paths is always a diagnostic `[]` here, never the real per-op
+    value, and — separately, the actual owner-hit — `sandbox.mode: strict`
+    never reached the real production resolver at all before #5818's own
+    fix). Reworded to "Sandbox policy this config resolves to", matching
+    what this function can actually verify."""
     cfg = _load(
         tmp_path,
         "sandbox:\n"
@@ -101,9 +109,9 @@ def test_unknown_sandbox_policy_key_warning_names_the_effective_policy(
     assert any(
         "sandbox.policy.typo_field_name" in m and "NOT APPLIED" in m for m in messages
     ), messages
-    assert any("Effective sandbox policy" in m and "network" in m for m in messages), (
-        messages
-    )
+    assert any(
+        "Sandbox policy this config resolves to" in m and "network" in m for m in messages
+    ), messages
 
 
 def test_a_removed_top_level_key_warns_delete_not_rewrite(tmp_path, caplog) -> None:

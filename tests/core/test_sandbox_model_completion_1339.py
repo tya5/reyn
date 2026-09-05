@@ -37,7 +37,7 @@ def test_resolve_returns_default_when_config_none():
     from the floor dict entirely now, so ``SandboxPolicy(**floor)`` falls
     through to the dataclass's own (now-empty) default. An operator who
     wants the old defense-in-depth back sets ``read_deny_paths`` explicitly."""
-    pol = resolve_sandbox_policy(None, write_paths=["/ws"])
+    pol = resolve_sandbox_policy(None, write_paths=["/ws"], mode="compat")
     assert pol["network"] is DEFAULT_SANDBOX_NETWORK
     assert pol["write_paths"] == ["/ws"]
     assert "read_deny_paths" not in pol
@@ -52,7 +52,7 @@ def test_resolve_merges_operator_config_onto_floor():
     # from the internal SandboxPolicy field name/sense — subprocess=False
     # means denied, translated internally to deny_subprocess=True) —
     # write_paths (caller) must survive (the #2964 silent-drop bug).
-    merged = resolve_sandbox_policy({"subprocess": False}, write_paths=["/ws"])
+    merged = resolve_sandbox_policy({"subprocess": False}, write_paths=["/ws"], mode="compat")
     assert merged["deny_subprocess"] is True          # operator field applied
     assert merged["write_paths"] == ["/ws"]           # caller value SURVIVES (was dropped)
     assert merged["network"] is DEFAULT_SANDBOX_NETWORK
@@ -60,7 +60,7 @@ def test_resolve_merges_operator_config_onto_floor():
 
 def test_resolve_operator_written_field_overrides_floor():
     """Tier 2: #2964 —a field the operator DID write wins over the floor."""
-    merged = resolve_sandbox_policy({"network": False}, write_paths=["/ws"])
+    merged = resolve_sandbox_policy({"network": False}, write_paths=["/ws"], mode="compat")
     assert merged["network"] is False                 # operator override wins
     assert merged["write_paths"] == ["/ws"]           # unwritten field keeps floor
 
@@ -70,8 +70,8 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
     (the operator deliberately granted nothing), distinct from OMITTING it
     (which keeps the caller's value). dict-key presence expresses the
     explicit-empty-vs-omitted distinction the merge hinges on."""
-    explicit_empty = resolve_sandbox_policy({"allow_write_paths": []}, write_paths=["/ws"])
-    omitted = resolve_sandbox_policy({"network": False}, write_paths=["/ws"])
+    explicit_empty = resolve_sandbox_policy({"allow_write_paths": []}, write_paths=["/ws"], mode="compat")
+    omitted = resolve_sandbox_policy({"network": False}, write_paths=["/ws"], mode="compat")
     assert explicit_empty["write_paths"] == []        # deliberate empty grant respected
     assert omitted["write_paths"] == ["/ws"]          # omission keeps the floor
 

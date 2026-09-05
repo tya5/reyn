@@ -161,7 +161,24 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         # operator config to merge here — there's genuinely nothing to read
         # it from on this path) rather than leaving this one path uniquely
         # computed from op fields alone.
-        default_sandbox_policy=resolve_sandbox_policy(None),
+        #
+        # #5818 (owner-hit, security, lead-coder ruling): `mode="compat"` is
+        # explicit here, not read from `sandbox_config.mode` — this
+        # construction point (reached only when `rs is None` or `rs.op_
+        # context_factory is None`, i.e. no real router/host context at
+        # all) never reaches reyn.yaml, so `sandbox_config` above is never
+        # more than a `SandboxConfig(backend=backend)` synthesized from a
+        # backend NAME alone; its `.mode` is always the dataclass default,
+        # never the operator's real setting. The construction point that
+        # DOES have the real config is `router_op_context.py`'s own
+        # `build_router_op_context` (already fixed this issue) — reached
+        # here too, first, via `rs.op_context_factory` above, whenever a
+        # real host exists. Naming `mode=sandbox_config.mode` here instead
+        # would make this ONE path claim to honor an operator's `strict`
+        # setting it structurally cannot see — the setting would silently
+        # stay unenforced while `default_sandbox_policy` reported "compat"
+        # as if that were the operator's real, deliberate choice.
+        default_sandbox_policy=resolve_sandbox_policy(None, mode="compat"),
     )
 
 
