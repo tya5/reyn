@@ -1,9 +1,11 @@
 """AgentSnapshot — per-agent state snapshot for crash recovery (PR21).
 
-Stores the agent's recovery-critical runtime state plus the WAL `seq`
-already absorbed (`applied_seq`). On restart, the registry replays WAL
-entries past every snapshot's `applied_seq`, then hands each agent its
-final snapshot to populate in-memory queues / dicts.
+Stores the agent's recovery-critical runtime state plus a WAL `seq`
+LOWER BOUND on what's already absorbed (`applied_seq` — see that field's
+own docstring, #5816: not the exact position, and not an ownership
+claim). On restart, the registry replays WAL entries past every
+snapshot's `applied_seq`, then hands each agent its final snapshot to
+populate in-memory queues / dicts.
 
 Atomic write: dump to `<path>.tmp`, fsync, rename. mid-write crash leaves
 the previous file intact.
@@ -56,9 +58,41 @@ class SchemaVersionError(Exception):
 class AgentSnapshot:
     """Recovery-critical state for one agent.
 
-    `applied_seq` is the highest WAL seq whose effects are already baked
-    into `inbox` / `pending_chains`. WAL replay applies events with
-    `seq > applied_seq`.
+    #5816 (architect ruling — read the FULL WAL `seq` reader census in
+    that issue before touching this field again): `applied_seq` is a
+    LOWER BOUND on absorption — "every WAL entry belonging to this
+    (agent, session) at `seq <= applied_seq` is already baked into
+    `inbox` / `pending_chains`." It is NOT the exact position of "this
+    agent's own last event", and NOT an ownership claim over that WAL
+    position — a WAL position has no single owner, only a set of
+    entries that happen to sit there (#5815: `gen-<seq>.json` existing
+    for two different agents at the SAME seq is routine, not a defect).
+    The prior wording here ("the **highest** WAL seq whose effects are
+    already baked in") read as an exact/tight claim — that reading is
+    what #5782 mistook this field for an OWNER, before #5815 corrected
+    the readers that relied on it.
+
+    Two real writers pick DIFFERENT, independently-safe values of P
+    satisfying the same one invariant: `SnapshotJournal` stamps the
+    GLOBAL WAL head at record time (never wrong to be too small —
+    everything after head, by definition, has not happened yet);
+    `apply_events` (below) stamps the last matching entry it actually
+    replayed (also never wrong to be too small — a caller that hands it
+    a gapless slice from `applied_seq + 1` never overshoots). Both
+    satisfy "P is a real, accurate-or-conservative lower bound"; neither
+    ever needs, or provides, "this agent's own last WAL entry"
+    specifically (0 real readers in `src/` ask for that — #5816's own
+    read-side census).
+
+    **The dangerous direction**: a writer that claims a HIGHER P than
+    what it actually absorbed permanently loses whatever WAL entry sits
+    between the real absorption point and the false P, the moment the
+    WAL truncates below it — see
+    `tests/core/test_5816_applied_seq_lower_bound_invariant.py`'s own
+    pin on `reconstruct()`'s gapless delta construction, the one thing
+    standing between this invariant and that hazard today.
+
+    WAL replay applies events with `seq > applied_seq`.
     """
 
     agent_name: str
