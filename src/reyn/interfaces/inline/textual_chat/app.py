@@ -2441,6 +2441,25 @@ class TextualChatApp(App):
         destination was never a safe thing to attempt, in a test or
         anywhere else, so skipping it there costs nothing a real
         incident depended on.
+
+        **#5873 follow-up (architect co-vet finding)**: log rotation
+        (``RotatingFileHandler``) renames the path this fd was opened
+        against out from under it on every rollover — unlike a plain
+        churn-and-reuse of the fd NUMBER (the #5877 hazard above, which
+        this worker's self-opened fd is already immune to), a rollover
+        moves the underlying FILE the fd's own inode points at: ``.1``,
+        then ``.2``, and so on, until it is unlinked past
+        ``backup_count`` — permanently, not "one rollover behind" as an
+        earlier version of this docstring claimed (true only before this
+        module could ever rotate). Left unhandled, every dump after the
+        first rollover would write to an ever-more-stale, eventually
+        DELETED generation nobody reads. Each tick therefore compares
+        ``os.stat(path).st_ino`` (the CURRENT file at that path) against
+        ``os.fstat(_dump_fd).st_ino`` (what this fd still points at) —
+        deterministic, cut on the file identity changing, not a clock —
+        and on a mismatch: disarm, close the stale fd, and open a fresh
+        one against the same path before re-arming. A ``stat`` call
+        every :data:`~.loop_probe._TICK_SECONDS` (50 ms) is negligible.
         """
         import asyncio  # noqa: PLC0415
         import os  # noqa: PLC0415
@@ -2525,6 +2544,41 @@ class TextualChatApp(App):
                 last = now
                 stack_dumped: "bool | None" = None
                 if _dump_fd is not None:
+                    # `_dump_fd is not None` only ever became true inside
+                    # the `_log_path is not None` branch above, and
+                    # `_log_path` itself is never reassigned — so this
+                    # narrows `_log_path` for mypy the same way the
+                    # runtime invariant already guarantees it.
+                    assert _log_path is not None
+                    # #5873 follow-up (architect co-vet finding): a
+                    # rotation renames _log_path's file out from under
+                    # this fd (see this method's own docstring paragraph
+                    # above) — detect it via inode identity, deterministic
+                    # and cheap, and reopen against the CURRENT file
+                    # before re-arming, so a dump never lands in an
+                    # already-rotated-out (eventually unlinked)
+                    # generation nobody reads.
+                    try:
+                        stale = os.stat(_log_path).st_ino != os.fstat(_dump_fd).st_ino
+                    except OSError:
+                        stale = False
+                    if stale:
+                        _disarm_stall_trace()
+                        try:
+                            os.close(_dump_fd)
+                        except OSError:
+                            pass
+                        try:
+                            _dump_fd = os.open(
+                                _log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT,
+                            )
+                        except OSError:
+                            logger.exception(
+                                "textual chat: could not reopen the tripwire's "
+                                "own stall-dump fd after a log rotation"
+                            )
+                            _dump_fd = None
+                if _dump_fd is not None:
                     # Re-arm for the NEXT wait immediately — cancels the
                     # pending one-shot from the wait that just ended (whether
                     # or not it already fired; faulthandler.cancel_dump_
@@ -2532,11 +2586,12 @@ class TextualChatApp(App):
                     # disarm's own docstring) and re-points it :data:
                     # `_STACK_DUMP_SECONDS` into the future, against the SAME
                     # self-opened fd every time (#5877 — never re-resolved,
-                    # see this method's own docstring for why). A tick that
-                    # lands on time always beats this deadline, so a healthy
-                    # loop never triggers a dump; one that doesn't land in
-                    # time leaves the PENDING timer to fire on its own,
-                    # mid-stall, on faulthandler's own OS thread.
+                    # see this method's own docstring for why), unless the
+                    # rotation check just above reopened it this very tick.
+                    # A tick that lands on time always beats this deadline,
+                    # so a healthy loop never triggers a dump; one that
+                    # doesn't land in time leaves the PENDING timer to fire
+                    # on its own, mid-stall, on faulthandler's own OS thread.
                     _arm_stall_trace(_STACK_DUMP_SECONDS, file=_dump_fd, repeat=False)
                     # Best-effort proxy for "did the dump above just fire" —
                     # see LoopTripwire.observe's own docstring for why this

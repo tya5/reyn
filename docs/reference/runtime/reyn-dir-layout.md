@@ -122,6 +122,23 @@ Everything else is excluded, by one of four reasons:
 │                           migrated into this once, on first touch, then inert history.
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
 │   audit-trail/ tool-results/ media/
+│                           `logs/reyn.log` (#5873): the interactive CUI's
+│                           own log redirect target
+│                           (`_setup_interactive_logging`) is UNLIKE the
+│                           rest of this tier — it is size-ROTATED, not
+│                           append-forever, via a stdlib
+│                           `RotatingFileHandler`. Bounded by
+│                           `logs.max_bytes × (backup_count + 1)`
+│                           (`reyn.log` plus up to `backup_count` numbered
+│                           `reyn.log.N` generations), config-tunable —
+│                           see `reyn-yaml.md`'s own `logs:` block —
+│                           defaulting to 16 MiB × 5 = 80 MiB. Motivated
+│                           by an owner report of unbounded growth while
+│                           idle ("放置してるだけで reyn.log 肥大化して
+│                           システム止まらないようにしてね"); every OTHER
+│                           file under this bullet still grows unbounded
+│                           by design (a forensic record, not a rotated
+│                           log).
 │                           `media/` (#4478): flat `<file>` for a legacy
 │                           write with no agent identity, `<agent>/
 │                           <session_id>/<file>` for a real one (the

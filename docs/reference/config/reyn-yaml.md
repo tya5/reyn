@@ -2172,6 +2172,23 @@ process_memory:
 
 Two independent facts, two keys — setting a cap does not itself turn on halting, and turning on halting requires a real, checkable cap. `process_footprint` / `process_footprint_unavailable` audit-events (`docs/reference/runtime/events.md`) record the measured value regardless of whether a cap or `enforce` is set at all — observe-only ships the observation.
 
+## `logs` block
+
+Size-based rotation for the interactive CUI's own log redirect, `.reyn/logs/reyn.log` (#5873, owner-hit: "放置してるだけで reyn.log 肥大化してシステム止まらないようにしてね" — reyn.log grew unbounded while idle). Same resource role as `history_resident`/`read_cap`/`process_memory` above: both fields are `Axis.BOUNDING`, bytes, model-independent. Reuses the stdlib `logging.handlers.RotatingFileHandler` rather than a second cron/purge mechanism — deterministic (cuts on bytes written, not a clock).
+
+```yaml
+logs:
+  max_bytes: 16777216   # 16 MiB — ceiling on the LIVE reyn.log before it rotates
+  backup_count: 4        # rotated generations kept (reyn.log.1 .. reyn.log.4)
+```
+
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `max_bytes` | bounding | int | `16777216` (16 MiB) | Size, in bytes, at which the live `reyn.log` rotates to `reyn.log.1` and a fresh file starts. A non-positive or non-numeric value falls back to the default. |
+| `backup_count` | bounding | int | `4` | Number of rotated generations kept (`reyn.log.1` .. `reyn.log.<backup_count>`); the oldest is deleted once this is exceeded. A negative or non-numeric value falls back to the default. |
+
+Total on-disk footprint for `.reyn/logs/reyn.log*` is bounded by `max_bytes × (backup_count + 1)` — 80 MiB under the shipped defaults (see `reyn-dir-layout.md`'s own `logs/` entry). The defaults are provisional and owner-revisable, derived from #5870 stage 1's own per-episode stall-trace dump size (~10-20 KiB): one 16 MiB file holds roughly a thousand episodes, several days of idle-time WARNING traffic. Omitting the block keeps these defaults (behaviour unchanged from what ships).
+
 ## `image` block
 
 The fixed row height (in terminal rows/cells) every `present`-rendered inline image is shown at (#4474). Width is derived from this to preserve the image's real aspect ratio — `HalfBlockImage` (reyn's own image renderable, `interfaces/repl/present_renderer.py` — no third-party image-rendering dependency, #4474) takes an explicit width/height in cells with no aspect-ratio derivation of its own; passing a fixed height is what makes aspect-ratio-correct rendering possible at all.

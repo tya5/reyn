@@ -932,6 +932,21 @@
 
 
 # -----------------------------------------------------------------------------
+# logs: size-based rotation for the interactive CUI's own log redirect,
+# .reyn/logs/reyn.log (#5873, owner-hit: reyn.log grew unbounded while idle).
+# Same resource role as history_resident/read_cap/process_memory above —
+# bytes, model-independent. Reuses logging.handlers.RotatingFileHandler
+# rather than a second cron/purge mechanism. Omit the block to keep the
+# 16 MiB x 4 backups default below (80 MiB total); a non-positive/non-numeric
+# max_bytes, or a negative/non-numeric backup_count, falls back to that
+# default too.
+# -----------------------------------------------------------------------------
+# logs:
+#   max_bytes: 16777216   # 16 MiB — ceiling on the LIVE reyn.log before it rotates
+#   backup_count: 4        # rotated generations kept (reyn.log.1 .. reyn.log.4)
+
+
+# -----------------------------------------------------------------------------
 # image: the fixed row height (in terminal rows/cells) every present-rendered
 # inline image (reyn's own HalfBlockImage renderable, #4474) is shown at.
 # Width is derived from this to preserve the image's real aspect ratio —

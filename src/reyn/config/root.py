@@ -28,6 +28,7 @@ from reyn.config.chat import (
     CostWarnConfig,
     HistoryResidentConfig,
     ImageConfig,
+    LogsConfig,
     OffloadConfig,
     ProcessMemoryConfig,
     ReadCapConfig,
@@ -241,6 +242,11 @@ class ReynConfig:
     # plumbing only, no halt (that's stage (c), after real
     # `process_footprint` data informs a default cap).
     process_memory: ProcessMemoryConfig = field(default_factory=ProcessMemoryConfig)
+    # #5873 (owner-hit): size-based rotation for .reyn/logs/reyn.log — bytes,
+    # config-driven, same Axis.BOUNDING role as history_resident/process_memory
+    # above. Default 16 MiB x 4 backups (80 MiB total); see LogsConfig's own
+    # docstring for the derivation.
+    logs: LogsConfig = field(default_factory=LogsConfig)
     # #4474: the fixed row-height (in cells) every present-rendered inline
     # image (reyn's own HalfBlockImage renderable) is shown at, so width
     # can be derived to preserve the image's real aspect ratio (see

@@ -550,6 +550,44 @@ def _clear_find_project_root_cache() -> Iterator[None]:
     yield
     _find_project_root_uncached.cache_clear()
 
+
+@pytest.fixture(autouse=True)
+def _isolate_stall_trace_file_handler_registration() -> Iterator[None]:
+    """Save + restore ``reyn.runtime.stall_trace``'s registered log-handler
+    path around every test (#5873 follow-up, #5879 CI finding).
+
+    ``stall_trace.register_file_handler_path`` declares a SINGLE process-
+    global path (set by ``chat.py``'s ``_setup_interactive_logging``, the
+    one production writer) — any test that calls
+    ``_setup_interactive_logging`` directly (5 files across ``tests/``, at
+    last count: ``test_litellm_lazy_load.py``, ``test_loop_probe_3539.py``,
+    ``test_3671_stall_trace_startup_wiring.py``,
+    ``test_config_warning_chrome_4194.py``,
+    ``test_inline_interactive_logging.py``) mutates this SAME global.
+
+    Measured (CI, 2026-09-06): `test_first_use_routes_litellm_logger_to_
+    file_not_console` (`test_litellm_lazy_load.py`) called
+    ``_setup_interactive_logging`` and never restored the registration —
+    under xdist, whichever LATER test happened to land on the same worker
+    and asserted the OTHER premise (``find_file_handler_path() is None``,
+    e.g. ``test_the_tripwire_never_arms_without_a_file_handler``) then
+    failed on a leaked path from a wholly unrelated test file. 3.11 passed
+    by luck (a different worker-assignment order); 3.12 did not.
+
+    Folding this into ONE autouse fixture here — rather than adding a 6th,
+    7th, ... manual save/restore block to each individual test that calls
+    ``_setup_interactive_logging`` — closes the CLASS of hole (any CURRENT
+    or FUTURE caller of ``_setup_interactive_logging``/
+    ``register_file_handler_path`` anywhere in ``tests/``), matching
+    ``_isolate_rich_style_ansi_memo``/``_isolate_budget_limit_context``
+    above: process-global state a test can set is this file's own
+    responsibility to isolate, not each individual test's."""
+    from reyn.runtime import stall_trace
+
+    saved = stall_trace.find_file_handler_path()
+    yield
+    stall_trace.register_file_handler_path(saved)
+
 # ── Marker registration ────────────────────────────────────────────────────────
 
 
