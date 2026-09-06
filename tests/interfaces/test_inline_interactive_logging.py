@@ -16,6 +16,14 @@ real-litellm-use chokepoint).
 ようにしてね"): the handler installed here is now a size-bounded
 ``RotatingFileHandler``, not a bare unrotated ``FileHandler``. The tests
 below pin the 5 acceptance witnesses from that fix.
+
+#5873 follow-up (CI finding, 2026-09-06): `_setup_interactive_logging` also
+registers its handler's path with `reyn.runtime.stall_trace` — a process-
+global this file's own tests used to save/restore individually, per test.
+That is now handled once, for every test in the whole suite, by
+`tests/conftest.py`'s `_isolate_stall_trace_file_handler_registration`
+autouse fixture — see its own docstring for the CI failure that motivated
+folding it there instead of adding a 6th per-test block here.
 """
 from __future__ import annotations
 
@@ -34,11 +42,8 @@ from tests._support.paths import REPO_ROOT
 
 def test_interactive_logging_redirects_root_logger_to_file(tmp_path) -> None:
     """Tier 2: a WARNING record lands in .reyn/logs/reyn.log, not on stderr."""
-    from reyn.runtime import stall_trace
-
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
@@ -61,11 +66,6 @@ def test_interactive_logging_redirects_root_logger_to_file(tmp_path) -> None:
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
-        # #5873 follow-up: _setup_interactive_logging now also registers its
-        # handler's path with stall_trace (a FOURTH piece of process-global
-        # state) — left uncleared here, this leaks into other test files
-        # that assert stall_trace.find_file_handler_path() is None.
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 def test_interactive_logging_routes_warnings_warn_to_the_file_not_stderr(
@@ -92,11 +92,8 @@ def test_interactive_logging_routes_warnings_warn_to_the_file_not_stderr(
     already having triggered this exact warning can't make it silently not
     fire here.
     """
-    from reyn.runtime import stall_trace
-
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
@@ -117,7 +114,6 @@ def test_interactive_logging_routes_warnings_warn_to_the_file_not_stderr(
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 # ── #5873: size-based rotation (5 acceptance witnesses) ─────────────────────
@@ -130,11 +126,8 @@ def test_small_max_bytes_rotates_and_bounds_the_live_file(tmp_path) -> None:
     RotatingFileHandler to a bare FileHandler (this fix's own before-state)
     never produces a .1 file and lets reyn.log grow past max_bytes freely
     (verified during this fix)."""
-    from reyn.runtime import stall_trace
-
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         _apply_logs_config(LogsConfig(max_bytes=4096, backup_count=2))
@@ -154,7 +147,6 @@ def test_small_max_bytes_rotates_and_bounds_the_live_file(tmp_path) -> None:
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 def test_backup_count_bounds_total_disk_usage(tmp_path) -> None:
@@ -162,11 +154,8 @@ def test_backup_count_bounds_total_disk_usage(tmp_path) -> None:
     deleted (never reyn.log.<backup_count+1>), and the total on-disk size
     across reyn.log + every reyn.log.N stays <= max_bytes *
     (backup_count + 1)."""
-    from reyn.runtime import stall_trace
-
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         _apply_logs_config(LogsConfig(max_bytes=2048, backup_count=2))
@@ -187,7 +176,6 @@ def test_backup_count_bounds_total_disk_usage(tmp_path) -> None:
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 def test_no_bare_basicconfig_filename_call_remains_in_src() -> None:
@@ -250,7 +238,6 @@ def test_existing_file_handler_readers_still_find_the_rotating_handler(
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
@@ -266,4 +253,3 @@ def test_existing_file_handler_readers_still_find_the_rotating_handler(
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
-        stall_trace.register_file_handler_path(saved_registered_path)

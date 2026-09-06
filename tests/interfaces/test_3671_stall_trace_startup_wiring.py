@@ -62,23 +62,22 @@ def installed_file_handler(tmp_path: Path):
     declared via ``stall_trace.register_file_handler_path``. This
     fixture bypasses ``_setup_interactive_logging`` (the one production
     caller of that registration function), so it must register the path
-    itself, and restore the PRIOR registration on teardown rather than
-    unconditionally clearing it — a leaked registration must not survive
-    into a later test, but nor may this fixture assume it is the only
-    registrant during its own lifetime."""
+    itself — restoring the PRIOR registration on teardown is
+    `tests/conftest.py`'s own `_isolate_stall_trace_file_handler_
+    registration` autouse fixture's job now (CI finding, 2026-09-06: a
+    6th hand-rolled save/restore here would be the exact per-test
+    duplication that fixture's own docstring says to stop adding)."""
     log_dir = tmp_path / ".reyn" / "logs"
     log_dir.mkdir(parents=True)
     log_path = log_dir / "reyn.log"
     handler = logging.FileHandler(str(log_path))
     logging.getLogger().addHandler(handler)
-    saved_registered_path = stall_trace.find_file_handler_path()
     stall_trace.register_file_handler_path(str(log_path))
     try:
         yield log_path
     finally:
         logging.getLogger().removeHandler(handler)
         handler.close()
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 @pytest.mark.asyncio
@@ -293,7 +292,10 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
     # inode — no rotation for this test to detect at all.
     handler = RotatingFileHandler(str(log_path), maxBytes=1, backupCount=2)
     logging.getLogger().addHandler(handler)
-    saved_registered_path = stall_trace.find_file_handler_path()
+    # Registration restore is tests/conftest.py's own autouse
+    # _isolate_stall_trace_file_handler_registration fixture's job — see
+    # installed_file_handler's own docstring above for why this file no
+    # longer hand-rolls it per test.
     stall_trace.register_file_handler_path(str(log_path))
 
     calls: "list[tuple[float, object, bool | None]]" = []
@@ -331,7 +333,6 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
     finally:
         logging.getLogger().removeHandler(handler)
         handler.close()
-        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 @pytest.mark.asyncio
