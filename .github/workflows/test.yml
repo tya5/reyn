@@ -167,6 +167,32 @@ jobs:
             echo "no stall-trace dump (pytest session finished normally)"
           fi
 
+      # #5878 (architect follow-up, #5877 co-vet): the same visibility gap
+      # #4986 closed for a session-teardown hang, for a DIFFERENT silent
+      # death — `dev/testing/memory_ceiling.py`'s per-worker RSS ceiling
+      # kills a runaway worker with `os._exit(97)` (no pytest traceback,
+      # capture-manager output discarded on the way out) after naming the
+      # offending test in `.reyn-memory-ceiling.log` FIRST. Unlike the
+      # stall-trace file above, this one is never pre-created empty (it is
+      # only opened, in append mode, at the moment the ceiling actually
+      # fires) — `-s` (exists AND non-empty) is still the right test either
+      # way: false on both "never created" and "created but empty", which
+      # is exactly "did not fire" here. `-n auto` runs several workers
+      # sharing this job's one checkout/cwd, so any worker's firing lands
+      # in this SAME file (append mode, never clobbered) — one check
+      # covers all of them. Missing this cat is what cost a full
+      # investigation round-trip during #5877's own CI-hang triage (the
+      # test name that died was invisible in the job log).
+      - name: Memory-ceiling dump (#5878 — only non-empty if a worker was killed)
+        if: always()
+        run: |
+          if [ -s .reyn-memory-ceiling.log ]; then
+            echo "::warning::#5878 memory ceiling fired — a pytest worker exceeded its RSS ceiling and was killed"
+            cat .reyn-memory-ceiling.log
+          else
+            echo "no memory-ceiling dump (no worker exceeded its RSS ceiling)"
+          fi
+
       # #4331: what a green run above does NOT say — the skip census (count
       # + reason breakdown) and the collection-error count, on the SAME
       # surface (this job's own summary page) a human reads the green
