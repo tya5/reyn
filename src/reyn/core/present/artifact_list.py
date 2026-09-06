@@ -189,15 +189,30 @@ def resolve_display_paths(
     The one piece of I/O this module's collection path does — called only
     on rows about to be DISPLAYED (a pane refresh), matching this module's
     own "no pre-stat, no persisted cache" discipline; see the module
-    docstring."""
-    from reyn.data.workspace.artifact_ref import resolve_ref
+    docstring.
 
+    #5870 stage 2 (F1): resolves every ref-bearing row through ONE
+    :func:`~reyn.data.workspace.artifact_ref.resolve_refs` call rather
+    than one :func:`~reyn.data.workspace.artifact_ref.resolve_ref` call
+    per row — the architect's own census found this the single most
+    expensive per-frame cost in the drawer's refresh path (a full
+    read+parse of the (potentially thousands-of-lines) ref table, once
+    per artifact row, on EVERY frame). ``resolve_refs`` itself also
+    caches the table by the file's own identity (mtime/size), so a
+    refresh against an UNCHANGED table costs one ``os.stat``, not one
+    read per row per frame."""
+    from reyn.data.workspace.artifact_ref import resolve_refs
+
+    ref_rows = [row for row in rows if row.ref is not None]
+    resolved_by_ref = resolve_refs(
+        project_root, agent_name, (row.ref for row in ref_rows if row.ref is not None),
+    )
     out: list[ArtifactRow] = []
     for row in rows:
         if row.ref is None:
             out.append(row)
             continue
-        resolved = resolve_ref(project_root, agent_name, row.ref)
+        resolved = resolved_by_ref.get(row.ref)
         if resolved is None:
             out.append(row)
             continue
