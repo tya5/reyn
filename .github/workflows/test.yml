@@ -277,8 +277,15 @@ jobs:
       #
       # `timeout 8m` (#3670): see the "Run tests" job's comment for why —
       # converts a would-be `cancelled` job-timeout into a legible `failure`.
+      #
+      # `--full` (#5882): the script's own LOCAL default is now
+      # changed-files mode (only the .py files a branch touched, relative
+      # to origin/main) — a "find out sooner" tool, not the judgment (see
+      # the script's own module docstring). CI is the judgment, so it
+      # always passes `--full` explicitly, checking the whole src/reyn +
+      # tests trees exactly as before this change.
       - name: Run mypy ratchet
-        run: timeout 8m python scripts/mypy_ratchet.py
+        run: timeout 8m python scripts/mypy_ratchet.py --full
 
   docs:
     name: docs build (strict)
