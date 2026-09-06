@@ -454,7 +454,7 @@ def _looks_like_write_denial(text: str | None) -> bool:
     denial arrives on the subprocess's stderr (:meth:`MCPClient.initialize`),
     while a denial inside a running server's tool handler never touches stderr
     at all and arrives as JSON-RPC tool-error content
-    (:meth:`MCPClient.call_tool`). See :data:`_TOOL_CALL_WRITE_DENIAL_HINT`.
+    (:meth:`MCPClient.call_tool`). See :data:`_TOOL_CALL_PERMISSION_HINT`.
     """
     if not text:
         return False
@@ -476,15 +476,40 @@ def _looks_like_write_denial(text: str | None) -> bool:
 #
 # i.e. FastMCP prefixes the handler's exception but preserves ``str(exc)``
 # verbatim, so the errno survives into the payload and _looks_like_write_denial
-# matches it. Both concrete remedies are named (the #2932 ``require_mcp`` shape),
-# and the zero-config one goes FIRST per #3009's principle: the path that needs no
-# declaration is the recommendation, the grant is the documented deviation.
-_TOOL_CALL_WRITE_DENIAL_HINT = (
-    "\n\nHint (#3009): this looks like reyn's MCP sandbox DENYING the server a "
-    "write to a path outside its granted write scope — NOT a bug in the tool "
-    "(the error above names the exact path). A sandboxed stdio MCP server may "
-    "write only inside its working directory unless its config says otherwise. "
-    "Two ways forward:\n"
+# matches it.
+#
+# #5845 (sibling of #5840, same causal overclaim, same fix shape): this used to
+# read "this looks like reyn's MCP sandbox DENYING the server a write ... NOT a
+# bug in the tool" — a stderr/tool-error STRING MATCH asserted as a CAUSAL
+# claim. The same "[Errno 1] Operation not permitted: '<path>'" text is
+# IDENTICAL whether the sandbox denied a write outside its granted scope OR a
+# genuine non-sandbox permission failure occurred INSIDE that scope (a
+# read-only mount, a missing parent directory) — the entailment gap
+# ``security/sandbox/denial.py``'s own module comment already names. Two
+# gates now, not one: :func:`~reyn.security.sandbox.denial.looks_permission_
+# related` (reused verbatim from #5840/#5832 — not a second classifier for the
+# same question) gates the non-causal granted-range disclosure;
+# :func:`_looks_like_write_denial` (unchanged) still gates whether the
+# write_paths remedy is worth appending, worded conditionally ("if this IS the
+# cause") rather than asserted.
+_TOOL_CALL_PERMISSION_HINT = (
+    "\n\nHint (#5845): this looks permission-related (the error above may "
+    "name the exact path). reyn's sandbox ran this server with "
+    "subprocess={subprocess}, network={network}, write_paths={write_paths} "
+    "— the range reyn granted, not a diagnosis of this failure's cause (a "
+    "genuine non-sandbox permission error, e.g. a read-only mount or a "
+    "missing parent directory, reads identically)."
+)
+
+# #5845: the write_paths remedy, unchanged in substance from the pre-#5845
+# hint's own "two ways forward" — only its wording moved from asserted
+# ("this IS a sandbox denial") to conditional ("IF the sandbox's write scope
+# IS the cause"), and it now only ever appends onto _TOOL_CALL_PERMISSION_HINT
+# rather than standing alone. The zero-config option still goes FIRST per
+# #3009's original principle: the path that needs no declaration is the
+# recommendation, the grant is the documented deviation.
+_TOOL_CALL_WRITE_DENIAL_REMEDY = (
+    " If the sandbox's write scope IS the cause, two ways forward:\n"
     "  1. Pass a path INSIDE the server's working directory (a relative path "
     "like \"rag/docs.sqlite\" needs no configuration at all), or\n"
     "  2. Grant the location you want — add it to this server's `write_paths`:\n"
@@ -1697,8 +1722,9 @@ class MCPClient:
         return self._annotate_write_denial(_result_to_dict(result))
 
     def _annotate_write_denial(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Append the ``write_paths`` hint to *result* when it carries a sandbox
-        write denial. Returns *result* unchanged otherwise (#3009).
+        """Append a permission-failure hint to *result* when it looks
+        permission-related. Returns *result* unchanged otherwise (#3009,
+        reworked #5845).
 
         Why HERE and not in ``_result_to_dict``: that helper is a pure flattener
         of the SDK's shape, and this is reyn's own diagnosis of a reyn-imposed
@@ -1712,6 +1738,12 @@ class MCPClient:
         only its config has a ``write_paths`` to point the operator at. Advice
         about a knob an http/sse server does not have would be a wrong turn.
 
+        #5845: two gates, not one — see :data:`_TOOL_CALL_PERMISSION_HINT`'s
+        own comment for why. ``looks_permission_related`` decides whether the
+        granted-range disclosure fires at all; ``_looks_like_write_denial``
+        (unchanged) decides only whether the write_paths remedy is ALSO worth
+        appending underneath it.
+
         The hint is APPENDED, unlike #2976's, which is deliberately prepended.
         That was forced by ``pool.describe_fault(limit=600)`` truncating an init
         error from the END; nothing truncates this path — a tool-error result is
@@ -1719,6 +1751,8 @@ class MCPClient:
         text block into the LLM's tool result whole. So the natural order stands:
         what happened, then what to do about it.
         """
+        from reyn.security.sandbox.denial import looks_permission_related
+
         if self._type != "stdio" or not result.get("isError"):
             return result
         content = result.get("content")
@@ -1728,11 +1762,18 @@ class MCPClient:
             item.get("text", "") for item in content
             if isinstance(item, dict) and item.get("type") == "text"
         )
-        if not _looks_like_write_denial(text):
+        if not looks_permission_related(text):
             return result
-        hint = _TOOL_CALL_WRITE_DENIAL_HINT.format(
-            server=self._server_name or "<server-name>",
+        policy = self._build_mcp_sandbox_policy()
+        hint = _TOOL_CALL_PERMISSION_HINT.format(
+            subprocess=not policy.deny_subprocess,
+            network=policy.network,
+            write_paths=list(policy.write_paths),
         )
+        if _looks_like_write_denial(text):
+            hint += _TOOL_CALL_WRITE_DENIAL_REMEDY.format(
+                server=self._server_name or "<server-name>",
+            )
         # A separate block, not an edit of the server's own text: the server's
         # message is data reyn relays, the hint is reyn's. Both reach the reader
         # either way (op_runtime joins them), so keep the provenance clean.

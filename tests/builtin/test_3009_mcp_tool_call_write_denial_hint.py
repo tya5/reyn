@@ -8,9 +8,18 @@ handler, so it comes back as JSON-RPC tool-error content and stderr stays empty.
 What the operator saw was a bare sqlite error naming neither the sandbox nor the
 knob, i.e. the same silence #2976 existed to end, one layer down.
 
-These tests pin the invariant that closes it: **when the sandbox denies a write,
-the operator learns that it was a denial and what to do next.** They deliberately
-do not pin the hint's wording — only that the reader is pointed at the mechanism.
+These tests pin the invariant that closes it: **when a tool call fails in a way
+that looks permission-related, the operator learns what reyn's sandbox granted
+and, if the failure is write-shaped, what to do next.** They deliberately do
+not pin the hint's wording — only that the reader is pointed at the mechanism.
+
+#5845 update: the hint no longer ASSERTS the sandbox caused the failure (the
+same stderr/tool-error signature is identical whether the sandbox denied the
+write or a genuine non-sandbox permission error occurred inside the granted
+scope) — it discloses the granted range non-causally, and the write_paths
+remedy below is worded as "if this IS the cause". The word "sandbox" and the
+`write_paths` knob both still appear in the disclosure text, which is all
+this file's own assertions require.
 
 Two independent things have to hold for that, and each has its own test below,
 because each was separately observed to fail (both MEASURED under the real
