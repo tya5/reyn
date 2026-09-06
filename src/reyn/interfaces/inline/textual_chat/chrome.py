@@ -494,33 +494,48 @@ COMPOSER_KEYS: "list[tuple[str, str]]" = [
     ("esc", "dismiss completion"),
 ]
 
-#: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides).
+#: The menu row's navigation keys (imperative ``MenuBar._on_key`` overrides),
+#: PLUS (below the ``#5869`` marker) the PANE's own two rows — a different
+#: focus region, co-located here because this is the one Help ledger a reader
+#: already checks for "what does esc/up do near the drawer", the same reason
+#: the pane-fallback row lived here even before #5869 (see that marker).
 #:
 #: #3365: ``↑`` and ``esc`` used to share one row worded "close" — read as
 #: "closes the drawer, landing on the tab-bar" (one level up), but the ACTUAL
 #: destination (measured, both keys) is the Composer directly, regardless of
 #: navigation depth. Split into two rows with accurate wording instead of one
 #: combined row that invited a "one step back" misreading.
+#:
+#: #5869 (owner request, overturns #3365 ruling ①): a NEW rung sits BETWEEN
+#: the pane and the composer — one press of esc/up from PANE content (an
+#: OptionList row, or a readout) now lands on THIS row (the tab row) instead
+#: of jumping straight to the composer; a SECOND press from here (the rows
+#: above this marker, unchanged) still goes straight to the composer, exactly
+#: as before. Two rows below document the NEW first press; the two rows above
+#: this marker document what happens once you are actually ON the tab row.
 MENUBAR_KEYS: "list[tuple[str, str]]" = [
     ("← →", "move"),
     ("enter", "open"),
     # #3699: a readout pane taller than the drawer's cap scrolls, and until
     # this row existed the Help pane did not say how — the pane whose content
     # was cut off was also the pane that would have told you how to see the
-    # rest. PgUp/PgDn rather than ↑/↓ because ↑ already means "back to
-    # composer" here (the row below), and this app already uses PgUp/PgDn for
-    # "page through content" on the conversation.
+    # rest. PgUp/PgDn rather than ↑/↓ because ↑ now means "back to the tab
+    # row" while a pane holds focus (see the #5869 rows below), and this app
+    # already uses PgUp/PgDn for "page through content" on the conversation.
     ("pgup / pgdn", "scroll this pane"),
     ("↑", "back to composer"),
-    ("esc", "back to composer"),
-    # Owned HERE rather than sourced from the app's ``BINDINGS`` (#3818). The
-    # binding still exists and still does the work — but Textual identifies the
-    # key as ``escape``, and rendering the identifier put ``escape  Close
-    # drawer`` directly under ``esc  back to composer``: one key, two
-    # spellings, one screen. reyn already owns how a key is written (every
-    # other row in every one of these tables), so the fix is to let it own this
-    # one too rather than to translate at the last moment.
-    ("esc", "close drawer"),
+    ("esc", "close drawer, back to composer"),
+    # #5869: the NEW rung, one press closer than the composer — see the
+    # marker above this table. Owned HERE rather than sourced from the app's
+    # ``BINDINGS`` (#3818): the binding still exists and still does the
+    # work — but Textual identifies the key as ``escape``, and rendering the
+    # identifier put ``escape`` next to every other row's hand-spelled
+    # ``esc``, one key with two spellings on one screen. reyn already owns
+    # how a key is written (every other row in every one of these tables),
+    # so the fix is to let it own this one too rather than to translate at
+    # the last moment.
+    ("↑", "back to tabs"),
+    ("esc", "back to tabs"),
 ]
 
 #: Keys RESERVED by an approved-but-unimplemented feature — claimed, but bound
@@ -2291,6 +2306,35 @@ def config_warning_text(
     return f"{base}: {names} → reyn config validate"
 
 
+class DrawerOptionList(OptionList):
+    """A drawer picker's list (Model/Agent/History/... — every tab in
+    :data:`_LIST_PANES`), with one addition on top of the base widget's own
+    ``↑``/``↓`` cursor navigation: **#5869 (owner request)** — ``↑`` pressed
+    while already on the FIRST row (or before the first navigation at all,
+    ``highlighted is None``) escapes UP to the tab row instead of the base
+    widget's own default, which is to WRAP to the LAST row (measured
+    directly — a real ``run_test`` pilot press, not assumed: an unnavigated
+    list's very first ``↑`` jumps straight to the bottom row). That wrap was
+    never a deliberate destination for this app — nothing here documented or
+    tested it — so redirecting it to the tab row costs nothing a design
+    depended on, and gives the owner's ask (readout panes reach the tab row
+    on ``↑`` too — see ``app.py``'s ``ScrollableDrawer.action_back_to_tabs``)
+    a matching answer for the OTHER pane family.
+
+    Every row below the first still moves exactly as the base widget does —
+    only the boundary case changes."""
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "up" and self.highlighted in (0, None):
+            menubar = self.app.query(MenuBar)
+            if menubar:
+                event.stop()
+                event.prevent_default()
+                menubar.first().focus()
+                return
+        await super()._on_key(event)
+
+
 def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
     """Build the mounted drawer pane widget for ``tab_id`` from its display
     ``rows``: an :class:`OptionList` for a picker pane, a Rich :class:`Static`
@@ -2312,7 +2356,7 @@ def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
             if pane_needs_literal_rows(tab_id)
             else rows
         )
-        return OptionList(*options, id=tab_id)
+        return DrawerOptionList(*options, id=tab_id)
     # #3699 keeps this a plain ``Static``: the scrolling for an over-tall
     # readout is done by the drawer around it (see the ``#drawer`` rule in the
     # app stylesheet for why it cannot be done here), so this branch stays the

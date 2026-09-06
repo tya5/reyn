@@ -14,9 +14,17 @@ merely assumed, safety net; and what would immediately catch that future
 Input-vs-Esc regression by going RED.
 
 Seven HAND-ENUMERATED focus states, each independently reachable and each
-asserted to return to the Composer on ``Esc``:
+asserted to return to the Composer on ``Esc`` (possibly more than one —
+see #5869 below):
   1. MenuBar (tab-bar row, not yet opened)
-  2. Drawer content (an OptionList pane)
+  2. Drawer content (an OptionList pane) — **#5869 (owner request, overturns
+     this file's own #3365 ruling ①)**: reaching the Composer from here now
+     takes TWO presses, not one — the first moves focus to the tab row
+     (MenuBar) and leaves the drawer open, the second is state 1 above. The
+     sufficiency claim itself is unchanged (Esc still, eventually, always
+     reaches the Composer from every state); only this one state's press
+     COUNT changed, from the owner's own explicit ask that a single Esc no
+     longer skip the tab row on its way out.
   3. SentQueue
   4. InterventionPanel — closed-set (RadioSet)
   5. InterventionPanel — free-text (Input) — the specific widget architect
@@ -39,7 +47,7 @@ reach the Composer:
      selection exists, so the key is consumed one layer in and never
      bubbles to reyn's app-level "close drawer / back to Composer"
      binding. This is the innermost of #3692's three Esc layers; the other
-     two (drawer open -> close it; nothing selected -> Composer) are
+     two (drawer open -> tab row, #5869; nothing selected -> Composer) are
      exactly states 2 and 6 above, re-verified to still hold once the
      flowview 0.13 pin (#3692 PR-A) gave FlowView its own competing Esc
      binding for the first time.
@@ -172,9 +180,13 @@ async def test_esc_from_menubar_returns_to_composer() -> None:
 
 @pytest.mark.asyncio
 async def test_esc_from_drawer_content_returns_to_composer() -> None:
-    """Tier 2b: Esc from an OPEN drawer's content (an OptionList) -> Composer,
-    regardless of navigation depth inside it (matches the architect's own
-    measured trace: depth does not change the destination)."""
+    """Tier 2b: Esc from an OPEN drawer's content (an OptionList) -> Composer
+    in exactly TWO presses (#5869, owner request, overturns this file's own
+    #3365 ruling ①) — the first lands on the tab row (MenuBar) with the
+    drawer STILL open, the second is state 1's own ordinary MenuBar-Esc.
+    Depth-independence still holds for the first press (matches the
+    architect's own measured trace): navigating a few rows deep beforehand
+    changes nothing about where either press lands."""
     app = TextualChatApp(transport=_Transport([]))
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -190,10 +202,20 @@ async def test_esc_from_drawer_content_returns_to_composer() -> None:
         await pilot.press("down", "down", "down")
         await pilot.pause()
 
+        drawer = app.query_one("#drawer")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.focused, MenuBar), (
+            f"first Esc from drawer content did not land on the tab row: {app.focused!r}"
+        )
+        assert drawer.display, (
+            "first Esc from drawer content closed the drawer -- #5869 keeps it open"
+        )
+
         await pilot.press("escape")
         await pilot.pause()
         assert isinstance(app.focused, Composer), (
-            f"Esc from drawer content did not return to Composer: {app.focused!r}"
+            f"second Esc (from the tab row) did not return to Composer: {app.focused!r}"
         )
 
 

@@ -179,8 +179,8 @@ Press `↓` from an empty input to focus the status bar, then:
 |-----|--------|
 | `←` / `→` | Move between chips (or between sub-bar chips, once `more` is open) |
 | `Enter` | Open the focused chip's detail view (or, for an actionable one like `model`, apply the selected row) |
-| `↑` / `↓` | Navigate rows inside an open detail view; at the top, `↑` closes it and returns focus to the input |
-| `Esc` | Close the open detail view / sub-bar |
+| `↑` / `↓` | Navigate rows inside an open detail view; at the top, `↑` moves focus up to the chip row (the detail view stays open) |
+| `Esc` | From inside an open detail view, move focus up to the chip row (still open); press again from the chip row to close it |
 
 ### Turn control
 

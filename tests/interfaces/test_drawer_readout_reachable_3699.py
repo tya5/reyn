@@ -25,7 +25,7 @@ from typing import AsyncIterator
 import pytest
 from textual.widgets import ContentSwitcher, OptionList
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat import MenuBar, TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import (
     MENUBAR_KEYS,
     Composer,
@@ -190,10 +190,12 @@ async def test_a_picker_pane_still_focuses_its_list() -> None:
 
 @pytest.mark.asyncio
 async def test_escape_still_returns_to_the_composer_from_a_readout() -> None:
-    """Tier 2: the existing keyboard contract survives the new focus target.
-
-    ``Esc`` means "back to composer" everywhere in this app. Moving focus onto
-    the drawer must not create a place Esc does not work from.
+    """Tier 2: the existing keyboard contract survives the new focus target,
+    now in TWO presses (#5869, owner request, overturns this file's own
+    #3365-era assumption of one press): ``Esc`` still, eventually, always
+    reaches the composer from a readout pane — moving focus onto the drawer
+    must not create a place Esc does not work from — but the FIRST press now
+    lands on the tab row (drawer still open) rather than skipping it.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
@@ -203,13 +205,85 @@ async def test_escape_still_returns_to_the_composer_from_a_readout() -> None:
         for _ in range(4):
             await pilot.pause()
 
+        drawer = app.query_one("#drawer", ContentSwitcher)
+        await pilot.press("escape")
+        for _ in range(4):
+            await pilot.pause()
+
+        assert isinstance(app.focused, MenuBar), (
+            f"first Esc from the Help pane did not land on the tab row: {app.focused!r}"
+        )
+        assert drawer.display, (
+            "first Esc from the Help pane closed the drawer -- #5869 keeps it open"
+        )
+
         await pilot.press("escape")
         for _ in range(4):
             await pilot.pause()
 
         assert isinstance(app.focused, Composer), (
-            f"Esc from the Help pane landed on {type(app.focused).__name__}"
+            f"second Esc (from the tab row) did not return to the composer: {app.focused!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_up_from_a_readout_reaches_the_tab_row_leaving_the_drawer_open() -> None:
+    """Tier 2: #5869 (owner request) -- ``↑`` from a readout pane (the
+    ``ScrollableDrawer`` itself holds focus, #3699) moves focus to the tab
+    row without closing the drawer. Before this rung existed ``↑`` from here
+    reached NEITHER a scroll action NOR any bound key at any ancestor --
+    measured directly (a real ``run_test`` pilot press left focus exactly
+    where it started) -- so this is a genuinely new destination, not a
+    redirect of a working one.
+    """
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._open_drawer("help")
+        for _ in range(4):
+            await pilot.pause()
+
+        drawer = app.query_one("#drawer", ContentSwitcher)
+        await pilot.press("up")
+        for _ in range(4):
+            await pilot.pause()
+
+        assert isinstance(app.focused, MenuBar), (
+            f"↑ from the Help pane did not land on the tab row: {app.focused!r}"
+        )
+        assert drawer.display, "↑ from the Help pane closed the drawer -- #5869 keeps it open"
+
+
+@pytest.mark.asyncio
+async def test_up_from_the_top_of_a_picker_reaches_the_tab_row_leaving_the_drawer_open() -> None:
+    """Tier 2: #5869 (owner request) -- ``↑`` on an ``OptionList`` picker's
+    FIRST row moves focus to the tab row instead of the base widget's own
+    default (wrap to the LAST row -- measured directly, a real pilot press
+    on an unnavigated list; never a documented or tested destination this
+    app depended on). Every OTHER row still navigates exactly as before --
+    this rung fires only at the boundary.
+    """
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._open_drawer("menu")
+        for _ in range(4):
+            await pilot.pause()
+
+        opt = app.query_one("#menu", OptionList)
+        assert opt.option_count > 1, "setup: the menu pane needs more than one row to test wrap vs. escape"
+        drawer = app.query_one("#drawer", ContentSwitcher)
+
+        await pilot.press("up")
+        for _ in range(2):
+            await pilot.pause()
+
+        assert isinstance(app.focused, MenuBar), (
+            f"↑ from the picker's first row did not land on the tab row: {app.focused!r}"
+        )
+        assert drawer.display, "↑ from the picker's first row closed the drawer -- #5869 keeps it open"
 
 
 def test_the_help_text_says_how_to_scroll_itself() -> None:
@@ -228,4 +302,30 @@ def test_the_help_text_says_how_to_scroll_itself() -> None:
     # consistent.
     assert any("pgdn" in key.lower() or "pagedown" in key.lower() for key in keys), (
         f"the drawer's key ledger does not mention paging: {sorted(keys)}"
+    )
+
+
+def test_the_help_text_names_both_esc_rungs() -> None:
+    """Tier 2: #5869 -- the Help ledger says what BOTH presses do, not just
+    the second one. Before this PR one row ("esc close drawer") already
+    covered the pane's own Esc, worded for the OLD one-press behaviour; this
+    asserts the NEW two-rung wording is actually there, on both the pane-
+    context and tab-row-context rows, rather than assuming a row exists
+    just because the key does.
+    """
+    labels_by_key: "dict[str, list[str]]" = {}
+    for key, label in MENUBAR_KEYS:
+        labels_by_key.setdefault(key, []).append(label)
+
+    esc_labels = labels_by_key.get("esc", [])
+    assert any("back to tabs" in label for label in esc_labels), (
+        f"no esc row says the pane-context destination (tab row): {esc_labels!r}"
+    )
+    assert any("close drawer" in label and "composer" in label for label in esc_labels), (
+        f"no esc row says the tab-row-context destination (close + composer): {esc_labels!r}"
+    )
+
+    up_labels = labels_by_key.get("↑", [])
+    assert any("back to tabs" in label for label in up_labels), (
+        f"no ↑ row says the pane-context destination (tab row): {up_labels!r}"
     )
