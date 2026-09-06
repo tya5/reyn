@@ -1278,6 +1278,13 @@ set (CI's own full run) or `REYN_FULL_SUITE_OK=1` is passed explicitly.
    ```bash
    python scripts/mypy_ratchet.py
    ```
+   This bare invocation is now changed-files mode by default (#5882 —
+   the `.py` files your branch touched relative to `origin/main`'s
+   merge-base, committed or not, plus untracked ones; shared cache dir,
+   repo-wide lock). CI always passes `--full` and is the one that
+   actually decides — see [PR workflow](pr-workflow.md) for what that
+   split means and why.
+
    ⚠️ It also fails when `mypy` is not importable by the interpreter running it
    (#4576) — that is a *precondition* failure, not a finding. Before the guard,
    a missing mypy produced `OK: 0 findings, all baselined (215 declared)` and
