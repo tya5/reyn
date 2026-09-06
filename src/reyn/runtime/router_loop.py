@@ -1214,28 +1214,6 @@ def _known_action_names() -> "frozenset[str]":
 _KNOWN_ACTION_NAMES: frozenset[str] = _known_action_names()
 
 
-def gate_effective_tool_name(name: str, args: "dict | None") -> "str | None":
-    """The TOOL-axis gate's name resolution — the ONE place the wrapper unwrap lives.
-
-    Both halves of the #3378 advertise ⇔ enforce agreement key on this:
-    :func:`apply_contextual_visibility` (advertisement, ``args=None``) and
-    :meth:`RouterLoop._excluded_result` (enforcement, the live ``args``). A
-    ``invoke_action`` call carries its real target in ``action_name``, so the
-    effective name is knowable only at CALL time — ``args=None`` therefore
-    returns ``None`` ("undeterminable"), which the advertisement half reads as
-    "cannot pre-filter this row". That asymmetry is deliberate and load-bearing:
-    pre-filtering the wrapper itself under an allow-list contextual would hide
-    the ONLY route to every allowed action, i.e. advertise MORE narrowly than
-    enforcement denies — the mirror image of the #3378 defect.
-
-    ``None`` is also returned for an ``invoke_action`` whose ``action_name`` is
-    absent (a malformed call): nothing to gate on, and dispatch rejects it.
-    """
-    if name == "invoke_action":
-        return (args or {}).get("action_name")
-    return name
-
-
 def apply_contextual_visibility(
     tools: list[dict], contextual: "object | None"
 ) -> list[dict]:
@@ -1246,24 +1224,32 @@ def apply_contextual_visibility(
     composed effective narrowing (topology ∩ delegate floor ∩ per-session config ∩
     ⊆-parent cap ∩ ``/visibility`` override ∩ the ephemeral ``_untrusted`` profile ∩
     the ``exclude_tools`` bridge) — and the same
-    :func:`gate_effective_tool_name` unwrap, so a tool that would be rejected with
-    ``tool_excluded`` is never offered in the first place. The prior filter keyed on
-    ``exclude_tools`` ALONE, so any contextual that did not come from
-    ``exclude_tools`` (topology / delegate / ephemeral) left the tool advertised and
-    denied it only at call time — the owner-reported ``exec`` symptom.
+    :func:`~reyn.security.permissions.effective.gate_effective_tool_name` unwrap,
+    so a tool that would be rejected with ``tool_excluded`` is never offered in
+    the first place. The prior filter keyed on ``exclude_tools`` ALONE, so any
+    contextual that did not come from ``exclude_tools`` (topology / delegate /
+    ephemeral) left the tool advertised and denied it only at call time — the
+    owner-reported ``exec`` symptom.
 
     **Not a substitute for enforcement (#187).** Hiding a row does not stop the LLM
     from naming it anyway (native direct call, the #229 salvage, or a direct
     ``invoke_action(action_name=…)``), which is exactly how the #187 ``web_search``
-    leak executed. ``_excluded_result`` stays the boundary; this is the presentation
-    half that keeps the model from wasting a turn on a tool it cannot have.
+    leak executed. #5854: the boundary is now ``dispatch_tool``'s own call-time
+    TOOL-axis restrict (2b, ``core/dispatch/dispatcher.py``) — the single shared
+    seam every dispatch path funnels through, having retired the separate
+    ``RouterLoop._excluded_result`` pre-dispatch gate this docstring used to name
+    here; this function is the presentation half that keeps the model from
+    wasting a turn on a tool it cannot have.
 
     ``contextual is None`` (no narrowing anywhere) → ``tools`` returned unchanged.
     P7-clean: no hardcoded tool names; the narrowing is data resolved per session.
     """
     if contextual is None:
         return tools
-    from reyn.security.permissions.effective import tool_contextually_denied
+    from reyn.security.permissions.effective import (
+        gate_effective_tool_name,
+        tool_contextually_denied,
+    )
 
     kept: list[dict] = []
     for t in tools:
@@ -1378,10 +1364,13 @@ class RouterLoop:
         # threaded onto RouterCallerState so the universal catalog drops them.
         self._excluded_categories: frozenset[str] = frozenset(excluded_categories or set())
         # #1827 S1 (live-gate): the TOOL-axis ENFORCEMENT flows through the unified
-        # ∩-model (effective.py ContextualLayer) at the single live gate
-        # ``_excluded_result``. #3378: ``_contextual_permission`` is now the SINGLE
-        # EFFECTIVE SOURCE for BOTH halves — enforcement (``_excluded_result``) and
-        # advertisement (``apply_contextual_visibility``) — so ``exclude_tools`` is
+        # ∩-model (effective.py ContextualLayer) at the single live gate —
+        # ``dispatch_tool``'s own call-time restrict (2b, #5841/#5854; formerly
+        # this loop's own separate pre-dispatch ``_excluded_result``, retired).
+        # #3378: ``_contextual_permission`` is now the SINGLE EFFECTIVE SOURCE
+        # for BOTH halves — enforcement (``dispatch_tool`` 2b, via ``ctx.
+        # contextual``) and advertisement (``apply_contextual_visibility``) —
+        # so ``exclude_tools`` is
         # COMPOSED IN as one more restrict-only ∩ conjunct rather than living on as a
         # parallel, advertisement-only axis.
         #
@@ -3475,15 +3464,11 @@ class RouterLoop:
         """
         name, args, raw_name = self._resolve_tool_call(tc)
 
-        excluded = self._excluded_result(name, args)
-        if excluded is not None:
-            # #3455: a pre-dispatch exclude IS a routing decision (the
-            # decision was "deny") — it never reaches ``_dispatch_resolved``,
-            # so its own emit call there would silently drop this outcome.
-            # Matches the pre-#3455 behavior (the old run_loop-local emit
-            # iterated ALL tool_results, excluded ones included).
-            self._emit_routing_decided(name, args, excluded, raw_name=raw_name)
-            return excluded
+        # #5854: no separate pre-dispatch exclude check here any more —
+        # ``_dispatch_resolved`` -> ``dispatch_tool``'s own 2b call-time
+        # restrict is the single live gate, and its own routing_decided
+        # emit (this method's tail) already covers the excluded outcome
+        # the same way it covers every other one.
         return await self._dispatch_resolved(
             name, args, raw_name=raw_name, call_id=call_id,
         )
@@ -3524,74 +3509,17 @@ class RouterLoop:
             name, args = self._maybe_salvage_action_direct_call(name, args)
         return name, args, raw_name
 
-    def _excluded_result(self, name: str, args: dict) -> "dict | None":
-        """#1406/#187: the **pre-dispatch** exclude gate. Returns the
-        ``tool_excluded`` error result when the effective op is excluded, else None.
-
-        The narrowing is not just an advertisement filter (#1400 / #3378
-        ``apply_contextual_visibility`` hides denied tools from ``tools[]`` /
-        ``self._catalog``) — the LLM can still call an excluded tool by name, which
-        the #229 salvage rewrites to ``invoke_action(action_name=<excluded>)`` (or it
-        is called as ``invoke_action`` directly), and ``universal_dispatch`` then
-        resolves and EXECUTES it (the #187 N=3 web_search leak). Compute the
-        effective resolved action — unwrap ``invoke_action`` — and reject if excluded.
-        Covers all three bypass paths (native direct / salvaged / direct
-        invoke_action). The ``tool_excluded`` kind + decision-enabling message lets
-        the model adjust ([[deny-message-decision-enabling]]).
-
-        #1827 S1 (live-gate): the decision now flows through the unified ∩-model
-        (effective.py ``ContextualLayer``) — the single live TOOL-axis enforcement
-        gate. ``never-elevate`` is the structural ``all()`` in
-        ``EffectivePermission`` (a contextual deny can't be re-granted). The
-        standalone ``exclude_tools`` *enforcement* membership is retired; #3378
-        COMPOSES ``exclude_tools`` into ``_contextual_permission`` (see
-        ``_with_exclude_tools``) so this gate and the advertisement filter read one
-        source, and S2+ feed a real contextual from topology / delegate / ephemeral
-        narrowing."""
-        if self._contextual_permission is not None:
-            # #1912: the shared contextual gate — the same check the
-            # advertisement filter runs, so what is hidden and what is denied
-            # cannot disagree. (This said "chat RouterLoop + op dispatch" until
-            # #3513; the op-dispatch leg was an orphaned wrapper with no caller
-            # and is gone. Op-dispatch coverage is #3546, unmeasured.)
-            from reyn.security.permissions.effective import (
-                contextual_deny_message,
-                tool_contextually_denied,
-            )
-            # #3378: the SAME unwrap the advertisement half uses (one seam).
-            effective = gate_effective_tool_name(name, args)
-            if effective is not None and tool_contextually_denied(
-                self._contextual_permission, effective
-            ):
-                # #3501: the message the MODEL reads. It used to say only "excluded
-                # this session", which is why an agent that lost a capability
-                # mid-session could not say what had happened or what would restore
-                # it — the reason and the lift condition were nowhere on this path,
-                # only in the Tool tab the operator had to open by hand. The shared
-                # builder names the narrowing that actually fired.
-                return {
-                    "status": "error",
-                    "error": {
-                        "kind": "tool_excluded",
-                        "message": (
-                            contextual_deny_message(
-                                "tool", effective, self._contextual_permission,
-                            )
-                            + " Do not call it again this turn (directly or via "
-                            "invoke_action)."
-                        ),
-                    },
-                }
-        return None
-
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
     ) -> dict:
-        """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
-        (DispatchContext / ``dispatch_tool`` — P5). The pure-OS dispatch
-        half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
-        calls to it (it never sees the DispatchContext).
+        """#1593: dispatch a resolved tool call via the OS substrate
+        (DispatchContext / ``dispatch_tool`` — P5). #5854: "resolved" no
+        longer means "already exclude-cleared" — ``dispatch_tool``'s own 2b
+        call-time restrict is what clears (or denies) it now, reached via
+        THIS call, not before it. The pure-OS dispatch half of the former
+        ``_execute_tool``; the scheme's ``execute`` orchestrates calls to
+        it (it never sees the DispatchContext).
 
         #1618 root-1: the membership/resolution gate (``tool_catalog``) is sourced
         from the scheme's DISPATCHABLE set (``self._dispatch_catalog``) — decoupled
@@ -3648,13 +3576,13 @@ class RouterLoop:
             chain_id=self.chain_id,
             tool_catalog=catalog,
             events=self.host.events,
-            # #5841: the SAME contextual narrowing _excluded_result already
-            # gates on above (dispatch()'s own earlier pre-dispatch check) —
-            # this makes dispatch_tool's own new call-time restrict a
-            # harmless no-op re-check for THIS caller (already denied
-            # earlier, never reaches here) while being the FIRST real
-            # enforcement for the other dispatch_tool callers (/exec,
-            # /tasks) that have no equivalent of _excluded_result at all.
+            # #5841/#5854: this loop's own effective narrowing — dispatch_
+            # tool's 2b call-time restrict (dispatcher.py) is now the SINGLE
+            # live enforcement gate for THIS caller too (the separate
+            # pre-dispatch ``_excluded_result`` this loop used to run before
+            # ever reaching here is retired, #5854), as well as for the
+            # other dispatch_tool callers (/exec, /tasks) that never had an
+            # equivalent of it.
             contextual=self._contextual_permission,
             call_id=call_id,
             completed_response_include_text=(
@@ -4390,9 +4318,15 @@ class RouterLoop:
         self, interp, *, call_id: "str | None" = None,
     ) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former
-        ``_run_scheme_tool_round`` body. The OS exclude-gate produces the same
-        ``tool_excluded`` error result **in place** (not a drop), so order +
-        ``tool_call_id`` alignment are preserved across the dispatch.
+        ``_run_scheme_tool_round`` body. #5854: every action now flows
+        straight to ``self._scheme.execute`` -> ``ops.dispatch`` ->
+        ``_dispatch_resolved`` -> ``dispatch_tool``, whose own 2b call-time
+        restrict produces the same ``tool_excluded`` error result **in
+        place** (not a drop) that this method's own pre-filter used to —
+        so order + ``tool_call_id`` alignment are unaffected, and
+        ``_dispatch_resolved``'s own ``routing_decided`` emit (its tail,
+        unconditional) covers the excluded outcome the same way it covers
+        every other one, with no separate emit needed here any more.
 
         ``call_id`` (#4691 Phase B ①, remainder): the litellm call this round
         dispatches on behalf of — threaded through ``ExecContext.extra``
@@ -4405,30 +4339,12 @@ class RouterLoop:
         actions = interp.actions
         tool_calls = [a["tc"] for a in actions]
 
-        results: list = [None] * len(actions)
-        to_dispatch: list[tuple[int, dict]] = []
-        for i, a in enumerate(actions):
-            ex = self._excluded_result(a["name"], a["args"])
-            if ex is not None:
-                # #3455: the exclude gate IS a routing decision (outcome
-                # "error") — this action never reaches ``dispatch()`` /
-                # ``_dispatch_resolved``, so its emit call there would never
-                # see it. Mirrors the pre-#3455 behavior (the old run_loop
-                # emit iterated every tool_result, excluded ones included).
-                self._emit_routing_decided(
-                    a["name"], a["args"], ex, raw_name=a.get("raw_name"),
-                )
-                results[i] = ex
-            else:
-                to_dispatch.append((i, a))
-
         exec_res = await self._scheme.execute(
-            Execute(actions=[a for _, a in to_dispatch]),
+            Execute(actions=actions),
             ExecContext(extra={"call_id": call_id}),
             ops=self,
         )
-        for (i, _), r in zip(to_dispatch, exec_res.tool_results):
-            results[i] = r
+        results = list(exec_res.tool_results)
         # #1608: return the RAW (tool_calls, results) — the 8 lifecycle/audit sites
         # (async / spawn-ack / plan / error / routing) consume the pair, and the OS
         # Execute branch hands it to ``format_feedback`` for the message build. (The
@@ -4443,10 +4359,12 @@ class RouterLoop:
         ``format_feedback`` message(s) for the loop to append (design (a)).
 
         ``_os_gate`` is the SAME gate the Execute path uses, per in-code ``tool()``
-        call: ``_excluded_result`` (exclude, pre-dispatch, resolved effective name) →
-        ``_dispatch_resolved`` (``dispatch_tool`` → permission_resolver, P5). The
-        snippet runs in the sandboxed subprocess (``CodeActRunner`` via
-        ``exec_ctx.sandbox``, fail-closed); the scheme orchestrates, the OS gates.
+        call: straight to ``_dispatch_resolved`` (``dispatch_tool``, whose
+        own 2b call-time restrict is the single live TOOL-axis exclude gate,
+        #5854 — this loop no longer runs a separate pre-dispatch check
+        before it). The snippet runs in the sandboxed subprocess
+        (``CodeActRunner`` via ``exec_ctx.sandbox``, fail-closed); the
+        scheme orchestrates, the OS gates.
 
         ``call_id`` (#4691 Phase B ①, remainder): the litellm call this
         snippet's tool() calls belong to — captured by ``_os_gate``'s own
@@ -4455,15 +4373,11 @@ class RouterLoop:
         from reyn.tools.scheme import ExecContext  # noqa: PLC0415
 
         async def _os_gate(name: str, args: dict) -> dict:
-            excluded = self._excluded_result(name, args)
-            if excluded is not None:
-                # #3455: CodeAct's in-snippet ``tool()`` calls previously had
-                # NO routing_decided coverage at all (the old emit only ever
-                # iterated the Execute arm's tool_calls/tool_results). Now
-                # covered symmetrically with the exclude branches above:
-                # the exclude gate is itself a routing decision.
-                self._emit_routing_decided(name, args, excluded)
-                return excluded
+            # #5854: ``_dispatch_resolved``'s own tail unconditionally emits
+            # ``routing_decided`` for whatever it returns — including a
+            # ``tool_excluded`` result from dispatch_tool's 2b — so this
+            # closure no longer needs its own pre-check + emit for that
+            # outcome, symmetric with the Execute arm above.
             return await self._dispatch_resolved(name, args, call_id=call_id)
 
         # CodeAct-safe default policy (operator-overridable in S4 via the host's
