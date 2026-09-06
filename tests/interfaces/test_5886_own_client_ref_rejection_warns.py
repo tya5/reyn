@@ -33,7 +33,7 @@ from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransportStub
-from reyn.interfaces.transport.frames import EventFrame, StatusApplied
+from reyn.interfaces.transport.frames import EventFrame, QueueSnapshot, StatusApplied
 from reyn.schemas.models import Event
 
 _TEXT = "a submission the gate will reject"
@@ -42,15 +42,19 @@ _LOGGER = "reyn.interfaces.inline.textual_chat.app"
 
 class _SeededReadModel(ChatReadModel):
     """A real ``ChatReadModel`` seam impl (the ``_MutableSnapshotReadModel``
-    shape from ``test_3338``) whose snapshot already carries ``queue_seq 5``
-    — what the seed reads when the snapshot frame below is processed."""
+    shape from ``test_3338``) — the surface the app needs to mount. Its
+    ``snapshot()`` deliberately reports ``queue_seq 0``: #5895 moved the
+    seed's source onto the frame, so if the seed still consulted this read
+    model the baseline would be 0, the stale seq-1 delta below would be
+    ADMITTED, and both tests would fail on "no rejection" — that is the
+    strip."""
 
     @property
     def capabilities(self):
         return LOCAL_CHAT_READ_CAPABILITIES
 
     def snapshot(self, config=None):
-        return {"queue": [], "turn_active": False, "queue_seq": 5}
+        return {"queue": [], "turn_active": False, "queue_seq": 0}
 
     def intervention_head(self):
         return None
@@ -143,7 +147,11 @@ def _rejections(caplog) -> "list":
 
 
 async def _drive(app: TextualChatApp, transport: _FrameTransport, client_ref: str, pilot, caplog) -> None:
-    await transport.push(StatusApplied(kind="snapshot"))  # baseline := 5
+    # #5895: the frame CARRIES the baseline — queue_seq 5 rides here.
+    await transport.push(StatusApplied(
+        kind="snapshot",
+        snapshot=QueueSnapshot(queue=(), turn_active=False, queue_seq=5),
+    ))
     await transport.push(_stale_user_submitted(client_ref))
     while not _rejections(caplog):
         await pilot.pause()

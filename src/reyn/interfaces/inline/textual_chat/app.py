@@ -2779,30 +2779,12 @@ class TextualChatApp(App):
                     self._hydrate_from_history()
                 except Exception:
                     logger.exception("textual chat: on_mount hydrate-from-history failed")
-        # #5886: seed the sent-queue gate ONCE at mount, and let a remote
-        # connection's own STATE_SNAPSHOT re-seed it authoritatively when
-        # the pump reaches one (:meth:`_pump_frames`).
-        #
-        # This exists for the LOCAL (in-process) transport, which never
-        # produces a ``StatusApplied`` at all — ``agui/client.py`` is its
-        # only producer — so after #5886 deleted the lazy first-frame seed
-        # there would otherwise be NOTHING to seed a local client, and a
-        # local attach to a session with items already queued would show an
-        # empty sent-queue region. Caught by asking "what does this change
-        # make false" of the local path, not by a test: the architect's
-        # ruling assumed a mount-time live read already existed here, and
-        # the lazy seed had been quietly serving that role.
-        #
-        # Harmless for remote, deliberately: at mount the read model is
-        # still empty, so this takes a baseline of 0 — the ADMITTING
-        # direction, never the dropping one — and the connect-time snapshot
-        # replaces it with the real hydration value moments later. A local
-        # read at mount IS the hydration value there (no wire, so "now" and
-        # "the snapshot instant" are the same instant).
-        try:
-            self._seed_queue_view()
-        except Exception:
-            logger.exception("textual chat: on_mount queue-view seed failed")
+        # #5895: no mount-time seed here. The sent-queue gate is seeded from
+        # a ``StatusApplied(kind="snapshot")`` frame and from nothing else —
+        # the local transport puts one behind every ``session_attached``
+        # barrier (``in_process.py``), the first attach included, and the
+        # remote transport decodes one from every STATE_SNAPSHOT. A live
+        # read here was the #5886 defect in a narrower window.
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
@@ -6018,9 +6000,22 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: could not start image resolution")
 
-    def _seed_queue_view(self) -> None:
+    def _seed_queue_view(self, frame: "StatusApplied") -> None:
         """Seed :attr:`_queue_view` — the sent-queue seq-gate's baseline —
-        from a fresh read-model snapshot (#3300 P2b).
+        from the values a ``StatusApplied(kind="snapshot")`` frame CARRIES
+        (#3300 P2b; #5895 for why the frame and never the read model).
+
+        The parameter type IS the rule (architect ruling, #5895 ③): this
+        method takes the frame and reads ``frame.snapshot`` only. It does
+        not call :meth:`_snapshot`, and must not — the read model is the
+        DISPLAY's source, live and free to move; the gate's baseline is a
+        hydration value that must be exactly what the snapshot said at the
+        instant it was taken. #5886's first fix seeded "at the snapshot
+        frame's position" but still read the read model live, which only
+        narrowed the window: a delta the decoder applied (remote), or a
+        submit that advanced ``queue_seq`` (local), between enqueuing the
+        frame and the pump reaching it, still left the baseline ahead of
+        the frames it must admit.
 
         **WHEN this runs is the whole design (#5886).** It is called from
         exactly two places, and both are hydration points:
@@ -6046,24 +6041,24 @@ class TextualChatApp(App):
         rejected by its own gate (``seq 1 <= baseline``), leaving no user
         row and a stranded sent-queue placeholder.
 
-        The read-model projects ``queue``/``turn_active``/``queue_seq``
-        uniformly for local and remote (``read_model.py``'s
-        ``project_remote_snapshot`` mirrors ``interfaces/repl/status.py``'s
-        ``_snapshot()``), so ONE call seeds correctly for either transport.
-        Any item the snapshot already carries (a submission from BEFORE this
-        client attached) is rendered into the sent-queue region
-        immediately."""
-        snap = self._snapshot() or {}
+        Both producers build the frame's values from the SAME status
+        builder the read model uses (``interfaces/repl/status.py``), so one
+        seed body serves either transport. Any item the snapshot already
+        carries (a submission from BEFORE this client attached) is rendered
+        into the sent-queue region immediately."""
+        if frame.snapshot is None:  # a delta — never a seed point (ruling ③)
+            raise ValueError("_seed_queue_view needs a kind='snapshot' frame")
+        snap = frame.snapshot
         self._queue_view.apply_snapshot(
-            queue=snap.get("queue", []),
-            turn_active=snap.get("turn_active", False),
-            queue_seq=snap.get("queue_seq", 0),
+            queue=[dict(item) for item in snap.queue],
+            turn_active=snap.turn_active,
+            queue_seq=snap.queue_seq,
         )
         # #3693: a client that attached mid-turn knows ``turn_active`` and
         # nothing else — no start instant, no tool, no stream. It says so and
         # shows no clock (``started=False``), rather than timing from the
         # moment it happened to connect.
-        if snap.get("turn_active"):
+        if snap.turn_active:
             self._activity.begin("WORKING", started=False)
             # A mid-turn attach did not see the entries that already landed,
             # so it counts from zero and says so by counting from HERE. It
@@ -6154,22 +6149,19 @@ class TextualChatApp(App):
           the panel is tabbed, #3308) actually closes rather than lingering
           empty.
         - :attr:`_queue_view` / :attr:`_queue_seeded` — a FRESH
-          ``RemoteQueueView()``, immediately re-seeded from the NEW session's
-          OWN snapshot right here (:meth:`_seed_queue_view`) rather than
-          deferred to "whenever the next frame happens to arrive" — the
-          identical PROJECTION the #3305 reconnect-reseed/mount-time seed
-          use, just called eagerly instead of gated on
-          :attr:`_queue_seeded`. ★Found during gate-writing (not in the
-          architect's table): deferring to the generic first-frame gate
-          (leaving ``_queue_seeded = False`` and letting the ordinary
-          "seed on first frame" check in :meth:`_pump_frames` catch it) is
-          NOT equivalent here — that check runs BEFORE a frame is
-          dispatched, so it would need a frame AFTER this barrier to ever
-          fire; a session with an already-queued item but no OTHER pending
-          activity would show an empty sent-queue region until something
-          else happened to arrive. Seeding eagerly here closes that gap;
-          :attr:`_queue_seeded` is still set True (never left False) so the
-          generic check is correctly a no-op for this same barrier frame.
+          ``RemoteQueueView()``, seeded by the NEW session's own
+          ``StatusApplied(kind="snapshot")`` frame when the pump reaches
+          it (#5895) — which both transports guarantee follows this
+          barrier: the local one enqueues it right behind the barrier
+          (``in_process.py``), the remote emitter's reconnect protocol
+          sends a STATE_SNAPSHOT after it. No eager reseed here any more:
+          the one this handler used to do read the read model LIVE at the
+          moment the barrier was processed, and the remote emitter yields
+          the barrier BEFORE the new session's snapshot, so across a chunk
+          boundary it seeded from the OLD session — #5886's class in its
+          switch form. (An earlier version of this bullet argued the
+          generic first-frame seed needed a frame AFTER the barrier to
+          fire; the snapshot frame IS that frame, by construction.)
         - :attr:`_queue_item_meta` — cleared (keyed by msg_id, which is
           per-submission; an old session's entries are meaningless once its
           queue view is gone too).
@@ -7164,12 +7156,22 @@ class TextualChatApp(App):
                     # the defect itself.
                     if frame.kind == "snapshot":
                         try:
-                            self._seed_queue_view()
+                            self._seed_queue_view(frame)
                         except Exception:
                             logger.exception("textual chat: queue-view seed failed")
                         self._queue_seeded = True
                 else:
-                    if not self._queue_seeded:
+                    # #5895: the ``session_attached`` barrier is EXEMPT from
+                    # the pre-seed warning below — by construction it
+                    # precedes its own session's snapshot frame (both
+                    # transports put the snapshot right behind it), so it
+                    # is the announcement OF the seed, not a frame that
+                    # arrived before one.
+                    _is_barrier = (
+                        frame.tag is FrameTag.EVENT
+                        and getattr(frame.event, "type", None) == "session_attached"
+                    )
+                    if not self._queue_seeded and not _is_barrier:
                         # #5886 (architect ruling ⑤): an event frame BEFORE
                         # any snapshot is a protocol violation — the server
                         # contract is snapshot-first (emitter.py's

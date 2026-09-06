@@ -365,15 +365,67 @@ class StatusApplied:
       between frames while ``frames()`` suspends between each, so the read
       model runs arbitrarily far ahead of the pump's position).
 
-    A required field, not a defaulted one: there is exactly one producer,
-    and a default would let a future second producer silently pick the
-    lenient answer — the shape #5818 spent a night removing elsewhere."""
+    A required field, not a defaulted one: a default would let a future
+    producer silently pick the lenient answer — the shape #5818 spent a
+    night removing elsewhere.
+
+    ``snapshot`` (#5895, architect ruling on #5886's fix — the class was
+    only narrowed, not closed, until this): a ``"snapshot"`` CARRIES the
+    three values the sent-queue gate seeds from, captured at the instant
+    the snapshot was taken. The seed reads THIS frame and nothing else —
+    never the live read model. Reading the read model at seed time, even
+    "at the snapshot frame's own position", is the #5886 defect with a
+    narrower window: on the remote side ``_pump_sse`` can apply a later
+    delta onto ``RemoteStatusView`` between enqueuing this frame and the
+    pump reaching it; on the local side a submit can advance ``queue_seq``
+    in the same gap. Both leave a baseline ahead of the frames it must
+    admit. A value captured with the snapshot cannot move.
+
+    Typed, not documented: a ``"snapshot"`` MUST carry one and a
+    ``"delta"`` MUST NOT (``__post_init__``) — the read model stays the
+    display's source, the frame is the seed's, and the two cannot be
+    mixed by accident because the seed's parameter type is this class."""
 
     kind: Literal["snapshot", "delta"]
+    snapshot: "QueueSnapshot | None" = None
+
+    def __post_init__(self) -> None:
+        if (self.kind == "snapshot") != (self.snapshot is not None):
+            raise ValueError(
+                f"StatusApplied(kind={self.kind!r}) must carry a QueueSnapshot "
+                f"iff kind is 'snapshot' (got snapshot={self.snapshot!r})"
+            )
+
+
+@dataclass(frozen=True)
+class QueueSnapshot:
+    """The sent-queue gate's hydration values, as of one snapshot instant
+    (#5895): the undispatched queue, whether a turn is active, and the
+    monotonic ``queue_seq`` that becomes the gate's baseline. Produced by
+    the same status builder the read model uses (``interfaces/repl/status.
+    py``'s ``_snapshot_for_session``, via the remote ``project_status`` or
+    the local ``_snapshot``), captured once, immutable."""
+
+    queue: "tuple[dict, ...]"
+    turn_active: bool
+    queue_seq: int
+
+    @classmethod
+    def from_status(cls, values: "dict | None") -> "QueueSnapshot":
+        """Build from a status dict in the ``_snapshot`` shape — the SAME
+        three keys, read once, defensively typed (a wire dict may carry
+        ``None`` where a fresh session has nothing)."""
+        v = values or {}
+        return cls(
+            queue=tuple(dict(item) for item in (v.get("queue") or ())),
+            turn_active=bool(v.get("turn_active", False)),
+            queue_seq=int(v.get("queue_seq", 0) or 0),
+        )
 
 
 __all__ = [
     "BacklogBatch",
+    "QueueSnapshot",
     "DisplayFrame",
     "EventFrame",
     "StatusApplied",

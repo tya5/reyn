@@ -54,6 +54,7 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
+    QueueSnapshot,
     StatusApplied,
 )
 
@@ -329,11 +330,19 @@ class AgUiTransport(ClientTransport):
                 # update. A snapshot wins when a block somehow carries
                 # both: hydration is the stronger claim, and seeding from
                 # it is never wrong.
-                out.append(
-                    StatusApplied(
-                        kind="snapshot" if decoded.snapshot is not None else "delta"
-                    )
-                )
+                #
+                # #5895: a snapshot frame CARRIES its own queue values,
+                # captured right here from the decoded snapshot — the seed
+                # reads the frame, never the live `_status` view, which a
+                # later delta in this same pump task can have moved before
+                # the app reaches this frame. A delta carries nothing.
+                if decoded.snapshot is not None:
+                    out.append(StatusApplied(
+                        kind="snapshot",
+                        snapshot=QueueSnapshot.from_status(decoded.snapshot),
+                    ))
+                else:
+                    out.append(StatusApplied(kind="delta"))
             elif isinstance(decoded, MessagesSnapshot):
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
                 # ONE BacklogBatch item, appended to `out` like any other
