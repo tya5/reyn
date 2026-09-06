@@ -15,9 +15,12 @@ call boundary (call_llm_tools), not here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from reyn.core.dispatch.content_declarations import get_content_fields
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.effective import ContextualPermission
 
 
 class UnknownToolError(Exception):
@@ -69,6 +72,20 @@ class DispatchContext:
             declared tool field whose content class is "user" — e.g.
             ``ask_user``'s ``answer``. Same default-False rationale as
             above.
+        contextual: #5841 (REQUIRED, no default — #5818's own "silent
+            fallback caused real harm" pattern: a caller that forgets to
+            pass this must fail to construct, not silently get an
+            unenforced ⊤). The SAME ``ContextualPermission | None`` object
+            ``RouterLoop._contextual_permission`` / ``OpContext.
+            contextual_permission`` / ``capability_visibility``'s own
+            ``contextual_permission`` property already carry — a per-
+            session narrowing (delegate/topology/ephemeral), never an
+            agent's static declared authority (see ``dispatch_tool``'s own
+            docstring for why this axis specifically does NOT read
+            ``PermissionDecl.tool``). ``None`` is a genuine, valid value
+            (no narrowing in effect — every existing caller before #5841
+            behaves byte-identically) — it must still be passed
+            EXPLICITLY, never omitted.
     """
 
     caller_kind: Literal["router", "operator"]
@@ -76,6 +93,7 @@ class DispatchContext:
     chain_id: str | None
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
+    contextual: "ContextualPermission | None"
     call_id: str | None = None
     completed_response_include_text: bool = False
     user_input_include_text: bool = False
@@ -137,7 +155,33 @@ async def dispatch_tool(
     The invoker callable receives the validated args dict and returns the
     raw result (any JSON-serializable value). PermissionError raised
     inside invoker becomes a "permission_denied" error result.
+
+    #5841: a call-time TOOL-axis restrict check now runs here too, BEFORE
+    the invoker — ``ctx.contextual`` (a per-session narrowing:
+    delegate/topology/ephemeral) denying ``name`` is a "permission_denied"
+    error, exactly as if the invoker itself had raised ``PermissionError``.
+    This is the ONE shared seam every ``dispatch_tool`` caller (the
+    router's own LLM tool-call dispatch, ``/exec``, ``/tasks``) funnels
+    through — so a hidden-but-name-callable tool is denied the same way
+    regardless of caller.
+
+    Deliberately checks ONLY the contextual (narrowing) layer, never
+    ``PermissionDecl.tool`` (the static per-agent declaration) — #5841's
+    own investigation found the two layers encode "no restriction" with
+    OPPOSITE values (``ContextualLayer``: ``None`` = ⊤ unconstrained;
+    ``AgentLayer``: empty ``decl.tool`` list = ⊥ deny-all, since NOTHING in
+    production ever populates it). Reading the static layer here would
+    make every undeclared agent's every tool call fail — a MUCH worse
+    regression than the gap this closes. ``PermissionDecl.tool``'s own
+    disposition (populate it correctly, or retire it) is tracked
+    separately, deliberately not this fix's scope.
+
+    Also deliberately does NOT wire ``require_tool``'s confirmation half
+    (the "Allow tool X?" prompt) — whether to ask at all is FP-0069's own
+    posture dial; wiring a confirmation here independently would create a
+    second source for that same decision.
     """
+    from reyn.security.permissions.effective import tool_contextually_denied
 
     # 1. Name validation
     if name not in ctx.tool_catalog:
@@ -165,6 +209,19 @@ async def dispatch_tool(
             _validate_args(args, schema)
         except InvalidArgsError as e:
             return _error(ctx, name, "invalid_args", str(e))
+
+    # 2b. #5841: call-time TOOL-axis restrict — contextual narrowing only
+    # (see this function's own docstring for why never PermissionDecl.tool).
+    # Same shape/message-builder RouterLoop._excluded_result already uses
+    # for its own pre-dispatch exclude gate (effective.py's
+    # contextual_deny_message) — a hidden tool that is called by name is
+    # denied with the SAME wording whichever path it was named from.
+    if tool_contextually_denied(ctx.contextual, name):
+        from reyn.security.permissions.effective import contextual_deny_message
+        return _error(
+            ctx, name, "permission_denied",
+            contextual_deny_message("tool", name, ctx.contextual),
+        )
 
     # args_hash is a fingerprint over the FULL, unredacted args — #4666
     # item ③b never touches it (it coexists with args as a correlation

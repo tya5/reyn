@@ -3648,6 +3648,14 @@ class RouterLoop:
             chain_id=self.chain_id,
             tool_catalog=catalog,
             events=self.host.events,
+            # #5841: the SAME contextual narrowing _excluded_result already
+            # gates on above (dispatch()'s own earlier pre-dispatch check) —
+            # this makes dispatch_tool's own new call-time restrict a
+            # harmless no-op re-check for THIS caller (already denied
+            # earlier, never reaches here) while being the FIRST real
+            # enforcement for the other dispatch_tool callers (/exec,
+            # /tasks) that have no equivalent of _excluded_result at all.
+            contextual=self._contextual_permission,
             call_id=call_id,
             completed_response_include_text=(
                 bool(_completed_getter()) if _completed_getter else False

@@ -399,6 +399,7 @@ async def test_denied_emit_via_production_router_tool_path_is_audited():
     dispatch_ctx = DispatchContext(
         caller_kind="router", caller_id="test-agent", chain_id="c1",
         tool_catalog=catalog, events=events,
+        contextual=None,  # #5841: no narrowing in play for this test
     )
 
     result = await dispatch_tool(

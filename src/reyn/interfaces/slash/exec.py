@@ -47,13 +47,22 @@ full, not repeated here) — the 4 that shape this module:
    ``exec`` calls use, so ``sandbox.mode: strict`` reaches this path
    identically, unrelated to the confirmation question entirely.
 
-   ⚠️ Same #5841 gap, disclosed: catalog VISIBILITY (whether an agent
-   whose Profile denies the ``exec`` capability class should even be
-   able to run it) is not wired on the LLM path either — an agent whose
-   profile denies ``exec`` can still run ``/exec`` today, no differently
-   from how that same agent's LLM could still call the ``exec`` tool
-   directly if it tried. Not this PR's gap to close alone (parity with
-   the LLM path, not a new hole) — #5841 closes both at the shared seam.
+   ⚠️ Correction (architect co-vet, #5853 — #5841's own investigation
+   under-counted): the LLM path was NOT actually ungated here.
+   ``RouterLoop._excluded_result`` already stopped a denied tool named
+   directly by the LLM, via the SAME ``tool_contextually_denied``
+   predicate and the SAME ``ContextualPermission`` object #5841 wires
+   into ``dispatch_tool`` (#1827 S1 / #1912) — main already had tests
+   for it (``test_exclude_execution_block_1406.py``,
+   ``test_3378_advertise_enforce_agreement.py``). What #5841 actually
+   closes is narrower: **`/exec` and `/tasks` (the operator slash-driven
+   routes) had NO equivalent check at all** before it — an agent whose
+   Profile/topology/``/visibility`` narrowing denied ``exec`` could still
+   run this command, even though the SAME narrowing already stopped its
+   LLM from calling the ``exec`` tool directly. #5841's ``dispatch_tool``
+   check is a harmless no-op re-check on the router's own path (already
+   denied earlier by ``_excluded_result``, never reaches here) and the
+   FIRST real enforcement for this module.
 
 ② **``caller_kind="operator"``, and a dedicated actor.** ``ToolContext.
    caller_kind`` is ``"operator"`` (never ``"router"`` — this is not an
@@ -278,6 +287,25 @@ async def _run_exec(ctx: "SlashContext", args: str) -> "tuple[list[str], dict] |
         chain_id=None,
         tool_catalog={"exec": EXEC.render_for_router()},
         events=tool_ctx.events,
+        # #5841 (architect co-vet, #5853 -- "same object" is not generally
+        # true, corrected here): this operator route reads the SESSION-
+        # level narrowing (profile/topology/`/visibility` override) --
+        # op_ctx.contextual_permission, via the identical
+        # op_context_factory() seam the LLM's own exec tool call builds
+        # its OpContext through too. It does NOT carry the LLM-run-scoped
+        # layers a router turn additionally composes on top of that same
+        # base (RouterLoop._contextual_permission = _with_exclude_tools(
+        # capability_visibility.contextual_permission), re-assigned per
+        # turn under the `iteration` capability_narrowing rung) --
+        # `exclude_tools` (this run's tool subset) and the ephemeral-
+        # untrusted narrowing are both LLM-context-scoped concepts an
+        # operator keystroke has no equivalent of. The two are the same
+        # object only when a turn has neither an exclude_tools override
+        # nor live ephemeral-untrusted narrowing -- not a defect, just
+        # not "the same" as a general claim. A hidden-but-named /exec is
+        # still denied under the SAME session-level narrowing a hidden
+        # LLM exec call is denied under.
+        contextual=op_ctx.contextual_permission,
     )
 
     async def _invoker(call_args: dict) -> Any:
