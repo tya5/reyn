@@ -3940,6 +3940,37 @@ class Session:
         return self._pending_user_attachments
 
     @property
+    def pending_user_attachments(self) -> "tuple[dict, ...]":
+        """Snapshot read of the per-session attachment queue (#5856).
+
+        The queue's own name (``_pending_user_attachments``) predates this
+        accessor and, by #5837/#5509, now holds more than images —
+        ``/exec-attach``, ``/attachment``, and ``/image`` all queue onto it —
+        but until this property existed the ONLY public read was
+        :attr:`pending_user_images`, whose own name and docstring commit to
+        the narrower "image upload queue" framing. A test asserting on an
+        ``/exec-attach`` or ``/attachment`` block through that name would
+        read correctly but claim the wrong thing; this property names what
+        is actually being read, for every producer.
+
+        Returns a TUPLE COPY, unlike :attr:`pending_user_images`'s live list
+        reference — a snapshot a caller cannot accidentally mutate into a
+        second write path (this property adds a read, never a write; the
+        three producers above stay the only writers, still going through
+        ``self._pending_user_attachments`` directly, same as before).
+
+        ``@property``, not a plain method — deliberately, so its name
+        (``pending_user_attachments``) matches ``test_tier_audit.py``'s own
+        Rule 8 (#4864, ``private-read-public-alt``) naming rule: that gate
+        links a private ``self._x`` assignment to a public alternative only
+        when a SAME-CLASS ``@property`` is named exactly ``x`` (the leading
+        underscore stripped). A plain method of the same name would leave
+        Rule 8 blind to a reintroduced ``session._pending_user_attachments``
+        read in a future test — the exact gap this issue exists to close.
+        """
+        return tuple(self._pending_user_attachments)
+
+    @property
     def journal(self) -> "SnapshotJournal":
         """Read-only accessor for the session's SnapshotJournal.
 
