@@ -1811,6 +1811,7 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
             else None
         ),
         _memory_line(snap),
+        _network_posture_line(snap),
     ]
 
 
@@ -1863,6 +1864,34 @@ def _format_bytes_gib(n: int) -> str:
     formatting register (thousands-separated, not raw bytes an operator
     would have to mentally divide)."""
     return f"{n / (1024 ** 3):.1f} GiB"
+
+
+def _network_posture_line(snap: dict) -> str:
+    """#5825 item 8 (architect design): "a boundary that is not enforced
+    is not silently called one" — FP-0069 §8's own acceptance line, verbatim.
+    Same three-state discipline as ``_memory_line`` right above (that
+    docstring's own reasoning for why "not reported" and "not measurable/
+    not enforced" must never collapse into each other applies identically
+    here — one is "this connection never told me", the other is a real,
+    named fact about this session's own resolved sandbox boundary):
+
+    - the key absent from ``snap`` entirely (an older remote server that
+      predates this field, or ``ctx_pane_lines`` called with no snapshot
+      at all) -> "not reported on this connection".
+    - key present, value ``None`` -> nothing degraded to report (no
+      sandbox config, network not even asked closed, or the backend
+      genuinely enforces it — see ``Session.network_enforcement_gap``'s
+      own docstring for the full contract) -> "enforced".
+    - key present, a string -> the human-readable reason
+      (``unenforced_axis_reason``) the boundary is not real, e.g. Noop
+      under a closed-network policy -> "NOT enforced — <reason>".
+    """
+    if "network_posture_gap" not in snap:
+        return "network      not reported on this connection"
+    gap = snap.get("network_posture_gap")
+    if gap is None:
+        return "network      enforced"
+    return f"network      NOT enforced — {gap}"
 
 
 def _folded_line(progress_raw: "dict | None") -> str:

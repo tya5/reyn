@@ -828,6 +828,14 @@ def _snapshot_for_session(registry, s, config=None):
         "process_footprint_metric": s.process_memory_guard.metric,
         "process_memory_cap_bytes": s.process_memory_guard.cap_bytes,
         "process_memory_enforce": s.process_memory_guard.enforce,
+        # #5825 item 8: a LIVE read (pure functions over already-resolved
+        # config, no I/O) of whether this session's own sandbox boundary
+        # can actually enforce a closed network. `None` = nothing degraded
+        # (no sandbox config, network not even asked closed, or the
+        # backend genuinely enforces it); a string = the human-readable
+        # reason the boundary is not real (`Session.network_enforcement_
+        # gap`'s own docstring has the full 3-state contract).
+        "network_posture_gap": s.network_enforcement_gap,
         # #5654: this session's own currently-RUNNING tasks (attached
         # session only, owner scope decision — no cross-session listing).
         # Derived from Session.chains the SAME way list_tasks does

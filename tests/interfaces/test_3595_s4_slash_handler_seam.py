@@ -644,7 +644,16 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: wrong thing about what was actually queued. See the #5851 entry just
 #: above for the collision this stacks onto (#5858, tui-coder rebasing
 #: 123 -> 124 per lead-coder instruction, 2026-09-06).
-_PUBLIC_MEMBER_CEILING = 124
+#: Raised 124 -> 125 for #5825 item 8: ``network_enforcement_gap`` — a NEW
+#: public read-only property, this session's own resolved-sandbox-boundary
+#: honesty read (``status.py``'s snapshot reads it for the Ctx pane's
+#: "network" row — see ``session.py``'s own ``process_memory_guard`` sibling
+#: property, 123->124's own entry, for the identical pattern). Genuinely
+#: unrelated to #3595 S4's slash-handler-encapsulation concern: nothing
+#: about a slash handler reaches through this — it exists so a STATUS READ
+#: MODEL (not a slash command) can surface a per-session sandbox-config
+#: fact, same shape/reasoning as the 123->124 entry above.
+_PUBLIC_MEMBER_CEILING = 125
 
 
 def test_session_public_surface_does_not_grow() -> None:

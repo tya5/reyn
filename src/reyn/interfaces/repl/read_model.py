@@ -987,7 +987,7 @@ def project_remote_snapshot(values: "dict | None") -> dict:
     to ``—`` so a pre-``STATE_SNAPSHOT`` frame renders a placeholder, not None.
     """
     v = values or {}
-    return {
+    out = {
         # -- MAIN bar (frame-available via STATE_*) --
         "model": v.get("model") or "—",
         "attached_name": v.get("attached_name"),
@@ -1204,6 +1204,17 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # byte-identical to a genuinely task-free LOCAL session.
         "tasks": [],
     }
+    # #5825 item 8 / #5892 co-vet 🔴-2: copied through ONLY when the server
+    # sent it — never `v.get(...)`. `None` here means "enforced" to the
+    # Ctx pane, so synthesizing it would fabricate a boundary claim in the
+    # window before the first STATE_SNAPSHOT and against a server that
+    # predates the field. Absent → the pane's genuine third state,
+    # "not reported on this connection", stays reachable from a REAL read
+    # model. Mirrors the same discipline on the producing side
+    # (agui/state.py's own project_status).
+    if "network_posture_gap" in v:
+        out["network_posture_gap"] = v["network_posture_gap"]
+    return out
 
 
 class RemoteReadModel(ChatReadModel):
