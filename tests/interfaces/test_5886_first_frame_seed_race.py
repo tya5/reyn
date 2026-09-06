@@ -309,9 +309,11 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             )
             # ruling ⑥, the accept side: with a correct baseline this
             # client's own submission is never rejected, so the WARNING
-            # that names that fingerprint must not appear. (Its RED side —
-            # the warning firing when the baseline IS wrong — is its own
-            # test below.)
+            # that names that fingerprint must not appear. Its RED side —
+            # the warning firing when the baseline IS wrong — is witnessed
+            # in ``test_5886_own_client_ref_rejection_warns.py`` (the
+            # discriminator driven directly), and was also observed live on
+            # the strip run that restored the lazy seed.
             own_ref_warnings = [
                 r.getMessage() for r in caplog.records
                 if r.levelname == "WARNING" and "baseline is wrong" in r.getMessage()
