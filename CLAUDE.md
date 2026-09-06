@@ -118,7 +118,8 @@ sessions apart. Full rationale and the measured instances behind each rule:
 **Before you open a PR** — `ruff check .` (the same command CI runs, not a
 narrower one), `python scripts/test_tier_audit.py --strict <changed test
 files>`, `python scripts/verify_module_docstrings.py <changed src files>`,
-`python scripts/mypy_ratchet.py`, `python scripts/flat_tests_ratchet.py`,
+`python scripts/mypy_ratchet.py` (changed-files by default, #5882 — see
+pr-workflow.md), `python scripts/flat_tests_ratchet.py`,
 `python scripts/check_tests_path_literal_reference.py` (re-run right before
 pushing — its baseline goes stale when `main` moves), and `pytest` **scoped to
 your diff**. Do NOT run the full suite locally — CI does that in a clean
