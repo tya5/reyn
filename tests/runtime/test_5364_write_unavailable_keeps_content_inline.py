@@ -115,7 +115,8 @@ def test_cap_tool_result_content_keeps_content_inline_on_write_unavailable() -> 
     )
 
 
-def test_the_real_production_chain_marks_the_entry_never_persisted(
+@pytest.mark.asyncio
+async def test_the_real_production_chain_marks_the_entry_never_persisted(
     tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: architect/lead-coder's own #5372 precedent — a real
@@ -143,12 +144,8 @@ def test_the_real_production_chain_marks_the_entry_never_persisted(
     async def _always_fail() -> None:
         raise OSError("disk full")
 
-    async def _seed_failure() -> None:
-        worker.submit_nowait(_always_fail)
-        await worker.flush()
-
-    import asyncio
-    asyncio.run(_seed_failure())
+    worker.submit_nowait(_always_fail)
+    await worker.flush()
     assert session.router_host.media_store.durability_failed is True, (
         "test setup sanity: the seeded failure must have latched durability_failed"
     )
@@ -167,6 +164,7 @@ def test_the_real_production_chain_marks_the_entry_never_persisted(
         assistant_content="",
     )
     loop.feedback(result)
+    await loop.persist_feedback()
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     assert SPILLED_META_KEY not in tool_msg.meta, (

@@ -11,7 +11,9 @@ Also owns the module-level helpers:
 
   - _materialise_path_ref_content
   - _read_pathref_image
-  - _resolve_spilled_content    — #5364 §1.2: lost-file detection for spilled entries
+  - resolve_history_content     — #5364 §1.2: the ONE resolver's caller for every
+                                  ref-carrying entry (spilled: lost-file detection;
+                                  un-spilled, #5896: body hydration from its file)
 
 history_fn dependency: a zero-arg callable that returns the raw history list
 (all ChatMessages including summaries) — passed in production as
@@ -208,22 +210,36 @@ def _refresh_skill_location_tokens(
     )
 
 
-def _resolve_spilled_content(
+def resolve_history_content(
     content: "str | list[dict]", meta: Any, project_dir_fn: "Callable[[], Any] | None",
     events: Any = None, seen_lost_refs: "set[str] | None" = None,
+    *, read_text: "Callable[[str], str] | None" = None,
 ) -> "str | list[dict]":
-    """#5364 §1.2: replace a spilled entry's stale ref-preview with an
-    explicit "lost" notice once its backing file is actually gone —
-    every serialise, via the ONE resolver
-    (:func:`reyn.core.offload.history_content_resolve.resolve`).
+    """#5364 §1.2: the ONE resolver's
+    (:func:`reyn.core.offload.history_content_resolve.resolve`) caller for
+    every entry that carries a ``CONTENT_REF_META_KEY`` — the resolver's
+    own table decides which of the entry's persisted signals is the body:
+
+    - a SPILLED entry: replace its stale ref-preview with an explicit
+      "lost" notice once its backing file is actually gone — every
+      serialise (the pre-#5896 job, unchanged);
+    - an UN-SPILLED entry (#5896, #5364 §1.1 "A" at return time — the
+      ``history.jsonl`` row carries no body): hydrate the body from its
+      file through *read_text* when the entry holds none, or the same
+      "lost" notice when the file is gone; an entry that already holds
+      its body (a resident row, or one hydrated at parse time) passes
+      through untouched — the resolver never reads disk for it.
 
     No-op (content returned unchanged) unless ``content`` is a ``str``
-    AND ``meta`` carries ``SPILLED_META_KEY`` — an unspilled entry's own
-    content is already self-sufficient (§1.2's own truth table: the
-    ``spilled=False`` row never depends on file existence), so this never
-    touches it. ``project_dir_fn is None`` (legacy/test double with no
-    workspace access) degrades to "never check" — same fail-closed idiom
+    AND ``meta`` carries ``CONTENT_REF_META_KEY`` (a pre-#5896 row or a
+    §1.5 write-refused row: body inline, nothing to resolve).
+    ``project_dir_fn is None`` (legacy/test double with no workspace
+    access) degrades to "never check" — same fail-closed idiom
     :func:`_refresh_skill_location_tokens` uses for the identical shape.
+    *read_text* is ``MediaStore.read_tool_result``'s text half in
+    production (the store validates the path boundary); a caller that
+    passes none can still resolve every cell but "un-spilled, no body"
+    (the resolver raises there rather than guess — see its docstring).
 
     Without this, a spilled entry whose backing file was GC'd or never
     persisted keeps showing the model a ``read_file(path=...)`` preview
@@ -240,8 +256,11 @@ def _resolve_spilled_content(
     minted and is now missing, and eviction
     (``media_store._evict_history_content_over_cap``) is reyn's ONLY
     deleter of an already-persisted ref — so absence derives
-    ``LostReason.GC`` (see ``LostReason``'s own docstring for the
-    disclosed, not-exhaustive caveat). Surfaced on 2 operator-facing
+    ``LostReason.GC`` for a spilled entry (see ``LostReason``'s own
+    docstring for the disclosed, not-exhaustive caveat) and
+    ``LostReason.EXTERNAL`` for an un-spilled one (#5896 stage ①: no
+    eviction pass selects an un-spilled file, so only something outside
+    reyn's own GC can have removed it). Surfaced on 2 operator-facing
     faces, per architect's own text — never a THIRD hidden one: (1) the
     reason named inline in the placeholder text every reader (model +
     transcript) already sees, (2) one ``offloaded_content_unavailable``
@@ -260,11 +279,10 @@ def _resolve_spilled_content(
         SPILLED_META_KEY,
         LostReason,
     )
-    if not meta.get(SPILLED_META_KEY):
-        return content
     ref = meta.get(CONTENT_REF_META_KEY)
     if not ref:
         return content
+    spilled = bool(meta.get(SPILLED_META_KEY))
     project_dir = project_dir_fn()
     if project_dir is None:
         return content
@@ -277,16 +295,20 @@ def _resolve_spilled_content(
         return (_Path(project_dir) / rel_path).is_file()
 
     resolved = resolve(
-        HistoryContentEntry(spilled=True, content=content, ref=ref),
+        HistoryContentEntry(spilled=spilled, content=content, ref=ref),
         file_exists=_file_exists,
+        read_text=read_text,
     )
+    if resolved.kind == "inline":
+        return resolved.value
     if resolved.kind == "lost":
         recorded_reason = meta.get(LOST_REASON_META_KEY)
-        reason = (
-            LostReason.NEVER_PERSISTED
-            if recorded_reason == LostReason.NEVER_PERSISTED
-            else LostReason.GC
-        )
+        if recorded_reason == LostReason.NEVER_PERSISTED:
+            reason = LostReason.NEVER_PERSISTED
+        elif spilled:
+            reason = LostReason.GC
+        else:
+            reason = LostReason.EXTERNAL
         if events is not None and (seen_lost_refs is None or ref not in seen_lost_refs):
             if seen_lost_refs is not None:
                 seen_lost_refs.add(ref)
@@ -773,7 +795,7 @@ class RouterHistoryBuffer:
 
         ``seen_lost_refs`` (#5438): a set the CALLER owns, built fresh per
         top-level call — passed straight through to
-        :func:`_resolve_spilled_content` so its own ``offloaded_content_
+        :func:`resolve_history_content` so its own ``offloaded_content_
         unavailable`` event fires at most once per distinct ref for
         THIS read, never once per process lifetime (see that function's
         own docstring).
@@ -816,11 +838,20 @@ class RouterHistoryBuffer:
         )
         # #5364 §1.2: fresh, every serialise — a spilled entry's backing
         # file may have been GC'd or never persisted since the last time
-        # this turn was serialised (see _resolve_spilled_content's own
+        # this turn was serialised (see resolve_history_content's own
         # docstring for why this is not a one-time check at write time).
-        content = _resolve_spilled_content(
+        content = resolve_history_content(
             content, getattr(m, "meta", None), self._project_dir_fn,
             self._events, seen_lost_refs,
+            # #5896: only the "un-spilled, no body" cell reads — a resident
+            # row already holds its body (see the resolver's table), so
+            # this is reached only for a row some path parsed without a
+            # store to hydrate through. Same None-store degrade as
+            # _materialise_path_ref_content above.
+            read_text=(
+                (lambda ref: self._media_store.read_tool_result(ref)[0])
+                if self._media_store is not None else None
+            ),
         )
         # #5612 (was #5296 PR-2's in-memory overlay — now durable): apply
         # the reactive-spill supersede map, same stage as the watermark
@@ -1080,7 +1111,7 @@ class RouterHistoryBuffer:
         # 2969 turns, materially nonzero only for inline images, and every
         # such call precedes or accompanies a provider round-trip orders of
         # magnitude slower.
-        # #5438: fresh per call — see _resolve_spilled_content's own
+        # #5438: fresh per call — see resolve_history_content's own
         # docstring for why this is not a process-global dedup set.
         seen_lost_refs: set[str] = set()
         selected = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]
@@ -1211,7 +1242,7 @@ class RouterHistoryBuffer:
         spill_map = self._spill_supersede_map(history)
         # #2957 PR-B: serialise once up front — same canonical-quantity
         # rationale as build_history (see ``_serialise_turn``'s docstring).
-        # #5438: fresh per call — see _resolve_spilled_content's own
+        # #5438: fresh per call — see resolve_history_content's own
         # docstring for why this is not a process-global dedup set.
         seen_lost_refs: set[str] = set()
         wire_turns = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]

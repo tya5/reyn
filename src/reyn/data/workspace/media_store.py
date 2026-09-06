@@ -105,7 +105,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Collection
 
 from reyn.services.offload.store import offload_value, read_offloaded
 
@@ -115,9 +115,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
-#: line per :meth:`MediaStore.save_tool_result` write — the persisted
-#: cross-process spill-provenance manifest.
+#: #4381: one JSON object per line (``{"path": "<absolute path>"}``, plus
+#: ``"spilled": false`` for a #5896 un-spilled write — absent means
+#: ``true``, the only kind of write that existed before #5896), one line
+#: per :meth:`MediaStore.save_tool_result` write — the persisted
+#: cross-process spill-provenance manifest. The ``spilled`` flag is what
+#: every eviction pass reads to leave an un-spilled body alone (#5896
+#: stage ①, architect condition: "GC は un-spilled の file を候補にしない"
+#: — the model still sees that body inline, the file is its ONLY durable
+#: copy, so evicting it would turn a byte-identical restart into ``lost``).
 #:
 #: Lives under ``.reyn/memory/`` — PERSIST tier (#4584 fix; previously
 #: ``.reyn/cache/``, moved there from ``tool_results_dir`` by #4432 round
@@ -534,6 +540,7 @@ def history_content_root_for(
 
 def cross_session_eviction_candidates(
     root: Path, *, pin: "list[str] | None" = None,
+    unspilled: "Collection[Path]" = (),
 ) -> list[Path]:
     """#5366 §3 (architect design, revised — issuecomment-5451564768):
     the project-wide GC's own candidate set. Every file
@@ -541,7 +548,14 @@ def cross_session_eviction_candidates(
     EVERY session — #5383's own ``<agent>/<sid>/`` nesting means
     attribution is readable straight from each path's first two
     segments), minus any file whose ``<agent>`` segment names a pinned
-    agent.
+    agent, minus (#5896 stage ①) any file in *unspilled* — a body the
+    model still sees inline, whose file is its only durable copy (see
+    :data:`_SPILL_MANIFEST_FILENAME`; the manifest is project-wide, so
+    the store passes every session's un-spilled files here, not just its
+    own). Resolved paths on both sides (``_eviction_order`` yields what
+    ``rglob`` finds under *root*; the store records ``resolve()``d
+    absolute paths — compared after resolving here so a symlinked
+    ``.reyn`` cannot make the two disagree).
 
     Deliberately NO liveness filter (architect's own reversal after
     e2e-coder's #5366 measurement found ``process_registry``'s own
@@ -569,6 +583,9 @@ def cross_session_eviction_candidates(
     a cross-session sweep immediately followed by another session's own
     in-flight ref reading back ``lost``."""
     ordered = _eviction_order(root)
+    if unspilled:
+        excluded = {p.resolve() for p in unspilled}
+        ordered = [p for p in ordered if p.resolve() not in excluded]
     if not pin:
         return ordered
     pinned = {_safe_token(name) for name in pin}
@@ -820,7 +837,7 @@ class MediaStore:
         # module-level docstring for the full correction). It otherwise
         # survives for the project's lifetime, same as :mod:`data.workspace.
         # artifact_ref`'s sibling table.
-        self._history_content_spill_paths: "set[Path]" = self._load_spill_manifest()
+        self._history_content_spill_paths, self._unspilled_paths = self._load_spill_manifest()
         # #5387: the write-time cap path's ONE consumer of ``chain_id`` —
         # NOT persisted (lead-coder ruling: GC is writer-triggered, so the
         # chain that fired THIS eviction pass IS "the turn currently in
@@ -894,11 +911,16 @@ class MediaStore:
         # :data:`_SPILL_MANIFEST_FILENAME`'s own module docstring).
         return self._project_root / ".reyn" / "memory" / _SPILL_MANIFEST_FILENAME
 
-    def _load_spill_manifest(self) -> "set[Path]":
+    def _load_spill_manifest(self) -> "tuple[set[Path], set[Path]]":
+        """Returns ``(every path this store wrote, the un-spilled subset)``
+        — the second set is the #5896 GC exclusion (see
+        :data:`_SPILL_MANIFEST_FILENAME`); a line with no ``spilled`` key
+        predates #5896 and was necessarily a spill."""
         manifest = self._spill_manifest_path()
         if not manifest.exists():
-            return set()
+            return set(), set()
         paths: "set[Path]" = set()
+        unspilled: "set[Path]" = set()
         stale = False
         try:
             for line in manifest.read_text(encoding="utf-8").splitlines():
@@ -921,15 +943,29 @@ class MediaStore:
                 # full on every MediaStore construction).
                 if p.exists():
                     paths.add(p)
+                    if entry.get("spilled", True) is False:
+                        unspilled.add(p)
                 else:
                     stale = True
         except OSError:
-            return set()  # best-effort — an unreadable manifest degrades to empty, not a crash
+            return set(), set()  # best-effort — an unreadable manifest degrades to empty, not a crash
         if stale:
-            self._persist_spill_manifest(paths)
-        return paths
+            self._persist_spill_manifest(paths, unspilled)
+        return paths, unspilled
 
-    def _persist_spill_manifest(self, paths: "set[Path]") -> None:
+    @staticmethod
+    def _manifest_line(path: Path, *, spilled: bool) -> str:
+        """The ONE encoding of a manifest line (the append in
+        :meth:`save_tool_result` and the prune-rewrite in
+        :meth:`_persist_spill_manifest` must agree, or a prune would
+        silently drop the ``spilled`` flag and re-admit every un-spilled
+        file to GC on the next process start)."""
+        entry: dict = {"path": str(path)}
+        if not spilled:
+            entry["spilled"] = False
+        return json.dumps(entry) + "\n"
+
+    def _persist_spill_manifest(self, paths: "set[Path]", unspilled: "set[Path]") -> None:
         """#4478: rewrite the MANIFEST ONLY — the ledger of which paths
         this store has spilled, under ``.reyn/memory/`` (#4584: moved from
         ``.reyn/cache/``). Never touches an artifact under
@@ -957,7 +993,10 @@ class MediaStore:
         manifest = self._spill_manifest_path()
         try:
             manifest.write_text(
-                "".join(json.dumps({"path": str(p)}) + "\n" for p in sorted(paths)),
+                "".join(
+                    self._manifest_line(p, spilled=p not in unspilled)
+                    for p in sorted(paths)
+                ),
                 encoding="utf-8",
             )
         except OSError:
@@ -1153,6 +1192,7 @@ class MediaStore:
         tool: str = "tool",
         seq: int = 1,
         payload_field: str | None = None,
+        spilled: bool = True,
     ) -> dict:
         """Write a tool result text dump under this session's
         ``history-content`` directory (#5364 §1.1/§1.4 — the SAME write
@@ -1192,8 +1232,21 @@ class MediaStore:
         exist"): raises :class:`MediaStoreWriteUnavailable` instead of
         returning a block when this store's writes are known not to
         land — see that exception's own docstring for the two ways this
-        can be discovered. ``cap_tool_result_content`` (this method's
-        one real caller) catches it and keeps the content inline.
+        can be discovered. Both real callers catch it and keep the
+        content inline: ``cap_tool_result_content`` (the spill / write-
+        time-cap path) and ``RouterLoop.feedback`` (the #5896 return-time
+        path).
+
+        ``spilled`` (#5896, #5364 §1.1 "A" at return time): whether the
+        model already sees a REF for this body (``True`` — a spill or a
+        write-time-cap offload, the row's content is a ref-preview) or
+        still sees the body INLINE (``False`` — ``RouterLoop.feedback``'s
+        return-time write, where this file is the body's ONLY durable copy
+        and the ``history.jsonl`` row carries none). Recorded per file in
+        the manifest and read by every eviction pass: an un-spilled file
+        is never a GC candidate (stage ① — see the manifest's own
+        docstring; stage ② will relax this to spilled-FIRST ordering once
+        the owner has ruled on un-spilled eviction).
         """
         if self.durability_failed:
             raise MediaStoreWriteUnavailable(
@@ -1278,6 +1331,8 @@ class MediaStore:
         # eventual completion, is what this file's manifest contract needs.
         resolved_path = abs_path.resolve()
         self._history_content_spill_paths.add(resolved_path)
+        if not spilled:
+            self._unspilled_paths.add(resolved_path)
         # #5387: record this write's chain_id (in-memory, per-process —
         # see the field's own docstring) so a LATER eviction pass this
         # same process runs can tell "this file belongs to the turn that
@@ -1291,7 +1346,7 @@ class MediaStore:
             try:
                 manifest_path = self._spill_manifest_path()
                 manifest_path.parent.mkdir(parents=True, exist_ok=True)
-                line = json.dumps({"path": str(_resolved_path)}) + "\n"
+                line = self._manifest_line(_resolved_path, spilled=spilled)
 
                 def _append() -> None:
                     with manifest_path.open("a", encoding="utf-8") as f:
@@ -1317,6 +1372,26 @@ class MediaStore:
         # expected to fire under real usage.
         self._evict_history_content_over_cap(current_chain_id=chain_id)
         return block
+
+    def is_unspilled_file(self, path: "str | Path") -> bool:
+        """#5896 stage ①: True if *path* was written by
+        :meth:`save_tool_result` with ``spilled=False`` — a tool-result
+        body the model still sees INLINE (its ``history.jsonl`` row holds
+        no copy), so this file is that body's only durable form and is
+        excluded from every eviction pass (per-session
+        :meth:`_evict_history_content_over_cap` and project-wide
+        :func:`cross_session_eviction_candidates` alike). Persisted in the
+        manifest, so it holds across a restart, and project-wide, so a
+        cross-session pass sees every session's un-spilled files.
+
+        Resolves *path* the same way :meth:`is_history_content_spill`
+        does (relative → against ``project_root``), for the same reason."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = (self._project_root / p).resolve()
+        else:
+            p = p.resolve()
+        return p in self._unspilled_paths
 
     def is_open_turn_file(self, path: Path, *, current_chain_id: str) -> bool:
         """#5387: True if ``path`` was written by the SAME chain that is
@@ -1387,6 +1462,8 @@ class MediaStore:
             if protect_open_turn and self.is_open_turn_file(
                 path, current_chain_id=current_chain_id,
             ):
+                continue
+            if self.is_unspilled_file(path):
                 continue
             try:
                 size = path.stat().st_size
@@ -1478,7 +1555,7 @@ class MediaStore:
         if total <= max_bytes:
             return
         history_content_candidates = cross_session_eviction_candidates(
-            history_content_root, pin=self._storage.pin,
+            history_content_root, pin=self._storage.pin, unspilled=self._unspilled_paths,
         )
         # #4478: a NEW (post-#4478) nested media write's own pin match
         # works exactly like history-content's; a pre-#4478 flat file's
@@ -1537,7 +1614,7 @@ class MediaStore:
         if total <= max_bytes:
             return []
         history_content_candidates = cross_session_eviction_candidates(
-            history_content_root, pin=self._storage.pin,
+            history_content_root, pin=self._storage.pin, unspilled=self._unspilled_paths,
         )
         media_candidates = cross_session_eviction_candidates(
             self._media_dir, pin=self._storage.pin,

@@ -71,24 +71,29 @@ def _mcp_env(**data_extra) -> dict:
     return {"status": "ok", "data": data, "_canonical_source": "mcp"}
 
 
-def _feedback(env: dict, host: "_RecordingHost"):
+async def _feedback(env: dict, host: "_RecordingHost"):
     loop = RouterLoop(host=host, chain_id="c1", router_model=_MODEL)
     result = ExecutionResult(
         tool_results=[env],
         tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "mcp"}}],
         assistant_content="",
     )
-    return loop.feedback(result)
+    out = loop.feedback(result)
+    # #5896: feedback() queues its rows; persist_feedback() (the write-ahead
+    # barrier run_loop awaits right after format_feedback) lands them.
+    await loop.persist_feedback()
+    return out
 
 
-def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -> None:
     """Tier 2: content over the cap → the persisted entry's meta carries
     SPILLED_META_KEY=True and CONTENT_REF_META_KEY naming a file that
     actually exists and holds the ORIGINAL (pre-offload) content."""
     store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     host = _RecordingHost(store)
 
-    _feedback(_mcp_env(content=_BIG), host)
+    await _feedback(_mcp_env(content=_BIG), host)
 
     (tool_entry,) = [e for e in host.appended if e["role"] == "tool"]
     meta = tool_entry["meta"]
@@ -100,22 +105,33 @@ def test_offloaded_tool_result_is_stamped_spilled_with_a_content_ref(tmp_path) -
     assert full.read_text(encoding="utf-8") == _BIG
 
 
-def test_unoffloaded_tool_result_is_never_stamped_spilled(tmp_path) -> None:
-    """Tier 2: content under the cap → no offload happens → meta carries
-    neither key at all (never False/None as a placeholder — see
-    SPILLED_META_KEY's own docstring: absence means "never spilled")."""
+@pytest.mark.asyncio
+async def test_unoffloaded_tool_result_is_stamped_unspilled_with_a_content_ref(tmp_path) -> None:
+    """Tier 2: content under the cap → no offload happens → the entry is
+    still file-backed (#5896, #5364 §1.1 "A" at return time — a storage
+    form, not a size gate) and says so in the typed fields:
+    SPILLED_META_KEY=False (the model sees the body INLINE — this row's
+    own content still IS the body) plus CONTENT_REF_META_KEY naming a
+    file that exists and holds that same body. Distinguishable from the
+    spilled stamp above by the flag's VALUE, never its presence."""
     store = MediaStore(project_root=tmp_path, agent_name="test-agent", session_id="test-session")
     host = _RecordingHost(store)
 
-    _feedback(_mcp_env(content=_SMALL), host)
+    await _feedback(_mcp_env(content=_SMALL), host)
 
     (tool_entry,) = [e for e in host.appended if e["role"] == "tool"]
     meta = tool_entry["meta"]
-    assert SPILLED_META_KEY not in meta
-    assert CONTENT_REF_META_KEY not in meta
+    assert meta.get(SPILLED_META_KEY) is False
+    ref = meta.get(CONTENT_REF_META_KEY)
+    assert ref, f"expected a content ref in meta, got: {meta!r}"
+    full = tmp_path / ref
+    assert full.is_file(), f"the ref must name a file that actually exists: {full}"
+    assert full.read_text(encoding="utf-8") == tool_entry["content"]
+    assert _SMALL in tool_entry["content"]
 
 
-def test_the_real_production_chain_stamps_spilled_meta_end_to_end(
+@pytest.mark.asyncio
+async def test_the_real_production_chain_stamps_spilled_meta_end_to_end(
     tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: architect/lead-coder BLOCKING (#5372, head 8803bc020) — the 3
@@ -150,6 +166,7 @@ def test_the_real_production_chain_stamps_spilled_meta_end_to_end(
         assistant_content="",
     )
     loop.feedback(result)
+    await loop.persist_feedback()
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     assert tool_msg.meta.get(SPILLED_META_KEY) is True, (
@@ -162,15 +179,18 @@ def test_the_real_production_chain_stamps_spilled_meta_end_to_end(
     assert full.read_text(encoding="utf-8") == _BIG
 
 
-def test_no_media_store_never_stamps_spilled(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_no_media_store_never_stamps_spilled(tmp_path) -> None:
     """Tier 2: accept-side — a host with no media_store configured (cap
     is identity, per _RecordingHost.cap_tool_result's own no-op branch)
     never stamps SPILLED_META_KEY even for content that WOULD have been
     offloaded had a store existed — proves the stamp is tied to an actual
-    offload, not just "content is large"."""
+    offload, not just "content is large". #5896: the return-time file
+    write is likewise tied to the store — no store, no ref, body inline
+    (the same degrade every other optional-store seam has)."""
     host = _RecordingHost(store=None)
 
-    _feedback(_mcp_env(content=_BIG), host)
+    await _feedback(_mcp_env(content=_BIG), host)
 
     (tool_entry,) = [e for e in host.appended if e["role"] == "tool"]
     meta = tool_entry["meta"]

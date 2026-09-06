@@ -29,7 +29,6 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.tool_result_cap import TRIGGER_CAP, cap_tool_result_content
-from reyn.tools.scheme import ExecutionResult
 from tests._support.router_loop import FakeRouterHost
 
 _MODEL = "gpt-4o"
@@ -158,23 +157,18 @@ class _ExistenceCheckingLLM:
 
 
 async def _seed_pending_spill(host: _MediaStoreHost) -> Path:
-    """Enqueue one spilled write via the SAME chokepoint a real chat turn
-    uses (``RouterLoop.feedback``), synchronously — no ``await`` happens
-    between this call and the caller's next statement, so the write is
-    still PENDING (the drainer task has had no chance to run) by the time
-    ``run_loop`` is entered."""
-    loop = RouterLoop(host=host, chain_id="c-seed", router_model=_MODEL)
-    data = {"kind": "mcp", "status": "ok", "server": "s", "tool": "t", "content": _BIG, "media_blocks": []}
-    env = {"status": "ok", "data": data, "_canonical_source": "mcp"}
-    result = ExecutionResult(
-        tool_results=[env],
-        tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "mcp"}}],
-        assistant_content="",
-    )
-    loop.feedback(result)
-    (entry,) = [e for e in host.history if e.get("role") == "tool"]
-    ref = entry["meta"]["content_ref"]
-    return host.media_store._project_root / ref
+    """Enqueue one write through the ONE write seam (#5364 §1.4:
+    ``MediaStore.save_tool_result`` — the same call the cap path and the
+    #5896 return-time path both make), synchronously — no ``await``
+    happens between this call and the caller's next statement, so the
+    write is still PENDING (the drainer task has had no chance to run) by
+    the time ``run_loop`` is entered. (Pre-#5896 this went through
+    ``RouterLoop.feedback``; that now ends in its own write-ahead flush
+    (``persist_feedback``), which would land the write this helper needs
+    to leave pending — the subject here is ``run_loop``'s OWN barrier,
+    so the seed bypasses feedback's.)"""
+    block = host.media_store.save_tool_result(_BIG, chain_id="c-seed")
+    return host.media_store._project_root / block["path"]
 
 
 @pytest.mark.asyncio
