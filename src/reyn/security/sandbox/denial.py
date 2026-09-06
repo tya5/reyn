@@ -99,3 +99,49 @@ def classify_denial(returncode: int, stderr: bytes | str) -> str | None:
     if _NETWORK_DENIED.search(stderr):
         return DENIAL_NETWORK
     return None
+
+
+# #5832: real-machine incident (owner, 2026-09-06) — a shell hook's write
+# under `open()` was denied (`write_paths:` unset for that hook), and the
+# generic "shell-hook %r exited %d (stderr: %s)" fallback carried NO sandbox
+# context at all: just the child's raw `PermissionError: [Errno 1] Operation
+# not permitted: '<path>'`. lead-coder traced this to the actual cause in 10
+# steps; the owner, seeing only the raw traceback, could not take step 1.
+#
+# Deliberately NOT a new DENIAL_WRITE class alongside DENIAL_FORK/
+# DENIAL_NETWORK above: those two classifiers each name a SPECIFIC syscall
+# and a SPECIFIC knob that fixes it (fork -> `subprocess: true`, connect ->
+# `network: true`) -- a confident, narrow claim earned by a signature that
+# (per #5244's own module docstring above) does not also occur for an
+# ordinary non-sandbox failure. A write denial has no such disjoint
+# signature: `PermissionError: [Errno 1] Operation not permitted: '<path>'`
+# is IDENTICAL whether the sandbox denied the write or the real filesystem
+# did (a read-only mount, a missing parent directory, an actual permissions
+# problem) -- "EPERM means the sandbox did it" would be the exact bandaid
+# lead-coder's #5832 brief rejected. So this function does not classify a
+# denial at all -- it only decides whether a failure is PERMISSION-SHAPED
+# enough that disclosing what reyn granted is worth the sentence. The
+# caller states a FACT ("reyn ran this with write_paths=X"), never a
+# diagnosis ("the sandbox caused this") -- the fact is true regardless of
+# the real cause, and is exactly as far as reyn can honestly go on its own.
+_PERMISSION_FAILURE_MARKERS = (
+    "eperm",
+    "eacces",
+    "operation not permitted",
+    "permission denied",
+)
+
+
+def looks_permission_related(stderr: bytes | str) -> bool:
+    """Whether *stderr* looks like an OS-level permission failure of some
+    kind — NOT a denial classifier (contrast :func:`classify_denial` above).
+
+    This only gates whether reyn's granted sandbox range is worth disclosing
+    alongside a failure; it never claims the sandbox caused it. See the
+    module comment directly above this function for why a write denial
+    specifically cannot be classified the way fork/network denials are.
+    """
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _PERMISSION_FAILURE_MARKERS)

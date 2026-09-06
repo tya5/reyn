@@ -349,6 +349,77 @@ async def test_failed_hook_stderr_snippet_keeps_the_exceptions_own_type(
     )
 
 
+@pytest.mark.asyncio
+async def test_permission_failure_discloses_granted_sandbox_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 1: #5832 -- real-machine incident (owner, 2026-09-06). A hook's
+    write was denied and the generic failure log line carried nothing but
+    the child's raw traceback -- no hint that reyn itself has a sandbox
+    scope, let alone what it is. lead-coder needed 10 steps to reach the
+    real cause; the owner could not take step 1 from the screen alone.
+
+    Drives a REAL, non-sandboxed permission denial (chmod 0 on a real
+    directory -- an actual OS-level PermissionError, no mock, no fake
+    backend) through the generic (unclassified) failure branch, and
+    asserts the granted `subprocess`/`network`/`write_paths` values now
+    appear in the log line.
+
+    Deliberately NOT gated on the sandbox being the actual cause: this
+    failure is genuinely NOT a sandbox denial (`NoopBackend`, no
+    enforcement at all) -- it is a real filesystem permission error. The
+    disclosure fires anyway, because reyn's own contract here is
+    "state what I granted", never "diagnose why this failed" (see
+    `looks_permission_related`'s own docstring in
+    `reyn.security.sandbox.denial` for why the two must stay separate).
+    """
+    from reyn.hooks.shell_runner import run_shell_hook
+
+    allowlist = tmp_path / "allowlist.json"
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+
+    locked_dir = tmp_path / "locked"
+    locked_dir.mkdir()
+    locked_dir.chmod(0o000)
+    target = locked_dir / "cursor.json.tmp"
+    script = tmp_path / "denied_write.py"
+    script.write_text(
+        f"open({str(target)!r}, 'w')\n",
+        encoding="utf-8",
+    )
+    argv = [_PY, str(script)]
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="reyn.hooks.shell_runner"):
+            result = await run_shell_hook(
+                argv,
+                event_context={"event": "turn_end"},
+                timeout_seconds=10,
+                sandbox_backend=_noop_backend(),
+                sandbox_policy=_policy(temp_dir=str(tmp_path)),
+                allowlist_path=allowlist,
+            )
+    finally:
+        locked_dir.chmod(0o755)  # restore so tmp_path cleanup can remove it
+
+    assert result is None  # a failed exec run yields no push-directive
+    warnings = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("PermissionError" in msg for msg in warnings), (
+        f"expected the real PermissionError to reach the log -- got {warnings!r}"
+    )
+    assert any("#5832" in msg and "write_paths=[]" in msg for msg in warnings), (
+        f"expected the granted-range disclosure (subprocess/network/write_paths) "
+        f"on the same failure -- got {warnings!r}"
+    )
+    # The disclosure is a FACT about what reyn granted, not a verdict on the
+    # cause -- this failure is a real FS permission error under a Noop
+    # (non-enforcing) backend, so reyn must not claim the sandbox caused it.
+    assert not any("sandbox denied" in msg.lower() for msg in warnings), (
+        f"disclosure must not claim the sandbox caused a failure it cannot "
+        f"actually attribute -- got {warnings!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helper: fake stdin object with configurable isatty()
 # ---------------------------------------------------------------------------
