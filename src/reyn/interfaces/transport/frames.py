@@ -303,10 +303,41 @@ class BacklogBatch:
 HYDRATE_PAGE_FRAMES = 200
 
 
+@dataclass(frozen=True)
+class StatusApplied:
+    """#5830 (architect FINAL ruling, same shape #5139 already established
+    for :class:`BacklogBatch`): one decoded ``STATE_SNAPSHOT``/``STATE_DELTA``
+    application, carried IN-STREAM — appended to the SAME list
+    :meth:`~reyn.interfaces.transport.agui.client.AgUiTransport._consume_block`
+    already builds for every other frame, not a side channel.
+
+    Owner-hit this closes: web/connect's status bar (agent name / model /
+    cost / ctx / session tree / …) stayed on the OLD agent right after
+    ``/attach <other agent>``, updating only once the next turn's own
+    frame arrived. Root cause (architect's own measurement): applying a
+    decoded ``StateUpdate`` onto :class:`~reyn.interfaces.transport.agui.
+    state.RemoteStatusView` (``AgUiTransport._consume_block``) never
+    produced anything for :meth:`TextualChatApp._pump_frames` to see — the
+    new values landed on the read-model instantly, but the ONE place that
+    calls :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _refresh_live_chrome` (this pump's own per-frame trailer) had nothing
+    to iterate for a snapshot/delta-only SSE block, so the redraw waited
+    for whatever frame happened to arrive next.
+
+    Carries no data of its own — the values are already on
+    :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView` by the
+    time this item is even constructed (:meth:`_consume_block` applies the
+    ``StateUpdate`` first, in the SAME branch, before appending this). Its
+    only job is to exist as a stream item so ``_pump_frames``'s trailing
+    ``_refresh_live_chrome()`` call fires in wire-arrival order — unlike
+    :class:`BacklogBatch`, the pump does NOT ``continue`` past it."""
+
+
 __all__ = [
     "BacklogBatch",
     "DisplayFrame",
     "EventFrame",
+    "StatusApplied",
     "Frame",
     "FrameTag",
     "HYDRATE_PAGE_FRAMES",
