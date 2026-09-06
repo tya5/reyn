@@ -270,6 +270,11 @@ async def _run_exec(ctx: "SlashContext", args: str) -> "tuple[list[str], dict] |
         chain_id=None,
         tool_catalog={"exec": EXEC.render_for_router()},
         events=tool_ctx.events,
+        # #5841: the SAME contextual narrowing the LLM's own exec tool
+        # call is checked against (op_ctx already carries it, built via
+        # the identical op_context_factory() seam) -- a hidden-but-named
+        # /exec is denied exactly like a hidden-but-named LLM exec call.
+        contextual=op_ctx.contextual_permission,
     )
 
     async def _invoker(call_args: dict) -> Any:

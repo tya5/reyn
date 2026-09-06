@@ -98,6 +98,10 @@ async def _dispatch(name: str, args: dict, session) -> dict:
         chain_id=None,
         tool_catalog={name: definition.render_for_router()},
         events=tool_ctx.events,
+        # #5841: DispatchContext.contextual is now required — this test's
+        # own local reproduction of slash/tasks.py's _dispatch needs it
+        # too. No narrowing in play for these tests → None (⊤).
+        contextual=None,
     )
 
     async def _invoker(call_args: dict) -> "object":

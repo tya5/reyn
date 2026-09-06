@@ -57,6 +57,22 @@ async def _build_tasks_tool_context(ctx: "SlashContext") -> Any:
     )
 
 
+async def _router_contextual_permission(tool_ctx: Any) -> "object | None":
+    """The per-session ``ContextualPermission`` narrowing (delegate/
+    topology/ephemeral) — #5841 — via the SAME ``op_context_factory()``
+    seam ``interfaces/slash/exec.py`` already uses. ``list_tasks``/
+    ``cancel_task`` don't otherwise need an ``OpContext`` at all; this
+    builds one purely to extract that one field, matching ``exec.py``'s
+    own construction rather than re-deriving contextual permission from
+    a different source (there is no simpler direct accessor on
+    ``RouterLoopHost`` — see #5841's own investigation)."""
+    rs = tool_ctx.router_state
+    if rs is None or rs.op_context_factory is None:
+        return None
+    op_ctx = rs.op_context_factory()
+    return getattr(op_ctx, "contextual_permission", None)
+
+
 async def _dispatch(name: str, args: dict, ctx: "SlashContext") -> dict:
     """Route one op call through :func:`dispatch_tool`, for the audit trail
     (``tool_called``/``tool_returned``, ``caller_kind="operator"``) — the
@@ -75,6 +91,12 @@ async def _dispatch(name: str, args: dict, ctx: "SlashContext") -> dict:
         chain_id=None,
         tool_catalog={name: definition.render_for_router()},
         events=tool_ctx.events,
+        # #5841: DispatchContext.contextual is now REQUIRED (no default) —
+        # extracted through the SAME op_context_factory() seam /exec uses,
+        # even though list_tasks/cancel_task don't otherwise need an
+        # OpContext. Without this, /tasks would be the one dispatch_tool
+        # caller silently exempt from the new call-time restrict check.
+        contextual=await _router_contextual_permission(tool_ctx),
     )
 
     async def _invoker(call_args: dict) -> Any:

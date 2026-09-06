@@ -26,6 +26,7 @@ def make_ctx(
     call_id: str | None = None,
     catalog: dict | None = None,
     events: FakeEventEmitter | None = None,
+    contextual: "object | None" = None,
 ) -> tuple[DispatchContext, FakeEventEmitter]:
     e = events or FakeEventEmitter()
     return (
@@ -35,6 +36,9 @@ def make_ctx(
             chain_id=chain_id,
             tool_catalog=catalog or {},
             events=e,
+            # #5841: no narrowing by default -- individual tests pass a
+            # real ContextualPermission to exercise the restrict check.
+            contextual=contextual,
             call_id=call_id,
         ),
         e,
@@ -487,4 +491,154 @@ def test_handler_iserror_flag_alone_is_not_promoted():
             "status": "ok",
             "data": {"content": "tool-reported failure text", "isError": True},
         }
+    asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# #5841 — call-time TOOL-axis restrict, contextual layer only
+#
+# Real-machine finding: capability_visibility.py's own "hide a denied tool"
+# mechanism already existed, but nothing stopped a NAMED call to that same
+# tool from reaching a handler -- dispatch_tool is the ONE seam every
+# caller (RouterLoop's own LLM tool-call dispatch, /exec, /tasks) funnels
+# through, so this is where the restrict check belongs. Deliberately
+# ContextualLayer only (never PermissionDecl.tool -- see dispatch_tool's
+# own docstring for why: nothing in production populates decl.tool, and
+# its own empty-list-means-deny-all semantics would make EVERY undeclared
+# agent's EVERY tool call fail if read here).
+# ---------------------------------------------------------------------------
+
+
+def test_contextually_denied_tool_is_rejected_without_calling_invoker():
+    """Tier 2: accept ① (architect) -- "Profile または Contextual が exec を
+    denied にした agent で... 名指しした tool call が dispatch で拒否される".
+    A real ContextualPermission denying "exec" makes a DIRECT, by-name call
+    to it fail at dispatch_tool, before the invoker ever runs -- closing
+    the "a tool named anyway is not stopped" gap #5842's own doc line
+    (now false) had just recorded.
+
+    Falsify note (verified in-file, Edit-only, then reverted): removing
+    the ``tool_contextually_denied`` check from ``dispatch_tool`` makes
+    this RED -- the invoker runs and the call succeeds."""
+    from reyn.security.permissions.effective import ContextualPermission
+
+    async def main():
+        invoked = False
+
+        async def invoker(args):
+            nonlocal invoked
+            invoked = True
+            return {"ok": True}
+
+        contextual = ContextualPermission(tool_deny=frozenset({"exec"}))
+        ctx, ev = make_ctx(
+            catalog={"exec": {"function": {"name": "exec", "parameters": {}}}},
+            contextual=contextual,
+        )
+        result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=invoker)
+
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "permission_denied"
+        assert invoked is False, "the invoker must never run for a denied tool"
+        types = [e[0] for e in ev.events]
+        assert "tool_called" not in types
+        assert "tool_returned" not in types
+        assert "tool_failed" in types
+    asyncio.run(main())
+
+
+def test_contextual_tool_allow_narrowing_also_denies_a_name_not_in_it():
+    """Tier 2: the OTHER contextual shape -- ``tool_allow`` (an allowlist,
+    not a denylist) narrowing away a name not in it. Same seam, same
+    result shape, different construction of the narrowing."""
+    async def main():
+        from reyn.security.permissions.effective import ContextualPermission
+
+        contextual = ContextualPermission(tool_allow=frozenset({"list_skills"}))
+        ctx, _ev = make_ctx(
+            catalog={"exec": {"function": {"name": "exec", "parameters": {}}}},
+            contextual=contextual,
+        )
+        result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=_unused_invoker)
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "permission_denied"
+    asyncio.run(main())
+
+
+def test_undeclared_agent_ie_no_narrowing_at_all_calls_every_tool_unchanged():
+    """Tier 2: accept ③ (architect) + lead-coder's own emphasis -- "denied
+    でない agent の tool call が 1 文字も変わらない". This is the load-
+    bearing control arm for #5841's entire design: PermissionDecl.tool is
+    deliberately NOT read anywhere in this check, specifically so an
+    agent that has never declared/been narrowed (contextual=None, the
+    overwhelming common case -- #5841's own investigation found ZERO
+    production populators of PermissionDecl.tool) is not silently deny-
+    alled by this new check. Asserts the FULL result dict is byte-
+    identical to a call made before #5841 existed (contextual=None was
+    already the default in every pre-#5841 DispatchContext construction
+    this file's own make_ctx tests exercise above)."""
+    async def main():
+        async def invoker(args):
+            return {"items": ["a", "b"]}
+
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG, contextual=None)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": "."}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {"status": "ok", "data": {"items": ["a", "b"]}}
+        types = [e[0] for e in ev.events]
+        assert types == ["tool_called", "tool_returned"]
+    asyncio.run(main())
+
+
+def test_a_narrowing_that_does_not_mention_this_tool_leaves_it_unaffected():
+    """Tier 2: accept ③, second half -- a REAL, active narrowing that
+    simply doesn't deny THIS tool must not become an accidental deny-all
+    either (a bug shaped like "any contextual object present -> denied"
+    would pass the two denial tests above and still be wrong)."""
+    async def main():
+        from reyn.security.permissions.effective import ContextualPermission
+
+        contextual = ContextualPermission(tool_deny=frozenset({"some_other_tool"}))
+        async def invoker(args):
+            return {"items": []}
+
+        ctx, _ev = make_ctx(catalog=_SAMPLE_CATALOG, contextual=contextual)
+        result = await dispatch_tool(
+            name="list_skills", args={"path": "."}, ctx=ctx, invoker=invoker,
+        )
+        assert result == {"status": "ok", "data": {"items": []}}
+    asyncio.run(main())
+
+
+def test_no_confirmation_bus_is_ever_consulted():
+    """Tier 2: accept ④ (architect) -- restrict-only, no confirm prompt.
+    DispatchContext carries no bus/intervention field at all (confirmed
+    by construction -- this test's own make_ctx never supplies one), and
+    dispatch_tool's own source never imports RequestBus/_approve -- a
+    denied call returns synchronously with no possibility of blocking on
+    user input. This test's own real assertion: the denial path completes
+    without ANY additional argument this file's make_ctx doesn't already
+    supply, i.e. there is no bus for require_tool's own confirm half to
+    have used even if someone tried to wire it back in via this DispatchContext."""
+    async def main():
+        from reyn.security.permissions.effective import ContextualPermission
+
+        contextual = ContextualPermission(tool_deny=frozenset({"exec"}))
+        ctx, _ev = make_ctx(
+            catalog={"exec": {"function": {"name": "exec", "parameters": {}}}},
+            contextual=contextual,
+        )
+        # DispatchContext has no bus-shaped field to pass in the first
+        # place -- the absence itself is the witness. dataclasses.fields
+        # gives the authoritative list, not a claim about what dispatch_
+        # tool COULD read off an object that had one.
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(ctx)}
+        assert "bus" not in field_names
+        assert "intervention_bus" not in field_names
+        assert "request_bus" not in field_names
+
+        result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=_unused_invoker)
+        assert result["status"] == "error"  # denied, synchronously, no prompt
     asyncio.run(main())
