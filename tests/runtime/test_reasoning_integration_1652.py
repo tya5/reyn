@@ -84,7 +84,7 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
 
 def _put(host, *, text="answer", reasoning=_REASONING):
     outbox_async = host.put_outbox(
-        kind="agent", text=text,
+        kind="agent", text=text, persist_as="assistant",
         meta={"chain_id": "c1", "reasoning": reasoning},
     )
     asyncio.run(outbox_async)

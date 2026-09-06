@@ -12,7 +12,7 @@ import functools
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, runtime_checkable
 
 from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
@@ -93,6 +93,12 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
         " · retry: {retry} (chat.empty_stop_retry) · call {call_id}]"
     ),
 }
+
+
+#: #5887: the roles a ``put_outbox`` row may be persisted to history AS —
+#: exactly ``ChatMessage.role``'s own set, so the adapter passes it straight
+#: through and never re-derives a role from the display ``kind``.
+PersistAs = Literal["user", "assistant", "tool", "system", "summary", "spill_record"]
 
 
 def _empty_response_text(
@@ -949,15 +955,22 @@ class RouterLoopCore(Protocol):
     # -- every ``RouterLoopHost`` genuinely implements this, test hosts
     # included (``tests/_support/router_loop.py``'s ``FakeRouterHost``).
     def make_router_op_context(self) -> Any: ...
-    # #3633: ``persist`` makes the kind=="agent" → history-append coupling an
-    # EXPLICIT per-call-site choice instead of an implicit blanket rule the
-    # host applies unconditionally. Defaults True (= the pre-#3633 behavior,
-    # unchanged for every existing caller); a call site whose text is already
-    # persisted by another path (e.g. router_loop's tool-turn display bubble,
-    # duplicated by ``feedback()``'s ``append_history_entry``) passes False.
+    # #5887 (architect ruling): ``persist_as`` says, in ONE argument, both
+    # whether this row lands in history and AS WHAT role — ``None`` = display
+    # only. No default, deliberately: a new call site must state what it
+    # leaves behind for the next turn's wire. It replaces #3633's
+    # ``persist: bool`` plus the host-side "role is inferred from kind" rule,
+    # because that pair is exactly how the #5887 incident's fix would have
+    # gone wrong — changing ``kind`` (the DISPLAY axis: who is speaking to
+    # the operator) silently switched persistence off (the LLM-CONTEXT
+    # axis: what the model sees next turn). The two are orthogonal;
+    # dogfood-v6's decision to keep the empty-response text in history as an
+    # assistant placeholder is a context-axis decision and survives a
+    # display-axis change untouched. #3633's ``persist=False`` (a row whose
+    # text is already persisted by ``feedback()``) maps to ``persist_as=None``.
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
-        persist_as_assistant: bool = False,
+        self, *, kind: str, text: str, meta: dict,
+        persist_as: "PersistAs | None",
     ) -> None: ...
 
 
@@ -1129,11 +1142,12 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     async def send_to_session(self, *, agent: str, session: str,
                               text: str, wake: bool) -> dict: ...
 
-    # #3633: see RouterLoopCore.put_outbox above — ``persist`` is the same
-    # explicit per-call-site opt-out, inherited here (Protocol overlap).
+    # #5887: see RouterLoopCore.put_outbox above — ``persist_as`` is the same
+    # explicit, default-less per-call-site declaration, inherited here
+    # (Protocol overlap).
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
-        persist_as_assistant: bool = False,
+        self, *, kind: str, text: str, meta: dict,
+        persist_as: "PersistAs | None",
     ) -> None: ...
 
     # E-full PR-E (issue #383): persist a single ChatMessage entry
@@ -2701,7 +2715,7 @@ class RouterLoop:
                 # parent row with its children shown under it is not a visual
                 # regression the way a bare empty bubble alone would have been.
                 #
-                # #3633: this call is DISPLAY-ONLY — ``persist=False``. The prior
+                # #3633: this call is DISPLAY-ONLY — ``persist_as=None`` (was ``persist=False``). The prior
                 # comment here ("no double-emit ... history persistence is unchanged")
                 # was wrong: it only ruled out collision with the *different*
                 # no-tool_calls terminal path further down this file and missed that
@@ -2709,7 +2723,7 @@ class RouterLoop:
                 # ``format_feedback`` → ``append_history_entry``) independently
                 # persists this SAME text moments later as the canonical
                 # ``source="router_tool_turn"`` record — the one that also carries
-                # ``tool_calls``, so it is the complete turn. Without ``persist=False``
+                # ``tool_calls``, so it is the complete turn. Without ``persist_as=None``
                 # RouterHostAdapter's unconditional ``kind=="agent"`` → append-to-
                 # history side effect wrote the identical string to history.jsonl
                 # twice (measured: 24/283 adjacent-duplicate assistant records in a
@@ -2718,7 +2732,7 @@ class RouterLoop:
                 await self.host.put_outbox(
                     kind="agent",
                     text=_tool_turn_text,
-                    persist=False,
+                    persist_as=None,
                     # #1652: supply this turn's reasoning (host gates display/
                     # continuity + emits the discrete kind="reasoning" signal).
                     meta={
@@ -2849,13 +2863,13 @@ class RouterLoop:
                     )
                     ack_text = f"{header}\n\n{trailer}"
                     # #5887: an OS ack, not the model's words — system
-                    # marker, not the agent one. ``persist_as_assistant``
+                    # marker, not the agent one. ``persist_as="assistant"``
                     # preserves the history placeholder this row always
                     # wrote (see RouterHostAdapter.put_outbox).
                     await self.host.put_outbox(
                         kind="system",
                         text=ack_text,
-                        persist_as_assistant=True,
+                        persist_as="assistant",
                         meta={
                             "chain_id": self.chain_id,
                             "source": "agent_spawn_ack",
@@ -3038,7 +3052,7 @@ class RouterLoop:
                 # #5887: reyn authored this sentence, not the model — it
                 # renders under the system marker (``· `` dim), not the
                 # agent one (``● ``), and a generic AG-UI client never
-                # sees it as an ``assistant`` turn. ``persist_as_assistant``
+                # sees it as an ``assistant`` turn. ``persist_as="assistant"``
                 # keeps the dogfood-v6 decision in RouterHostAdapter.
                 # put_outbox intact: the text still lands in history as an
                 # assistant placeholder so the next turn's wire does not
@@ -3046,7 +3060,7 @@ class RouterLoop:
                 await host.put_outbox(
                     kind="system",
                     text=failure_text,
-                    persist_as_assistant=True,
+                    persist_as="assistant",
                     meta={
                         "chain_id": self.chain_id,
                         "source": "router_empty_response",
@@ -3091,12 +3105,14 @@ class RouterLoop:
                 await self.host.put_outbox(
                     kind="agent",
                     text=_structured_text,
+                    persist_as="assistant",
                     meta={"chain_id": self.chain_id, "reasoning": result.reasoning},
                 )
                 return self._total_usage
             await self.host.put_outbox(
                 kind="agent",
                 text=result.content or "",
+                persist_as="assistant",
                 # #1652: supply the turn's reasoning; the host applies the
                 # display/continuity gates + the discrete kind="reasoning" emit.
                 meta={
@@ -3170,6 +3186,7 @@ class RouterLoop:
             await self.host.put_outbox(
                 kind="system",
                 text="✗ turn interrupted",
+                persist_as=None,
                 meta={"chain_id": self.chain_id},
             )
             # #3694: durable cancelled-turn outcome — the cooperative-cancel
@@ -3229,6 +3246,7 @@ class RouterLoop:
                 await self.host.put_outbox(
                     kind="agent",
                     text=_wrapup.content,
+                    persist_as="assistant",
                     meta={
                         "chain_id": self.chain_id,
                         "limit_stopped": True,
@@ -3240,6 +3258,7 @@ class RouterLoop:
             pass
         await self.host.put_outbox(
             kind="error",
+            persist_as=None,
             text=(
                 f"Router loop exceeded max iterations ({self.max_iterations}). "
                 f"Configure safety.on_limit.mode=interactive or auto_extend to "

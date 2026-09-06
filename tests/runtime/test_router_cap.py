@@ -179,7 +179,7 @@ def test_router_succeeds_within_cap(tmp_path, monkeypatch):
         # Mirror what real RouterLoop does on a chitchat reply: put a text
         # outbox via the host callback.
         await self.host.put_outbox(
-            kind="agent", text="stub-reply",
+            kind="agent", text="stub-reply", persist_as="assistant",
             meta={"chain_id": self.chain_id},
         )
 

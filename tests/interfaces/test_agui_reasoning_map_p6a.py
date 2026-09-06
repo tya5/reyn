@@ -194,7 +194,7 @@ def test_display_off_yields_zero_reasoning_events() -> None:
     )
     asyncio.run(
         host.put_outbox(
-            kind="agent", text="answer",
+            kind="agent", text="answer", persist_as="assistant",
             meta={"chain_id": "c1", "reasoning": _REASONING_TEXT},
         )
     )
@@ -221,7 +221,7 @@ def test_display_on_yields_reasoning_triplet_on_the_wire() -> None:
     )
     asyncio.run(
         host.put_outbox(
-            kind="agent", text="answer",
+            kind="agent", text="answer", persist_as="assistant",
             meta={"chain_id": "c1", "reasoning": _REASONING_TEXT},
         )
     )

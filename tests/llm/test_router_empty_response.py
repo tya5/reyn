@@ -146,12 +146,10 @@ class FakeRouterHost:
         pass
 
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
-        persist_as_assistant: bool = False,
+        self, *, kind: str, text: str, meta: dict, persist_as: "str | None",
     ) -> None:
         self.outbox.append({
-            "kind": kind, "text": text, "meta": meta,
-            "persist_as_assistant": persist_as_assistant,
+            "kind": kind, "text": text, "meta": meta, "persist_as": persist_as,
         })
 
     async def file_read(self, path: str) -> str:
@@ -371,12 +369,13 @@ async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
     tui 表示の区別がついてない"). strip: reverting the emit site to
     ``kind="agent"`` turns this red.
 
-    ``persist_as_assistant`` is asserted alongside: the display axis moved
+    ``persist_as="assistant"`` is asserted alongside: the display axis moved
     to "system", but the dogfood-v6 decision in ``RouterHostAdapter.
     put_outbox`` (keep an assistant placeholder in history so the next
     turn's wire does not carry two consecutive user messages) is carried
-    by that explicit flag now, not by ``kind`` — see that method's own
-    comment. Dropping the flag would silently re-open the v6 attractor."""
+    by that explicit argument now, not inferred from ``kind`` — see that
+    method's own comment. ``persist_as=None`` here would silently re-open
+    the v6 attractor."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
@@ -388,9 +387,9 @@ async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
     assert msg["kind"] == "system", (
         f"an OS-authored notice must not render in the model's voice; got kind={msg['kind']!r}"
     )
-    assert msg["persist_as_assistant"] is True, (
+    assert msg["persist_as"] == "assistant", (
         "the notice must still ask for its assistant placeholder in history "
-        "(dogfood-v6 alternation decision)"
+        f"(dogfood-v6 alternation decision); got persist_as={msg['persist_as']!r}"
     )
     assert len(msg["text"]) > 0, "Failure text must be non-empty"
     assert msg["meta"].get("source") == "router_empty_response"

@@ -162,7 +162,7 @@ class _FakeRouterHost:
         return "fake-model"
 
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        self, *, kind: str, text: str, meta: dict, persist_as: "str | None",
     ) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
 

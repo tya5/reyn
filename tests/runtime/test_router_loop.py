@@ -228,6 +228,52 @@ async def test_async_tool_dispatch_exits_the_loop(monkeypatch):
     ), f"spawn ack must still persist as an assistant placeholder; got: {host.history}"
 
 
+def test_every_host_put_outbox_call_site_declares_persist_as() -> None:
+    """Tier 2: #5887 witness ④ — every call to the host's ``put_outbox(``
+    in ``src/`` states ``persist_as=`` explicitly. The argument has no
+    default on purpose (architect ruling): a new call site must say what
+    it leaves in history for the next turn, so the display ``kind`` can
+    never again be the thing that silently decides persistence. Removing
+    the inference only closes the hole if it is closed at EVERY site,
+    which is why this is a census, not a sample.
+
+    Matches the host method (``host.put_outbox(`` / ``self.host.put_outbox(``
+    — keyword ``kind=``/``text=`` form). ``_put_outbox(OutboxMessage(...))``
+    is a different method (the display channel, takes a built
+    ``OutboxMessage``, has no persistence axis) and is not in scope."""
+    import re
+
+    from tests._support.paths import REPO_ROOT
+
+    src = REPO_ROOT / "src"
+    pattern = re.compile(r"(?<![_\w])host\.put_outbox\(", re.MULTILINE)
+    offenders: list[str] = []
+    checked = 0
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for m in pattern.finditer(text):
+            # Walk to the matching close paren of THIS call.
+            depth, i = 0, m.end() - 1
+            while i < len(text):
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            call = text[m.start():i + 1]
+            checked += 1
+            if "persist_as=" not in call:
+                line = text.count("\n", 0, m.start()) + 1
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line}")
+    assert checked >= 8, f"expected the router_loop call sites to be found; saw {checked}"
+    assert offenders == [], (
+        "put_outbox( call sites without an explicit persist_as= "
+        f"(no default — say what the row leaves in history): {offenders}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_async_tool_does_not_redispatch_in_same_turn(monkeypatch):
     """Tier 2: OS invariant — RouterLoop.run() exits after first async

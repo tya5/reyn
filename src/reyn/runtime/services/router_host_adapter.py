@@ -44,6 +44,7 @@ _TURN_BUDGET_ENGINE_UNSET = object()
 _RUN_PROMPT_DEFAULT_TIMEOUT_S: float = 120.0
 
 if TYPE_CHECKING:
+    from reyn.runtime.router_loop import PersistAs
     from reyn.runtime.router_op_context import RouterOpContextSource
 
 logger = logging.getLogger(__name__)
@@ -2301,8 +2302,8 @@ class RouterHostAdapter:
         await self._commit_mid_turn_injection_cb(msg_id)
 
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
-        persist_as_assistant: bool = False,
+        self, *, kind: str, text: str, meta: dict,
+        persist_as: "PersistAs | None",
     ) -> None:
         from reyn.runtime.chat_message import ChatMessage, _now_iso
         from reyn.runtime.outbox import OutboxMessage
@@ -2353,34 +2354,32 @@ class RouterHostAdapter:
         # cascading-attractor mitigation needs to live elsewhere
         # (= context build / classifier-side, tracked as follow-up).
         #
-        # #3633: ``persist`` (default True) makes this append an EXPLICIT
-        # per-call-site choice rather than an implicit blanket rule. A caller
-        # whose text is already persisted through a different path (e.g.
-        # router_loop's tool-turn display bubble — the SAME text is persisted
-        # a few lines later as the canonical record by
-        # ``append_history_entry`` in ``RouterLoop.feedback()``, complete
-        # with ``tool_calls``) passes ``persist=False`` so the display-only
-        # outbox emit does not ALSO write to history.jsonl. Do not add a new
-        # unconditional persist path here without checking whether the text
-        # is already recorded elsewhere.
+        # #3633 introduced ``persist: bool`` so a caller whose text is already
+        # persisted through a different path (router_loop's tool-turn display
+        # bubble — the SAME text lands a few lines later as the canonical
+        # record via ``append_history_entry`` in ``RouterLoop.feedback()``,
+        # complete with ``tool_calls``) could opt out of a second write. Do
+        # not add a new unconditional persist path here without checking
+        # whether the text is already recorded elsewhere.
         #
-        # #5887: ``persist_as_assistant`` separates two axes this condition
-        # used to conflate. ``kind`` is the DISPLAY axis — who said it, which
-        # marker the TUI draws, which role a generic AG-UI client sees.
-        # The history append is the LLM-CONTEXT axis — whether the next
-        # turn's wire keeps user/assistant alternation. OS-authored text
-        # (the empty-response notice, the async-dispatch ack) is emitted
-        # as ``kind="system"`` so it stops rendering in the model's voice,
-        # but the dogfood-v6 decision above still stands: it must ALSO land
-        # in history as an ``assistant`` placeholder, or the next turn sees
-        # two consecutive ``user`` messages. Those two sites pass
-        # ``persist_as_assistant=True``; every other non-agent kind keeps
-        # its previous no-persist behaviour, byte-identical.
-        if text and persist and (kind == "agent" or persist_as_assistant):
-            # Issue #383: chat history now uses ``role="assistant"`` +
-            # ``content=`` (= wire shape mirror); the OutboxMessage above
-            # keeps ``kind="agent"`` since that's the TUI-facing
-            # OutboxMessage taxonomy, independent of the LLM-side role.
+        # #5887 (architect ruling): ``persist_as`` replaces that bool AND the
+        # ``kind == "agent"`` role inference this branch used to do. ``kind``
+        # is the DISPLAY axis — who is speaking to the operator, which marker
+        # the TUI draws, which role a generic AG-UI client sees. This append
+        # is the LLM-CONTEXT axis — what the model sees on the next turn's
+        # wire. Inferring the second from the first is exactly how the
+        # #5887 fix would have gone wrong: switching the empty-response
+        # notice to ``kind="system"`` (correct — reyn wrote it) would have
+        # silently switched off its history append, reverting the
+        # dogfood-v6 decision above without anyone choosing to. Now the
+        # caller states the role explicitly (``None`` = display only) and
+        # this method never derives one; the OS-authored rows pass
+        # ``persist_as="assistant"`` and keep the v6 placeholder.
+        if text and persist_as is not None:
+            # Issue #383: chat history uses ``role="assistant"`` +
+            # ``content=`` (= wire shape mirror) for the model's replies;
+            # the OutboxMessage above keeps its own ``kind`` since that's
+            # the TUI-facing taxonomy, independent of the LLM-side role.
             # #1652: persist reasoning on the history ChatMessage ONLY when
             # continuity is on (so _reasoning_continuity_section can replay it);
             # otherwise persist the stripped meta. Either way the wire-shape
@@ -2390,7 +2389,7 @@ class RouterHostAdapter:
                 else _outbox_meta
             )
             self._append_history_cb(ChatMessage(
-                role="assistant", content=text, ts=_now_iso(), meta=_persist_meta,
+                role=persist_as, content=text, ts=_now_iso(), meta=_persist_meta,
             ))
             # Capture for agent-to-agent paths that need to forward the
             # reply upstream via _send_agent_response.
