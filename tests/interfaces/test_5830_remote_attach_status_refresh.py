@@ -56,6 +56,24 @@ async def _build_snapshot_only_transport(state: dict) -> AgUiTransport:
     return AgUiTransport(_sse_lines(sse), _noop_send)
 
 
+async def _end_frame():
+    from reyn.interfaces.transport.frames import DisplayFrame
+    from reyn.runtime.outbox import OutboxMessage
+
+    yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
+
+
+async def _build_snapshot_then_end_transport(state: dict) -> AgUiTransport:
+    """Same reconnect-protocol preamble as :func:`_build_snapshot_only_
+    transport`, but followed by ONE live ``__end__`` frame -- for driving a
+    consumer (``run_output_loop``) that runs to completion rather than
+    being drained by hand, one frame at a time."""
+    emitter = AgUiEmitter(_end_frame(), lambda: dict(state))
+    sse = "".join([chunk async for chunk in emitter.stream()])
+    assert "STATE_SNAPSHOT" in sse
+    return AgUiTransport(_sse_lines(sse), _noop_send)
+
+
 # --- client.py level: the transport itself yields StatusApplied ---------------
 
 
@@ -165,4 +183,94 @@ async def test_all_sessions_status_listener_fires_on_snapshot_not_only_delta() -
     assert ("researcher", "main", True, False) in seen, (
         f"all_sessions_status row from the SNAPSHOT never reached the "
         f"listener: {seen}"
+    )
+
+
+# --- the OTHER .tag readers: BacklogBatch's own precedent lives in 6 files ----
+#
+# #5830 BLOCKING (lead-coder review of PR #5835's own first pass): a
+# StatusApplied item flows through the SAME "git grep BacklogBatch" surface
+# every other non-Frame stream item does. Census, distinguishing "seen" from
+# "fix needed" (lead-coder's own explicit ask):
+#
+#   interfaces/inline/textual_chat/app.py   -- fix applied (this PR's own
+#                                               main change, see the other
+#                                               tests in this file).
+#   interfaces/repl/stream_client.py        -- fix needed AND applied
+#                                               (`run_output_loop`'s own
+#                                               `.tag` read crashed on a
+#                                               StatusApplied before this;
+#                                               THIS test drives it).
+#   interfaces/transport/agui/client.py     -- the PRODUCER of StatusApplied
+#                                               (`_consume_block`) -- not a
+#                                               `.tag` reader of its OWN
+#                                               output, no fix needed.
+#   interfaces/transport/agui/protocol.py   -- a docstring cross-reference
+#                                               to BacklogBatch only, no
+#                                               `.tag` read at all -- no fix
+#                                               needed (grepped, confirmed).
+#   interfaces/transport/client_transport.py -- same: docstring cross-
+#                                               reference only (the ABSTRACT
+#                                               base does not itself consume
+#                                               the stream it declares) --
+#                                               no fix needed.
+#   interfaces/transport/frames.py          -- the vocabulary's own
+#                                               definition file; its module
+#                                               docstring's ".tag selects
+#                                               the renderer entry" claim is
+#                                               corrected in this same PR.
+#   interfaces/transport/in_process.py      -- lead-coder's explicit ⚠️:
+#                                               "not-broken is not the same
+#                                               as safe" -- checked directly:
+#                                               InProcessTransport.frames()
+#                                               (in_process.py's own queue,
+#                                               fed exclusively by DisplayFrame/
+#                                               EventFrame construction sites)
+#                                               structurally CANNOT ever
+#                                               enqueue a BacklogBatch or a
+#                                               StatusApplied -- both are
+#                                               remote-only artifacts
+#                                               (AgUiTransport's own decode).
+#                                               No fix needed; confirmed by
+#                                               reading the whole method, not
+#                                               inferred from "it doesn't
+#                                               mention BacklogBatch".
+
+
+@pytest.mark.asyncio
+async def test_run_output_loop_survives_a_status_applied_item() -> None:
+    """Tier 2: #5830 BLOCKING (lead-coder review of PR #5835's own first
+    pass) -- the PREVIOUS test suite in this file only ever drove
+    StatusApplied through TextualChatApp's own `_pump_frames`.
+    `interfaces/repl/stream_client.py`'s `run_output_loop` (the console/
+    ``--cui`` consumer of the SAME transport stream) reads `frame.tag`
+    unconditionally right after its own BacklogBatch check -- an
+    AttributeError on a real remote server's very first STATE_SNAPSHOT,
+    confirmed failing CI on this PR's first pass (`AttributeError:
+    'StatusApplied' object has no attribute 'tag'`,
+    interfaces/repl/stream_client.py:384).
+
+    Real AgUiEmitter -> real SSE text -> real AgUiTransport decode -> real
+    ConsoleChatRenderer -> real run_output_loop, no mocks (mirrors
+    test_agui_remote_rewind_textfallback.py's own established pattern in
+    this directory). The loop completing at all (never raising, never
+    hanging) is the whole assertion -- a StatusApplied item is dropped
+    silently here (this console has no live status chrome to refresh, see
+    stream_client.py's own comment at that check)."""
+    import asyncio
+
+    from reyn.interfaces.repl.renderer import ConsoleChatRenderer
+    from reyn.interfaces.repl.stream_client import run_output_loop
+
+    transport = await _build_snapshot_then_end_transport(
+        {"attached_name": "researcher", "model": "opus"}
+    )
+    # A finite timeout is itself part of the witness: the pre-fix
+    # AttributeError propagated out of run_output_loop's own `async for`
+    # immediately (never a hang) -- this asserts "runs to completion",
+    # which a bare `await run_output_loop(...)` with no timeout would also
+    # do for a WRONG reason (an unrelated hang would time out the whole
+    # test suite instead of failing this one test specifically).
+    await asyncio.wait_for(
+        run_output_loop(transport, ConsoleChatRenderer()), timeout=2.0,
     )

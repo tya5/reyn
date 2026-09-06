@@ -29,7 +29,12 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.interfaces.transport.client_transport import ClientTransport, pending_head_id
-from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, FrameTag
+from reyn.interfaces.transport.frames import (
+    BacklogBatch,
+    DisplayFrame,
+    FrameTag,
+    StatusApplied,
+)
 from reyn.runtime.outbox import OutboxMessage
 
 from ._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
@@ -376,6 +381,17 @@ async def run_output_loop(
             for f in frame.frames:
                 if isinstance(f, DisplayFrame):
                     await _render_display_message(f.message)
+            continue
+        if isinstance(frame, StatusApplied):
+            # #5830 BLOCKING (lead-coder review of PR #5835's own first
+            # pass): this console/plain client has no live status-bar/
+            # chrome concept the way TextualChatApp does (see
+            # StatusApplied's own docstring, whose ONLY consumer before
+            # this fix was that class's `_refresh_live_chrome` fall-
+            # through) — nothing to refresh here, so this item is simply
+            # dropped. Checked BEFORE the unconditional `frame.tag` read
+            # below, the same way the BacklogBatch check above already is
+            # — StatusApplied is not a Frame either.
             continue
         # Event frame → the renderer's working-indicator entry point. The dual
         # stream is dispatched by tag at the CONSUMING end so the renderer keeps

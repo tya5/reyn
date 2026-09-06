@@ -18,6 +18,20 @@ A frame carries its :class:`FrameTag` so the consuming client dispatches to the
 renderer's two entry points (``message`` for display, ``on_audit_event`` for
 event) at the consuming end — one stream in, two renderer entry points out.
 
+#5830 BLOCKING (lead-coder review, PR #5835's own first pass): ``.tag`` is
+ONLY ever safe to read on a genuine :data:`Frame` member (``DisplayFrame``/
+``EventFrame``) — :meth:`~reyn.interfaces.transport.client_transport.
+ClientTransport.frames` is typed to also yield :class:`BacklogBatch` and
+:class:`StatusApplied`, NEITHER of which carries a ``.tag``. **Every**
+consumer of that stream must check for both with ``isinstance`` BEFORE
+touching ``.tag`` on whatever it got, the same way each already checks for
+``BacklogBatch`` — a consumer that does not (``interfaces/repl/stream_
+client.py``'s own plain/``--cui`` output loop, before this fix) raises
+``AttributeError`` the instant a remote server ever sends a ``STATE_*``
+update. ``git grep -n "BacklogBatch" src/reyn`` names every file that must
+be checked when a NEW non-``Frame`` stream item is added here — this is
+not optional per-consumer discretion, it is the vocabulary's own contract.
+
 The forward-set (:func:`forwarded_frame_kinds`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
 the turn / intervention-answer events ``on_audit_event`` handles — never
