@@ -11,10 +11,16 @@ The transport is decoupled from HTTP for testability and single-responsibility:
 it consumes an ``AsyncIterator[str]`` of raw SSE lines (production: an httpx
 ``aiter_lines`` over the SSE endpoint) and calls an injected ``send`` coroutine
 to POST a client→server message (production: an httpx POST). :meth:`frames`
-demuxes the one SSE stream three ways — render frames to the renderer, STATE_*
-to the :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView`
-side-channel, and the reconnect MESSAGES/STATE snapshots — while re-guarding
-presentation nodes at the edge (A5).
+demuxes the one SSE stream: render frames go straight to the renderer;
+MESSAGES_SNAPSHOT becomes one in-stream :class:`~reyn.interfaces.transport.
+frames.BacklogBatch` item (#5139); STATE_* is applied onto
+:class:`~reyn.interfaces.transport.agui.state.RemoteStatusView` immediately
+AND (#5830) also yields one in-stream :class:`~reyn.interfaces.transport.
+frames.StatusApplied` item — NOT a side channel any more: #5830's own
+owner-hit (web/connect's status bar staying on the old agent until the next
+turn's frame arrived) was exactly that prior side-channel shape, the same
+class #5139 already closed for MESSAGES_SNAPSHOT. All of it is re-guarded at
+the edge (A5) where it carries presentation nodes.
 
 P3 (HITL answer round-trip): the client tracks the pending intervention BY ID
 off the intervention frontend-tool (:class:`InterventionTool`) the server emits
@@ -43,7 +49,13 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
-from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, EventFrame, Frame
+from reyn.interfaces.transport.frames import (
+    BacklogBatch,
+    DisplayFrame,
+    EventFrame,
+    Frame,
+    StatusApplied,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -261,13 +273,15 @@ class AgUiTransport(ClientTransport):
                 )
         return frame
 
-    def _consume_block(self, block_lines: "list[str]") -> "list[Frame | BacklogBatch]":
-        # Decode one SSE block into zero or more render frames, routing
-        # STATE_* to its side-channel and MESSAGES_SNAPSHOT into `out` as
-        # ONE BacklogBatch item (#5139) — everything this transport
-        # produces flows through the SAME queue/`frames()` stream, no
-        # second channel.
-        out: list[Frame | BacklogBatch] = []
+    def _consume_block(
+        self, block_lines: "list[str]",
+    ) -> "list[Frame | BacklogBatch | StatusApplied]":
+        # Decode one SSE block into zero or more render frames, folding
+        # STATE_* and MESSAGES_SNAPSHOT into `out` as ONE in-stream item
+        # each (#5139 for MESSAGES_SNAPSHOT, #5830 for STATE_*) — every-
+        # thing this transport produces flows through the SAME queue/
+        # `frames()` stream, no side channel.
+        out: "list[Frame | BacklogBatch | StatusApplied]" = []
         for ev in parse_sse_blocks(block_lines + [""]):
             decoded = decode_event(ev.type, ev.data)
             if decoded is None:
@@ -275,6 +289,18 @@ class AgUiTransport(ClientTransport):
             if isinstance(decoded, StateUpdate):
                 if decoded.snapshot is not None:
                     self._status.apply_snapshot(decoded.snapshot)
+                    # #5830 acceptance ④ (architect design ②: "snapshot も
+                    # listener を発火する"): a snapshot is a delta from ∅ —
+                    # before this, `_dispatch_status_listeners` only ever
+                    # fired for `decoded.delta`, so an attach's own
+                    # `all_sessions_status` row (arriving on the SNAPSHOT,
+                    # not a later delta) never reached
+                    # `TextualChatApp._on_session_status_delta` until some
+                    # UNRELATED future delta happened to touch that key —
+                    # the "もう1段悪い箇所" the issue names, permanently
+                    # stale otherwise (a frame-arrival fix alone cannot
+                    # close this: the listener call itself was never made).
+                    self._dispatch_status_listeners(decoded.snapshot)
                 if decoded.delta is not None:
                     self._status.apply_delta(decoded.delta)
                     self._dispatch_status_listeners(decoded.delta)
@@ -284,6 +310,17 @@ class AgUiTransport(ClientTransport):
                 # this is set here, independent of whether this block also
                 # yields any display Frame.
                 self._state_ready_event.set()
+                # #5830 (architect FINAL ruling, same shape #5139 already
+                # established for MESSAGES_SNAPSHOT below): the values are
+                # already applied above — this item's only job is to give
+                # `TextualChatApp._pump_frames` something to see IN THE
+                # SAME STREAM, in wire-arrival order, so its trailing
+                # `_refresh_live_chrome()` call fires right after this
+                # update lands instead of waiting for whatever OTHER frame
+                # happens to arrive next (the owner-hit: the status bar
+                # stayed on the old agent until the next turn's own
+                # frame). See `StatusApplied`'s own docstring.
+                out.append(StatusApplied())
             elif isinstance(decoded, MessagesSnapshot):
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
                 # ONE BacklogBatch item, appended to `out` like any other
@@ -454,11 +491,13 @@ class AgUiTransport(ClientTransport):
         finally:
             self._display_queue.put_nowait(_SSE_DONE)
 
-    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch | StatusApplied]":
         # #5139: widened from ``AsyncIterator[Frame]`` — this transport is
         # the only ``ClientTransport`` implementation that ever yields a
         # ``BacklogBatch`` (see that class's own docstring); every other
-        # implementation's ``frames()`` return type is unchanged.
+        # implementation's ``frames()`` return type is unchanged. #5830
+        # widens it again for ``StatusApplied`` — same reasoning, same
+        # single producer.
         #
         # Started lazily, once, on first iteration (production calls this
         # exactly once per connection — grepped, #5107 co-vet) rather than

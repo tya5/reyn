@@ -72,6 +72,7 @@ from reyn.interfaces.transport.frames import (
     BacklogBatch,
     DisplayFrame,
     FrameTag,
+    StatusApplied,
 )
 
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
@@ -6782,135 +6783,152 @@ class TextualChatApp(App):
                 if isinstance(frame, BacklogBatch):
                     self._apply_backlog_batch(frame)
                     continue
-                if not self._queue_seeded:
-                    try:
-                        self._seed_queue_view()
-                    except Exception:
-                        logger.exception("textual chat: queue-view seed failed")
-                    self._queue_seeded = True
-                if frame.tag is FrameTag.EVENT:
-                    etype = getattr(frame.event, "type", None)
-                    if etype == "session_attached":
-                        try:
-                            await self._handle_session_attached_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: session_attached reset+hydrate failed"
-                            )
-                    elif etype == "user_submitted":
-                        try:
-                            self._handle_user_submitted_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: user_submitted ingest failed"
-                            )
-                    elif etype == "turn_started":
-                        try:
-                            self._handle_turn_started_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: turn_started queue-promote failed"
-                            )
-                    elif etype == "inbox_cancel":
-                        try:
-                            self._handle_inbox_cancel_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: inbox_cancel ingest failed"
-                            )
-                    elif etype == "intervention_answer_submitted":
-                        try:
-                            self._handle_intervention_answer_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: intervention_answer_submitted "
-                                "ingest failed"
-                            )
-                    elif etype == "session_halted":
-                        try:
-                            self._handle_session_halted_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: session_halted status refresh failed"
-                            )
-                    elif etype == "agent_delta":
-                        try:
-                            self._handle_agent_delta_event(frame.event)
-                        except Exception:
-                            logger.exception(
-                                "textual chat: agent_delta coalesce failed"
-                            )
-                    elif etype in _TURN_END_EVENT_TYPES:
-                        # #3693: the turn is over — the row goes, whichever of
-                        # the three terminal events arrived. Guarded like its
-                        # siblings below: one frame's failure must not stop the
-                        # pump, and a chrome row is the last thing that should
-                        # be able to.
-                        try:
-                            self._activity.end()
-                        except Exception:
-                            logger.exception("textual chat: activity row clear failed")
-                        try:
-                            self._sweep_orphaned_running_tools()
-                        except Exception:
-                            logger.exception(
-                                "textual chat: orphaned-tool sweep failed"
-                            )
-                        try:
-                            self._sweep_orphaned_streaming_replies()
-                        except Exception:
-                            logger.exception(
-                                "textual chat: orphaned-stream sweep failed"
-                            )
-                        try:
-                            # #4691 arc item ①: settle the turn's own parent
-                            # LAST — after both sweeps above have already
-                            # given every one of its completion-Group
-                            # children a terminal state, so nothing here can
-                            # observe a child still RUNNING.
-                            self._settle_turn_parent()
-                        except Exception:
-                            logger.exception(
-                                "textual chat: turn-parent settle failed"
-                            )
+                if isinstance(frame, StatusApplied):
+                    # #5830 (architect FINAL ruling, same shape #5139
+                    # already established for BacklogBatch above) —
+                    # DELIBERATELY no ``continue`` here, unlike the
+                    # BacklogBatch branch: this item carries nothing to
+                    # apply of its own (the transport already applied the
+                    # STATE_SNAPSHOT/STATE_DELTA onto RemoteStatusView
+                    # before producing it — see StatusApplied's own
+                    # docstring), so falling through to this loop's own
+                    # trailing ``_refresh_live_chrome()`` call below is its
+                    # entire job: give that call something to fire ON, in
+                    # wire-arrival order, instead of waiting for whatever
+                    # OTHER frame happens to arrive next (the owner-hit:
+                    # web/connect's status bar stayed on the old agent
+                    # until the next turn's own frame arrived).
+                    pass
                 else:
-                    msg = frame.message
-                    if msg.kind == "__end__":
-                        break
-                    # #3362: the two CLIENT-consumed sentinels are handled here,
-                    # not skipped. Deliberately NOT written as an early
-                    # ``continue`` — the live-chrome refresh at the foot of this
-                    # loop must still run for these frames, and a ``continue``
-                    # past it is precisely the defect the F5b/#3338 note below
-                    # records (an EVENT-leg ``continue`` once starved the whole
-                    # status line).
-                    elif msg.kind == "__copy_last_reply__":
+                    if not self._queue_seeded:
                         try:
-                            await self._handle_copy_request(msg.text)
-                        except Exception as exc:
-                            logger.exception("textual chat: /copy sentinel failed")
-                            self._record_pump_swallow("__copy_last_reply__", exc)
-                    elif msg.kind == "__rewind_list__":
-                        try:
-                            await self._handle_rewind_request(msg)
-                        except Exception as exc:
-                            logger.exception("textual chat: /rewind sentinel failed")
-                            self._record_pump_swallow("__rewind_list__", exc)
-                    elif msg.kind == "__open_artifact__":
-                        try:
-                            await self._handle_open_artifact_request(msg.text)
-                        except Exception as exc:
-                            logger.exception("textual chat: /open sentinel failed")
-                            self._record_pump_swallow("__open_artifact__", exc)
-                    elif msg.kind not in _SKIP_KINDS:
-                        try:
-                            self._ingest_frame(msg)
-                        except Exception as exc:
-                            logger.exception(
-                                "textual chat: frame ingest failed for kind=%r",
-                                msg.kind,
-                            )
-                            self._record_pump_swallow(msg.kind, exc)
+                            self._seed_queue_view()
+                        except Exception:
+                            logger.exception("textual chat: queue-view seed failed")
+                        self._queue_seeded = True
+                    if frame.tag is FrameTag.EVENT:
+                        etype = getattr(frame.event, "type", None)
+                        if etype == "session_attached":
+                            try:
+                                await self._handle_session_attached_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: session_attached reset+hydrate failed"
+                                )
+                        elif etype == "user_submitted":
+                            try:
+                                self._handle_user_submitted_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: user_submitted ingest failed"
+                                )
+                        elif etype == "turn_started":
+                            try:
+                                self._handle_turn_started_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: turn_started queue-promote failed"
+                                )
+                        elif etype == "inbox_cancel":
+                            try:
+                                self._handle_inbox_cancel_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: inbox_cancel ingest failed"
+                                )
+                        elif etype == "intervention_answer_submitted":
+                            try:
+                                self._handle_intervention_answer_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: intervention_answer_submitted "
+                                    "ingest failed"
+                                )
+                        elif etype == "session_halted":
+                            try:
+                                self._handle_session_halted_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: session_halted status refresh failed"
+                                )
+                        elif etype == "agent_delta":
+                            try:
+                                self._handle_agent_delta_event(frame.event)
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: agent_delta coalesce failed"
+                                )
+                        elif etype in _TURN_END_EVENT_TYPES:
+                            # #3693: the turn is over — the row goes, whichever of
+                            # the three terminal events arrived. Guarded like its
+                            # siblings below: one frame's failure must not stop the
+                            # pump, and a chrome row is the last thing that should
+                            # be able to.
+                            try:
+                                self._activity.end()
+                            except Exception:
+                                logger.exception("textual chat: activity row clear failed")
+                            try:
+                                self._sweep_orphaned_running_tools()
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: orphaned-tool sweep failed"
+                                )
+                            try:
+                                self._sweep_orphaned_streaming_replies()
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: orphaned-stream sweep failed"
+                                )
+                            try:
+                                # #4691 arc item ①: settle the turn's own parent
+                                # LAST — after both sweeps above have already
+                                # given every one of its completion-Group
+                                # children a terminal state, so nothing here can
+                                # observe a child still RUNNING.
+                                self._settle_turn_parent()
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: turn-parent settle failed"
+                                )
+                    else:
+                        msg = frame.message
+                        if msg.kind == "__end__":
+                            break
+                        # #3362: the two CLIENT-consumed sentinels are handled here,
+                        # not skipped. Deliberately NOT written as an early
+                        # ``continue`` — the live-chrome refresh at the foot of this
+                        # loop must still run for these frames, and a ``continue``
+                        # past it is precisely the defect the F5b/#3338 note below
+                        # records (an EVENT-leg ``continue`` once starved the whole
+                        # status line).
+                        elif msg.kind == "__copy_last_reply__":
+                            try:
+                                await self._handle_copy_request(msg.text)
+                            except Exception as exc:
+                                logger.exception("textual chat: /copy sentinel failed")
+                                self._record_pump_swallow("__copy_last_reply__", exc)
+                        elif msg.kind == "__rewind_list__":
+                            try:
+                                await self._handle_rewind_request(msg)
+                            except Exception as exc:
+                                logger.exception("textual chat: /rewind sentinel failed")
+                                self._record_pump_swallow("__rewind_list__", exc)
+                        elif msg.kind == "__open_artifact__":
+                            try:
+                                await self._handle_open_artifact_request(msg.text)
+                            except Exception as exc:
+                                logger.exception("textual chat: /open sentinel failed")
+                                self._record_pump_swallow("__open_artifact__", exc)
+                        elif msg.kind not in _SKIP_KINDS:
+                            try:
+                                self._ingest_frame(msg)
+                            except Exception as exc:
+                                logger.exception(
+                                    "textual chat: frame ingest failed for kind=%r",
+                                    msg.kind,
+                                )
+                                self._record_pump_swallow(msg.kind, exc)
                 # F5b + #3338: refresh the live chrome (the always-visible
                 # status-values line, plus whichever drawer pane is OPEN) on EVERY
                 # frame — DISPLAY **and** EVENT alike. This used to sit inside the

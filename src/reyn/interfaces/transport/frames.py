@@ -18,6 +18,20 @@ A frame carries its :class:`FrameTag` so the consuming client dispatches to the
 renderer's two entry points (``message`` for display, ``on_audit_event`` for
 event) at the consuming end — one stream in, two renderer entry points out.
 
+#5830 BLOCKING (lead-coder review, PR #5835's own first pass): ``.tag`` is
+ONLY ever safe to read on a genuine :data:`Frame` member (``DisplayFrame``/
+``EventFrame``) — :meth:`~reyn.interfaces.transport.client_transport.
+ClientTransport.frames` is typed to also yield :class:`BacklogBatch` and
+:class:`StatusApplied`, NEITHER of which carries a ``.tag``. **Every**
+consumer of that stream must check for both with ``isinstance`` BEFORE
+touching ``.tag`` on whatever it got, the same way each already checks for
+``BacklogBatch`` — a consumer that does not (``interfaces/repl/stream_
+client.py``'s own plain/``--cui`` output loop, before this fix) raises
+``AttributeError`` the instant a remote server ever sends a ``STATE_*``
+update. ``git grep -n "BacklogBatch" src/reyn`` names every file that must
+be checked when a NEW non-``Frame`` stream item is added here — this is
+not optional per-consumer discretion, it is the vocabulary's own contract.
+
 The forward-set (:func:`forwarded_frame_kinds`) is mostly **DERIVED** from the
 renderer's own vocabulary — ``_WAITING_ON_BY_EVENT`` (the tool-axis table) plus
 the turn / intervention-answer events ``on_audit_event`` handles — never
@@ -303,10 +317,41 @@ class BacklogBatch:
 HYDRATE_PAGE_FRAMES = 200
 
 
+@dataclass(frozen=True)
+class StatusApplied:
+    """#5830 (architect FINAL ruling, same shape #5139 already established
+    for :class:`BacklogBatch`): one decoded ``STATE_SNAPSHOT``/``STATE_DELTA``
+    application, carried IN-STREAM — appended to the SAME list
+    :meth:`~reyn.interfaces.transport.agui.client.AgUiTransport._consume_block`
+    already builds for every other frame, not a side channel.
+
+    Owner-hit this closes: web/connect's status bar (agent name / model /
+    cost / ctx / session tree / …) stayed on the OLD agent right after
+    ``/attach <other agent>``, updating only once the next turn's own
+    frame arrived. Root cause (architect's own measurement): applying a
+    decoded ``StateUpdate`` onto :class:`~reyn.interfaces.transport.agui.
+    state.RemoteStatusView` (``AgUiTransport._consume_block``) never
+    produced anything for :meth:`TextualChatApp._pump_frames` to see — the
+    new values landed on the read-model instantly, but the ONE place that
+    calls :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _refresh_live_chrome` (this pump's own per-frame trailer) had nothing
+    to iterate for a snapshot/delta-only SSE block, so the redraw waited
+    for whatever frame happened to arrive next.
+
+    Carries no data of its own — the values are already on
+    :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView` by the
+    time this item is even constructed (:meth:`_consume_block` applies the
+    ``StateUpdate`` first, in the SAME branch, before appending this). Its
+    only job is to exist as a stream item so ``_pump_frames``'s trailing
+    ``_refresh_live_chrome()`` call fires in wire-arrival order — unlike
+    :class:`BacklogBatch`, the pump does NOT ``continue`` past it."""
+
+
 __all__ = [
     "BacklogBatch",
     "DisplayFrame",
     "EventFrame",
+    "StatusApplied",
     "Frame",
     "FrameTag",
     "HYDRATE_PAGE_FRAMES",
