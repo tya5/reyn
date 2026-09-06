@@ -49,20 +49,23 @@ full, not repeated here) — the 4 that shape this module:
 
    ⚠️ Correction (architect co-vet, #5853 — #5841's own investigation
    under-counted): the LLM path was NOT actually ungated here.
-   ``RouterLoop._excluded_result`` already stopped a denied tool named
-   directly by the LLM, via the SAME ``tool_contextually_denied``
-   predicate and the SAME ``ContextualPermission`` object #5841 wires
-   into ``dispatch_tool`` (#1827 S1 / #1912) — main already had tests
-   for it (``test_exclude_execution_block_1406.py``,
+   ``RouterLoop`` already stopped a denied tool named directly by the
+   LLM, via the SAME ``tool_contextually_denied`` predicate and the SAME
+   ``ContextualPermission`` object #5841 wires into ``dispatch_tool``
+   (#1827 S1 / #1912) — main already had tests for it
+   (``test_exclude_execution_block_1406.py``,
    ``test_3378_advertise_enforce_agreement.py``). What #5841 actually
    closes is narrower: **`/exec` and `/tasks` (the operator slash-driven
    routes) had NO equivalent check at all** before it — an agent whose
    Profile/topology/``/visibility`` narrowing denied ``exec`` could still
    run this command, even though the SAME narrowing already stopped its
    LLM from calling the ``exec`` tool directly. #5841's ``dispatch_tool``
-   check is a harmless no-op re-check on the router's own path (already
-   denied earlier by ``_excluded_result``, never reaches here) and the
-   FIRST real enforcement for this module.
+   check was a harmless no-op re-check on the router's own path back
+   then (already denied earlier, by a separate pre-dispatch gate that
+   never reached here) and the FIRST real enforcement for this module.
+   #5854 later folded that separate router-side gate into
+   ``dispatch_tool``'s own check — now the ONLY TOOL-axis enforcement
+   point for every caller, this module included, not a re-check.
 
 ② **``caller_kind="operator"``, and a dedicated actor.** ``ToolContext.
    caller_kind`` is ``"operator"`` (never ``"router"`` — this is not an

@@ -319,7 +319,8 @@ def _make_tool_dispatch(
     (``effective.tool_contextually_denied``). This path is the one tool-dispatch
     seam that does NOT run inside a ``RouterLoop`` — a pipeline driver-session
     runs ``PipelineExecutorDriver``, so neither the RouterLoop advertisement
-    filter nor its ``_excluded_result`` call-time gate is in the path. Without
+    filter nor a way to reach ``dispatch_tool``'s own call-time restrict
+    (#5841/#5854) is in the path. Without
     this the narrowing a driver-session is born with (``session_api.
     _spawn_pipeline_driver_session``) would be persisted and never read on the
     surface that actually executes capabilities. ``None`` (the default, and what
