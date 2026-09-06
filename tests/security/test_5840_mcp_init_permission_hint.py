@@ -26,6 +26,7 @@ mirrors `tests/hooks/test_1800_hook_shell_runner.py`'s own established
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -33,8 +34,22 @@ import pytest
 
 from reyn.mcp.client import MCPClient, MCPError
 
+# #5028's own ratchet (`scripts/check_subprocess_reyn_pin.py`): every
+# tests/ file spawning `sys.executable` declares `out_of_process_reyn`,
+# with no "this spawn never imports reyn" carve-out -- a grandfathered
+# baseline is for files that predate the gate, never a place to add a new
+# one (lead-coder, #5846 review). None of this file's 3 spawns actually
+# import `reyn` today, but the declaration is what keeps that true under
+# a future edit, not an assumption this file gets to make on its own.
+_PIN_ENV = lambda out_of_process_reyn: {  # noqa: E731
+    "PATH": os.environ.get("PATH", ""),
+    "PYTHONPATH": out_of_process_reyn,
+}
 
-def _client_that_hits_a_real_permission_error(locked_dir: Path) -> MCPClient:
+
+def _client_that_hits_a_real_permission_error(
+    locked_dir: Path, out_of_process_reyn: str
+) -> MCPClient:
     """A real stdio MCPClient whose subprocess tries to ``open()`` a file
     inside *locked_dir* (chmod 0o000, a REAL OS-level denial -- nothing to
     do with reyn's own sandbox, which this client never even wraps the
@@ -45,12 +60,13 @@ def _client_that_hits_a_real_permission_error(locked_dir: Path) -> MCPClient:
         "type": "stdio",
         "command": sys.executable,
         "args": ["-c", f"open({str(target)!r}, 'w')"],
+        "env": _PIN_ENV(out_of_process_reyn),
     })
 
 
 @pytest.mark.asyncio
 async def test_real_permission_failure_discloses_the_granted_range_not_a_verdict(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2: the #5840 witness -- a REAL, non-sandbox-caused PermissionError
     (chmod 0, no sandbox enforcement anywhere in this path) still gets the
@@ -61,7 +77,7 @@ async def test_real_permission_failure_discloses_the_granted_range_not_a_verdict
     locked_dir = tmp_path / "locked"
     locked_dir.mkdir()
     locked_dir.chmod(0o000)
-    client = _client_that_hits_a_real_permission_error(locked_dir)
+    client = _client_that_hits_a_real_permission_error(locked_dir, out_of_process_reyn)
     try:
         with pytest.raises(MCPError) as excinfo:
             await client.initialize()
@@ -83,7 +99,9 @@ async def test_real_permission_failure_discloses_the_granted_range_not_a_verdict
 
 
 @pytest.mark.asyncio
-async def test_write_shaped_epermreal_subprocess_still_offers_the_remedy() -> None:
+async def test_write_shaped_epermreal_subprocess_still_offers_the_remedy(
+    out_of_process_reyn: str,
+) -> None:
     """Tier 2: acceptance ② (remedy usefulness is not lost) -- a real
     subprocess that produces the write-denial-SHAPED marker
     (`_looks_like_write_denial`'s own EPERM/"operation not permitted"
@@ -112,6 +130,7 @@ async def test_write_shaped_epermreal_subprocess_still_offers_the_remedy() -> No
             "\"PermissionError: [Errno 1] Operation not permitted: "
             "'/tmp/some/path'\\n\"); sys.exit(1)",
         ],
+        "env": _PIN_ENV(out_of_process_reyn),
     })
     with pytest.raises(MCPError) as excinfo:
         await client.initialize()
@@ -126,7 +145,7 @@ async def test_write_shaped_epermreal_subprocess_still_offers_the_remedy() -> No
 
 @pytest.mark.asyncio
 async def test_a_non_write_shaped_permission_failure_gets_no_write_paths_remedy(
-    tmp_path: Path,
+    tmp_path: Path, out_of_process_reyn: str,
 ) -> None:
     """Tier 2: acceptance ② the other direction -- a REAL, non-sandboxed
     permission failure (chmod 0, a genuine OS-level EACCES -- confirmed by
@@ -140,7 +159,7 @@ async def test_a_non_write_shaped_permission_failure_gets_no_write_paths_remedy(
     locked_dir = tmp_path / "locked"
     locked_dir.mkdir()
     locked_dir.chmod(0o000)
-    client = _client_that_hits_a_real_permission_error(locked_dir)
+    client = _client_that_hits_a_real_permission_error(locked_dir, out_of_process_reyn)
     try:
         with pytest.raises(MCPError) as excinfo:
             await client.initialize()
