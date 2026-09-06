@@ -41,10 +41,13 @@ message leaving the input box and the (async, network-round-trip-bound)
 window where the message was visible NOWHERE. The row renders with
 :data:`_SENDING_GLYPH` (not :data:`_QUEUED_GLYPH`) while in this state —
 an honest "not yet confirmed sent" distinct from "confirmed queued,
-awaiting dispatch". :meth:`rekey` promotes it in place once
-``submit_user_text`` acks (``app.py``'s ``_reconcile_local_send``); if the
-real broadcast already materialized the row first (:meth:`has_row`), the
-placeholder is simply dropped as redundant.
+awaiting dispatch". :meth:`rekey` promotes it in place the moment the
+``user_submitted`` echo carrying it arrives — identified by
+``meta.client_ref`` matching this local id, a FACT the echo itself
+carries (#5833; ``app.py``'s ``_handle_user_submitted_event``), never by
+waiting on ``submit_user_text``'s own return value (the #3287 race that
+predated this: the returned id and this echo travel on independent
+channels, either can arrive first).
 
 **Cancel affordance (#3300 Y-client)**: this widget is focusable
 (``can_focus = True``) and keeps a highlighted row index, keyed by the SAME

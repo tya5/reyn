@@ -240,11 +240,13 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         return s.workspace_dir.parent.parent if s is not None else None
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
         s = self._attached()
         if s is None:
             return ""
-        return await s.submit_user_text(text)
+        return await s.submit_user_text(text, client_ref=client_ref)
 
     async def run_slash_command(self, name: str, args: str) -> bool:
         # #3595 S5: the local execution side of the shared client-side slash

@@ -60,7 +60,7 @@ class ScriptedTransport(ClientTransportStub):
         else:
             await asyncio.Event().wait()
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:
         self.submitted.append(text)
 
     async def answer_intervention_text(self, text: str) -> bool:
@@ -192,7 +192,7 @@ class T(ClientTransportStub):
         yield DisplayFrame(OutboxMessage(kind="user", text="hi"))
         yield DisplayFrame(OutboxMessage(kind="agent", text="hello"))
         yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
-    async def submit_user_text(self, text): pass
+    async def submit_user_text(self, text, *, client_ref=None): pass
     async def answer_intervention_text(self, text): return False
     async def answer_intervention_choice(self, cid): return False
     def has_session(self): return True

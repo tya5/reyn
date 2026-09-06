@@ -21,7 +21,10 @@ measure existing mechanisms before inventing a new state machine) — a
 FOURTH, LOCAL entry into it (``SentQueue``'s own module docstring), shown
 synchronously with the composer clearing, keyed by a client-generated id
 and rendered with a distinct glyph (:data:`~reyn.interfaces.inline.textual_chat.sent_queue._SENDING_GLYPH`)
-until the server acks the submission (``_reconcile_local_send``).
+until the ``user_submitted`` echo carrying this submission's own
+``client_ref`` promotes it (#5833; ``TextualChatApp._handle_user_
+submitted_event``) — see that method's own docstring for why this no
+longer waits on the server's POST-response ack at all.
 
 Owner requirement ① ("入力欄から消えるのと同時に" — the exact same moment):
 verified directly below by observing the composer and the sent-queue in
@@ -83,6 +86,13 @@ class _GatedTransport(ClientTransportStub):
         self._msg_id = msg_id
         self._fail = fail
         self.submitted_texts: "list[str]" = []
+        #: #5833: the ``client_ref`` this transport was actually called
+        #: with — the SAME id ``on_composer_submitted`` minted as this
+        #: submission's local placeholder key. A test reads this back to
+        #: build a ``user_submitted`` fixture event that carries the exact
+        #: fact ``_handle_user_submitted_event`` now promotes on, without
+        #: reaching into the app's own private state to learn the id.
+        self.last_client_ref: "str | None" = None
 
     async def push_event(self, event: Event) -> None:
         await self._queue.put(EventFrame(event))
@@ -97,8 +107,9 @@ class _GatedTransport(ClientTransportStub):
         while True:
             yield await self._queue.get()
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         self.submitted_texts.append(text)
+        self.last_client_ref = client_ref
         self.entered.set()
         await self.ack_gate.wait()
         if self._fail:
@@ -127,10 +138,13 @@ class _GatedTransport(ClientTransportStub):
         pass
 
 
-def _user_submitted(*, msg_id: str, chain_id: str, text: str, seq: int) -> Event:
+def _user_submitted(
+    *, msg_id: str, chain_id: str, text: str, seq: int, client_ref: "str | None" = None,
+) -> Event:
+    meta = {"client_ref": client_ref} if client_ref is not None else {}
     return Event(
         type="user_submitted",
-        data={"text": text, "chain_id": chain_id, "msg_id": msg_id, "seq": seq, "meta": {}},
+        data={"text": text, "chain_id": chain_id, "msg_id": msg_id, "seq": seq, "meta": meta},
     )
 
 
@@ -248,62 +262,103 @@ async def test_placeholder_reaches_the_transport_with_the_typed_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ack_promotes_the_placeholder_in_place_no_duplicate() -> None:
-    """Tier 2b: once ``submit_user_text`` acks, the SAME row promotes from
-    SENDING to CONFIRMED (glyph flips ``◇`` → ``▷``) — never a second row,
-    never a remove-then-readd (item_count stays 1 throughout)."""
+async def test_echo_promotes_the_placeholder_in_place_no_duplicate() -> None:
+    """Tier 2b: #5833 — the ``user_submitted`` ECHO (carrying THIS
+    submission's own ``meta.client_ref``, ``transport.last_client_ref``)
+    promotes the SAME row from SENDING to CONFIRMED (glyph flips ``◇`` →
+    ``▷``) the moment it arrives — never a second row, never a
+    remove-then-readd (item_count stays 1 throughout) — regardless of
+    whether ``submit_user_text``'s own POST response (``ack_gate``, still
+    closed here) has come back at all. Pre-#5833 this promotion waited on
+    the ack instead; #5833 moves it entirely onto the echo (see
+    ``TextualChatApp._handle_user_submitted_event``'s own docstring for
+    why: the two travel on independent channels and either can arrive
+    first, so waiting on one of them by design leaves the other's
+    ordering unclosed)."""
     transport = _GatedTransport(msg_id="m1")
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         task = await _type_and_submit_in_flight(pilot, transport, _TEXT)
-        sent_queue = app.query_one(SentQueue)
-        assert sent_queue.item_count() == 1
-
-        transport.ack_gate.set()
-        await task
-        await pilot.pause()
-
-        assert sent_queue.item_count() == 1, "the ack must promote in place, not add a row"
-        (row,) = sent_queue.rendered_texts()
-        assert _is_confirmed(row)
-
-
-@pytest.mark.asyncio
-async def test_late_broadcast_after_ack_does_not_duplicate_the_row() -> None:
-    """Tier 2b: the ``user_submitted`` broadcast for the SAME msg_id,
-    arriving AFTER the ack already promoted the row, must be a no-op on
-    the widget (the row already shows the confirmed text) — not a second
-    remove+readd."""
-    transport = _GatedTransport(msg_id="m1")
-    app = TextualChatApp(transport=transport)
-    async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        task = await _type_and_submit_in_flight(pilot, transport, _TEXT)
-        transport.ack_gate.set()
-        await task
-        await pilot.pause()
         sent_queue = app.query_one(SentQueue)
         assert sent_queue.item_count() == 1
 
         await transport.push_event(
+            _user_submitted(
+                msg_id="m1", chain_id="c1", text=_TEXT, seq=1,
+                client_ref=transport.last_client_ref,
+            )
+        )
+        # #4409 test-only note: NOT ``pilot.pause()`` — see ``_yield_until``'s
+        # own docstring for why that would deadlock here (the backgrounded
+        # ``on_composer_submitted`` task is still open on ``ack_gate``).
+        await _yield_until(
+            lambda: bool(sent_queue.rendered_texts())
+            and _is_confirmed(sent_queue.rendered_texts()[0])
+        )
+        assert sent_queue.item_count() == 1, "the echo must promote in place, not add a row"
+        (row,) = sent_queue.rendered_texts()
+        assert _TEXT in row
+
+        transport.ack_gate.set()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_late_broadcast_does_not_duplicate_the_row() -> None:
+    """Tier 2b: a SECOND ``user_submitted`` delta for the SAME ``msg_id``
+    (a replay/duplicate — the seq-gate's own job to reject, or, failing
+    that, the ``has_row(msg_id)`` guard :meth:`_handle_user_submitted_
+    event` still carries for a non-``client_ref`` delta) must be a no-op
+    on the widget once the first one already promoted the row — never a
+    second remove+readd."""
+    transport = _GatedTransport(msg_id="m1")
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        task = await _type_and_submit_in_flight(pilot, transport, _TEXT)
+        sent_queue = app.query_one(SentQueue)
+
+        await transport.push_event(
+            _user_submitted(
+                msg_id="m1", chain_id="c1", text=_TEXT, seq=1,
+                client_ref=transport.last_client_ref,
+            )
+        )
+        await _yield_until(
+            lambda: bool(sent_queue.rendered_texts())
+            and _is_confirmed(sent_queue.rendered_texts()[0])
+        )
+        assert sent_queue.item_count() == 1
+
+        # A duplicate of the SAME seq — the gate ``apply_user_submitted``
+        # itself already applied must reject as stale.
+        await transport.push_event(
             _user_submitted(msg_id="m1", chain_id="c1", text=_TEXT, seq=1)
         )
-        await pilot.pause()
+        await asyncio.sleep(0)
 
         assert sent_queue.item_count() == 1
         (row,) = sent_queue.rendered_texts()
         assert _TEXT in row and _is_confirmed(row)
 
+        transport.ack_gate.set()
+        await task
+
 
 @pytest.mark.asyncio
-async def test_broadcast_before_ack_then_ack_drops_the_now_redundant_placeholder() -> None:
-    """Tier 2b: the opposite ordering — the ``user_submitted`` broadcast
-    materializes the AUTHORITATIVE row before ``submit_user_text`` itself
-    returns. The two rows (real + local placeholder) coexist momentarily;
-    once the ack finally arrives, ``_reconcile_local_send`` recognizes the
-    real row already exists (``SentQueue.has_row``) and drops the
-    placeholder — back to exactly one row, never a lingering duplicate."""
+async def test_echo_before_ack_promotes_immediately_ack_is_then_a_no_op() -> None:
+    """Tier 2b: #5833 — the OLD race this replaces (pre-#5833, verified by
+    reverting to that shape): the ``user_submitted`` broadcast materializing
+    the authoritative row BEFORE ``submit_user_text`` itself returns used
+    to leave two rows (real + local placeholder) coexisting until the ack
+    finally arrived and ``_reconcile_local_send`` dropped the redundant one.
+
+    #5833 closes this structurally, not narrower: the echo carries THIS
+    client's own ``client_ref``, so it recognises and rekeys its OWN
+    placeholder as a FACT, immediately — there is never a second row to
+    begin with, and the ack (once unblocked below) has nothing left to
+    reconcile at all."""
     transport = _GatedTransport(msg_id="m1")
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -313,22 +368,30 @@ async def test_broadcast_before_ack_then_ack_drops_the_now_redundant_placeholder
         assert sent_queue.item_count() == 1  # the local placeholder only
 
         await transport.push_event(
-            _user_submitted(msg_id="m1", chain_id="c1", text=_TEXT, seq=1)
+            _user_submitted(
+                msg_id="m1", chain_id="c1", text=_TEXT, seq=1,
+                client_ref=transport.last_client_ref,
+            )
         )
         # #4409 test-only note: NOT ``pilot.pause()`` — see ``_yield_until``'s
         # own docstring for why that would deadlock here (the backgrounded
         # ``on_composer_submitted`` task is still open).
-        await _yield_until(lambda: sent_queue.item_count() == 2)
-        assert sent_queue.item_count() == 2, (
-            "the real row and the still-unresolved local placeholder "
-            "legitimately coexist until the ack catches up"
+        await _yield_until(
+            lambda: bool(sent_queue.rendered_texts())
+            and _is_confirmed(sent_queue.rendered_texts()[0])
         )
+        assert sent_queue.item_count() == 1, (
+            "#5833: never a second row, even momentarily — the echo rekeys "
+            "the SAME placeholder by client_ref, it does not add a new one"
+        )
+        (row,) = sent_queue.rendered_texts()
+        assert _TEXT in row
 
         transport.ack_gate.set()
         await task
         await pilot.pause()
 
-        assert sent_queue.item_count() == 1, "the ack must drop the now-redundant placeholder"
+        assert sent_queue.item_count() == 1, "the now-irrelevant ack must not disturb the row"
         (row,) = sent_queue.rendered_texts()
         assert _TEXT in row and _is_confirmed(row)
 
@@ -337,12 +400,16 @@ async def test_broadcast_before_ack_then_ack_drops_the_now_redundant_placeholder
 async def test_dispatch_before_ack_drops_the_placeholder_without_requeuing_it() -> None:
     """Tier 2b: the sharpest race — ``user_submitted`` AND ``turn_started``
     (the item is dispatched and promoted to a flow entry) both arrive
-    before this client's own ack. Without ``_dispatched_before_ack``, the
-    ack's reconcile would see "no row for msg_id" (turn_started already
-    removed it) and wrongly REKEY the local placeholder back into the
-    queue for an item that already left it — this asserts that does not
-    happen: the placeholder is dropped, the queue ends empty, and the
-    flow entry from the dispatch is untouched."""
+    before this client's own ack.
+
+    #5833: the OLD mechanism this raced against (``_dispatched_before_ack``)
+    is deleted; the structural fix removes the need for it. Ordering
+    guarantees the server always emits ``user_submitted`` before it
+    dispatches the SAME item — so the echo (carrying ``client_ref``)
+    always rekeys the placeholder onto ``msg_id`` BEFORE ``turn_started``
+    can fire for it, and by the time that dispatch removes the sent-queue
+    row, it is already keyed by the server's own id. Nothing is left for
+    a late ack to wrongly requeue."""
     transport = _GatedTransport(msg_id="m1")
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -350,7 +417,10 @@ async def test_dispatch_before_ack_drops_the_placeholder_without_requeuing_it() 
         task = await _type_and_submit_in_flight(pilot, transport, _TEXT)
 
         await transport.push_event(
-            _user_submitted(msg_id="m1", chain_id="c1", text=_TEXT, seq=1)
+            _user_submitted(
+                msg_id="m1", chain_id="c1", text=_TEXT, seq=1,
+                client_ref=transport.last_client_ref,
+            )
         )
         await transport.push_event(_turn_started(chain_id="c1", seq=2))
         # #4409 test-only note: NOT ``pilot.pause()`` — see ``_yield_until``'s

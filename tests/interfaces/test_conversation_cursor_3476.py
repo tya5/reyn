@@ -52,7 +52,7 @@ class _Transport(ClientTransportStub):
         await asyncio.Event().wait()
         yield DisplayFrame(OutboxMessage(kind="status", text=""))  # pragma: no cover
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:
         self.submitted.append(text)
 
     async def run_slash_command(self, name: str, args: str) -> bool:

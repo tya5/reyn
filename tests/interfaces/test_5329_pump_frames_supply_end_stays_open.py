@@ -64,7 +64,7 @@ class _CleanEndTransport(ClientTransportStub):
         yield DisplayFrame(OutboxMessage(kind="agent", text="a normal reply"))
         yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
 
-    async def submit_user_text(self, text: str) -> "str | None":  # pragma: no cover - trivial
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> "str | None":  # pragma: no cover - trivial
         return None
 
     async def answer_intervention_text(

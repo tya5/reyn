@@ -78,7 +78,7 @@ class QueueTransport(ClientTransportStub):
     def push_event(self, etype: str, data: dict) -> None:
         self._queue.put_nowait(EventFrame(Event(type=etype, data=data)))
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return ""
 
     async def answer_intervention_text(

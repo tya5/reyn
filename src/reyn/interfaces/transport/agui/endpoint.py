@@ -1502,12 +1502,21 @@ async def agui_submit(request: Request):
             # `user_submitted` audit-event (#3300 P1 C) that every attached
             # surface's event→display handler renders as this client's turn,
             # not just the agent's reply.
+            # #5833: `client_ref` is an opaque token the submitting client
+            # minted for its OWN later correlation (its sent-queue
+            # placeholder id) — read here and forwarded VERBATIM, never
+            # inspected or validated. See `ClientTransport.submit_user_
+            # text`'s own docstring for the full contract; `Session.
+            # submit_user_text` stores it in `meta` and this handler never
+            # branches on it either.
+            client_ref = payload.get("client_ref")
             msg_id = await session.submit_user_text(
                 text,
                 attribution={
                     "auth_user_id": identity.user_id,
                     "auth_connection_id": connection_id,
                 },
+                client_ref=client_ref if isinstance(client_ref, str) else None,
             )
             # #3287: echo the assigned msg_id back to the SUBMITTING client —
             # the SAME correlation id the broadcast user_submitted event above

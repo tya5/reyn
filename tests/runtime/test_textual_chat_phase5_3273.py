@@ -131,7 +131,7 @@ class ScriptedTransport(ClientTransportStub):
             yield DisplayFrame(msg)
         await asyncio.Event().wait()
 
-    async def submit_user_text(self, text: str) -> None:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:
         self.submitted.append(text)
 
     async def answer_intervention_text(self, text: str) -> bool:

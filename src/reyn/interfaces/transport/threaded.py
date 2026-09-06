@@ -376,8 +376,10 @@ class ThreadedTransportProxy(ClientTransport):
         )
         return await asyncio.wrap_future(concurrent_future)
 
-    async def submit_user_text(self, text: str) -> str:
-        return await self._call_on_worker("submit_user_text", text)
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
+        return await self._call_on_worker("submit_user_text", text, client_ref=client_ref)
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None,

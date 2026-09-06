@@ -221,8 +221,10 @@ class _ErrorWatchingTransport(ClientTransport):
     def reyn_state_root(self) -> "Path | None":
         return self._inner.reyn_state_root()
 
-    async def submit_user_text(self, text: str) -> str:
-        return await self._inner.submit_user_text(text)
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
+        return await self._inner.submit_user_text(text, client_ref=client_ref)
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None

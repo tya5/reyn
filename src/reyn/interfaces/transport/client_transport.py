@@ -70,8 +70,26 @@ class ClientTransport(ABC):
         """Yield the unified, ordered, tagged frame stream (display + event)."""
 
     @abstractmethod
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
         """Submit a user turn (the ordinary new-turn path).
+
+        ``client_ref`` (#5833): an OPAQUE, caller-minted correlation token
+        (never interpreted, never validated — a server that received it
+        stores it verbatim and echoes it back on the ``user_submitted``
+        broadcast's ``meta.client_ref``, and MUST NOT branch on its value).
+        A caller that also renders a local placeholder for this submission
+        (``textual_chat/app.py``'s sent-queue row) passes its own
+        placeholder id here, so it can recognise its OWN echo as a FACT the
+        moment that broadcast arrives — see ``TextualChatApp.
+        _handle_user_submitted_event`` — rather than by any race-prone
+        guess against this call's own return value, which is exactly the
+        #3287 entailment gap named below (the id this call returns and the
+        echo travel on independent channels, either can arrive first). A
+        caller with no such placeholder (the plain REPL, agent-to-agent
+        submission, most tests) omits it; ``None`` changes nothing for
+        them.
 
         Returns the server-assigned ``msg_id`` — the SAME correlation id the
         broadcast ``user_submitted`` audit-event carries (#3300 P2a). Two
@@ -660,8 +678,10 @@ class DelegatingClientTransport(ClientTransport):
     def frames(self) -> "AsyncIterator[Frame]":
         return self._inner.frames()
 
-    async def submit_user_text(self, text: str) -> str:
-        return await self._inner.submit_user_text(text)
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
+        return await self._inner.submit_user_text(text, client_ref=client_ref)
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None

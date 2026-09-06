@@ -49,7 +49,7 @@ class _RecordingInner(ClientTransportStub):
     def frames(self) -> "AsyncIterator[object]":
         raise NotImplementedError("not exercised by this test file")
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return ""
 
     async def answer_intervention_text(self, text: str, *, intervention_id=None) -> bool:
