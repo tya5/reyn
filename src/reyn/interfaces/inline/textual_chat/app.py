@@ -158,6 +158,19 @@ logger = logging.getLogger(__name__)
 # a future control sentinel that needs skipping here.
 _SKIP_KINDS: "frozenset[str]" = frozenset()
 
+#: #5870 stage 2 (F3, architect ruling): drawer panes whose content is
+#: derived from `self.conversation` (never `_snapshot()`'s numeric fields)
+#: — safe to skip a refresh for a frame the pump ALREADY KNOWS carries only
+#: a status/snapshot delta (`StatusApplied`, "status系 pane は STATE_DELTA"
+#: in the architect's own words — meaning the CONVERSE for these two: they
+#: are never driven by one). Deliberately narrow and conservative ("少なく
+#: とも「この frame の種類ではこの pane は変わらない」なら skip" — the
+#: architect's own phrasing: skip only what is CERTAIN, never a guess) —
+#: every OTHER pane (Cost/Ctx/Model/Agent/Tool/MCP/Skill/Pipe/Hook/Cron/
+#: Task/Menu/Help) keeps refreshing on every frame exactly as before,
+#: since a `StatusApplied` frame is precisely what CAN move them.
+_STATUS_INDEPENDENT_PANES: "frozenset[str]" = frozenset({"history", "artifacts"})
+
 
 @dataclass
 class PumpSwallowStats:
@@ -2244,22 +2257,48 @@ class TextualChatApp(App):
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
         return resolve_display_paths(rows, project_root, self._destination.agent)
 
-    def _pane_rows(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> "list[str]":
+    def _pane_rows(
+        self, tab_id: str, snap: "dict | None | object" = _UNSET,
+        *, artifact_rows: "list[ArtifactRow] | None" = None,
+    ) -> "list[str]":
         """The display rows for ``tab_id``'s pane, derived from canonical sources:
         the status snapshot (model/agent/cost/ctx), the slash ``REGISTRY`` (menu),
         the live conversation (history), the live artifact list (#4482), and the
         app BINDINGS (help). Pass ``snap`` to reuse an already-read snapshot
-        (keeps the rows and the selection ids derived from ONE snapshot)."""
+        (keeps the rows and the selection ids derived from ONE snapshot).
+
+        #5870 stage 2 (F2, architect's own census): ``history``/``artifacts``
+        are each computed ONLY when ``tab_id`` is the one pane that actually
+        consumes them — ``pane_payload`` below already dispatches on
+        ``tab_id`` internally (only the ``"history"``/``"artifacts"``
+        branches ever read these two arguments), so computing both
+        UNCONDITIONALLY on every call (the pre-#5870 shape) paid a full
+        `self.conversation` walk PLUS the artifact-ref table's own
+        resolution for a Ctx/Help/Cost/... open tab that could never use
+        either. ``artifact_rows``, when given, is used AS-IS instead of a
+        fresh :meth:`_artifact_rows` call — :meth:`_refresh_pane` (this
+        method's own per-frame caller) already computes it once for its
+        OWN separate purpose (the `_artifact_rows_cache`/`pane_commands`
+        pair) and passes it through here so the SAME artifact list is
+        never derived twice for one refresh; :meth:`compose`'s own
+        call (the one-time initial mount, no such value available yet)
+        omits it and falls back to computing its own, exactly as before."""
         from datetime import datetime, timezone
 
         from reyn.interfaces.slash import REGISTRY  # noqa: PLC0415 — TTY-local
         snapshot = self._snapshot() if snap is _UNSET else snap
+        if artifact_rows is not None:
+            artifacts = artifact_rows
+        elif tab_id == "artifacts":
+            artifacts = self._artifact_rows()
+        else:
+            artifacts = []
         return pane_payload(
             tab_id,
             snapshot=snapshot,  # type: ignore[arg-type]
             commands=REGISTRY.all_commands(),
-            history=self._history_turns(),
-            artifacts=self._artifact_rows(),
+            history=self._history_turns() if tab_id == "history" else (),
+            artifacts=artifacts,
             artifact_source=self._artifact_rows_source,
             artifact_fallback_total=self._artifact_rows_fallback_total,
             app_bindings=self._app_binding_help(),
@@ -3649,16 +3688,32 @@ class TextualChatApp(App):
         vs the constructor), so it needs its own, independently-verified wrap;
         both ask the one ``pane_needs_literal_rows`` predicate rather than
         re-deciding. For History the row TEXT is additionally neutralized
-        upstream, in :meth:`_history_turns`."""
+        upstream, in :meth:`_history_turns`.
+
+        #5870 stage 2 (F2): ``_artifact_rows()`` is now called AT MOST once
+        per refresh, and only when ``tab_id`` is actually ``"artifacts"`` —
+        this method's own docstring already scoped the "computed once,
+        reused for both..." comment below to the command-list/row-cache
+        pair, but a THIRD, unconditional consumer sat right above it: the
+        old :meth:`_pane_rows` call computed its OWN separate artifact list
+        every single time, for every tab, before this method's copy even
+        ran — the SAME data walked twice per refresh, computed for panes
+        that could never use it. The single result computed here is now
+        the one and only source, passed down to :meth:`_pane_rows` too."""
         snapshot = self._snapshot() if snap is _UNSET else snap
-        rows = self._pane_rows(tab_id, snapshot)
         # #4574 design B: computed ONCE and reused for both the command list
         # AND the row cache `on_option_list_option_selected` reads for a
         # pure-inline row's materialize+open path — `_artifact_rows()` does
         # real I/O (one `stat()` per ref-bearing row), so a second call here
-        # would double that work for no reason.
-        artifact_rows = self._artifact_rows()
-        self._artifact_rows_cache = artifact_rows
+        # would double that work for no reason. Only ever called for the
+        # "artifacts" tab (#5870 stage 2 F2) — every other tab's command
+        # list/row cache never reads artifact rows at all.
+        if tab_id == "artifacts":
+            artifact_rows = self._artifact_rows()
+            self._artifact_rows_cache = artifact_rows
+        else:
+            artifact_rows = []
+        rows = self._pane_rows(tab_id, snapshot, artifact_rows=artifact_rows)
         from datetime import datetime, timezone
 
         self._pane_commands[tab_id] = pane_commands(  # type: ignore[arg-type]
@@ -7086,7 +7141,7 @@ class TextualChatApp(App):
         if self._read_model is not None:
             self._read_model.remove_status_listener(self._on_session_status_delta)
 
-    def _refresh_live_chrome(self) -> None:
+    def _refresh_live_chrome(self, *, status_only: bool = False) -> None:
         """Re-render everything that must track live session state as frames land:
         the collapsed status-values line, and the drawer pane that is currently
         OPEN (#3338 — before this, a pane was built once at open time and then
@@ -7102,7 +7157,22 @@ class TextualChatApp(App):
         reinstate exactly the cost that seam exists to avoid.
 
         One snapshot read feeds both refreshes, so a frame costs one read
-        regardless of whether the drawer is open."""
+        regardless of whether the drawer is open.
+
+        ``status_only`` (#5870 stage 2, F3, architect ruling): the CALLER
+        (:meth:`_pump_frames`) sets this when it already knows the frame
+        that just landed carries NOTHING but a status/snapshot delta
+        (``StatusApplied`` — see that class's own docstring: "carries
+        nothing to apply of its own"). The status line / status-driven
+        panes (Cost, Ctx, ...) still refresh unconditionally below — that
+        is exactly what such a frame CAN move. Only the open tab's pane
+        refresh is skipped, and only when that tab is itself provably
+        independent of `_snapshot()`'s numeric fields
+        (:data:`_STATUS_INDEPENDENT_PANES` — History/Artifacts, whose
+        content is derived from `self.conversation`, never the snapshot).
+        Deliberately conservative: every OTHER open tab still refreshes on
+        this frame exactly as before, since a status delta genuinely CAN
+        move it."""
         snap = self._snapshot()
         # #3283 ④: re-cache the keyed per-turn lookup off the SAME snapshot read
         # (see :attr:`_turn_usage_fn`) — the right gutter cannot afford a
@@ -7115,6 +7185,8 @@ class TextualChatApp(App):
         except Exception:
             return  # not yet mounted
         open_tab = drawer.current
+        if status_only and open_tab in _STATUS_INDEPENDENT_PANES:
+            return  # #5870 stage 2 F3: this frame cannot have changed this pane
         if drawer.display and open_tab:
             self._refresh_pane(open_tab, snap)
 

@@ -80,10 +80,30 @@ from __future__ import annotations
 import json
 import secrets
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.data.workspace.ref_path_normalize import normalize_ref_path
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 _REF_TABLE_FILENAME = "artifact_refs.jsonl"
+
+#: #5870 stage 2 (F1): process-wide, keyed by absolute table path — a table
+#: read+parse (potentially thousands of JSONL lines) is orders of magnitude
+#: more expensive than the single ``os.stat`` this cache costs on every
+#: call, and the TUI's own per-frame chrome refresh (``_pump_frames`` ->
+#: ``_refresh_live_chrome`` -> ... -> :func:`~reyn.core.present.
+#: artifact_list.resolve_display_paths`) used to pay the full read on
+#: EVERY frame regardless of whether the file had changed at all (the
+#: architect's own census, issue #5870). Keyed on ``(mtime_ns, size)`` —
+#: the file's own identity, never a TTL/clock (architect ruling: "TTL は
+#: 置かない — 時計でなくファイルの identity で無効化"). This table is
+#: append-only (:mod:`this module's own docstring) so a real change ALWAYS
+#: moves at least ``size`` — an append that happened to land in the exact
+#: same nanosecond as a prior write (theoretically possible, never
+#: observed) would still be caught by the size delta.
+_TABLE_CACHE: "dict[str, tuple[int, int, list[dict]]]" = {}
 
 
 def _table_path(project_root: Path) -> Path:
@@ -94,9 +114,23 @@ def _table_path(project_root: Path) -> Path:
 
 
 def _load_table(project_root: Path) -> "list[dict]":
+    """Every entry, from cache when the file's own ``(mtime_ns, size)``
+    identity is unchanged since the last read — see :data:`_TABLE_CACHE`'s
+    own docstring for why identity, not a TTL. A file that does not exist
+    (yet) is never cached as such: the NEXT call re-stats rather than
+    trusting a stale "missing" answer, since ``mint_ref`` can create the
+    file between two calls within the same process."""
     path = _table_path(project_root)
-    if not path.is_file():
+    key = str(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        _TABLE_CACHE.pop(key, None)
         return []
+    identity = (stat.st_mtime_ns, stat.st_size)
+    cached = _TABLE_CACHE.get(key)
+    if cached is not None and (cached[0], cached[1]) == identity:
+        return cached[2]
     entries: "list[dict]" = []
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -108,7 +142,9 @@ def _load_table(project_root: Path) -> "list[dict]":
             except json.JSONDecodeError:
                 continue  # one malformed line never invalidates the rest
     except OSError:
+        _TABLE_CACHE.pop(key, None)
         return []
+    _TABLE_CACHE[key] = (identity[0], identity[1], entries)
     return entries
 
 
@@ -166,6 +202,58 @@ def resolve_ref(project_root: Path, agent_name: str, ref: str) -> "Path | None":
             candidate = Path(entry["path"])
             return candidate if candidate.exists() else None
     return None
+
+
+def resolve_refs(
+    project_root: Path, agent_name: str, refs: "Iterable[str]",
+) -> "dict[str, Path | None]":
+    """Batch form of :func:`resolve_ref` — loads the table ONCE regardless
+    of how many *refs* are asked for, rather than once per ref (#5870
+    stage 2, architect ruling: "呼び手が1回loadした entries を渡す形に").
+    :func:`~reyn.core.present.artifact_list.resolve_display_paths` is the
+    motivating caller — a drawer pane refresh resolving N artifact rows
+    used to read+parse the WHOLE table N times for one render.
+
+    Every ref in *refs* appears as a key in the returned dict — ``None``
+    for an unknown ref or a resolved-but-deleted path, exactly matching
+    :func:`resolve_ref`'s own per-ref answer, so a caller migrating from N
+    calls to one gets byte-identical per-ref results. Duplicate refs in
+    *refs* are deduplicated (the returned dict has one entry per distinct
+    ref, same as calling :func:`resolve_ref` repeatedly and keeping only
+    the last write — but since a single table lookup answers every
+    duplicate identically, there is no "last write" ambiguity here the way
+    a naive per-call cache could introduce).
+
+    First-match-wins per (agent, ref) pair, matching :func:`resolve_ref`'s
+    own linear scan — this table is idempotent-mint (:func:`mint_ref`'s
+    own docstring), so in practice there is only ever one matching entry
+    per pair; first-match is simply the same tie-break rule stated
+    explicitly for the batch case."""
+    wanted = set(refs)
+    if not wanted:
+        return {}
+    entries = _load_table(project_root)
+    path_by_ref: "dict[str, str]" = {}
+    for entry in entries:
+        entry_ref = entry.get("ref")
+        entry_path = entry.get("path")
+        if (
+            entry.get("agent") == agent_name
+            and isinstance(entry_ref, str)
+            and isinstance(entry_path, str)
+            and entry_ref in wanted
+            and entry_ref not in path_by_ref
+        ):
+            path_by_ref[entry_ref] = entry_path
+    result: "dict[str, Path | None]" = {}
+    for ref in wanted:
+        path_str = path_by_ref.get(ref)
+        if path_str is None:
+            result[ref] = None
+            continue
+        candidate = Path(path_str)
+        result[ref] = candidate if candidate.exists() else None
+    return result
 
 
 def list_refs_for_agent(
