@@ -2348,13 +2348,48 @@ class TextualChatApp(App):
         ``stall_trace.py``'s own docstring for what this costs the OTHER
         (turn-scoped) caller of the same global timer once this worker has
         started.
+
+        **CI incident, same-day follow-up (#5877 — architect ruling,
+        real-machine measurement)**: the FIRST version of this re-armed
+        against ``stall_trace``'s own default destination lookup on
+        EVERY tick. That lookup (or a naive "resolve a stable stream
+        once" fix this method's own history briefly tried) is unsafe for
+        a caller that stays armed across MANY of its own calls:
+        ``faulthandler.dump_traceback_later`` captures the ``file``
+        argument's underlying FILE-DESCRIPTOR NUMBER at arm time, not a
+        live object reference (reproduced directly, architect finding —
+        see :func:`~reyn.runtime.stall_trace.find_file_handler_path`'s
+        own docstring for the exact repro). Under pytest, per-test
+        fd-capture opens and closes tmpfiles constantly, freeing and
+        reusing fd numbers; a pending timer armed against a stream
+        object whose fd number gets reused for something ELSE (an
+        ``execnet`` socket, in the CI hang this explains) silently
+        redirects its dump there instead — hanging the READER on the
+        other end. Not pytest-specific either: a log-rotation reopen
+        (#5873) reuses a fd number the exact same way.
+
+        Fixed by opening this worker's OWN fd, once, against the root
+        logger's ``FileHandler`` path (never borrowing the handler's own
+        ``stream``) and holding it for the worker's ENTIRE lifetime — a
+        self-opened fd is immune to anything else's later open/close
+        churn on that same number. **No ``FileHandler`` installed (every
+        TUI test in this repo constructs ``TextualChatApp`` directly,
+        with none) means this dead-man's switch never arms at all** —
+        deliberately, not a fail-open: a dump with no genuinely stable
+        destination was never a safe thing to attempt, in a test or
+        anywhere else, so skipping it there costs nothing a real
+        incident depended on.
         """
         import asyncio  # noqa: PLC0415
+        import os  # noqa: PLC0415
         import time  # noqa: PLC0415
         from collections import deque  # noqa: PLC0415
 
         from reyn.runtime.stall_trace import arm as _arm_stall_trace
         from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
+        from reyn.runtime.stall_trace import (
+            find_file_handler_path as _find_file_handler_path,
+        )
 
         from .loop_probe import (  # noqa: PLC0415
             _TICK_SECONDS,
@@ -2370,6 +2405,21 @@ class TextualChatApp(App):
         # "did the loop stall" and "should a stack have been dumped for it"
         # can never disagree about WHERE the line is.
         _STACK_DUMP_SECONDS = _TRIPWIRE_MS / 1000
+        # #5877: this worker's OWN fd, opened once and held for its whole
+        # lifetime — see this method's own CI-incident docstring paragraph
+        # above for why borrowing anything else's fd/stream is unsafe here.
+        # `None` (no FileHandler installed) means this dead-man's switch
+        # never arms at all for this worker's lifetime.
+        _dump_fd: "int | None" = None
+        _log_path = _find_file_handler_path()
+        if _log_path is not None:
+            try:
+                _dump_fd = os.open(_log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+            except OSError:
+                logger.exception(
+                    "textual chat: could not open the tripwire's own stall-dump fd"
+                )
+                _dump_fd = None
 
         # #4761 ② (lead-coder review): a stall that never recovers — #4761's
         # own report, the operator killed the process rather than waiting —
@@ -2401,30 +2451,37 @@ class TextualChatApp(App):
         # #5870 stage 1: arm the dead-man's switch for the FIRST wait too —
         # otherwise a stall on the very first tick (before the loop below
         # ever re-arms it) would go undumped, the one case a `while True:
-        # re-arm at the top` shape would silently miss.
-        _arm_stall_trace(_STACK_DUMP_SECONDS, repeat=False)
+        # re-arm at the top` shape would silently miss. A no-op when
+        # `_dump_fd` is `None` (#5877 — see above).
+        if _dump_fd is not None:
+            _arm_stall_trace(_STACK_DUMP_SECONDS, file=_dump_fd, repeat=False)
         try:
             while True:
                 await asyncio.sleep(_TICK_SECONDS)
                 now = time.perf_counter()
                 lateness_ms = (now - last - _TICK_SECONDS) * 1000
                 last = now
-                # Re-arm for the NEXT wait immediately — cancels the pending
-                # one-shot from the wait that just ended (whether or not it
-                # already fired; faulthandler.cancel_dump_traceback_later is
-                # a no-op either way, stall_trace.disarm's own docstring) and
-                # re-points it :data:`_STACK_DUMP_SECONDS` into the future.
-                # A tick that lands on time always beats this deadline, so a
-                # healthy loop never triggers a dump; one that doesn't land
-                # in time leaves the PENDING timer to fire on its own,
-                # mid-stall, on faulthandler's own OS thread.
-                _arm_stall_trace(_STACK_DUMP_SECONDS, repeat=False)
-                # Best-effort proxy for "did the dump above just fire" — see
-                # LoopTripwire.observe's own docstring for why this is the
-                # same comparison it already makes internally, not a
-                # separate readback of faulthandler's own (nonexistent)
-                # fired-or-not state.
-                stack_dumped = lateness_ms > _TRIPWIRE_MS
+                stack_dumped: "bool | None" = None
+                if _dump_fd is not None:
+                    # Re-arm for the NEXT wait immediately — cancels the
+                    # pending one-shot from the wait that just ended (whether
+                    # or not it already fired; faulthandler.cancel_dump_
+                    # traceback_later is a no-op either way, stall_trace.
+                    # disarm's own docstring) and re-points it :data:
+                    # `_STACK_DUMP_SECONDS` into the future, against the SAME
+                    # self-opened fd every time (#5877 — never re-resolved,
+                    # see this method's own docstring for why). A tick that
+                    # lands on time always beats this deadline, so a healthy
+                    # loop never triggers a dump; one that doesn't land in
+                    # time leaves the PENDING timer to fire on its own,
+                    # mid-stall, on faulthandler's own OS thread.
+                    _arm_stall_trace(_STACK_DUMP_SECONDS, file=_dump_fd, repeat=False)
+                    # Best-effort proxy for "did the dump above just fire" —
+                    # see LoopTripwire.observe's own docstring for why this
+                    # is the same comparison it already makes internally,
+                    # not a separate readback of faulthandler's own
+                    # (nonexistent) fired-or-not state.
+                    stack_dumped = lateness_ms > _TRIPWIRE_MS
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()
@@ -2494,8 +2551,17 @@ class TextualChatApp(App):
             # than leaving a dangling pending dump behind. Safe even though
             # this may already be disarmed or re-pointed by another caller
             # by the time this runs (stall_trace.disarm's own docstring:
-            # a no-op when nothing is armed).
-            _disarm_stall_trace()
+            # a no-op when nothing is armed). #5877: disarm BEFORE closing
+            # this worker's own fd — the reverse order would let a timer
+            # still theoretically pending fire against an already-closed
+            # (and possibly already-reused) fd number, the exact hazard
+            # this whole fix exists to avoid.
+            if _dump_fd is not None:
+                _disarm_stall_trace()
+                try:
+                    os.close(_dump_fd)
+                except OSError:
+                    pass
 
     def on_stray_output_captured(self, message: "StrayOutputCaptured") -> None:
         """#5168: a stray ``stdout``/``stderr`` write was captured (a
