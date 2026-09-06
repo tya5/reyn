@@ -730,7 +730,16 @@ class CompactionController:
             # not fired yet here, but the pre-#5633 catch-all DID emit for
             # this segment, so omitting this try/except would be a
             # regression, not merely a non-issue).
-            self._events.emit("compaction_failed", error=str(exc))
+            #
+            # #5828: `failure_class="fatal"` is a LITERAL here, not a
+            # `classify_llm_failure` probe (unlike `CompactionEngine.
+            # compact()`'s own emit) — this segment builds `input_chunk`
+            # BEFORE any LLM call is even made, so whatever raised here is
+            # never an LLM/provider exception the shrink ladder's own
+            # overflow classification is meant to read; it is always
+            # unshrinkable-and-fatal for this operator-driven `/compact`
+            # attempt.
+            self._events.emit("compaction_failed", error=str(exc), failure_class="fatal")
             raise
 
         # #5475 (architect ruling): compaction_started now emits at
@@ -930,7 +939,14 @@ class CompactionController:
             # never reach here — this except only ever fires for a
             # genuinely NEW failure, never the same one compact() already
             # emitted `compaction_failed` for.
-            self._events.emit("compaction_failed", error=str(exc))
+            #
+            # #5828: `failure_class="fatal"` is a LITERAL here too (see
+            # the sibling try/except above this method's own compact()
+            # call for the full rationale) — this segment runs AFTER
+            # compact() already returned successfully, so nothing here is
+            # an LLM/overflow failure either; it is always fatal for this
+            # attempt.
+            self._events.emit("compaction_failed", error=str(exc), failure_class="fatal")
             raise
 
 
