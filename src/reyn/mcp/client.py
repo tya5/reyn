@@ -1371,6 +1371,7 @@ class MCPClient:
             # this except clause narrowed `exc` to), so reassigning `exc` itself
             # would widen its statically-known type for every later reference.
             real_exc = await _close_stack_after_init_failure(exc, stack)
+            from reyn.security.sandbox.denial import looks_permission_related
             from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
             hint = ""
@@ -1380,17 +1381,56 @@ class MCPClient:
                     "DISABLED (`network: false` in its config). If it needs "
                     "network access, set `network: true` (or remove the override)."
                 )
-            if _looks_like_write_denial(tail):
+            # #5840 (owner-hit, silent): this used to read `if _looks_like_
+            # write_denial(tail): hint += "the sandbox DENIED a write ..."` —
+            # a stderr STRING MATCH asserted as a CAUSAL claim. `PermissionError:
+            # [Errno 1] Operation not permitted: '<path>'` is IDENTICAL whether
+            # the sandbox denied a write outside its granted scope OR a genuine
+            # non-sandbox permission failure occurred INSIDE that scope (a
+            # read-only mount, a missing parent directory, a real permissions
+            # problem) — the same entailment gap #5839/#5832 already found and
+            # deliberately did NOT classify (`security/sandbox/denial.py`'s own
+            # module comment: "a write denial has no such disjoint signature").
+            # `looks_permission_related` is THAT gate, reused verbatim (not a
+            # second classifier for the same question) — it only decides
+            # whether disclosing what reyn granted is worth the sentence; it
+            # never claims the sandbox caused the failure. Mirrors shell_
+            # runner.py's own `granted_scope_note` wording (#5832) so the
+            # SAME kind of disclosure reads identically across the codebase.
+            if looks_permission_related(tail):
+                policy = self._build_mcp_sandbox_policy()
                 hint += (
-                    "\nHint (#2976): the sandbox DENIED a write to a path outside "
-                    "this server's granted write scope (the stderr below names "
-                    "the exact path). A launcher that bootstraps into a per-user "
-                    "cache needs that cache granted. Add the path to this "
-                    "server's `write_paths` in its MCP config, e.g.\n"
-                    "    write_paths: [\"~/.npm\"]\n"
-                    "Declaring `write_paths` replaces the built-in per-runtime "
-                    "defaults; the server's working directory is always granted."
+                    "\nHint (#5840): this looks permission-related (the "
+                    "stderr below may name the exact path). reyn ran this "
+                    f"server with subprocess={not policy.deny_subprocess}, "
+                    f"network={policy.network}, "
+                    f"write_paths={list(policy.write_paths)!r} — the range "
+                    "reyn granted, not a diagnosis of this failure's cause "
+                    "(a genuine non-sandbox permission error, e.g. a "
+                    "read-only mount or a missing parent directory, reads "
+                    "identically)."
                 )
+                # #2976: the write_paths remedy stays gated on the NARROWER,
+                # Seatbelt-observed write-denial markers (`_looks_like_write_
+                # denial`, unchanged) — a genuinely useful next step ONLY
+                # when the failure is write-shaped; suggesting it for every
+                # permission-shaped failure (e.g. a fork/network denial,
+                # already covered by their own #2820/#1344 hints above) would
+                # be a wrong-knob remedy, not merely an unproven cause.
+                # Conditionally worded ("if this IS...") rather than
+                # asserted, so acceptance ① (no causal claim) holds even
+                # here, where the remedy IS being offered.
+                if _looks_like_write_denial(tail):
+                    hint += (
+                        " If the sandbox's write scope IS the cause, a "
+                        "launcher that bootstraps into a per-user cache "
+                        "needs that cache granted — add the path to this "
+                        "server's `write_paths` in its MCP config, e.g.\n"
+                        "    write_paths: [\"~/.npm\"]\n"
+                        "Declaring `write_paths` replaces the built-in "
+                        "per-runtime defaults; the server's working "
+                        "directory is always granted."
+                    )
             # #3698 stage 1: no more chain-walking predicate — anyio.fail_after
             # raises a plain TimeoutError (__cause__=None) directly, live-
             # verified against a stdio server that starts and never speaks

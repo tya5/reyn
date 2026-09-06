@@ -52,6 +52,7 @@
   "tests/scripts/test_reyn_web_proc.py",
   "tests/security/test_3552_mcp_install_probe_permission_gate.py",
   "tests/security/test_4204_bucket_e_pwd_matches_cwd.py",
+  "tests/security/test_5840_mcp_init_permission_hint.py",
   "tests/security/test_container_backend_output_cap_3822.py",
   "tests/security/test_mcp_client_sandbox_wrap.py",
   "tests/security/test_sandbox_launcher_3823.py",
