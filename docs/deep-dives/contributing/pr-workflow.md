@@ -429,6 +429,23 @@ These rules then keep multi-session work coherent:
    same as it always was; a green here means "some note names the exact
    tree about to merge," never "the tree was reviewed by the right people."
 
+   🔴 **A marker word (`BLOCKING` / `BLOCKING-CLEARED` / `TESTS-READ`) in a
+   comment's first line trips near-miss detection (#5522) RED unless that
+   line is a genuine, well-formed marker** — the required `open-blocking-
+   checkbox` status goes red and auto-merge stops. Detection cannot tell
+   *mentioning* the word from *declaring* the marker, because the only
+   discriminator available is the sentence being classified itself — there
+   is no separate signal to read instead. Negation, a preview of what's
+   coming, a quote, or a reference to someone else's marker all land on the
+   wrong side of that same line, every time: two real incidents landed the
+   same night from two different sessions, both careful, considerate
+   sentences — lead-coder's own "not yet BLOCKING-CLEARED — will post once
+   the fix lands" (#5823), and architect's "lead-coder's BLOCKING (5 reds)
+   is theirs, not touching it" (#5827). **Fix: any negation, preview,
+   quotation, or reference to a marker goes on line 2 or later, never line
+   1.** Line 1 is either a real marker in its required form, or a sentence
+   that contains none of the three words at all.
+
 9. **Arming auto-merge and merging are the reviewer's act (lead-coder in
    this repo), never the implementer's — the implementer's turn ends at
    push + report.** Real incident (#5662, 2026-09-02): an implementer saw
