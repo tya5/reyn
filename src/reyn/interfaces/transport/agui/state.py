@@ -223,6 +223,13 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "process_footprint_metric": snap.get("process_footprint_metric"),
         "process_memory_cap_bytes": snap.get("process_memory_cap_bytes"),
         "process_memory_enforce": snap.get("process_memory_enforce"),
+        # #5825 item 8: same route as `halted_reason`/`process_footprint_*`
+        # above — rides the snapshot/delta channel so a remote Ctx pane
+        # renders the SAME "network ..." row a local one does
+        # (`ctx_pane_lines`'s own "not reported on this connection"
+        # fallback fires only when this key is absent from `snap` entirely,
+        # e.g. an older remote server that predates this field).
+        "network_posture_gap": snap.get("network_posture_gap"),
     }
     return out
 

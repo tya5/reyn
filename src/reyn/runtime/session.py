@@ -7529,6 +7529,57 @@ class Session:
         return self._process_memory_guard
 
     @property
+    def network_enforcement_gap(self) -> "str | None":
+        """#5825 item 8 (architect design, 2026-09-06): whether THIS
+        session's resolved sandbox boundary can actually enforce a closed
+        network — FP-0069 §8's own acceptance wording: "when the
+        configured sandbox backend cannot enforce the network deny
+        (``sandbox_policy_not_applied``), ``bounded`` is shown as degraded
+        in the posture surface — a boundary that is not enforced is not
+        silently called one."
+
+        A pure, LIVE read (same "read unconditionally, no caching" posture
+        ``process_memory_guard`` above already uses for this pane) over the
+        SAME two pure functions ``sandboxed_exec.py``'s own op-dispatch path
+        resolves BEFORE ever running a command
+        (``launcher.resolve_backend`` + ``policy.resolve_sandbox_policy``).
+        Deliberately does NOT wait for a real exec to have run: this is a
+        property of the session's OWN config (backend selection × resolved
+        policy), knowable at any time — exactly FP-0069 §9's own ruling that
+        posture belongs to a SESSION, not a turn. ``unenforced_axes`` is the
+        SAME predicate ``sandboxed_exec.py``'s own ``sandbox_axis_unenforced``
+        audit-event already reads per real call; this is that same fact,
+        read proactively rather than waiting for a call to surface it.
+
+        ``None`` when there is nothing degraded to report: no sandbox
+        config at all (nothing configured, nothing to fail at —
+        ``unenforced_axes``'s own "empty means nothing you configured went
+        unenforced" contract), the resolved policy does not even ask for
+        network to be closed (``policy.network`` is not ``False`` — an
+        open-network config has no boundary to fail at), or the resolved
+        backend genuinely enforces it. A non-``None`` return is the
+        human-readable reason (``unenforced_axis_reason``) the boundary is
+        not real."""
+        from reyn.security.sandbox.launcher import resolve_backend
+        from reyn.security.sandbox.policy import (
+            SandboxPolicy,
+            resolve_sandbox_policy,
+            unenforced_axes,
+            unenforced_axis_reason,
+        )
+
+        sandbox_config = self._sandbox_config
+        backend = resolve_backend(self._sandbox_backend, sandbox_config)
+        policy = SandboxPolicy(**resolve_sandbox_policy(
+            sandbox_config.policy if sandbox_config is not None else None,
+            temp_source="session",
+            mode=sandbox_config.mode if sandbox_config is not None else "compat",
+        ))
+        if "network" not in unenforced_axes(backend, policy):
+            return None
+        return unenforced_axis_reason(backend.name)
+
+    @property
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
         halted; ``None`` while running. The operator-visible in-memory state paired with the
