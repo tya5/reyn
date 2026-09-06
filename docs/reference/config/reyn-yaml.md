@@ -2145,6 +2145,25 @@ history_resident:
 
 Eviction is not information loss: `Session.history` is a cache, not the source of truth — `history.jsonl` (append-only, on disk) is, and every entry evicted from memory reloads on demand via the already-shipped backward-hydrate path (TUI scrollback paging, in-conversation search, and WAL rewind visibility all already page older entries back in as needed). This closes an unbounded-growth defect (`self.history` previously had no cap at all — see #4387) independent of any claim about what fraction of a given memory ceiling `history` itself accounts for, which this config does not measure or claim to fix.
 
+## `process_memory` block
+
+#5851 stage (a). Same resource role as `history_resident`/`read_cap` above (bytes, model-independent, config-driven), but a different SUBJECT: this bounds the WHOLE process's real measured memory footprint (`ProcessMemoryGuard`, ONE instance per process — darwin: `phys_footprint`, macOS's own "Memory" figure; linux: `rss`) cause-independently, not one consumer's own contribution to it (ADR-0046: each band member bounds its own resource, regardless of what is driving it up).
+
+```yaml
+process_memory:
+  max_bytes: 2147483648   # cap, in bytes — absent/unset = no cap (observe only)
+  enforce: false           # halt when exceeded — stage (a) ships no halt; a later
+                            # stage wires this. Setting it true today is validated
+                            # (see below) but has no runtime effect yet.
+```
+
+| Field | Axis | Type | Default | Description |
+|---|---|---|---|---|
+| `max_bytes` | bounding | int \| absent | absent (no cap) | Ceiling, in bytes, on the process's measured footprint. Absent/unset = no cap, observe-only — this is the shipped stage (a) default. Deliberately NOT `0` for "no cap": a non-positive or non-numeric value is treated as ABSENT (falls back to no-cap), never coerced to the literal number 0. |
+| `enforce` | bounding | bool | `false` | Whether exceeding `max_bytes` halts the process — **inert in stage (a)**: no halt mechanism exists yet (a later stage adds it). Validated at config-LOAD time regardless: `enforce: true` with no `max_bytes` set, or on a platform with no reader (only darwin/linux are measured today), is a config-load ERROR, not a silent no-op — an operator who asks to be halted by an unenforceable cap is told immediately. |
+
+Two independent facts, two keys — setting a cap does not itself turn on halting, and turning on halting requires a real, checkable cap. `process_footprint` / `process_footprint_unavailable` audit-events (`docs/reference/runtime/events.md`) record the measured value regardless of whether a cap or `enforce` is set at all — observe-only ships the observation.
+
 ## `image` block
 
 The fixed row height (in terminal rows/cells) every `present`-rendered inline image is shown at (#4474). Width is derived from this to preserve the image's real aspect ratio — `HalfBlockImage` (reyn's own image renderable, `interfaces/repl/present_renderer.py` — no third-party image-rendering dependency, #4474) takes an explicit width/height in cells with no aspect-ratio derivation of its own; passing a fixed height is what makes aspect-ratio-correct rendering possible at all.

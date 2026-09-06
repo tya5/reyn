@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import sys
 import tempfile
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Callable
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from reyn.mcp.connection_service import MCPConnectionService
     from reyn.runtime.fs_watcher import FsWatcher
     from reyn.runtime.hot_reload import HotReloader
+    from reyn.runtime.process_memory import ProcessMemoryGuard
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
     from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
@@ -1008,6 +1010,13 @@ class Session:
         # #4387 Phase B ③: the resource-bound cap on self.history's resident
         # footprint (bytes). None → HistoryResidentConfig's own default (256 MiB).
         history_resident_config: "HistoryResidentConfig | None" = None,
+        # #5851 stage (a): the ONE process-wide ProcessMemoryGuard (shared
+        # across every Session this process's factory_config constructs —
+        # see that field's own docstring). None -> a fresh, unshared guard
+        # (production default reader for THIS process, no cap — matches
+        # every other *_config param's "None = this session's own default"
+        # shape, though production always threads the real, SHARED one).
+        process_memory_guard: "ProcessMemoryGuard | None" = None,
         # #5366 §3: reyn.yaml storage.* (max_bytes / pin) — the PROJECT-wide
         # (cross-session) history-content cap, threaded to this Session's
         # own MediaStore. None → StorageConfig's own default (max_bytes
@@ -1219,6 +1228,20 @@ class Session:
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
+        # #5851 stage (a): consulted at the 2 observation points wired in
+        # this stage (load_history's own finally, and _run_router_loop's
+        # finally next to the turn_end dispatch) — the ruling's other 2
+        # (run_one_iteration's process-edge, the router-loop's in-turn
+        # iteration head) are DECISION points for a halt check that does
+        # not exist until stage (c); not wired here (architect co-vet on
+        # #5858 confirmed this scope). See ProcessMemoryGuard's own
+        # docstring for why this must be the SAME shared instance across
+        # every Session in the process, not a fresh one per Session
+        # (production always threads the real one; only a caller that
+        # omits it entirely — e.g. a bare test construction — gets an
+        # unshared fallback here).
+        from reyn.runtime.process_memory import ProcessMemoryGuard as _ProcessMemoryGuard
+        self._process_memory_guard = process_memory_guard or _ProcessMemoryGuard()
         # #5366 §3: stored so MediaStore construction below can thread it —
         # no other reader today (mirrors read_cap_config/auth_config's own
         # plain-value-not-supplier shape).
@@ -3940,6 +3963,37 @@ class Session:
         return self._pending_user_attachments
 
     @property
+    def pending_user_attachments(self) -> "tuple[dict, ...]":
+        """Snapshot read of the per-session attachment queue (#5856).
+
+        The queue's own name (``_pending_user_attachments``) predates this
+        accessor and, by #5837/#5509, now holds more than images —
+        ``/exec-attach``, ``/attachment``, and ``/image`` all queue onto it —
+        but until this property existed the ONLY public read was
+        :attr:`pending_user_images`, whose own name and docstring commit to
+        the narrower "image upload queue" framing. A test asserting on an
+        ``/exec-attach`` or ``/attachment`` block through that name would
+        read correctly but claim the wrong thing; this property names what
+        is actually being read, for every producer.
+
+        Returns a TUPLE COPY, unlike :attr:`pending_user_images`'s live list
+        reference — a snapshot a caller cannot accidentally mutate into a
+        second write path (this property adds a read, never a write; the
+        three producers above stay the only writers, still going through
+        ``self._pending_user_attachments`` directly, same as before).
+
+        ``@property``, not a plain method — deliberately, so its name
+        (``pending_user_attachments``) matches ``test_tier_audit.py``'s own
+        Rule 8 (#4864, ``private-read-public-alt``) naming rule: that gate
+        links a private ``self._x`` assignment to a public alternative only
+        when a SAME-CLASS ``@property`` is named exactly ``x`` (the leading
+        underscore stripped). A plain method of the same name would leave
+        Rule 8 blind to a reintroduced ``session._pending_user_attachments``
+        read in a future test — the exact gap this issue exists to close.
+        """
+        return tuple(self._pending_user_attachments)
+
+    @property
     def journal(self) -> "SnapshotJournal":
         """Read-only accessor for the session's SnapshotJournal.
 
@@ -5082,7 +5136,28 @@ class Session:
         :meth:`extend_history_backward_async`, and — for a caller on the
         other side of a transport —
         :meth:`~reyn.interfaces.transport.threaded.ThreadedTransportProxy.extend_history_backward`.
-        """
+
+        #5851 stage (a), observation point ① ("起動"): the process
+        footprint is read and audited in a ``finally`` around the whole
+        body below, regardless of which of the two paths (or the early
+        empty-file return) actually ran — placed HERE, in the one method
+        every ``load_history()`` caller (registry_bootstrap.py, chat.py,
+        web/deps.py, mcp.py, dogfood.py) already funnels through, rather
+        than at just one of those 5 call sites (architect's own dispatch
+        named registry_bootstrap.py's call site as the example locus, not
+        as the only one that should fire — a wiring at all 5 sites would
+        risk the SAME "6th caller silently exempt" class #5841 just
+        closed for ``dispatch_tool``)."""
+        try:
+            self._load_history_body()
+        finally:
+            self._emit_process_footprint()
+
+    def _load_history_body(self) -> None:
+        """The actual hydrate logic — extracted, unchanged, from
+        ``load_history`` (#5851 stage (a)) so that method's own ``finally``
+        wrapper covers every exit path (early return, fast path, fallback
+        path) with ONE emit call rather than three."""
         if not self.history_path.exists():
             return
         from reyn.runtime.history_tail_reader import read_history_tail, read_last_line
@@ -7405,6 +7480,53 @@ class Session:
         if wake:
             reg.ensure_session_running(target_agent, target_session_id)
         return True
+
+    def _emit_process_footprint(self, *, chain_id: "str | None" = None) -> None:
+        """#5851 stage (a), architect ruling ⑤: the shared emit body for
+        BOTH real observation/record points (``load_history``'s own
+        ``finally`` above; ``_run_router_loop``'s ``finally``, next to the
+        ``turn_end`` dispatch, below). NOT called at the process-edge
+        (``run_one_iteration``) or in-turn (router-loop-iteration) points
+        architect's ruling also named — those are DECISION points for a
+        halt check that does not exist yet (stage (c)); wiring an emit
+        there with nothing to decide on would be dead code no test in
+        THIS stage could exercise (this repo's own test-review question 4:
+        "would it stay green having never run"). Disclosed in the PR body,
+        not silently narrowed.
+
+        Emits ``process_footprint`` when the guard's reader returns a
+        value; emits ``process_footprint_unavailable`` (at most once per
+        PROCESS — see ``ProcessMemoryGuard._unavailable_announced``'s own
+        docstring) when this platform has none. Never raises — a
+        measurement that failed is a disclosed fact in the audit trail,
+        not a caller-visible exception this method's own callers (a
+        turn's ``finally``, ``load_history``) would then have to guard."""
+        guard = self._process_memory_guard
+        value = guard.read()
+        if value is None:
+            if guard.claim_unavailable_announcement():
+                self._audit_events.emit(
+                    "process_footprint_unavailable", platform=sys.platform,
+                )
+            return
+        self._audit_events.emit(
+            "process_footprint",
+            bytes=value,
+            metric=guard.metric,
+            cap_bytes=guard.cap_bytes,
+            enforce=guard.enforce,
+            chain_id=chain_id,
+        )
+
+    @property
+    def process_memory_guard(self) -> "ProcessMemoryGuard":
+        """#5851 stage (a): the process-wide ``ProcessMemoryGuard`` this
+        Session was constructed with (or a fresh unshared one — see the
+        constructor param's own docstring). Read straight off here by
+        ``status.py``'s snapshot for the Ctx-pane "memory" row — a live
+        ``guard.read()`` each call, not a cached figure (the reader costs
+        ~39µs, architect's own "read unconditionally" ruling)."""
+        return self._process_memory_guard
 
     @property
     def halted_reason(self) -> "str | None":
@@ -11366,6 +11488,12 @@ class Session:
                         ),
                     )
                 finally:
+                    # #5851 stage (a), observation point ④ ("turn 終端"): 1
+                    # emit per turn, unconditionally (#5248's own
+                    # nested-finally discipline — a turn_end hook that
+                    # raised still reaches this, same as it must not skip
+                    # the hot_reloader step right after it).
+                    self._emit_process_footprint(chain_id=chain_id)
                     try:
                         # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
                         # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b

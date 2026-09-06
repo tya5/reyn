@@ -13,6 +13,7 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_history_resident_config,
     _build_image_config,
     _build_offload_config,
+    _build_process_memory_config,
     _build_read_cap_config,
     _build_render_template_config,
     _build_safety_config,
@@ -946,6 +947,53 @@ def _validate_skill_visibility(cfg: "ReynConfig") -> None:
             )
 
 
+def _validate_process_memory(cfg: "ReynConfig") -> None:
+    """#5851 stage (a), architect ruling: ``process_memory.enforce: true``
+    with no reachable cap is a LOAD-time error, mirroring
+    ``_validate_retrieval_scheme_embedding``/``_validate_skill_visibility``
+    above (the enforce-at-load precedent this module already has) — never
+    a silent no-op. Two ways "no reachable cap" happens:
+
+    1. ``max_bytes`` was never set — ``enforce: true`` would have nothing
+       to compare against.
+    2. This platform has no reader (``process_memory_metric_name()`` is
+       ``None``) — ``enforce: true`` could never fire even with a real
+       ``max_bytes``, since nothing here can ever measure a value to
+       compare it against.
+
+    Both leave an operator's stated intent ("halt me over this cap")
+    silently unenforceable — exactly the "declared, never reached" class
+    #5818/#5841/#5849 already named this session (see #5851's own
+    architect ruling, "同じ根、今夜3件目"). Stage (a) ships no halt at
+    all (``enforce`` is inert until stage (c)), but the validation is
+    correct to add NOW: an operator who sets ``enforce: true`` today,
+    before stage (c) lands, deserves the SAME loud error stage (c) will
+    also raise — not a quiet no-op now that turns into a surprise later
+    once stage (c) starts reading this field."""
+    pm = cfg.process_memory
+    if not pm.enforce:
+        return
+    if pm.max_bytes is None:
+        raise ValueError(
+            "process_memory.enforce: true requires process_memory.max_bytes "
+            "to be set — there is nothing to compare the measured footprint "
+            "against otherwise. Set process_memory.max_bytes: <bytes>, or "
+            "leave enforce unset/false for observe-only."
+        )
+    from reyn.runtime.process_memory import process_memory_metric_name
+
+    if process_memory_metric_name() is None:
+        import sys
+
+        raise ValueError(
+            f"process_memory.enforce: true was set, but this platform "
+            f"({sys.platform!r}) has no process-memory reader (#5851: "
+            f"only darwin/linux are measured today) — the cap could never "
+            f"be checked. Leave enforce unset/false on this platform; the "
+            f"cap cannot be enforced here regardless of max_bytes."
+        )
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -1179,6 +1227,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     render_template = _build_render_template_config(merged.get("render_template"))
     read_cap = _build_read_cap_config(merged.get("read_cap"))
     history_resident = _build_history_resident_config(merged.get("history_resident"))
+    process_memory = _build_process_memory_config(merged.get("process_memory"))
     # #5416: known-key/malformed-value FAIL-OPEN rejections a builder
     # discovers while parsing — mutated in place by `_build_storage_config`
     # below, then merged into `unknown_config_keys_found` (same combined
@@ -1233,6 +1282,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         render_template=render_template,
         read_cap=read_cap,
         history_resident=history_resident,
+        process_memory=process_memory,
         image=image,
         tui=tui,
         web_fetch=_build_web_fetch_config(merged.get("web_fetch")),
@@ -1269,6 +1319,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     )
     _validate_retrieval_scheme_embedding(_cfg)
     _validate_skill_visibility(_cfg)
+    _validate_process_memory(_cfg)
     return _cfg
 
 

@@ -29,6 +29,7 @@ from reyn.config.chat import (
     HistoryResidentConfig,
     ImageConfig,
     OffloadConfig,
+    ProcessMemoryConfig,
     ReadCapConfig,
     RenderTemplateConfig,
     SafetyConfig,
@@ -223,6 +224,14 @@ class ReynConfig:
     # footprint — bytes, model-independent, config-driven (#4431's role
     # split, same shape as read_cap above). Default 256 MiB.
     history_resident: HistoryResidentConfig = field(default_factory=HistoryResidentConfig)
+    # #5851 stage (a): the process-WIDE measured-footprint cap (bytes,
+    # model-independent, config-driven — same role family as
+    # history_resident just above, different subject: process-wide, not
+    # per-consumer). Default: no cap, observe-only (`max_bytes=None`,
+    # `enforce=False`) — stage (a) ships the reader/audit-event/status
+    # plumbing only, no halt (that's stage (c), after real
+    # `process_footprint` data informs a default cap).
+    process_memory: ProcessMemoryConfig = field(default_factory=ProcessMemoryConfig)
     # #4474: the fixed row-height (in cells) every present-rendered inline
     # image (reyn's own HalfBlockImage renderable) is shown at, so width
     # can be derived to preserve the image's real aspect ratio (see

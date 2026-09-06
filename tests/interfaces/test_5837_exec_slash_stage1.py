@@ -19,11 +19,12 @@ from reyn.interfaces.slash.exec import (
     ExecCmdlineRejected,
     tokenize_exec_cmdline,
 )
+from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.slash import slash_ctx
 
 
-def _session(tmp_path: Path, *, sandbox_config: "SandboxConfig | None" = None):
+def _session(tmp_path: Path, *, sandbox_config: "SandboxConfig | None" = None) -> Session:
     return make_session(
         agent_name="alpha",
         state_log=StateLog(tmp_path / "state.wal"),
@@ -294,10 +295,10 @@ async def test_exec_attach_queues_argv_and_result_for_the_next_message(tmp_path)
     cmd = REGISTRY.get("exec-attach")
     outbox: list = []
     ctx = slash_ctx(session, recorder=outbox)
-    queue_before = list(session._pending_user_attachments)
+    queue_before = session.pending_user_attachments
     await cmd.handler(ctx, 'python3 -c "print(1+1)"')
 
-    queue = session._pending_user_attachments
+    queue = session.pending_user_attachments
     added = [b for b in queue if b not in queue_before]
     assert added, "the command must queue at least one new block"
     block = added[-1]
@@ -326,7 +327,7 @@ async def test_exec_attach_three_times_each_adds_its_own_distinguishable_block(t
     for i in range(3):
         await cmd.handler(ctx, f'python3 -c "print({i})"')
 
-    queue = session._pending_user_attachments
+    queue = session.pending_user_attachments
     assert all(b["type"] == "text" for b in queue)
     for i in range(3):
         assert any(f"print({i})" in b["text"] and f"\n{i}" in b["text"] for b in queue), (

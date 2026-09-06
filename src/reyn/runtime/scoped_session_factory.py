@@ -162,6 +162,7 @@ def build_scoped_chat_session(
         read_cap_config=factory_config.read_cap_config,  # #4381 PR-5
         auth_config=factory_config.auth_config,  # #5012-A
         history_resident_config=factory_config.history_resident_config,  # #4387 Phase B ③
+        process_memory_guard=factory_config.process_memory_guard,  # #5851 stage (a)
         storage_config=factory_config.storage_config,  # #5366 §3
         embedding_config=factory_config.embedding_config,
         router_config=factory_config.router_config,

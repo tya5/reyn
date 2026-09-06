@@ -55,6 +55,14 @@ class SessionFactoryConfig:
     # shape/role as read_cap_config (#4431's role split): bytes,
     # model-independent, config-driven.
     history_resident_config: Any
+    # #5851 stage (a): ONE ProcessMemoryGuard per process — built here
+    # (from_config runs once per frontend-process bootstrap) from
+    # config.process_memory, so every Session this bundle's factory_config
+    # constructs for THIS process shares the SAME guard instance (mirrors
+    # #5352's sandbox_config comment just above: process-wide, not
+    # per-session narrowed — the eventual cap this guards is a property
+    # of the process, not of any one agent).
+    process_memory_guard: Any
     # #5366 §3: reyn.yaml storage.* (max_bytes / pin) — the PROJECT-wide
     # (cross-session) history-content cap. Same shape/role as
     # history_resident_config just above: a plain value, config-driven,
@@ -127,6 +135,11 @@ class SessionFactoryConfig:
         from reyn.data.pipelines.registry import build_pipeline_registry
         from reyn.data.presentations.registry import build_presentation_registry
         from reyn.data.skills.registry import build_skill_registry
+        from reyn.runtime.process_memory import (
+            ProcessMemoryGuard,
+            make_process_memory_reader,
+            process_memory_metric_name,
+        )
         from reyn.tools.transport import Transport, resolve_scheme_for_transport
         root = Path(project_root) if project_root is not None else None
         pipeline_registry = (
@@ -154,6 +167,15 @@ class SessionFactoryConfig:
             auth_config=config.auth,
             # #4387 Phase B ③: the resource-bound history-resident cap config.
             history_resident_config=config.history_resident,
+            # #5851 stage (a): built ONCE here (per process bootstrap) —
+            # see the field's own docstring above for why this must stay
+            # ONE shared instance rather than one per Session.
+            process_memory_guard=ProcessMemoryGuard(
+                reader=make_process_memory_reader(),
+                metric=process_memory_metric_name(),
+                cap_bytes=config.process_memory.max_bytes,
+                enforce=config.process_memory.enforce,
+            ),
             # #5366 §3: the project-wide (cross-session) storage cap/pin.
             storage_config=config.storage,
             embedding_config=config.embedding,
