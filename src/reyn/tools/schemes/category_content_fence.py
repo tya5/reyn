@@ -24,10 +24,10 @@ listing every action up front is the wrong trade (the ``category`` reason). The
 Everything except the exposure is the transport, inherited from
 ``ContentFenceCellScheme``: fence extraction, sandboxed execution through the OS
 per-call gate, and the observation turn. In particular the per-call gate is the
-same one the ``tool_calls`` cell goes through — ``_excluded_result`` unwraps
-``invoke_action`` to its effective action name before the exclusion check, and
-``dispatch_tool`` then runs the wrapper handler — so wrapping the call in Python
-neither widens nor narrows what the model may do.
+same one the ``tool_calls`` cell goes through — ``dispatch_tool``'s own 2b
+call-time restrict (#5841/#5854) unwraps ``invoke_action`` to its effective
+action name before the exclusion check, then runs the wrapper handler — so
+wrapping the call in Python neither widens nor narrows what the model may do.
 """
 from __future__ import annotations
 

@@ -392,6 +392,32 @@ class ContextualLayer:
         return True
 
 
+def gate_effective_tool_name(name: str, args: "dict | None") -> "str | None":
+    """The TOOL-axis gate's name resolution — the ONE place the wrapper unwrap lives.
+
+    #5854: moved here (from ``runtime.router_loop``) so the SAME unwrap
+    reaches both halves of the #3378 advertise ⇔ enforce agreement without
+    an import cycle — :func:`runtime.router_loop.apply_contextual_
+    visibility` (advertisement, ``args=None``) and ``core.dispatch.
+    dispatcher.dispatch_tool``'s own 2b call-time restrict (enforcement,
+    the live ``args``), which cannot import ``router_loop`` (``router_loop``
+    already imports ``dispatch_tool`` from ``core.dispatch``). A
+    ``invoke_action`` call carries its real target in ``action_name``, so the
+    effective name is knowable only at CALL time — ``args=None`` therefore
+    returns ``None`` ("undeterminable"), which the advertisement half reads as
+    "cannot pre-filter this row". That asymmetry is deliberate and load-bearing:
+    pre-filtering the wrapper itself under an allow-list contextual would hide
+    the ONLY route to every allowed action, i.e. advertise MORE narrowly than
+    enforcement denies — the mirror image of the #3378 defect.
+
+    ``None`` is also returned for an ``invoke_action`` whose ``action_name`` is
+    absent (a malformed call): nothing to gate on, and dispatch rejects it.
+    """
+    if name == "invoke_action":
+        return (args or {}).get("action_name")
+    return name
+
+
 def tool_contextually_denied(
     contextual: "ContextualPermission | None", effective_name: str
 ) -> bool:
@@ -401,9 +427,14 @@ def tool_contextually_denied(
     ``effective_name``. ``contextual is None`` → not denied (⊤), so an
     un-narrowed path is byte-identical to pre-#1827.
 
-    **Measured callers** (#3513, ``src/`` enumeration; #3546 adds the last one):
-    the RouterLoop enforcement gate ``_excluded_result`` (chat and phase are the
-    same code) and its advertisement filter, the three exposure/fence schemes
+    **Measured callers** (#3513, ``src/`` enumeration; #3546 adds one, #5854
+    folds a former separate one into this list's first entry):
+    ``core.dispatch.dispatcher.dispatch_tool``'s own call-time TOOL-axis
+    restrict (2b — the SINGLE live enforcement gate every ``dispatch_tool``
+    caller funnels through since #5854 retired ``RouterLoop._excluded_
+    result``'s duplicate pre-dispatch check; the pipeline tool-step
+    dispatch listed below does NOT funnel through it) and the advertisement filter
+    (``apply_contextual_visibility``), the three exposure/fence schemes
     (``_category_exposure``, ``_enumerate_exposure``,
     ``retrieval_content_fence``), and the pipeline tool-step dispatch
     (``tools/pipeline_verbs._make_tool_dispatch``). Those paths share this one

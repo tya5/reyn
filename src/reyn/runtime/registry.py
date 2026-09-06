@@ -4171,7 +4171,7 @@ class AgentRegistry:
         # caller starts a run-loop. The factory resolved this session's envelope with
         # sid=None (no sid exists yet at construction), so the live session's
         # _contextual_permission — the SINGLE source the RouterLoop's advertisement
-        # filter and its _excluded_result call-time gate both read — ignores this sid's
+        # filter and dispatch_tool's own call-time restrict (#5841/#5854) both read — ignores this sid's
         # config.yaml until something re-resolves WITH the sid.
         #
         # spawn_session_recorded did that for itself and only for itself, which left

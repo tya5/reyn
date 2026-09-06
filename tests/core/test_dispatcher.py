@@ -517,6 +517,14 @@ def test_contextually_denied_tool_is_rejected_without_calling_invoker():
     the "a tool named anyway is not stopped" gap #5842's own doc line
     (now false) had just recorded.
 
+    Kind is "tool_excluded", not "permission_denied" (#5854): this TOOL-
+    axis restrict check folds RouterLoop's former separate pre-dispatch
+    ``_excluded_result`` gate into this seam, adopting that gate's own
+    kind + message-builder rather than dispatch_tool's generic denial
+    kind -- the SAME contextual narrowing must read identically to the
+    model regardless of which caller (router LLM dispatch, /exec, /tasks)
+    named the tool.
+
     Falsify note (verified in-file, Edit-only, then reverted): removing
     the ``tool_contextually_denied`` check from ``dispatch_tool`` makes
     this RED -- the invoker runs and the call succeeds."""
@@ -538,7 +546,7 @@ def test_contextually_denied_tool_is_rejected_without_calling_invoker():
         result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=invoker)
 
         assert result["status"] == "error"
-        assert result["error"]["kind"] == "permission_denied"
+        assert result["error"]["kind"] == "tool_excluded"
         assert invoked is False, "the invoker must never run for a denied tool"
         types = [e[0] for e in ev.events]
         assert "tool_called" not in types
@@ -547,10 +555,73 @@ def test_contextually_denied_tool_is_rejected_without_calling_invoker():
     asyncio.run(main())
 
 
+def test_excluded_name_absent_from_catalog_still_reads_tool_excluded():
+    """Tier 2: accept (#5854's own falsification finding) -- a contextually
+    excluded name that is ALSO not a member of ``ctx.tool_catalog`` (e.g.
+    an ARS-only catalog action reachable only via ``invoke_action``, never
+    advertised as its own top-level entry) must still return
+    "tool_excluded", never "unknown_tool" -- root-1 (#1618): the model
+    must not be told a real-but-denied tool "does not exist".
+
+    Falsify note (verified in-file, Edit-only, then reverted): moving the
+    2b exclude check to run AFTER the "1. Name validation" catalog-
+    membership check (dispatch_tool's own pre-#5854 step order) makes
+    this RED -- ``run_prompt`` is not in ``ctx.tool_catalog`` here, so the
+    catalog check fires first and returns "unknown_tool" instead, exactly
+    the misclassification 3 real test files (test_3378_advertise_enforce_
+    agreement.py, test_contextual_permission_1827.py) caught during this
+    fold when the router's own former separate, catalog-independent
+    ``_excluded_result`` pre-check was retired without preserving this
+    ordering."""
+    from reyn.security.permissions.effective import ContextualPermission
+
+    async def main():
+        contextual = ContextualPermission(tool_deny=frozenset({"run_prompt"}))
+        # "run_prompt" is deliberately NOT in this catalog -- only
+        # "invoke_action" is, mirroring an ARS-only action's real shape.
+        ctx, _ev = make_ctx(
+            catalog={"invoke_action": {"function": {"name": "invoke_action", "parameters": {}}}},
+            contextual=contextual,
+        )
+        result = await dispatch_tool(
+            name="run_prompt", args={}, ctx=ctx, invoker=_unused_invoker,
+        )
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "tool_excluded", (
+            f"an excluded-but-uncataloged name must not misreport as "
+            f"unknown_tool -- got {result!r}"
+        )
+    asyncio.run(main())
+
+
+def test_excluded_action_wrapped_in_invoke_action_is_still_denied():
+    """Tier 2: accept -- the SAME unwrap the router's advertisement filter
+    uses (``gate_effective_tool_name``) applies here too: a call literally
+    named "invoke_action" carrying the excluded action in ``action_name``
+    is denied against the EFFECTIVE name, never against the literal
+    "invoke_action" wrapper name (which is never itself excluded)."""
+    from reyn.security.permissions.effective import ContextualPermission
+
+    async def main():
+        contextual = ContextualPermission(tool_deny=frozenset({"web_search"}))
+        ctx, _ev = make_ctx(
+            catalog={"invoke_action": {"function": {"name": "invoke_action", "parameters": {}}}},
+            contextual=contextual,
+        )
+        result = await dispatch_tool(
+            name="invoke_action", args={"action_name": "web_search"},
+            ctx=ctx, invoker=_unused_invoker,
+        )
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "tool_excluded"
+    asyncio.run(main())
+
+
 def test_contextual_tool_allow_narrowing_also_denies_a_name_not_in_it():
     """Tier 2: the OTHER contextual shape -- ``tool_allow`` (an allowlist,
     not a denylist) narrowing away a name not in it. Same seam, same
-    result shape, different construction of the narrowing."""
+    result shape (#5854: "tool_excluded" -- see the sibling test just
+    above for why), different construction of the narrowing."""
     async def main():
         from reyn.security.permissions.effective import ContextualPermission
 
@@ -561,7 +632,7 @@ def test_contextual_tool_allow_narrowing_also_denies_a_name_not_in_it():
         )
         result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=_unused_invoker)
         assert result["status"] == "error"
-        assert result["error"]["kind"] == "permission_denied"
+        assert result["error"]["kind"] == "tool_excluded"
     asyncio.run(main())
 
 

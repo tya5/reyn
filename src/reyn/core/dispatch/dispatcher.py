@@ -116,6 +116,8 @@ async def dispatch_tool(
     Error kinds:
         - "unknown_tool": name not in ctx.tool_catalog
         - "invalid_args": args fail schema validation
+        - "tool_excluded": ctx.contextual denies the (effective, unwrapped)
+            name at call time (#1406/#187/#5841/#5854 — see 2b below)
         - "permission_denied": invoker raised PermissionError
         - "exception": invoker raised any other Exception
         - any handler-supplied ``kind`` (see #3450 below) — else "handler_error"
@@ -156,14 +158,19 @@ async def dispatch_tool(
     raw result (any JSON-serializable value). PermissionError raised
     inside invoker becomes a "permission_denied" error result.
 
-    #5841: a call-time TOOL-axis restrict check now runs here too, BEFORE
-    the invoker — ``ctx.contextual`` (a per-session narrowing:
-    delegate/topology/ephemeral) denying ``name`` is a "permission_denied"
-    error, exactly as if the invoker itself had raised ``PermissionError``.
-    This is the ONE shared seam every ``dispatch_tool`` caller (the
-    router's own LLM tool-call dispatch, ``/exec``, ``/tasks``) funnels
-    through — so a hidden-but-name-callable tool is denied the same way
-    regardless of caller.
+    #5841/#5854: a call-time TOOL-axis restrict check now runs here too,
+    BEFORE the invoker — ``ctx.contextual`` (a per-session narrowing:
+    delegate/topology/ephemeral) denying the EFFECTIVE (``invoke_action``-
+    unwrapped, :func:`~reyn.security.permissions.effective.
+    gate_effective_tool_name`) name is a "tool_excluded" error. #5854 folds
+    ``RouterLoop._excluded_result`` — that loop's own former SEPARATE
+    pre-dispatch exclude gate, which produced this exact kind and wording —
+    into THIS seam, so every ``dispatch_tool`` caller (the router's own LLM
+    tool-call dispatch, ``/exec``, ``/tasks``) now shares the identical
+    check, unwrap, kind, and message-builder — a hidden-but-name-callable
+    tool (native direct call, the #229 salvage, or a direct
+    ``invoke_action(action_name=…)``) is denied the same way regardless of
+    caller or which of those three forms named it.
 
     Deliberately checks ONLY the contextual (narrowing) layer, never
     ``PermissionDecl.tool`` (the static per-agent declaration) — #5841's
@@ -181,9 +188,47 @@ async def dispatch_tool(
     posture dial; wiring a confirmation here independently would create a
     second source for that same decision.
     """
-    from reyn.security.permissions.effective import tool_contextually_denied
+    from reyn.security.permissions.effective import (
+        gate_effective_tool_name,
+        tool_contextually_denied,
+    )
 
-    # 1. Name validation
+    # 1. #5841/#5854: call-time TOOL-axis restrict — contextual narrowing
+    # only (see this function's own docstring for why never PermissionDecl.
+    # tool). Checked BEFORE catalog membership, deliberately: #5854 folds
+    # RouterLoop._excluded_result's own former pre-dispatch exclude gate
+    # into this ONE seam, and that gate never depended on catalog
+    # membership at all — a contextually-excluded name that also happens
+    # not to be independently dispatchable (e.g. an action reachable only
+    # via invoke_action) must still get the TRUTHFUL "tool_excluded"
+    # verdict, never "unknown_tool" (root-1, #1618: the model must not be
+    # told a real-but-denied tool "does not exist"). Checking catalog
+    # membership first would let that exact misclassification back in for
+    # any excluded name absent from ``ctx.tool_catalog`` — MEASURED, not
+    # theorized: this ordering was reached only after that exact failure
+    # mode reproduced in tests/runtime/test_3378_advertise_enforce_
+    # agreement.py and tests/security/test_contextual_permission_1827.py
+    # during this fold's own falsification pass.
+    #
+    # The SAME unwrap (gate_effective_tool_name — an invoke_action(
+    # action_name=X) wrapper call is checked against X, never against the
+    # literal "invoke_action" name, which is never itself excluded) and the
+    # SAME kind + message-builder (effective.py's contextual_deny_message)
+    # that loop used to apply now apply HERE, for every dispatch_tool
+    # caller (a pipeline tool step, tools/pipeline_verbs._make_tool_
+    # dispatch, does not funnel through dispatch_tool at all — it calls
+    # the handler directly and reads the same predicate at its own,
+    # separate site, #3546).
+    effective = gate_effective_tool_name(name, args)
+    if effective is not None and tool_contextually_denied(ctx.contextual, effective):
+        from reyn.security.permissions.effective import contextual_deny_message
+        return _error(
+            ctx, name, "tool_excluded",
+            contextual_deny_message("tool", effective, ctx.contextual)
+            + " Do not call it again this turn (directly or via invoke_action).",
+        )
+
+    # 2. Name validation
     if name not in ctx.tool_catalog:
         # #187 A (deny-message-decision-enabling): suggest the closest catalog tool
         # so the LLM can self-correct a near-miss instead of stalling. The #187
@@ -198,7 +243,7 @@ async def dispatch_tool(
         return _error(ctx, name, "unknown_tool",
                       f"Tool {name!r} not in catalog.{_hint}")
 
-    # 2. Argument validation against parameters schema
+    # 3. Argument validation against parameters schema
     schema = (
         ctx.tool_catalog.get(name, {})
         .get("function", {})
@@ -210,26 +255,13 @@ async def dispatch_tool(
         except InvalidArgsError as e:
             return _error(ctx, name, "invalid_args", str(e))
 
-    # 2b. #5841: call-time TOOL-axis restrict — contextual narrowing only
-    # (see this function's own docstring for why never PermissionDecl.tool).
-    # Same shape/message-builder RouterLoop._excluded_result already uses
-    # for its own pre-dispatch exclude gate (effective.py's
-    # contextual_deny_message) — a hidden tool that is called by name is
-    # denied with the SAME wording whichever path it was named from.
-    if tool_contextually_denied(ctx.contextual, name):
-        from reyn.security.permissions.effective import contextual_deny_message
-        return _error(
-            ctx, name, "permission_denied",
-            contextual_deny_message("tool", name, ctx.contextual),
-        )
-
     # args_hash is a fingerprint over the FULL, unredacted args — #4666
     # item ③b never touches it (it coexists with args as a correlation
     # key, never a value substitute for it — see _redact_content_fields'
     # own docstring for why redaction must not perturb it).
     args_hash = _compute_args_hash(args)
 
-    # 3. Pre-event: record the tool call.
+    # 4. Pre-event: record the tool call.
     ctx.events.emit(
         "tool_called",
         caller_kind=ctx.caller_kind,
@@ -241,7 +273,7 @@ async def dispatch_tool(
         args_hash=args_hash,
     )
 
-    # 4. Invoke (with structured error handling)
+    # 5. Invoke (with structured error handling)
     try:
         result = await invoker(args)
     except PermissionError as e:
@@ -275,7 +307,7 @@ async def dispatch_tool(
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
 
-    # 4b. Envelope correctness (#3450): the invoker returned normally, but its
+    # 5b. Envelope correctness (#3450): the invoker returned normally, but its
     # own return value may itself declare an error (see the docstring above
     # and _handler_declared_error's). Promote it to THIS function's outer
     # {"status": "error", ...} shape before the "ok" wrap below, so neither
@@ -298,7 +330,7 @@ async def dispatch_tool(
             return {"status": "error",
                     "error": {"kind": _err_kind, "message": _err_message}}
 
-    # 5. Post-event: record the result. `result` itself (the return value
+    # 6. Post-event: record the result. `result` itself (the return value
     # dispatch_tool hands back to the caller/LLM) is NEVER redacted —
     # only the copy that reaches the audit-event.
     ctx.events.emit(
