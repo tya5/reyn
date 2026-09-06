@@ -49,16 +49,6 @@ def _load():
     return module
 
 
-class _FakeCompleted:
-    """A real, minimal stand-in for `subprocess.CompletedProcess` — not a
-    mock, just the two attributes `run_mypy`/`run_mypy_tests_none_arg_type`
-    read off whatever `runner` returns."""
-
-    def __init__(self, stdout: str = "", stderr: str = "") -> None:
-        self.stdout = stdout
-        self.stderr = stderr
-
-
 # ── parse_mypy_output ───────────────────────────────────────────────────────
 
 
@@ -299,13 +289,17 @@ def test_changed_files_mode_passes_only_the_changed_files_to_mypy() -> None:
     """Tier 1: #5882 accept ② — the exact argv `run_mypy` builds for a
     changed-files call is just those files (plus `--cache-dir`); a
     `--full`-shaped call (`["src/reyn"]`) still gets the WHOLE target.
-    `runner` is injected so this needs no real mypy install or subprocess."""
+    `runner` is injected so this needs no real mypy install or subprocess —
+    and what it returns is a REAL `subprocess.CompletedProcess` (cheaply
+    constructible, and its own `.stdout`/`.stderr` are exactly the two
+    attributes the function under test reads), never a hand-rolled
+    stand-in."""
     module = _load()
     recorded: list[list[str]] = []
 
-    def _runner(argv: list[str], **kwargs: object) -> _FakeCompleted:
+    def _runner(argv: list[str], **kwargs: object) -> "subprocess.CompletedProcess[str]":
         recorded.append(argv)
-        return _FakeCompleted()
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
 
     module.run_mypy(["src/reyn/foo.py"], cache_dir=Path("/tmp/cache"), runner=_runner)
     assert recorded[-1][-1] == "src/reyn/foo.py"
@@ -320,9 +314,9 @@ def test_changed_files_mode_passes_only_the_changed_test_files_to_mypy() -> None
     module = _load()
     recorded: list[list[str]] = []
 
-    def _runner(argv: list[str], **kwargs: object) -> _FakeCompleted:
+    def _runner(argv: list[str], **kwargs: object) -> "subprocess.CompletedProcess[str]":
         recorded.append(argv)
-        return _FakeCompleted()
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
 
     module.run_mypy_tests_none_arg_type(
         ["tests/runtime/test_foo.py"], cache_dir=Path("/tmp/cache"), runner=_runner,
