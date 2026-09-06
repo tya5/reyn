@@ -614,7 +614,20 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: implementations (the sanctioned production boundary, same as
 #: ``InProcessTransport`` already reaching ``cancel_inflight``/
 #: ``run_slash_command`` and siblings), never published.
-#: Raised 122 -> 123 for #5856: ``pending_user_attachments`` — a NEW
+#: Raised 122 -> 123 for #5851 stage (a): ``process_memory_guard`` — a NEW
+#: public read-only property, the process-wide ``ProcessMemoryGuard``
+#: ``status.py``'s snapshot reads (live ``guard.read()`` for the Ctx pane's
+#: "memory" row — see ``session.py``'s own ``halted_reason`` sibling
+#: property for the same pattern). Genuinely unrelated to #3595 S4's
+#: slash-handler-encapsulation concern: nothing about a slash handler
+#: reaches through this — it exists so a STATUS READ MODEL (not a slash
+#: command) can surface a per-process measurement, same shape/reasoning as
+#: the 121->122 entry above for ``mcp_probe_state``. #5859 (tui-coder)
+#: independently raises this SAME ceiling for an unrelated change — whichever
+#: PR lands first gets 123; the other rebases onto 124 (architect co-vet on
+#: #5858 flagged this collision in advance, not discovered as a merge
+#: conflict).
+#: Raised 123 -> 124 for #5856: ``pending_user_attachments`` — a NEW
 #: read-only ``@property``, a tuple-copy snapshot of the SAME queue
 #: ``pending_user_images`` (already public, see its own ``_Residue`` entry
 #: above) exposes as a live list. Not the S4 failure mode: this is a
@@ -628,8 +641,10 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: that name's own docstring commits to the narrower "image upload
 #: queue" framing #5837/#5509 outgrew — the queue holds non-image blocks
 #: now, and a read through the image-named accessor would claim the
-#: wrong thing about what was actually queued.
-_PUBLIC_MEMBER_CEILING = 123
+#: wrong thing about what was actually queued. See the #5851 entry just
+#: above for the collision this stacks onto (#5858, tui-coder rebasing
+#: 123 -> 124 per lead-coder instruction, 2026-09-06).
+_PUBLIC_MEMBER_CEILING = 124
 
 
 def test_session_public_surface_does_not_grow() -> None:
