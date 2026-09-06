@@ -112,14 +112,18 @@ async def test_drawer_collapsed_by_default() -> None:
         assert app.query_one(MenuBar) is not None
 
 
-# ── Gate 2: focus flow (↓ focus / ←→ move / Enter open / ↑ or Esc close) ──────
+# ── Gate 2: focus flow (↓ focus / ←→ move / Enter open / Esc: pane→tabs→composer) ─
 
 @pytest.mark.asyncio
 async def test_focus_flow_arrow_moves_without_opening_enter_opens_esc_closes() -> None:
     """Tier 2b: the full focus flow. ``↓`` from the composer focuses the menu;
     ``→`` moves the highlight but does NOT open the drawer; ``Enter`` opens the
-    highlighted item's drawer downward (ContentSwitcher.current set + visible);
-    ``Esc`` closes it and returns focus to the composer."""
+    highlighted item's drawer downward (ContentSwitcher.current set + visible)
+    and focuses its content; **#5869 (owner request, overturns this file's own
+    #3365-era one-press assumption)**: the FIRST ``Esc`` from that content
+    lands on the tab row with the drawer still open, and only the SECOND
+    ``Esc`` (now genuinely from the tab row) closes it and returns focus to
+    the composer."""
     from textual.widgets import ContentSwitcher
 
     from reyn.interfaces.inline.textual_chat import Composer, MenuBar, TextualChatApp
@@ -146,19 +150,35 @@ async def test_focus_flow_arrow_moves_without_opening_enter_opens_esc_closes() -
         assert drawer.display is False, "arrow-move opened the drawer (must be explicit Enter)"
         assert drawer.current is None
 
-        # Enter opens the highlighted item's drawer DOWNWARD.
+        # Enter opens the highlighted item's drawer DOWNWARD and focuses its content.
         await pilot.press("enter")
         await pilot.pause()
         assert drawer.display is True, "Enter did not open the drawer"
         assert drawer.current == moved_active, "opened drawer shows the wrong pane"
+        assert not isinstance(app.focused, MenuBar), (
+            "setup: Enter should have moved focus INTO the drawer's content, "
+            f"not left it on the tab row: {app.focused!r}"
+        )
 
-        # Esc closes and returns focus to the composer (works even though focus
-        # is INSIDE the drawer — the app-level binding is the fallback).
+        # First Esc (from the drawer's content — the app-level fallback, since
+        # MenuBar no longer has focus to claim the key itself) lands on the
+        # tab row, drawer still open.
         await pilot.press("escape")
         await pilot.pause()
-        assert drawer.display is False, "Esc did not close the drawer"
+        assert drawer.display is True, "first Esc from drawer content closed the drawer -- #5869 keeps it open"
+        assert isinstance(app.focused, MenuBar), (
+            f"first Esc from drawer content did not land on the tab row: {app.focused!r}"
+        )
+
+        # Second Esc (genuinely from the tab row now) closes and returns focus
+        # to the composer.
+        await pilot.press("escape")
+        await pilot.pause()
+        assert drawer.display is False, "second Esc (from the tab row) did not close the drawer"
         assert drawer.current is None
-        assert isinstance(app.focused, Composer), f"Esc did not refocus composer: {app.focused!r}"
+        assert isinstance(app.focused, Composer), (
+            f"second Esc (from the tab row) did not refocus composer: {app.focused!r}"
+        )
 
 
 @pytest.mark.asyncio

@@ -534,15 +534,28 @@ class ScrollableDrawer(ContentSwitcher):
     measured: 11 of 30 lines on screen, and the 19 missing were the keyboard
     shortcuts the pane exists to list).
 
-    PgUp/PgDn rather than ↑/↓: ``↑`` already means "back to composer" while
-    the drawer is open (``chrome.MENUBAR_KEYS``), and rebinding it would trade
-    one unreachable thing for another. PgUp/PgDn are unbound in this context
-    and already read as "page through content" elsewhere in this app. The
-    Help pane lists them from that same ledger, so the pane that was cut off
-    now also says how to see the rest.
+    PgUp/PgDn rather than ↑/↓ for SCROLLING: ↑/↓ were already claimed
+    elsewhere (PgUp/PgDn are unbound in this context and already read as
+    "page through content" elsewhere in this app). The Help pane lists them
+    from ``chrome.MENUBAR_KEYS``, so the pane that was cut off now also says
+    how to see the rest.
 
     A pane that fits is unaffected: with nothing to scroll, these keys move
     nothing rather than being conditionally absent.
+
+    **#5869 (owner request): ``↑`` alone escapes UP to the tab row**, leaving
+    the drawer open — this widget is what :meth:`TextualChatApp._open_drawer`
+    focuses for a READOUT pane (Cost/Ctx/Help — #3699), so it is the one
+    place this rung has to be named for that pane family; the OTHER pane
+    family (an ``OptionList`` picker) claims its OWN focus and needs its
+    OWN top-row rung — see :class:`DrawerOptionList` in ``chrome.py``, not
+    here. Before this rung existed ``↑`` from a readout reached NEITHER a
+    scroll action NOR any bound key at any ancestor — measured directly (a
+    ``run_test`` pilot press left focus exactly where it started, drawer
+    still open) — so despite this class's own OLD docstring claiming "↑
+    already means back to composer", that claim was never actually true for
+    THIS widget; only ``MenuBar``'s OWN ``↑`` (a different widget, a
+    different focus state — the tab row, not the pane) does that, unchanged.
     """
 
     BINDINGS = [
@@ -550,6 +563,7 @@ class ScrollableDrawer(ContentSwitcher):
         Binding("pageup", "scroll_pane_up", "Scroll this pane", show=False),
         Binding("home", "scroll_pane_home", "Top of this pane", show=False),
         Binding("end", "scroll_pane_end", "Bottom of this pane", show=False),
+        Binding("up", "back_to_tabs", "Back to tabs", show=False),
     ]
 
     def action_scroll_pane_down(self) -> None:
@@ -563,6 +577,15 @@ class ScrollableDrawer(ContentSwitcher):
 
     def action_scroll_pane_end(self) -> None:
         self.scroll_end(animate=False)
+
+    def action_back_to_tabs(self) -> None:
+        """#5869: ``↑`` from a readout pane lands on the tab row, drawer
+        still open — the mirror of :meth:`TextualChatApp.action_close_
+        drawer`'s own ``esc`` rung, for the one key that used to reach
+        nowhere at all from here."""
+        menubar = self.app.query(MenuBar)
+        if menubar:
+            menubar.first().focus()
 
 
 @dataclass(frozen=True, slots=True)
@@ -4272,6 +4295,24 @@ class TextualChatApp(App):
         wanted, so this rung answers "there is nothing to dismiss": close the
         drawer if it is open, otherwise go back to following the newest output.
 
+        **#5869 (owner request, overturns #3365 ruling ① — the one place that
+        ruling was NOT the owner's own): one step per press, not two at once.**
+        This global fallback is reached ONLY when focus is somewhere INSIDE
+        the open drawer's PANE content — an OptionList picker, or the readout
+        ``ScrollableDrawer`` itself (#3699) — never when :class:`MenuBar` (the
+        tab row) has focus: ``MenuBar._on_key`` intercepts ``esc``/``up``
+        itself before either could bubble this far, and its own handler
+        (unchanged by this PR) still closes the drawer and returns straight to
+        the composer — that is rung 2 of the new ladder, always was. So the
+        ONE thing this rung used to do — close outright — is now split into
+        two: an ``esc`` FROM THE PANE moves focus up to the tab row and
+        leaves the drawer open (giving the operator the #3528 active-tab
+        marker as a landing cue), and only a SECOND ``esc`` — now consumed by
+        ``MenuBar`` itself, this method is not reached for it — closes the
+        drawer. #3365's own gate (Esc reaches the composer from every focus
+        state) still holds: it is one press further away for this one state,
+        never zero presses further, so no state loses its way out.
+
         **Only when the composer is empty.** With a draft in it, ``esc`` does
         nothing at all rather than moving the view: someone who has typed and
         pressed ``esc`` is most likely reaching for "never mind" on the text,
@@ -4305,7 +4346,15 @@ class TextualChatApp(App):
             return
         drawer = self.query_one("#drawer", ContentSwitcher)
         if drawer.display:
-            self._open_drawer(None)
+            # #5869: one rung, not two — see this method's own docstring.
+            # Reaching here at all already means focus is in the pane (never
+            # MenuBar, which claims esc/up for itself); land on the tab row
+            # and stop, leaving the drawer open.
+            menubar = self.query(MenuBar)
+            if menubar:
+                menubar.first().focus()
+                return
+            self._open_drawer(None)  # no tab row mounted (headless/test edge) — fall back to closing
             return
         composer = self.query_one(Composer)
         if not composer.has_focus:
