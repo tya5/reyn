@@ -1228,9 +1228,13 @@ class Session:
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
-        # #5851 stage (a): consulted at the 4 observation points below
-        # (load_history / run_one_iteration process-edge / router-loop
-        # in-turn / _run_turn_body finally) — see ProcessMemoryGuard's own
+        # #5851 stage (a): consulted at the 2 observation points wired in
+        # this stage (load_history's own finally, and _run_router_loop's
+        # finally next to the turn_end dispatch) — the ruling's other 2
+        # (run_one_iteration's process-edge, the router-loop's in-turn
+        # iteration head) are DECISION points for a halt check that does
+        # not exist until stage (c); not wired here (architect co-vet on
+        # #5858 confirmed this scope). See ProcessMemoryGuard's own
         # docstring for why this must be the SAME shared instance across
         # every Session in the process, not a fresh one per Session
         # (production always threads the real one; only a caller that
@@ -7440,7 +7444,7 @@ class Session:
     def _emit_process_footprint(self, *, chain_id: "str | None" = None) -> None:
         """#5851 stage (a), architect ruling ⑤: the shared emit body for
         BOTH real observation/record points (``load_history``'s own
-        ``finally`` above; ``_run_turn_body``'s ``finally``, next to the
+        ``finally`` above; ``_run_router_loop``'s ``finally``, next to the
         ``turn_end`` dispatch, below). NOT called at the process-edge
         (``run_one_iteration``) or in-turn (router-loop-iteration) points
         architect's ruling also named — those are DECISION points for a

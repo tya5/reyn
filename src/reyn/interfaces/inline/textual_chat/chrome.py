@@ -1802,28 +1802,37 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
 def _memory_line(snap: dict) -> str:
     """#5851 stage (a): the process-wide footprint row, same three-state
     discipline every other #5009-pass row in this pane already follows
-    (``_folded_line`` right above is the closest sibling):
+    (``_folded_line`` right above is the closest sibling) — plus a 4th
+    state architect co-vet on #5858 split out, because collapsing it
+    into "not measurable on this platform" asserts a PLATFORM fact
+    (this machine cannot ever measure this) to describe a TRANSIENT one
+    (this one read failed) — an operator reading it on a real darwin/
+    linux box would have their diagnosis wrongly steered toward "my
+    platform is unsupported" for what was actually one bad tick:
 
     - the 4 keys absent from ``snap`` entirely (an older remote server
       that predates this field, or ``ctx_pane_lines`` called with no
       snapshot at all) -> "not reported on this connection", the SAME
       words every other row here uses for that state.
     - keys present but ``process_footprint_metric`` is ``None`` (this
-      platform has no reader) -> "not measurable on this platform" —
-      never a fabricated number.
-    - ``metric`` present but this ONE read's ``bytes`` came back
-      ``None`` (a transient read failure, not a platform fact) -> same
-      "not measurable" wording; a single failed read is not a state
-      worth a fourth phrase over.
+      platform genuinely has no reader) -> "not measurable on this
+      platform" — never a fabricated number.
+    - ``metric`` present (the platform CAN measure) but this ONE read's
+      ``bytes`` came back ``None`` -> "read failed this tick (<metric>)"
+      — a transient fact, not a platform one; keeps the one piece of
+      information the snapshot itself already disclosed (which reader
+      this platform uses) rather than discarding it.
     - real reading -> the formatted bytes, metric name, and cap/enforce
       state.
     """
     if "process_footprint_metric" not in snap:
         return "memory       not reported on this connection"
     metric = snap.get("process_footprint_metric")
-    value = snap.get("process_footprint_bytes")
-    if metric is None or value is None:
+    if metric is None:
         return "memory       not measurable on this platform"
+    value = snap.get("process_footprint_bytes")
+    if value is None:
+        return f"memory       read failed this tick ({metric})"
     cap_bytes = snap.get("process_memory_cap_bytes")
     enforce = snap.get("process_memory_enforce", False)
     value_str = _format_bytes_gib(value)

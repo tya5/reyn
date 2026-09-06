@@ -69,8 +69,9 @@ def _read_darwin_phys_footprint() -> "int | None":
         return None
 
     # RUSAGE_INFO_V2 layout (sys/resource.h): a 16-byte UUID, then a run
-    # of uint64_t counters. ri_phys_footprint is the 22nd field (index 21,
-    # 0-based) in the V2 struct — only the fields up to and including it
+    # of uint64_t counters. ri_phys_footprint is the 9th field (index 8,
+    # 0-based, counting ri_uuid as field 0) in the V2 struct — only the
+    # fields up to and including it
     # are declared; ctypes ignores any real struct fields beyond what's
     # named here (the kernel writes a V2-sized struct; nothing this code
     # reads depends on the layout continuing beyond ri_phys_footprint).

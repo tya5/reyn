@@ -40,18 +40,25 @@ def test_memory_row_says_not_measurable_when_metric_is_none():
     assert "not reported" not in line, line
 
 
-def test_memory_row_says_not_measurable_on_a_single_failed_read():
-    """Tier 1: ``metric`` present (the platform IS supported) but THIS
-    read's ``bytes`` came back ``None`` (a transient failure) — same
-    wording as the platform-unsupported case; a single failed read is
-    not a fourth phrase's worth of distinction."""
+def test_memory_row_says_read_failed_this_tick_on_a_single_failed_read():
+    """Tier 1: ``metric`` present (the platform IS supported — the
+    snapshot itself says so) but THIS read's ``bytes`` came back
+    ``None`` (a transient failure) — architect co-vet on #5858: this
+    must NOT read as "not measurable on this platform", which asserts a
+    PLATFORM fact to describe a TRANSIENT one and would wrongly steer an
+    operator's diagnosis toward "unsupported platform" for one bad tick
+    on a machine that measures fine every other frame. The metric name
+    is kept in the message — the one piece of information the snapshot
+    already disclosed, not discarded just because this tick failed."""
     snap = {
         "ctx_window": 1000, "ctx_used": 100,
         "process_footprint_bytes": None, "process_footprint_metric": "phys_footprint",
         "process_memory_cap_bytes": None, "process_memory_enforce": False,
     }
     line = _memory(snap)
-    assert "not measurable on this platform" in line, line
+    assert "read failed this tick" in line, line
+    assert "phys_footprint" in line, line
+    assert "not measurable on this platform" not in line, line
 
 
 def test_memory_row_renders_real_value_with_no_cap():

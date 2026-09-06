@@ -321,7 +321,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "turn_completed": frozenset({"chain_id"}),
     # process_footprint (#5851 stage (a)): a live process-memory reading —
     # ``Session.load_history()``'s own finally (once, at startup, every
-    # ``load_history()`` caller) and ``_run_turn_body``'s finally (once
+    # ``load_history()`` caller) and ``_run_router_loop``'s finally (once
     # per turn, next to the turn_end dispatch). ``metric`` MUST ride with
     # every ``bytes`` value (verification-hazards' own root: "an
     # observation does not name its own referent") — darwin's
