@@ -39,6 +39,14 @@ full, not repeated here) — the 4 that shape this module:
    ``exec`` calls use, so ``sandbox.mode: strict`` reaches this path
    identically, unrelated to the confirmation question entirely.
 
+   ⚠️ Same #5841 gap, disclosed: catalog VISIBILITY (whether an agent
+   whose Profile denies the ``exec`` capability class should even be
+   able to run it) is not wired on the LLM path either — an agent whose
+   profile denies ``exec`` can still run ``/exec`` today, no differently
+   from how that same agent's LLM could still call the ``exec`` tool
+   directly if it tried. Not this PR's gap to close alone (parity with
+   the LLM path, not a new hole) — #5841 closes both at the shared seam.
+
 ② **``caller_kind="operator"``, and a dedicated actor.** ``ToolContext.
    caller_kind`` is ``"operator"`` (never ``"router"`` — this is not an
    LLM tool call). ``op_context_factory()`` (``RouterOpContextSource.
@@ -50,6 +58,18 @@ full, not repeated here) — the 4 that shape this module:
    ``dataclasses.replace`` AFTER the factory call (the factory itself has
    no parameter for this — same shape as the resolved-backend override
    ``op_context_from_tool_context`` already applies post-construction).
+
+   ⚠️ #5843 BLOCKING finding (fixed): ``caller_kind="operator"`` sitting
+   on ``ToolContext`` reaches no audit-event on its own — ``core.dispatch.
+   dispatcher.dispatch_tool`` is the ONE place ``tool_called``/
+   ``tool_returned``/``tool_failed`` are emitted carrying ``caller_kind``.
+   An earlier version of ``_run_exec`` called ``handle_sandboxed_exec``
+   directly, bypassing it entirely. Fixed by routing through
+   ``dispatch_tool`` (mirrors ``slash/tasks.py``'s own ``_dispatch``
+   helper) — the ``invoker`` passed to it still builds its OWN op-context
+   (with the ② actor override already applied) rather than delegating to
+   ``tools/exec.py``'s generic tool handler, which has no hook for that
+   override.
 
 ③ **``/exec`` = screen only; ``/exec-attach`` = queue for the next user
    message.** The queued block carries the ACTUAL argv that ran
@@ -226,21 +246,46 @@ async def _run_exec(ctx: "SlashContext", args: str) -> "tuple[list[str], dict] |
     tool_ctx = await _build_exec_tool_context(ctx)
     op_ctx = await _build_operator_op_context(tool_ctx)
 
-    from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
-    from reyn.schemas.models import SandboxedExecIROp
+    # #5843 BLOCKING ①: route through dispatch_tool (core/dispatch/
+    # dispatcher.py) -- the ONE place that emits tool_called/tool_returned/
+    # tool_failed carrying caller_kind. Calling handle_sandboxed_exec
+    # directly (the earlier shape) left caller_kind="operator" sitting on
+    # ToolContext with nothing ever reading it -- no audit-event recorded
+    # it. Mirrors slash/tasks.py's own _dispatch helper exactly. The
+    # invoker below still builds ITS OWN op_ctx (with the ② actor
+    # override already applied above) rather than going through the
+    # generic exec-tool handler (tools/exec.py's own _handle), which would
+    # re-derive op_ctx internally via op_context_from_tool_context with NO
+    # hook to apply that override -- this keeps both fixes (① audit
+    # routing, ② actor override) working together, not one at the cost of
+    # the other. dispatch_tool's own exception handling wraps the op's
+    # PermissionError (the pre-exec threat scan, FP-0050/#1822 S5) into
+    # its standard error envelope -- no separate try/except needed here.
+    from reyn.core.dispatch.dispatcher import DispatchContext, dispatch_tool
+    from reyn.tools.exec import EXEC
 
-    op = SandboxedExecIROp(kind="sandboxed_exec", argv=argv)
-    try:
-        result = await handle_sandboxed_exec(op=op, ctx=op_ctx)
-    except PermissionError as exc:
-        # The op's own pre-exec threat scan (FP-0050/#1822 S5) denies via
-        # this channel — the sandbox-scoped write/network/subprocess
-        # boundary applies the same way it does for the LLM's own exec
-        # calls (② op_context_factory seam); this is that boundary
-        # reporting a real denial, not a new gate this module adds.
-        await reply_error(ctx, f"exec denied: {exc}")
+    dispatch_ctx = DispatchContext(
+        caller_kind="operator",
+        caller_id=getattr(tool_ctx, "agent_name", None) or "",
+        chain_id=None,
+        tool_catalog={"exec": EXEC.render_for_router()},
+        events=tool_ctx.events,
+    )
+
+    async def _invoker(call_args: dict) -> Any:
+        from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
+        from reyn.schemas.models import SandboxedExecIROp
+
+        op = SandboxedExecIROp(kind="sandboxed_exec", argv=call_args["argv"])
+        return await handle_sandboxed_exec(op=op, ctx=op_ctx)
+
+    dispatch_result = await dispatch_tool(
+        name="exec", args={"argv": argv}, ctx=dispatch_ctx, invoker=_invoker,
+    )
+    if dispatch_result["status"] == "error":
+        await reply_error(ctx, f"exec denied: {dispatch_result['error']['message']}")
         return None
-    return argv, result
+    return argv, dispatch_result["data"]
 
 
 @slash(

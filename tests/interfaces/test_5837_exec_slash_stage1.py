@@ -198,6 +198,40 @@ async def test_exec_runs_and_shows_result_on_screen_only_no_history_growth(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_exec_emits_tool_called_with_operator_caller_kind(tmp_path):
+    """Tier 2: accept (#5843 BLOCKING ①) — caller_kind="operator" must
+    reach a REAL audit-event, not just sit on an object nothing reads.
+    dispatch_tool (core/dispatch/dispatcher.py) is the ONE place that
+    emits tool_called/tool_returned carrying caller_kind — a direct call
+    to handle_sandboxed_exec (the earlier shape of this module) bypassed
+    it entirely, leaving zero audit-events with caller_kind at all.
+
+    Falsify note (verified in-file, Edit-only, then reverted): reverting
+    _run_exec's dispatch_tool call back to a direct handle_sandboxed_exec
+    call makes this RED -- no tool_called event is emitted at all."""
+    from tests._support.events import collect_events, settle
+
+    session = _session(tmp_path)
+    events = collect_events(session._audit_events)
+
+    cmd = REGISTRY.get("exec")
+    ctx = slash_ctx(session)
+    await cmd.handler(ctx, 'python3 -c "print(1)"')
+    await settle(session._audit_events)
+
+    tool_called = [e for e in events if e.type == "tool_called" and e.data.get("tool") == "exec"]
+    assert tool_called, f"no tool_called event for exec -- got types {[e.type for e in events]!r}"
+    assert tool_called[0].data.get("caller_kind") == "operator", (
+        f"/exec's own audit trail must attribute caller_kind='operator', "
+        f"got {tool_called[0].data!r}"
+    )
+
+    tool_returned = [e for e in events if e.type == "tool_returned" and e.data.get("tool") == "exec"]
+    assert tool_returned, "no tool_returned event for a successful exec run"
+    assert tool_returned[0].data.get("caller_kind") == "operator"
+
+
+@pytest.mark.asyncio
 async def test_exec_rejects_shell_metacharacters_with_no_execution(tmp_path):
     """Tier 2: accept — `/exec 'ls | wc -l'` is not executed, explicit
     error on screen."""
@@ -257,5 +291,98 @@ async def test_exec_attach_three_times_each_adds_its_own_distinguishable_block(t
         assert any(f"print({i})" in b["text"] and f"\n{i}" in b["text"] for b in queue), (
             f"block for call {i} not found (or not distinguishable) in {queue!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_exec_attach_three_times_then_submit_drains_to_one_message_one_completion(
+    tmp_path,
+):
+    """Tier 2: accept (architect's own closing prescription, #5843 BLOCKING
+    ②) — "queued" is not a witness for "drained". A plain ``{"type":
+    "text", ...}`` block is a NEW shape in `_pending_user_attachments`
+    (existing producers, `/attachment`/`/image`, only ever queue a
+    path-ref `file`/`image` block) — this drives a REAL Session end to
+    end to confirm it is not silently filtered out anywhere between the
+    queue and the actual outbound litellm call.
+
+    Real Session, real inbox processing (`run_one_iteration`), a real
+    (stubbed-at-the-litellm-boundary, #5103's own established
+    fixture-less pattern) completion — captures the EXACT `messages`
+    litellm.acompletion is called with, one layer beneath `LLMStub`'s own
+    fixed response so the call itself still returns a normal, harmless
+    completion (no gating/tool-call machinery needed for this witness).
+
+    Asserts BOTH halves architect named: (1) the durable history entry
+    (one `role="user"` turn) carries the "go" text AND all 3 `$ ...`
+    markers, and (2) the actual message litellm receives ALSO carries
+    them — proving the block survives history persistence AND the wire-
+    format conversion, not just the first of the two.
+    """
+    import litellm
+
+    from reyn.dev.testing.llm_stub import LLMStub
+
+    session = _session(tmp_path)
+    cmd = REGISTRY.get("exec-attach")
+    ctx = slash_ctx(session)
+
+    for i in range(3):
+        await cmd.handler(ctx, f'python3 -c "print({i})"')
+
+    stub = LLMStub()
+    stub.install()
+    captured_messages: "list[list[dict]]" = []
+    original_acompletion = litellm.acompletion
+
+    async def _capturing_acompletion(*, model, messages, **kwargs):
+        captured_messages.append(messages)
+        return await original_acompletion(model=model, messages=messages, **kwargs)
+
+    litellm.acompletion = _capturing_acompletion
+    try:
+        await session.submit_user_text("go")
+        await session.run_one_iteration()
+    finally:
+        stub.restore()
+        litellm.acompletion = original_acompletion
+
+    # (1) the durable history entry.
+    user_entries = [m for m in session.history if m.role == "user"]
+    (entry,) = [m for m in user_entries if _content_text(m.content) and "go" in _content_text(m.content)]
+    entry_text = _content_text(entry.content)
+    assert "go" in entry_text
+    for i in range(3):
+        assert f"print({i})" in entry_text, (
+            f"call {i}'s own $ ... marker missing from the persisted history "
+            f"entry: {entry_text!r}"
+        )
+
+    # (2) the ACTUAL message the model call received — ONE completion,
+    # carrying all 3 (architect's own "3回 -> 1通 -> completion 1回").
+    assert captured_messages, "litellm.acompletion was never called"
+    (sent_messages,) = captured_messages  # exactly one completion
+    sent_texts = " ".join(_content_text(m.get("content")) for m in sent_messages)
+    assert "go" in sent_texts
+    for i in range(3):
+        assert f"print({i})" in sent_texts, (
+            f"call {i}'s own $ ... marker missing from the message actually "
+            f"sent to the model: {sent_texts!r}"
+        )
+
+
+def _content_text(content: "str | list[dict] | None") -> str:
+    """Flatten a ChatMessage/litellm-message ``content`` (a plain string,
+    or a list of ``{"type": "text", "text": ...}``-shaped blocks) into one
+    searchable string — mirrors how both the history entry and the
+    litellm-wire message represent multi-block content."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return "\n".join(parts)
 
 
