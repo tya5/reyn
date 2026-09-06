@@ -10,21 +10,26 @@ reyn has two separate systems that both gate what a workflow can do.
 They are **completely orthogonal** — they answer different questions and are
 configured at different levels. Conflating them is a common source of confusion.
 
-## Permission: can the workflow use this capability?
+## Permission: can this agent/session use this capability?
 
-`skill.permissions` (declared in `skill.md` frontmatter) describes the **access
-policy** for a specific workflow:
+`permissions:` (declared in `reyn.yaml`'s `permissions:` block —
+[reference](../../reference/config/permissions.md)) describes the **access
+policy** in force:
 
 - What file paths may it read or write?
 - May it make network requests? To which hosts?
 - May it call shell commands or MCP tools?
 
-Permissions are **workflow-level**: each workflow declares its own, and the operator
-or user approves them. The runtime enforces them through the AgentLayer of the
+Permissions are **project-level**, not workflow-level: there is no `skill.md`
+frontmatter `permissions:` key — an earlier version of this page (and of
+`reference/config/permissions.md`) described one, and a parser for it was
+never built (#5863). The operator declares the project's `reyn.yaml`, and a
+just-in-time prompt covers an access that declaration does not. The runtime
+enforces the declared set through the AgentLayer of the
 [conjunctive permission model](../runtime/permission-model.md#effective-permission-conjunctive-restrict-model).
 
 ```yaml
-# skill.md
+# reyn.yaml
 permissions:
   file.write:
     - path: "{{workspace}}/output"
@@ -33,8 +38,8 @@ permissions:
     - host: "api.github.com"
 ```
 
-**Who sets it:** the workflow author declares, the operator/user approves.
-**Question answered:** "Is this op allowed for this workflow?"
+**Who sets it:** the operator declares in `reyn.yaml`; the operator/user approves any JIT prompt.
+**Question answered:** "Is this op allowed?"
 
 ## Sandbox: how is the workflow contained?
 
@@ -63,27 +68,28 @@ sandbox:
 Permission and sandbox are applied independently and conjunctively:
 
 ```
-allowed = permission_check(skill, op) AND sandbox_check(backend, op)
+allowed = permission_check(op) AND sandbox_check(backend, op)
 ```
 
 The permission system may allow an op that the sandbox still denies — for
-example, a workflow with `http.get: [{host: "api.github.com"}]` permission running
-under a `network: false` sandbox policy will be denied at the sandbox layer. The
-workflow author cannot override the operator's sandbox configuration.
+example, `http.get: [{host: "api.github.com"}]` permission granted in
+`reyn.yaml`, running under a `network: false` sandbox policy, is still denied
+at the sandbox layer: a `permissions:` grant cannot override the sandbox
+configuration.
 
 Conversely, the sandbox may allow something the permission system denies — for
-example, a broad sandbox configuration does not grant a workflow permission to call
-shell ops it hasn't declared.
+example, a broad sandbox configuration does not itself grant permission to
+call a shell op `reyn.yaml`'s `permissions:` block has not declared.
 
 ## Summary
 
 | Axis | Permission | Sandbox |
 |---|---|---|
-| Level | Workflow-level | Agent-level |
-| Declared by | Workflow author | Operator |
-| Approved by | User / operator | Operator (config / CLI) |
-| Covers | Op access policy (what may this workflow do?) | Containment (how is the process isolated?) |
-| Lives in | `skill.md` frontmatter `permissions:` | `reyn.yaml` `sandbox:` / CLI |
+| Level | Project-level (per `reyn.yaml`) | Agent-level |
+| Declared by | Operator | Operator |
+| Approved by | User / operator (JIT prompt) | Operator (config / CLI) |
+| Covers | Op access policy (what may this project's agents do?) | Containment (how is the process isolated?) |
+| Lives in | `reyn.yaml` `permissions:` | `reyn.yaml` `sandbox:` / CLI |
 
 ## See also
 

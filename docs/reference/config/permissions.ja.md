@@ -2,12 +2,12 @@
 type: reference
 topic: config
 audience: [human, agent]
-applies_to: [reyn.yaml, skill.md, phases/*.md]
+applies_to: [reyn.yaml]
 ---
 
 # Permissions
 
-Reyn の Permission システムは、ファイルパス、シェル、MCP ツール、名前付きツール、Python preprocessor ステップへのアクセスをゲートします。デフォルトは保守的です。デフォルト外のものには、Skill レベルの宣言とユーザーの承認、またはプロジェクト全体の事前承認（`reyn.yaml`）が必要です。
+Reyn の Permission システムは、ファイルパス、シェル、MCP ツール、名前付きツール、Python preprocessor ステップへのアクセスをゲートします。デフォルトは保守的です。デフォルト外のものには `reyn.yaml` の `permissions:` ブロックでのプロジェクト全体の宣言が必要で、宣言された集合が cover しないアクセスには just-in-time のオペレーター承認が必要です。
 
 ## デフォルト付与（宣言不要）
 
@@ -31,60 +31,9 @@ Reyn の Permission システムは、ファイルパス、シェル、MCP ツ�
 
 解決された集合の外側は、単に拒否されるわけではありません。リクエストバスがあれば都度ユーザーに確認し（chat / 対話実行）、無ければ拒否します（ヘッドレス / eval）。**設定＝常設の集合、JIT＝アクセス単位の拡張**という二層構造です。
 
-## Skill の宣言（skill.md frontmatter の `permissions:`）
+## Permission の宣言
 
-Phase レベルの `permissions:` は削除されました。すべての Permission 宣言は `skill.md` frontmatter に記載します — skill-md.md を参照してください。Phase はスキルが宣言したものを継承します。
-
-```yaml
----
-type: skill
-name: example
-entry: main
-final_output: result
-permissions:
-  shell: true
-  mcp: [my_server]
-  tool: [web_search]
-  file:
-    read:
-      - path: ~/notes
-        scope: recursive
-    write:
-      - path: /tmp/output
-        scope: just_path
-  python:
-    - module: stats
-      function: compute
-      mode: safe
-      timeout: 30
----
-```
-
-### `shell`
-
-この Phase で `shell` Control IR op を有効にするには `true`。デフォルトはオフ。
-
-### `mcp`、`tool`
-
-Phase が呼び出せる MCP サーバー名 / 名前付きツール ID のリスト。
-
-### `file.read` / `file.write`
-
-デフォルトゾーン外のパス向け。各エントリーは以下を持ちます:
-
-- `path` — 絶対パス、または CWD からの相対パス。`~` は展開されます。
-- `scope` — `just_path`（この正確なパス）または `recursive`（このパスとその以下のすべて）。
-
-`file.write` は `write`、`edit`、`delete` op をカバーします。
-
-### `python`
-
-`python` preprocessor ステップの（モジュール、関数）ごとの宣言。`reference/dsl/preprocessor.md` を参照してください。
-
-- `module`、`function` — 対応する preprocessor ステップと一致しなければなりません。
-- `timeout` — 親が子を SIGKILL するまでのウォールクロック秒数。デフォルト `30`。
-
-Python ステップは常にサンドボックス化されます（AST allowlist + 制限された builtins）。`mode: unsafe` の宣言はロード時に拒否されます — 生の I/O は `run_op` ステップに分離するか、permission でゲートされた `reyn.api.safe.*` サーフェスを使用してください。
+**Permission を宣言できる場所は `reyn.yaml` の `permissions:` ブロックだけです** — 形は下記の[プロジェクト全体の事前承認](#プロジェクト全体の事前承認reynyaml)を参照してください。`skill.md` frontmatter に `permissions:` キーは**ありません**: このページの以前のバージョンはそのキーを文書化していましたが、それを読む parser は一度も実装されませんでした（`docs/reference/config/permissions.md` 自身の drift、#5863）。本番の読み口は `session.py` の `PermissionDecl.from_dict` 呼び出し 1 箇所だけで、そこに渡す dict は `PermissionResolver._config` — つまり `reyn.yaml` の `permissions:` ブロックです。`skill.md` から parse したものではありません。`skill.md`（や workflow/phase ファイル）の frontmatter に `permissions:` キーがあっても、それは**inert**（何も読みません）。
 
 ## Web op（Tier 1 — デフォルト許可）
 
@@ -99,7 +48,7 @@ permissions:
   web.fetch: allow   # 明示的に事前承認（ラン時プロンプトを完全スキップ）
 ```
 
-これは Tier 2-3 op（`shell`、`mcp`）とは異なります。Tier 2-3 は op を試みる前に `skill.md` で明示的な宣言が必要です。
+これは Tier 2-3 op（`shell`、`mcp`）とは異なります。Tier 2-3 は op を試みる前に `reyn.yaml` の `permissions:` ブロックで明示的な宣言が必要です。
 
 ## 承認フロー（インタラクティブ）
 
@@ -150,5 +99,4 @@ reyn permissions revoke <key>     # approved=False レコードをappend(履歴�
 
 - [reyn-yaml.md](reyn-yaml.md) — 完全なプロジェクト設定
 - [state-dir.md](state-dir.md) — `.reyn/approvals.jsonl` の場所
-- リファレンス: skill.md — Permission の宣言
 - [リファレンス: control-ir](../runtime/control-ir.md) — Permission が必要な op
