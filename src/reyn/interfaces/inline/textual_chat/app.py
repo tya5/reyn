@@ -2779,6 +2779,30 @@ class TextualChatApp(App):
                     self._hydrate_from_history()
                 except Exception:
                     logger.exception("textual chat: on_mount hydrate-from-history failed")
+        # #5886: seed the sent-queue gate ONCE at mount, and let a remote
+        # connection's own STATE_SNAPSHOT re-seed it authoritatively when
+        # the pump reaches one (:meth:`_pump_frames`).
+        #
+        # This exists for the LOCAL (in-process) transport, which never
+        # produces a ``StatusApplied`` at all — ``agui/client.py`` is its
+        # only producer — so after #5886 deleted the lazy first-frame seed
+        # there would otherwise be NOTHING to seed a local client, and a
+        # local attach to a session with items already queued would show an
+        # empty sent-queue region. Caught by asking "what does this change
+        # make false" of the local path, not by a test: the architect's
+        # ruling assumed a mount-time live read already existed here, and
+        # the lazy seed had been quietly serving that role.
+        #
+        # Harmless for remote, deliberately: at mount the read model is
+        # still empty, so this takes a baseline of 0 — the ADMITTING
+        # direction, never the dropping one — and the connect-time snapshot
+        # replaces it with the real hydration value moments later. A local
+        # read at mount IS the hydration value there (no wire, so "now" and
+        # "the snapshot instant" are the same instant).
+        try:
+            self._seed_queue_view()
+        except Exception:
+            logger.exception("textual chat: on_mount queue-view seed failed")
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
