@@ -1198,6 +1198,13 @@ same thing, correctly, in about 5 minutes. If that trade stops being worth it
 more than expected), that's a reason to revisit this section, not a reason to
 silently start running the full suite locally again without updating it.
 
+**#5850: this is now mechanically enforced, not just stated here.**
+`tests/conftest.py`'s `pytest_collection_modifyitems` hook
+(`reyn.dev.testing.full_suite_guard`) aborts any LOCAL run that collects
+more than 300 items — a number a genuinely diff-scoped run never crosses
+and a full/near-full sweep always does — unless `CI`/`GITHUB_ACTIONS` is
+set (CI's own full run) or `REYN_FULL_SUITE_OK=1` is passed explicitly.
+
 1. **pytest, scoped to your diff** — run the tests your change actually
    touches, by file path or `-k <keyword>`, not the whole suite:
    ```bash

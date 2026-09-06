@@ -647,6 +647,17 @@ def pytest_configure(config: pytest.Config) -> None:
     stall_dump.pytest_configure(config)
 
 
+def pytest_collection_modifyitems(
+    session: pytest.Session, config: pytest.Config, items: list[pytest.Item],
+) -> None:
+    # #5850: mechanically stop a local run that collected a full-or-near-
+    # full suite — see that module's own docstring for the incident, the
+    # measured ceiling, and why CI is unconditionally exempt.
+    from reyn.dev.testing import full_suite_guard
+
+    full_suite_guard.pytest_collection_modifyitems(session, config, items)
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     from reyn.dev.testing import memory_ceiling, network_gate
 
