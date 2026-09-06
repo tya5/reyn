@@ -31,7 +31,10 @@ jobs:
       # real default-deny filter is irrevocable for the process that does
       # it), so this dedicated job is the only place this witness can run.
       - name: Install sandbox-linux extra
-        run: pip install -e ".[dev,sandbox-linux]"
+        # `-c ci-constraints.txt` (#5831): see sandbox-landlock-deny-gate.yml's
+        # own comment on the same step for why, and why an extra this file
+        # doesn't pin is still safe (a constraints file only narrows, never adds).
+        run: pip install -e ".[dev,sandbox-linux]" -c ci-constraints.txt
 
       # The gate. No skip path: every precondition (Linux, x86_64, Landlock
       # present, seccomp present, a glibc ld-linux interpreter on disk) is a

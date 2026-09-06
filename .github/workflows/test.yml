@@ -66,7 +66,16 @@ jobs:
         #     tests/builtin/test_fp0063_p2_builtin_mcp_rag.py. Load-bearing: that file
         #     `pytest.importorskip`s all three, so WITHOUT this extra the whole
         #     module silently SKIPS and CI goes green having verified nothing.
-        run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]"
+        #
+        # `-c ci-constraints.txt` (#5831): pins every resolved dependency to a
+        # recorded exact version, so this install is byte-identical across
+        # CI runs regardless of what PyPI's "latest" is at run time — see
+        # that file's own header for why (2026-09-06: litellm 1.99.0 ->
+        # 1.100.0 turned main red with zero reyn commits changing). This
+        # does NOT change pyproject.toml's own `>=` floors — a constraints
+        # file only narrows what pip resolves FROM that floor, it adds
+        # nothing pyproject didn't already declare.
+        run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]" -c ci-constraints.txt
 
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a
@@ -196,7 +205,10 @@ jobs:
           cache: pip
 
       - name: Install dev dependencies
-        run: pip install -e ".[dev]"
+        # `-c ci-constraints.txt` (#5831): see the "Install dependencies"
+        # step in the `test` job above for why — same reproducibility pin,
+        # applied to every job that installs project dependencies.
+        run: pip install -e ".[dev]" -c ci-constraints.txt
 
       # `timeout 4m` (#3670): see the "Run tests" step above for why —
       # converts a would-be `cancelled` job-timeout into a legible `failure`.
@@ -223,7 +235,10 @@ jobs:
           cache: pip
 
       - name: Install dev dependencies
-        run: pip install -e ".[dev]"
+        # `-c ci-constraints.txt` (#5831): see the "Install dependencies"
+        # step in the `test` job above for why — same reproducibility pin,
+        # applied to every job that installs project dependencies.
+        run: pip install -e ".[dev]" -c ci-constraints.txt
 
       # #3726: mypy is configured (pyproject.toml [tool.mypy]) but was never
       # run in CI — a declared check with no execution. scripts/mypy_ratchet.py
@@ -259,7 +274,9 @@ jobs:
           cache: pip
 
       - name: Install docs dependencies
-        run: pip install -e ".[docs]"
+        # `-c ci-constraints.txt` (#5831): see the "Install dependencies"
+        # step in the `test` job above for why.
+        run: pip install -e ".[docs]" -c ci-constraints.txt
 
       # Mirrors the "Build documentation" step in pages.yml so broken links
       # and missing nav targets fail at PR time, not post-merge on the Pages
