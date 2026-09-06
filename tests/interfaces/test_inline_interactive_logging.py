@@ -38,7 +38,7 @@ def test_interactive_logging_redirects_root_logger_to_file(tmp_path) -> None:
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
@@ -96,7 +96,7 @@ def test_interactive_logging_routes_warnings_warn_to_the_file_not_stderr(
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
@@ -134,7 +134,7 @@ def test_small_max_bytes_rotates_and_bounds_the_live_file(tmp_path) -> None:
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         _apply_logs_config(LogsConfig(max_bytes=4096, backup_count=2))
@@ -166,7 +166,7 @@ def test_backup_count_bounds_total_disk_usage(tmp_path) -> None:
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         _apply_logs_config(LogsConfig(max_bytes=2048, backup_count=2))
@@ -250,7 +250,7 @@ def test_existing_file_handler_readers_still_find_the_rotating_handler(
 
     root = logging.getLogger()
     saved_handlers, saved_level = root.handlers[:], root.level
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     try:
         _setup_interactive_logging(tmp_path)
         log_file = tmp_path / ".reyn" / "logs" / "reyn.log"

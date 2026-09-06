@@ -71,7 +71,7 @@ def installed_file_handler(tmp_path: Path):
     log_path = log_dir / "reyn.log"
     handler = logging.FileHandler(str(log_path))
     logging.getLogger().addHandler(handler)
-    saved_registered_path = stall_trace._registered_file_handler_path
+    saved_registered_path = stall_trace.find_file_handler_path()
     stall_trace.register_file_handler_path(str(log_path))
     try:
         yield log_path
@@ -251,6 +251,87 @@ async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
             "the armed fd does not point at the installed FileHandler's "
             "own baseFilename"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp_path: Path) -> None:
+    """Tier 2: #5873 co-vet finding (architect 🔴-1) — a ``RotatingFileHandler``
+    rollover renames the path this worker's self-opened fd points at
+    (``reyn.log`` -> ``reyn.log.1``, then ``.2``, ...), eventually UNLINKING
+    it past ``backup_count`` — PERMANENTLY, not "one rollover behind" as an
+    earlier version of ``find_file_handler_path``'s own docstring claimed
+    (true only before this module could ever rotate, #5877). Left
+    unhandled, every dump after the first rollover this worker's fd
+    survives writes to an ever-more-stale, eventually deleted generation
+    nobody reads.
+
+    Each tick now compares ``os.stat(path).st_ino`` (the file currently AT
+    that path) against ``os.fstat(fd).st_ino`` (what this worker's fd still
+    points at) and, on a mismatch, disarms + closes + reopens against the
+    CURRENT file before re-arming — deterministic (cut on file identity,
+    not a clock).
+
+    Drives the rollover directly (``handler.doRollover()``, real production
+    API, not a simulated size threshold), then waits UNBOUNDED for the
+    worker's own next ``arm()`` call to carry a fd whose inode matches the
+    POST-rollover file (testing policy: wait on the condition, never a
+    fixed tick count — CI's own ``--timeout=120`` is the ceiling). strip
+    (recorded during this fix): removing the inode-comparison block in
+    ``_watch_loop_responsiveness`` leaves every later ``arm()`` call's fd
+    permanently pointing at the pre-rollover (renamed) generation, so this
+    assertion never becomes true and the test times out."""
+    from logging.handlers import RotatingFileHandler
+
+    monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+
+    log_dir = tmp_path / ".reyn" / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "reyn.log"
+    # backupCount >= 1 is load-bearing for this test's own premise:
+    # RotatingFileHandler.doRollover() with backupCount == 0 just closes
+    # and reopens the SAME path with no rename, which keeps the SAME
+    # inode — no rotation for this test to detect at all.
+    handler = RotatingFileHandler(str(log_path), maxBytes=1, backupCount=2)
+    logging.getLogger().addHandler(handler)
+    saved_registered_path = stall_trace.find_file_handler_path()
+    stall_trace.register_file_handler_path(str(log_path))
+
+    calls: "list[tuple[float, object, bool | None]]" = []
+    monkeypatch.setattr(
+        stall_trace, "arm",
+        lambda seconds, **kw: calls.append((seconds, kw.get("file"), kw.get("repeat"))),
+    )
+    monkeypatch.setattr(stall_trace, "disarm", lambda: None)
+
+    try:
+        app = TextualChatApp(transport=QueueTransport())
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            assert calls, (
+                "the tripwire's own worker never armed the dead-man's "
+                "switch before this test could even drive a rotation"
+            )
+            pre_ino = os.fstat(calls[-1][1]).st_ino  # type: ignore[arg-type]
+            assert pre_ino == log_path.stat().st_ino, (
+                "setup: the worker's own arm() fd must start out pointing "
+                "at the installed handler's own path"
+            )
+
+            handler.doRollover()
+            post_ino = log_path.stat().st_ino
+            assert post_ino != pre_ino, (
+                "setup: doRollover() must produce a NEW inode at the same "
+                "path (backupCount=2 makes this a rename, not a truncate) "
+                "for this test's own premise to hold"
+            )
+
+            while os.fstat(calls[-1][1]).st_ino != post_ino:  # type: ignore[arg-type]
+                await pilot.pause()
+    finally:
+        logging.getLogger().removeHandler(handler)
+        handler.close()
+        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 @pytest.mark.asyncio

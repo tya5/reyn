@@ -359,32 +359,44 @@ def _setup_interactive_logging(project_root: Path) -> None:
     own warnings redirected.
 
     #5873 (owner-hit — "放置してるだけで reyn.log 肥大化してシステム止まら
-    ないようにしてね"): the handler is now a ``RotatingFileHandler``
-    (``_DEFAULT_LOG_MAX_BYTES``/``_DEFAULT_LOG_BACKUP_COUNT``), not a bare
-    unrotated ``FileHandler`` — ``.reyn/logs/`` is `audit` tier with no
+    ないようにしてね"): the handler is now a ``RotatingFileHandler``, not a
+    bare unrotated ``FileHandler`` — ``.reyn/logs/`` is `audit` tier with no
     ceiling otherwise (unlike `events/`, which #4479 already purges).
-    Installed with the hardcoded DEFAULTS here, not the real
-    ``reyn.yaml logs:`` config: this function runs BEFORE config load (see
-    this module's own call sites' comments — config-time WARNING records
-    must land in the file too), so the real config is not resolved yet.
+    Installed with ``LogsConfig()``'s own DATACLASS DEFAULTS here, not the
+    real ``reyn.yaml logs:`` config: this function runs BEFORE config load
+    (see this module's own call sites' comments — config-time WARNING
+    records must land in the file too), so the real, operator-configured
+    ``LogsConfig`` is not resolved yet — only the SHIPPED default is
+    available, and ``LogsConfig()`` (no args) IS that shipped default,
+    the one literal source #5851/FP-0069 §8 already require ("a default
+    stated in one place that a test reads") — architect co-vet finding,
+    #5873: an earlier version of this function duplicated the two numbers
+    as separate module-level constants, risking silent drift between them
+    and ``LogsConfig``'s own field defaults. ``from reyn.config.chat import
+    LogsConfig`` costs nothing extra here (measured): this module's own
+    top-level ``from ..invocation_context import InvocationContext``
+    already imports the whole ``reyn.config`` package, so it is fully
+    resident in ``sys.modules`` well before this function ever runs.
     ``_apply_logs_config`` (below) refines the already-installed handler's
-    ``maxBytes``/``backupCount`` in place once config IS available — the
-    handler's own class (a ``FileHandler`` subclass) never changes, so
-    existing readers that structurally detect it (``isinstance(handler,
-    logging.FileHandler)`` — ``litellm_bootstrap.py``, ``stall_trace.py``)
-    are unaffected either way.
+    ``maxBytes``/``backupCount`` in place once the REAL config IS
+    available — the handler's own class (a ``FileHandler`` subclass) never
+    changes, so existing readers that structurally detect it
+    (``isinstance(handler, logging.FileHandler)`` — ``litellm_bootstrap.py``,
+    ``stall_trace.py``) are unaffected either way.
     """
     from logging.handlers import RotatingFileHandler
 
+    from reyn.config.chat import LogsConfig
     from reyn.runtime import stall_trace
 
+    defaults = LogsConfig()
     log_dir = project_root / ".reyn" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "reyn.log"
     handler = RotatingFileHandler(
         str(log_path),
-        maxBytes=_DEFAULT_LOG_MAX_BYTES,
-        backupCount=_DEFAULT_LOG_BACKUP_COUNT,
+        maxBytes=defaults.max_bytes,
+        backupCount=defaults.backup_count,
     )
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -401,15 +413,6 @@ def _setup_interactive_logging(project_root: Path) -> None:
     # matches a hardcoded shape — see register_file_handler_path's own
     # docstring for why.
     stall_trace.register_file_handler_path(str(log_path))
-
-
-# #5873: mirrors reyn.config.chat.LogsConfig's own defaults — duplicated as
-# plain constants (not an import of LogsConfig itself) because
-# _setup_interactive_logging runs BEFORE reyn.yaml is loaded (see its own
-# docstring): there is no LogsConfig instance to read from yet at this
-# point, only a safe hardcoded floor _apply_logs_config refines later.
-_DEFAULT_LOG_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB
-_DEFAULT_LOG_BACKUP_COUNT = 4
 
 
 def _apply_logs_config(logs_cfg: "LogsConfig") -> None:

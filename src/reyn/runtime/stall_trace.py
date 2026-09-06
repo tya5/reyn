@@ -170,10 +170,22 @@ def find_file_handler_path() -> "str | None":
     (``os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)``) and hold
     it for its own entire armed lifetime — a self-opened fd is immune to
     a HANDLER-side rotation reopen (it still points at the original
-    inode after the handler's own path is renamed out from under it;
-    the next rollover's writes simply land in the renamed file instead —
-    harmless, the dump is still readable, just possibly one rollover
-    behind) and is never touched by anything else's open/close churn.
+    inode after the handler's own path is renamed out from under it) and
+    is never touched by anything else's open/close churn.
+
+    #5873 follow-up (architect co-vet finding, corrects an earlier
+    version of this paragraph): the self-opened fd staying valid across
+    ONE rollover does NOT mean drift is harmless to leave unhandled — a
+    caller that stays armed and re-arms across MANY ticks (this module's
+    #5870 stage 1 dead-man's-switch caller, the one long-lived case this
+    paragraph is actually about) will see its fd's file renamed `.1`,
+    then `.2`, and so on every further rollover, until it is unlinked
+    past `backup_count` — PERMANENTLY, not "one rollover behind" as this
+    paragraph previously claimed (true only before this module could
+    ever rotate). Such a caller must detect the rename (compare
+    ``os.stat(path).st_ino`` against ``os.fstat(fd).st_ino`` each re-arm)
+    and reopen against the CURRENT file before re-arming — see
+    ``TextualChatApp._watch_loop_responsiveness`` for the implementation.
 
     #5873 follow-up: this used to scan ``logging.getLogger().handlers``
     for a ``FileHandler`` whose path matched the ``.reyn/logs/reyn.log``
