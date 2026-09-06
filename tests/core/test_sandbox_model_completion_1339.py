@@ -97,17 +97,25 @@ def test_tool_schema_is_argv_and_timeout_only():
 
     #4733: `collect` (enum `["async"]`) selects DISPATCH MODE (sync vs.
     background asyncio.Task on the caller's own session) — orthogonal to
-    every axis this test's `removed` loop guards (it sets no network/fs/
-    subprocess policy field, and the async path resolves the SAME
-    operator-or-default `ctx.default_sandbox_policy` the sync path
-    already does, unchanged). It belongs in the EXPECTED set for the same
-    reason `timeout` does."""
+    every axis this test's `removed` loop guards (it sets no fs/subprocess
+    policy field, and the async path resolves the SAME operator-or-default
+    `ctx.default_sandbox_policy` the sync path already does, unchanged).
+    It belongs in the EXPECTED set for the same reason `timeout` does.
+
+    #5825① (2026-09-06, architect ruling): `network` came back too — the
+    SAME reversal shape as `timeout`, not a reopening of the gap #3907
+    closed for the other 4: a REQUEST, not a grant, with a real reader
+    this time (`op_runtime/sandboxed_exec.py`'s own seam calls
+    `PermissionResolver.require_network`), read ONLY when the resolved
+    policy already has network off. It moves from the `removed` loop
+    below into the EXPECTED set; the other 4 (fs/subprocess axes) stay
+    removed."""
     from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
     props = set(_EXEC_PARAMETERS["properties"])
-    assert props == {"argv", "timeout", "collect"}
+    assert props == {"argv", "timeout", "collect", "network"}
     for removed in (
-        "network", "write_paths", "allow_subprocess", "deny_subprocess",
+        "write_paths", "allow_subprocess", "deny_subprocess",
         "env_deny_names", "read_deny_paths", "write_deny_paths",
     ):
         assert removed not in props

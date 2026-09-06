@@ -1271,6 +1271,7 @@ async def run_exec_async(
     caller_sid: str,
     argv: "list[str]",
     timeout_seconds: "int | None" = None,
+    network: bool = False,
 ) -> dict:
     """#4733 — ``exec(collect="async")``: run *argv* under the CALLING
     session's own sandbox policy as a plain ``asyncio.Task`` on that SAME
@@ -1346,7 +1347,10 @@ async def run_exec_async(
     from reyn.core.op_runtime.sandboxed_exec import run_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
 
-    op = SandboxedExecIROp(kind="sandboxed_exec", argv=list(argv), timeout_seconds=timeout_seconds)
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec", argv=list(argv), timeout_seconds=timeout_seconds,
+        network=network,
+    )
     base_ctx = caller_session.router_host.make_router_op_context()
     # #4733: a cancel_event DEDICATED to this one exec — NEVER the shared
     # per-turn one make_router_op_context() hands back (see this

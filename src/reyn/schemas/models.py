@@ -324,11 +324,31 @@ class SandboxedExecIROp(BaseModel):
     actual configured max), never silently clamped — a silent clamp would
     recreate #3962's advertised-but-ignored shape in a new form (the LLM
     would believe it got what it asked for).
+
+    #5825 ①: `network` is ONE of the 5 fields #3907 removed above, BACK —
+    architect ruling (issue #5825, 2026-09-06), NOT a repeat of that gap.
+    #3907's own point was "declared, never reached": the field advertised
+    a capability the op-fields fallback branch that read it was already
+    dead. This field is different in the one way that matters — it has a
+    REAL reader this time (`op_runtime/sandboxed_exec.py`'s own seam):
+    `True` is a REQUEST, not a grant (same "declaration is intent, the
+    prompt is the grant" framing `require_http_get`'s own docstring
+    states) — read ONLY when the resolved policy already has network
+    OFF (`policy.network is False`), at which point it triggers
+    `PermissionResolver.require_network` (config pre-approval, a
+    persisted ledger grant, or an interactive ask) before the policy for
+    THIS call is replaced with `network=True` and the process spawns.
+    `False` (the default) changes nothing — the sandbox's own resolved
+    policy governs, exactly as before this field existed. A policy that
+    already has network ON (compat / `unbounded`) never calls
+    `require_network` at all, regardless of this field's value — the op
+    can REQUEST network, never force it past a narrower operator policy.
     """
     kind: Literal["sandboxed_exec"]
     argv: list[str]                                      # command + args; argv[0] is the executable
     stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
     timeout_seconds: float | None = None                 # #3903①: optional LLM override, checked against SandboxPolicy.max_timeout_seconds
+    network: bool = False                                 # #5825①: REQUEST (not grant) that this call run with network enabled; see class docstring
 
 
 

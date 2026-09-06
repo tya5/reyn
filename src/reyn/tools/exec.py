@@ -42,20 +42,24 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 _EXEC_DESCRIPTION = _execution_descriptions.exec_.text
 
 
-# #1339 / sandbox-model completion: the tool exposes argv + timeout only. The
-# sandbox policy (network / write_paths / deny_subprocess / env_deny_names —
-# vocabulary renamed to deny-lists, #3901 PR-B ④) is operator-or-default,
-# resolved onto the OpContext — the LLM cannot set it via the tool. (The
-# SandboxedExecIROp type keeps its OWN, older allow_-prefixed fields — #3901
-# PR-B deliberately did not rename those; op and policy are different
-# vocabularies now, not mirrors of one another — only this tool surface is
-# trimmed.) #3962 removed `timeout_seconds` here too (same advertised-but-
-# ignored gap #3907 closed for the 5 policy fields, just missed since a
-# timeout isn't a permission axis); #3903① (2026-08-11) brought `timeout`
-# back deliberately, with a real reader this time (op_runtime/
+# #1339 / sandbox-model completion: the tool exposes argv + timeout +
+# network only. The sandbox policy (write_paths / deny_subprocess /
+# env_deny_names — vocabulary renamed to deny-lists, #3901 PR-B ④) is
+# operator-or-default, resolved onto the OpContext — the LLM cannot set
+# those axes via the tool. (The SandboxedExecIROp type keeps its OWN,
+# older allow_-prefixed fields — #3901 PR-B deliberately did not rename
+# those; op and policy are different vocabularies now, not mirrors of one
+# another — only this tool surface is trimmed.) #3962 removed
+# `timeout_seconds` here too (same advertised-but-ignored gap #3907
+# closed for the 5 policy fields, just missed since a timeout isn't a
+# permission axis); #3903① (2026-08-11) brought `timeout` back
+# deliberately, with a real reader this time (op_runtime/
 # sandboxed_exec.py checks it against the operator's own configured
 # max_timeout_seconds and applies it — see that module for why this one
-# doesn't repeat #3962's mistake).
+# doesn't repeat #3962's mistake). #5825① (2026-09-06) brought `network`
+# back the same way — a REQUEST, not a grant, gated by a real reader
+# (op_runtime/sandboxed_exec.py's own seam calls require_network) rather
+# than #3907's advertised-but-ignored shape.
 _EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -75,6 +79,17 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             # timeout.
             "type": "integer",
             "description": _execution_descriptions.PARAMS["exec"]["timeout"].text,
+        },
+        # #5825①: a REQUEST, not a grant — "declaration is intent, the
+        # prompt is the grant" (require_http_get's own framing, applied
+        # here). Omitted/false changes nothing (byte-identical to before
+        # this parameter existed). true against a policy that already has
+        # network closed triggers require_network (config pre-approval, a
+        # persisted grant, or an interactive ask) before the process
+        # spawns — see op_runtime/sandboxed_exec.py's own seam.
+        "network": {
+            "type": "boolean",
+            "description": _execution_descriptions.PARAMS["exec"]["network"].text,
         },
         # #4733: optional — omitted (the default) keeps exec fully
         # synchronous, byte-identical to before this parameter existed.
@@ -250,6 +265,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             )
         return await rs.sandboxed_exec_async_fn(
             argv=args["argv"], timeout_seconds=args.get("timeout"),
+            network=bool(args.get("network", False)),
         )
 
     from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
@@ -259,14 +275,16 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # timeout, #3903①). The op's other policy fields keep their defaults
     # here — the effective sandbox policy is operator-or-default, resolved
     # onto the OpContext (ctx.default_sandbox_policy), which the op_runtime
-    # handler applies over the op fields. The LLM cannot set network / fs
-    # scope via this tool — timeout is the one axis it CAN extend, bounded
-    # by the operator's own configured ceiling (see op_runtime/
-    # sandboxed_exec.py for the enforcement).
+    # handler applies over the op fields. The LLM cannot set fs scope via
+    # this tool — timeout (#3903①) and network (#5825①) are the two axes
+    # it CAN request, both bounded by a real gate (see op_runtime/
+    # sandboxed_exec.py for timeout's ceiling check and its own #5825 ①
+    # seam for network's ask-or-deny).
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=args["argv"],
         timeout_seconds=args.get("timeout"),
+        network=bool(args.get("network", False)),
     )
     legacy_ctx = await op_context_from_tool_context(ctx)
     return await handle_sandboxed_exec(op=op, ctx=legacy_ctx)

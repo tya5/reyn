@@ -133,11 +133,18 @@ def test_op_no_longer_accepts_the_deleted_policy_fields():
     `SandboxPolicy.max_timeout_seconds` and applies it), so it is no longer
     advertised-but-ignored. `test_sandboxed_exec_timeout_seconds_is_actually_applied`
     below is the positive witness that distinguishes "back and read" from
-    "back and ignored again"."""
+    "back and ignored again".
+
+    #5825① (2026-09-06, architect ruling): `network` came back the same
+    way — a REQUEST, not a grant, with a real reader
+    (`PermissionResolver.require_network`, called from `op_runtime/
+    sandboxed_exec.py`'s own seam ONLY when the resolved policy already
+    has network off). Moves from the `removed_field` loop below into the
+    EXPECTED set; the other 4 stay removed."""
     fields = set(SandboxedExecIROp.model_fields)
-    assert fields == {"kind", "argv", "stdin", "timeout_seconds"}
+    assert fields == {"kind", "argv", "stdin", "timeout_seconds", "network"}
     for removed_field in (
-        "network", "read_paths", "write_paths", "allow_subprocess",
+        "read_paths", "write_paths", "allow_subprocess",
         "env_passthrough",
     ):
         assert removed_field not in fields

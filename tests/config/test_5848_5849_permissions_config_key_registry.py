@@ -72,6 +72,18 @@ def test_file_write_still_works_unwarned_regression_control():
     assert hits == {}
 
 
+def test_network_is_recognized_after_5825_real_reader():
+    """Tier 2: #5825④ — `permissions.network:` (`allow`/`deny`) is now
+    recognized, UNLIKE `permissions.exec:` above: this key has a REAL
+    reader as of #5825① (`PermissionResolver.require_network`, called
+    from `op_runtime/sandboxed_exec.py`'s own seam) — not a declared-but-
+    unreached key like `exec`/`tool`/`python.safe` were."""
+    hits = config_schema.unknown_config_keys({"permissions": {"network": "allow"}})
+    assert hits == {}
+    hits2 = config_schema.unknown_config_keys({"permissions": {"network": "deny"}})
+    assert hits2 == {}
+
+
 def test_http_get_composite_host_key_is_recognized_via_prefix():
     """Tier 2: accept — the composite flat-string pre-approval key shape
     (`f"http.get.{host}"`, `_is_config_approved`'s own literal construction)

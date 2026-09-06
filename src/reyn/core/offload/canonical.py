@@ -501,14 +501,27 @@ def _network_denial_note() -> str:
     different denied syscall: an EPERM on ``connect()`` (or the same,
     buried inside an asyncio ``TaskGroup``'s own ``ExceptionGroup``) reads
     as a broken command or a client-library bug; it is actually the
-    sandbox denying network egress because this op's own ``network`` field
-    is unset/false."""
+    sandbox denying network egress because this exec ran CLOSED — never
+    requested network (#5825 ①: ``op.network`` unset/false, so
+    ``require_network`` never even ran; this is the "hit the wall without
+    asking" case, not an asked-and-refused one, which raises a
+    ``PermissionError`` before the process ever spawns instead of
+    reaching this classifier at all).
+
+    #5825 ①: unlike the pre-#5825 wording this replaces ("Fix: set
+    network: true for this op" — aspirational at the time, since the op
+    had no such field to set), ``network: true`` is now a REAL,
+    LLM-settable request on the ``exec`` tool with a real gate behind it
+    (``PermissionResolver.require_network``) — this note's fix line names
+    the actual next action: retry with the request set, not a retry of
+    the identical call (which fails identically)."""
     return (
         "[sandbox] Blocked at the syscall layer: the sandbox denies outbound "
-        "network access (connect()) because this op's own network policy is "
-        "unset/false. This is an environment / sandbox-configuration problem — "
-        "NOT a missing tool and NOT a lack of tool-calling ability; retrying the "
-        "same command will fail identically. Fix: set network: true for this op."
+        "network access (connect()) because this exec did not request it. "
+        "This is an environment / sandbox-configuration problem — NOT a "
+        "missing tool and NOT a lack of tool-calling ability; retrying the "
+        "same command will fail identically. Fix: network denied under "
+        "`bounded`; request it with `network: true`."
     )
 
 

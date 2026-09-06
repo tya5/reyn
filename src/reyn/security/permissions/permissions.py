@@ -553,6 +553,13 @@ KEY_PYTHON = "python"
 #: the op gate (`require_web_fetch`/`require_media_load`).
 KEY_WEB_FETCH = "web.fetch"
 KEY_MEDIA_OVERSIZE = "media.oversize"
+#: #5825 ④: pre-approval-only key for `sandboxed_exec`'s network axis
+#: (same shape as `KEY_WEB_FETCH` above — `_is_config_approved`/
+#: `_is_config_denied` literal args, no `from_dict`/`PermissionDecl`
+#: counterpart). UNLIKE `KEY_PYTHON`/`PYTHON_MODE_PREFIX` above, this key
+#: has a REAL reader as of this PR: `require_network` (below), called
+#: from `op_runtime/sandboxed_exec.py`'s own seam.
+KEY_NETWORK = "network"
 #: The composite flat-string pre-approval key prefix (see the docstring
 #: above for why the fallback split cannot resolve a nested
 #: ``http.get: {host: ...}`` shape, so this flat form is the one that
@@ -578,7 +585,7 @@ PYTHON_MODE_PREFIX = "python."
 PERMISSIONS_EXACT_CONFIG_KEYS: frozenset[str] = frozenset({
     KEY_MCP, KEY_FILE_READ, KEY_FILE_WRITE, KEY_HTTP_GET, KEY_SECRET_WRITE,
     KEY_ENV_EXPAND, KEY_SUBPROCESS, KEY_ENV, KEY_PYTHON,
-    KEY_WEB_FETCH, KEY_MEDIA_OVERSIZE,
+    KEY_WEB_FETCH, KEY_MEDIA_OVERSIZE, KEY_NETWORK,
 }) | frozenset(
     # Legacy bool axes (#571 collapse arc Phase 5) — recognized here so
     # their OWN DeprecationWarning fires (from_dict's own loop over this
@@ -2001,6 +2008,111 @@ class PermissionResolver:
             raise PermissionError(
                 f"HTTP access to host {host!r} denied (legacy compat path)."
             )
+
+    async def require_network(
+        self,
+        decl: PermissionDecl,
+        bus: "RequestBus | None" = None,
+        actor: str = "",
+        *,
+        argv: "list[str] | None" = None,
+        agent_name: str = "",
+    ) -> None:
+        """Gate a ``sandboxed_exec`` call's REQUEST to run with network
+        enabled (#5825 ①, architect ruling 2026-09-06).
+
+        The host-less sibling of :meth:`require_http_get`: a sandbox
+        backend cannot select a host for a subprocess (Seatbelt is on/off
+        for outbound, Linux seccomp carries the deny in its syscall
+        allowlist — Landlock has no network API at all — Docker is
+        ``--network none``), so the honest granularity here is a single
+        bool per actor, not a per-host set. ``decl`` is accepted for
+        call-site parity with every other ``require_*`` method (all take
+        the actor's ``PermissionDecl`` first) but is not itself consulted
+        — unlike ``http.get``, there is no per-workflow declared list for
+        this axis; ``permissions.network`` is a config-tier pre-approval
+        key only (see :data:`KEY_NETWORK`), same shape as
+        :data:`KEY_WEB_FETCH`.
+
+        Called ONLY when the op explicitly REQUESTS network
+        (``op.network is True``) against a resolved policy that has it
+        OFF (``policy.network is False``) — see
+        ``op_runtime/sandboxed_exec.py``'s own seam docstring. A policy
+        that already has network on (compat / ``unbounded``) never
+        reaches this method at all, regardless of the op's request — an
+        op can ask for network, never force it past a narrower operator
+        policy.
+
+        Order (owner ruling 2026-09-06, FP-0069 §6.1/§10 — "declared →
+        silent, undeclared → ask", corrected from an earlier "undeclared
+        → deny" draft):
+
+        1. **Floor**: ``permissions.network: deny`` (config) → denies,
+           without asking — the operator's floor always wins.
+        2. **Declared**: ``permissions.network: allow`` (config
+           pre-approval) OR a persisted ledger grant under
+           ``<actor>/sandbox.network/*`` (a prior ALWAYS answer, #5052
+           agent-scope convention) → passes silently, no ask.
+        3. **Ask**: an interactive ``bus`` is available → prompts once,
+           persists an ALWAYS/NEVER choice to the SAME ledger key.
+        4. **No bus** (non-interactive / headless) → denies — the same
+           "bus=None is not a pause, it's a deny" posture
+           ``require_http_get``'s own legacy-compat path already applies.
+
+        Steps 2-4 mostly reuse :meth:`_approve`'s own layering (session /
+        saved-with-#5052-scope / not-interactive / prompt) — but
+        ``_approve``'s OWN config-approved check reads its ``key`` arg
+        literally, and this axis's ledger key
+        (``<actor>/sandbox.network/*``) does not match its config key
+        (``network``, flat — see :data:`KEY_NETWORK`), so the config
+        check is done explicitly here first, same as
+        ``require_http_get``'s own deny-then-config-approved shape. When
+        no bus is available (or the resolver is non-interactive), a
+        NEW decision cannot be collected, but a PRIOR persisted grant
+        must still apply silently (a headless run repeating a
+        previously-ALWAYS-approved command should not re-deny) — checked
+        inline rather than via ``_approve`` (whose ``bus`` parameter is
+        not optional; passing ``None`` through it when a prompt is
+        genuinely reachable would crash on ``bus.request(...)``, the same
+        hazard :meth:`require_plugin_git_run_code_trust`'s own combined
+        ``bus is None or not self._interactive`` guard exists to avoid).
+        """
+        if self._is_config_denied(KEY_NETWORK):
+            raise PermissionError(
+                f"network access for this exec denied by config "
+                f"({KEY_NETWORK}: deny)."
+            )
+        if self._is_config_approved(KEY_NETWORK):
+            return
+        key = f"{actor}/sandbox.network/*"
+        if bus is None or not self._interactive:
+            if self._session.get(key):
+                return
+            if (
+                key in self._saved and self._saved[key]
+                and self._scope_covers_agent(key, agent_name)
+            ):
+                return
+            raise PermissionError(
+                "network access for this exec requires an interactive "
+                "prompt but no bus is available. Pre-approve via "
+                "reyn.yaml (`permissions.network: allow`), or run "
+                "interactively so the prompt can collect approvals."
+            )
+        import shlex
+        command = shlex.join(argv) if argv else ""
+        approved = await self._approve(
+            key,
+            f"exec requests network: {command!r}" if command else "exec requests network",
+            bus,
+            user_prompt=(
+                f"Allow network access for: {command}?" if command
+                else "Allow network access for this command?"
+            ),
+            agent_name=agent_name,
+        )
+        if not approved:
+            raise PermissionError("network access denied for this exec.")
 
     async def require_plugin_git_run_code_trust(
         self,

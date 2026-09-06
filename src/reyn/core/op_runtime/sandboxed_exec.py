@@ -9,7 +9,8 @@ NoopBackend on unsupported platforms; argv0-resolution and the pre-exec
 threat scan below stay handler-local (not shared — see the launcher
 module's own docstring for why).
 
-Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
+Emits `sandboxed_exec_started` / `sandboxed_exec_completed` / (on a
+Ctrl-C `cancel_event`, #1470) `sandboxed_exec_cancelled` events (P6).
 
 `run_sandboxed_exec` (#4733 §3-a) is the real body, factored out of the
 op-dispatch entry point `handle` so `session_api.run_exec_async` (the
@@ -213,6 +214,32 @@ async def run_sandboxed_exec(
         else None
     )
     effective_argv = [argv0_resolved, *op.argv[1:]] if op.argv else list(op.argv)
+
+    # #5825 ①: the op's own REQUEST to run with network enabled (architect
+    # ruling, issue #5825, 2026-09-06 — "ask is where a *request* meets a
+    # *closed* boundary"). Called ONLY when BOTH are true: the op explicitly
+    # asks (op.network is True) AND the resolved policy has it OFF
+    # (policy.network is False). A policy that already has network on
+    # (compat / unbounded) is untouched — require_network is not called at
+    # all, byte-identical to before this field existed (see
+    # SandboxedExecIROp.network's own docstring: "the op can REQUEST
+    # network, never FORCE it past a narrower operator policy"). On grant,
+    # replace THIS call's policy so every downstream read (backend.run, the
+    # started/completed events below) sees what was actually enforced —
+    # never the op's own unvalidated request field (#1339's own rule,
+    # applied to this new axis the same way it already applies to every
+    # other one).
+    if op.network and not policy.network:
+        if ctx.permission_resolver is None:
+            raise PermissionError(
+                "network access for this exec was requested (network: "
+                "true) but no permission resolver is available to gate it."
+            )
+        await ctx.permission_resolver.require_network(
+            ctx.permission_decl, ctx.intervention_bus, ctx.actor,
+            argv=op.argv, agent_name=ctx.agent_name or ctx.actor,
+        )
+        policy = dataclasses.replace(policy, network=True)
 
     # #1339: emit the ACTUAL enforced policy values (from the resolved policy),
     # not the op's request fields — the operator-or-default policy wins over op
