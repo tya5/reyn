@@ -217,6 +217,24 @@ without checking whether it actually answers what the test needs (#4866:
 exactly this shape once "ratified the encapsulation break instead of
 closing it").
 
+**Third disclosed gap (#5856): a function with no type evidence for
+`obj` is invisible to this rule, entirely — silently, not as a
+warning.** `obj` needs a resolvable type via one of the paths above (a
+parameter annotation, a same-file factory/fixture call with an
+annotated return, a direct constructor call, or a public-property
+chain); a local built from an UNANNOTATED same-file helper, or from a
+call to an imported function (its own annotation lives in a different
+file this rule never opens), never enters `local_types` for that
+function — every private read inside it, however direct, is skipped.
+Adding a public `@property` alternative for a private attribute does
+**not** retroactively protect every existing test reading that
+attribute: only the ones whose enclosing function already carries type
+evidence for `obj` light up. A newly-added public alternative is worth
+auditing against its existing private-reading call sites for exactly
+this reason — a green `--strict` run after adding one can mean either
+"no more direct reads" or "the reads are still there, just outside this
+rule's type-evidence reach."
+
 ## Flags
 
 | Flag | Description |
