@@ -5,10 +5,14 @@ cost). Every reyn call site that touches litellm does so lazily, inside a
 function — see ``reyn/__init__.py`` for the full inventory + the #2928
 ``LITELLM_LOCAL_*`` env-var defaults that must be set before ANY of them run.
 This module adds the SECOND piece: routing litellm's own console log output
-(StreamHandlers it attaches to its "LiteLLM" / "LiteLLM Router" / "LiteLLM
-Proxy" loggers, unconditionally, at import time) to reyn's log file instead of
+(handlers it attaches to its "LiteLLM" / "LiteLLM Router" / "LiteLLM Proxy"
+loggers, unconditionally, at import time) to reyn's log file instead of
 stderr, so an interactive CUI session's terminal is never corrupted by a
-litellm banner or warning.
+litellm banner or warning. #5831: this redirects the OS-facing
+``sys.stdout``/``sys.stderr`` streams themselves for the duration of the
+import, rather than patching handler construction — see
+``_litellm_import_logs_to_file``'s own docstring for why (litellm 1.100.0
+started rebinding a handler's stream at *emit* time, not just construction).
 
 ``ensure_litellm_ready()`` is the ONE place that should perform this
 first-import work — and (#4395 PR-1) the ONE place the actual ``import
@@ -119,35 +123,47 @@ class LitellmUnavailableError(Exception):
 
 @contextlib.contextmanager
 def _litellm_import_logs_to_file() -> "Iterator[None]":
-    """Route litellm's own loggers to reyn's log file instead of stderr.
+    """Route litellm's own console output to reyn's log file instead of the
+    terminal, for the duration of the (possibly first-ever) ``import litellm``.
 
-    litellm's ``_logging.py`` module attaches a fresh ``logging.StreamHandler()``
-    (→ stderr, by construction) to each of ``"LiteLLM"`` / ``"LiteLLM Router"`` /
-    ``"LiteLLM Proxy"`` **unconditionally at import time** (module-level code,
-    not gated on whether the logger already has a handler) — the first
-    ``import litellm`` anywhere in the process attaches it, which happens
-    inside this context manager's ``with`` body when routed through
-    ``ensure_litellm_ready``. Because the attach is unconditional, merely
-    pre-configuring these loggers *before* import does not stop litellm from
-    ALSO adding its own console handler — it would just add a second one. So
-    the console redirect has to intercept handler *construction* itself: for
-    the duration of the ``import litellm`` this swaps in a
-    ``logging.StreamHandler`` subclass whose default stream is reyn's log file
-    instead of stderr, so every StreamHandler litellm builds at import time —
-    including the one behind the cost-map-fetch-failure warning
-    ``litellm.litellm_core_utils.get_model_cost_map`` emits synchronously
-    during import — writes to the file, not the console.
+    #5831: an earlier version of this intercepted handler *construction* —
+    for the duration of ``import litellm`` it swapped in a
+    ``logging.StreamHandler`` subclass whose default ``stream`` was reyn's
+    log file, on the theory that every StreamHandler litellm builds during
+    that one import (including the one behind the cost-map-fetch-failure
+    warning ``litellm.litellm_core_utils.get_model_cost_map`` emits
+    synchronously during import) would inherit that default. litellm 1.100.0
+    broke that assumption: its ``_logging.py`` now attaches a
+    ``LevelRoutingStreamHandler`` whose ``emit()`` **re-reads** ``sys.stdout``/
+    ``sys.stderr`` and **rebinds** ``self.stream`` on every call (WARNING+ →
+    stderr), so whatever stream the handler was *constructed* with is
+    discarded the moment it emits — the construction-time patch above no
+    longer has anything to intercept.
 
-    On exit, the real ``StreamHandler`` class is restored and the three
-    loggers are stripped down to file-routed only: their handler lists are
-    cleared and ``propagate`` is set ``True``, so every *runtime* litellm log
-    (not just the import-time one) flows to the root logger's file handler
-    exactly once, with no leftover console sink. This also makes the
-    context manager safe to use when litellm was already imported earlier in
-    the process (e.g. by an unrelated call site's own lazy import racing ahead
-    of ``ensure_litellm_ready``) — the patch during ``import litellm`` becomes
-    a no-op (module cache hit, nothing re-runs), but the handler-strip on exit
-    still redirects it.
+    The fix moves one layer down: instead of patching handler construction,
+    this redirects the actual OS-facing ``sys.stdout``/``sys.stderr`` objects
+    themselves (via `contextlib.redirect_stdout`/`redirect_stderr`) to reyn's
+    log file for the whole ``import litellm`` window. This is independent of
+    *when* or *how often* a handler (re)binds its stream, because both the
+    old construction-time default (``logging.StreamHandler.__init__``'s own
+    ``stream = sys.stderr`` fallback) and the new emit-time rebind
+    (``LevelRoutingStreamHandler.emit``'s ``self.stream = sys.stderr``) get
+    their value from the SAME place: whatever ``sys.stdout``/``sys.stderr``
+    currently ARE. Substituting those for the whole window catches either
+    shape, and any future litellm handler shape that keeps reading from the
+    same two names. litellm's own choice of logger/handler/level/format is
+    untouched — only where the bytes ultimately land changes, keeping the
+    line "reyn decides the destination, litellm decides the content."
+
+    On exit, the three loggers are also stripped down to file-routed only:
+    their handler lists are cleared and ``propagate`` is set ``True``, so
+    every *runtime* litellm log (not just the import-time one) flows to the
+    root logger's file handler exactly once, with no leftover console sink.
+    This also makes the context manager safe to use when litellm was already
+    imported earlier in the process (e.g. by an unrelated call site's own
+    lazy import racing ahead of ``ensure_litellm_ready``) — the stream
+    redirect during ``import litellm`` becomes a no-op (module cache hit,
+    nothing re-runs), but the handler-strip on exit still redirects it.
     """
     # Find the reyn.log FileHandler the interactive startup installed. Unlike
     # the pre-lazy-load version — which ran only immediately after
@@ -164,28 +180,19 @@ def _litellm_import_logs_to_file() -> "Iterator[None]":
             break
     if file_stream is None:
         # No file handler in place (non-interactive / --cui / no prior
-        # basicConfig call) — do not patch anything, so litellm's normal
+        # basicConfig call) — do not redirect anything, so litellm's normal
         # stderr behavior applies.
         yield
         return
 
-    original_stream_handler = logging.StreamHandler
-
-    class _FileRoutedStreamHandler(logging.StreamHandler):
-        """``StreamHandler`` that defaults to reyn's log file, not stderr."""
-
-        def __init__(self, stream: object = None) -> None:
-            super().__init__(stream=file_stream if stream is None else stream)
-
-    logging.StreamHandler = _FileRoutedStreamHandler  # type: ignore[misc]
-    try:
-        yield
-    finally:
-        logging.StreamHandler = original_stream_handler  # type: ignore[misc]
-        for name in _LITELLM_LOGGER_NAMES:
-            logger = logging.getLogger(name)
-            logger.handlers.clear()
-            logger.propagate = True
+    with contextlib.redirect_stdout(file_stream), contextlib.redirect_stderr(file_stream):
+        try:
+            yield
+        finally:
+            for name in _LITELLM_LOGGER_NAMES:
+                logger = logging.getLogger(name)
+                logger.handlers.clear()
+                logger.propagate = True
 
 
 _litellm_import_failure_warned = False
