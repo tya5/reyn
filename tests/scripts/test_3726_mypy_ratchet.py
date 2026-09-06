@@ -282,6 +282,80 @@ def test_cache_dir_resolves_to_the_git_common_dir_not_the_worktree(tmp_path: Pat
     )
 
 
+# ── #5882: changed_python_files — the population changed-files mode checks ──
+
+
+def test_an_uncommitted_edit_to_a_tracked_file_is_in_the_population(tmp_path: Path) -> None:
+    """Tier 1: #5882 accept (architect's widened scope, #5884 review) — a
+    tracked `.py` file EDITED BUT NOT COMMITTED is in changed-files mode's
+    population, because that is the state a coder is actually in at the
+    moment they run this gate (before committing). An earlier version
+    diffed `origin/main...HEAD` (committed only) and reported "nothing to
+    check" there — a verdict over a population it had never looked at.
+
+    strip: reverting the diff to `f"{base_ref}...HEAD"` drops `edited.py`
+    from the returned list (verified directly during this fix), leaving
+    only the untracked file — this test goes red on exactly that revert.
+
+    Real git throughout: a repo with a real `refs/remotes/origin/main`,
+    a real commit, a real uncommitted edit, and a real untracked file —
+    the only way to witness what `git diff` actually reports."""
+    module = _load()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+    )
+    _run_git("init", "-q")
+    _run_git("config", "user.email", "t@example.com")
+    _run_git("config", "user.name", "t")
+    (repo / "tracked.py").write_text("x = 1\n")
+    (repo / "edited.py").write_text("y = 1\n")
+    _run_git("add", ".")
+    _run_git("commit", "-q", "-m", "init")
+    # A real remote-tracking ref at this commit — `changed_python_files`
+    # resolves `origin/main` and diffs against its merge-base with HEAD.
+    _run_git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    # The three states the widened population must cover, minus the
+    # committed one (which the merge-base makes trivially empty here).
+    (repo / "edited.py").write_text("y = 2  # uncommitted edit\n")   # tracked, unstaged
+    (repo / "brand_new.py").write_text("z = 3\n")                    # untracked
+    (repo / "notes.md").write_text("not python\n")                   # untracked, not .py
+
+    changed = module.changed_python_files(root=repo)
+
+    assert changed is not None, "origin/main resolves here — this must not be the fallback"
+    assert changed == ["brand_new.py", "edited.py"], (
+        "an uncommitted edit to a TRACKED file must be in the population "
+        f"(and a non-.py file must not); got: {changed!r}"
+    )
+
+
+def test_changed_python_files_returns_none_when_the_base_ref_is_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: #5882 — a checkout with no `origin/main` (a shallow clone, a
+    fork, CI's own non-PR contexts) returns `None` so `main()` can fall
+    back to `--full` and say why, rather than diffing against nothing and
+    silently reporting an empty population as "nothing to check"."""
+    module = _load()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+    )
+    _run_git("init", "-q")
+    _run_git("config", "user.email", "t@example.com")
+    _run_git("config", "user.name", "t")
+    (repo / "a.py").write_text("x = 1\n")
+    _run_git("add", ".")
+    _run_git("commit", "-q", "-m", "init")
+    # deliberately NO refs/remotes/origin/main
+
+    assert module.changed_python_files(root=repo) is None
+
+
 # ── #5882: run_mypy / run_mypy_tests_none_arg_type — injectable argv ────────
 
 

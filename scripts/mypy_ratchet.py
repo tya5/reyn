@@ -120,8 +120,10 @@ Three changes, all from the architect's own ruling (issue #5882):
 
 2. **Local default is changed-files mode, not the whole tree** — see
    :func:`changed_python_files` / :func:`main` below: only the ``.py``
-   files this branch actually touched (relative to ``origin/main``) are
-   passed to mypy, and the baseline comparison is SCOPED to those same
+   files this branch actually touched relative to ``origin/main``'s
+   merge-base — committed, staged, unstaged, or untracked alike, since
+   the gate is usually run BEFORE committing — are passed to mypy, and
+   the baseline comparison is SCOPED to those same
    files. ``--full`` restores the old whole-tree behavior; CI always
    passes it explicitly, and a checkout where ``origin/main`` cannot be
    resolved (no such remote-tracking ref) falls back to it automatically,
@@ -316,24 +318,29 @@ def release_lock(handle: "IO[Any] | None") -> None:
 
 
 def changed_python_files(root: Path = _ROOT, base_ref: str = _BASE_REF) -> "list[str] | None":
-    """The ``.py`` files this checkout's ``HEAD`` changed relative to
-    ``base_ref``, plus untracked ``.py`` files — the population
-    changed-files mode checks (#5882).
+    """Every ``.py`` file this checkout differs from ``base_ref``'s
+    merge-base by — committed, staged, unstaged — plus untracked ``.py``
+    files. The population changed-files mode checks (#5882).
 
     Returns ``None`` when ``base_ref`` cannot be resolved (no such
     remote-tracking ref — a shallow clone, a fork without ``origin/main``
     configured, or CI's own non-PR contexts) so the caller can fall back
     to ``--full`` instead of silently checking nothing.
 
-    Committed changes only (``git diff --name-only --diff-filter=ACMR
-    <base_ref>...HEAD``, three-dot = against the MERGE-BASE, so a branch
-    that has diverged from a moving ``main`` is diffed against where it
-    branched, not against ``main``'s current tip) plus untracked new
-    files — deliberately NOT staged-or-unstaged edits to an already
-    TRACKED file. Architect's own ruling scope; a caller mid-edit with
-    uncommitted changes to a tracked file should commit (or use
-    ``--full``) before relying on this for anything but a quick look —
-    disclosed here and in ``pr-workflow.md``, not silently assumed.
+    ``git diff --name-only --diff-filter=ACMR --merge-base <base_ref>``
+    (no second commit, so the comparison's right-hand side is the WORKING
+    TREE) is the whole tracked side in one command: the question this
+    mode answers is "is there a new finding in what I am about to push",
+    and at the moment a coder actually runs the gate — before committing
+    — the edits in question are usually still uncommitted. An earlier
+    version of this diffed ``<base_ref>...HEAD`` (committed only), which
+    made exactly that moment report "nothing to check": a verdict over a
+    population it had never looked at, the same silently-green shape
+    #5849 closed elsewhere (architect ruling, #5884 review).
+    ``--merge-base`` (rather than a bare ``<base_ref>``) keeps the
+    three-dot semantics that matter here — a branch diverging from a
+    MOVING ``main`` is compared against where it branched, so unrelated
+    commits landing on ``main`` never enter this population.
 
     ``--diff-filter=ACMR`` (Added/Copied/Modified/Renamed) excludes
     Deleted — nothing to type-check in a file that no longer exists."""
@@ -344,7 +351,7 @@ def changed_python_files(root: Path = _ROOT, base_ref: str = _BASE_REF) -> "list
     if resolvable.returncode != 0:
         return None
     diff = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACMR", f"{base_ref}...HEAD"],
+        ["git", "diff", "--name-only", "--diff-filter=ACMR", "--merge-base", base_ref],
         cwd=root, capture_output=True, text=True, check=True,
     ).stdout.splitlines()
     untracked = subprocess.run(
