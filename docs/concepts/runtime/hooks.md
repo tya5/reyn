@@ -1001,8 +1001,11 @@ This structurally can never touch `reyn.yaml` (the OUT-set), the GLOBAL
 runtime layer, or any other session's per-agent/per-session layer. The
 per-session hook joins the other layers (startup, global runtime, per-agent)
 ADDITIVELY — none override one another — and takes effect at the next turn
-boundary. The tool itself is write-gated (`permissions.tool`) and can be
-denied per-agent via a capability profile's `tool_deny`. Full hot-reload
+boundary. The tool itself is write-gated by catalog visibility and #5841's
+call-time check (`CapabilityProfile`, corrected #5848 — an earlier version
+of this line named `permissions.tool`, which has no declared-authority
+backing) and can be denied per-agent via a capability profile's
+`tool_deny`. Full hot-reload
 mechanics — the layered COMBINE, validate-before-apply, boot resilience —
 are covered in [Concepts: Config hot-reload](config-hot-reload.md).
 

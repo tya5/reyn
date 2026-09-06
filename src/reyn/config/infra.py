@@ -1155,6 +1155,42 @@ def _register_skills_validator() -> None:
 _register_skills_validator()
 
 
+def _permissions_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#5849③ Kind① — see
+    :data:`~reyn.security.permissions.permissions.PERMISSIONS_EXACT_CONFIG_KEYS`.
+
+    Defined here (the config layer, which already imports from
+    ``security.permissions``) rather than in ``config_schema.py`` itself,
+    which must NOT import a leaf module — see
+    ``register_freeform_leaf_validator``'s own docstring for why (same
+    shape as ``_sandbox_policy_freeform_validator`` right above)."""
+    from reyn.security.permissions.permissions import unknown_permissions_config_keys
+
+    return {key: None for key in unknown_permissions_config_keys(raw)}
+
+
+def _register_permissions_validator() -> None:
+    """Register :func:`_permissions_freeform_validator` onto
+    ``config_schema`` at import time — called once, below, at module load.
+
+    #5849③: promotes ``permissions:`` from Kind② (declared-open) to Kind①
+    (validated) — root cause was that the whole ``permissions:`` block was
+    treated as an opaque free-form leaf with NO registered vocabulary at
+    all (not specific to any one key, e.g. ``exec:`` — #5849①'s own
+    finding), so every sub-key silently accepted whether a real consumer
+    read it or not. The registry this validator reads is derived from the
+    real consumers (``from_dict`` / the pre-approval gate's own literal
+    keys), not hand-guessed — see that registry's own docstring."""
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "permissions", _permissions_freeform_validator,
+    )
+
+
+_register_permissions_validator()
+
+
 def _register_declared_open_freeform_leaves() -> None:
     """#4655 Kind② — every OTHER free-form dict-leaf, verified genuinely
     open (consumed via ``.get(name)``/``.items()`` with a truly
@@ -1166,21 +1202,8 @@ def _register_declared_open_freeform_leaves() -> None:
     """
     from reyn.config import config_schema
 
-    # `permissions`: `PermissionResolver._is_config_approved`/
-    # `_is_config_denied` (security/permissions/permissions.py) look up
-    # `self._config.get(key)` for the CURRENT op's dotted key at runtime —
-    # e.g. "web.fetch", f"http.get.{host}" (host is unboundedly open). The
-    # valid key set is reyn's whole tool/capability catalog, resolved
-    # elsewhere (permission decls, `ALL_OP_KINDS`-shaped op-kind names,
-    # host names) — no single importable, already-enumerated catalog of
-    # valid `permissions.*` keys exists anywhere in the codebase (the
-    # closest candidate, `ALL_OP_KINDS`/`ALL_TOOL_NAMES`, is a DIFFERENT
-    # vocabulary — op-kind names like "read_file", not permission-dotted
-    # keys like "web.fetch" — mapping one to the other is hand-written
-    # translation logic, not a genuine reuse of an existing catalog).
-    # Building a new one would be a significant new abstraction, not a
-    # "read one existing symbol" job, so this stays Kind②.
-    config_schema.register_freeform_leaf_open("permissions")
+    # `permissions`: promoted to Kind① (#5849③) — see
+    # `_register_permissions_validator` above. No longer registered here.
 
     # `chat.compaction.section_weights`: unlike `component_weights`, its
     # own direct consumer (`services/compaction/engine.py`'s

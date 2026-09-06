@@ -174,7 +174,10 @@ async def test_require_tool_prompt_is_natural(tmp_path) -> None:
     """Tier 2: require_tool prompts use natural phrasing including the tool name."""
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="no")
-    decl = PermissionDecl(tool=["web_search"])
+    # #5848: decl carries no `tool` field any more — the static TOOL-axis
+    # gate always passes now, so the confirm prompt under test here is
+    # reached unconditionally.
+    decl = PermissionDecl()
     try:
         await r.require_tool(decl, "web_search", bus)
     except PermissionError:

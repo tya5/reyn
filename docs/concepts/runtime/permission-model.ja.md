@@ -30,7 +30,7 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 ### レイヤー 2：宣言されたケイパビリティ
 
-デフォルト外のものが必要な actor は `reyn.yaml` の `permissions:` ブロック（`PermissionDecl`、`permissions.file.write` / `file.read` / `mcp` / `tool` / `http.get` / `secret.write` リストから構築）で宣言します。パスを宣言してもそれ自体はアクセスを付与しません — ランタイムがその actor がそのパスを必要とし得ることを認識するだけです。file / mcp / http 軸では、プロンプトは実際にそのリソースへアクセスする時点（起動時ではない）で just-in-time に発火します。⚠️ `tool` 軸はこのリストの他の軸と違います: `permissions.tool:` / `PermissionDecl.tool` は tool call を gate していません（#5841 — 下の軸表参照）。名指しされた hidden tool call が当たる call-time restrict は **`ContextualLayer` narrowing**（delegate/topology/ephemeral — ランタイムが設定するもので、この `permissions:` ブロックではない）であって、宣言 allowlist ではありません：
+デフォルト外のものが必要な actor は `reyn.yaml` の `permissions:` ブロック（`PermissionDecl`、`permissions.file.write` / `file.read` / `mcp` / `http.get` / `secret.write` リストから構築）で宣言します。パスを宣言してもそれ自体はアクセスを付与しません — ランタイムがその actor がそのパスを必要とし得ることを認識するだけです。プロンプトは実際にそのパスへアクセスする時点（起動時ではない）で just-in-time に発火します。⚠️ `tool` 軸はこのリストに **在りません** — `PermissionDecl` に `tool` field は存在しません（#5848: 削除済み、本番 populator が 0 でした）。named-but-hidden な tool call が受ける call-time restrict は **`ContextualLayer` narrowing**（`CapabilityProfile` — delegate/topology/ephemeral/`/visibility` override、runtime が設定するもので宣言された allowlist ではない）で、それがこの軸の唯一の authority です — 下の axis 表を参照。reyn.yaml の `permissions.tool:` key は今は unrecognized-key warning になり、黙って無視されません：
 
 ```
 [approval] chat_router/file.write needs:
@@ -56,12 +56,13 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 ```yaml
 permissions:
-  exec: allow
   file.write: allow
   python:
     safe: allow
     unsafe: allow
 ```
+
+（`exec: allow` は #5849（architect 裁定・clean break）でこの例から削除されました — `allow` がスキップする interactive prompt がそもそも存在しなかったため、この key に reader は無く、`permissions.exec:` は今は unrecognized-key warning になります。）
 
 (`exec` は #3226 Phase 3 で `shell` から改名 — clean-break、alias なし。既存の
 `reyn.yaml` の `permissions.shell:` キーは手動で `permissions.exec:` に改名する
@@ -219,7 +220,7 @@ permission system は OS runtime の一部であり、 OS の上に乗る別レ�
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | `~/.reyn/secrets.env` write の per-key、 `"*"` wildcard で runtime-determined keys 対応（= value prompt が actual gate）|
 | `mcp` | `list[str]` | per-server | MCP 呼び出し時 implicit | サーバー名の allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
-| `tool` | *(宣言リストなし — 補足参照)* | per-tool | `dispatch_tool()`（`core/dispatch/dispatcher.py`、#5841/#5854）— **`dispatch_tool` を通る全呼び口**（router 自身の LLM tool-call dispatch、`/exec`、`/tasks`）にとって唯一の live な TOOL 軸 enforcement gate。#5854 が `RouterLoop` 自身の旧・別 pre-dispatch gate（`_excluded_result`、#1827 S1 / #1912）をこの 1 つの seam に畳んで retire した。⚠️ pipeline の tool step（`tools/pipeline_verbs._make_tool_dispatch`、#3546）は `dispatch_tool` を通らない — handler を直接呼び、同じ predicate を自分で呼ぶ別 site として残る（`effective.py` 自身の docstring がこれを列挙している）。 | **`ContextualLayer` のみ。`PermissionDecl.tool` / `permissions.tool:` は決して読まない。** 2 つの層は同じ軸で「制限なし」を逆の値で表す — `ContextualLayer.tool_allow`/`tool_deny`: `None`/未設定 = ⊤（無制限、ACL）；`PermissionDecl.tool`: 空 `[]` = ⊥（deny-all、allowlist）— そして本番で `PermissionDecl.tool` を populate する箇所は無い（architect 裁定、#5841）ため、ここで読むと `permissions.tool:` を宣言していない全 agent の全 tool call が拒否される。`dispatch_tool` は effective（`invoke_action` 解決済み）name を unwrap（`gate_effective_tool_name` — #5854 で `security/permissions/effective.py` へ移動し、この seam と router 自身の advertisement filter `apply_contextual_visibility` が import cycle 無しで共有できるようにした）してから `tool_contextually_denied` を check する — しかも **catalog membership の前**に、意図的に: catalog 上独立に dispatch 可能でない excluded な名前（`invoke_action` 経由でしか届かない）は、そうしないと `unknown_tool` になってしまう（root-1、#1618: real-but-denied な tool をモデルに「存在しない」と伝えてはならない）— この失敗モードは #5854 自身の falsification pass がこの順序で再現・解消した。denial の kind は `"tool_excluded"`（`dispatch_tool` 一般の `"permission_denied"` ではない）— #5854 は `_excluded_result` 自身の kind + message-builder（`contextual_deny_message`）を採用した。理由は既存の tests/`src/` 上の読者数十件（例: `category_content_fence.py` 自身の root-1 handling）がその文字列に既に依存しているため。restrict のみ — confirm prompt は無い（*訊くか* は FP-0069 の姿勢ダイヤルが独立に配線するもので、この gate ではない）。`permissions.tool:` / `PermissionDecl.tool` 自身の処遇（正しく populate するか、retire するか）は別途: #5848。 |
+| `tool` | *(無し — 宣言軸自体が存在しない)* | per-tool | `dispatch_tool()`（`core/dispatch/dispatcher.py`、#5841/#5854）— **`dispatch_tool` を通る全呼び口**（router 自身の LLM tool-call dispatch、`/exec`、`/tasks`）にとって唯一の live な TOOL 軸 enforcement gate。#5854 が `RouterLoop` 自身の旧・別 pre-dispatch gate（`_excluded_result`、#1827 S1 / #1912）をこの 1 つの seam に畳んで retire した。⚠️ pipeline の tool step（`tools/pipeline_verbs._make_tool_dispatch`、#3546）は `dispatch_tool` を通らない — handler を直接呼び、同じ predicate を自分で呼ぶ別 site として残る（`effective.py` 自身の docstring がこれを列挙している）。 | **`CapabilityProfile`（`ContextualLayer` 経由）が tool 軸の唯一の authority**（visibility ＋ #5841/#5854 の call-time check）— `#5848` が `PermissionDecl.tool` / `permissions.tool:` を完全に削除（本番 populator が 0；空リスト＝deny-all という読みは `ContextualLayer` 自身の「未設定＝⊤」という同一軸の読みと OPPOSITE で、両方残すのは冗長ではなく standing hazard だった）。reyn.yaml の `permissions.tool:` key は今 unrecognized-key warning になり（`PERMISSIONS_EXACT_CONFIG_KEYS`、`security/permissions/permissions.py`）、黙って no-op にはならない。restrict のみ — confirm prompt は無い（`require_tool` 自身の confirm 半分は FP-0069 の姿勢ダイヤル待ち；restrict 半分はこの行に置き換えられ、本番呼び手は今 0）。 |
 | `shell` | *(live gate なし)* | — | — | **Doc drift、ここでは未修正のまま flag のみ**: この行はかつて bool `permissions.shell` 軸の gate site として `require_shell()` を挙げていた。`require_shell()` は現行コードベースに存在しない（`grep -rn "require_shell"` は `src/` 全体で 0 件）— この行がかつて指していた subprocess-exec gate は、raw `shell` op が撤廃された際（#1352-A/#1352-L3）に retire 済み。subprocess access は現在、`sandboxed_exec` の seam で `SandboxPolicy.deny_subprocess`（#3901 PR-B ④ で `allow_subprocess` からリネーム・意味反転、`permissions:` dict のエントリではなく sandbox config 側で宣言）により bound される。この行が支えていた、今や stale な rationale については下記 [`shell` だけが bool である理由](#shell-だけが-bool-である理由) 参照。 |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | MCP 呼び出し時 implicit | per-agent restriction、 `mcp` 軸と cross-cut |
 
@@ -360,7 +361,7 @@ OS レベルのファイルパーミッションでのみゲートされてい�
 
 - **Linux ケイパビリティサンドボックスではありません。** Python ステップの subprocess は同じユーザーとして実行され、AST allowlist は honor-system です。reyn はカーネルをサンドボックス化しません（そのレイヤーは `sandboxed_exec`）。
 - **シークレットの保管庫ではありません。** 認証情報を approvals.jsonl に入れたり、パーミッションで環境変数を隠そうとしないでください。認証情報には [コンセプト: シークレット管理](../runtime/secret-handling.md) を使用してください。
-- **ユーザーに対する保護ではありません。** `reyn.yaml` で `permissions: exec: allow` とした場合、exec を承認したことになります。このシステムは意図せずケイパビリティが増大することを防ぐものであり、ユーザーの意図を防ぐものではありません。
+- **ユーザーに対する保護ではありません。** `reyn.yaml` で `permissions: file.write: allow` とした場合、広い書き込みを承認したことになります。このシステムは意図せずケイパビリティが増大することを防ぐものであり、ユーザーの意図を防ぐものではありません。（この項の例は #5849 まで `exec: allow` でした — その key に reader は無く、axis 表の `tool` 行を参照。）
 
 ## 参考
 

@@ -10,12 +10,27 @@ never-elevate is the STRUCTURAL `all()` in `EffectivePermission.allows`: a
 `ContextualLayer` is just another conjunct, so it can only narrow — it can neither
 re-grant what it denies nor re-grant the static authority's deny.
 
+#5848 (architect ruling): `PermissionDecl.tool` (the static per-actor TOOL
+declaration this file originally demonstrated never-elevate with) is deleted
+— `AgentLayer` no longer has ANY opinion on the TOOL axis, so there is no
+static grant/deny left to demonstrate the "no grant-back of a static deny"
+half of never-elevate on TOOL specifically any more. The tests that
+depended on an "undeclared tool" state being deniable are removed (that
+state no longer exists); the tests that only need CONTEXTUAL narrowing
+(deny / allow-subset) are kept, `decl=PermissionDecl()` throughout since
+declaration is now irrelevant to this axis.
+`test_effective_all_seam_is_never_elevate` demonstrates the FULL
+never-elevate property (both directions) on the MCP axis instead — MCP
+still has both a real `AgentLayer` grant/deny (`decl.mcp`) AND a
+`ContextualLayer` narrowing (`mcp_allow`/`mcp_deny`), so it is the
+faithful sibling this file's original TOOL-axis demonstration was.
+
 Falsification gates (lead-required):
-  - byte-identical: with `contextual=None` the gate decision (allow / the exact
-    "not declared" deny message) is unchanged → breaking inertness goes CLEAN RED.
-  - never-elevate: a `ContextualLayer` that "allows" a tool the static authority
-    never granted must STILL be denied (no grant-back) → asserting the raise is
-    the proof.
+  - byte-identical: with `contextual=None` the gate decision (allow) is
+    unchanged → breaking inertness goes CLEAN RED.
+  - never-elevate: a `ContextualLayer` that "allows" a value the static
+    authority never granted must STILL be denied (no grant-back) → the MCP
+    version of this proof, below.
 
 Policy: real `PermissionResolver` + real `EffectivePermission` + real gate; the
 intervention bus (the only ask boundary) is a recording fake. No mocks.
@@ -60,44 +75,41 @@ def _resolver(tmp_path: Path) -> PermissionResolver:
 
 
 @pytest.mark.asyncio
-async def test_none_contextual_allows_declared_tool(tmp_path):
-    """Tier 2: contextual=None on a declared tool passes the layer (byte-identical).
+async def test_none_contextual_allows_a_tool(tmp_path):
+    """Tier 2: contextual=None passes the layer (byte-identical) — #5848:
+    AgentLayer no longer constrains TOOL at all, so any name passes here
+    regardless of declaration; this test's own job is only the contextual
+    plumbing itself staying inert at None.
 
-    Falsify: if the contextual plumbing wrongly narrowed when None, a declared
-    tool would be denied → CLEAN RED. 'yes' on the bus clears the _approve prompt.
+    Falsify: if the contextual plumbing wrongly narrowed when None, this
+    would be denied → CLEAN RED. 'yes' on the bus clears the _approve
+    prompt.
     """
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="yes")
-    decl = PermissionDecl(tool=["web_search"])
+    decl = PermissionDecl()
     # No raise = the layer admitted it (and the user approved).
     await r.require_tool(decl, "web_search", bus, contextual=None)
-
-
-@pytest.mark.asyncio
-async def test_none_contextual_preserves_undeclared_message(tmp_path):
-    """Tier 2: contextual=None keeps the exact pre-#1827 'not declared' deny."""
-    r = _resolver(tmp_path)
-    bus = _RecordingBus(answer_id="yes")
-    decl = PermissionDecl(tool=[])  # web_search NOT declared
-    with pytest.raises(PermissionError, match="not declared in actor permissions"):
-        await r.require_tool(decl, "web_search", bus, contextual=None)
 
 
 # ── contextual narrowing (the new capability) ───────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_contextual_deny_blocks_declared_tool(tmp_path):
-    """Tier 2: a declared tool denied by contextual tool_deny is blocked.
+async def test_contextual_deny_blocks_a_tool(tmp_path):
+    """Tier 2: a tool denied by contextual tool_deny is blocked — #5848:
+    decl is irrelevant to this axis now, so this holds for EVERY decl, not
+    just a "declared" one.
 
-    The deny is decision-enabling (distinct message: blocked by context, not
-    undeclared) and fires at the layer — before the _approve prompt. #3501: the
-    "which narrowing" half is asserted by naming the term's own origin, so the
-    message cannot degrade back to listing candidate narrowings.
+    The deny is decision-enabling (distinct message: blocked by context,
+    not the — now unreachable — undeclared deny) and fires at the layer —
+    before the _approve prompt. #3501: the "which narrowing" half is
+    asserted by naming the term's own origin, so the message cannot
+    degrade back to listing candidate narrowings.
     """
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="yes")
-    decl = PermissionDecl(tool=["web_search"])
+    decl = PermissionDecl()
     ctx = ContextualPermission(
         tool_deny=frozenset({"web_search"}),
         origin=NarrowingOrigin(
@@ -109,69 +121,56 @@ async def test_contextual_deny_blocks_declared_tool(tmp_path):
     with pytest.raises(PermissionError) as exc:
         await r.require_tool(decl, "web_search", bus, contextual=ctx)
     assert "the narrowing under test" in str(exc.value)
-    assert "declared in actor permissions" in str(exc.value), (
-        "must stay distinguishable from the undeclared-tool deny"
-    )
     assert bus.captured == [], "contextual deny must fire before the approve prompt"
 
 
 @pytest.mark.asyncio
 async def test_contextual_allowlist_narrows_to_subset(tmp_path):
-    """Tier 2: a contextual tool_allow narrows a multi-tool decl to the subset."""
+    """Tier 2: a contextual tool_allow narrows access to the subset it
+    names — #5848: decl is irrelevant to this axis now, so this holds
+    regardless of what (if anything) a decl once would have declared."""
     r = _resolver(tmp_path)
     bus = _RecordingBus(answer_id="yes")
-    decl = PermissionDecl(tool=["web_search", "file_read"])
+    decl = PermissionDecl()
     ctx = ContextualPermission(tool_allow=frozenset({"web_search"}))
-    # web_search: declared ∩ contextual-allowed → passes.
+    # web_search: in the contextual allow-list → passes.
     await r.require_tool(decl, "web_search", bus, contextual=ctx)
-    # file_read: declared but NOT in the contextual allow-list → narrowed away.
-    with pytest.raises(PermissionError, match="declared in actor permissions"):
+    # file_read: NOT in the contextual allow-list → narrowed away.
+    with pytest.raises(PermissionError):
         await r.require_tool(decl, "file_read", bus, contextual=ctx)
 
 
-# ── never-elevate (the structural invariant) ────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_contextual_cannot_grant_back_static_deny(tmp_path):
-    """Tier 2: a ContextualLayer that 'allows' an UNDECLARED tool cannot grant it.
-
-    never-elevate falsification: the static authority never granted web_search
-    (decl.tool empty); the context 'allows' it — but the gate must STILL deny
-    (the static 'not declared' path wins). If grant-back were possible this would
-    pass → asserting the raise is the proof.
-    """
-    r = _resolver(tmp_path)
-    bus = _RecordingBus(answer_id="yes")
-    decl = PermissionDecl(tool=[])  # NOT declared
-    ctx = ContextualPermission(tool_allow=frozenset({"web_search"}))  # context "allows"
-    with pytest.raises(PermissionError, match="not declared in actor permissions"):
-        await r.require_tool(decl, "web_search", bus, contextual=ctx)
+# ── never-elevate (the structural invariant, demonstrated on MCP —
+#    #5848's own note above: TOOL no longer has a static leg to elevate
+#    over) ───────────────────────────────────────────────────────────────
 
 
 def test_effective_all_seam_is_never_elevate():
     """Tier 2: EffectivePermission.allows = all(layers) — the structural seam.
 
-    Directly pins both never-elevate directions on the ∩ model itself:
+    Directly pins both never-elevate directions on the ∩ model itself, on
+    the MCP axis (still a real AgentLayer grant/deny + ContextualLayer
+    narrowing pair — see this file's own module docstring for why TOOL no
+    longer serves this demonstration post-#5848):
       (a) static-grant ∩ contextual-deny → denied (contextual narrows);
       (b) static-deny ∩ contextual-allow → denied (no grant-back).
     """
-    granted = PermissionDecl(tool=["web_search"])
-    denied = PermissionDecl(tool=[])
-    deny_ctx = ContextualLayer(ContextualPermission(tool_deny=frozenset({"web_search"})))
-    allow_ctx = ContextualLayer(ContextualPermission(tool_allow=frozenset({"web_search"})))
+    granted = PermissionDecl(mcp=["filesystem"])
+    denied = PermissionDecl(mcp=[])
+    deny_ctx = ContextualLayer(ContextualPermission(mcp_deny=frozenset({"filesystem"})))
+    allow_ctx = ContextualLayer(ContextualPermission(mcp_allow=frozenset({"filesystem"})))
 
     # (a) granted by AgentLayer, denied by ContextualLayer → all() = False.
     assert EffectivePermission([AgentLayer(granted), deny_ctx]).allows(
-        CapabilityAxis.TOOL, "web_search"
+        CapabilityAxis.MCP, "filesystem"
     ) is False
     # (b) denied by AgentLayer, "allowed" by ContextualLayer → all() = False (no grant-back).
     assert EffectivePermission([AgentLayer(denied), allow_ctx]).allows(
-        CapabilityAxis.TOOL, "web_search"
+        CapabilityAxis.MCP, "filesystem"
     ) is False
     # control: granted by both → True (the layer is genuinely inert when it permits).
     assert EffectivePermission([AgentLayer(granted), allow_ctx]).allows(
-        CapabilityAxis.TOOL, "web_search"
+        CapabilityAxis.MCP, "filesystem"
     ) is True
 
 
@@ -182,13 +181,22 @@ def test_none_context_layer_is_top():
     assert layer.allows(CapabilityAxis.MCP, "anything") is True
 
 
-# ── live gate: _excluded_result is now effective.py-backed (#1827 S1.5) ──────
+# ── live gate: dispatch_tool's own 2b call-time restrict (#5841/#5854) ───────
 #
-# The LIVE tool-enforcement gate (router_loop._excluded_result, the #1406/#187
-# pre-dispatch block) now consults the ∩-model (ContextualLayer) — the single
-# enforcement gate. These pin that an explicit ContextualPermission blocks via
-# every bypass shape (native / salvaged / direct invoke_action), and that the
-# gate is load-bearing (no narrowing → the tool executes).
+# The LIVE tool-enforcement gate is `dispatch_tool`'s own 2b call-time
+# restrict (`core/dispatch/dispatcher.py`) — the single enforcement gate.
+# #5854 folded `RouterLoop`'s former, separate pre-dispatch `_excluded_result`
+# gate into this one seam and retired it; `RouterLoop._execute_tool` now
+# dispatches straight to `dispatch_tool`, which itself consults the ∩-model
+# (ContextualLayer) before catalog membership. These pin that an explicit
+# ContextualPermission blocks via every bypass shape (native / salvaged /
+# direct invoke_action), and that the gate is load-bearing (no narrowing →
+# the tool executes).
+#
+# #5848 note: these 4 tests are unrelated to `PermissionDecl.tool` (the
+# deleted static declaration) — they exercise the live `dispatch_tool` gate
+# against `ContextualPermission` directly, never touching a `PermissionDecl`
+# at all. Kept verbatim.
 import asyncio
 import json
 

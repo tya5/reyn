@@ -103,7 +103,7 @@ OUT-set（`reyn.yaml`）には触れません。リロードがスケジュー�
 | `push_when` | いいえ | Jinja2 → bool ガード; false にレンダリングされた場合にプッシュをスキップ。 |
 | `name` | いいえ | 履歴の `[hook:name]` アトリビューションプレフィックスとして表示されるラベル。 |
 
-ツールはライトゲートされています: 呼び出し側のスキルは `permissions.tool` に `hooks_add` を宣言する必要があり、ケイパビリティプロファイルの `tool_deny` でそれを拒否できます。
+ツールは catalog visibility と #5841 の call-time check（`CapabilityProfile`、#5848 で訂正 — 旧版はここで `permissions.tool` に `hooks_add` を宣言する必要があると書いていましたが、その key に declared-authority の裏付けは無い）でライトゲートされており、ケイパビリティプロファイルの `tool_deny` でそれを拒否できます。
 
 ## セーフティストーリー
 
