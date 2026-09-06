@@ -511,7 +511,22 @@
   },
   {
     "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/bar.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/changed.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
     "literal": "tests/runtime/test_foo.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_3726_mypy_ratchet.py",
+    "literal": "tests/unchanged.py",
     "class": "never-existed"
   },
   {

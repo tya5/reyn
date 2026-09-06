@@ -12,11 +12,24 @@ Public surface only: `parse_mypy_output` / `new_findings` / `load_baseline` /
 `write_baseline` are called directly against real strings/files (no mocks —
 there is nothing to fake here, the whole point is these are pure functions
 over text/sets).
+
+#5882 additions (cache-dir sharing / changed-files mode / the repo-wide
+lock): every `main()`-driving test below now forces `--full` and points
+`default_cache_dir` at a throwaway `tmp_path` — `main([])`'s new DEFAULT is
+changed-files mode, which would otherwise run a real `git diff` against
+THIS checkout's actual working-tree state and make these tests' own
+target/scope non-deterministic; `--full` restores the old, deterministic
+whole-tree semantics these tests were written against. Pointing
+`default_cache_dir` at `tmp_path` keeps every test from touching (or
+contending on) the real, shared `<git-common-dir>/reyn-mypy-cache` a
+genuine concurrent mypy_ratchet.py run elsewhere on the machine might be
+holding.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -105,6 +118,31 @@ def test_measured_set_equal_to_baseline_is_clean() -> None:
     assert module.new_findings(pairs, pairs) == set()
 
 
+def test_changed_files_mode_hides_an_off_baseline_pair_in_an_unchanged_file() -> None:
+    """Tier 1: #5882 accept ③ — positive control. An off-baseline pair in a
+    file OUTSIDE changed-files mode's `scope` stays invisible (mypy
+    following an import into an unchanged file must not resurrect a
+    pre-existing finding on THIS run) — the SAME pair surfaces the moment
+    `scope` is removed (`--full`), proving the hiding is `scope`-driven,
+    not a bug that would hide it everywhere."""
+    module = _load()
+    measured = {
+        ("src/reyn/changed.py", "arg-type"),
+        ("src/reyn/unchanged.py", "attr-defined"),
+    }
+    baseline = {("src/reyn/changed.py", "arg-type")}  # unchanged.py's pair is NOT baselined
+
+    scoped = module.new_findings(measured, baseline, scope={"src/reyn/changed.py"})
+    assert scoped == set(), (
+        "an off-baseline pair OUTSIDE changed-files mode's scope must stay green"
+    )
+
+    full = module.new_findings(measured, baseline, scope=None)
+    assert full == {("src/reyn/unchanged.py", "attr-defined")}, (
+        "the SAME off-baseline pair must surface once scope is removed (--full)"
+    )
+
+
 # ── syntax_pairs_in (#3727, verification-hazards.md §18 "B. Misidentification") ──
 
 
@@ -188,11 +226,296 @@ def test_the_committed_baseline_is_reachable_through_the_registered_target() -> 
     assert len(baseline) > 0
 
 
+# ── #5882: split_src_and_tests ──────────────────────────────────────────────
+
+
+def test_split_src_and_tests_partitions_by_top_level_directory() -> None:
+    """Tier 1: a changed-files population splits into exactly the two
+    populations the src ratchet / #5739 tests gate each cover; a file under
+    neither (e.g. scripts/) is in NEITHER output list — same scope the old
+    whole-tree targets already had."""
+    module = _load()
+    src, tests = module.split_src_and_tests(
+        ["src/reyn/foo.py", "tests/bar.py", "scripts/baz.py", "docs/readme.md"]
+    )
+    assert src == ["src/reyn/foo.py"]
+    assert tests == ["tests/bar.py"]
+
+
+# ── #5882: default_cache_dir — shared across worktrees ──────────────────────
+
+
+def test_cache_dir_resolves_to_the_git_common_dir_not_the_worktree(tmp_path: Path) -> None:
+    """Tier 1: #5882 accept ① — from a REAL git worktree, `default_cache_dir`
+    resolves under the MAIN checkout's `.git` (shared across every
+    worktree of this repo), never the worktree's own directory. strip: the
+    naive cwd-relative default this fix replaces would resolve to a path
+    INSIDE the worktree instead — verified directly by asserting the
+    resolved path is NOT under the worktree and IS under the main repo."""
+    module = _load()
+    main_repo = tmp_path / "main"
+    main_repo.mkdir()
+    _run_git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=main_repo, check=True, capture_output=True, text=True,
+    )
+    _run_git("init", "-q")
+    _run_git("config", "user.email", "t@example.com")
+    _run_git("config", "user.name", "t")
+    (main_repo / "f.txt").write_text("x")
+    _run_git("add", ".")
+    _run_git("commit", "-q", "-m", "init")
+    _run_git("branch", "wt-branch")
+
+    worktree = tmp_path / "worktree"
+    _run_git("worktree", "add", str(worktree), "wt-branch")
+
+    resolved = module.default_cache_dir(root=worktree)
+
+    assert resolved.name == "reyn-mypy-cache"
+    assert not str(resolved).startswith(str(worktree)), (
+        "cache dir resolved INSIDE the worktree — the shared-across-worktrees "
+        "fix regressed to a naive per-worktree default"
+    )
+    assert str(resolved).startswith(str(main_repo)), (
+        "cache dir did not resolve under the MAIN checkout — worktrees no "
+        "longer share a warm cache"
+    )
+
+
+# ── #5882: changed_python_files — the population changed-files mode checks ──
+
+
+def test_an_uncommitted_edit_to_a_tracked_file_is_in_the_population(tmp_path: Path) -> None:
+    """Tier 1: #5882 accept (architect's widened scope, #5884 review) — a
+    tracked `.py` file EDITED BUT NOT COMMITTED is in changed-files mode's
+    population, because that is the state a coder is actually in at the
+    moment they run this gate (before committing). An earlier version
+    diffed `origin/main...HEAD` (committed only) and reported "nothing to
+    check" there — a verdict over a population it had never looked at.
+
+    strip: reverting the diff to `f"{base_ref}...HEAD"` drops `edited.py`
+    from the returned list (verified directly during this fix), leaving
+    only the untracked file — this test goes red on exactly that revert.
+
+    Real git throughout: a repo with a real `refs/remotes/origin/main`,
+    a real commit, a real uncommitted edit, and a real untracked file —
+    the only way to witness what `git diff` actually reports."""
+    module = _load()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+    )
+    _run_git("init", "-q")
+    _run_git("config", "user.email", "t@example.com")
+    _run_git("config", "user.name", "t")
+    (repo / "tracked.py").write_text("x = 1\n")
+    (repo / "edited.py").write_text("y = 1\n")
+    _run_git("add", ".")
+    _run_git("commit", "-q", "-m", "init")
+    # A real remote-tracking ref at this commit — `changed_python_files`
+    # resolves `origin/main` and diffs against its merge-base with HEAD.
+    _run_git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    # The three states the widened population must cover, minus the
+    # committed one (which the merge-base makes trivially empty here).
+    (repo / "edited.py").write_text("y = 2  # uncommitted edit\n")   # tracked, unstaged
+    (repo / "brand_new.py").write_text("z = 3\n")                    # untracked
+    (repo / "notes.md").write_text("not python\n")                   # untracked, not .py
+
+    changed = module.changed_python_files(root=repo)
+
+    assert changed is not None, "origin/main resolves here — this must not be the fallback"
+    assert changed == ["brand_new.py", "edited.py"], (
+        "an uncommitted edit to a TRACKED file must be in the population "
+        f"(and a non-.py file must not); got: {changed!r}"
+    )
+
+
+def test_changed_python_files_returns_none_when_the_base_ref_is_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: #5882 — a checkout with no `origin/main` (a shallow clone, a
+    fork, CI's own non-PR contexts) returns `None` so `main()` can fall
+    back to `--full` and say why, rather than diffing against nothing and
+    silently reporting an empty population as "nothing to check"."""
+    module = _load()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+    )
+    _run_git("init", "-q")
+    _run_git("config", "user.email", "t@example.com")
+    _run_git("config", "user.name", "t")
+    (repo / "a.py").write_text("x = 1\n")
+    _run_git("add", ".")
+    _run_git("commit", "-q", "-m", "init")
+    # deliberately NO refs/remotes/origin/main
+
+    assert module.changed_python_files(root=repo) is None
+
+
+# ── #5882: run_mypy / run_mypy_tests_none_arg_type — injectable argv ────────
+
+
+def test_changed_files_mode_passes_only_the_changed_files_to_mypy() -> None:
+    """Tier 1: #5882 accept ② — the exact argv `run_mypy` builds for a
+    changed-files call is just those files (plus `--cache-dir`); a
+    `--full`-shaped call (`["src/reyn"]`) still gets the WHOLE target.
+    `runner` is injected so this needs no real mypy install or subprocess —
+    and what it returns is a REAL `subprocess.CompletedProcess` (cheaply
+    constructible, and its own `.stdout`/`.stderr` are exactly the two
+    attributes the function under test reads), never a hand-rolled
+    stand-in."""
+    module = _load()
+    recorded: list[list[str]] = []
+
+    def _runner(argv: list[str], **kwargs: object) -> "subprocess.CompletedProcess[str]":
+        recorded.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    module.run_mypy(["src/reyn/foo.py"], cache_dir=Path("/tmp/cache"), runner=_runner)
+    assert recorded[-1][-1] == "src/reyn/foo.py"
+    assert "--cache-dir" in recorded[-1] and "/tmp/cache" in recorded[-1]
+
+    module.run_mypy(["src/reyn"], cache_dir=Path("/tmp/cache"), runner=_runner)
+    assert recorded[-1][-1] == "src/reyn"
+
+
+def test_changed_files_mode_passes_only_the_changed_test_files_to_mypy() -> None:
+    """Tier 1: same as above, for the #5739 tests/-scoped invocation."""
+    module = _load()
+    recorded: list[list[str]] = []
+
+    def _runner(argv: list[str], **kwargs: object) -> "subprocess.CompletedProcess[str]":
+        recorded.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    module.run_mypy_tests_none_arg_type(
+        ["tests/runtime/test_foo.py"], cache_dir=Path("/tmp/cache"), runner=_runner,
+    )
+    assert recorded[-1][-1] == "tests/runtime/test_foo.py"
+
+    module.run_mypy_tests_none_arg_type(["tests"], cache_dir=Path("/tmp/cache"), runner=_runner)
+    assert recorded[-1][-1] == "tests"
+
+
+# ── #5882: acquire_lock / release_lock — repo-wide, single-run ──────────────
+
+
+def test_no_wait_returns_none_immediately_when_the_lock_is_already_held(tmp_path: Path) -> None:
+    """Tier 1: #5882 accept ④ — a SECOND, independent open-file-description
+    on the same lock path contends via `flock` even within one process
+    (`acquire_lock`'s own docstring on why this is testable without a real
+    second process). `wait=False` must fail IMMEDIATELY — no sleep, no
+    duration — while the first holder has it, and succeed the moment it is
+    released."""
+    module = _load()
+    cache_dir = tmp_path / "cache"
+
+    holder = module.acquire_lock(cache_dir, wait=True)
+    assert holder is not None
+
+    second = module.acquire_lock(cache_dir, wait=False)
+    assert second is None, (
+        "a second, non-waiting acquire must fail immediately while the first is held"
+    )
+
+    module.release_lock(holder)
+
+    third = module.acquire_lock(cache_dir, wait=False)
+    assert third is not None, "once released, a non-waiting acquire must succeed"
+    module.release_lock(third)
+
+
+def test_main_no_wait_exits_2_when_the_lock_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 1: #5882 accept ④, wired through `main()` — `--no-wait` against
+    an already-held lock is exit code 2, distinct from the ratchet's own
+    0/1 verdicts, and never reaches either mypy invocation."""
+    module = _load()
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setattr(module, "default_cache_dir", lambda: cache_dir)
+    calls: list[str] = []
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: calls.append("src") or "")
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type", lambda *a, **kw: calls.append("tests") or "",
+    )
+
+    holder = module.acquire_lock(cache_dir, wait=True)
+    try:
+        rc = module.main(["--full", "--no-wait"])
+    finally:
+        module.release_lock(holder)
+
+    assert rc == 2
+    assert calls == [], "a lock refusal must never reach either mypy invocation"
+
+
+# ── #5882: main() — changed-files mode selection ────────────────────────────
+
+
+def test_main_changed_files_mode_skips_mypy_entirely_when_nothing_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: #5882 — with zero changed `.py` files, `main()` spends no
+    subprocess call on either gate at all (the whole point of the fix), and
+    never touches the cache dir / lock either."""
+    module = _load()
+    monkeypatch.setattr(module, "changed_python_files", lambda: [])
+    calls: list[str] = []
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: calls.append("src") or "")
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type", lambda *a, **kw: calls.append("tests") or "",
+    )
+    monkeypatch.setattr(
+        module, "default_cache_dir",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("cache dir must not be resolved when there is nothing to check")
+        ),
+    )
+
+    rc = module.main([])
+
+    assert rc == 0
+    assert calls == []
+
+
+def test_main_falls_back_to_full_when_origin_main_is_unresolvable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 1: #5882 — a checkout where `origin/main` cannot be resolved
+    (`changed_python_files` returns ``None``) falls back to the WHOLE
+    `src/reyn` / `tests` targets, same as an explicit `--full`."""
+    module = _load()
+    monkeypatch.setattr(module, "changed_python_files", lambda: None)
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
+    monkeypatch.setattr(module, "load_baseline", lambda: set())
+    recorded_src_targets: list[list[str]] = []
+    recorded_tests_targets: list[list[str]] = []
+    monkeypatch.setattr(
+        module, "run_mypy",
+        lambda targets, **kw: recorded_src_targets.append(list(targets)) or "",
+    )
+    monkeypatch.setattr(
+        module, "run_mypy_tests_none_arg_type",
+        lambda targets, **kw: recorded_tests_targets.append(list(targets)) or "",
+    )
+
+    rc = module.main([])
+
+    assert rc == 0
+    assert recorded_src_targets == [["src/reyn"]]
+    assert recorded_tests_targets == [["tests"]]
+
+
 # ── main() wiring (#3727 review: the bug lived in main(), not in a pure fn) ──
 
 
 def test_main_fails_even_when_the_only_measured_pair_is_a_baselined_syntax_one(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path,
 ) -> None:
     """Tier 1: FALSIFY the exact gap lead-coder's review found — the ORIGINAL
     wiring checked `new_findings()` only, so a `[syntax]` pair already in the
@@ -202,38 +525,40 @@ def test_main_fails_even_when_the_only_measured_pair_is_a_baselined_syntax_one(
     already bound into their default-argument at module-def time) so the
     test drives `main()`'s real control flow without touching disk."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "syntax")})
     monkeypatch.setattr(
         module, "run_mypy",
-        lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
+        lambda *a, **kw: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
                 "Found 1 error in 1 file (errors prevented further checking)\n",
     )
-    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda *a, **kw: "")
 
-    rc = module.main([])
+    rc = module.main(["--full"])
 
     assert rc == 1
     assert "not confirmed clean" in capsys.readouterr().err
 
 
 def test_main_ok_when_measured_matches_baseline_with_no_syntax(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 1: the ordinary green path is unaffected by the syntax check —
     only actually-present [syntax] pairs change the verdict."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
     monkeypatch.setattr(
         module, "run_mypy",
-        lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n",
+        lambda *a, **kw: "src/reyn/foo.py:1: error: msg  [attr-defined]\n",
     )
-    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda *a, **kw: "")
 
-    assert module.main([]) == 0
+    assert module.main(["--full"]) == 0
 
 
 def test_main_write_baseline_refuses_when_a_syntax_pair_is_measured(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path,
 ) -> None:
     """Tier 1: FALSIFY — `--write-baseline` is the module docstring's own
     named "one way to defeat the ratchet"; baking in a `[syntax]` pair would
@@ -241,14 +566,15 @@ def test_main_write_baseline_refuses_when_a_syntax_pair_is_measured(
     adds. `main()` must refuse to write at all — `write_baseline` must never
     even be called."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     calls: list[object] = []
     monkeypatch.setattr(module, "write_baseline", lambda pairs, path=None: calls.append(pairs))
     monkeypatch.setattr(
         module, "run_mypy",
-        lambda: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
+        lambda *a, **kw: "src/reyn/foo.py:1: error: Invalid syntax  [syntax]\n"
                 "Found 1 error in 1 file (errors prevented further checking)\n",
     )
-    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda *a, **kw: "")
 
     rc = module.main(["--write-baseline"])
 
@@ -268,13 +594,14 @@ def test_main_refuses_when_mypy_is_not_importable(
 ) -> None:
     """Tier 1: FALSIFY the #4576 shape — with mypy absent, `main()` must
     fail LOUDLY (not print "0 findings" and exit 0) and must never even
-    reach either mypy invocation."""
+    reach either mypy invocation — nor the changed-files/cache-dir/lock
+    machinery below the guard."""
     module = _load()
     monkeypatch.setattr(module, "mypy_is_importable", lambda: False)
     calls: list[str] = []
-    monkeypatch.setattr(module, "run_mypy", lambda: calls.append("src") or "")
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: calls.append("src") or "")
     monkeypatch.setattr(
-        module, "run_mypy_tests_none_arg_type", lambda: calls.append("tests") or "",
+        module, "run_mypy_tests_none_arg_type", lambda *a, **kw: calls.append("tests") or "",
     )
 
     rc = module.main([])
@@ -369,22 +696,46 @@ def test_two_none_hits_on_the_same_line_are_kept_distinct() -> None:
     }
 
 
+def test_scope_hides_a_none_arg_hit_in_an_unchanged_test_file() -> None:
+    """Tier 1: #5882 — same shape as `new_findings`'s own `scope` above,
+    for the #5739 gate: a hit outside changed-files mode's tests/ scope
+    (mypy following an import into an unchanged test helper) stays
+    invisible on THIS run; unscoped (`--full`) still catches it."""
+    module = _load()
+    text = (
+        'tests/changed.py:1: error: Argument "x" to "Y" has incompatible '
+        'type "None"; expected "Z"  [arg-type]\n'
+        'tests/unchanged.py:2: error: Argument "a" to "B" has incompatible '
+        'type "None"; expected "C"  [arg-type]\n'
+    )
+    scoped = module.none_arg_type_hits_in_tests(text, scope={"tests/changed.py"})
+    assert scoped == {
+        ("tests/changed.py", 1, 'Argument "x" to "Y" has incompatible type "None"; expected "Z"'),
+    }
+    unscoped = module.none_arg_type_hits_in_tests(text, scope=None)
+    assert unscoped == {
+        ("tests/changed.py", 1, 'Argument "x" to "Y" has incompatible type "None"; expected "Z"'),
+        ("tests/unchanged.py", 2, 'Argument "a" to "B" has incompatible type "None"; expected "C"'),
+    }
+
+
 def test_main_fails_on_a_none_arg_type_hit_even_when_the_baselined_ratchet_is_clean(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path,
 ) -> None:
     """Tier 1: FALSIFY — #5739's own gate has NO baseline, so it must fail
     `main()` independently of the src/reyn ratchet's own verdict (a clean
     baselined run must not mask a real #5739 hit)."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
-    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
     monkeypatch.setattr(
         module, "run_mypy_tests_none_arg_type",
-        lambda: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
+        lambda *a, **kw: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
                 'incompatible type "None"; expected "Z"  [arg-type]\n',
     )
 
-    rc = module.main([])
+    rc = module.main(["--full"])
 
     err = capsys.readouterr().err
     assert rc == 1
@@ -393,20 +744,21 @@ def test_main_fails_on_a_none_arg_type_hit_even_when_the_baselined_ratchet_is_cl
 
 
 def test_main_ok_when_both_the_ratchet_and_the_5739_gate_are_clean(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """Tier 1: the ordinary green path — neither gate has anything to
     report."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(module, "load_baseline", lambda: {("src/reyn/foo.py", "attr-defined")})
-    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
-    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda: "")
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(module, "run_mypy_tests_none_arg_type", lambda *a, **kw: "")
 
-    assert module.main([]) == 0
+    assert module.main(["--full"]) == 0
 
 
 def test_main_write_baseline_still_surfaces_a_5739_hit(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path,
 ) -> None:
     """Tier 1: FALSIFY — #5739 has no baseline to write, so
     `--write-baseline` must not read as "everything is clean" while a real
@@ -415,11 +767,12 @@ def test_main_write_baseline_still_surfaces_a_5739_hit(
     unrelated, legitimate baseline regeneration), but main() still exits
     nonzero and reports the hit."""
     module = _load()
+    monkeypatch.setattr(module, "default_cache_dir", lambda: tmp_path / "cache")
     monkeypatch.setattr(module, "write_baseline", lambda pairs, path=None: None)
-    monkeypatch.setattr(module, "run_mypy", lambda: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
+    monkeypatch.setattr(module, "run_mypy", lambda *a, **kw: "src/reyn/foo.py:1: error: msg  [attr-defined]\n")
     monkeypatch.setattr(
         module, "run_mypy_tests_none_arg_type",
-        lambda: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
+        lambda *a, **kw: 'tests/runtime/test_foo.py:1: error: Argument "x" to "Y" has '
                 'incompatible type "None"; expected "Z"  [arg-type]\n',
     )
 

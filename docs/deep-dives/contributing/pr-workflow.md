@@ -38,7 +38,13 @@ records.
 **Before you open a PR, run `ruff check .`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
-scripts/mypy_ratchet.py`, `python scripts/flat_tests_ratchet.py`
+scripts/mypy_ratchet.py` (#5882 — this LOCAL run defaults to changed-files
+mode: the `.py` files your branch touched relative to `origin/main`'s
+merge-base, committed or not, plus untracked ones. It is a "find out
+sooner" tool, not the judgment — a signature change breaking an UNCHANGED
+caller elsewhere is invisible to it. CI always passes
+`--full`, checking the whole tree, and is the one that actually decides),
+`python scripts/flat_tests_ratchet.py`
 (#3879 Stage 0 — CI runs this unconditionally on every PR, no path
 filter, `.github/workflows/flat-tests-ratchet.yml`; it only fails when
 a NEW `.py` file lands directly in `tests/`, not in any subdirectory —
