@@ -514,14 +514,21 @@ def _network_denial_note() -> str:
     LLM-settable request on the ``exec`` tool with a real gate behind it
     (``PermissionResolver.require_network``) — this note's fix line names
     the actual next action: retry with the request set, not a retry of
-    the identical call (which fails identically)."""
+    the identical call (which fails identically).
+
+    #5876 co-vet correction: an earlier draft of this note's fix line
+    said "network denied under `bounded`" — `bounded` is FP-0069's own
+    proposed posture-dial NAME (not yet a shipped `sandbox.mode` value;
+    today's live modes are `compat`/`strict` only, #3823), so stating it
+    here as a fact would name a mode that does not exist in this
+    codebase yet. Rewritten to describe only what actually happened."""
     return (
         "[sandbox] Blocked at the syscall layer: the sandbox denies outbound "
-        "network access (connect()) because this exec did not request it. "
-        "This is an environment / sandbox-configuration problem — NOT a "
-        "missing tool and NOT a lack of tool-calling ability; retrying the "
-        "same command will fail identically. Fix: network denied under "
-        "`bounded`; request it with `network: true`."
+        "network access (connect()) because this exec ran with network "
+        "closed. This is an environment / sandbox-configuration problem — "
+        "NOT a missing tool and NOT a lack of tool-calling ability; "
+        "retrying the same command will fail identically. Fix: request it "
+        "with `network: true`."
     )
 
 

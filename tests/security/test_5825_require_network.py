@@ -54,6 +54,36 @@ async def test_config_allow_grants_without_asking(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_stray_config_key_with_a_dot_does_not_leak_a_grant(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5876 architect co-vet finding — an EARLIER draft of the
+    ledger key (`<actor>/sandbox.network/*`) carried a `.`-bearing path
+    segment (`sandbox.network`), which `_approve`'s own composite-key
+    fallback (`for part in key.split("/"): if "." in part and
+    self._is_config_approved(part): ...`) would silently match against a
+    config-only key this registry never registered (a stray
+    `sandbox.network: allow` or a nested `sandbox: {network: allow}`
+    under `permissions:`) and no reader outside this accidental match
+    ever consults — the request would pass with NO ask at all. The
+    current key (`<actor>/network/*`) carries no `.` segment, so neither
+    stray shape can reach the composite fallback: a bus IS available
+    here, so a real ask must fire (proving the request reached the
+    prompt, not a silent config-side bypass) and NO must then deny --
+    strip: reverting the key back to the `.`-bearing shape makes this go
+    RED (bus.asks stays empty, no PermissionError; verified during this
+    fix)."""
+    r = _resolver(
+        tmp_path,
+        config={"sandbox": {"network": "allow"}, "sandbox.network": "allow"},
+    )
+    bus = _FakeBus(NO)
+    with pytest.raises(PermissionError, match="denied"):
+        await r.require_network(PermissionDecl(), bus, "skill", argv=["curl", "x"])
+    (_ask,) = bus.asks  # exactly one — the composite hole would leave this empty
+
+
+@pytest.mark.asyncio
 async def test_no_bus_and_no_prior_grant_denies(tmp_path: Path) -> None:
     """Tier 2: bus=None with no config/ledger grant denies — the same
     "bus=None is not a pause, it's a deny" posture require_http_get's own
@@ -88,7 +118,7 @@ async def test_ask_no_denies(tmp_path: Path) -> None:
 async def test_always_persists_ledger_and_a_later_headless_call_passes_silently(
     tmp_path: Path,
 ) -> None:
-    """Tier 2: ALWAYS persists to the `<actor>/sandbox.network/*` ledger
+    """Tier 2: ALWAYS persists to the `<actor>/network/*` ledger
     key — a LATER call for the SAME actor+agent, even with bus=None,
     passes without asking again. This is the "declared → silent" step
     applying to a PRIOR interactive grant, not just config."""

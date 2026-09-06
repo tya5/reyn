@@ -2051,7 +2051,7 @@ class PermissionResolver:
            without asking — the operator's floor always wins.
         2. **Declared**: ``permissions.network: allow`` (config
            pre-approval) OR a persisted ledger grant under
-           ``<actor>/sandbox.network/*`` (a prior ALWAYS answer, #5052
+           ``<actor>/network/*`` (a prior ALWAYS answer, #5052
            agent-scope convention) → passes silently, no ask.
         3. **Ask**: an interactive ``bus`` is available → prompts once,
            persists an ALWAYS/NEVER choice to the SAME ledger key.
@@ -2062,12 +2062,23 @@ class PermissionResolver:
         Steps 2-4 mostly reuse :meth:`_approve`'s own layering (session /
         saved-with-#5052-scope / not-interactive / prompt) — but
         ``_approve``'s OWN config-approved check reads its ``key`` arg
-        literally, and this axis's ledger key
-        (``<actor>/sandbox.network/*``) does not match its config key
-        (``network``, flat — see :data:`KEY_NETWORK`), so the config
-        check is done explicitly here first, same as
-        ``require_http_get``'s own deny-then-config-approved shape. When
-        no bus is available (or the resolver is non-interactive), a
+        literally, and this axis's ledger key (``<actor>/network/*``)
+        does not match its config key (``network``, flat — see
+        :data:`KEY_NETWORK`), so the config check is done explicitly here
+        first, same as ``require_http_get``'s own deny-then-config-
+        approved shape. **The ledger key deliberately carries no ``"."``
+        segment** (architect co-vet finding, #5876): ``_approve``'s
+        composite-key fallback (``for part in key.split("/"): if "." in
+        part and self._is_config_approved(part): ...``) exists so a
+        DIFFERENT axis's flat-composite key (e.g. ``python.safe``) can
+        honor a kind-level config blanket grant — but a ``"."``-bearing
+        segment here (an earlier ``<actor>/sandbox.network/*`` draft)
+        would let it silently match a config-only key like
+        ``sandbox.network`` or a nested ``sandbox: {network: allow}``
+        that this registry never registered and no reader outside this
+        accidental match consults — the composite fallback is for OTHER
+        axes' real keys, not a hole in this one's own floor check above.
+        When no bus is available (or the resolver is non-interactive), a
         NEW decision cannot be collected, but a PRIOR persisted grant
         must still apply silently (a headless run repeating a
         previously-ALWAYS-approved command should not re-deny) — checked
@@ -2084,7 +2095,7 @@ class PermissionResolver:
             )
         if self._is_config_approved(KEY_NETWORK):
             return
-        key = f"{actor}/sandbox.network/*"
+        key = f"{actor}/network/*"
         if bus is None or not self._interactive:
             if self._session.get(key):
                 return

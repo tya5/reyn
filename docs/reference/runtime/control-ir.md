@@ -387,7 +387,7 @@ Fields:
   ONLY when the resolved policy already has network OFF
   (`policy.network is False`) — at that point it triggers
   `PermissionResolver.require_network` (config `permissions.network:
-  allow`/`deny`, a persisted ledger grant under `<actor>/sandbox.network/*`,
+  allow`/`deny`, a persisted ledger grant under `<actor>/network/*`,
   or an interactive ask) BEFORE the process spawns; on grant, replaces
   THIS call's policy with `network=True` so the enforced value (not the
   request) is what `sandboxed_exec_started` records. A policy that
