@@ -27,7 +27,10 @@ jobs:
       # present until this one. That gap is exactly why #2975's own live
       # validation (24/24, aarch64) could never have run in CI at all before now.
       - name: Install sandbox-linux extra
-        run: pip install -e ".[sandbox-linux]"
+        # `-c ci-constraints.txt` (#5831): see sandbox-landlock-deny-gate.yml's
+        # own comment on the same step for why, and why an extra this file
+        # doesn't pin is still safe (a constraints file only narrows, never adds).
+        run: pip install -e ".[sandbox-linux]" -c ci-constraints.txt
 
       # scripts/sandbox_seccomp_x86_64_live_smoke.py is intentionally NOT a
       # pytest file: loading a real seccomp filter is irrevocable for the rest

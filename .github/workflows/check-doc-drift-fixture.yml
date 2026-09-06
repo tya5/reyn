@@ -55,7 +55,9 @@ jobs:
           cache: pip
 
       - name: Install test dependencies
-        run: pip install -e ".[dev]"
+        # `-c ci-constraints.txt` (#5831): pins the resolved dependency set
+        # for reproducibility across CI runs — see that file's own header.
+        run: pip install -e ".[dev]" -c ci-constraints.txt
 
       - name: Run the #5010 calibration fixture tests
         run: pytest tests/scripts/test_check_doc_drift_5003.py -k 5010 -v

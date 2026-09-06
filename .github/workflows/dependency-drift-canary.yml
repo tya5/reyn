@@ -1,0 +1,101 @@
+name: Dependency-drift canary
+
+# #5831: on 2026-09-06, litellm released 1.100.0 and `main` went red with
+# ZERO reyn commits changing — CI (test.yml) resolves PyPI's latest on
+# every run, so a third-party release's timing decided whether main was
+# green. test.yml now pins every install to `ci-constraints.txt` (a
+# recorded, reviewed set) to make main's color depend only on reyn's own
+# commits. But pinning alone answers "reproducible", not "who notices when
+# an upstream release WOULD have broken us" — that is this workflow's job.
+#
+# This installs the SAME extras as test.yml, WITHOUT ci-constraints.txt
+# (floating latest, exactly matching pyproject.toml's own `>=` floor), on a
+# schedule. A break here means: the next `ci-constraints.txt` refresh (an
+# ordinary PR — see that file's own regen instructions) will need to
+# account for it, BEFORE it reaches main by surprise.
+#
+# ⚠️ #5831 architect's ruling, load-bearing for this file's own design:
+# "第三者の release 時刻が reyn の merge 可否を握らない" (a third party's
+# release timing must not decide whether reyn can merge) — this workflow
+# therefore:
+#   - triggers ONLY on `schedule` + `workflow_dispatch`, never on
+#     `push`/`pull_request`/`merge_group` — structurally, it cannot become
+#     a required status check for any PR, so it cannot block a merge no
+#     matter how branch protection is configured.
+#   - on a red result, opens or UPDATES one tracking issue (never fails a
+#     PR, never re-runs anything on main). Updating (not re-opening fresh
+#     each time) matters: a new issue per occurrence of the SAME upstream
+#     drift buries the history that would otherwise show a pattern.
+on:
+  schedule:
+    # Daily, 06:00 UTC. Frequency is a cost/latency trade, not a precision
+    # requirement — the point is "before too many PRs build on a drift no
+    # one noticed", not "the instant a release lands".
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    name: floating-latest install + test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies (floating latest — no ci-constraints.txt)
+        id: install
+        run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]"
+
+      - name: Run tests
+        id: run_tests
+        run: |
+          set -o pipefail
+          timeout 15m python -m pytest -q -n auto --timeout=120 -rs | tee /tmp/pytest-canary-output.log
+
+      # `if: failure()`: only reached if either step above (install or test)
+      # actually failed — a healthy canary run does nothing here at all, no
+      # issue traffic on a good day.
+      - name: Open or update the drift-tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PY_VER: ${{ matrix.python-version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          LABEL="dependency-drift-canary"
+          TITLE="Dependency-drift canary red — floating-latest install/test failed"
+          gh label create "$LABEL" --repo "${{ github.repository }}" \
+            --description "Opened/updated by dependency-drift-canary.yml (#5831) — never blocks a PR" \
+            --color "d93f0b" 2>/dev/null || true
+
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "$LABEL" --json number --jq '.[0].number // empty')
+
+          BODY="**[dependency-drift-canary]** — floating-latest install/test (Python ${PY_VER}, no ci-constraints.txt) failed on $(date -u +%F).
+
+          Run: ${RUN_URL}
+
+          This does **not** block any PR — this workflow only runs on \`schedule\`/\`workflow_dispatch\`, never on \`push\`/\`pull_request\`/\`merge_group\`. It signals an upstream dependency changed in a way that would break the pinned CI once \`ci-constraints.txt\` is next refreshed to pick it up — see that file's own header for the regen steps and #5831 for the original incident (litellm 1.99.0 -> 1.100.0 turning main red with zero reyn commits). Read the run log above for the actual failure before deciding whether/how to update the lock."
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi

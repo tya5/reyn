@@ -1,0 +1,191 @@
+# #5831: CI-only dependency lock — pins the EXACT version every CI job
+# resolves, so a byte-identical `pip install -e ".[...]"` runs on every CI
+# invocation regardless of what PyPI's "latest" is at that moment.
+#
+# This is a `pip install -c ci-constraints.txt` CONSTRAINTS file, not a
+# requirements file: it does not add any package to the install, it only
+# pins the version pip picks IF that package is already pulled in by
+# `pyproject.toml`'s own dependency graph. `pyproject.toml` itself keeps
+# its `>=` floors unchanged (#4395/#5059's standing rule) — this file
+# governs reproducibility of THIS repo's CI runs, not what a user's own
+# environment is allowed to install. See architect's ruling on #5831 for
+# the full "CI resolves a recorded set / pyproject states a floor" split.
+#
+# Why this exists: on 2026-09-06, litellm released 1.100.0 (from 1.99.0)
+# and `main` went red with ZERO reyn commits changing — CI resolves
+# PyPI's latest on every run, so a third party's release time decided
+# whether main was green. This file makes "which exact versions CI
+# installs" a value under version control, changed only by a deliberate,
+# reviewed PR (see the regen command below) — never silently, by an
+# upstream release landing between two CI runs.
+#
+# To regenerate (an ordinary PR — the diff, and the PR's own CI, are the
+# review): build a fresh venv, install every extra any CI job uses, freeze,
+# strip the editable `reyn` line itself, replace this file whole:
+#
+#   python3.11 -m venv .venv-lockgen && source .venv-lockgen/bin/activate
+#   pip install --upgrade pip
+#   pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag,docs]"
+#   pip freeze | grep -v -i "^-e \|^reyn==" > ci-constraints.txt
+#
+# Generate from the LOWER of the two matrix Pythons (3.11), not 3.12:
+# confirmed directly (2026-09-06) that freezing from 3.12 pinned
+# numpy==2.5.2, a version with no 3.11 wheel at all — `pip install -c` on
+# 3.11 then fails with ResolutionImpossible instead of installing anything.
+# 3.11's own resolution (numpy==2.4.6) installs cleanly on BOTH 3.11 and
+# 3.12 (verified, both matrix versions, real `pip install -e . -c
+# ci-constraints.txt` runs) — every other package in this file was
+# identical between the two freezes, so this was the one real gotcha, not
+# a general rule that every package differs.
+#
+# The dependency-drift canary (`.github/workflows/dependency-drift-canary.yml`)
+# installs WITHOUT this file (floating latest, matching pyproject's own
+# floor) on a schedule, so an upstream break like today's is caught there
+# — as an issue, never as a red main — instead of surfacing here by luck.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+apsw==3.53.4.0
+ast_serialize==0.9.0
+attrs==26.1.0
+babel==2.18.0
+backrefs==8.0
+boto3==1.43.89
+botocore==1.43.89
+certifi==2026.7.22
+cffi==2.1.1
+cfgv==3.5.0
+charset-normalizer==3.5.1
+chonkie==1.7.0
+chonkie-core==0.10.2
+click==8.5.0
+colorama==0.4.6
+coverage==7.16.0
+croniter==6.2.4
+cryptography==50.0.1
+ddgs==9.16.0
+distlib==0.4.3
+distro==1.9.0
+execnet==2.1.2
+fastapi==0.136.3
+fastuuid==0.14.0
+filelock==3.32.5
+frozenlist==1.8.0
+fsspec==2026.7.0
+ghp-import==2.1.0
+googleapis-common-protos==1.75.3
+h11==0.16.0
+hf-xet==1.6.0
+httpcore==1.0.9
+httpcore2==2.12.0
+httptools==0.8.0
+httpx==0.28.1
+httpx2==2.12.0
+huggingface_hub==1.30.0
+identify==2.6.19
+idna==3.19
+importlib_metadata==8.9.0
+iniconfig==2.3.0
+Jinja2==3.1.6
+jiter==0.16.0
+jmespath==1.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+librt==0.15.0
+linkify-it-py==2.2.0
+litellm==1.100.0
+lxml==6.1.3
+Markdown==3.10.3
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mcp==2.1.1
+mcp-types==2.1.1
+mdit-py-plugins==0.6.1
+mdurl==0.1.2
+mergedeep==1.3.4
+mkdocs==1.6.1
+mkdocs-get-deps==0.2.2
+mkdocs-material==9.7.7
+mkdocs-material-extensions==1.3.1
+mkdocs-static-i18n==1.3.1
+multidict==6.7.1
+mypy==2.3.1
+mypy_extensions==1.1.0
+nodeenv==1.10.0
+numpy==2.4.6
+openai==2.54.0
+opentelemetry-api==1.44.0
+opentelemetry-exporter-otlp-proto-common==1.44.0
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-proto==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-semantic-conventions==0.65b0
+packaging==26.3
+paginate==0.5.7
+pathspec==1.1.1
+pillow==12.3.0
+platformdirs==4.11.7
+pluggy==1.6.0
+pre_commit==4.6.2
+primp==2.0.0
+prompt_toolkit==3.0.53
+propcache==0.5.2
+protobuf==7.36.1
+pycparser==3.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
+pydantic_core==2.46.5
+Pygments==2.21.0
+PyJWT==2.13.0
+pymdown-extensions==11.0.2
+pyperclip==1.11.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+pytest-timeout==2.4.0
+pytest-xdist==3.8.0
+python-dateutil==2.9.0.post0
+python-discovery==1.6.0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+pyyaml_env_tag==1.1
+referencing==0.37.0
+regex==2026.9.3
+requests==2.34.2
+rich==15.0.0
+rpds-py==2026.6.3
+ruff==0.16.6
+s3transfer==0.19.2
+setproctitle==1.3.7
+six==1.17.0
+sniffio==1.3.1
+sqlite-vec==0.1.9
+sse-starlette==3.4.11
+starlette==1.2.1
+tenacity==9.1.4
+textual==8.2.8
+# textual-flowview: intentionally NOT listed here — already pinned to an
+# exact commit directly in pyproject.toml's own dependency line (`@<sha>`),
+# and a `pip install -c` constraints file does not support a VCS/URL
+# requirement specifier (pip errors: "Unsupported URL"). Nothing to add.
+tiktoken==0.14.0
+tokenizers==0.23.2
+tokie==0.1.4
+tqdm==4.70.0
+truststore==0.10.4
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0
+uvicorn==0.52.4
+uvloop==0.22.1
+virtualenv==21.7.8
+watchdog==6.0.0
+watchfiles==1.2.0
+wcwidth==0.8.3
+websockets==17.1
+yarl==1.24.5
+zipp==4.1.0

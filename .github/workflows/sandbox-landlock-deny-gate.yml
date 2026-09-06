@@ -43,7 +43,12 @@ jobs:
       # the reyn-rag-chunker / reyn-rag-vector-store console scripts) RUN
       # rather than skip on this job.
       - name: Install sandbox-linux + builtin-rag extras
-        run: pip install -e ".[dev,sandbox-linux,builtin-rag]"
+        # `-c ci-constraints.txt` (#5831): pins the resolved dependency set
+        # for reproducibility across CI runs — see that file's own header.
+        # `sandbox-linux`'s own extra deps are not pinned by this file (the
+        # lock was generated without that extra); unpinned packages simply
+        # resolve normally, a constraints file never adds a requirement.
+        run: pip install -e ".[dev,sandbox-linux,builtin-rag]" -c ci-constraints.txt
 
       # #4302's own "install the plugin's own requirements.txt into the
       # runner venv" step USED TO live here — REMOVED (design correction,

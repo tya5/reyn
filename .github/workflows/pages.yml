@@ -48,7 +48,9 @@ jobs:
         # `[docs]` for mkdocs + plugins; `pyyaml` for website/build.py
         # (pyyaml is already in core deps via pyproject, so `pip install -e .`
         # would suffice, but pin the docs extras explicitly here).
-        run: pip install -e ".[docs]"
+        # `-c ci-constraints.txt` (#5831): pins the resolved dependency set
+        # for reproducibility across CI runs — see that file's own header.
+        run: pip install -e ".[docs]" -c ci-constraints.txt
 
       - name: Build landing page (website/dist/)
         run: python website/build.py
