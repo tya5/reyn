@@ -2302,6 +2302,7 @@ class RouterHostAdapter:
 
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        persist_as_assistant: bool = False,
     ) -> None:
         from reyn.runtime.chat_message import ChatMessage, _now_iso
         from reyn.runtime.outbox import OutboxMessage
@@ -2362,7 +2363,20 @@ class RouterHostAdapter:
         # outbox emit does not ALSO write to history.jsonl. Do not add a new
         # unconditional persist path here without checking whether the text
         # is already recorded elsewhere.
-        if kind == "agent" and text and persist:
+        #
+        # #5887: ``persist_as_assistant`` separates two axes this condition
+        # used to conflate. ``kind`` is the DISPLAY axis — who said it, which
+        # marker the TUI draws, which role a generic AG-UI client sees.
+        # The history append is the LLM-CONTEXT axis — whether the next
+        # turn's wire keeps user/assistant alternation. OS-authored text
+        # (the empty-response notice, the async-dispatch ack) is emitted
+        # as ``kind="system"`` so it stops rendering in the model's voice,
+        # but the dogfood-v6 decision above still stands: it must ALSO land
+        # in history as an ``assistant`` placeholder, or the next turn sees
+        # two consecutive ``user`` messages. Those two sites pass
+        # ``persist_as_assistant=True``; every other non-agent kind keeps
+        # its previous no-persist behaviour, byte-identical.
+        if text and persist and (kind == "agent" or persist_as_assistant):
             # Issue #383: chat history now uses ``role="assistant"`` +
             # ``content=`` (= wire shape mirror); the OutboxMessage above
             # keeps ``kind="agent"`` since that's the TUI-facing

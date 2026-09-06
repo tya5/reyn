@@ -72,16 +72,48 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
 # (finish_reason=stop, no content, no tool calls). Deterministic i18n so
 # output_language is always honoured.  P7-clean: no tool names.
 # "en" is the global-safe default.
+#
+# #5887 (owner report: "llm からのメッセージなのか、システムメッセージなのか
+# tui 表示の区別がついてない"): this is reyn speaking ABOUT the model, so it
+# is (a) emitted as ``kind="system"`` — see the emit site — and (b) worded
+# as an OS notice that says what happened and what is in effect, never as
+# advice in the model's voice. The old "check your configuration" told the
+# owner nothing about WHICH setting; the retry switch is the one that
+# matters here (``chat.empty_stop_retry``, owner default False since
+# 2026-08-14), so its state is printed, with the call id for the audit
+# trail. ``{finish_reason}`` / ``{retry}`` / ``{call_id}`` are filled by
+# :func:`_empty_response_text`.
 _EMPTY_RESPONSE_MSG: dict[str, str] = {
     "ja": (
-        "モデルが空の応答を返しました。"
-        " 別の表現で再入力するか、設定を確認してください。"
+        "[⚠ モデルが空の応答を返しました (finish_reason={finish_reason})"
+        " · 再試行: {retry} (chat.empty_stop_retry) · call {call_id}]"
     ),
     "en": (
-        "The model returned an empty response."
-        " Please try rephrasing your request or check your configuration."
+        "[⚠ model returned an empty response (finish_reason={finish_reason})"
+        " · retry: {retry} (chat.empty_stop_retry) · call {call_id}]"
     ),
 }
+
+
+def _empty_response_text(
+    lang: "str | None", *, finish_reason: "str | None", retry_on: bool,
+    call_id: "str | None",
+) -> str:
+    """Render :data:`_EMPTY_RESPONSE_MSG` for ``lang`` with the facts of this
+    particular empty response filled in (#5887).
+
+    ``retry_on`` is whether the empty-stop retry was IN EFFECT for this
+    call (config ``chat.empty_stop_retry``, or the ``REYN_EMPTY_STOP_RETRY``
+    env override) — printed as ``on``/``off`` so the reader sees the switch
+    that governs what reyn just did, not a generic hint to go look at
+    settings. When it is on and this text is still being shown, the one
+    retry already ran and the model answered empty twice."""
+    template = _EMPTY_RESPONSE_MSG.get(lang or "", _EMPTY_RESPONSE_MSG["en"])
+    return template.format(
+        finish_reason=finish_reason or "?",
+        retry="on" if retry_on else "off",
+        call_id=call_id or "?",
+    )
 
 
 # Localized OS-level acknowledgment emitted when a request is dispatched
@@ -925,6 +957,7 @@ class RouterLoopCore(Protocol):
     # duplicated by ``feedback()``'s ``append_history_entry``) passes False.
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        persist_as_assistant: bool = False,
     ) -> None: ...
 
 
@@ -1100,6 +1133,7 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     # explicit per-call-site opt-out, inherited here (Protocol overlap).
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        persist_as_assistant: bool = False,
     ) -> None: ...
 
     # E-full PR-E (issue #383): persist a single ChatMessage entry
@@ -2814,9 +2848,14 @@ class RouterLoop:
                         lang, _AGENT_SPAWN_ACK_MSG["en"],
                     )
                     ack_text = f"{header}\n\n{trailer}"
+                    # #5887: an OS ack, not the model's words — system
+                    # marker, not the agent one. ``persist_as_assistant``
+                    # preserves the history placeholder this row always
+                    # wrote (see RouterHostAdapter.put_outbox).
                     await self.host.put_outbox(
-                        kind="agent",
+                        kind="system",
                         text=ack_text,
+                        persist_as_assistant=True,
                         meta={
                             "chain_id": self.chain_id,
                             "source": "agent_spawn_ack",
@@ -2984,12 +3023,30 @@ class RouterLoop:
                     )
                     continue  # re-enter the loop with the directive in messages
                 lang = getattr(host, "output_language", None)
-                failure_text = _EMPTY_RESPONSE_MSG.get(
-                    lang, _EMPTY_RESPONSE_MSG["en"]
+                failure_text = _empty_response_text(
+                    lang,
+                    finish_reason=result.finish_reason,
+                    retry_on=bool(
+                        self._empty_stop_retry_directive
+                        and (
+                            self._empty_stop_retry_auto
+                            or os.environ.get("REYN_EMPTY_STOP_RETRY") == "1"
+                        )
+                    ),
+                    call_id=result.call_id,
                 )
+                # #5887: reyn authored this sentence, not the model — it
+                # renders under the system marker (``· `` dim), not the
+                # agent one (``● ``), and a generic AG-UI client never
+                # sees it as an ``assistant`` turn. ``persist_as_assistant``
+                # keeps the dogfood-v6 decision in RouterHostAdapter.
+                # put_outbox intact: the text still lands in history as an
+                # assistant placeholder so the next turn's wire does not
+                # carry two consecutive user messages.
                 await host.put_outbox(
-                    kind="agent",
+                    kind="system",
                     text=failure_text,
+                    persist_as_assistant=True,
                     meta={
                         "chain_id": self.chain_id,
                         "source": "router_empty_response",

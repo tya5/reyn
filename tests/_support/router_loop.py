@@ -249,10 +249,13 @@ class FakeRouterHost:
 
     async def put_outbox(
         self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        persist_as_assistant: bool = False,
     ) -> None:
         self.outbox.append({"kind": kind, "text": text, "meta": meta})
         # #3633: mirror RouterHostAdapter.put_outbox's persist side effect.
-        if kind == "agent" and text and persist:
+        # #5887: including its ``persist_as_assistant`` axis — an OS-authored
+        # ``kind="system"`` row that asks to keep user/assistant alternation.
+        if text and persist and (kind == "agent" or persist_as_assistant):
             self.history.append({
                 "role": "assistant", "content": text, "meta": meta,
                 "tool_calls": None,

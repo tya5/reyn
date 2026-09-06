@@ -207,14 +207,25 @@ async def test_async_tool_dispatch_exits_the_loop(monkeypatch):
     # structured spawn_ack (= parity with skill / plan spawn_ack),
     # not a generic "awaiting peer reply" status row. (proposal 0067 P4,
     # #3978, architect ruling 2026-08-10: kind=agent -> kind=prompt —
-    # `m["kind"]` below is the UNRELATED outbox-display-frame axis, byte-
-    # identical, not touched by this migration.)
+    # `m["kind"]` below is the UNRELATED outbox-display-frame axis.)
+    # #5887: that display axis is now ``"system"`` — the ack is reyn's
+    # own sentence about a dispatch, not the model's words, so it must
+    # not wear the model's marker. strip: reverting the emit site to
+    # ``kind="agent"`` turns this red.
     assert any(
-        m["kind"] == "agent"
+        m["kind"] == "system"
         and m.get("meta", {}).get("source") == "agent_spawn_ack"
         and "[task_spawned] kind=prompt" in m["text"]
         for m in host.outbox
-    ), f"Expected agent_spawn_ack; got: {host.outbox}"
+    ), f"Expected a system-kind agent_spawn_ack; got: {host.outbox}"
+    # #5887 (dogfood-v6 decision preserved, see RouterHostAdapter.
+    # put_outbox): the ack still lands in history as an assistant
+    # placeholder so the next turn's wire keeps user/assistant
+    # alternation — the DISPLAY kind changed, the LLM-context axis did not.
+    assert any(
+        h["role"] == "assistant" and "[task_spawned] kind=prompt" in h["content"]
+        for h in host.history
+    ), f"spawn ack must still persist as an assistant placeholder; got: {host.history}"
 
 
 @pytest.mark.asyncio
