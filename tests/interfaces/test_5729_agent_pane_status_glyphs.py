@@ -301,7 +301,7 @@ class _EventOnlyTransport(ClientTransportStub):
         while True:
             yield await self._queue.get()  # pragma: no cover - never actually sent
 
-    async def submit_user_text(self, text: str) -> str:  # pragma: no cover
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:  # pragma: no cover
         return ""
 
     async def run_slash_command(self, name: str, args: str) -> bool:  # pragma: no cover

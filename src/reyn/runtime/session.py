@@ -5130,6 +5130,7 @@ class Session:
 
     async def submit_user_text(
         self, text: str, *, attribution: "dict | None" = None,
+        client_ref: "str | None" = None,
     ) -> str:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
@@ -5139,6 +5140,14 @@ class Session:
         # (not just emitted on the event below) — a late-joiner seeding from
         # STATE_SNAPSHOT/queued_user_messages() needs it too. See agui-transport.md.
         meta = _user_frame_meta(attribution)
+        # #5833: `client_ref` is an OPAQUE token the submitting client minted
+        # for its own later correlation (see `ClientTransport.submit_user_
+        # text`'s own docstring). Stored and echoed verbatim, NEVER read
+        # branch-wise here or anywhere downstream — this method's own job
+        # ends at receiving it, same as `text`/`chain_id`.
+        if client_ref is not None:
+            meta = dict(meta)
+            meta["client_ref"] = client_ref
         msg_id = await self._put_inbox(
             TurnOrigin.CLIENT_INPUT,
             {"text": text, "chain_id": chain_id, "meta": meta},

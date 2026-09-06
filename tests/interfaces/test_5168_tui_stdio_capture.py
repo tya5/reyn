@@ -254,7 +254,7 @@ class _StubTransport(ClientTransportStub):
         return
         yield DisplayFrame(OutboxMessage(role="assistant", content=""))  # pragma: no cover — makes this a real async generator
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return "msg-1"
 
     async def answer_intervention_text(self, text: str, *, intervention_id=None) -> bool:

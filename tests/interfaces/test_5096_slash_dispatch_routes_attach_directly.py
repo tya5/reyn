@@ -43,7 +43,7 @@ class _RecordingTransport(ClientTransportStub):
         return
         yield  # pragma: no cover — makes this an async generator
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return ""
 
     async def answer_intervention_text(self, text, *, intervention_id=None):

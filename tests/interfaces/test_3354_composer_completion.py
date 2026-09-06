@@ -110,7 +110,7 @@ class RecordingTransport(ClientTransportStub):
         while True:
             yield await self._queue.get()
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         self.submitted.append(text)
         return "m-" + str(len(self.submitted))
 

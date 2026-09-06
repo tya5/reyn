@@ -170,7 +170,7 @@ class _AttachStateTransport(ClientTransportStub):
         import asyncio
         await asyncio.Event().wait()
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         self.submitted.append(text)
         return "msg-1"
 
