@@ -5995,19 +5995,40 @@ class TextualChatApp(App):
             logger.exception("textual chat: could not start image resolution")
 
     def _seed_queue_view(self) -> None:
-        """Seed :attr:`_queue_view` from a fresh read-model snapshot — called
-        once, on the FIRST frame the pump processes (#3300 P2b).
+        """Seed :attr:`_queue_view` — the sent-queue seq-gate's baseline —
+        from a fresh read-model snapshot (#3300 P2b).
+
+        **WHEN this runs is the whole design (#5886).** It is called from
+        exactly two places, and both are hydration points:
+
+        - remote: the moment a ``StatusApplied(kind="snapshot")`` is
+          processed IN THE STREAM (:meth:`_pump_frames`). A snapshot is the
+          server's own paired, consistent view (#5179's
+          ``_session_backlog_page_and_status``), and reading it at its own
+          position in the stream is what makes the baseline independent of
+          how far ahead the decoder happens to be.
+        - local (in-process): once at mount. No wire exists, so a single
+          live read IS the hydration value.
+
+        It is deliberately NOT called on "the first non-status frame" any
+        more (#5886, architect ruling ④ — deleted, not kept as a fallback,
+        because a fallback is a second source). That older trigger read a
+        LIVE read model at a data-dependent moment, and ``AgUiTransport``'s
+        own ``_pump_sse`` decodes without yielding between frames while
+        ``frames()`` suspends between each — so the read model runs
+        arbitrarily far ahead of the pump's position, and the baseline
+        could be seeded from state the pump had not reached. Measured, not
+        theorised: the operator's own first message after attaching was
+        rejected by its own gate (``seq 1 <= baseline``), leaving no user
+        row and a stranded sent-queue placeholder.
 
         The read-model projects ``queue``/``turn_active``/``queue_seq``
         uniformly for local and remote (``read_model.py``'s
         ``project_remote_snapshot`` mirrors ``interfaces/repl/status.py``'s
-        ``_snapshot()``), so ONE call seeds the seq-gate baseline correctly
-        for either transport: local is always live (no wire delay), and for
-        remote the connect-time ``STATE_SNAPSHOT`` has already reached the
-        transport by the time frame #1 is yielded (emitter.py's "Reconnect
-        snapshots first (A4)"), so this is late-joiner-correct. Any item the
-        snapshot already carries (a submission from BEFORE this client
-        attached) is rendered into the sent-queue region immediately."""
+        ``_snapshot()``), so ONE call seeds correctly for either transport.
+        Any item the snapshot already carries (a submission from BEFORE this
+        client attached) is rendered into the sent-queue region
+        immediately."""
         snap = self._snapshot() or {}
         self._queue_view.apply_snapshot(
             queue=snap.get("queue", []),
@@ -6263,15 +6284,21 @@ class TextualChatApp(App):
                 agent=agent or self._destination.agent,
                 session_id=session_id or self._destination.session_id,
             )
-        # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
-        # above): seed the fresh view from the NEW session's snapshot right
-        # now, rather than deferring to the generic "first frame" check —
-        # which would need ANOTHER frame after this barrier to ever fire.
-        try:
-            self._seed_queue_view()
-        except Exception:
-            logger.exception("textual chat: switch queue-view reseed failed")
-        self._queue_seeded = True
+        # #5886 (architect ruling ④): the eager reseed that used to run
+        # HERE is DELETED, not kept as a fallback. It read the live read
+        # model at the moment this ``session_attached`` frame was
+        # processed — but the emitter yields this barrier frame FIRST and
+        # the new session's own backlog + STATE_SNAPSHOT strictly AFTER it
+        # (``emitter.py``'s ``if etype == "session_attached"`` branch runs
+        # after the frame is encoded). Landing in the same HTTP chunk made
+        # it accidentally correct (``_consume_block`` applies the snapshot
+        # to the read model before the app sees either); across a chunk
+        # boundary it seeded from the OLD session's values — the same class
+        # #5886 fixes on the connect path. The fresh view built above is
+        # now seeded by that new session's own STATE_SNAPSHOT when the pump
+        # reaches it, which is the one moment the value is known to be
+        # this session's.
+        self._queue_seeded = False
         # #5050 ③: SAME reasoning — a switch to an agent that already has
         # a pending intervention gets no live announce (restore.py: an
         # unanswered intervention leaves no history trace, and
@@ -6368,10 +6395,27 @@ class TextualChatApp(App):
             # stale delta is legitimate and stays silent to the operator; it
             # stops being invisible to the LOG, which is the surface an
             # investigation reads.
-            logger.debug(
+            # #5886 (architect ruling ⑥): a rejection whose ``client_ref``
+            # is THIS client's own pending row is the bug's fingerprint,
+            # not routine staleness. This client minted that id moments ago
+            # for a submission it has not seen echoed yet, so "already
+            # reflected" cannot be true of it — the only way the gate says
+            # so is a baseline that is wrong. Loud, with the id, so an
+            # operator's log shows the cause instead of just the silence.
+            # Every OTHER rejection (another client's genuinely stale
+            # delta) stays debug: those are the gate doing its job.
+            _ref = (dict(data.get("meta") or {})).get("client_ref")
+            _is_own_pending = isinstance(_ref, str) and self._sent_queue.has_row(_ref)
+            (logger.warning if _is_own_pending else logger.debug)(
                 "textual chat: sent-queue gate rejected user_submitted "
-                "msg_id=%s seq=%s (already reflected by a prior snapshot/delta)",
-                msg_id, seq,
+                "msg_id=%s seq=%s client_ref=%s (already reflected by a "
+                "prior snapshot/delta)%s",
+                msg_id, seq, _ref,
+                (
+                    " — this is THIS client's own pending submission, so the "
+                    "gate's baseline is wrong (#5886), not the delta stale"
+                    if _is_own_pending else ""
+                ),
             )
 
     def _handle_turn_started_event(self, event) -> None:
@@ -7083,13 +7127,41 @@ class TextualChatApp(App):
                     # delta only" case — StatusApplied's own docstring
                     # already states it carries nothing else to apply.
                     frame_is_status_only = True
-                else:
-                    if not self._queue_seeded:
+                    # #5886 (architect ruling ②): a SNAPSHOT is the seq
+                    # gate's hydration point, and seeding HERE — at the
+                    # snapshot's own position in the stream — is what makes
+                    # the baseline independent of how far ahead the decoder
+                    # ran. Every route that produces one converges here:
+                    # first connect, reconnect, and a mid-stream session
+                    # switch (emitter.py's `_reconnect_snapshot_chunks`
+                    # emits a STATE_SNAPSHOT for all three). A DELTA is
+                    # deliberately NOT a seed point (ruling ③): it is a
+                    # display update, and letting it move the baseline is
+                    # the defect itself.
+                    if frame.kind == "snapshot":
                         try:
                             self._seed_queue_view()
                         except Exception:
                             logger.exception("textual chat: queue-view seed failed")
                         self._queue_seeded = True
+                else:
+                    if not self._queue_seeded:
+                        # #5886 (architect ruling ⑤): an event frame BEFORE
+                        # any snapshot is a protocol violation — the server
+                        # contract is snapshot-first (emitter.py's
+                        # "Reconnect snapshots first (A4)"). Say so, then
+                        # APPLY it anyway: dropping it is the invisible
+                        # failure this whole issue is about, while a
+                        # duplicate row is a visible one an operator can
+                        # report. The gate's baseline stays 0 here, which
+                        # admits the frame — the safe direction.
+                        logger.warning(
+                            "textual chat: %s frame arrived before any "
+                            "STATE_SNAPSHOT (protocol expects snapshot "
+                            "first) — applying it rather than dropping it; "
+                            "the sent-queue gate is still unseeded",
+                            getattr(getattr(frame, "event", None), "type", frame),
+                        )
                     if frame.tag is FrameTag.EVENT:
                         etype = getattr(frame.event, "type", None)
                         if etype == "session_attached":

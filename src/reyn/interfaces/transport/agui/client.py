@@ -320,7 +320,20 @@ class AgUiTransport(ClientTransport):
                 # happens to arrive next (the owner-hit: the status bar
                 # stayed on the old agent until the next turn's own
                 # frame). See `StatusApplied`'s own docstring.
-                out.append(StatusApplied())
+                #
+                # #5886 (architect ruling ①): carry WHICH of the two this
+                # was. This branch has always known — the two `if`s right
+                # above are that knowledge — and handed the app one opaque
+                # item for both, which is what left the sent-queue seq-gate
+                # with no way to tell a hydration point from a display
+                # update. A snapshot wins when a block somehow carries
+                # both: hydration is the stronger claim, and seeding from
+                # it is never wrong.
+                out.append(
+                    StatusApplied(
+                        kind="snapshot" if decoded.snapshot is not None else "delta"
+                    )
+                )
             elif isinstance(decoded, MessagesSnapshot):
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
                 # ONE BacklogBatch item, appended to `out` like any other

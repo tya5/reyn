@@ -40,7 +40,7 @@ from reyn.runtime.outbox import OutboxMessage
 
 class _MixedTransport(ClientTransportStub):
     """A real :class:`ClientTransport` that can push either a real
-    ``DisplayFrame`` (an ``OutboxMessage``) or a raw ``StatusApplied()``
+    ``DisplayFrame`` (an ``OutboxMessage``) or a raw ``StatusApplied(kind="delta")``
     item — mirrors #5830's own ``_EventOnlyTransport``
     (``test_3338_tui_status_chrome_liveness.py``), generalized to cover
     both frame families this file's own F2/F3 tests need to distinguish
@@ -53,7 +53,12 @@ class _MixedTransport(ClientTransportStub):
         await self._queue.put(DisplayFrame(msg))
 
     async def push_status_applied(self) -> None:
-        await self._queue.put(StatusApplied())
+        # #5886: `kind` is required now — these are status DELTAS (the
+        # frame this file is about: a status-only frame the pump must
+        # still fire its chrome refresh on). A "snapshot" here would
+        # additionally seed the sent-queue gate, which is a different
+        # frame's job and not what these tests drive.
+        await self._queue.put(StatusApplied(kind="delta"))
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass

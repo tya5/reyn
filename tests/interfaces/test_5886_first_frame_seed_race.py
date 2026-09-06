@@ -82,7 +82,9 @@ def _flow_user_texts(app: TextualChatApp) -> "list[str]":
     ]
 
 
-async def _drain_lines(body_iter, seen: "list[str]") -> AsyncIterator[str]:
+async def _drain_lines(
+    body_iter, seen: "list[str]", gate: "asyncio.Event | None" = None,
+) -> AsyncIterator[str]:
     """Adapts a real ``StreamingResponse.body_iterator`` (whole SSE chunks)
     into the line-at-a-time shape ``AgUiTransport`` expects — copied from
     ``test_5179_remote_own_message_seq_gate_race.py``'s own helper, blank
@@ -97,9 +99,18 @@ async def _drain_lines(body_iter, seen: "list[str]") -> AsyncIterator[str]:
     own test review, made checkable instead of assumed."""
     async for chunk in body_iter:
         for line in chunk.split("\n"):
+            if gate is not None:
+                await gate.wait()
             seen.append(line)
             yield line
-            await asyncio.sleep(0)
+            # NO `await asyncio.sleep(0)` here (the #5179 helper this was
+            # copied from has one). That yield hands control back to the app
+            # pump between every single line, which keeps the pump level with
+            # its own decoder and makes the state #5886 lives in
+            # unreachable. A real socket delivers many SSE lines in one read;
+            # awaiting an async generator that returns immediately does not
+            # yield to the loop, so `_pump_sse` gets to do what its own
+            # comment says it does — decode a whole burst without yielding.
 
 
 def _wire_shape(lines: "list[str]") -> "list[str]":
@@ -147,7 +158,7 @@ async def _wait_until(pilot, condition) -> None:
 
 @pytest.mark.asyncio
 async def test_a_message_submitted_after_attach_reaches_the_conversation(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: #5886's acceptance — attach to an IDLE session, then submit
     through the client. The message must be promoted into the conversation
@@ -191,6 +202,9 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
         "path_params": {"agent_name": _AGENT_NAME},
     }
     req = Request(scope)
+    caplog.set_level(
+        "DEBUG", logger="reyn.interfaces.inline.textual_chat.app",
+    )
 
     try:
         resp = await endpoint_mod.agui_events(req)
@@ -214,8 +228,13 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             return {"status": "ok", "msg_id": msg_id}
 
         wire_lines: "list[str]" = []
-        transport = AgUiTransport(_drain_lines(resp.body_iterator, wire_lines), _send)
-        app_ = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
+        gate = asyncio.Event()
+        gate.set()  # open: the connect-time snapshot must reach the app
+        transport = AgUiTransport(
+            _drain_lines(resp.body_iterator, wire_lines, gate), _send,
+        )
+        read_model = RemoteReadModel(transport)
+        app_ = TextualChatApp(transport=transport, read_model=read_model)
 
         async with app_.run_test(size=(100, 30)) as pilot:
             # Attach: the connect-time STATE_SNAPSHOT (queue_seq 0 — this
@@ -223,6 +242,13 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             # seq-gate (status-only frames never do), which is the standing
             # precondition this whole class rests on.
             await _wait_until(pilot, lambda: transport.has_session())
+
+            # Hold DELIVERY (never production): the server keeps running
+            # at full speed; this only decides when bytes it has already
+            # produced reach the client, which is the one variable this race
+            # turns on. Released below, so the whole burst is decoded in one
+            # go.
+            gate.clear()
 
             # The operator's own Enter, through the client path, so the
             # local placeholder is staged exactly as in production.
@@ -238,6 +264,18 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             # 2 = the enqueue bump plus the dispatch bump.
             await _wait_until(pilot, lambda: session.queue_seq >= 2)
 
+            # Release. `_pump_sse` (AgUiTransport's OWN task, client.py:507)
+            # decodes the whole burst WITHOUT yielding between frames — its
+            # own comment says so — applying every STATE_* to the read-model
+            # as it goes, while `frames()` hands the app one frame at a time
+            # through `suspend_between_frames()`. So by the time the app pump
+            # reaches `user_submitted`, the read-model the lazy seed reads is
+            # ALREADY at the post-dispatch `queue_seq`. That gap is the bug,
+            # and it needs no wire reordering at all — only a pump that lags
+            # its own decoder, which a real TUI doing real rendering work
+            # does by default.
+            gate.set()
+
             # The FIFO barrier. The dispatched turn reaches the real
             # litellm boundary, where this suite's network gate raises;
             # the session CONTAINS that (``session.py``'s "router loop
@@ -250,29 +288,35 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             # is guaranteed, unlike matching on the error's own wording.
             await _wait_until(pilot, lambda: _flow_error_seen(app_))
 
-            # ── Did the racing order actually happen on this run? ──────
-            # The whole point of #5886 is a status projection carrying an
-            # ALREADY-ADVANCED queue_seq reaching the pump BEFORE the
-            # `user_submitted` frame it must not outrun. If that order did
-            # not occur here, a green below measures nothing — so the order
-            # is READ off the wire and reported, never assumed.
-            advanced_idx = _first_index(wire_lines, _advanced_queue_seq)
-            submitted_idx = _first_index(
-                wire_lines, lambda ln: "user_submitted" in ln
+            # ── Did the run reach the state the bug lives in? ───────────
+            # NOT the wire order (measured, and it does NOT invert here:
+            # `user_submitted` precedes the advancing delta on the wire).
+            # The precondition that matters is that the client's READ MODEL
+            # was already carrying the post-dispatch `queue_seq` — that is
+            # what the lazy seed reads. `_pump_sse` decodes the released
+            # burst without yielding, so it is; asserted here rather than
+            # assumed, since a run where the decoder had NOT advanced would
+            # make every verdict below meaningless.
+            # The read model this test itself constructed and handed to
+            # the app — its own public `snapshot()`, never a private
+            # attribute reached back through the app.
+            advanced = (read_model.snapshot() or {}).get("queue_seq", 0)
+            assert advanced >= 2, (
+                "this run never reached #5886's own precondition — the "
+                "client's read model must already carry the post-dispatch "
+                f"queue_seq when the pump seeds (saw {advanced!r}). Wire, in "
+                f"arrival order: {_wire_shape(wire_lines)!r}"
             )
-            raced = (
-                advanced_idx is not None
-                and submitted_idx is not None
-                and advanced_idx < submitted_idx
-            )
-            assert raced, (
-                "this run did NOT construct #5886's own order — an advanced "
-                "queue_seq must reach the client BEFORE the user_submitted "
-                f"frame (advanced at line {advanced_idx}, user_submitted at "
-                f"line {submitted_idx}). Whatever the assertions below say, "
-                "they would say it about a sequence the bug does not live in. "
-                f"Wire, in arrival order: {_wire_shape(wire_lines)!r}"
-            )
+            # ruling ⑥, the accept side: with a correct baseline this
+            # client's own submission is never rejected, so the WARNING
+            # that names that fingerprint must not appear. (Its RED side —
+            # the warning firing when the baseline IS wrong — is its own
+            # test below.)
+            own_ref_warnings = [
+                r.getMessage() for r in caplog.records
+                if r.levelname == "WARNING" and "baseline is wrong" in r.getMessage()
+            ]
+            assert not own_ref_warnings, own_ref_warnings
 
             user_texts = _flow_user_texts(app_)
             queued_texts = list(app_.query_one(SentQueue).rendered_texts())
