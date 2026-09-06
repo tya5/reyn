@@ -35,10 +35,14 @@ compact op uses), so the freed-token report is the **same contract** as the op:
    reactive ladder's shortfall (#5719's rule, which exists to stop the
    ladder's own over-fold and was never a reason to refuse an operator).
 
-Still open, deliberately not implemented here: ruling 3, ``/compact
---keep N`` (trim the tail so protected turns CAN fold), which needs the
-owner's word first — so a history whose head+tail genuinely hold
-everything still stops, it just now says exactly that.
+Still open, deliberately not implemented here: #5888's 3″ — on the
+forced path, offer rung ① SPILL even when zero fold candidates were
+selected. Spill swaps a tool result's body for a reference without
+splitting the message, so it reaches content head/tail is protecting
+without loosening that protection; a 3 MB tool result sitting in the
+tail is exactly what it is for. Until that lands (stage 2), a history
+whose head+tail genuinely hold everything still stops here — it just now
+says exactly that instead of claiming nothing was eligible.
 """
 from __future__ import annotations
 
@@ -241,10 +245,11 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     eligible = result.get("eligible_count")
     if eligible is not None and eligible > 0:
         # Eligible entries existed; head/tail protection held every one of
-        # them back. Ruling 3 (`/compact --keep N`, trimming the tail so
-        # they CAN fold) is still with the owner — until then this reply's
-        # job is to say plainly which boundary stopped it, so the operator
-        # is not left guessing at an empty-sounding "nothing to fold".
+        # them back. Reaching that content is stage 2's job (#5888 3″:
+        # spill on the forced path, which does not loosen protection) —
+        # until then this reply's job is to say plainly which boundary
+        # stopped it, so the operator is not left guessing at an
+        # empty-sounding "nothing to fold".
         word = "entry" if eligible == 1 else "entries"
         await reply(
             ctx,

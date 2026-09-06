@@ -429,9 +429,12 @@ class CompactionController:
         measured. #5719's shortfall rule exists to stop the REACTIVE
         ladder's own 600x over-fold; it was never a reason to refuse an
         operator. head/tail protection is unchanged in BOTH modes —
-        operator mode widens what may fold, never what is protected
-        (loosening protection is ruling 3, ``--keep N``, still awaiting
-        the owner's word and deliberately not implemented here).
+        operator mode widens what may fold, never what is protected.
+        Reaching the content head/tail holds is stage 2's job (#5888 3″):
+        on the forced path, offer rung ① SPILL even when zero candidates
+        were selected — spill replaces a tool result's body with a
+        reference without splitting the message, so it reaches a
+        protected group without loosening protection at all.
 
         Group-awareness in operator mode is satisfied by construction
         rather than by re-grouping: taking the whole unprotected set
