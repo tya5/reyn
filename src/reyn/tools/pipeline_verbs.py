@@ -78,7 +78,9 @@ all statically decidable over the parsed ``Pipeline`` + its ``SchemaRegistry``:
      Both halves are now closed — the spawn passes ``narrowing=`` (the seam
      where the envelope is born) and the tool-step dispatch consults the
      session's live contextual through the shared
-     ``effective.tool_contextually_denied`` predicate. Check 6 closes the
+     ``effective.tool_contextually_denied`` predicate (#5865: now indirectly,
+     via :func:`~reyn.core.dispatch.dispatcher.dispatch_tool`'s own 2b check
+     — see :func:`_make_tool_dispatch`'s own docstring). Check 6 closes the
      separate identity hole.
   5. **S3 no nested launch** — a ``tool`` step must not itself launch a pipeline
      or delegate (nesting is ``call``-only; enforced structurally at dispatch
@@ -302,6 +304,28 @@ def _pipeline_step_deny_reason(name: str) -> str:
     )
 
 
+#: #5865: the ``dispatch_tool`` error ``kind``s that mean the invocation never
+#: happened — a seam-level refusal (before ``target.handler`` ever ran:
+#: ``unknown_tool``/``invalid_args``/``tool_excluded``) or the invoker itself
+#: raising (``permission_denied``/``exception``). Pre-#5865, ALL of these were
+#: raised (the deny checks raised directly; a handler exception propagated
+#: uncaught) — folding onto ``dispatch_tool`` preserves that "propagates"
+#: contract by re-raising here, now uniformly as ``PipelineExecutionError``
+#: (a disclosed, deliberate narrowing of the exception TYPE a step's own
+#: ``on_error`` catches — every existing catch in this module is a bare
+#: ``except Exception``, so nothing keys off the original type). Any OTHER
+#: kind means the handler returned normally with a SELF-declared error (e.g.
+#: ``run_pipeline``'s own ``{"status": "error", "error": {...}}`` envelope) —
+#: that must NOT raise: pre-#5865 it was returned as-is, letting
+#: ``_run_tool_step``'s canonicalization (``is_error_result``) apply
+#: ``on_error`` policy, and — load-bearing — an UNSET ``on_error`` returns
+#: such a result unchecked rather than aborting the run. Raising here too
+#: would make every recoverable tool-declared error unconditionally fatal.
+_DISPATCH_TOOL_RAISING_KINDS: "frozenset[str]" = frozenset({
+    "unknown_tool", "invalid_args", "tool_excluded", "permission_denied", "exception",
+})
+
+
 def _make_tool_dispatch(
     ctx: ToolContext, *, contextual_permission: "object | None" = None,
 ) -> "Callable[[str, dict], Any]":
@@ -313,19 +337,31 @@ def _make_tool_dispatch(
     the tool exactly as if the caller had invoked it directly. No stub, no
     op_runtime bridge: this IS the real tool-execution path.
 
-    #3546: ``contextual_permission`` is the running session's live
-    ``ContextualPermission`` (``Session.contextual_permission``), consulted through
-    the SAME shared predicate every other TOOL-axis site uses
-    (``effective.tool_contextually_denied``). This path is the one tool-dispatch
-    seam that does NOT run inside a ``RouterLoop`` — a pipeline driver-session
-    runs ``PipelineExecutorDriver``, so neither the RouterLoop advertisement
-    filter nor a way to reach ``dispatch_tool``'s own call-time restrict
-    (#5841/#5854) is in the path. Without
-    this the narrowing a driver-session is born with (``session_api.
-    _spawn_pipeline_driver_session``) would be persisted and never read on the
-    surface that actually executes capabilities. ``None`` (the default, and what
-    the ``reyn pipe`` CLI passes — an operator-direct run with no session
-    envelope) leaves the dispatch byte-identical to pre-#3546.
+    #3546/#5865: ``contextual_permission`` is the running session's live
+    ``ContextualPermission`` (``Session.contextual_permission``). This path is
+    the one tool-dispatch seam that does NOT run inside a ``RouterLoop`` — a
+    pipeline driver-session runs ``PipelineExecutorDriver``, so neither the
+    RouterLoop advertisement filter nor a way to reach ``dispatch_tool``
+    naturally is in the path. #5865 folds the actual invocation onto
+    :func:`~reyn.core.dispatch.dispatcher.dispatch_tool` itself (a
+    ``DispatchContext`` built fresh per call, ``contextual=contextual_permission``
+    threaded straight through) instead of reading
+    ``effective.tool_contextually_denied`` directly at a second, separate
+    site — the call-time TOOL-axis restrict predicate (#5841/#5854's 2b) now
+    has exactly ONE call site for every caller, this one included, and a
+    pipeline step gains the SAME ``tool_called``/``tool_returned``/
+    ``tool_failed`` audit trail every other ``dispatch_tool`` caller already
+    had (``caller_kind="pipeline"``, ``chain_id=None`` — there is no litellm
+    tool_calls round behind a pipeline step to key one on). ``None`` (the
+    default, and what the ``reyn pipe`` CLI passes — an operator-direct run
+    with no session envelope) still leaves the dispatch byte-identical:
+    ``dispatch_tool``'s own 2b check no-ops on a ``None`` contextual exactly
+    as the direct predicate call used to (``tool_contextually_denied``'s own
+    docstring: "``contextual is None`` → not denied").
+
+    See :data:`_DISPATCH_TOOL_RAISING_KINDS` for how a ``dispatch_tool``
+    error result maps back onto this closure's pre-#5865 raise/return
+    contract.
 
     #3429: this used to try ``universal_dispatch.resolve_invoke_action`` first,
     so a step could name a tool by its second, ``<category>__<verb>`` spelling
@@ -339,6 +375,9 @@ def _make_tool_dispatch(
     """
 
     async def _dispatch(name: str, resolved_args: "dict[str, Any]") -> Any:
+        from typing import cast
+
+        from reyn.core.dispatch.dispatcher import DispatchContext, dispatch_tool
         from reyn.tools import get_default_registry
 
         registry = get_default_registry()
@@ -350,35 +389,72 @@ def _make_tool_dispatch(
                 f"{_pipeline_step_deny_reason(name)}."
             )
 
-        # #3546: the TOOL-axis contextual gate, on the one dispatch seam that runs
-        # outside a RouterLoop. Same predicate + same deny text as every other site.
-        if contextual_permission is not None:
-            from typing import cast
-
-            from reyn.security.permissions.effective import (
-                contextual_deny_message,
-                tool_contextually_denied,
-            )
-
-            _ctx_perm = cast("Any", contextual_permission)
-            if tool_contextually_denied(_ctx_perm, name):
-                raise PipelineExecutionError(
-                    contextual_deny_message("tool", name, _ctx_perm)
-                )
-
         target = registry.lookup(name)
         if target is None:
             raise PipelineExecutionError(
                 f"pipeline tool step {name!r} does not resolve to a "
                 f"registered tool"
             )
-        target_name = name
-        result = await target.handler(target_args, ctx)
+
+        # #5865 architect co-vet 🔴-1: dispatch_tool's own 5b promotion keeps
+        # only {"kind", "message"} from a handler-declared error, discarding
+        # every OTHER key the handler's own dict carried (e.g. mcp_verbs'
+        # {"status": "error", "data": {"error": ..., "server": ..., "tool":
+        # ...}} — #3450's own named shape). Pre-#5865 the RAW dict reached
+        # the executor, and error_to_canonical's own docstring says this is
+        # deliberately LOSSLESS (the whole dict survives as a structured
+        # attachment). Capturing the invoker's raw return here — read back
+        # below only for the non-raising branch — is what keeps that
+        # lossless contract; reconstructing from dispatch_tool's own
+        # already-narrowed envelope cannot get those keys back.
+        _raw_result: "Any | None" = None
+
+        async def _invoker(call_args: "dict[str, Any]") -> Any:
+            nonlocal _raw_result
+            _raw_result = await target.handler(call_args, ctx)
+            return _raw_result
+
+        dispatch_ctx = DispatchContext(
+            caller_kind="pipeline",
+            caller_id=cast("str", ctx.agent_name or ""),
+            chain_id=None,
+            # A single-entry catalog: `name` was already resolved against the
+            # real registry above, so dispatch_tool's own catalog-membership
+            # check (2. Name validation) can never fire "unknown_tool" for it
+            # — this mirrors slash/tasks.py's own one-tool DispatchContext,
+            # not a full router-style catalog (a pipeline step names ONE
+            # tool per call, never a set an LLM chooses from).
+            tool_catalog={name: target.render_for_router()},
+            events=ctx.events,
+            contextual=cast("Any", contextual_permission),
+        )
+        envelope = await dispatch_tool(
+            name=name, args=target_args, ctx=dispatch_ctx, invoker=_invoker,
+        )
+        if envelope["status"] == "ok":
+            result = envelope["data"]
+        else:
+            error = envelope["error"]
+            if error["kind"] in _DISPATCH_TOOL_RAISING_KINDS:
+                raise PipelineExecutionError(error["message"])
+            # A handler-declared (non-raising) error — preserve the
+            # pre-#5865 "returned normally" contract so _run_tool_step's own
+            # canonicalization (is_error_result) applies on_error policy,
+            # not an unconditional pipeline abort. Returns the RAW handler
+            # dict byte-identically (never dispatch_tool's own narrowed
+            # {"kind", "message"} envelope) — see _raw_result's own comment
+            # above for why.
+            assert _raw_result is not None, (
+                "dispatch_tool promoted a handler-declared error (5b), which "
+                "only fires when the invoker RETURNED a dict — _raw_result "
+                "must have been captured"
+            )
+            result = _raw_result
         # FP-0056 PR-F1: tag the RESOLVED target tool name so _run_tool_step canonicalizes by invoked
         # identity (declaration born at the tool's registration seam), not result["kind"]. Stripped
         # before schema validation + ctx exposure in _run_tool_step.
         if isinstance(result, dict) and "_canonical_source" not in result:
-            result = {**result, "_canonical_source": target_name}
+            result = {**result, "_canonical_source": name}
         return result
 
     return _dispatch

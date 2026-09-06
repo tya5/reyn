@@ -36,12 +36,17 @@ class DispatchContext:
     """Per-call context passed into dispatch_tool.
 
     Attributes:
-        caller_kind: "router" (the chat agent main loop) or "operator"
+        caller_kind: "router" (the chat agent main loop), "operator"
             (#5654 — a slash command driving an op directly, with no LLM
-            tool_calls round behind it, e.g. /tasks). Used in event
-            taxonomy for filtering, and load-bearing for who a `tool_called`
-            audit event says did something (a slash-driven cancel must not
-            be misattributed to the router).
+            tool_calls round behind it, e.g. /tasks), or "pipeline" (#5865
+            — a pipeline `tool:` step, dispatched by a driver-session
+            outside any RouterLoop turn). Used in event taxonomy for
+            filtering, and load-bearing for who a `tool_called` audit
+            event says did something (a slash-driven cancel must not be
+            misattributed to the router; a pipeline step must not be
+            misattributed to a live LLM turn — no `call_id` is ever
+            threaded for one, since there is no litellm tool_calls round
+            behind it).
         caller_id: agent_name. Identifies the audit subject.
         chain_id: optional chain id for multi-hop tracing (PR14).
         tool_catalog: dict[str, dict] mapping tool name → tool definition
@@ -88,7 +93,7 @@ class DispatchContext:
             EXPLICITLY, never omitted.
     """
 
-    caller_kind: Literal["router", "operator"]
+    caller_kind: Literal["router", "operator", "pipeline"]
     caller_id: str
     chain_id: str | None
     tool_catalog: dict[str, dict]
@@ -166,11 +171,12 @@ async def dispatch_tool(
     ``RouterLoop._excluded_result`` — that loop's own former SEPARATE
     pre-dispatch exclude gate, which produced this exact kind and wording —
     into THIS seam, so every ``dispatch_tool`` caller (the router's own LLM
-    tool-call dispatch, ``/exec``, ``/tasks``) now shares the identical
-    check, unwrap, kind, and message-builder — a hidden-but-name-callable
-    tool (native direct call, the #229 salvage, or a direct
-    ``invoke_action(action_name=…)``) is denied the same way regardless of
-    caller or which of those three forms named it.
+    tool-call dispatch, ``/exec``, ``/tasks``, and #5865 folds in the
+    pipeline ``tool:`` step, ``tools/pipeline_verbs._make_tool_dispatch``)
+    now shares the identical check, unwrap, kind, and message-builder — a
+    hidden-but-name-callable tool (native direct call, the #229 salvage, or
+    a direct ``invoke_action(action_name=…)``) is denied the same way
+    regardless of caller or which of those three forms named it.
 
     Deliberately checks ONLY the contextual (narrowing) layer, never
     ``PermissionDecl.tool`` (the static per-agent declaration) — #5841's
@@ -215,10 +221,10 @@ async def dispatch_tool(
     # literal "invoke_action" name, which is never itself excluded) and the
     # SAME kind + message-builder (effective.py's contextual_deny_message)
     # that loop used to apply now apply HERE, for every dispatch_tool
-    # caller (a pipeline tool step, tools/pipeline_verbs._make_tool_
-    # dispatch, does not funnel through dispatch_tool at all — it calls
-    # the handler directly and reads the same predicate at its own,
-    # separate site, #3546).
+    # caller — including a pipeline tool step (tools/pipeline_verbs.
+    # _make_tool_dispatch, #3546), which used to read the same predicate
+    # directly at its own, separate site and now funnels through this one
+    # instead (#5865).
     effective = gate_effective_tool_name(name, args)
     if effective is not None and tool_contextually_denied(ctx.contextual, effective):
         from reyn.security.permissions.effective import contextual_deny_message
