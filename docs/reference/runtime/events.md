@@ -608,12 +608,17 @@ call it wraps. `tool_returned` and `tool_failed` are mutually exclusive per
 call.
 
 `caller_kind` is `"router"` (the chat agent main loop — every pre-#5654
-caller) or `"operator"` (#5654: a slash command driving an op directly, with
+caller), `"operator"` (#5654: a slash command driving an op directly, with
 no LLM `tool_calls` round behind it — e.g. `/tasks cancel`, via
-`slash/tasks.py`'s own `dispatch_tool` call). Load-bearing for who a
-`tool_called` event says did something: a slash-driven cancel reaching
-`chains.get(id).cancel()` directly instead of through `dispatch_tool` would
-silently drop this attribution — #5654's own reviewer strip.
+`slash/tasks.py`'s own `dispatch_tool` call), or `"pipeline"` (#5865: a
+pipeline `tool:` step, dispatched by a driver-session outside any RouterLoop
+turn — `tools/pipeline_verbs._make_tool_dispatch`, which used to invoke a
+tool's handler directly with no audit trail at all; `chain_id` is always
+`None` for this caller, since there is no litellm `tool_calls` round to key
+one on). Load-bearing for who a `tool_called` event says did something: a
+slash-driven cancel reaching `chains.get(id).cancel()` directly instead of
+through `dispatch_tool` would silently drop this attribution — #5654's own
+reviewer strip.
 
 | Kind | When | Key payload |
 |------|------|-------------|

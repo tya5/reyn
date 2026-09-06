@@ -439,20 +439,21 @@ def tool_contextually_denied(
     ``effective_name``. ``contextual is None`` → not denied (⊤), so an
     un-narrowed path is byte-identical to pre-#1827.
 
-    **Measured callers** (#3513, ``src/`` enumeration; #3546 adds one, #5854
-    folds a former separate one into this list's first entry):
+    **Measured callers** (#3513, ``src/`` enumeration; #3546 added one, #5854
+    and #5865 each folded a former separate one into this list's first entry):
     ``core.dispatch.dispatcher.dispatch_tool``'s own call-time TOOL-axis
     restrict (2b — the SINGLE live enforcement gate every ``dispatch_tool``
-    caller funnels through since #5854 retired ``RouterLoop._excluded_
-    result``'s duplicate pre-dispatch check; the pipeline tool-step
-    dispatch listed below does NOT funnel through it) and the advertisement filter
-    (``apply_contextual_visibility``), the three exposure/fence schemes
-    (``_category_exposure``, ``_enumerate_exposure``,
-    ``retrieval_content_fence``), and the pipeline tool-step dispatch
-    (``tools/pipeline_verbs._make_tool_dispatch``). Those paths share this one
-    function, so they cannot disagree about what a narrowing means. This is an
-    enumeration of who calls it — NOT a claim that every path which executes a
-    capability calls it.
+    caller funnels through: #5854 retired ``RouterLoop._excluded_result``'s
+    duplicate pre-dispatch check, and #5865 folded the pipeline tool-step
+    dispatch — ``tools/pipeline_verbs._make_tool_dispatch``, #3546's own
+    former separate site — onto this same seam, so it too is now an INDIRECT
+    caller via ``dispatch_tool`` rather than a direct one) and the
+    advertisement filter (``apply_contextual_visibility``), plus the three
+    exposure/fence schemes (``_category_exposure``, ``_enumerate_exposure``,
+    ``retrieval_content_fence``), which call it directly. Those paths share
+    this one function, so they cannot disagree about what a narrowing means.
+    This is an enumeration of who calls it — NOT a claim that every path
+    which executes a capability calls it.
 
     ⚠️ This docstring used to claim that **every** tool-dispatch path calls this
     function — naming "control-IR op dispatch" as one of them — and concluded
@@ -462,9 +463,10 @@ def tool_contextually_denied(
     files in #2434; the orphaned wrapper had no ``src/`` caller and was deleted
     in #3513. #3546 measured ONE of the paths that claim left open — the pipeline
     tool-step dispatch, which executed a narrowing-denied tool's real side effect
-    and now calls this function. **The op-dispatch axis itself (control-IR ops,
-    whose own contextual gating rides ``OpContext.contextual_permission`` rather
-    than this predicate) is still unmeasured.** Do not restore an exhaustiveness
+    and (until #5865 folded it onto ``dispatch_tool``) called this function
+    directly. **The op-dispatch axis itself (control-IR ops, whose own
+    contextual gating rides ``OpContext.contextual_permission`` rather than
+    this predicate) is still unmeasured.** Do not restore an exhaustiveness
     claim here without an enumeration that supports it.
 
     Callers pass the **effective resolved name** (``invoke_action`` already
