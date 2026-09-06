@@ -218,6 +218,79 @@ def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
         litellm_bootstrap._ready_registry.update(saved_registry)
 
 
+def test_import_time_redirect_survives_a_handler_that_rebinds_stream_at_emit(tmp_path) -> None:
+    """Tier 2: #5831 — the import-time redirect must not depend on WHEN a
+    handler binds its stream, since litellm can (and, in 1.100.0, does)
+    attach a handler that REBINDS its own ``self.stream`` from the live
+    ``sys.stderr``/``sys.stdout`` on every single ``emit()`` call, discarding
+    whatever it was constructed with. This test does not depend on litellm's
+    installed version at all — it constructs that exact hazard directly, so
+    "green on today's litellm" is not this test's witness; a future litellm
+    handler shape doing the same rebind-from-sys-module trick is what it
+    actually exercises.
+
+    FALSIFY: reverting `_litellm_import_logs_to_file` to its pre-#5831
+    mechanism (patch ``logging.StreamHandler``'s *construction*, not the
+    ``sys.stdout``/``sys.stderr`` objects themselves) makes this RED — the
+    synthetic handler below is constructed with a plain, unpatched stream
+    and then rebinds past it at emit time straight to whatever `sys.stderr`
+    the fake-terminal fixture below installed, leaking the marker there
+    instead of the log file.
+    """
+    import io
+    import logging
+    import sys
+
+    from reyn.llm.litellm_bootstrap import _LITELLM_LOGGER_NAMES, _litellm_import_logs_to_file
+
+    class _RebindsStreamAtEmit(logging.StreamHandler):
+        """Mimics litellm 1.100.0's ``LevelRoutingStreamHandler``: re-reads
+        the live `sys.stderr` and rebinds `self.stream` on every `emit()`,
+        regardless of what it was constructed with."""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.stream = sys.stderr
+            super().emit(record)
+
+    logs_dir = tmp_path / ".reyn" / "logs"
+    logs_dir.mkdir(parents=True)
+    log_file = logs_dir / "reyn.log"
+    file_handler = logging.FileHandler(log_file)
+
+    root = logging.getLogger()
+    target_logger = logging.getLogger(_LITELLM_LOGGER_NAMES[0])
+    saved_root_handlers = root.handlers[:]
+    saved_target_handlers = target_logger.handlers[:]
+    saved_target_propagate = target_logger.propagate
+    saved_stderr = sys.stderr
+    fake_terminal = io.StringIO()  # stands in for the real terminal's stderr
+    sys.stderr = fake_terminal
+    root.handlers[:] = [file_handler]
+    try:
+        with _litellm_import_logs_to_file():
+            # Constructed with the module's OWN default (stream=None ->
+            # whatever sys.stderr IS right now) -- inside the context
+            # manager that is already reyn's file stream, but the point of
+            # this handler is that it does not matter: emit() rebinds past
+            # it anyway.
+            handler = _RebindsStreamAtEmit()
+            target_logger.addHandler(handler)
+            target_logger.warning("marker-5831-emit-time-rebind")
+        file_handler.flush()
+
+        assert "marker-5831-emit-time-rebind" in log_file.read_text(), (
+            "message never reached the log file"
+        )
+        assert "marker-5831-emit-time-rebind" not in fake_terminal.getvalue(), (
+            f"message leaked to the (fake) terminal: {fake_terminal.getvalue()!r}"
+        )
+    finally:
+        sys.stderr = saved_stderr
+        root.handlers[:] = saved_root_handlers
+        target_logger.handlers[:] = saved_target_handlers
+        target_logger.propagate = saved_target_propagate
+
+
 def test_first_use_routes_litellm_import_time_warning_to_file(tmp_path, out_of_process_reyn) -> None:
     """Tier 2: litellm's cost-map-fetch-failure warning, emitted synchronously
     *during* ``import litellm`` (not a runtime call reyn controls, so exercised
