@@ -627,7 +627,24 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: PR lands first gets 123; the other rebases onto 124 (architect co-vet on
 #: #5858 flagged this collision in advance, not discovered as a merge
 #: conflict).
-_PUBLIC_MEMBER_CEILING = 123
+#: Raised 123 -> 124 for #5856: ``pending_user_attachments`` — a NEW
+#: read-only ``@property``, a tuple-copy snapshot of the SAME queue
+#: ``pending_user_images`` (already public, see its own ``_Residue`` entry
+#: above) exposes as a live list. Not the S4 failure mode: this is a
+#: READ published so a TEST no longer has to reach into
+#: ``Session._pending_user_attachments`` directly (``test_tier_audit.py``
+#: Rule 8 can now catch a reintroduced private read) — the WRITE side
+#: stays exactly where ``pending_user_images``'s own docstring already
+#: committed it (``/exec-attach``/``/attachment``/``/image`` append to
+#: the private list directly; no new write path was added). Named
+#: separately from ``pending_user_images`` rather than reusing it because
+#: that name's own docstring commits to the narrower "image upload
+#: queue" framing #5837/#5509 outgrew — the queue holds non-image blocks
+#: now, and a read through the image-named accessor would claim the
+#: wrong thing about what was actually queued. See the #5851 entry just
+#: above for the collision this stacks onto (#5858, tui-coder rebasing
+#: 123 -> 124 per lead-coder instruction, 2026-09-06).
+_PUBLIC_MEMBER_CEILING = 124
 
 
 def test_session_public_surface_does_not_grow() -> None:
