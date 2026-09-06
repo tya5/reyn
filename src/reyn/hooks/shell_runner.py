@@ -746,7 +746,11 @@ async def run_shell_hook(
     try:
         stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
 
-        from reyn.security.sandbox.denial import DENIAL_FORK, DENIAL_NETWORK  # noqa: PLC0415
+        from reyn.security.sandbox.denial import (  # noqa: PLC0415
+            DENIAL_FORK,
+            DENIAL_NETWORK,
+            looks_permission_related,
+        )
         from reyn.security.sandbox.launcher import run_and_classify  # noqa: PLC0415
 
         launched = await run_and_classify(
@@ -919,11 +923,37 @@ async def run_shell_hook(
                     stderr_snippet or "<empty>",
                 )
             else:
+                # #5832: real-machine incident (owner, 2026-09-06) — a hook's
+                # write was denied (`write_paths:` unset for it) and this
+                # branch's own message carried NOTHING beyond the child's raw
+                # traceback; lead-coder needed 10 steps to reach the actual
+                # cause, and the owner could not take step 1 from the screen
+                # alone. reyn already knows what it granted (`policy`, built
+                # above) — it just was not saying so.
+                #
+                # This does NOT classify the failure as a sandbox denial (see
+                # `looks_permission_related`'s own module comment in
+                # denial.py for why a write denial cannot be told apart from
+                # a genuine non-sandbox permission error by its stderr text
+                # alone) — it only decides whether disclosing the granted
+                # range is worth the sentence, then states that range as a
+                # FACT, never a diagnosis.
+                granted_scope_note = ""
+                if looks_permission_related(result.stderr):
+                    granted_scope_note = (
+                        " #5832: reyn ran this hook with subprocess="
+                        f"{not policy.deny_subprocess}, network={policy.network}, "
+                        f"write_paths={list(policy.write_paths)!r} — the range "
+                        "reyn granted, not a diagnosis of this failure's cause "
+                        "(a genuine non-sandbox permission error reads "
+                        "identically)."
+                    )
                 _log.warning(
-                    "shell-hook %r exited %d (stderr: %s).",
+                    "shell-hook %r exited %d (stderr: %s).%s",
                     command,
                     result.returncode,
                     stderr_snippet or "<empty>",
+                    granted_scope_note,
                 )
             return None  # fail-safe: a failed command yields no push-directive
 
