@@ -912,6 +912,26 @@
 
 
 # -----------------------------------------------------------------------------
+# process_memory: #5851 stage (a). Same resource role as history_resident/
+# read_cap above (bytes, model-independent, config-driven), but a different
+# SUBJECT: bounds the WHOLE process's real measured memory footprint
+# (darwin: phys_footprint; linux: rss) cause-independently, not one
+# consumer's own contribution to it. Omit the block to keep observe-only
+# (no cap, enforce off) — the shipped stage (a) default; a non-positive/
+# non-numeric max_bytes falls back to no-cap, never to the literal 0.
+#
+# enforce: true is INERT in stage (a) — no halt mechanism exists yet (a
+# later stage adds it) — but IS validated at config-load time regardless:
+# enforce: true with no max_bytes set, or on a platform with no reader
+# (only darwin/linux are measured today), is a config-load ERROR, not a
+# silent no-op.
+# -----------------------------------------------------------------------------
+# process_memory:
+#   max_bytes: 2147483648   # cap, in bytes — absent/unset = no cap (observe only)
+#   enforce: false           # halt when exceeded — inert until a later stage
+
+
+# -----------------------------------------------------------------------------
 # image: the fixed row height (in terminal rows/cells) every present-rendered
 # inline image (reyn's own HalfBlockImage renderable, #4474) is shown at.
 # Width is derived from this to preserve the image's real aspect ratio —

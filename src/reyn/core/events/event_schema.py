@@ -319,6 +319,23 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   the turn_end lifecycle hook (slice 5b). chain_id matches the turn's
     #   chain_id for cross-agent tracing.
     "turn_completed": frozenset({"chain_id"}),
+    # process_footprint (#5851 stage (a)): a live process-memory reading —
+    # ``Session.load_history()``'s own finally (once, at startup, every
+    # ``load_history()`` caller) and ``_run_router_loop``'s finally (once
+    # per turn, next to the turn_end dispatch). ``metric`` MUST ride with
+    # every ``bytes`` value (verification-hazards' own root: "an
+    # observation does not name its own referent") — darwin's
+    # ``phys_footprint`` and linux's ``rss`` are not comparable numbers.
+    # ``cap_bytes``/``enforce`` are always present (possibly ``cap_bytes``
+    # = None, observe-only) so a reader never has to cross-reference
+    # config to know whether THIS reading was ever checked against
+    # anything.
+    "process_footprint": frozenset({"bytes", "metric", "cap_bytes", "enforce"}),
+    # process_footprint_unavailable (#5851 stage (a)): this platform has
+    # no reader (``process_memory_metric_name()`` is None) — fires at
+    # most once per PROCESS (``ProcessMemoryGuard.claim_unavailable_
+    # announcement``), never a fabricated ``bytes`` value.
+    "process_footprint_unavailable": frozenset({"platform"}),
     # turn_settled: emitted in Session.run_one_iteration()'s finally for EVERY
     #   turn kind (including slash / intervention short-circuits that return
     #   before the router). Unlike turn_completed (router path only), this is the
@@ -557,6 +574,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "presentation_installed",
     "presentation_load_failed",
     "presented",
+    "process_footprint",
+    "process_footprint_unavailable",
     "process_marker_reaped",
     "project_context_changed",
     # #5742 (architect ruling): an operator EXPLICITLY specified a
