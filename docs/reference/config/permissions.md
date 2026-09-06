@@ -2,12 +2,12 @@
 type: reference
 topic: config
 audience: [human, agent]
-applies_to: [reyn.yaml, skill.md, phases/*.md]
+applies_to: [reyn.yaml]
 ---
 
 # Permissions
 
-reyn's permission system gates access to file paths, exec (argv-only process execution — `#3226` renamed `shell` -> `exec`), MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a workflow-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
+reyn's permission system gates access to file paths, exec (argv-only process execution — `#3226` renamed `shell` -> `exec`), MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults needs a project-wide declaration in `reyn.yaml`'s `permissions:` block, and — for an access the declared set does not cover — a just-in-time operator approval.
 
 ## Default grants (no declaration needed)
 
@@ -42,88 +42,19 @@ still asks the operator when a request bus is available (chat / interactive
 runs) and denies when there is none (headless / eval). Config is the standing
 set; JIT is the per-access extension of it.
 
-## Workflow declarations (`permissions:` in `skill.md` frontmatter)
+## Declaring permissions
 
-Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see skill-md.md. Phases inherit whatever the workflow declares.
-
-```yaml
----
-type: skill
-name: example
-entry: main
-final_output: result
-permissions:
-  shell: true
-  mcp: [my_server]
-  tool: [web_search]
-  file:
-    read:
-      - path: ~/notes
-        scope: recursive
-    write:
-      - path: /tmp/output
-        scope: just_path
-  http.get:
-    - host: api.github.com           # specific host: startup_guard prompts once, runtime silent
-    - host: "*"                      # wildcard: runtime per-host 4-layer prompt for any URL
-  secret.write:
-    - GITHUB_TOKEN                   # specific key, or
-    - "*"                            # wildcard for runtime-determined keys (= user-prompt is the gate)
-  python:
-    - module: stats
-      function: compute
-      mode: safe
-      timeout: 30
----
-```
-
-### `shell`
-
-`true` to enable the `shell` Control IR op for this phase. Off by default.
-
-### `mcp`, `tool`
-
-List of MCP server names / named tool ids the phase may call.
-
-### `file.read` / `file.write`
-
-Declares paths the actor may need. Each entry has:
-
-- `path` — absolute, or relative to the zone root. `~` is expanded.
-- `scope` — `just_path` (this exact path) or `recursive` (this path and everything below it).
-
-Declaring a path in workflow frontmatter does not itself grant access (the gate
-is decl-less: the configured scope, or an approval). To grant it standing, put
-the path in `reyn.yaml`'s `permissions.file.read` / `file.write` list — that
-list is the set both the gate and the tool advertisement read.
-
-`file.write` covers `write`, `edit`, and `delete` ops.
-
-### `python`
-
-Per-(module, function) declarations for `python` preprocessor steps. See `reference/dsl/preprocessor.md`.
-
-- `module`, `function` — must match the corresponding preprocessor step.
-- `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
-
-Python steps are always sandboxed (AST allowlist + restricted builtins). A `mode: unsafe` declaration is rejected at load — split any raw I/O out via a `run_op` step, or use the permission-gated `reyn.api.safe.*` surface.
-
-### `http.get`
-
-Per-host HTTP allowlist for `reyn.api.safe.http.*` (workflow-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
-
-- **Specific host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts once per `<skill, host>`; runtime is silent after approval. Same model as `file.write` outside the default zone.
-- **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime); the 4-layer prompt fires inside `require_http_get` at the actual host gate; ALWAYS / NEVER persists per host.
-- **No declaration** — legacy `web.fetch` compat fallback with `DeprecationWarning` until the migration window closes.
-
-`reyn.api.safe.http` (subprocess path) accepts only specific hosts; wildcard requires the async `web_fetch` op route.
-
-### `secret.write`
-
-Per-key allowlist for `~/.reyn/secrets.env` writes (= called by the `mcp_install` op handler when persisting `isSecret` env vars).
-
-- **Specific key** (`secret.write: ["GITHUB_TOKEN"]`) — authorises that exact env-var name.
-- **Wildcard** (`secret.write: ["*"]`) — runtime-determined key set (= mcp_install reads `isSecret` env vars from the registry response). The operator's per-value prompt at op-execution time is the actual security gate.
+**The only place a permission is declared is `reyn.yaml`'s `permissions:`
+block** — see [Project-wide pre-approval](#project-wide-pre-approval-reynyaml)
+below for its shape. There is no `skill.md` frontmatter `permissions:` key: an
+earlier version of this page documented one, and a parser for it that was
+never built (`docs/reference/config/permissions.md`'s own drift, #5863) — the
+production read path is the single call to `PermissionDecl.from_dict` in
+`session.py`, and the dict it is handed there is `PermissionResolver._config`,
+which is `reyn.yaml`'s `permissions:` block, never anything parsed out of a
+`skill.md` file. If you are looking at a `skill.md` (or workflow/phase file)
+with a `permissions:` key in its frontmatter, that key is inert — nothing
+reads it.
 
 ## Web ops
 
@@ -138,7 +69,7 @@ permissions:
   web.fetch: allow   # legacy alias — pre-approves any host (= equivalent to ALWAYS for all hosts)
 ```
 
-This differs from Tier 2-3 ops (`shell`, `mcp`) which require an explicit declaration in `skill.md` before the op is even attempted.
+This differs from Tier 2-3 ops (`shell`, `mcp`) which require an explicit declaration in `reyn.yaml`'s `permissions:` block before the op is even attempted.
 
 ## Approval flow (interactive)
 
