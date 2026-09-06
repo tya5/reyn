@@ -6868,6 +6868,17 @@ class TextualChatApp(App):
                 # other frame, and this loop needs nothing else (no
                 # separate ordering barrier, no fallback worker for "zero
                 # further frames": this item IS one of those frames).
+                # #5870 stage 2 (F3, architect ruling): whether THIS frame is
+                # provably a status/snapshot delta only — the ONE thing that
+                # lets the trailing ``_refresh_live_chrome()`` call below
+                # skip refreshing a pane that cannot possibly have changed
+                # (History/Artifacts — see ``_STATUS_INDEPENDENT_PANES``).
+                # Reset every iteration; every OTHER branch below leaves it
+                # False (the conservative default — "assume this frame COULD
+                # have changed anything" unless a branch positively proves
+                # otherwise, per the architect's own "skip only what is
+                # certain" ruling).
+                frame_is_status_only = False
                 if isinstance(frame, BacklogBatch):
                     self._apply_backlog_batch(frame)
                     continue
@@ -6886,7 +6897,11 @@ class TextualChatApp(App):
                     # OTHER frame happens to arrive next (the owner-hit:
                     # web/connect's status bar stayed on the old agent
                     # until the next turn's own frame arrived).
-                    pass
+                    #
+                    # #5870 stage 2 (F3): this IS the "provably a status
+                    # delta only" case — StatusApplied's own docstring
+                    # already states it carries nothing else to apply.
+                    frame_is_status_only = True
                 else:
                     if not self._queue_seeded:
                         try:
@@ -7027,7 +7042,7 @@ class TextualChatApp(App):
                 # its whole duration. Bounded by frame rate (far below a render
                 # loop) and guarded so a snapshot read failure never kills the pump.
                 try:
-                    self._refresh_live_chrome()
+                    self._refresh_live_chrome(status_only=frame_is_status_only)
                     # #3680: the inputs to the layout decision (a turn
                     # starting, an item queued) arrive on these same frames,
                     # so re-deciding here is what keeps the answer from being
