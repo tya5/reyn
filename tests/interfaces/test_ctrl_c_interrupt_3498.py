@@ -64,8 +64,11 @@ class _Transport(ClientTransportStub):
     def put_display(self, msg: "OutboxMessage") -> None:  # pragma: no cover
         pass
 
-    async def cancel_inflight(self) -> None:
+    async def cancel_inflight(self) -> str:
         self.cancels += 1
+        # A non-empty summary: the ABC reserves "" for "not delivered"
+        # (#5894), which the app now draws as an error row.
+        return "cancelled"
 
     async def shutdown(self) -> None:  # pragma: no cover - trivial
         pass
@@ -75,7 +78,7 @@ class _Transport(ClientTransportStub):
 
 
 class _RaisingTransport(_Transport):
-    async def cancel_inflight(self) -> None:
+    async def cancel_inflight(self) -> str:
         raise RuntimeError("boom")
 
 

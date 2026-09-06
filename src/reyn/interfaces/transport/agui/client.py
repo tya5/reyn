@@ -110,6 +110,15 @@ class AgUiTransport(ClientTransport):
     ) -> None:
         self._sse_lines = sse_lines
         self._send = send
+        # #5894 (architect ruling ①-3): at most one cancel_inflight POST in
+        # flight per connection — the SAME coalesce shape endpoint.py's
+        # ``_status_ping_pending`` uses. Once the TUI stops awaiting the
+        # round-trip on its message pump, a held Ctrl-C would otherwise
+        # open one POST per key repeat against a server that is, by
+        # hypothesis, not answering. A second press while one is pending
+        # is a no-op; nothing is lost — a cancel is idempotent and the
+        # pending one carries the whole intent.
+        self._cancel_inflight_pending = False
         self._status = status_view if status_view is not None else RemoteStatusView()
         self._reguard_surface = reguard_surface
         self._connected = connected
@@ -784,8 +793,20 @@ class AgUiTransport(ClientTransport):
         # slash command for the SERVER to run via execute_slash_command,
         # which calls Session.cancel_inflight() directly and gets the real
         # summary — this generic string is never what a /cancel reply shows.
-        await self._send({"type": "cancel_inflight"})
-        return "cancel requested"
+        if self._cancel_inflight_pending:
+            return "cancel already requested"
+        self._cancel_inflight_pending = True
+        try:
+            accepted = await self._send({"type": "cancel_inflight"})
+        finally:
+            self._cancel_inflight_pending = False
+        # #5894: ``send`` returns ``None`` for a non-delivery — a control
+        # timeout (#5894 ①-1) or a transport error. That is NOT "cancel
+        # requested": the server never acknowledged it. Return the falsy
+        # empty string so the caller can say so (the ABC contract: a
+        # summary of what happened, never a claim of success the transport
+        # could not observe).
+        return "cancel requested" if accepted is not None else ""
 
     async def cancel_queued(self, msg_id: str) -> bool:
         # #3300 P3 (Y-server) remote parity: POST the cancel-by-id op; the

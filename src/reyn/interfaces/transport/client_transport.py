@@ -206,7 +206,11 @@ class ClientTransport(ABC):
         success unconditionally: a transport that cannot observe the real
         outcome (e.g. a fire-and-forget wire message) returns a
         best-effort/generic string rather than asserting something was
-        actually stopped."""
+        actually stopped. The EMPTY string is reserved (#5894): it means the
+        request was NOT delivered at all — a control timeout or a send
+        failure — and the TUI names that as "not responding" rather than
+        letting a "cancel requested" row stand for an acknowledgement the
+        transport never observed."""
 
     @abstractmethod
     async def run_slash_command(self, name: str, args: str) -> bool:

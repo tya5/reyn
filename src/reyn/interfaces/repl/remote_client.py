@@ -48,6 +48,56 @@ def _env_float(name: str, default: float) -> float:
 # ``REYN_AGUI_HEARTBEAT_INTERVAL_S``; MUST stay below the server's timeout.
 _HEARTBEAT_INTERVAL = _env_float("REYN_AGUI_HEARTBEAT_INTERVAL_S", 25.0)
 
+#: #5894 (architect ruling ①-1): the read timeout for a CONTROL POST
+#: (submit / cancel / answer / heartbeat) — the one constant, the one place.
+#: The SSE stream keeps ``read=None`` (a live stream legitimately reads
+#: forever); a control request is a bounded round-trip and must not share
+#: the stream's policy. Owner-hit: the server was pinned by CPU-bound LLM
+#: request assembly, the client's control POSTs waited on the SAME
+#: unbounded-read client, and Ctrl-C hung forever. With this, the wait ends
+#: in a typed ``httpx.ReadTimeout`` that ``send`` turns into a
+#: non-delivery (``None``) the TUI can name.
+_CONTROL_TIMEOUT_S = _env_float("REYN_AGUI_CONTROL_TIMEOUT_S", 10.0)
+
+
+async def post_control(
+    client, url: str, *, params: dict, payload: dict,
+    timeout_s: "float | None" = None,
+) -> "dict | None":
+    """POST one client→server control message with the CONTROL timeout
+    policy (#5894 ①-1) and return the parsed JSON body on a 2xx accept,
+    ``None`` on a non-delivery.
+
+    This is the whole policy in one place: ``timeout_s`` (default
+    :data:`_CONTROL_TIMEOUT_S`) bounds the read; the ``client`` passed in
+    keeps its OWN default (``read=None``, the SSE stream's) untouched — one
+    client, two request kinds, two policies. A non-delivery is any of: the
+    request raised (timeout, connect error, ...), or the server answered
+    ≥300. A 2xx whose body is empty / not JSON is still an accept and reads
+    as a truthy ``{"status": "ok"}``, so every ``if accepted:`` caller keeps
+    the old bool contract.
+
+    ``timeout_s`` is a parameter so a test can supply T — it is the subject
+    there, never a wait the test sits out.
+    """
+    import httpx
+
+    read_timeout = _CONTROL_TIMEOUT_S if timeout_s is None else timeout_s
+    try:
+        resp = await client.post(
+            url, params=params, json=payload,
+            timeout=httpx.Timeout(read_timeout, connect=10.0),
+        )
+    except Exception:  # noqa: BLE001 — a transport error is a non-delivery
+        logger.warning("remote send failed for %r", payload.get("type"))
+        return None
+    if resp.status_code >= 300:
+        return None
+    try:
+        return resp.json()
+    except Exception:  # noqa: BLE001 — an empty/non-JSON 2xx body is still an accept
+        return {"status": "ok"}
+
 
 def _heartbeat_due(last_send: float, now: float, interval: float = _HEARTBEAT_INTERVAL) -> bool:
     """Piggyback decision: True iff no client→server POST (real traffic or a
@@ -153,17 +203,11 @@ async def run_remote_repl(
             ``session.py``'s ``submit_user_text`` docstring.
             """
             last_send[0] = time.monotonic()
-            try:
-                resp = await client.post(submit_url, params=params, json=payload)
-            except Exception:  # noqa: BLE001 — a transport error is a non-delivery
-                logger.warning("remote send failed for %r", payload.get("type"))
-                return None
-            if resp.status_code >= 300:
-                return None
-            try:
-                return resp.json()
-            except Exception:  # noqa: BLE001 — an empty/non-JSON 2xx body is still an accept
-                return {"status": "ok"}
+            # #5894 ①-1: the control-POST policy lives in ``post_control``
+            # (its own bounded read timeout); ``client``'s default
+            # ``read=None`` stays for the SSE stream below, which is the
+            # request that must never time out.
+            return await post_control(client, submit_url, params=params, payload=payload)
 
         async def heartbeat() -> None:
             while True:
