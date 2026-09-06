@@ -4818,9 +4818,10 @@ class RouterLoop:
         ):
             async def _exec_async_bound_impl(
                 *, argv: "list[str]", timeout_seconds: "int | None" = None,
+                network: bool = False,
             ) -> dict:
                 return await self.host.run_exec_async(
-                    argv=argv, timeout_seconds=timeout_seconds,
+                    argv=argv, timeout_seconds=timeout_seconds, network=network,
                 )
             _exec_async_bound = _exec_async_bound_impl
 

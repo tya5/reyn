@@ -1973,6 +1973,7 @@ class RouterHostAdapter:
 
     async def run_exec_async(
         self, *, argv: "list[str]", timeout_seconds: "int | None" = None,
+        network: bool = False,
     ) -> dict:
         """#4733 — ``exec(collect="async")``: thin wiring layer only, mirroring
         ``run_prompt_async`` above — all the real logic (chain registration,
@@ -1992,6 +1993,7 @@ class RouterHostAdapter:
             caller_sid=self.live_session_id or "main",
             argv=argv,
             timeout_seconds=timeout_seconds,
+            network=network,
         )
 
     async def _spawn_limit_checkpoint(

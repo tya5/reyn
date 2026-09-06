@@ -501,14 +501,34 @@ def _network_denial_note() -> str:
     different denied syscall: an EPERM on ``connect()`` (or the same,
     buried inside an asyncio ``TaskGroup``'s own ``ExceptionGroup``) reads
     as a broken command or a client-library bug; it is actually the
-    sandbox denying network egress because this op's own ``network`` field
-    is unset/false."""
+    sandbox denying network egress because this exec ran CLOSED — never
+    requested network (#5825 ①: ``op.network`` unset/false, so
+    ``require_network`` never even ran; this is the "hit the wall without
+    asking" case, not an asked-and-refused one, which raises a
+    ``PermissionError`` before the process ever spawns instead of
+    reaching this classifier at all).
+
+    #5825 ①: unlike the pre-#5825 wording this replaces ("Fix: set
+    network: true for this op" — aspirational at the time, since the op
+    had no such field to set), ``network: true`` is now a REAL,
+    LLM-settable request on the ``exec`` tool with a real gate behind it
+    (``PermissionResolver.require_network``) — this note's fix line names
+    the actual next action: retry with the request set, not a retry of
+    the identical call (which fails identically).
+
+    #5876 co-vet correction: an earlier draft of this note's fix line
+    said "network denied under `bounded`" — `bounded` is FP-0069's own
+    proposed posture-dial NAME (not yet a shipped `sandbox.mode` value;
+    today's live modes are `compat`/`strict` only, #3823), so stating it
+    here as a fact would name a mode that does not exist in this
+    codebase yet. Rewritten to describe only what actually happened."""
     return (
         "[sandbox] Blocked at the syscall layer: the sandbox denies outbound "
-        "network access (connect()) because this op's own network policy is "
-        "unset/false. This is an environment / sandbox-configuration problem — "
-        "NOT a missing tool and NOT a lack of tool-calling ability; retrying the "
-        "same command will fail identically. Fix: set network: true for this op."
+        "network access (connect()) because this exec ran with network "
+        "closed. This is an environment / sandbox-configuration problem — "
+        "NOT a missing tool and NOT a lack of tool-calling ability; "
+        "retrying the same command will fail identically. Fix: request it "
+        "with `network: true`."
     )
 
 

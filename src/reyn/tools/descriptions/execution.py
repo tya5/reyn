@@ -30,15 +30,16 @@ exec_ = ToolDescription(
     ),
     purpose=(
         "Execute a command in a sandboxed environment (FP-0017), with the "
-        "sandbox policy (network + filesystem scope) resolved by the OS, "
-        "not chosen by the LLM. #3903①: the wall-clock timeout is the one "
-        "policy axis the LLM MAY extend, up to the operator's own "
-        "configured ceiling."
+        "sandbox policy (filesystem scope) resolved by the OS, not chosen "
+        "by the LLM. #3903①: the wall-clock timeout is one policy axis the "
+        "LLM MAY extend, up to the operator's own configured ceiling. "
+        "#5825①: network is another — a REQUEST, not a grant, gated by an "
+        "ask when the sandbox already has it closed."
     ),
     text=(
         "Execute a command in a sandboxed environment (FP-0017). The sandbox "
-        "policy (network access + filesystem scope) is the OPERATOR's, "
-        "resolved by the OS — it is not chosen here. "
+        "policy (filesystem scope) is the OPERATOR's, resolved by the OS — "
+        "it is not chosen here. "
         "argv: command and arguments (argv[0] is the executable). "
         "timeout: optional — extends the wall-clock timeout past its "
         "operator-configured default, up to the operator's own configured "
@@ -46,12 +47,14 @@ exec_ = ToolDescription(
         "rejection names the actual maximum. If you need longer than that, "
         "run it in the background instead (collect=\"async\") — "
         "background work runs on a separate budget from this foreground "
-        "wall-clock cap, and you can stop it with cancel_task."
+        "wall-clock cap, and you can stop it with cancel_task. "
+        "network: optional, default false — REQUEST network access for "
+        "this command; not a grant (see the parameter's own description)."
     ),
     ja=(
         "サンドボックス環境内でコマンドを実行する（FP-0017）。サンドボックス"
-        "ポリシー（ネットワークアクセス・ファイルシステムスコープ）はオペレー"
-        "ターのものとして OS が解決する（ここで選択するものではない）。"
+        "ポリシー（ファイルシステムスコープ）はオペレーターのものとして OS "
+        "が解決する（ここで選択するものではない）。"
         "argv: コマンドと引数（argv[0] が実行ファイル）。"
         "timeout: 任意 — オペレーター設定の既定タイムアウトを、オペレーター"
         "自身が設定した上限まで延長できる。上限を超える要求は拒否され、"
@@ -59,6 +62,8 @@ exec_ = ToolDescription(
         "ドで実行すること（collect=\"async\"）— バックグラウンドの作業はこ"
         "の前景ウォールクロック上限とは別の予算で動作し、cancel_task で停止"
         "できる。"
+        "network: 任意、既定 false — このコマンドのネットワークアクセスを"
+        "要求する。付与ではない（パラメータ自身の説明を参照）。"
     ),
 )
 
@@ -125,6 +130,27 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "collect": ParamDescription(
             text='Optional — "async" runs this in the background (see the tool description).',
             ja='任意 — "async" でバックグラウンド実行（ツール説明を参照）。',
+        ),
+        # #5825① (2026-09-06): a REQUEST, not a grant. Omitted/false is the
+        # default and changes nothing. true against a policy that already
+        # has network closed may prompt the operator once (or be silently
+        # pre-approved/denied by config or a prior persisted answer) before
+        # the command runs — never a silent open.
+        "network": ParamDescription(
+            text=(
+                "Optional, default false — REQUEST that this command run "
+                "with network access. Not a grant: if the sandbox already "
+                "has network closed, this may prompt the operator once "
+                "(or be silently pre-approved/denied per prior "
+                "configuration) before the command runs."
+            ),
+            ja=(
+                "任意、既定 false — このコマンドをネットワークアクセスあり"
+                "で実行することを要求する。付与ではない: サンドボックスが"
+                "既にネットワークを閉じている場合、コマンド実行前にオペレ"
+                "ーターへ一度確認が入ることがある（または事前設定により無"
+                "言で承認／拒否される）。"
+            ),
         ),
     },
 }

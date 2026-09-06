@@ -360,7 +360,8 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
   "kind": "sandboxed_exec",
   "argv": ["echo", "hello"],
   "stdin": null,
-  "timeout_seconds": null
+  "timeout_seconds": null,
+  "network": false
 }
 ```
 
@@ -380,9 +381,24 @@ Fields:
   advertised-but-ignored shape the removal below closed, just for a value
   that quietly changes instead of a field that's quietly dropped. A
   non-positive value is rejected the same way.
+- `network` (optional, default `False`) — **#5825① (2026-09-06), architect
+  ruling, ALSO a deliberate reversal of the paragraph below, for the SAME
+  reason `timeout_seconds` was**: `True` is a REQUEST, not a grant. Read
+  ONLY when the resolved policy already has network OFF
+  (`policy.network is False`) — at that point it triggers
+  `PermissionResolver.require_network` (config `permissions.network:
+  allow`/`deny`, a persisted ledger grant under `<actor>/network/*`,
+  or an interactive ask) BEFORE the process spawns; on grant, replaces
+  THIS call's policy with `network=True` so the enforced value (not the
+  request) is what `sandboxed_exec_started` records. A policy that
+  already has network on (compat / `unbounded`) never calls
+  `require_network` — the op can ask for network, never force it past a
+  narrower operator policy. See [permission-model.md](../../concepts/runtime/permission-model.md)'s
+  `network` axis row.
 
-**No other policy fields** (`network` / `read_paths` / `write_paths` /
-`allow_subprocess` / `env_passthrough` — removed #3907): the sandbox
+**No other policy fields** (`read_paths` / `write_paths` /
+`allow_subprocess` / `env_passthrough` — removed #3907, `network` itself
+removed #3907 and brought back #5825① above): the sandbox
 policy's other axes that actually govern a run are **never** settable via
 this op. It is the agent-level (operator) `sandbox.policy`
 (`reyn.yaml`, resolved through `resolve_sandbox_policy` — see the
@@ -401,6 +417,9 @@ it survived #3907's sweep and stayed dead one issue longer) but is a
 DIFFERENT axis from the 5 above: boundedness, not permission (#3903's own
 framing). It came back with a real reader this time — see above — which is
 what distinguishes this reversal from reopening the gap #3962 closed.
+`network` is the FIRST of the original 5 to come back — same discipline
+(a real reader, `require_network`, not a repeat of #3907's gap), a real
+permission axis this time rather than a boundedness one.
 
 **Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
 

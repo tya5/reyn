@@ -1837,6 +1837,14 @@ permissions:
       mode: safe            # read). The sole use: fail load if any entry says
                              # `mode: unsafe` (removed). Grants no runtime authority —
                              # python steps are always sandboxed regardless of this key.
+  network: allow          # allow | deny — #5825① pre-approval for the `exec` tool's
+                          # OWN network: true request (SandboxedExecIROp.network).
+                          # Unset: an undeclared request asks (interactive) or denies
+                          # (headless); `deny` refuses without asking; `allow` opens
+                          # silently. DISTINCT from `http.get` (per-host, LLM web_fetch/
+                          # safe.http) — a subprocess's network cannot be scoped by
+                          # host, so this key is a flat bool. See
+                          # concepts/runtime/permission-model.md's `network` axis row.
 ```
 
 MCP server install is gated the same way — via `file.write` (declarative path list, as
