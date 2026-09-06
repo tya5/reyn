@@ -12,10 +12,83 @@ user input → it calls the session-level compaction directly. It reuses
 ``Session._compact_now_for_op`` (the same `force_compact_now` wrapper the
 compact op uses), so the freed-token report is the **same contract** as the op:
 ``{freed_tokens, free_window_after}``.
+
+#5888 (owner real-machine incident: "ctx 75% なのに ... ユーザは圧縮したい
+のにできない") — two defects, one report:
+
+1. **The reply described a quantity it had never measured.** Its only
+   number was ``free_window_after`` = ``effective_trigger − history
+   estimate``: the room left in the MIDDLE once head/tail/system-prompt
+   budgets are subtracted. It rendered that as "the window is still full
+   (~0 tokens free)" — a claim about the model's context window, which
+   the status bar was simultaneously (and correctly) showing as 75%
+   used. Every reply now ends with :func:`_measured_line`: window
+   used/size, middle room/used, what head/tail protected, and the seq the
+   summary already covers — each named as itself.
+2. **"There was nothing eligible to fold" was false.** It fired whenever
+   no candidate was SELECTED, which included the owner's actual case:
+   plenty eligible, all of it held back by head/tail protection. Those
+   are now two different sentences, told apart by ``eligible_count``
+   (see the branches at the end of :func:`compact_cmd`), and this
+   command now asks for ``selection="operator"`` so an explicit
+   ``/compact`` folds the whole unprotected middle instead of only the
+   reactive ladder's shortfall (#5719's rule, which exists to stop the
+   ladder's own over-fold and was never a reason to refuse an operator).
+
+Still open, deliberately not implemented here: #5888's 3″ — on the
+forced path, offer rung ① SPILL even when zero fold candidates were
+selected. Spill swaps a tool result's body for a reference without
+splitting the message, so it reaches content head/tail is protecting
+without loosening that protection; a 3 MB tool result sitting in the
+tail is exactly what it is for. Until that lands (stage 2), a history
+whose head+tail genuinely hold everything still stops here — it just now
+says exactly that instead of claiming nothing was eligible.
 """
 from __future__ import annotations
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+
+
+def _measured_line(result: dict) -> str:
+    """#5888 ruling 1: the four quantities this compaction pass measured,
+    each named as itself — window used/size, middle room/used, what
+    head/tail protected, and how far the existing summary already
+    reaches.
+
+    Rendered from ``Session._compact_now_for_op``'s own returned numbers
+    (which come from the SAME selection pass that decided what to fold,
+    and — for the window pair — from the SAME accessors the status-bar
+    ctx chip reads). Nothing here is re-derived locally: a number this
+    line prints is a number the code acted on.
+
+    Degrades a field at a time rather than all-or-nothing: a caller whose
+    result predates these keys (or a session with no LLM call yet, so no
+    ``prompt_tokens``) simply gets the parts that ARE known. An empty
+    string when nothing is known at all — never a fabricated zero, which
+    would read as a real measurement of "nothing".
+    """
+    parts: list[str] = []
+    window = result.get("window_tokens") or 0
+    used = result.get("window_used_tokens") or 0
+    if window:
+        pct = f" ({used * 100 // window}%)" if used else ""
+        parts.append(f"window {used}/{window} tokens{pct}")
+    if "middle_room_tokens" in result or "middle_used_tokens" in result:
+        room = result.get("middle_room_tokens") or 0
+        middle_used = result.get("middle_used_tokens") or 0
+        parts.append(f"middle room {room}, used {middle_used}")
+    if "protected_head_tokens" in result or "protected_tail_tokens" in result:
+        head_t = result.get("protected_head_tokens") or 0
+        tail_t = result.get("protected_tail_tokens") or 0
+        turns = (result.get("protected_head_turns") or 0) + (
+            result.get("protected_tail_turns") or 0
+        )
+        parts.append(
+            f"protected: head {head_t} + tail {tail_t} tokens ({turns} turns)"
+        )
+    if "covers_through_seq" in result:
+        parts.append(f"already folded through seq {result.get('covers_through_seq') or 0}")
+    return (" — " + " · ".join(parts)) if parts else ""
 
 
 @slash(
@@ -42,7 +115,12 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
         return
 
     try:
-        result = await compact_now()
+        # #5888 ruling 2: an operator's explicit /compact is a request to
+        # SHRINK, not a fit-check. `selection="operator"` folds the whole
+        # unprotected, uncovered middle; the reactive ladder keeps the
+        # `"shortfall"` default (#5719 non-regression). See
+        # `CompactionController._measure_and_select`.
+        result = await compact_now(selection="operator")
     except Exception as exc:  # noqa: BLE001 — surface to the user, never crash the REPL
         await reply_error(ctx, f"compaction failed: {exc}")
         return
@@ -57,6 +135,16 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     # the raw->bridge token compression.
     n = result.get("summarized_turns", 0)
     free_after = result.get("free_window_after")
+    # #5888 ruling 1: every reply below ends with the four quantities this
+    # pass actually measured, each named as ITSELF. The pre-#5888 reply had
+    # exactly one number (`free_window_after`) and used it to make a claim
+    # about a different quantity — "the window is still full (~0 tokens
+    # free)" while the status bar read ctx 75%, because `free_window_after`
+    # is `effective_trigger - history estimate` (the room left in the
+    # MIDDLE after head/tail/system-prompt budgets), not the model's
+    # context window at all. Owner's own words: "ctx 75% なのに下記メッセ
+    # ージ出るのも謎。ユーザは圧縮したいのにできない".
+    measured = _measured_line(result)
     free_tail = f" Free window: ~{free_after} tokens." if free_after is not None else ""
 
     if n > 0:
@@ -66,7 +154,7 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
         await reply(
             ctx,
             f"✓ Compacted — summarised {n} older {word} (~{compressed} tokens) into a "
-            f"~{bridge}-token summary bridge.",
+            f"~{bridge}-token summary bridge." + measured,
         )
         return
 
@@ -131,34 +219,48 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
             f"An attempt to compact ran ({count_word}), but it did not "
             "advance — no summary was persisted, though no failure was "
             "recorded either. Check the audit log for compaction_check/"
-            "recovery_summary_persisted for detail." + free_tail,
+            "recovery_summary_persisted for detail." + measured + free_tail,
         )
         return
 
-    # outcome in {"forced_sync_no_turns", "forced_sync" with candidate_
-    # count == 0} (or an old-shaped result with no `compaction_outcome` at
-    # all — a legacy caller) — genuinely nothing eligible to fold (no
-    # candidates were ever selected), the one case the pre-#5708 wording
-    # was actually correct for.
+    # #5888 ruling 1: these last two branches used to be told apart by
+    # `free_window_after`, which answers neither question. They are now
+    # told apart by `eligible_count` — the number that actually decides
+    # which of the two happened:
     #
-    # #5579 (acceptance ③, kept unchanged): `free_window_after` is an
-    # ORTHOGONAL fact from WHY nothing was selected — a genuinely-empty
-    # candidate set can still coincide with a window that has NOT
-    # recovered any room (`free_after <= 0`, the owner's own observed
-    # contradiction: "already fits the window. Free window: ~0 tokens."
-    # in the same line). Keep the two wordings distinct here, exactly as
-    # #5579 fixed them — this branch only decides "nothing was eligible",
-    # never "the window has room".
-    if free_after is not None and free_after <= 0:
+    #   eligible_count == 0  → nothing was ELIGIBLE. The only state where
+    #                          "nothing eligible to fold" is true.
+    #   eligible_count > 0   → things were eligible and head/tail PROTECTED
+    #     with candidate_count == 0  all of them. A different fact, and the one the owner
+    #                          actually hit; saying "nothing eligible" here
+    #                          told them their history was empty of
+    #                          foldable content when it was full of it.
+    #
+    # `free_window_after` still travels (in `free_tail`) as the orthogonal
+    # fact #5579 established it as — but it no longer DECIDES anything,
+    # and it never again supplies the words "the window is full": that
+    # sentence described the model's context window using a number
+    # measured against the compaction trigger, which is exactly how a
+    # 75%-full window got reported as full (#5888).
+    eligible = result.get("eligible_count")
+    if eligible is not None and eligible > 0:
+        # Eligible entries existed; head/tail protection held every one of
+        # them back. Reaching that content is stage 2's job (#5888 3″:
+        # spill on the forced path, which does not loosen protection) —
+        # until then this reply's job is to say plainly which boundary
+        # stopped it, so the operator is not left guessing at an
+        # empty-sounding "nothing to fold".
+        word = "entry" if eligible == 1 else "entries"
         await reply(
             ctx,
-            "Nothing was compacted this pass, and the window is still "
-            "full (~0 tokens free) — /compact did not free any room. "
-            "There was nothing eligible to fold.",
+            f"Nothing was folded: all {eligible} eligible {word} are "
+            "protected by the head/tail keep-window, so there was no "
+            "unprotected middle left to compact." + measured + free_tail,
         )
         return
     await reply(
         ctx,
-        "✓ Nothing to compact right now — recent history already fits the "
-        "window." + free_tail,
+        "✓ Nothing to compact right now — no history entry is eligible to "
+        "fold yet (everything is either already folded into the summary or "
+        "is not compactable content)." + measured + free_tail,
     )

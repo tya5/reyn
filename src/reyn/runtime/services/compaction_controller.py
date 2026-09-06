@@ -106,12 +106,91 @@ class ForceCompactResult:
     (``/compact``) gets the fact "an attempt genuinely failed", never the
     exception itself, so it can say so instead of the pre-#5708 "Nothing
     was compacted this pass" a swallowed failure used to render as.
+
+    ``selection`` and the five measured quantities below (#5888, owner
+    real-machine incident: ``/compact`` at ctx 75% replied "the window is
+    still full (~0 tokens free) … nothing eligible to fold"): the reply
+    used to describe a quantity it had never measured. ``free_window_
+    after`` is a TRIGGER-relative number (``effective_trigger − history
+    estimate``, i.e. the room left in the MIDDLE after head/tail/system-
+    prompt budgets are subtracted) — saying "the window is full" with it
+    is a category error whenever the model's real context window has
+    room, which is exactly what the owner saw. These fields carry what
+    this selection pass ACTUALLY looked at, so the caller can name each
+    number as itself instead of borrowing one for another's meaning:
+
+    - ``eligible_count`` — entries that passed ``is_compaction_eligible``
+      and are not yet covered by the latest summary. ``0`` is the ONLY
+      state that means "nothing eligible to fold".
+    - ``protected_head_tokens``/``protected_tail_tokens`` (and their turn
+      counts) — what head/tail trimming held back. ``eligible_count > 0``
+      with ``candidate_count == 0`` means "everything eligible was
+      protected", a genuinely different fact from "nothing eligible",
+      and the two must not share a sentence.
+    - ``middle_room_tokens``/``middle_used_tokens`` — ``main_M_room`` and
+      what the unprotected middle actually occupies. Their difference is
+      the ``shortfall`` the reactive ladder selects against.
     """
 
     outcome: str
     candidate_count: int = 0
     batch_truncated: bool = False
     failed: bool = False
+    # #5888: which selection rule ran ("shortfall" = reactive ladder,
+    # "operator" = an explicit shrink request). Returned rather than
+    # inferred so a caller reporting what happened never has to guess
+    # which question this pass was answering.
+    selection: str = "shortfall"
+    eligible_count: int = 0
+    protected_head_tokens: int = 0
+    protected_tail_tokens: int = 0
+    protected_head_turns: int = 0
+    protected_tail_turns: int = 0
+    middle_room_tokens: int = 0
+    middle_used_tokens: int = 0
+    covers_through_seq: int = 0
+
+
+@dataclass(frozen=True)
+class _SelectionMeasurement:
+    """#5888: one pass of head/tail protection + candidate selection, with
+    every number it computed on the way — so ``force_compact_now`` can
+    report them without a SECOND, separately-derived computation of the
+    same quantities (which is how a reported number drifts from the one
+    the code actually acted on).
+
+    :meth:`CompactionController._select_candidates` is now a thin view
+    over this (``.candidates``), keeping its own long-standing
+    ``list[ChatMessage]`` contract for the callers/tests that only ever
+    wanted the list."""
+
+    candidates: "list[ChatMessage]"
+    selection: str
+    eligible_count: int
+    head_tokens: int
+    tail_tokens: int
+    head_turns: int
+    tail_turns: int
+    middle_room_tokens: int
+    middle_used_tokens: int
+
+
+def _measured_fields(m: "_SelectionMeasurement", covers_through_seq: int) -> dict:
+    """The measurement, as the :class:`ForceCompactResult` kwargs that
+    carry it (#5888). One place maps the two shapes, so the two
+    ``ForceCompactResult`` construction sites that both need it cannot
+    populate it two different ways."""
+    return {
+        "selection": m.selection,
+        "eligible_count": m.eligible_count,
+        "protected_head_tokens": m.head_tokens,
+        "protected_tail_tokens": m.tail_tokens,
+        "protected_head_turns": m.head_turns,
+        "protected_tail_turns": m.tail_turns,
+        "middle_room_tokens": m.middle_room_tokens,
+        "middle_used_tokens": m.middle_used_tokens,
+        "covers_through_seq": covers_through_seq,
+    }
 
 
 def _estimate_tokens(text: str) -> int:
@@ -315,9 +394,54 @@ class CompactionController:
         self,
         messages: "list[ChatMessage]",
         prev_cover: int,
+        *,
+        selection: str = "shortfall",
     ) -> "list[ChatMessage]":
+        """The candidate list :meth:`_measure_and_select` selected — a thin
+        view over it, kept because this method's ``list[ChatMessage]``
+        return is its own long-standing contract (three test files call it
+        directly for exactly that list, and nothing else)."""
+        return self._measure_and_select(
+            messages, prev_cover, selection=selection,
+        ).candidates
+
+    def _measure_and_select(
+        self,
+        messages: "list[ChatMessage]",
+        prev_cover: int,
+        *,
+        selection: str = "shortfall",
+    ) -> "_SelectionMeasurement":
         """Select compaction candidates: token-budget HEAD/TAIL protect,
-        the SHORTFALL against ``main_M_room`` selects.
+        then ``selection`` decides how much of what is left to fold.
+
+        ``selection="shortfall"`` (default, the REACTIVE ladder) is the
+        #5719 rule below — fold only as much as brings the unprotected
+        middle back under ``main_M_room``.
+
+        ``selection="operator"`` (#5888, owner real-machine incident:
+        "ユーザは圧縮したいのにできない") folds ALL of the unprotected,
+        not-yet-covered middle. An operator's explicit ``/compact`` is a
+        request to SHRINK, not a fit-check: under the shortfall rule a
+        history whose head+tail hold most of the tokens has
+        ``shortfall <= 0`` and selects nothing, so the explicit request
+        did nothing and said so in a sentence about a quantity it had not
+        measured. #5719's shortfall rule exists to stop the REACTIVE
+        ladder's own 600x over-fold; it was never a reason to refuse an
+        operator. head/tail protection is unchanged in BOTH modes —
+        operator mode widens what may fold, never what is protected.
+        Reaching the content head/tail holds is stage 2's job (#5888 3″):
+        on the forced path, offer rung ① SPILL even when zero candidates
+        were selected — spill replaces a tool result's body with a
+        reference without splitting the message, so it reaches a
+        protected group without loosening protection at all.
+
+        Group-awareness in operator mode is satisfied by construction
+        rather than by re-grouping: taking the whole unprotected set
+        leaves nothing behind for a fold boundary to split a tool_call
+        away from its results. The only boundary that can split a group
+        is head/tail's own, which runs identically in both modes and is
+        not this step's to move.
 
         #5719 (architect ruling, real-machine incident: #5712's own fix
         compacted 1.6M raw_middle chars to a ~3K summary against a 950K
@@ -371,9 +495,41 @@ class CompactionController:
         unprotected_tokens = sum(
             estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in unprotected
         )
-        shortfall = unprotected_tokens - main_M_room
-        return select_fold_candidates_for_shortfall(
-            unprotected, shortfall, model, use_chars4=use_chars4,
+        if selection == "operator":
+            # #5888: the whole unprotected, uncovered middle — see this
+            # method's own docstring for why an operator's explicit
+            # request is not the shortfall question.
+            candidates = list(unprotected)
+        else:
+            shortfall = unprotected_tokens - main_M_room
+            candidates = select_fold_candidates_for_shortfall(
+                unprotected, shortfall, model, use_chars4=use_chars4,
+            )
+        # The two protection windows OVERLAP on a short history (with few
+        # enough turns, trim_head and trim_tail can each return all of
+        # them). Reporting `len(head) + len(tail)` there double-counts —
+        # measured directly: a real 3-turn session rendered "head 3 +
+        # tail 3 tokens (6 turns)" for 3 turns. Attributing an overlapping
+        # turn to HEAD only (computed first) keeps the two figures
+        # disjoint, so head + tail is exactly what is protected and the
+        # turn count is exactly how many turns that is.
+        tail_only = [t for t in tail_messages if id(t) not in head_id_set]
+        return _SelectionMeasurement(
+            candidates=candidates,
+            selection=selection,
+            eligible_count=len(messages),
+            head_tokens=sum(
+                estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4)
+                for t in head_messages
+            ),
+            tail_tokens=sum(
+                estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4)
+                for t in tail_only
+            ),
+            head_turns=len(head_messages),
+            tail_turns=len(tail_only),
+            middle_room_tokens=main_M_room,
+            middle_used_tokens=unprotected_tokens,
         )
 
     async def force_compact_now(
@@ -390,6 +546,7 @@ class CompactionController:
         # before this widening).
         spill_fn: "Callable[..., list[tuple[int, dict]]]",
         spill_capability_present: bool = True,
+        selection: str = "shortfall",
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
@@ -402,6 +559,16 @@ class CompactionController:
         fallback) pass the SAME concrete spill implementation
         (``RouterLoopDriver._spill_batch_for_retry``) — one real
         implementation, reused, never a second copy for this path.
+
+        ``selection`` (#5888): which rule picks candidates out of the
+        unprotected middle — ``"shortfall"`` (default, the REACTIVE
+        ladder's own #5719 rule: fold only what brings the middle back
+        under ``main_M_room``) or ``"operator"`` (fold all of it). The
+        default keeps every existing caller — including ``RouterLoop
+        Driver``'s post-``retry_loop``-exhaustion fallback — on exactly
+        the behaviour they had, so #5719's own non-regression is a
+        default, not a promise. See :meth:`_measure_and_select` for why
+        an operator's explicit ``/compact`` asks a different question.
 
         ``spill_capability_present`` (#5717): default ``True`` — the
         caller genuinely has a driver-backed ``spill_fn``. ``Session.
@@ -493,7 +660,15 @@ class CompactionController:
             # everywhere else in this file instead.
             outcome = "forced_sync_no_turns"
             self._events.emit("compaction_check", outcome=outcome)
-            return ForceCompactResult(outcome=outcome)
+            # #5888: `eligible_count=0` is left at its default HERE and
+            # only here — this is the one branch where "nothing eligible
+            # to fold" is literally true, and the caller's own wording
+            # keys off exactly that. `covers_through_seq` still travels,
+            # so a reply can say how far the existing summary reaches
+            # even when this pass found nothing new to add to it.
+            return ForceCompactResult(
+                outcome=outcome, covers_through_seq=prev_cover, selection=selection,
+            )
         # #4472 architect review, point ③: NOT a normal branch — a defensive
         # invariant, not a routine outcome. The durable read always starts
         # its batch immediately after `prev_cover` (only the END of the
@@ -511,17 +686,32 @@ class CompactionController:
             outcome = "compaction_input_gap_invariant_violated"
             self._events.emit("compaction_check", outcome=outcome)
             return ForceCompactResult(outcome=outcome)
-        candidates = self._select_candidates(eligible_messages, prev_cover)
+        measured = self._measure_and_select(
+            eligible_messages, prev_cover, selection=selection,
+        )
+        candidates = measured.candidates
 
         outcome = "forced_sync"
         self._events.emit(
             "compaction_check", outcome=outcome,
             batch_truncated=batch_truncated,
             candidate_count=len(candidates),
+            # #5888: the audit trail carries the same numbers the caller
+            # reports, from the same measurement — a later reader of
+            # `compaction_check` can tell "nothing eligible" from
+            # "everything eligible was protected" without re-deriving
+            # either from a token estimate of their own.
+            selection=measured.selection,
+            eligible_count=measured.eligible_count,
+            protected_head_tokens=measured.head_tokens,
+            protected_tail_tokens=measured.tail_tokens,
+            middle_room_tokens=measured.middle_room_tokens,
+            middle_used_tokens=measured.middle_used_tokens,
         )
         if not candidates:
             return ForceCompactResult(
                 outcome=outcome, candidate_count=0, batch_truncated=batch_truncated,
+                **_measured_fields(measured, prev_cover),
             )
 
         self._compacting = True
@@ -552,6 +742,7 @@ class CompactionController:
         return ForceCompactResult(
             outcome=outcome, candidate_count=len(candidates),
             batch_truncated=batch_truncated, failed=failed,
+            **_measured_fields(measured, prev_cover),
         )
 
     async def persist_recovery_summary(
