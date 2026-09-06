@@ -81,6 +81,25 @@ def environment_axes() -> "dict[str, Any]":
     field here is one of those axes, and each is read defensively — a probe that
     raises while collecting context would destroy the occurrence it exists to
     capture.
+
+    #5870 stage 1 adds ``loadavg``/``process_footprint_bytes``: the owner's
+    own report ("2.5s とか発生してるんだけど...idle でも出る") named a stall
+    that arrives with NO conversation activity, which the code-path census
+    this issue also ran could not explain on its own — leaving exactly two
+    live hypotheses this module cannot tell apart without its own numbers:
+    (a) reyn's own code blocking the loop (the stack dump alongside this
+    record answers that one directly), or (b) the HOST failing to schedule
+    the process at all (a saturated CPU run queue, or the swap pressure the
+    owner's own machine hit the same night, #5851) — the process's own loop
+    could be perfectly idle and still starved. ``os.getloadavg()``'s 1-minute
+    figure is the cheapest live signal for exactly that: a run queue longer
+    than the core count says the host was oversubscribed AT THIS INSTANT,
+    independent of whether reyn's own code did anything wrong. Paired with
+    the process's own current memory footprint (:mod:`reyn.runtime.
+    process_memory`, #5851/#5858 — the SAME reader ``ProcessMemoryGuard``
+    uses, ~39µs, no fork/subprocess) so a swap-pressure host stall and a
+    healthy one are distinguishable from the SAME record a stall wrote,
+    without a second, separately-timed capture.
     """
     axes: "dict[str, Any]" = {}
     try:
@@ -100,6 +119,27 @@ def environment_axes() -> "dict[str, Any]":
         value = os.environ.get(var)
         if value:
             axes[var.lower()] = value
+    try:
+        # POSIX only (AttributeError on Windows) — matches this function's
+        # own "never fabricate a value this platform cannot produce" rule
+        # for the platform-guarded fields below.
+        axes["loadavg_1m"] = os.getloadavg()[0]
+    except (OSError, AttributeError):
+        pass
+    try:
+        from reyn.runtime.process_memory import (
+            make_process_memory_reader,
+            process_memory_metric_name,
+        )
+
+        _footprint_metric = process_memory_metric_name()
+        if _footprint_metric is not None:
+            _footprint_bytes = make_process_memory_reader()()
+            if _footprint_bytes is not None:
+                axes["process_footprint_bytes"] = _footprint_bytes
+                axes["process_footprint_metric"] = _footprint_metric
+    except Exception:  # noqa: BLE001
+        pass
     return axes
 
 
@@ -194,6 +234,7 @@ class LoopTripwire:
         *,
         pump_ticks: "int | None" = None,
         turn_active: "bool | None" = None,
+        stack_dumped: "bool | None" = None,
     ) -> "float | None":
         """Record one tick's lateness; return it the FIRST time it is bad.
 
@@ -237,6 +278,17 @@ class LoopTripwire:
         actually surfaces to an unarmed session; this ``write_record`` call
         only adds it to the opt-in detail dump for consistency with
         ``pump_ticks``.
+
+        ``stack_dumped`` (#5870 stage 1): whether the caller's own
+        ``reyn.runtime.stall_trace`` re-arm (a per-tick dead-man's switch,
+        see that module's own updated docstring) actually fired for THIS
+        tick and left a stack dump in ``reyn.log`` — best-effort, not a
+        byte-exact readback of ``faulthandler``'s own internal state (it
+        has none to read), so the caller derives it from the SAME
+        ``lateness_ms > threshold`` comparison this method already makes
+        internally to flag a stall. Riding here rather than in a second
+        call keeps "was there a stall" and "is there a stack for it"
+        answerable from the ONE record a later reader opens.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
@@ -245,6 +297,8 @@ class LoopTripwire:
             extra["pump_ticks"] = pump_ticks
         if turn_active is not None:
             extra["turn_active"] = turn_active
+        if stack_dumped is not None:
+            extra["stack_dumped"] = stack_dumped
         if lateness_ms <= self._threshold_ms:
             if self._in_stall:
                 self._in_stall = False

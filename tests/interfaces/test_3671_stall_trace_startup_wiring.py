@@ -101,7 +101,18 @@ async def test_stall_trace_disarmed_at_first_frame_via_on_mount(monkeypatch) -> 
     (pinned separately above) — this test never goes through
     run_textual_chat at all, since the site under test here
     (``on_mount``) is reached the same way regardless of which function
-    constructed the app."""
+    constructed the app.
+
+    **#5870 stage 1**: a SECOND, later ``disarm()`` is now expected too —
+    ``_watch_loop_responsiveness``'s own worker (started right after this
+    first-frame disarm, see that method's own docstring) holds the SAME
+    global timer continuously re-armed for as long as the app runs, and
+    disarms it in its own ``finally`` when the app shuts down and the
+    worker is cancelled (the assertion below is deliberately OUTSIDE the
+    ``async with`` block, so it reads state AFTER that shutdown has
+    already happened). Both are real, distinct cleanup events now — the
+    first-frame handoff this test is actually about, and the tripwire's
+    own worker-exit cleanup — not a regression of the first."""
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
 
     calls: list[str] = []
@@ -110,9 +121,56 @@ async def test_stall_trace_disarmed_at_first_frame_via_on_mount(monkeypatch) -> 
     app = TextualChatApp(transport=QueueTransport())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        assert calls == ["disarm"], (
+            "on_mount()'s own mark_first_frame() call must disarm the trace "
+            "directly, before the app has even shut down — this is the "
+            "real, intended boundary, not just the finally-block safety net"
+        )
 
-    assert calls == ["disarm"], (
-        "on_mount()'s own mark_first_frame() call must disarm the trace "
-        "directly — this is the real, intended boundary, not just the "
-        "finally-block safety net"
+    assert calls == ["disarm", "disarm"], (
+        "expected exactly ONE further disarm() after app shutdown — the "
+        "tripwire worker's own finally cleanup (#5870 stage 1) — not zero "
+        f"(a dangling timer) or more than one: {calls!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_arms_its_own_dead_mans_switch_unconditionally(
+    monkeypatch,
+) -> None:
+    """Tier 2: #5870 stage 1 — right after ``on_mount()``'s own disarm
+    above hands the one process-wide timer off, ``_watch_loop_
+    responsiveness``'s own worker arms it AGAIN itself, with
+    ``repeat=False`` — the per-tick dead-man's switch, not the
+    ``REYN_STALL_TRACE`` bracket's own ``repeat=True`` shape. Deliberately
+    with ``REYN_STALL_TRACE`` UNSET: this arm must fire regardless, the
+    same "arrives unannounced, so it cannot wait for a manual opt-in"
+    reasoning ``loop_probe.py``'s own module docstring already states for
+    the tripwire itself. Wiring only — no real delay, no threshold
+    crossing (banned by testing policy's duration rules, this file's own
+    module docstring)."""
+    monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+
+    calls: "list[tuple[float, bool | None]]" = []
+    monkeypatch.setattr(
+        stall_trace, "arm",
+        lambda seconds, **kw: calls.append((seconds, kw.get("repeat"))),
+    )
+    monkeypatch.setattr(stall_trace, "disarm", lambda: None)
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+    assert calls, (
+        "the tripwire's own worker never armed the dead-man's switch — "
+        "expected it to fire right after on_mount()'s own disarm, with no "
+        "REYN_STALL_TRACE opt-in required"
+    )
+    seconds, repeat = calls[0]
+    assert seconds == pytest.approx(0.25), f"expected the 250ms tripwire threshold, got {seconds!r}"
+    assert repeat is False, (
+        "the tripwire's own arm must use repeat=False (a re-armed "
+        "dead-man's switch), not repeat=True (a fixed-cadence alarm)"
     )
