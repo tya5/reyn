@@ -12,6 +12,7 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_cost_warn_config,
     _build_history_resident_config,
     _build_image_config,
+    _build_logs_config,
     _build_offload_config,
     _build_process_memory_config,
     _build_read_cap_config,
@@ -1228,6 +1229,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     read_cap = _build_read_cap_config(merged.get("read_cap"))
     history_resident = _build_history_resident_config(merged.get("history_resident"))
     process_memory = _build_process_memory_config(merged.get("process_memory"))
+    logs = _build_logs_config(merged.get("logs"))
     # #5416: known-key/malformed-value FAIL-OPEN rejections a builder
     # discovers while parsing — mutated in place by `_build_storage_config`
     # below, then merged into `unknown_config_keys_found` (same combined
@@ -1283,6 +1285,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         read_cap=read_cap,
         history_resident=history_resident,
         process_memory=process_memory,
+        logs=logs,
         image=image,
         tui=tui,
         web_fetch=_build_web_fetch_config(merged.get("web_fetch")),

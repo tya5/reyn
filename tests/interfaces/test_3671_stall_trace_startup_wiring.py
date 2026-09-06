@@ -55,17 +55,30 @@ def installed_file_handler(tmp_path: Path):
     installs its own ``logging.FileHandler`` subclass pointed at
     ``/dev/null`` on the root logger — a bare ``tmp_path / "reyn.log"``
     here would sit BEHIND that pytest-owned handler in the lookup order
-    and never be the one this fixture's own callers actually want)."""
+    and never be the one this fixture's own callers actually want).
+
+    #5873 follow-up: ``find_file_handler_path`` no longer scans
+    ``handlers`` for a path-shape match — it returns whatever was last
+    declared via ``stall_trace.register_file_handler_path``. This
+    fixture bypasses ``_setup_interactive_logging`` (the one production
+    caller of that registration function), so it must register the path
+    itself, and restore the PRIOR registration on teardown rather than
+    unconditionally clearing it — a leaked registration must not survive
+    into a later test, but nor may this fixture assume it is the only
+    registrant during its own lifetime."""
     log_dir = tmp_path / ".reyn" / "logs"
     log_dir.mkdir(parents=True)
     log_path = log_dir / "reyn.log"
     handler = logging.FileHandler(str(log_path))
     logging.getLogger().addHandler(handler)
+    saved_registered_path = stall_trace._registered_file_handler_path
+    stall_trace.register_file_handler_path(str(log_path))
     try:
         yield log_path
     finally:
         logging.getLogger().removeHandler(handler)
         handler.close()
+        stall_trace.register_file_handler_path(saved_registered_path)
 
 
 @pytest.mark.asyncio

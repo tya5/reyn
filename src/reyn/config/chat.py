@@ -614,6 +614,72 @@ class ProcessMemoryConfig:
     enforce: bool = field(default=False, metadata={"axis": Axis.BOUNDING})
 
 
+@dataclass
+class LogsConfig:
+    """`logs:` — #5873 (owner-hit, 2026-09-06: "放置してるだけで reyn.log
+    肥大化してシステム止まらないようにしてね"): size-based rotation for
+    `.reyn/logs/reyn.log`, ``Axis.BOUNDING``.
+
+    ``.reyn/logs/`` is `audit` tier (``reyn-dir-layout.md``: "write-only
+    record, never restored") — the SAME tier `events/` is, which already
+    has a #4479 purge. `logs/` had none: a bare `logging.basicConfig
+    (filename=...)` (a plain, unrotated `FileHandler`) writing WARNING
+    records from idle-time sources (MCP reconnect, the loop tripwire's
+    stall notice, asyncio's own exception handler) with no size ceiling —
+    the disk-side instance of ADR-0046's Falsification shape ("a
+    resource no band member bounds").
+
+    architect's ruling: size-based rotation, not a second cron/purge
+    mechanism — deterministic (cuts on bytes written, not a clock) and
+    reuses `logging.handlers.RotatingFileHandler` instead of adding new
+    machinery. ``max_bytes``/``backup_count`` are BOTH ``Axis.BOUNDING``
+    (same axis role as ``history_resident``/``process_memory`` above:
+    bytes, model-independent, config-driven).
+
+    **Defaults (provisional, owner-revisable — architect's own
+    disclosure)**: ``max_bytes=16 MiB``, ``backup_count=4`` (total ≤ 80
+    MiB). Derived from #5870 stage 1's own per-episode dump size (~10-20
+    KiB, one main thread) — one 16 MiB file holds roughly a thousand
+    episodes, several days of idle-time WARNING traffic — and 80 MiB
+    total is under 1% of the 10%-of-disk ceiling #4479 already permits
+    for `events/`, negligible on the owner's own machine (~194 GiB free,
+    ADR-0046) and unaffected by session count (rotation is per-process-
+    log, not per-session). Like ``process_footprint``'s own cap, these
+    numbers may be revised once real usage is measured — the point of
+    shipping a real default now is closing the *unbounded* gap, not
+    picking the perfect number on day one.
+    """
+    max_bytes: int = field(default=16 * 1024 * 1024, metadata={"axis": Axis.BOUNDING})  # 16 MiB
+    backup_count: int = field(default=4, metadata={"axis": Axis.BOUNDING})  # total <= max_bytes * 5
+
+
+def _build_logs_config(raw: object) -> "LogsConfig":
+    """Parse the `logs:` section (#5873).
+
+    Missing or malformed -> default (16 MiB / 4 backups) — same
+    discipline as ``_build_history_resident_config``: a typo must not
+    silently disable rotation (0/negative would rotate every write or
+    never rotate)."""
+    if not isinstance(raw, dict):
+        return LogsConfig()
+    defaults = LogsConfig()
+    max_bytes = raw.get("max_bytes", defaults.max_bytes)
+    try:
+        max_bytes = int(max_bytes)
+        if max_bytes <= 0:
+            max_bytes = defaults.max_bytes
+    except (TypeError, ValueError):
+        max_bytes = defaults.max_bytes
+    backup_count = raw.get("backup_count", defaults.backup_count)
+    try:
+        backup_count = int(backup_count)
+        if backup_count < 0:
+            backup_count = defaults.backup_count
+    except (TypeError, ValueError):
+        backup_count = defaults.backup_count
+    return LogsConfig(max_bytes=max_bytes, backup_count=backup_count)
+
+
 def _build_process_memory_config(raw: object) -> "ProcessMemoryConfig":
     """Parse the `process_memory:` section (#5851 stage (a)).
 

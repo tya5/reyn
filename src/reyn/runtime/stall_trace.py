@@ -109,11 +109,47 @@ def stall_trace_seconds_from_env() -> "float | None":
     return seconds if seconds > 0 else None
 
 
+#: #5873 follow-up (architect, #5877 re-co-vet — "決定論側の改善...path 形状に
+#: 依存しない"): the registered ``.reyn/logs/reyn.log`` path, declared by
+#: ``chat.py``'s ``_setup_interactive_logging`` at the ONE moment it actually
+#: knows it (see :func:`register_file_handler_path`). ``None`` means no
+#: interactive log redirect is installed for this process.
+_registered_file_handler_path: "str | None" = None
+
+
+def register_file_handler_path(path: "str | None") -> None:
+    """Declare the path :func:`find_file_handler_path` should return.
+
+    Called by ``chat.py``'s ``_setup_interactive_logging`` right after it
+    installs the ``RotatingFileHandler`` (``path`` = its ``baseFilename``,
+    which stays fixed across every later rotation — a rollover renames the
+    file ON DISK and reopens a NEW one at this SAME path, never touching
+    the path itself). Pass ``None`` to declare "no handler installed"
+    explicitly (a test tearing one down should do this too, not just rely
+    on the default at import time — see this module's own test file for
+    the isolation pattern).
+
+    #5873 follow-up (architect, #5877 re-co-vet): replaces the PRE-#5873
+    version of :func:`find_file_handler_path`, which re-derived "is this
+    THE reyn.log handler" by scanning every root-logger handler and
+    matching its path against a hardcoded SHAPE (``.reyn/logs/reyn.log``)
+    each call — a heuristic good enough to see through pytest's own
+    ``/dev/null``-pointed ``FileHandler`` (measured directly, tui-coder's
+    own finding), but still a guess reconstructed from the outside. The
+    ONE place that knows the real path with certainty is the function that
+    just opened it — this makes that a declaration instead of something
+    every reader re-derives, and removes the "matches only THIS shape"
+    fragility entirely (a future reyn.log rename/relocation needs no
+    matching update here)."""
+    global _registered_file_handler_path
+    _registered_file_handler_path = path
+
+
 def find_file_handler_path() -> "str | None":
-    """The ``baseFilename`` of the root logger's own installed
-    ``FileHandler`` (``.reyn/logs/reyn.log``, when ``chat.py``'s
-    ``_setup_interactive_logging`` has run), or ``None`` when no such
-    handler is installed.
+    """The path :func:`register_file_handler_path` was last given (the
+    ``baseFilename`` of the root logger's installed ``RotatingFileHandler``,
+    ``.reyn/logs/reyn.log``, when ``chat.py``'s ``_setup_interactive_logging``
+    has run), or ``None`` when no interactive log redirect is installed.
 
     A READ-ONLY lookup — deliberately returns the PATH, never the
     handler's own ``stream``/``fileno()``. #5877 (architect finding,
@@ -139,26 +175,13 @@ def find_file_handler_path() -> "str | None":
     harmless, the dump is still readable, just possibly one rollover
     behind) and is never touched by anything else's open/close churn.
 
-    Matches ONLY a ``FileHandler`` whose own path ends in ``.reyn/logs/
-    reyn.log`` — never "any ``FileHandler``". Measured directly (a real
-    pytest run, not assumed): pytest's OWN logging plugin unconditionally
-    installs a ``logging.FileHandler`` SUBCLASS pointed at ``/dev/null``
-    on the root logger, for its own internal log-capture/routing — an
-    early, naive "first ``FileHandler`` wins" version of this function
-    picked up THAT handler instead of a test-installed reyn one (or,
-    absent one, armed against ``/dev/null`` rather than genuinely
-    skipping — silently defeating the "no stable destination -> no arm
-    at all" property this whole fix depends on). This path-shape check
-    is what makes pytest's own handler, and any other unrelated
-    ``FileHandler`` a future plugin might install, transparent to this
-    lookup."""
-    for handler in logging.getLogger().handlers:
-        if not isinstance(handler, logging.FileHandler):
-            continue
-        path = Path(handler.baseFilename)
-        if path.name == "reyn.log" and path.parts[-3:-1] == (".reyn", "logs"):
-            return handler.baseFilename
-    return None
+    #5873 follow-up: this used to scan ``logging.getLogger().handlers``
+    for a ``FileHandler`` whose path matched the ``.reyn/logs/reyn.log``
+    SHAPE (to see through pytest's own ``/dev/null``-pointed
+    ``FileHandler``, measured directly) — now a plain read of
+    :func:`register_file_handler_path`'s own declaration. See that
+    function's own docstring for why."""
+    return _registered_file_handler_path
 
 
 def default_log_stream():

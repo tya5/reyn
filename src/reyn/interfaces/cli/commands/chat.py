@@ -11,12 +11,16 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.interfaces.cli.env_backend import (
     build_environment_backend,
     register_env_backend_args,
 )
 from reyn.runtime.turn_origin import TurnOrigin
+
+if TYPE_CHECKING:
+    from reyn.config.chat import LogsConfig
 
 from ..common_args import add_common_args
 from ..invocation_context import InvocationContext
@@ -353,16 +357,84 @@ def _setup_interactive_logging(project_root: Path) -> None:
     as the rest of this function — both of this module's two call sites
     are gated by it, so an embedder or non-interactive run never has its
     own warnings redirected.
+
+    #5873 (owner-hit — "放置してるだけで reyn.log 肥大化してシステム止まら
+    ないようにしてね"): the handler is now a ``RotatingFileHandler``
+    (``_DEFAULT_LOG_MAX_BYTES``/``_DEFAULT_LOG_BACKUP_COUNT``), not a bare
+    unrotated ``FileHandler`` — ``.reyn/logs/`` is `audit` tier with no
+    ceiling otherwise (unlike `events/`, which #4479 already purges).
+    Installed with the hardcoded DEFAULTS here, not the real
+    ``reyn.yaml logs:`` config: this function runs BEFORE config load (see
+    this module's own call sites' comments — config-time WARNING records
+    must land in the file too), so the real config is not resolved yet.
+    ``_apply_logs_config`` (below) refines the already-installed handler's
+    ``maxBytes``/``backupCount`` in place once config IS available — the
+    handler's own class (a ``FileHandler`` subclass) never changes, so
+    existing readers that structurally detect it (``isinstance(handler,
+    logging.FileHandler)`` — ``litellm_bootstrap.py``, ``stall_trace.py``)
+    are unaffected either way.
     """
+    from logging.handlers import RotatingFileHandler
+
+    from reyn.runtime import stall_trace
+
     log_dir = project_root / ".reyn" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "reyn.log"
+    handler = RotatingFileHandler(
+        str(log_path),
+        maxBytes=_DEFAULT_LOG_MAX_BYTES,
+        backupCount=_DEFAULT_LOG_BACKUP_COUNT,
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    )
     logging.basicConfig(
-        filename=str(log_dir / "reyn.log"),
         level=logging.WARNING,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        handlers=[handler],
         force=True,  # safe: the interactive path has no prior logging setup
     )
     logging.captureWarnings(True)
+    # #5873 follow-up (architect, #5877 re-co-vet): declare the path
+    # directly rather than making stall_trace.find_file_handler_path()
+    # re-derive it by scanning root-logger handlers for one whose path
+    # matches a hardcoded shape — see register_file_handler_path's own
+    # docstring for why.
+    stall_trace.register_file_handler_path(str(log_path))
+
+
+# #5873: mirrors reyn.config.chat.LogsConfig's own defaults — duplicated as
+# plain constants (not an import of LogsConfig itself) because
+# _setup_interactive_logging runs BEFORE reyn.yaml is loaded (see its own
+# docstring): there is no LogsConfig instance to read from yet at this
+# point, only a safe hardcoded floor _apply_logs_config refines later.
+_DEFAULT_LOG_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB
+_DEFAULT_LOG_BACKUP_COUNT = 4
+
+
+def _apply_logs_config(logs_cfg: "LogsConfig") -> None:
+    """#5873: refine the RotatingFileHandler ``_setup_interactive_logging``
+    already installed, once the real ``reyn.yaml logs:`` config is known.
+
+    Called right after config load, at the ONE call site that has a local
+    config to read (``_run_remote`` never loads one — no local reyn.yaml
+    concept applies to an attach-only session, so it stays on the
+    hardcoded defaults, unaffected). Mutates the handler's ``maxBytes``/
+    ``backupCount`` attributes in place rather than swapping the handler
+    out — replacing it would need to also re-run ``setFormatter`` and risk
+    a handler-identity change synchronization gap other readers rely on
+    (see ``_setup_interactive_logging``'s own docstring on why the class
+    itself, ``RotatingFileHandler`` — a ``logging.FileHandler`` subclass —
+    stays fixed regardless of config). A no-op when the interactive log
+    redirect was never installed (no ``RotatingFileHandler`` on the root
+    logger — e.g. ``--cui``/non-TTY runs, which never call
+    ``_setup_interactive_logging`` at all)."""
+    from logging.handlers import RotatingFileHandler
+
+    for handler in logging.root.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            handler.maxBytes = logs_cfg.max_bytes
+            handler.backupCount = logs_cfg.backup_count
 
 
 def _run_remote(
@@ -553,6 +625,13 @@ def _run(args: argparse.Namespace) -> None:
 
     with _startup_stage("config"):
         session_cfg = InvocationContext.from_args(args)
+    # #5873: now that the real reyn.yaml `logs:` config is known, refine
+    # the RotatingFileHandler _setup_interactive_logging installed above
+    # (with hardcoded defaults) to the operator's own configured
+    # max_bytes/backup_count. A no-op when the log redirect was never
+    # installed (--cui / non-TTY runs).
+    if is_interactive:
+        _apply_logs_config(session_cfg.config.logs)
     # #3905: no per-surface startup credential check here (never was, since
     # #2708 P3.2b moved it onto the single LLM funnel) — and #3905 removed
     # that funnel-level pre-check too (an unnecessary hardcode, owner ruling).
