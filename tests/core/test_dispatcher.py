@@ -642,3 +642,31 @@ def test_no_confirmation_bus_is_ever_consulted():
         result = await dispatch_tool(name="exec", args={}, ctx=ctx, invoker=_unused_invoker)
         assert result["status"] == "error"  # denied, synchronously, no prompt
     asyncio.run(main())
+
+
+def test_dispatch_context_construction_without_contextual_raises_type_error():
+    """Tier 2: accept ③ (architect) -- ``contextual`` is a REQUIRED field,
+    no default. A caller that forgets to pass it must fail LOUDLY at
+    construction (a real ``dataclasses``/``TypeError``, not this test's
+    own reasoning about it) -- #5818's own "a silent fallback caused real
+    harm" pattern this field's docstring names. Omitting a keyword this
+    dataclass declares with no default is real Python behaviour, not
+    reyn's own trivia to re-derive."""
+    import dataclasses
+
+    import pytest as _pytest
+
+    with _pytest.raises(TypeError):
+        DispatchContext(
+            caller_kind="router",
+            caller_id="test_agent",
+            chain_id="c1",
+            tool_catalog={},
+            events=FakeEventEmitter(),
+            # contextual= deliberately omitted
+        )
+    # Control: the field really is declared, with no default -- so the
+    # TypeError above is this field's absence, not an unrelated one.
+    field = next(f for f in dataclasses.fields(DispatchContext) if f.name == "contextual")
+    assert field.default is dataclasses.MISSING
+    assert field.default_factory is dataclasses.MISSING

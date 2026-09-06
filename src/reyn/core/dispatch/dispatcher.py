@@ -15,9 +15,12 @@ call boundary (call_llm_tools), not here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from reyn.core.dispatch.content_declarations import get_content_fields
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.effective import ContextualPermission
 
 
 class UnknownToolError(Exception):
@@ -90,7 +93,7 @@ class DispatchContext:
     chain_id: str | None
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
-    contextual: "object | None"
+    contextual: "ContextualPermission | None"
     call_id: str | None = None
     completed_response_include_text: bool = False
     user_input_include_text: bool = False

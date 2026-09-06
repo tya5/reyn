@@ -32,9 +32,12 @@ only as much as the substrate actually knows.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.effective import ContextualPermission
 
 _USAGE = "usage: /tasks | /tasks cancel <task_id> [confirm]"
 
@@ -57,7 +60,7 @@ async def _build_tasks_tool_context(ctx: "SlashContext") -> Any:
     )
 
 
-async def _router_contextual_permission(tool_ctx: Any) -> "object | None":
+async def _router_contextual_permission(tool_ctx: Any) -> "ContextualPermission | None":
     """The per-session ``ContextualPermission`` narrowing (delegate/
     topology/ephemeral) — #5841 — via the SAME ``op_context_factory()``
     seam ``interfaces/slash/exec.py`` already uses. ``list_tasks``/
