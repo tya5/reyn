@@ -1795,7 +1795,50 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
             if snap.get("compaction_progress_reported", True)
             else None
         ),
+        _memory_line(snap),
     ]
+
+
+def _memory_line(snap: dict) -> str:
+    """#5851 stage (a): the process-wide footprint row, same three-state
+    discipline every other #5009-pass row in this pane already follows
+    (``_folded_line`` right above is the closest sibling):
+
+    - the 4 keys absent from ``snap`` entirely (an older remote server
+      that predates this field, or ``ctx_pane_lines`` called with no
+      snapshot at all) -> "not reported on this connection", the SAME
+      words every other row here uses for that state.
+    - keys present but ``process_footprint_metric`` is ``None`` (this
+      platform has no reader) -> "not measurable on this platform" —
+      never a fabricated number.
+    - ``metric`` present but this ONE read's ``bytes`` came back
+      ``None`` (a transient read failure, not a platform fact) -> same
+      "not measurable" wording; a single failed read is not a state
+      worth a fourth phrase over.
+    - real reading -> the formatted bytes, metric name, and cap/enforce
+      state.
+    """
+    if "process_footprint_metric" not in snap:
+        return "memory       not reported on this connection"
+    metric = snap.get("process_footprint_metric")
+    value = snap.get("process_footprint_bytes")
+    if metric is None or value is None:
+        return "memory       not measurable on this platform"
+    cap_bytes = snap.get("process_memory_cap_bytes")
+    enforce = snap.get("process_memory_enforce", False)
+    value_str = _format_bytes_gib(value)
+    if cap_bytes is None:
+        return f"memory       {value_str} {metric} (no cap — observe only)"
+    cap_str = _format_bytes_gib(cap_bytes)
+    posture = "enforced" if enforce else "observe only"
+    return f"memory       {value_str} {metric} / cap {cap_str} ({posture})"
+
+
+def _format_bytes_gib(n: int) -> str:
+    """#5851: one decimal place, GiB — matches this pane's own token-count
+    formatting register (thousands-separated, not raw bytes an operator
+    would have to mentally divide)."""
+    return f"{n / (1024 ** 3):.1f} GiB"
 
 
 def _folded_line(progress_raw: "dict | None") -> str:

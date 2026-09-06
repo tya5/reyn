@@ -202,6 +202,8 @@ presentation_install_blocked
 presentation_installed
 presentation_load_failed
 presented
+process_footprint
+process_footprint_unavailable
 process_marker_reaped
 project_context_changed
 project_context_unreadable
@@ -721,6 +723,25 @@ intervention flow and force-close wrap-up.
 |------|------|-------------|
 | `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
 | `untrusted_narrowing_engaged`, `untrusted_narrowing_lifted` | #1909/#3501 opt-in (`safety.threat_scan.capability_narrowing` != `off`): untrusted external content (an `external_source`-tagged history entry) enters/leaves the active, uncompacted context, most-restrictively narrowing tool visibility while it is live. `Session._ephemeral_contextual_for_turn` — the default `turn` rung, the common case an operator opting in at all is most likely running — emits both kinds, exactly once per genuine state flip, never per read (a status-panel poll on an unchanged state produces no event); previously silent at both transitions (#5282). The top `iteration` rung (`RouterLoop`'s own `_intra_turn_contextual_for_turn_fn` branch) separately emits `untrusted_narrowing_engaged` only — it has no lift event yet, out of #5282's scope. | `provenance` (`external_source`); the `iteration` rung's `engaged` also carries `chain_id`, `iteration` |
+
+## Process memory
+
+#5851 stage (a) — observation only, no halt (a later stage adds
+`process_memory.enforce`; see `docs/reference/config/reyn-yaml.md`'s
+`process_memory` block). `ProcessMemoryGuard` (`reyn.runtime.
+process_memory`, ONE instance per process, threaded to every `Session`
+the same route `history_resident_config` uses) reads the process's real
+measured footprint — darwin: `phys_footprint` (`libproc.proc_pid_
+rusage`, the same figure Activity Monitor's "Memory" column and
+`footprint(1)` report; SHRINKS on free, unlike `ru_maxrss`); linux:
+`rss` (`/proc/self/statm`'s resident pages × page size). No fork, no
+subprocess (`ps` would itself spawn a process — exactly the harm to
+avoid when memory is already tight), ~39µs per read.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `process_footprint` | Two record points (of the ruling's 4 observation points — the other two, `run_one_iteration`'s process-edge and the router-loop's in-turn iteration head, are DECISION points for a halt check that does not exist until a later stage; nothing to record there yet in stage (a)): `Session.load_history()`'s own `finally` (every `load_history()` caller — registry_bootstrap.py/chat.py/web/deps.py/mcp.py/dogfood.py — funnels through this ONE method, so the emit lives there rather than at 5 separate call sites), and `_run_turn_body`'s `finally`, next to the `turn_end` hook dispatch (once per turn). `metric` rides with every `bytes` value — a `phys_footprint` reading and an `rss` reading are not comparable numbers, and this repo's own verification-hazards discipline is "an observation does not name its own referent" without help. | `bytes`, `metric` (`"phys_footprint"` \| `"rss"`), `cap_bytes` (`None` = observe-only), `enforce`, `chain_id` (turn-end emit only) |
+| `process_footprint_unavailable` | This platform has no reader (`process_memory_metric_name()` is `None` — today, anything but darwin/linux). Fires at MOST ONCE PER PROCESS (`ProcessMemoryGuard` is the one shared instance every session's factory_config carries, so the "announced once" latch is process-scoped, not per-session) — a value is never fabricated to fill the gap. | `platform` (`sys.platform`) |
 
 ## Process registry
 
