@@ -41,6 +41,19 @@ queues, which is the invariant #3300 actually protects.
 ⚠️ Consequence worth naming rather than discovering: a slash handler now runs
 CONCURRENTLY with an in-flight turn instead of after it. #3327 established that
 shape for the answer funnel; S5 extends it to the whole catalog.
+
+★ **#5837 stage 2 — ``!``/``!!`` are a CLIENT-side spelling, not a second
+dispatch route.** Owner ruling (verbatim): "'!'/'!!' 解釈は core ではなく '/'
+と同様 remote 側責務期待" — the same client-owns-interpretation shape this
+module already gives ``/``. :func:`maybe_dispatch_slash` normalizes a
+``!``/``!!``-prefixed line into the equivalent ``/exec-attach``/``/exec`` text
+BEFORE its own ``/`` check, then falls straight through the SAME parsing,
+echo, and dispatch this module already had — there is no second interpreter,
+and the server never sees a bang (by the time anything crosses the transport
+it is an ordinary resolved command name + args, identical to what typing
+``/exec`` would have produced). ``!!`` is checked first because ``!!cmd``
+also satisfies ``text.startswith("!")`` — checking the single-bang form first
+would misroute every double-bang line to ``/exec-attach``.
 """
 from __future__ import annotations
 
@@ -101,7 +114,41 @@ async def maybe_dispatch_slash(
     bundled into ``args`` and ignored by whichever handler does not read them.
     The echo carries the WHOLE typed text, which is what makes the note about
     ignored lines legible.
+
+    #5837 stage 2: a leading ``!``/``!!`` is rewritten to ``/exec-attach``/
+    ``/exec`` right here, before anything below reads ``text`` — see this
+    module's own docstring for why order and placement both matter. The
+    ECHOED line is the rewritten ``/exec …`` form, not the original ``!…`` —
+    the same choice ``exec.py``'s own ``/exec-attach`` already made for its
+    queued block (log what actually ran, not what was typed before
+    normalization), applied here for the same "readable after the fact"
+    reason. A bare ``!``/``!!`` (no command text) is a mistake worth saying
+    so about, not a message to submit as a turn — same shape the bare-``/``
+    catalog branch below already gives an empty ``/``.
     """
+    if text.startswith("!!"):
+        rest = text[2:]
+        if not rest.strip():
+            if echo:
+                _display(transport, "user", text)
+            _display(
+                transport, "error",
+                "!! requires a command; usage: !!<cmdline> (same as /exec <cmdline>)",
+            )
+            return True
+        text = "/exec " + rest
+    elif text.startswith("!"):
+        rest = text[1:]
+        if not rest.strip():
+            if echo:
+                _display(transport, "user", text)
+            _display(
+                transport, "error",
+                "! requires a command; usage: !<cmdline> (same as /exec-attach <cmdline>)",
+            )
+            return True
+        text = "/exec-attach " + rest
+
     if not text.startswith("/"):
         return False
 

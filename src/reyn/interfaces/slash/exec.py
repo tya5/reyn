@@ -4,10 +4,18 @@ sandboxed exec op the LLM ``exec`` tool uses (#5837 stage 1).
 Usage::
 
     /exec <cmdline>          — run, show the result on screen only
+    !!<cmdline>              — same as /exec (stage 2 shorthand)
     /exec-attach <cmdline>   — run, queue argv + result for the NEXT user
                                message (drained by Session._handle_inbox_text,
                                the same ``_pending_user_attachments`` queue
                                ``/attachment``/``/image`` already write to)
+    !<cmdline>               — same as /exec-attach (stage 2 shorthand)
+
+#5837 stage 2 (``interfaces/slash/dispatch.py``'s own ``maybe_dispatch_
+slash``): the ``!``/``!!`` prefixes are a CLIENT-side spelling of the two
+commands above, normalized to the equivalent ``/exec``/``/exec-attach`` text
+before dispatch even reaches the ``/`` check — this module itself never sees
+a bang and needs no changes to support it.
 
 owner request (2026-09-06, verbatim): "スラッシュコマンド経由で llm tool の exec
 を打てるようにしたい". Owner rulings confirmed in #5837 (quoted there in
@@ -290,9 +298,9 @@ async def _run_exec(ctx: "SlashContext", args: str) -> "tuple[list[str], dict] |
 
 @slash(
     "exec",
-    summary="Run a command through the sandboxed exec tool (screen only)",
+    summary="Run a command through the sandboxed exec tool (screen only) — shorthand: !!<cmdline>",
     locus="session",
-    usage=_USAGE,
+    usage=_USAGE + "  (shorthand: !!<cmdline>)",
     see_also=("exec-attach",),
 )
 async def exec_cmd(ctx: "SlashContext", args: str) -> None:
@@ -305,9 +313,9 @@ async def exec_cmd(ctx: "SlashContext", args: str) -> None:
 
 @slash(
     "exec-attach",
-    summary="Run a command and attach argv + result to your next message",
+    summary="Run a command and attach argv + result to your next message — shorthand: !<cmdline>",
     locus="session",
-    usage="usage: /exec-attach <cmdline>",
+    usage="usage: /exec-attach <cmdline>  (shorthand: !<cmdline>)",
     see_also=("exec",),
 )
 async def exec_attach_cmd(ctx: "SlashContext", args: str) -> None:
