@@ -65,10 +65,20 @@ from tests._support.events import settle
 
 AGENT = "hard-cancel-agent"
 # #5450: the real stub's canned reply for an empty/no-tool-call completion
-# (router_loop.py's own constant) — the LITERAL content invariant 1 asserts
-# never lands for a hard-cancelled turn, replacing the old private helper's
-# own hand-picked sentinel string.
-_STUB_REPLY = _EMPTY_RESPONSE_MSG["en"]
+# is router_loop.py's own empty-response notice — the content invariant 1
+# asserts never lands for a hard-cancelled turn, replacing the old private
+# helper's own hand-picked sentinel string. #5887 made that notice a
+# TEMPLATE (`{finish_reason}` / `{retry}` / `{call_id}`, rendered per call
+# by `_empty_response_text`), so the persisted text is no longer the raw
+# constant: match on the template's literal head, up to its first
+# placeholder — stable across calls, still the real constant, never a
+# hand-picked string.
+_STUB_REPLY_HEAD = _EMPTY_RESPONSE_MSG["en"].split("{", 1)[0]
+assert _STUB_REPLY_HEAD, "test setup sanity: the notice must have a literal head before its first placeholder"
+
+
+def _is_stub_reply(m) -> bool:
+    return isinstance(m.content, str) and m.content.startswith(_STUB_REPLY_HEAD)
 
 
 def _make_session(wal: Path, snapshot_path: Path) -> tuple[Session, StateLog]:
@@ -152,7 +162,7 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(
     assert completed is True
 
     # (a) the cancelled turn's result never landed.
-    assert not any(m.content == _STUB_REPLY for m in session.history), (
+    assert not any(_is_stub_reply(m) for m in session.history), (
         "a hard-cancelled turn's LLM reply must never be appended, even after "
         "the underlying hung call is released post-cancel"
     )
@@ -188,7 +198,7 @@ async def test_hard_cancel_mid_generation_no_result_append_and_agent_survives(
     next_completed = await session.run_one_iteration()
     assert next_completed is True
     assert any(
-        m.role == "assistant" and m.content == _STUB_REPLY for m in session.history
+        m.role == "assistant" and _is_stub_reply(m) for m in session.history
     ), (
         "a normal turn after a hard-cancel must complete and append its reply — "
         "the agent must survive to serve the next turn"
@@ -328,7 +338,7 @@ async def test_external_cancel_of_driver_task_propagates(tmp_path, _llm_stub):
         await turn_task
 
     # sanity: the hung reply never landed (the turn was torn down, not completed).
-    assert not any(m.content == _STUB_REPLY for m in session.history)
+    assert not any(_is_stub_reply(m) for m in session.history)
     # witness ②: the real driver dispatched before the external cancel hit it.
     await settle(session)
     assert any(e.type == "turn_started" for e in events)
