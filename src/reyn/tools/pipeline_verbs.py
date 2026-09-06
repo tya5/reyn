@@ -396,8 +396,23 @@ def _make_tool_dispatch(
                 f"registered tool"
             )
 
+        # #5865 architect co-vet 🔴-1: dispatch_tool's own 5b promotion keeps
+        # only {"kind", "message"} from a handler-declared error, discarding
+        # every OTHER key the handler's own dict carried (e.g. mcp_verbs'
+        # {"status": "error", "data": {"error": ..., "server": ..., "tool":
+        # ...}} — #3450's own named shape). Pre-#5865 the RAW dict reached
+        # the executor, and error_to_canonical's own docstring says this is
+        # deliberately LOSSLESS (the whole dict survives as a structured
+        # attachment). Capturing the invoker's raw return here — read back
+        # below only for the non-raising branch — is what keeps that
+        # lossless contract; reconstructing from dispatch_tool's own
+        # already-narrowed envelope cannot get those keys back.
+        _raw_result: "Any | None" = None
+
         async def _invoker(call_args: "dict[str, Any]") -> Any:
-            return await target.handler(call_args, ctx)
+            nonlocal _raw_result
+            _raw_result = await target.handler(call_args, ctx)
+            return _raw_result
 
         dispatch_ctx = DispatchContext(
             caller_kind="pipeline",
@@ -425,12 +440,16 @@ def _make_tool_dispatch(
             # A handler-declared (non-raising) error — preserve the
             # pre-#5865 "returned normally" contract so _run_tool_step's own
             # canonicalization (is_error_result) applies on_error policy,
-            # not an unconditional pipeline abort. Re-flattened to a plain
-            # {"error": <str>} shape (dispatch_tool's OWN outer envelope
-            # nests the message one level deeper, under a dict — passing
-            # that dict through unflattened would render as a Python repr
-            # in the tool's chat/ctx text instead of the clean message).
-            result = {"status": "error", "error": error["message"], "error_kind": error["kind"]}
+            # not an unconditional pipeline abort. Returns the RAW handler
+            # dict byte-identically (never dispatch_tool's own narrowed
+            # {"kind", "message"} envelope) — see _raw_result's own comment
+            # above for why.
+            assert _raw_result is not None, (
+                "dispatch_tool promoted a handler-declared error (5b), which "
+                "only fires when the invoker RETURNED a dict — _raw_result "
+                "must have been captured"
+            )
+            result = _raw_result
         # FP-0056 PR-F1: tag the RESOLVED target tool name so _run_tool_step canonicalizes by invoked
         # identity (declaration born at the tool's registration seam), not result["kind"]. Stripped
         # before schema validation + ctx exposure in _run_tool_step.

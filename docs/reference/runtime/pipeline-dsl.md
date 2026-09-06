@@ -287,7 +287,7 @@ registered tool name (`web_search`).
 | Key | Required | Meaning |
 |-----|----------|---------|
 | `name` | yes | The tool/action name (literal string). |
-| `args` | no | Mapping of argument name → value. Each value is a **literal** unless tagged `!expr` (see [Literals vs `!expr`](#literals-vs-expr) below). |
+| `args` | no | Mapping of argument name → value. Each value is a **literal** unless tagged `!expr` (see [Literals vs `!expr`](#literals-vs-expr) below). Validated against the tool's own `parameters` JSON schema before dispatch (#5865); a mismatch fails the step with `invalid_args` — pre-#5865 a `tool` step never went through this check at all. |
 | `schema` | no | A registered schema name the result must conform to (`verify: schema` — see [Schemas](#schemas-verify-schema)). Non-conformance fails the step (checked against the RAW tool result, before the `text`/`structured` reduction below). |
 | `on_error` | no | (#3130) One of `continue`, `abort`, or `retry(N)` — see [`tool.on_error`](#toolon_error) below. **Omitted is a distinct state**, not a synonym for `abort`: it preserves the pre-#3130 behavior (only a raised exception fails the step; a canonical-error result — `meta.isError` — passes through unchecked, e.g. for a `schema:`-gated preflight probe to inspect downstream). |
 | `output` | no | Named store to write the result to. |

@@ -31,17 +31,20 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates
 _TOOL_NAME = "p5865_test_tool"
 
 
-def _install_tool(monkeypatch, handler) -> None:
+def _install_tool(monkeypatch, handler, *, parameters: "dict | None" = None) -> None:
     """A REAL ``ToolDefinition`` registered on a real (monkeypatched-fresh)
     registry — the same idiom
     ``test_3546_pipeline_driver_narrowing_inheritance.py``'s own
     ``_install_side_effect_tool`` uses, generalized to take any handler so
     each test below can install the exact behaviour (success / self-declared
-    error / raise) it needs to observe through the fold."""
+    error / raise) it needs to observe through the fold. ``parameters``
+    defaults to an empty-object schema (accepts anything); a test exercising
+    ``dispatch_tool``'s own arg-schema validation (#5865) passes a real
+    schema instead."""
     tool = ToolDefinition(
         name=_TOOL_NAME,
         description="#5865 test tool.",
-        parameters={"type": "object", "properties": {}},
+        parameters=parameters if parameters is not None else {"type": "object", "properties": {}},
         gates=ToolGates(router="allow"),
         handler=handler,
         category="io",
@@ -191,24 +194,81 @@ async def test_a_raised_handler_exception_still_propagates_not_a_silent_result(
     assert failed["error_kind"] == "exception"
 
 
+_REQUIRES_X_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "string"}},
+    "required": ["x"],
+}
+
+
+@pytest.mark.asyncio
+async def test_args_failing_the_tools_own_schema_fail_the_step_before_dispatch(
+    monkeypatch,
+) -> None:
+    """Tier 2: architect co-vet 🔴-2(a) — pre-#5865 a pipeline `tool:` step
+    never went through ANY argument-schema validation (`executor.py` calls
+    `deps.tool_dispatch(step.name, resolved_args)` with no schema check of
+    its own); `dispatch_tool`'s own step 3 (`_validate_args` against
+    `target.render_for_router()`'s `parameters`) now runs for every
+    `dispatch_tool` caller including this one — a new gate, disclosed in
+    the PR body and `pipeline-dsl.md`'s own `args` row. The handler must
+    never even run when args fail the tool's own schema (a real crash there
+    would prove the check did nothing)."""
+
+    async def _handler(args, ctx):
+        raise AssertionError("a schema-invalid call must never reach the handler")
+
+    _install_tool(monkeypatch, _handler, parameters=_REQUIRES_X_SCHEMA)
+    sink: "list" = []
+    events = EventLog(subscribers=[sink.append])
+    dispatch = _make_tool_dispatch(_tool_ctx(events))
+
+    with pytest.raises(PipelineExecutionError, match="args validation failed"):
+        await dispatch(_TOOL_NAME, {})
+    await events.drain()
+
+    (failed,) = _events_by_type(sink)["tool_failed"]
+    assert failed["error_kind"] == "invalid_args"
+
+
+@pytest.mark.asyncio
+async def test_args_satisfying_the_tools_own_schema_still_dispatch(monkeypatch) -> None:
+    """Tier 2: positive control for the test above — the SAME schema, valid
+    args, must still reach the handler and dispatch normally (the new gate
+    is a real schema check, not a blanket new failure)."""
+
+    async def _handler(args, ctx):
+        return {"got": args["x"]}
+
+    _install_tool(monkeypatch, _handler, parameters=_REQUIRES_X_SCHEMA)
+    events = EventLog()
+    dispatch = _make_tool_dispatch(_tool_ctx(events))
+
+    result = await dispatch(_TOOL_NAME, {"x": "hello"})
+
+    assert result["got"] == "hello"
+
+
 @pytest.mark.asyncio
 async def test_a_handler_declared_error_still_returns_normally_not_raising(
     monkeypatch,
 ) -> None:
     """Tier 2: the one case that must NOT raise: a handler that returns NORMALLY
-    with its own self-declared error envelope (the exact shape
-    `run_pipeline`'s own handler uses, per `_handler_declared_error`'s
-    docstring in `dispatcher.py`) — pre-#5865 this was returned as-is,
-    letting `_run_tool_step`'s own canonicalization apply `on_error` policy,
-    and an UNSET `on_error` (the default) returns such a result UNCHECKED
-    rather than aborting the pipeline. `dispatch_tool`'s own 5b promotes
-    this to its outer error envelope; folding that straight through
-    unflattened would raise (wrong) or render a Python dict repr as the
-    tool's text (also wrong) — this test pins the flattened, non-raising
-    shape `_dispatch` reconstructs instead."""
+    with its own self-declared error envelope — the ``{"status": "error",
+    "data": {"error": ..., ...}}`` shape #3450's own docstring names
+    (`mcp_verbs`/`pipeline_verbs`/`skill_verbs`/`plugin_management_verbs`) —
+    pre-#5865 this raw dict was returned as-is, letting `_run_tool_step`'s
+    own canonicalization apply `on_error` policy, and an UNSET `on_error`
+    (the default) returns such a result UNCHECKED rather than aborting the
+    pipeline. `dispatch_tool`'s own 5b promotion keeps only
+    ``{"kind", "message"}`` — architect co-vet 🔴-1: reconstructing from
+    THAT narrowed envelope silently drops every other key the handler's own
+    dict carried (here, `data.server`), breaking `error_to_canonical`'s own
+    documented LOSSLESS guarantee. `_dispatch` must return the RAW handler
+    dict byte-identically instead."""
 
     async def _handler(args, ctx):
-        return {"status": "error", "error": {"kind": "custom_kind", "message": "nope"}}
+        return {"status": "error", "data": {"error": "nope", "server": "s"}}
 
     _install_tool(monkeypatch, _handler)
     sink: "list" = []
@@ -218,12 +278,13 @@ async def test_a_handler_declared_error_still_returns_normally_not_raising(
     result = await dispatch(_TOOL_NAME, {})  # must not raise
     await events.drain()
 
-    assert result["status"] == "error"
-    assert result["error"] == "nope"
-    assert result["error_kind"] == "custom_kind"
-    assert result["_canonical_source"] == _TOOL_NAME
+    assert result == {
+        "status": "error",
+        "data": {"error": "nope", "server": "s"},
+        "_canonical_source": _TOOL_NAME,
+    }, "the handler's own raw dict must survive byte-identically (minus the tag)"
     (failed,) = _events_by_type(sink)["tool_failed"]
-    assert failed["error_kind"] == "custom_kind"
+    assert failed["error_kind"] == "handler_error"
 
 
 @pytest.mark.asyncio
