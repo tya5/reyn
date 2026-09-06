@@ -11188,7 +11188,7 @@ class Session:
                 figures[key] = None
         return {"is_compacting": self.is_compacting, **figures}
 
-    async def _compact_now_for_op(self) -> dict:
+    async def _compact_now_for_op(self, *, selection: str = "shortfall") -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
 
         Runs the existing synchronous compaction and reports what it did.
@@ -11218,6 +11218,22 @@ class Session:
         ``summarized_turns`` came back 0). ``/compact`` reads these to
         name the actual cause instead of hedging between causes it used
         to have no way to tell apart.
+
+        ``selection`` (#5888): forwarded to ``force_compact_now`` —
+        ``"operator"`` for an explicit ``/compact`` (fold the whole
+        unprotected middle: the operator asked to SHRINK), and the
+        ``"shortfall"`` default for everything else, which is what the
+        ``compact`` OP (LLM-emitted, via ``OpContext.compact_now``) still
+        gets. Whether the op should count as an operator request too is a
+        live question for the architect, deliberately NOT pre-answered by
+        widening the default here — #5888's own ruling names ``/compact``
+        and nothing else.
+
+        This dict also carries the quantities the pass actually measured
+        (``selection`` … ``window_used_tokens``, see their own comments
+        below). The WINDOW pair is read from the same two accessors the
+        status-bar ctx chip uses, because the incident this closes WAS
+        those two surfaces disagreeing about the same window.
         """
         import json as _json
 
@@ -11289,9 +11305,26 @@ class Session:
             # `spill_was_offered` field never claims rung① ran when there
             # was no mechanism to run it with.
             spill_capability_present=_spill_impl is not None,
+            # #5888: "/compact" asks to shrink; the reactive ladder asks
+            # whether it still fits. See force_compact_now's own docstring.
+            selection=selection,
         )
         _, after = self._budget_advisor._free_window_now()
         new_cover = _cover()
+        # #5888: the model's REAL context window and the most recent
+        # call's occupancy of it — `raw_context_window()["window"]` and
+        # `last_call_usage.prompt_tokens`, the SAME two the status-bar
+        # ctx chip reads (`interfaces/repl/status.py`). Read defensively:
+        # a session that has not made an LLM call yet has no usage to
+        # report, and neither number is worth failing a compaction over.
+        try:
+            window_tokens = int(self.raw_context_window().get("window", 0) or 0)
+        except Exception:  # noqa: BLE001 — a display number, never the operation
+            window_tokens = 0
+        try:
+            window_used_tokens = int(getattr(self.last_call_usage, "prompt_tokens", 0) or 0)
+        except Exception:  # noqa: BLE001
+            window_used_tokens = 0
 
         # Chat middle-compression: the conversational turns newly covered by the
         # summary bridge (prev_cover < seq <= new_cover) and their raw vs bridge
@@ -11330,6 +11363,31 @@ class Session:
             # left with no way to reach this caller — the exception itself
             # stays swallowed (intentional, #5633), only the FACT survives.
             "compaction_failed": compaction_outcome.failed,
+            # #5888 (owner real-machine incident, "ctx 75% なのに ... ユーザ
+            # は圧縮したいのにできない"): the quantities the pass ACTUALLY
+            # measured, so `/compact` names each as itself. Before this,
+            # the only number it had was `free_window_after` — a
+            # TRIGGER-relative figure — which it rendered as "the window
+            # is still full", a sentence about the model's context window
+            # that no number here had ever measured.
+            "selection": compaction_outcome.selection,
+            "eligible_count": compaction_outcome.eligible_count,
+            "protected_head_tokens": compaction_outcome.protected_head_tokens,
+            "protected_tail_tokens": compaction_outcome.protected_tail_tokens,
+            "protected_head_turns": compaction_outcome.protected_head_turns,
+            "protected_tail_turns": compaction_outcome.protected_tail_turns,
+            "middle_room_tokens": compaction_outcome.middle_room_tokens,
+            "middle_used_tokens": compaction_outcome.middle_used_tokens,
+            "covers_through_seq": compaction_outcome.covers_through_seq,
+            # #5888: the WINDOW pair, read from the SAME two sources the
+            # status bar's own ctx chip reads (`raw_context_window()` and
+            # `last_call_usage.prompt_tokens`, see `interfaces/repl/
+            # status.py`) — the owner's report was precisely that those
+            # two surfaces disagreed ("ctx 75%" vs "the window is still
+            # full"), so `/compact` must quote the status bar's own
+            # numbers rather than a second, differently-derived pair.
+            "window_tokens": window_tokens,
+            "window_used_tokens": window_used_tokens,
         }
 
     def reasoning_continuity_section(self) -> str:

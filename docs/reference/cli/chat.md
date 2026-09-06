@@ -82,7 +82,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
 | `/cancel` | Cancel the in-flight turn (same as Esc / Ctrl+C) — reports what was actually cancelled, or that nothing was running |
 | `/clear-history` (alias `/clear`) | Wipe chat history (**destructive**; clears in-memory + persistent history and the action-usage table; events/run-state/profile preserved) |
-| `/compact` | Compact the conversation history now to free up the context window (see [chat-compaction](../../concepts/data-retrieval/chat-compaction.md)) |
+| `/compact` | Compact the conversation history now to free up the context window (see [chat-compaction](../../concepts/data-retrieval/chat-compaction.md)). #5888: an explicit `/compact` folds the WHOLE unprotected middle — it is a request to shrink, not a fit-check, so it no longer stops when the middle already fits (the reactive overflow ladder still folds only its shortfall). The reply names what it measured: window used/size, middle room/used, what the head/tail keep-window protected, and the seq already folded through. Turns inside that keep-window are still never folded — if it holds everything, the reply says exactly that |
 | `/concept <term>` | Inline glossary lookup |
 | `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
 | `/cost` | Quick token + USD cost summary for this agent |

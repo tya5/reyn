@@ -153,11 +153,24 @@ def test_compact_slash_reports_compression(tmp_path, monkeypatch) -> None:
 
 
 def test_compact_slash_nothing_to_compact(tmp_path, monkeypatch) -> None:
-    """Tier 2: with no compactable turns, /compact reports nothing to compact
-    (freed=0 path) — never a misleading 'freed' claim."""
+    """Tier 2: with no compactable turns, /compact reports that nothing was
+    folded (freed=0 path) — never a misleading 'freed' claim, and never an
+    LLM call.
+
+    #5888 sharpened WHICH no-op sentence this case gets. These 3 turns are
+    all eligible; head(2)+tail(2) protects every one of them, so the
+    honest report is "all 3 eligible entries are protected by the
+    head/tail keep-window" — not the pre-#5888 "nothing to compact", which
+    a reader takes as "your history has nothing foldable in it" when in
+    fact it is full of it and a protection boundary is what stopped the
+    fold. This test runs the REAL session path, so it is also the witness
+    that the measured line renders from real numbers, not just from the
+    handler-level fixtures in ``tests/interfaces/test_slash_compact_cmd.py``.
+    """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, monkeypatch)
-    # 3 turns < head(2)+tail(2) → no candidates → force_compact_now no-ops.
+    # 3 turns, all inside head(2)+tail(2) → everything protected → no
+    # candidates → force_compact_now no-ops without an LLM call.
     for _ in range(3):
         session._append_history(ChatMessage(role="user", content="hi", ts=_now()))
 
@@ -169,4 +182,16 @@ def test_compact_slash_nothing_to_compact(tmp_path, monkeypatch) -> None:
     asyncio.run(REGISTRY.get("compact").handler(ctx, ""))
 
     text = _reply_text(ctx).lower()
-    assert "nothing to compact" in text, f"expected the no-op report; got: {text!r}"
+    assert "nothing was folded" in text, f"expected the no-op report; got: {text!r}"
+    assert "3 eligible" in text and "protected" in text, (
+        f"expected the all-protected cause named with its count; got: {text!r}"
+    )
+    assert "freed" not in text, f"must not claim anything was freed; got: {text!r}"
+    # #5888: the measured quantities ride the real path too, and the turn
+    # count must not double-count the overlapping head/tail windows —
+    # "(6 turns)" out of 3 was the first render of this very reply.
+    assert "protected: head" in text, f"expected the measured line; got: {text!r}"
+    assert "(3 turns)" in text, (
+        "3 turns are protected, and the head/tail windows overlap here — "
+        f"the count must not sum them; got: {text!r}"
+    )
