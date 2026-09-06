@@ -187,7 +187,18 @@ class RouterCallerState:
     # so handlers can build a permission-aware OpContext (= populated
     # PermissionDecl + Workspace + actor="chat_router") matching the
     # legacy router branch behavior.  When None, handlers fall back to
-    # minimal OpContext synthesis (= test sites).
+    # minimal OpContext synthesis.
+    #
+    # #5822: ``build_resource_caller_state`` (below) never leaves this
+    # ``None`` for a host it was given — it reads ``host.
+    # make_router_op_context`` directly (no ``getattr`` default), so a
+    # host missing the method raises at construction instead of silently
+    # producing ``None`` here. ``None`` still reaches this field
+    # legitimately through the OTHER, structural path: a
+    # ``RouterCallerState`` built directly (not through
+    # ``build_resource_caller_state``) with no factory at all —
+    # ``capability_visibility.py`` / ``router_tools.py``'s own direct
+    # constructions, both display-only today, never set this field.
     op_context_factory: Callable[[], Any] | None = None
 
     # RouterLoopHost reference for handlers that need duck-typed access
@@ -319,7 +330,28 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
         # #5291: no longer reads .reyn/agents/ here — RouterCallerState.
         # available_agents was removed (0 real consumers); this was a
         # real disk read (list_available_agents()) on every call.
-        op_context_factory=getattr(host, "make_router_op_context", None),
+        #
+        # #5822 (architect ruling, security co-vet on #5821): a DIRECT
+        # attribute read, not `getattr(host, "make_router_op_context",
+        # None)`. The prior getattr form answered "does this host
+        # structurally have the method" with a silent `None` on "no" —
+        # `None` here means "use tools/exec.py's minimal-synthesis path",
+        # which builds an OpContext that can never see the operator's
+        # real reyn.yaml sandbox config (#5818: `sandbox.mode: strict`
+        # silently never reached the resolver, because THIS exact
+        # getattr answered `None` for a host that had simply never been
+        # updated to implement the method). A host reaching this
+        # constructor is asserting membership in the `RouterLoopHost`
+        # Protocol — every real production host does; the one that
+        # didn't (`tests/_support/router_loop.py`'s `FakeRouterHost`)
+        # gained the method in this same PR (#5822) rather than being
+        # left to fall through silently. A host that still lacks it now
+        # raises `AttributeError` here, at construction, instead of
+        # manufacturing a `None` indistinguishable from the legitimate
+        # `rs is None` / direct-`RouterCallerState`-construction callers
+        # (`capability_visibility.py`, `router_tools.py`) that
+        # `tools/exec.py`'s own synthesis branch still serves.
+        op_context_factory=host.make_router_op_context,
         host=host,
         available_rag_sources=rag_sources,
         action_embedding_index=(
