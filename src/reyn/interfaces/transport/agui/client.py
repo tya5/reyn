@@ -584,7 +584,9 @@ class AgUiTransport(ClientTransport):
         # to answer_intervention_text (delivered BY ID, R1) instead of a new turn.
         return self._pending_intervention_id
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(
+        self, text: str, *, client_ref: "str | None" = None,
+    ) -> str:
         # #3287: the server echoes the msg_id it assigned (the SAME
         # correlation id the broadcast user_submitted audit-event carries,
         # #3300 P2a) in the POST's JSON response — see
@@ -594,7 +596,19 @@ class AgUiTransport(ClientTransport):
         # foreign server that doesn't echo the field — so a caller can always
         # treat "no id" with a plain falsy check, same as `""` from
         # `InProcessTransport` when nothing is attached.
-        result = await self._send({"type": "user_message", "text": text})
+        #
+        # #5833: `client_ref` rides the POST body verbatim, opaque to this
+        # client too — it never reads it back off `result`. This client's
+        # own echo-recognition already has a race-free mechanism (this
+        # method's own docstring on the ABC, `meta.auth_connection_id`) that
+        # predates and does not need `client_ref`; the field exists here
+        # only to satisfy the ABC's own contract for A DIFFERENT caller
+        # (`textual_chat/app.py`'s sent-queue placeholder), which reads it
+        # back off the broadcast, not off this call's return value.
+        payload: "dict[str, object]" = {"type": "user_message", "text": text}
+        if client_ref is not None:
+            payload["client_ref"] = client_ref
+        result = await self._send(payload)
         msg_id = (result or {}).get("msg_id")
         return msg_id if isinstance(msg_id, str) else ""
 

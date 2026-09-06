@@ -89,7 +89,7 @@ class QueueTransport(ClientTransportStub):
         while True:
             yield await self._queue.get()
 
-    async def submit_user_text(self, text: str) -> None:  # pragma: no cover
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:  # pragma: no cover
         pass
 
     async def answer_intervention_text(self, text: str) -> bool:  # pragma: no cover
@@ -539,4 +539,139 @@ async def test_strip_snapshot_meta_carry_loses_attribution(monkeypatch) -> None:
         assert entry.item.meta.get("actor") is None, (
             "the broken (meta-carry-stripped) seed should reproduce the "
             "misattribution — an empty meta on the promoted entry"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. ★#5833 ③ — ``_seed_queue_view``'s own has_row guard closes the SAME
+#    asymmetry the delta path (``_handle_user_submitted_event``) already had.
+# ---------------------------------------------------------------------------
+
+
+class _MutableQueueReadModel(_SnapshotSeededReadModel):
+    """Same shape as :class:`_SnapshotSeededReadModel`, but the queue
+    snapshot can be swapped IN PLACE after the read-model already exists —
+    lets one test drive :meth:`TextualChatApp._seed_queue_view` a SECOND
+    time against a snapshot that already reports an item this client's OWN
+    delta path already showed a row for (the exact precondition #5833 ③
+    names — see that method's own guard comment)."""
+
+    def __init__(self) -> None:
+        super().__init__({})
+        self.queue_items: "list[dict]" = []
+        #: Starts at 0 (empty queue, nothing applied yet) — NOT hardcoded
+        #: to a nonzero value, which would reseed the seq-gate ahead of a
+        #: delta this same test still needs to apply (a delta at seq N is
+        #: rejected as stale once the gate's ``_last_seq`` already sits at
+        #: N or above, ``RemoteQueueView.apply_user_submitted``'s own
+        #: monotonic contract).
+        self.queue_seq: int = 0
+
+    def snapshot(self, config=None):
+        return {
+            "queue": list(self.queue_items), "turn_active": False,
+            "queue_seq": self.queue_seq,
+        }
+
+
+@pytest.mark.asyncio
+async def test_seed_queue_view_does_not_reshow_a_row_the_delta_path_already_created() -> None:
+    """Tier 2b: #5833 ③ — ``_seed_queue_view`` must not re-``show_item`` a
+    row that already exists (``has_row(msg_id)``), the SAME guard
+    ``_handle_user_submitted_event``'s delta path already carried BEFORE
+    #5833. An unconditional re-show removes+re-mounts the row — dict
+    re-insertion order (``SentQueue.rekey``'s own docstring names this
+    exact mechanism) then moves it to the END, and it flashes off/on for
+    one frame — neither of which an item that has not actually changed
+    should ever cause.
+
+    Driven by calling :meth:`TextualChatApp._seed_queue_view` directly a
+    SECOND time (the same method this test file already names for
+    monkeypatch strip-witnesses above) — production fires it from two
+    call sites (first frame, and session-switch re-seed), and this test
+    needs the intermediate state neither site exposes alone: a row
+    already present for an item the snapshot ALSO reports."""
+    read_model = _MutableQueueReadModel()
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()  # first frame: empty snapshot, seed is a no-op
+        await transport.push_event(_user_submitted(msg_id="m1", chain_id="c1", text="alpha", seq=1))
+        await transport.push_event(_user_submitted(msg_id="m2", chain_id="c2", text="beta", seq=2))
+        await pilot.pause()
+        sent_queue = app.query_one(SentQueue)
+        assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["alpha", "beta"]
+
+        # The server's own current truth (what a reconnect snapshot would
+        # report) now ALSO includes both items — the exact input
+        # _seed_queue_view sees when it runs again.
+        read_model.queue_items = [
+            {"msg_id": "m1", "text": "alpha", "meta": {}},
+            {"msg_id": "m2", "text": "beta", "meta": {}},
+        ]
+        read_model.queue_seq = 2
+        app._seed_queue_view()
+        await pilot.pause()
+
+        assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["alpha", "beta"], (
+            "an already-shown row must not be re-mounted by the seed — "
+            "order must stay stable, not jump 'alpha' behind 'beta'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_strip_seed_has_row_guard_reorders_the_already_shown_row(monkeypatch) -> None:
+    """Tier 2b: non-vacuity — reverting ``_seed_queue_view`` to the
+    pre-#5833 unconditional ``show_item`` (dropping the ``has_row`` guard)
+    reproduces the asymmetry: re-showing "alpha" removes+re-mounts it, and
+    dict re-insertion order moves it PAST "beta" — proving the guard in
+    the positive test above is load-bearing, not incidental.
+
+    The re-seed's snapshot lists the items in REVERSED order (``m2`` then
+    ``m1``) — not the order this client's own rows are already in
+    (``m1`` then ``m2``, from live delta arrival order): the server's own
+    snapshot ordering has no reason to match a particular client's local
+    arrival order, and it is exactly this mismatch that makes an
+    unconditional re-show's reordering OBSERVABLE (reprocessing every item
+    in the SAME relative order it is already shown in would reproduce the
+    same order by construction — the bug needs a shuffle to be visible
+    at all)."""
+    from reyn.interfaces.inline.textual_chat import app as app_module
+
+    def _seed_without_has_row_guard(self) -> None:
+        snap = self._snapshot() or {}
+        self._queue_view.apply_snapshot(
+            queue=snap.get("queue", []),
+            turn_active=snap.get("turn_active", False),
+            queue_seq=snap.get("queue_seq", 0),
+        )
+        for item in self._queue_view.queue():
+            msg_id = item.get("msg_id")
+            if msg_id:
+                self._sent_queue.show_item(msg_id, str(item.get("text", "")))  # BUG under test
+                self._queue_item_meta[msg_id] = dict(item.get("meta") or {})
+
+    monkeypatch.setattr(app_module.TextualChatApp, "_seed_queue_view", _seed_without_has_row_guard)
+
+    read_model = _MutableQueueReadModel()
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_event(_user_submitted(msg_id="m1", chain_id="c1", text="alpha", seq=1))
+        await transport.push_event(_user_submitted(msg_id="m2", chain_id="c2", text="beta", seq=2))
+        await pilot.pause()
+        sent_queue = app.query_one(SentQueue)
+
+        read_model.queue_items = [
+            {"msg_id": "m2", "text": "beta", "meta": {}},
+            {"msg_id": "m1", "text": "alpha", "meta": {}},
+        ]
+        read_model.queue_seq = 2
+        app._seed_queue_view()
+        await pilot.pause()
+
+        assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["beta", "alpha"], (
+            "the broken (unguarded) seed should reorder 'alpha' behind "
+            "'beta' — proves the has_row guard in the positive test matters"
         )

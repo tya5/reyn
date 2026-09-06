@@ -1322,13 +1322,6 @@ class TextualChatApp(App):
         "_streaming_replies",
         "_pending_own_cancels",
         "_call_parents",
-        # #4409: dict-shaped only in spirit (sets — ``.clear()`` is the
-        # same call either way), see ``_dispatched_before_ack``'s own
-        # docstring for what they track and why an OLD session's entries
-        # are meaningless once its queue view is gone too (same reasoning
-        # as ``_queue_item_meta`` just above).
-        "_dispatched_before_ack",
-        "_pending_local_send_ids",
     )
 
     #: #5131 (architect ruling): the FIRST "state down" migration target —
@@ -1656,38 +1649,6 @@ class TextualChatApp(App):
         # client that populated this entry ever restores anything; every
         # other client applies the SAME delta as a plain removal.
         self._pending_own_cancels: "dict[str, str]" = {}
-        # #4409: server ``msg_id``s this client has SEEN dispatched
-        # (``turn_started``, :meth:`_handle_turn_started_event`), used ONLY
-        # to resolve a race :meth:`_reconcile_local_send` cannot otherwise
-        # see: ``submit_user_text``'s ack and the ``user_submitted`` /
-        # ``turn_started`` broadcasts travel on independent channels
-        # (``client_transport.py``'s own ``submit_user_text`` docstring,
-        # F2), so a fast dispatch can promote-then-remove the REAL row
-        # before this client's own ack-driven reconcile ever runs — without
-        # this set, that reconcile would see "no row for msg_id yet" and
-        # wrongly rekey the local placeholder back INTO the queue for an
-        # item that already left it.
-        #
-        # Bound: the sent-queue widget renders EVERY client's queued items
-        # (ADR-0039 attribution — a peer's queue entry shows too), so
-        # ``turn_started`` fires for dispatches that are never this
-        # client's own submission at all; naively adding every one of
-        # those here would accumulate for as long as the attach lasts, not
-        # for as long as this client has anything of its own to reconcile
-        # — the accumulation :attr:`_pending_local_send_ids` exists to
-        # prevent. ``_handle_turn_started_event`` only adds to this set
-        # while that one is non-empty, and the moment it empties (this
-        # client's last outstanding submission resolved,
-        # :meth:`_reconcile_local_send`) this set is wiped too — so its
-        # size is bounded by how many dispatches (of ANY client's items)
-        # interleave during the brief window THIS client has an
-        # unresolved submission of its own, never by session lifetime.
-        self._dispatched_before_ack: "set[str]" = set()
-        # #4409: local placeholder ids (``on_composer_submitted``) still
-        # awaiting :meth:`_reconcile_local_send` — see
-        # ``_dispatched_before_ack``'s own docstring for the bound this
-        # gates.
-        self._pending_local_send_ids: "set[str]" = set()
         # Per-picker parallel SLASH COMMAND lists, keyed by tab id and kept in
         # lock-step with the OptionList options a pane was last refreshed with, so
         # an ``OptionSelected.option_index`` maps back to the command that applies
@@ -5783,7 +5744,17 @@ class TextualChatApp(App):
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
             if msg_id:
-                self._sent_queue.show_item(msg_id, str(item.get("text", "")))
+                # #5833 ③: same guard :meth:`_handle_user_submitted_event`
+                # uses, closing the asymmetry an unconditional ``show_item``
+                # here had against that method's own ``has_row`` check — a
+                # row can already exist under ``msg_id`` at seed time (this
+                # client's own submission raced ahead of the very first
+                # frame this seed runs on), and re-showing it would
+                # remove+re-mount for no visible change, only a
+                # jump-to-bottom/flash risk (the same reasoning that
+                # method's own docstring gives).
+                if not self._sent_queue.has_row(msg_id):
+                    self._sent_queue.show_item(msg_id, str(item.get("text", "")))
                 # #3300 P2b co-vet fix: a snapshot-seeded item's ``meta``
                 # (ADR-0039 attribution — carried through by
                 # ``RemoteQueueView.apply_snapshot``'s ``dict(item)`` copy,
@@ -6064,7 +6035,20 @@ class TextualChatApp(App):
         immediately as a flow entry (that was P1 C's behavior; P2b replaces
         it with this staging step). Applies the seq-gate
         (:meth:`RemoteQueueView.apply_user_submitted`) before rendering, so a
-        stale/already-superseded delta is a no-op."""
+        stale/already-superseded delta is a no-op.
+
+        #5833: this is now the ONE place a submission of THIS client's own
+        (:attr:`_sent_queue`'s LOCAL placeholder row, ``on_composer_
+        submitted``) gets promoted onto its server ``msg_id`` — the moment
+        the echo carrying that id arrives, never waiting on ``submit_user_
+        text``'s own return value (see ``ClientTransport.submit_user_text``'s
+        docstring for the #3287 race this closes: the id that call returns
+        and this echo travel on independent channels, either can arrive
+        first). ``meta.client_ref`` is the FACT this decides on — the exact
+        local placeholder id THIS client minted at submit time, echoed back
+        opaque and unread by the server — replacing the old ``has_row(msg_id)``
+        GUESS (a row existing under the id this delta is ABOUT to use tells
+        you nothing about whose submission it was)."""
         data = event.data or {}
         msg_id = data.get("msg_id")
         chain_id = data.get("chain_id")
@@ -6074,15 +6058,20 @@ class TextualChatApp(App):
             msg_id=msg_id, chain_id=chain_id, text=text, seq=seq,
         )
         if applied and msg_id:
-            self._queue_item_meta[msg_id] = dict(data.get("meta") or {})
-            # #4409: if THIS client's own ``_reconcile_local_send`` already
-            # rekeyed a local placeholder onto ``msg_id`` (its ack, on the
-            # independent send-response channel, arrived before this
-            # broadcast), the row already shows this exact text — a plain
-            # ``show_item`` would remove+re-mount it (its own dedup guard)
-            # for no visible change, only a jump-to-bottom/flash risk. Skip
-            # the remount; the meta write above still lands either way.
-            if not self._sent_queue.has_row(msg_id):
+            meta = dict(data.get("meta") or {})
+            self._queue_item_meta[msg_id] = meta
+            client_ref = meta.get("client_ref")
+            if isinstance(client_ref, str) and self._sent_queue.has_row(client_ref):
+                # This client's own local placeholder, identified by FACT
+                # (this echo carries the exact id THIS client minted for
+                # THIS submission) — promote in place. Never a second row,
+                # never a guess.
+                self._sent_queue.rekey(client_ref, msg_id)
+            elif not self._sent_queue.has_row(msg_id):
+                # Some other client's submission, or a legacy/foreign
+                # server that never echoed ``client_ref`` — same guard
+                # :meth:`_seed_queue_view` uses for the identical reason
+                # (#5833 ③): avoid remounting a row that already exists.
                 self._sent_queue.show_item(msg_id, text)
             self._apply_compact_layout()
         elif not applied:
@@ -6149,11 +6138,6 @@ class TextualChatApp(App):
             msg_id = item.get("msg_id")
             if msg_id:
                 self._sent_queue.remove_item(msg_id)
-                # #4409: record BEFORE the pending-ack reconcile can run —
-                # see ``_dispatched_before_ack``'s own docstring for the
-                # race this closes and the bound this gate keeps.
-                if self._pending_local_send_ids:
-                    self._dispatched_before_ack.add(msg_id)
             meta = self._queue_item_meta.pop(msg_id, {}) if msg_id else {}
             # #4691 arc item ④: stamp THIS turn's own chain_id onto the
             # user row itself — the row is created here, at promotion time,
@@ -7316,11 +7300,12 @@ class TextualChatApp(App):
         # frame where the message is visible in NEITHER place (the owner's
         # own report: "msg enter -> sent 表示の間でメッセージ消えること
         # 多い"). See ``SentQueue``'s own module docstring for the full
-        # "fourth, LOCAL entry" account and ``_reconcile_local_send`` for
-        # how it resolves once the server acks.
+        # "fourth, LOCAL entry" account. #5833: this id is also this
+        # submission's ``client_ref`` (:meth:`_submit`) — the fact
+        # :meth:`_handle_user_submitted_event` promotes it by, once the
+        # echo carrying it arrives.
         local_id = f"local:{uuid.uuid4().hex}"
         self._sent_queue.show_item(local_id, text, sending=True)
-        self._pending_local_send_ids.add(local_id)
         self.query_one(Composer).clear_and_reset()
         await self._submit(text, local_id=local_id)
 
@@ -7392,7 +7377,22 @@ class TextualChatApp(App):
         exactly this). A no-op there is correct, not merely tolerated: no
         placeholder was ever shown pre-mount either (that only happens in
         ``on_composer_submitted``, which the framework never calls before
-        mount)."""
+        mount).
+
+        #5833: the ONE surviving direct removal of a local placeholder —
+        both of :meth:`_submit`'s failure paths (a slash dispatch, an
+        exception from ``submit_user_text`` itself). This is a genuinely
+        DIFFERENT failure axis from everything :meth:`_handle_user_
+        submitted_event` resolves: the submission never reached the server
+        at all (the POST/call itself failed, or was never sent — a slash
+        command), so no ``user_submitted`` echo will EVER arrive to
+        promote or drop this placeholder by ``client_ref``. There is
+        nothing to rekey against, only a row this client itself must take
+        down. Not a residual regulator kept "just in case" — the other two
+        (the old ``_reconcile_local_send``'s race-arbitration and
+        ``_dispatched_before_ack``) were deleted in the same change that
+        gave the echo path its own direct, fact-based promotion; this one
+        answers a question that path structurally cannot."""
         sent_queue = getattr(self, "_sent_queue", None)
         if sent_queue is not None:
             sent_queue.remove_item(msg_id)
@@ -7402,12 +7402,17 @@ class TextualChatApp(App):
 
         ``local_id`` (#4409): the sent-queue row ``on_composer_submitted``
         already showed, synchronously with clearing the composer, keyed by
-        a LOCAL id (no server ``msg_id`` exists yet). Every exit from this
-        method resolves it exactly once: dispatched as a slash command (was
-        never queued at all — see the ``#3595 S5`` paragraph below) drops
-        it, a submit failure drops it, and an ordinary submission hands the
-        server-acked ``msg_id`` to :meth:`_reconcile_local_send`, which
-        decides drop-vs-promote (see that method's own docstring).
+        a LOCAL id (no server ``msg_id`` exists yet), and ALSO passed
+        through as ``client_ref`` on the submit call below (#5833). A
+        dispatched slash command (never queued at all — see the ``#3595
+        S5`` paragraph below) or a submit failure drops it right here
+        (:meth:`_maybe_sent_queue_remove`) — an ordinary submission that
+        reaches the server resolves it entirely off THIS method: the
+        ``user_submitted`` echo carries ``meta.client_ref`` back and
+        :meth:`_handle_user_submitted_event` promotes the placeholder the
+        moment that arrives, whether before or after this call returns
+        (see that method's own docstring for why the old return-value
+        reconciliation is gone).
 
         #3299 P1: the Composer is now EXCLUSIVELY for new turns — it no longer
         reads ``pending_intervention_head()`` at all. Answering a pending
@@ -7454,7 +7459,14 @@ class TextualChatApp(App):
             if await maybe_dispatch_slash(self._transport, text):
                 self._maybe_sent_queue_remove(local_id)
                 return
-            msg_id = await self._transport.submit_user_text(text)
+            # #5833: no longer reconciled against this call's own return
+            # value (see ``ClientTransport.submit_user_text``'s docstring)
+            # — the echo (:meth:`_handle_user_submitted_event`) carries
+            # ``meta.client_ref`` == ``local_id`` and promotes this
+            # placeholder itself, the moment it arrives, whether that is
+            # before or after this call returns. The returned id has no
+            # remaining local use.
+            await self._transport.submit_user_text(text, client_ref=local_id)
         except Exception as exc:
             self._maybe_sent_queue_remove(local_id)
             logger.exception("textual chat: submit failed")
@@ -7468,68 +7480,6 @@ class TextualChatApp(App):
                 )
             except Exception:
                 pass
-        else:
-            self._reconcile_local_send(local_id, msg_id)
-        finally:
-            # #4409: every exit above resolved ``local_id`` one way or
-            # another — see ``_dispatched_before_ack``'s own docstring for
-            # why the moment NONE of this client's own submissions are
-            # still outstanding is exactly the moment that set can hold
-            # nothing worth keeping.
-            self._pending_local_send_ids.discard(local_id)
-            if not self._pending_local_send_ids:
-                self._dispatched_before_ack.clear()
-
-    def _reconcile_local_send(self, local_id: str, msg_id: str) -> None:
-        """#4409: resolve the local SENDING placeholder against the
-        server's ack, once ``submit_user_text`` returns.
-
-        The ack (this call) and the ``user_submitted`` broadcast that
-        materializes the AUTHORITATIVE row (:meth:`_handle_user_submitted_event`)
-        are two independent deliveries of the same fact, over two
-        independent channels (``client_transport.py``'s own
-        ``submit_user_text`` docstring, F2) — either can arrive first:
-
-        - the broadcast already arrived (:meth:`SentQueue.has_row` is
-          ``True`` for ``msg_id``) → the placeholder is now redundant;
-          drop it.
-        - ``msg_id`` was already seen DISPATCHED
-          (:attr:`_dispatched_before_ack` — ``turn_started`` can race
-          ahead of this ack too, see that attribute's own docstring) →
-          the item already left the queue entirely; drop the placeholder
-          rather than rekey it back INTO a queue it no longer belongs to.
-        - neither yet → promote the placeholder in place
-          (:meth:`SentQueue.rekey`), so the still-pending broadcast finds
-          an existing row under ``msg_id`` and updates it rather than
-          adding a second one.
-        - ``msg_id`` is falsy (no id echoed — an implementation detail of
-          ``ClientTransport.submit_user_text``'s own contract, never
-          ``None``) → nothing to reconcile against; the placeholder stays
-          exactly as it is, which is the honest state given no confirmed
-          id exists to promote it onto.
-        """
-        if not msg_id:
-            return
-        sent_queue = getattr(self, "_sent_queue", None)
-        if sent_queue is None:
-            # #4409: only reachable when this method is invoked directly,
-            # pre-mount, the way several existing tests already exercise
-            # ``_submit`` (``_sent_queue`` is a widget, constructed in
-            # ``compose()`` alongside every OTHER widget this App owns —
-            # same convention throughout this module, not something #4409
-            # changes). Nothing to reconcile a placeholder onto: no
-            # placeholder was ever shown pre-mount either (that only
-            # happens in ``on_composer_submitted``, which the framework
-            # never calls before mount).
-            return
-        if msg_id in self._dispatched_before_ack:
-            self._dispatched_before_ack.discard(msg_id)
-            sent_queue.remove_item(local_id)
-            return
-        if sent_queue.has_row(msg_id):
-            sent_queue.remove_item(local_id)
-            return
-        sent_queue.rekey(local_id, msg_id)
 
 
 async def run_textual_chat(

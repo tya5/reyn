@@ -574,6 +574,78 @@ def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
 
 
 @dataclass
+class ProcessMemoryConfig:
+    """`process_memory:` — #5851 stage (a): the PROCESS-WIDE (not
+    per-session, unlike ``history_resident`` above) measured-footprint
+    cap. Same resource role as ``history_resident``/``read_cap`` (bytes,
+    model-independent, config-driven, ``Axis.BOUNDING``) but a different
+    subject — this bounds the WHOLE process's measured memory
+    cause-independently (ADR-0046's own "each band member bounds its own
+    resource, regardless of what is driving it up"), not one consumer's
+    contribution to it.
+
+    **Two keys, two DISTINCT facts — architect ruling (#5851)**:
+
+    - ``max_bytes: int | None`` — the cap. ``None`` (absent) = no cap,
+      observe-only (stage (a)'s own shipped default — stage (b)/(c) will
+      flip this once real ``process_footprint`` data exists to derive a
+      number from). Deliberately NOT ``0`` for "no cap": a ``0`` that
+      silently means both "the literal number zero" and "disabled" is
+      the SAME two-facts-one-value shape ``history_resident``'s own
+      ``max_bytes`` deliberately avoids (its builder rejects a
+      non-positive value rather than overload it) — this axis avoids it
+      by using presence/absence of the KEY, not a magic value.
+    - ``enforce: bool`` — whether exceeding the cap eventually halts
+      (stage (c) only; this dataclass exists NOW so stage (c) does not
+      re-thread the whole construction route). Default ``False`` —
+      stage (a) ships observe-only; halting a process because a config
+      default silently turned on is exactly the "not visible with the
+      shipped config" failure CLAUDE.md's charter gates against.
+
+    ``enforce: true`` with no ``max_bytes``, or on a platform with no
+    reader (``process_memory_metric_name()`` returns ``None``), is a
+    **config-LOAD error** (``_validate_process_memory`` in loader.py),
+    never a silent no-op — same enforce-at-load precedent as
+    ``_validate_retrieval_scheme_embedding``/``_validate_skill_
+    visibility`` in that file. An operator who asks to be halted by a
+    cap that cannot be checked must be told immediately, not find out
+    the hard way that ``enforce: true`` never had a chance to fire."""
+    max_bytes: "int | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
+    enforce: bool = field(default=False, metadata={"axis": Axis.BOUNDING})
+
+
+def _build_process_memory_config(raw: object) -> "ProcessMemoryConfig":
+    """Parse the `process_memory:` section (#5851 stage (a)).
+
+    Unlike ``_build_history_resident_config``, a malformed ``max_bytes``
+    does NOT fall back to a default number — there is no default number
+    (``None`` = no cap IS the default). A non-numeric or non-positive
+    ``max_bytes`` is treated as absent (falls back to ``None``, never to
+    some other magic value) — an operator typo must not silently produce
+    a DIFFERENT cap than the one they wrote, which a numeric fallback
+    (unlike ``history_resident``'s, where any positive default is
+    equally "generous") would risk here since a wrong cap can silently
+    over- or under-bound.
+
+    ``enforce``/``max_bytes`` cross-validation (the "enforce with no
+    reachable cap" load error) is `_validate_process_memory` in
+    loader.py, not here — this function's own job is only shaping the
+    raw dict, matching every other `_build_*_config` in this module."""
+    if not isinstance(raw, dict):
+        return ProcessMemoryConfig()
+    max_bytes: "int | None" = None
+    if "max_bytes" in raw:
+        try:
+            candidate = int(raw["max_bytes"])
+            if candidate > 0:
+                max_bytes = candidate
+        except (TypeError, ValueError):
+            max_bytes = None
+    enforce = bool(raw.get("enforce", False))
+    return ProcessMemoryConfig(max_bytes=max_bytes, enforce=enforce)
+
+
+@dataclass
 class ImageConfig:
     """`image:` — operator-tunable inline image render bounds (#4474).
 

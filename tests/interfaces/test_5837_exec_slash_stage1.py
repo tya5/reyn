@@ -199,6 +199,47 @@ async def test_exec_runs_and_shows_result_on_screen_only_no_history_growth(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_exec_is_denied_end_to_end_when_contextually_narrowed(tmp_path):
+    """Tier 2: #5841 accept ② -- "同じ条件で /exec も同じ seam で拒否される".
+    A real Session whose CapabilityScope.contextual_permission denies
+    "exec" makes `/exec` (the REAL registered command, not a
+    reproduction) refuse to run at all -- through the SAME dispatch_tool
+    seam #5843 wired it into, no separate check this module built.
+
+    Control arm in the SAME test (not a separate one) -- a session with
+    NO narrowing runs the identical command successfully, so this isn't
+    "denies everything now"."""
+    from reyn.runtime.session_params import CapabilityScope
+    from reyn.security.permissions.effective import ContextualPermission
+
+    denied_session = make_session(
+        agent_name="alpha-denied",
+        state_log=StateLog(tmp_path / "denied.wal"),
+        snapshot_path=tmp_path / "denied-snap.json",
+        workspace_state_dir=tmp_path / "denied",
+        capability_scope=CapabilityScope(
+            contextual_permission=ContextualPermission(tool_deny=frozenset({"exec"})),
+        ),
+    )
+    outbox: list = []
+    ctx = slash_ctx(denied_session, recorder=outbox)
+    await REGISTRY.get("exec").handler(ctx, 'python3 -c "print(1)"')
+    texts = [getattr(m, "text", "") for m in outbox]
+    assert any("exec denied" in t.lower() for t in texts), (
+        f"expected a denial reply for the contextually-narrowed session, got {texts!r}"
+    )
+    assert not any("exit 0" in t for t in texts), texts
+
+    # Control arm: an UNnarrowed session runs the identical command fine.
+    allowed_session = _session(tmp_path / "allowed")
+    outbox2: list = []
+    ctx2 = slash_ctx(allowed_session, recorder=outbox2)
+    await REGISTRY.get("exec").handler(ctx2, 'python3 -c "print(1)"')
+    texts2 = [getattr(m, "text", "") for m in outbox2]
+    assert any("exit 0" in t for t in texts2), texts2
+
+
+@pytest.mark.asyncio
 async def test_exec_emits_tool_called_with_operator_caller_kind(tmp_path):
     """Tier 2: accept (#5843 BLOCKING ①) — caller_kind="operator" must
     reach a REAL audit-event, not just sit on an object nothing reads.

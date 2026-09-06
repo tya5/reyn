@@ -132,6 +132,7 @@ class _RealEventDispatchLoop(RouterLoop):
         dctx = DispatchContext(
             caller_kind="router", caller_id=self.host.agent_name,
             chain_id=self.chain_id, tool_catalog={name: {}}, events=self.event_log,
+            contextual=None,  # #5841: no narrowing in play for these tests
         )
         return await dispatch_tool(name=name, args=args, ctx=dctx, invoker=_invoker)
 

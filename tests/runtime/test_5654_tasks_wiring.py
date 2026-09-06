@@ -98,6 +98,10 @@ async def _dispatch(name: str, args: dict, session) -> dict:
         chain_id=None,
         tool_catalog={name: definition.render_for_router()},
         events=tool_ctx.events,
+        # #5841: DispatchContext.contextual is now required — this test's
+        # own local reproduction of slash/tasks.py's _dispatch needs it
+        # too. No narrowing in play for these tests → None (⊤).
+        contextual=None,
     )
 
     async def _invoker(call_args: dict) -> "object":
@@ -414,3 +418,63 @@ async def test_the_real_slash_command_lists_and_cancels_through_the_real_op(tmp_
         "caller_kind='operator' — a regression to a bare invoke_tool (or a "
         "chains.get(id).cancel() reimplementation) would silently drop this"
     )
+
+
+async def test_the_real_slash_command_is_denied_by_a_real_contextual_narrowing(tmp_path):
+    """Tier 2: #5841 architect co-vet on #5853 — the shared ``dispatch_tool``
+    seam test (``test_dispatcher.py``) and this file's own ``_dispatch``
+    reproduction above both bypass ``slash/tasks.py``'s REAL
+    ``_router_contextual_permission`` wiring (that reproduction hand-builds
+    its own ``DispatchContext`` with ``contextual=None`` — a byte-for-byte
+    stand-in, never the production extraction path). This test drives the
+    REAL registered ``/tasks`` handler, exactly as
+    ``test_the_real_slash_command_lists_and_cancels_through_the_real_op``
+    above does, so a regression in ``_router_contextual_permission`` itself
+    (e.g. a reintroduced fail-open branch, or a typo'd field name) would
+    show here even though every OTHER test in this file is immune to it.
+
+    Mirrors ``test_5837_exec_slash_stage1.py``'s
+    ``test_exec_is_denied_end_to_end_when_contextually_narrowed`` fixture
+    shape exactly (real ``Session`` + ``CapabilityScope(contextual_
+    permission=...)``, real registered handler, control arm in the same
+    test) — the SAME recipe architect's co-vet pointed at as proof this
+    is NOT scope growth."""
+    from reyn.interfaces.slash import REGISTRY
+    from reyn.runtime.session_params import CapabilityScope
+    from reyn.security.permissions.effective import ContextualPermission
+    from tests._support.slash import slash_ctx
+
+    denied_session = make_session(
+        agent_name="denied",
+        state_log=StateLog(tmp_path / ".reyn" / "denied.wal"),
+        snapshot_path=tmp_path / "denied-snap.json",
+        workspace_state_dir=tmp_path / "denied",
+        capability_scope=CapabilityScope(
+            contextual_permission=ContextualPermission(tool_deny=frozenset({"list_tasks"})),
+        ),
+    )
+    cmd = REGISTRY.get("tasks")
+    assert cmd is not None, "/tasks must be registered"
+
+    outbox: list = []
+    ctx = slash_ctx(denied_session, recorder=outbox)
+    await cmd.handler(ctx, "")
+    texts = [getattr(m, "text", "") for m in outbox]
+    assert any("list_tasks" in t and "not available" in t for t in texts), (
+        f"expected a denial reply naming the blocked tool, got {texts!r}"
+    )
+    assert not any("no running tasks" in t for t in texts), texts
+
+    # Control arm: an UNnarrowed session's /tasks still lists (empty here —
+    # no chain registered — but the seam must not have denied it).
+    allowed_session = make_session(
+        agent_name="allowed",
+        state_log=StateLog(tmp_path / ".reyn" / "allowed.wal"),
+        snapshot_path=tmp_path / "allowed-snap.json",
+        workspace_state_dir=tmp_path / "allowed",
+    )
+    outbox2: list = []
+    ctx2 = slash_ctx(allowed_session, recorder=outbox2)
+    await cmd.handler(ctx2, "")
+    texts2 = [getattr(m, "text", "") for m in outbox2]
+    assert any("no running tasks" in t for t in texts2), texts2

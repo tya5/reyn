@@ -59,7 +59,7 @@ class _Transport(ClientTransportStub):
         while True:
             yield await self._queue.get()
 
-    async def submit_user_text(self, text: str) -> None:  # pragma: no cover
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:  # pragma: no cover
         pass
 
     async def answer_intervention_text(self, text: str) -> bool:

@@ -134,7 +134,7 @@ class _QueueTransport(ClientTransportStub):
         while True:
             yield await self._frames.get()
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         self.submitted.append(text)
         if self._submit_msg_ids:
             return self._submit_msg_ids.pop(0)

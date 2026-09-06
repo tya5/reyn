@@ -47,7 +47,7 @@ class _CancelTrackingTransport(ClientTransportStub):
         await asyncio.Event().wait()
         yield DisplayFrame(OutboxMessage(kind="agent", text=""))  # pragma: no cover
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return ""
 
     async def answer_intervention_text(

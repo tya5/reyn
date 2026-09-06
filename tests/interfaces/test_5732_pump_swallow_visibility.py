@@ -190,7 +190,7 @@ class _StubTransport(ClientTransportStub):
         return
         yield DisplayFrame(OutboxMessage(kind="status", text=""))  # pragma: no cover
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return "msg-1"
 
     async def answer_intervention_text(self, text: str, *, intervention_id=None) -> bool:

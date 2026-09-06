@@ -816,6 +816,18 @@ def _snapshot_for_session(registry, s, config=None):
         # (``chrome.status_line_text``) and threaded onto the wire for remote
         # parity (``agui.state.project_status``, #5098).
         "halted_reason": s.halted_reason,
+        # #5851 stage (a): a LIVE read (~39µs, architect's own "read
+        # unconditionally" ruling — not a cached figure) of the process-
+        # wide ProcessMemoryGuard every session in this process shares.
+        # `process_footprint_bytes` is None either when this platform has
+        # no reader (`process_footprint_metric` also None — the Ctx pane
+        # renders "not measurable on this platform") or transiently
+        # (metric non-None, bytes None — a single failed read; the pane
+        # skips that render tick rather than showing a stale number).
+        "process_footprint_bytes": s.process_memory_guard.read(),
+        "process_footprint_metric": s.process_memory_guard.metric,
+        "process_memory_cap_bytes": s.process_memory_guard.cap_bytes,
+        "process_memory_enforce": s.process_memory_guard.enforce,
         # #5654: this session's own currently-RUNNING tasks (attached
         # session only, owner scope decision — no cross-session listing).
         # Derived from Session.chains the SAME way list_tasks does

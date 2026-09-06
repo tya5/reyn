@@ -32,9 +32,12 @@ only as much as the substrate actually knows.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+
+if TYPE_CHECKING:
+    from reyn.security.permissions.effective import ContextualPermission
 
 _USAGE = "usage: /tasks | /tasks cancel <task_id> [confirm]"
 
@@ -57,6 +60,33 @@ async def _build_tasks_tool_context(ctx: "SlashContext") -> Any:
     )
 
 
+async def _router_contextual_permission(tool_ctx: Any) -> "ContextualPermission | None":
+    """The per-session ``ContextualPermission`` narrowing (session-level:
+    profile/topology/``/visibility`` override — never the LLM-run-scoped
+    ``exclude_tools`` or ephemeral-untrusted narrowing a router turn also
+    layers in, see ``dispatch_tool``'s own docstring) — #5841 — via the
+    SAME ``op_context_factory()`` seam ``interfaces/slash/exec.py``
+    already uses. ``list_tasks``/``cancel_task`` don't otherwise need an
+    ``OpContext`` at all; this builds one purely to extract that one
+    field, matching ``exec.py``'s own construction rather than
+    re-deriving contextual permission from a different source (there is
+    no simpler direct accessor on ``RouterLoopHost`` — see #5841's own
+    investigation).
+
+    No fail-open fallback: ``tool_ctx.router_state.op_context_factory``
+    is always populated in production (``build_resource_caller_state``
+    sets it from ``host.make_router_op_context``) — a session for which
+    it were somehow absent must raise here (an ``AttributeError``), not
+    silently return ``None`` (= unnarrowed / ⊤). #5822 named this exact
+    shape ("silent ``None`` on a `getattr(host, ..., None)`") as the
+    root of #5818; this function used to repeat it one layer up (architect
+    co-vet on #5853). A branch with no reachable trigger stays untested
+    dead code either way — removing it is strictly safer than keeping an
+    unreachable fail-open path around."""
+    op_ctx = tool_ctx.router_state.op_context_factory()
+    return op_ctx.contextual_permission
+
+
 async def _dispatch(name: str, args: dict, ctx: "SlashContext") -> dict:
     """Route one op call through :func:`dispatch_tool`, for the audit trail
     (``tool_called``/``tool_returned``, ``caller_kind="operator"``) — the
@@ -75,6 +105,12 @@ async def _dispatch(name: str, args: dict, ctx: "SlashContext") -> dict:
         chain_id=None,
         tool_catalog={name: definition.render_for_router()},
         events=tool_ctx.events,
+        # #5841: DispatchContext.contextual is now REQUIRED (no default) —
+        # extracted through the SAME op_context_factory() seam /exec uses,
+        # even though list_tasks/cancel_task don't otherwise need an
+        # OpContext. Without this, /tasks would be the one dispatch_tool
+        # caller silently exempt from the new call-time restrict check.
+        contextual=await _router_contextual_permission(tool_ctx),
     )
 
     async def _invoker(call_args: dict) -> Any:

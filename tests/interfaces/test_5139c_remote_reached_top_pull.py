@@ -75,7 +75,7 @@ class _PagingTransport(ClientTransportStub):
         if self._older_batch is not None:
             self._queue.put_nowait(self._older_batch)
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         return ""
 
     async def answer_intervention_text(self, text: str, **_kw) -> bool:

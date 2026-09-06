@@ -86,6 +86,7 @@ def _make_ctx(
         chain_id="c1",
         tool_catalog=_CATALOG,
         events=events,
+        contextual=None,  # #5841: no narrowing in play for these tests
         completed_response_include_text=completed_response_include_text,
         user_input_include_text=user_input_include_text,
     )

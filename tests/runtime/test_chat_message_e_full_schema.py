@@ -230,6 +230,20 @@ def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
     session.history_path = tmp_path / "history.jsonl"
     session.history = []
     session._next_seq = 1  # touched by post-load init; safe default
+    # #5851 stage (a): load_history()'s own finally now reads
+    # self._process_memory_guard AND self._audit_events (Session.__init__
+    # normally sets both — a bypass construction like this one must
+    # supply them explicitly, same as history_path/history/_next_seq
+    # above, rather than have _emit_process_footprint silently getattr-
+    # fallback past a missing attribute (#5822/#5853's own "silent None"
+    # root, deliberately not repeated here per architect co-vet on
+    # #5858). Real instances, not fakes — both are cheaply constructible
+    # (CLAUDE.md's testing policy).
+    from reyn.core.events.events import EventLog
+    from reyn.runtime.process_memory import ProcessMemoryGuard
+
+    session._process_memory_guard = ProcessMemoryGuard()
+    session._audit_events = EventLog()
 
     legacy_lines = [
         {"role": "user", "text": "hi", "ts": "t1"},

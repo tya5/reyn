@@ -213,6 +213,16 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         # surfaces a halt proactively too, not only the local in-process
         # one.
         "halted_reason": snap.get("halted_reason"),
+        # #5851 stage (a): same route as `halted_reason` just above — rides
+        # the snapshot/delta channel so a remote Ctx pane can render the
+        # SAME "memory ..." row a local one does (`ctx_pane_lines`'s own
+        # "not reported on this connection" fallback fires only when these
+        # 4 keys are absent from `snap` entirely, e.g. an older remote
+        # server that predates this field).
+        "process_footprint_bytes": snap.get("process_footprint_bytes"),
+        "process_footprint_metric": snap.get("process_footprint_metric"),
+        "process_memory_cap_bytes": snap.get("process_memory_cap_bytes"),
+        "process_memory_enforce": snap.get("process_memory_enforce"),
     }
     return out
 

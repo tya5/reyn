@@ -92,7 +92,7 @@ class _RecordingTransport(ClientTransportStub):
         await self._never.wait()
         yield  # pragma: no cover - never reached, satisfies the generator shape
 
-    async def submit_user_text(self, text: str) -> str:
+    async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> str:
         self.call_idents.append(threading.get_ident())
         if self._started is not None:
             self._started.set()

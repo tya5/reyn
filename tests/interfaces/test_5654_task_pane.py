@@ -266,7 +266,7 @@ async def test_the_task_tab_shows_two_running_tasks_in_a_real_app():
             await asyncio.Event().wait()
             yield  # pragma: no cover — unreachable, satisfies the generator shape
 
-        async def submit_user_text(self, text: str) -> None:
+        async def submit_user_text(self, text: str, *, client_ref: "str | None" = None) -> None:
             pass
 
         async def run_slash_command(self, name: str, args: str) -> bool:
