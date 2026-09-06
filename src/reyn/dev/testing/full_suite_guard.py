@@ -65,10 +65,8 @@ WHY CI IS UNCONDITIONALLY EXEMPT
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
 
 #: See "THE NUMBER" above for the measured justification.
 FULL_SUITE_COLLECTION_CEILING = 300
@@ -91,14 +89,26 @@ def _override_is_set() -> bool:
     return bool(os.environ.get(OVERRIDE_ENV_VAR))
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(
-    session: "pytest.Session", config: "pytest.Config", items: "list[pytest.Item]",
+    session: pytest.Session, config: pytest.Config, items: list[pytest.Item],
 ) -> None:
     """#5850: abort the SESSION (not just this one file) the moment
     collection produces more items than a genuinely diff-scoped local run
     ever legitimately would. Runs after collection, before any test
     executes — the memory this exists to protect is never spent running
     tests that were about to be aborted anyway.
+
+    ``trylast=True``: pytest's OWN keyword/mark deselection (``-k``, ``-m``
+    — `_pytest.mark`'s own `pytest_collection_modifyitems` hookimpl) fires
+    at DEFAULT priority. Without ``trylast``, pluggy calls implementations
+    in reverse-registration order, and this one can run BEFORE that
+    deselection has trimmed `items` — measured directly: a `-k`-scoped run
+    that collected 50 and deselected 39 down to 11 still saw `len(items)
+    == 50` here, aborting a genuinely scoped run over a wide directory
+    (testing.md's own recommended `-k` form). `trylast` guarantees this
+    hook is the LAST `pytest_collection_modifyitems` to run, so `items`
+    reflects every other plugin's filtering, including `-k`/`-m`'s.
 
     ``pytest.exit`` (not a bare ``sys.exit``/raise) is pytest's own
     session-abort primitive — it prints the message given, sets the exit
@@ -107,8 +117,6 @@ def pytest_collection_modifyitems(
         return
     if len(items) <= FULL_SUITE_COLLECTION_CEILING:
         return
-    import pytest
-
     pytest.exit(
         f"BLOCKED by tests/conftest.py's #5850 collection guard: this "
         f"local run collected {len(items)} tests, over the "
