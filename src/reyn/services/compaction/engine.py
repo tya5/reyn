@@ -2603,7 +2603,47 @@ class CompactionEngine:
                 cost_usd=_cost_usd,
             )
         except Exception as exc:
-            self._events.emit("compaction_failed", error=str(exc))
+            # #5828 (owner-hit, reyn-self brown, 2026-09-05): `compaction_
+            # failed` used to carry only `error` (the reason TEXT) — every
+            # occurrence rendered identically, so a caller could not tell
+            # "one shrink-ladder attempt failed, the ladder may still
+            # recover" (INTERMEDIATE) from "this exception bypasses the
+            # ladder entirely and the turn is about to die" (FATAL/
+            # RETRYABLE) apart from re-reading `error`'s own free-text
+            # message. `failure_class` reuses `classify_llm_failure` (the
+            # SAME closed 3-member vocabulary `LLMFailureClass` already
+            # names for exactly this question, #5543) as a non-flow-
+            # altering PROBE: called here purely to LABEL the event, the
+            # unconditional `raise` below is unchanged and still re-raises
+            # the ORIGINAL `exc` — this call site's own control flow
+            # (which side classifies for shrink-ladder purposes) is
+            # untouched, #5633's "no marker written on `exc`" invariant
+            # still holds (nothing is attached to the exception object).
+            #
+            # What this field can and cannot promise, stated rather than
+            # implied: `failure_class == OVERFLOW` means THIS attempt is
+            # shrink-ladder-eligible — it does NOT mean the ladder will
+            # actually recover (rung①/rung② may still hit
+            # RetryLoopTerminal.MID_FLOOR/ROOM_FLOOR afterward, an outcome
+            # only the CALLER — not this method — can know, since it needs
+            # the caller's own attempt_len/pool state this method is never
+            # given). That "did it actually recover, or hit the floor"
+            # distinction is NOT this field's job — it already has its own
+            # dedicated, correctly-distinct-worded events
+            # (`compaction_shrink_recovered` / `router_context_overflow_
+            # unrecovered`), unchanged by this PR. `failure_class ==
+            # FATAL`/`RETRYABLE` means the opposite is knowable HERE, with
+            # certainty: `classify_compact_overflow`'s own bare re-raise
+            # for both means this exception bypasses the ladder and
+            # `_run_one_iteration`'s own `except (CompactionOverflowError,
+            # ContextOverflowError)` will not even catch it — the render
+            # side can commit to "this turn is ending" immediately, no
+            # provisional wording needed.
+            self._events.emit(
+                "compaction_failed",
+                error=str(exc),
+                failure_class=classify_llm_failure(exc).value,
+            )
             # #5633 (lead-coder review, structural not agreement-based):
             # no marker is written on *exc* here. Which side emits
             # `compaction_failed` for a given failure is decided by WHICH

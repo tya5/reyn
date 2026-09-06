@@ -522,6 +522,96 @@ def test_compaction_failed_missing_error_uses_fallback() -> None:
     assert "unknown error" in only.text
 
 
+# ── #5828: failure_class distinguishes the 3 states compaction_failed can
+# mean, so the marker text no longer reads identically for all of them ──
+
+
+def test_compaction_failed_overflow_reads_as_a_retry_not_a_failure() -> None:
+    """Tier 1: accept — failure_class="overflow" (the shrink ladder is
+    still eligible to retry within the SAME episode) renders WITHOUT the
+    alarming ✗ glyph and WITHOUT the word "failed" — the owner-hit
+    confusion (#5828) was reading this exact case as "broken"."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "context window exceeded", "failure_class": "overflow"},
+    ))
+    (only,) = _drain(q)
+    assert "✗" not in only.text
+    assert "failed" not in only.text
+    assert "context window exceeded" in only.text
+
+
+def test_compaction_failed_fatal_reads_as_the_turn_ending() -> None:
+    """Tier 1: accept — failure_class="fatal" (bypasses the shrink ladder
+    entirely, classify_compact_overflow's own bare re-raise) renders the
+    ✗ glyph PLUS an explicit "this turn is ending" clause -- distinct
+    from the overflow case's provisional wording."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "timeout", "failure_class": "fatal"},
+    ))
+    (only,) = _drain(q)
+    assert "✗" in only.text
+    assert "ending this turn" in only.text
+    assert "timeout" in only.text
+
+
+def test_compaction_failed_retryable_reads_the_same_as_fatal() -> None:
+    """Tier 1: accept — failure_class="retryable" (classify_llm_failure's
+    OTHER non-overflow member — 5xx/rate-limit/network/quota) bypasses the
+    shrink ladder exactly like "fatal" does (classify_compact_overflow's
+    own bare re-raise covers both), so it reads identically: ✗ + "ending
+    this turn", not a 4th wording."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "rate limited", "failure_class": "retryable"},
+    ))
+    (only,) = _drain(q)
+    assert "✗" in only.text
+    assert "ending this turn" in only.text
+
+
+def test_compaction_failed_missing_failure_class_degrades_to_the_fatal_wording() -> None:
+    """Tier 1: accept — a replay of an event this field predates (or one
+    of the 2 non-LLM compaction_controller.py sites this PR did not wire
+    the field onto by probe) degrades to the SAME "ending this turn"
+    wording as a known-fatal one, never the provisional overflow wording
+    — the safe default is "commit to what will happen", not "guess
+    it might recover"."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="compaction_failed", data={"error": "boom"}))
+    (only,) = _drain(q)
+    assert "✗" in only.text
+    assert "ending this turn" in only.text
+
+
+def test_compaction_failed_overflow_and_fatal_render_different_text() -> None:
+    """Tier 1: accept — the non-vacuity check the 3 tests above assume:
+    the SAME reason string, differing only in failure_class, produces 2
+    DIFFERENT rendered texts. Without this, a bug that made both branches
+    render identically (e.g. an accidentally-shared f-string) would still
+    pass every assertion above individually."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "same reason", "failure_class": "overflow"},
+    ))
+    fwd(Event(
+        type="compaction_failed",
+        data={"error": "same reason", "failure_class": "fatal"},
+    ))
+    overflow_msg, fatal_msg = _drain(q)
+    assert overflow_msg.text != fatal_msg.text
+
+
 # ── #5588: started/completed/failed carry the episode-marker absorption tag ──
 
 

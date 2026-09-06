@@ -225,19 +225,54 @@ class ChatLifecycleForwarder:
             self._enqueue("[⟳ compacting history]", meta=meta)
 
     def on_compaction_failed(self, data: dict) -> None:
-        """Surface a ``[✗ compaction failed: <reason>]`` error marker.
+        """Surface a marker for ONE failed ``compact()`` attempt — wording
+        chosen by ``failure_class`` (#5828), never the same text for every
+        occurrence.
 
-        ``compaction_controller.py`` emits ``compaction_failed`` when the
-        summarisation LLM call raises. Without this handler the user sees the
-        ``compaction_started`` marker (#5633) but gets no signal that
-        compaction silently failed — early turns are still unsummarised and
-        context pressure continues unrelieved.
+        ``compaction_controller.py``/``compaction/engine.py`` emit
+        ``compaction_failed`` when the summarisation LLM call raises.
+        Without this handler the user sees the ``compaction_started``
+        marker (#5633) but gets no signal that compaction failed.
+
+        #5828 (owner-hit, reyn-self brown, 2026-09-05): this used to
+        render the identical ``[✗ compaction failed: <reason>]`` for
+        EVERY occurrence — a single shrink-ladder attempt that may still
+        recover within the SAME episode (``failure_class == "overflow"``,
+        #5719's own retry ladder) read exactly like the exception that is
+        about to end the turn outright (``"fatal"``/``"retryable"`` —
+        bypasses the ladder entirely, ``classify_compact_overflow``'s own
+        bare re-raise for both). The owner read two of these in a row and
+        asked "how do you plan to address this" — the SAME wording gave
+        no way to tell "retrying automatically" from "stuck".
+
+        ``failure_class == "overflow"``: NOT rendered with the alarming
+        ``✗`` glyph — this attempt failing does not mean compaction is
+        failing; the ladder may shrink further and retry within this same
+        episode (:meth:`on_compaction_shrink_recovered` fires on success;
+        :meth:`on_router_context_overflow_unrecovered` fires with its OWN
+        distinct wording if the ladder instead reaches its floor — this
+        method never claims to know which in advance, see
+        ``CompactionEngine.compact()``'s own #5828 comment for why that
+        distinction is genuinely not knowable at THIS emission site).
+
+        ``failure_class in ("fatal", "retryable")``, or absent (a replay
+        of an event this field predates, or one of the two non-LLM
+        ``compaction_controller.py`` sites that always pass ``"fatal"``
+        literally): the ``✗`` glyph, PLUS an explicit "this turn is
+        ending" clause — this exception bypasses the shrink ladder
+        entirely (``classify_compact_overflow``'s own bare re-raise), so
+        unlike the overflow case there is nothing provisional left to
+        say.
         """
         reason = str(data.get("error") or "unknown error")
-        self._enqueue(
-            f"[✗ compaction failed: {reason}]",
-            meta={"compaction_episode_marker": True},
-        )
+        failure_class = data.get("failure_class")
+        meta = {"compaction_episode_marker": True}
+        if failure_class == "overflow":
+            self._enqueue(f"[⟳ compaction retry: shrinking input after {reason}]", meta=meta)
+        else:
+            self._enqueue(
+                f"[✗ compaction failed: {reason} — ending this turn]", meta=meta,
+            )
 
     def on_router_context_overflow_unrecovered(self, data: dict) -> None:
         """Surface a ``[✗ shrink flow failed: <impossibility>]`` marker —
