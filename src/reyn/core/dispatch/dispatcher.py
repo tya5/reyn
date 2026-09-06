@@ -214,7 +214,11 @@ async def dispatch_tool(
     # action_name=X) wrapper call is checked against X, never against the
     # literal "invoke_action" name, which is never itself excluded) and the
     # SAME kind + message-builder (effective.py's contextual_deny_message)
-    # that loop used to apply now apply HERE, for every caller.
+    # that loop used to apply now apply HERE, for every dispatch_tool
+    # caller (a pipeline tool step, tools/pipeline_verbs._make_tool_
+    # dispatch, does not funnel through dispatch_tool at all — it calls
+    # the handler directly and reads the same predicate at its own,
+    # separate site, #3546).
     effective = gate_effective_tool_name(name, args)
     if effective is not None and tool_contextually_denied(ctx.contextual, effective):
         from reyn.security.permissions.effective import contextual_deny_message

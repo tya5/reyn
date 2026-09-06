@@ -430,9 +430,10 @@ def tool_contextually_denied(
     **Measured callers** (#3513, ``src/`` enumeration; #3546 adds one, #5854
     folds a former separate one into this list's first entry):
     ``core.dispatch.dispatcher.dispatch_tool``'s own call-time TOOL-axis
-    restrict (2b — the SINGLE live enforcement gate every caller funnels
-    through since #5854 retired ``RouterLoop._excluded_result``'s
-    duplicate pre-dispatch check) and the advertisement filter
+    restrict (2b — the SINGLE live enforcement gate every ``dispatch_tool``
+    caller funnels through since #5854 retired ``RouterLoop._excluded_
+    result``'s duplicate pre-dispatch check; the pipeline tool-step
+    dispatch listed below does NOT funnel through it) and the advertisement filter
     (``apply_contextual_visibility``), the three exposure/fence schemes
     (``_category_exposure``, ``_enumerate_exposure``,
     ``retrieval_content_fence``), and the pipeline tool-step dispatch
