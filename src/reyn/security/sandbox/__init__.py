@@ -237,6 +237,32 @@ def _verify(cls: type | None, name: str) -> "tuple[SandboxBackend | None, str]":
     return backend, ""
 
 
+def _select_platform_backend(
+    SeatbeltBackend: type | None,  # noqa: N803
+    LandlockBackend: type | None,  # noqa: N803
+) -> "tuple[SandboxBackend | None, str]":
+    """The PURE half of auto-selection: which platform backend this host
+    actually has, or ``(None, <why not>)``. Never logs, never raises,
+    applies no policy (#5892 co-vet 🔴-1 — see :func:`select_backend`).
+
+    Extracted so the selection is written ONCE: :func:`_auto_select` (the
+    action path, which then applies ``on_unsupported``) and
+    :func:`select_backend` (the query path) both read it, so the two can
+    never disagree about what this host has."""
+    system = platform.system()
+
+    if system == "Darwin":
+        backend, reason = _verify(SeatbeltBackend, "seatbelt")
+        return (backend, "") if backend is not None else (None, f"macOS: {reason}")
+
+    if system == "Linux":
+        backend, reason = _verify(LandlockBackend, "landlock")
+        return (backend, "") if backend is not None else (None, f"Linux: {reason}")
+
+    # FreeBSD, Windows, or anything else — no OS backend.
+    return None, f"unsupported platform {system!r}"
+
+
 def _auto_select(
     SeatbeltBackend: type | None,  # noqa: N803
     LandlockBackend: type | None,  # noqa: N803
@@ -246,23 +272,68 @@ def _auto_select(
     backend is available, apply ``on_unsupported`` (via ``_noop_with_policy``) instead
     of a silent NoopBackend fallback. #2983: "available" now additionally requires
     that the backend fired a deny when self-tested (see :func:`_verify`), so a
-    present-but-dead backend takes the same fallback as an absent one."""
-    system = platform.system()
+    present-but-dead backend takes the same fallback as an absent one.
 
-    if system == "Darwin":
-        backend, reason = _verify(SeatbeltBackend, "seatbelt")
+    #5892: the SELECTION half now lives in :func:`_select_platform_backend`
+    (pure); this function is what it always was — that selection plus the
+    ``on_unsupported`` action. Same branches, same detail strings, same
+    behaviour for every caller."""
+    backend, detail = _select_platform_backend(SeatbeltBackend, LandlockBackend)
+    if backend is not None:
+        return backend
+    return _noop_with_policy(on_unsupported, detail)
+
+
+def select_backend(
+    config: "SandboxConfig | None" = None,
+) -> "tuple[SandboxBackend | None, str]":
+    """WHICH backend this config resolves to, and — when it resolves to
+    none — why not. A pure QUERY: platform checks, ``which``-style
+    availability and the per-process self-test cache only. **Never logs,
+    never raises, applies no ``on_unsupported`` policy.**
+
+    #5892 co-vet 🔴-1. :func:`get_default_backend` conflates two jobs:
+    selecting a backend, and APPLYING ``sandbox.on_unsupported`` (raise /
+    warn / ignore). That application is an ACTION, correct at the exec
+    site — and wrong for a caller that only wants to *display* what the
+    boundary is. Measured on a display caller that went through it: a
+    per-read WARNING on every status frame (``on_unsupported: "warn"``,
+    the shipped default, on a host whose backend cannot be verified), and
+    an outright ``RuntimeError`` under ``"error"`` — a knob whose whole
+    purpose is "refuse to run AI code" instead killing the status readout.
+
+    A caller that needs the action keeps calling
+    :func:`get_default_backend`; a caller that needs the fact calls this.
+    ``(backend, "")`` on success; ``(None, reason)`` when nothing real is
+    available — the reason is the same detail string the action path would
+    have reported, so a display can name it verbatim."""
+    try:
+        from .backends.seatbelt import SeatbeltBackend  # type: ignore[import]
+    except ImportError:
+        SeatbeltBackend = None  # type: ignore[misc,assignment]
+    try:
+        from .backends.landlock import LandlockBackend  # type: ignore[import]
+    except ImportError:
+        LandlockBackend = None  # type: ignore[misc,assignment]
+
+    backend_name = "auto" if config is None else config.backend
+
+    if backend_name == "auto":
+        return _select_platform_backend(SeatbeltBackend, LandlockBackend)
+    if backend_name == "noop":
+        return NoopBackend(), ""
+    cls = {"seatbelt": SeatbeltBackend, "landlock": LandlockBackend}.get(backend_name)
+    if cls is not None or backend_name in ("seatbelt", "landlock"):
+        backend, reason = _verify(cls, backend_name)
         if backend is not None:
-            return backend
-        return _noop_with_policy(on_unsupported, f"macOS: {reason}")
-
-    if system == "Linux":
-        backend, reason = _verify(LandlockBackend, "landlock")
-        if backend is not None:
-            return backend
-        return _noop_with_policy(on_unsupported, f"Linux: {reason}")
-
-    # FreeBSD, Windows, or anything else — no OS backend.
-    return _noop_with_policy(on_unsupported, f"unsupported platform {system!r}")
+            return backend, ""
+        return None, (
+            f"backend {backend_name!r} is not available on "
+            f"{platform.system()}: {reason}"
+        )
+    # Unreachable via SandboxConfig (__post_init__ rejects other values) —
+    # mirrors get_default_backend's own final else.
+    return NoopBackend(), ""
 
 
 def _resolve_explicit(

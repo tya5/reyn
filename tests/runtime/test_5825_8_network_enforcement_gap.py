@@ -17,25 +17,38 @@ lives in ``tests/interfaces/test_5825_8_network_posture_display.py``.
 """
 from __future__ import annotations
 
+import logging
+import platform
 from pathlib import Path
 
 from reyn.config.infra import SandboxConfig
+from reyn.security.sandbox import get_default_backend
 from reyn.security.sandbox.noop_backend import NoopBackend
 from tests._support.agent_session import make_session
 
 
-def _session(tmp_path: Path, sandbox_config: "SandboxConfig | None"):
-    """A REAL Session (no fakes) whose sandbox backend is a REAL
+def _session(tmp_path: Path, sandbox_config: "SandboxConfig | None", *, inject_noop: bool = True):
+    """A REAL Session (no fakes). By default its sandbox backend is a REAL
     ``NoopBackend`` instance — passed explicitly rather than left to
-    platform auto-selection, so this test measures the SAME thing on a
-    macOS runner (which would auto-select Seatbelt) as on a Linux one."""
+    platform auto-selection, so a test measures the SAME thing on a macOS
+    runner (which would auto-select Seatbelt) as on a Linux one.
+    ``inject_noop=False`` leaves selection to the config, for the tests
+    about what happens when that selection cannot succeed."""
     return make_session(
         agent_name="posture-test",
         workspace_base_dir=tmp_path,
         workspace_state_dir=tmp_path / ".reyn",
         sandbox_config=sandbox_config,
-        sandbox_backend=NoopBackend(),
+        sandbox_backend=NoopBackend() if inject_noop else None,
     )
+
+
+def _foreign_backend_name() -> str:
+    """A backend name that genuinely cannot be selected on THIS host —
+    Seatbelt is macOS-only, Landlock is Linux-only — so "the backend cannot
+    be selected" is a real platform fact here, not a fake. Chosen at run
+    time so the same test means the same thing on either CI runner."""
+    return "landlock" if platform.system() == "Darwin" else "seatbelt"
 
 
 def test_a_closed_network_policy_a_backend_cannot_enforce_is_reported(tmp_path):
@@ -77,3 +90,59 @@ def test_no_sandbox_config_at_all_reports_no_gap(tmp_path):
     session = _session(tmp_path, None)
 
     assert session.network_enforcement_gap is None
+
+
+# ── #5892 co-vet 🔴-1: the display read is a QUERY, never the exec ACTION ──
+
+
+def test_the_gap_read_never_raises_even_under_on_unsupported_error(tmp_path):
+    """Tier 2: ``sandbox.on_unsupported: error`` is the fail-closed knob —
+    "refuse to run AI code unsandboxed". Routed through the exec-site
+    resolver, a mere DISPLAY read of the boundary raised ``RuntimeError``
+    under it (measured by the architect on the previous head), so the knob
+    whose job is to refuse a run was killing the status readout instead.
+    The read must return a STRING naming both the reason and the
+    consequence (the refusal), and never raise."""
+    cfg = SandboxConfig(mode="strict", backend=_foreign_backend_name(), on_unsupported="error")
+    session = _session(tmp_path, cfg, inject_noop=False)
+
+    gap = session.network_enforcement_gap  # must not raise
+
+    assert gap is not None, "an unselectable backend under a closed-network policy is a gap"
+    assert "refused" in gap, gap
+
+
+def test_the_gap_read_logs_nothing_across_repeated_reads(tmp_path, caplog):
+    """Tier 2: a status snapshot is read on EVERY frame (``_refresh_live_
+    chrome``'s own docstring) and on every server status ping. Routed
+    through the exec-site resolver this read logged one WARNING per read
+    under the shipped default (``on_unsupported: warn``) on any host whose
+    backend cannot be verified — a log line per frame, bounded only by the
+    frame rate (#5873's class). N reads must produce ZERO log records from
+    the sandbox package: the read is a query, and the action's logging
+    stays at the action's own site."""
+    caplog.set_level(logging.DEBUG, logger="reyn.security.sandbox")
+    cfg = SandboxConfig(mode="strict", backend=_foreign_backend_name(), on_unsupported="warn")
+    session = _session(tmp_path, cfg, inject_noop=False)
+
+    reads = [session.network_enforcement_gap for _ in range(5)]
+
+    assert all(r is not None and "Noop" in r for r in reads), reads
+    sandbox_records = [r for r in caplog.records if r.name.startswith("reyn.security.sandbox")]
+    assert sandbox_records == [], [r.getMessage() for r in sandbox_records]
+
+
+def test_the_exec_action_path_still_applies_the_knob(tmp_path):
+    """Tier 2: the positive control that says the application MOVED rather
+    than DISAPPEARED — the SAME unselectable-backend config, through the
+    exec-site resolver (``get_default_backend``, what ``run_sandboxed_exec``
+    calls via ``launcher.resolve_backend``), still refuses under ``error``.
+    The full exec-path witnesses live in ``tests/security/test_sandbox_
+    factory.py`` (``on_unsupported='error'`` raising for auto and for a
+    forced foreign backend); this one pins that the split in
+    ``security/sandbox/__init__.py`` left that path's behaviour intact."""
+    import pytest
+
+    cfg = SandboxConfig(backend=_foreign_backend_name(), on_unsupported="error")
+    with pytest.raises(RuntimeError):
+        get_default_backend(cfg)

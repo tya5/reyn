@@ -13,7 +13,8 @@ never a live Session)."""
 from __future__ import annotations
 
 from reyn.interfaces.inline.textual_chat.chrome import ctx_pane_lines
-from reyn.interfaces.transport.agui.state import project_status
+from reyn.interfaces.repl.read_model import project_remote_snapshot
+from reyn.interfaces.transport.agui.state import RemoteStatusView, project_status
 
 
 def _network_line(snap: dict) -> str:
@@ -21,15 +22,32 @@ def _network_line(snap: dict) -> str:
     return line
 
 
-def test_network_row_says_not_reported_when_the_key_is_absent():
-    """Tier 1: a snapshot from before this field existed (or a remote
-    server that predates it) carries none of the key — must read as "not
-    reported", not "enforced" (a missing observation is not evidence of a
-    real boundary, the exact "display and reality diverge" shape this
-    whole arc exists to close)."""
-    line = _network_line({"ctx_window": 1000, "ctx_used": 100})
+def test_network_row_says_not_reported_from_a_real_unpopulated_read_model():
+    """Tier 1: the "not reported" state must be reachable from a REAL read
+    model, not only from a dict a test built (#5892 co-vet 🔴-2, question
+    ③: the earlier version of this test constructed its own bare dict, so
+    it stayed green while the production projection was fabricating the key
+    on every real connection).
+
+    A fresh ``RemoteStatusView`` — no frame applied yet, exactly the window
+    between connect and the first STATE_SNAPSHOT — projected through the
+    production ``project_remote_snapshot`` must render "not reported", never
+    "enforced": a missing observation is not evidence of a real boundary."""
+    line = _network_line(project_remote_snapshot(RemoteStatusView().values))
     assert "not reported on this connection" in line, line
     assert "enforced" not in line, line
+
+
+def test_network_row_says_enforced_once_a_real_snapshot_reports_no_gap():
+    """Tier 1: the sibling that makes the test above discriminating — the
+    SAME real read model, after a server snapshot that explicitly reports
+    no gap, must read "enforced". Without it, "not reported" would also
+    pass for a build that never rendered anything at all (a deny-only
+    assert is green in an empty world)."""
+    view = RemoteStatusView()
+    view.apply_snapshot({"agent": "default", "network_posture_gap": None})
+    line = _network_line(project_remote_snapshot(view.values))
+    assert line.strip() == "network      enforced", line
 
 
 def test_network_row_says_enforced_when_the_gap_is_none():
@@ -65,9 +83,14 @@ def test_network_posture_gap_is_projected_onto_the_wire():
     assert out["network_posture_gap"] == "Noop cannot enforce network"
 
 
-def test_network_posture_gap_defaults_to_none_on_the_wire_when_absent():
-    """Tier 1: ``snapshot=None`` (no session attached) -> the field
-    projects to ``None``, never a crash — mirrors every other field in
-    this same dict literal's own ``snap.get(...)`` discipline."""
-    out = project_status(None)
-    assert out["network_posture_gap"] is None
+def test_the_wire_omits_the_gap_key_rather_than_synthesizing_none():
+    """Tier 1: #5892 co-vet 🔴-2 — the projection must OMIT this key when
+    the server did not send it, never synthesize ``None``.
+
+    ``None`` reads as "enforced" downstream, so synthesizing it fabricates
+    a boundary claim in the two windows where nothing was reported at all:
+    before the first STATE_SNAPSHOT, and against a server that predates the
+    field. (The earlier version of this test asserted the synthesized
+    ``None`` — it pinned the defect's own shape.)"""
+    assert "network_posture_gap" not in project_status(None)
+    assert "network_posture_gap" not in project_status({"ctx_window": 1000})

@@ -7558,9 +7558,28 @@ class Session:
         network to be closed (``policy.network`` is not ``False`` — an
         open-network config has no boundary to fail at), or the resolved
         backend genuinely enforces it. A non-``None`` return is the
-        human-readable reason (``unenforced_axis_reason``) the boundary is
-        not real."""
-        from reyn.security.sandbox.launcher import resolve_backend
+        human-readable reason the boundary is not real.
+
+        **This is a QUERY and it stays one** (#5892 co-vet 🔴-1). It reads
+        ``sandbox.select_backend`` — pure: platform / availability / the
+        per-process self-test cache, no logging, no raising — never
+        ``get_default_backend``, which additionally APPLIES
+        ``sandbox.on_unsupported``. That application belongs to the exec
+        site: routed through it, this property logged a WARNING on EVERY
+        status frame under the shipped default, and RAISED under
+        ``on_unsupported: "error"`` — the fail-closed knob killing the
+        status readout instead of refusing a run. When no backend can be
+        selected at all, the gap names the reason AND the consequence,
+        which differs by that same knob (``error`` refuses the exec;
+        otherwise it runs unsandboxed under Noop).
+
+        Memoized on the ``_sandbox_config`` OBJECT's identity, not on a
+        clock: a hot-reload re-assigns that object, so a changed config is
+        a different object and recomputes, while a per-frame read of an
+        unchanged one costs a dict lookup. The first computation can run a
+        real self-test probe (measured ~100 ms cold, ~47 µs warm), which is
+        not something a render path should pay repeatedly."""
+        from reyn.security.sandbox import select_backend
         from reyn.security.sandbox.policy import (
             SandboxPolicy,
             resolve_sandbox_policy,
@@ -7569,15 +7588,54 @@ class Session:
         )
 
         sandbox_config = self._sandbox_config
-        backend = resolve_backend(self._sandbox_backend, sandbox_config)
+        cached = getattr(self, "_network_gap_cache", None)
+        if cached is not None and cached[0] is sandbox_config:
+            return cached[1]
+
+        injected = self._sandbox_backend
+        if injected is not None:
+            # An injected instance IS the backend (the same precedence
+            # ``launcher.resolve_backend`` gives it) — nothing to select,
+            # so nothing to be unavailable.
+            backend, unavailable = injected, ""
+        else:
+            backend, unavailable = select_backend(sandbox_config)
+
         policy = SandboxPolicy(**resolve_sandbox_policy(
             sandbox_config.policy if sandbox_config is not None else None,
             temp_source="session",
             mode=sandbox_config.mode if sandbox_config is not None else "compat",
         ))
-        if "network" not in unenforced_axes(backend, policy):
-            return None
-        return unenforced_axis_reason(backend.name)
+
+        gap: "str | None"
+        if backend is None:
+            # No real backend at all. The policy still says what was asked
+            # for: if network was never closed, there is no boundary to be
+            # dishonest about.
+            if policy.network is False:
+                _refuses = (
+                    sandbox_config is not None
+                    and sandbox_config.on_unsupported == "error"
+                )
+                gap = (
+                    f"{unavailable} — "
+                    + (
+                        "sandbox.on_unsupported: error, so a sandboxed exec is "
+                        "refused rather than run unenforced"
+                        if _refuses else
+                        "a sandboxed exec falls back to the Noop backend and "
+                        "runs with no network enforcement at all"
+                    )
+                )
+            else:
+                gap = None
+        elif "network" in unenforced_axes(backend, policy):
+            gap = unenforced_axis_reason(backend.name)
+        else:
+            gap = None
+
+        self._network_gap_cache = (sandbox_config, gap)
+        return gap
 
     @property
     def halted_reason(self) -> "str | None":
