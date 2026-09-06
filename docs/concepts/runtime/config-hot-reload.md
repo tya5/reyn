@@ -184,8 +184,11 @@ operator-facing global and per-agent layers are unchanged and still read;
 | `push_when` | no | Jinja2 → bool guard; the push is skipped when this renders false. |
 | `name` | no | Label surfaced as `[hook:name]` attribution prefix in history. |
 
-The tool is write-gated: the calling workflow must declare `hooks_add` in
-`permissions.tool`, and the capability profile `tool_deny` can deny it.
+The tool is write-gated by catalog visibility and #5841's call-time check
+(`CapabilityProfile`, corrected #5848 — an earlier version of this line
+said the calling workflow must declare `hooks_add` in `permissions.tool`,
+which has no declared-authority backing); the capability profile
+`tool_deny` can deny it.
 
 **Which reloader instance gets triggered.** Separately from which *file*
 `hooks_add` writes to (above), the reload it schedules always runs on the

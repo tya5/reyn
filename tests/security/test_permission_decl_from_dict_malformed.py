@@ -25,10 +25,11 @@ from reyn.security.permissions.permissions import PermissionDecl
 def test_malformed_permissions_yield_empty_decl(bad) -> None:
     """Tier 2: a non-dict permissions value → empty decl (no crash, no grants)."""
     decl = PermissionDecl.from_dict(bad)
-    # fail-secure: nothing is granted from a malformed block
+    # fail-secure: nothing is granted from a malformed block. #5848: no
+    # `.tool` field exists any more to assert on — TOOL's only authority
+    # is CapabilityProfile now, never this decl.
     assert not decl.file_write
     assert not decl.mcp
-    assert not decl.tool
 
 
 def test_none_still_yields_empty_decl() -> None:

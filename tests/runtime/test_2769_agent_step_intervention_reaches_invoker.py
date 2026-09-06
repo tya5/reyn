@@ -309,10 +309,15 @@ async def test_detached_agent_step_permission_fail_closed_deny(tmp_path: Path) -
 
     # The EXACT bus the worker's permission op would dispatch on (its declared AuditOnly bridge).
     bus = worker.intervention_bridge.bus(run_id="r", actor="agent-step")
-    # A real permission consumer: the tool IS declared (passes the static-authority gate) and is
-    # NOT pre-approved, so it reaches the interactive prompt → the AuditOnly bus → a refusal.
+    # A real permission consumer: the static-authority gate always passes for
+    # TOOL now (#5848) and the tool is NOT pre-approved, so it reaches the
+    # interactive prompt → the AuditOnly bus → a refusal.
     resolver = PermissionResolver({}, project_root=tmp_path, interactive=True)
-    decl = PermissionDecl(tool=["risky_tool"])
+    # #5848: decl carries no `tool` field any more (the static TOOL-axis
+    # declaration was deleted — AgentLayer no longer constrains this axis
+    # at all). This test's own subject is the CONFIRM half (the AuditOnly
+    # bus refusal below), unaffected by that deletion.
+    decl = PermissionDecl()
 
     with pytest.raises(PermissionError):
         # The AuditOnly refusal (choice_id=None) is consumed as DENY — require_tool raises. A
@@ -376,7 +381,11 @@ async def test_detached_driver_invoker_agent_step_permission_fail_closed_deny_tr
     # (ii) path proven fail-closed.
     bus = worker.intervention_bridge.bus(run_id="r", actor="agent-step")
     resolver = PermissionResolver({}, project_root=tmp_path, interactive=True)
-    decl = PermissionDecl(tool=["risky_tool"])
+    # #5848: decl carries no `tool` field any more (the static TOOL-axis
+    # declaration was deleted — AgentLayer no longer constrains this axis
+    # at all). This test's own subject is the CONFIRM half (the AuditOnly
+    # bus refusal below), unaffected by that deletion.
+    decl = PermissionDecl()
 
     with pytest.raises(PermissionError):
         await resolver.require_tool(decl, "risky_tool", bus)

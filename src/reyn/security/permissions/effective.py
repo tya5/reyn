@@ -65,9 +65,13 @@ class CapabilityAxis(Enum):
     # capability — conflating them would let a subprocess env-passthrough
     # declaration silently double as a credential-exposure grant.
     ENV_EXPAND = "env_expand"
-    # #1199 S3.1b-2c: the per-actor tool allowlist (decl.tool) — a distinct
-    # capability axis (gated by require_tool) not in the original 9; added here
-    # for the require_tool cutover.
+    # #1199 S3.1b-2c: a distinct capability axis (gated by require_tool),
+    # not in the original 9. #5848: the AgentLayer-side declared allowlist
+    # (decl.tool) is deleted — zero production populators, and its
+    # empty-list-means-deny-all semantics were the OPPOSITE of this same
+    # axis's ContextualLayer reading (None means unconstrained). The ONE
+    # live TOOL-axis authority is CapabilityProfile, via ContextualLayer
+    # (catalog visibility, and #5841's dispatch_tool call-time check).
     TOOL = "tool"
 
 
@@ -178,9 +182,15 @@ class AgentLayer:
                 or "*" in d.secret_write
                 or self._approved(axis, value)
             )
-        if axis is CapabilityAxis.TOOL:
-            # #1199 S3.1b-2c: the per-actor tool allowlist (require_tool).
-            return value in d.tool
+        # TOOL(deleted #5848): PermissionDecl.tool was a SECOND declaration
+        # of the same axis ContextualLayer.allows already gates below —
+        # with "no restriction" encoded by the OPPOSITE value (empty list
+        # = deny-all here, vs None = unconstrained there) and zero
+        # production populators. Falls through to the trailing `return
+        # True` below, same as PYTHON(removed)/SKILL(removed) — the decl
+        # does not constrain this axis at all now. See ContextualLayer.
+        # allows (this module) for the ONE live TOOL-axis check (#5841),
+        # and require_tool's own docstring for the restrict/confirm split.
         if axis is CapabilityAxis.ENV_EXPAND:
             # #3198: faithful to secret_write's shape — a specific declared
             # name OR the "*" wildcard. Deny-by-default: an empty/unset
@@ -335,7 +345,9 @@ class NarrowingOrigin:
 @dataclass(frozen=True)
 class ContextualPermission:
     """Per-session contextual narrowing (#1827) — a restrict-only ∩ term layered
-    on top of the static authority (``permission.tool`` etc.). Sourced per-session
+    on top of the static authority (``PermissionDecl``'s declared axes; TOOL
+    is #5848's exception — CapabilityProfile/ContextualLayer is that axis's
+    ONLY authority, nothing to layer on top of). Sourced per-session
     from a delegation / topology role / ephemeral profile (later slices wire those
     sources) and carried on ``OpContext.contextual_permission``.
 

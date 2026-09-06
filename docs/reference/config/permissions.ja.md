@@ -35,6 +35,8 @@ Reyn の Permission システムは、ファイルパス、シェル、MCP ツ�
 
 **Permission を宣言できる場所は `reyn.yaml` の `permissions:` ブロックだけです** — 形は下記の[プロジェクト全体の事前承認](#プロジェクト全体の事前承認reynyaml)を参照してください。`skill.md` frontmatter に `permissions:` キーは**ありません**: このページの以前のバージョンはそのキーを文書化していましたが、それを読む parser は一度も実装されませんでした（`docs/reference/config/permissions.md` 自身の drift、#5863）。本番の読み口は `session.py` の `PermissionDecl.from_dict` 呼び出し 1 箇所だけで、そこに渡す dict は `PermissionResolver._config` — つまり `reyn.yaml` の `permissions:` ブロックです。`skill.md` から parse したものではありません。`skill.md`（や workflow/phase ファイル）の frontmatter に `permissions:` キーがあっても、それは**inert**（何も読みません）。
 
+`tool` 宣言 key もありません — #5848 で `PermissionDecl.tool` が削除されました（本番の populator が 0 でした）。named-tool 軸の唯一の authority は `CapabilityProfile`（catalog visibility ＋ `dispatch_tool` の call-time check — [permission model](../../concepts/runtime/permission-model.md) の `tool` 行を参照）です。`reyn.yaml` の `permissions.tool:` は今 config load 時に unrecognized-key warning になります（#5849③ の registry）。
+
 ## Web op（Tier 1 — デフォルト許可）
 
 `web_search` と `web_fetch` は **Tier 1** です: 宣言なしでデフォルトで通過します。使用に際して `permissions:` エントリーは不要です。

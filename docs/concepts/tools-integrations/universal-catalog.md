@@ -95,10 +95,12 @@ The `mcp` category provides six verb_object actions that cover the LLM-visible s
 | `mcp_call_tool`      | Call a tool by `<server>__<tool>` id with `tool_args` |
 | `mcp_drop_server`    | Remove an installed server |
 
-`exec` is always visible, on the same permission axis (`gates.router` +
-`exec: allow`) as every other category (#4932, owner ruling
-2026-08-19 — reverses the earlier `is_exec_available()` gate that hid
-`exec` entirely when no real sandbox backend was configured). When no
+`exec` is always visible, on the same permission axis (`gates.router`) as
+every other category (#4932, owner ruling 2026-08-19 — reverses the
+earlier `is_exec_available()` gate that hid `exec` entirely when no real
+sandbox backend was configured; the `exec: allow` pre-approval key this
+sentence used to also cite was removed by #5849 — it had no reader).
+When no
 real backend is configured, the tool's description discloses that
 commands run without isolation, instead of the category disappearing
 silently — see [Visibility gating](#visibility-gating-d14) below for

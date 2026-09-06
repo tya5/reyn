@@ -147,7 +147,11 @@ async def test_attached_driver_permission_kind_agnostic_same_bus(tmp_path: Path)
     driver = await _spawn_driver(reg, BridgeToParent(originator))
     bus = driver._make_router_intervention_bus()  # noqa: SLF001 — production seam
     resolver = PermissionResolver({}, project_root=tmp_path, interactive=True)
-    decl = PermissionDecl(tool=[_TOOL])
+    # #5848: decl carries no `tool` field any more — the static TOOL-axis
+    # gate always passes now (AgentLayer no longer constrains it); this
+    # test's own subject is the CONFIRM prompt's origin-delivery, reached
+    # unconditionally.
+    decl = PermissionDecl()
 
     gate = asyncio.ensure_future(resolver.require_tool(decl, _TOOL, bus))
     await wait_until(lambda: bool(originator.interventions.list_active()))

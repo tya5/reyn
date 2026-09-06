@@ -96,9 +96,18 @@ class ReynConfig:
     )
     # Pre-declared permissions (same structure as phase frontmatter). Values are
     # "allow" (pre-approve, skip the interactive prompt) or "deny" (block outright).
-    # Example: permissions: {exec: allow, file.delete: deny, mcp: {github: allow}}
-    # (#3226 Phase 3: the `exec` tool's pre-approval key was renamed from `shell`
-    # — clean break, no alias; existing reyn.yaml `shell:` keys must be renamed.)
+    # Example: permissions: {file.delete: deny, mcp: {github: allow}}
+    # #5849 (architect ruling, clean break): `exec: allow`/`exec: deny` are
+    # REMOVED from this example — there never was an interactive `exec`
+    # prompt for `allow` to skip (#5837's own measurement: zero), and
+    # whether "don't ask" is even a per-op config key or a POSTURE (FP-0069's
+    # own `ask`/`bounded` dial) is FP-0069's call, not this key's. See
+    # `docs/concepts/runtime/permission-model.md`'s axis table for the
+    # `exec`/`tool` axis's real disposition. A stray `permissions.exec:` in
+    # reyn.yaml now surfaces as an unrecognized-key warning
+    # (`PERMISSIONS_CONFIG_KEY_REGISTRY`, `security/permissions/permissions.py`)
+    # rather than silently doing nothing (#5849's own root cause: this
+    # block's unknown-key walk previously stopped at `permissions:` itself).
     permissions: dict = field(
         default_factory=dict,
         metadata={"axis": Axis.CAPABILITY, "desc": "Pre-declare `allow`/`deny` for specific Control IR ops, skipping the interactive prompt."},

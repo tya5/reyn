@@ -60,9 +60,10 @@ hallucination 0/35)。
 | `exec` | sandboxed argv 実行 | sandbox backend 下で argv 実行 |
 
 `exec` は常に visible — 他の全 category と同じ permission 軸
-（`gates.router` + `exec: allow`）で決まる（#4932、owner 裁定
-2026-08-19 — 本物の sandbox backend が configure されていない場合に
-`exec` 全体を隠していた `is_exec_available()` gate を撤回）。本物の
+（`gates.router`）で決まる（#4932、owner 裁定 2026-08-19 — 本物の
+sandbox backend が configure されていない場合に `exec` 全体を隠していた
+`is_exec_available()` gate を撤回；この文が併記していた `exec: allow`
+pre-approval key は #5849 で削除済み — reader が無かった）。本物の
 backend が configure されていない場合は、category が黙って消える代わ
 りに、tool の description が「隔離なしで実行される」ことを開示する —
 開示 predicate は下の [Visibility gating](#visibility-gating-d14) 参照。

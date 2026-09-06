@@ -99,6 +99,12 @@ def test_a_key_registered_open_is_not_also_required_to_have_a_validator() -> Non
     is sufficient to clear a leaf from ``unregistered_freeform_leaves()``,
     confirming the completeness check treats the two registries as a
     UNION, not requiring both, matching #4655's own "exactly one of the
-    two kinds" design (never both, never neither)."""
-    assert config_schema.freeform_leaf_registration_kind("permissions") == "open"
-    assert "permissions" not in config_schema.unregistered_freeform_leaves()
+    two kinds" design (never both, never neither).
+
+    ``permissions`` used to be this test's own example (Kind②) — #5849③
+    promoted it to Kind① (a real derived-key validator, not a "genuinely
+    open" declaration), so ``auth.providers`` (still Kind②, `config/
+    infra.py`'s own arbitrary-provider-name disposition) is the example
+    here instead."""
+    assert config_schema.freeform_leaf_registration_kind("auth.providers") == "open"
+    assert "auth.providers" not in config_schema.unregistered_freeform_leaves()

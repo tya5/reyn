@@ -9,7 +9,11 @@ Outside the defaults → the actor must declare the path AND the user must appro
   file.read:  [{path: <path>, scope: just_path|recursive}]   (paths outside CWD)
   file.write: [{path: <path>, scope: just_path|recursive}]
   mcp        — declare permissions.mcp: [server_name, ...]
-  tool       — declare permissions.tool: [tool_name, ...]
+
+The TOOL axis (#5848) is NOT declared here — its only authority is
+CapabilityProfile (visibility + #5841's dispatch_tool call-time check),
+never a per-actor decl list. A ``permissions.tool:`` reyn.yaml key is
+unrecognized (see PERMISSIONS_CONFIG_KEY_REGISTRY below).
 
 Approval choices (shown once at startup before execution starts):
   [y]es                        — allow for this run only
@@ -236,10 +240,18 @@ def _in_default_read_zone(path_str: str, base: "Path | None" = None) -> bool:
 
 @dataclass
 class PermissionDecl:
-    """Permissions declared for an actor (via reyn.yaml `permissions:` or programmatically)."""
+    """Permissions declared for an actor (via reyn.yaml `permissions:` or programmatically).
+
+    #5848: no `tool` field here — the TOOL axis's only declared authority
+    is `CapabilityProfile` (`ContextualLayer`, visibility + #5841's
+    `dispatch_tool` call-time check), never this per-actor decl. A prior
+    `tool: list[str]` field had zero production populators and its
+    empty-list-means-deny-all semantics were the OPPOSITE of
+    ContextualLayer's own "unset = unconstrained" reading of the same
+    axis — see `effective.py`'s `CapabilityAxis.TOOL` for the full
+    architect ruling."""
 
     mcp: list[str] = field(default_factory=list)
-    tool: list[str] = field(default_factory=list)
     # Read-class ops outside CWD. Each entry: {"path": str, "scope": "just_path" | "recursive"}
     file_read: list[dict] = field(default_factory=list)
     # Write-class ops (write, edit, delete) outside the default zone.
@@ -382,7 +394,7 @@ class PermissionDecl:
         # load — NEVER silently downgraded to safe (a silent downgrade would run
         # code the author believed was unsandboxed → confusing failures). Python
         # steps are now ALWAYS sandboxed (AST-allowlisted + restricted builtins).
-        python_entries = d.get("python")
+        python_entries = d.get(KEY_PYTHON)
         if isinstance(python_entries, list):
             for entry in python_entries:
                 if isinstance(entry, dict) and entry.get("mode") == "unsafe":
@@ -412,23 +424,22 @@ class PermissionDecl:
                     stacklevel=3,
                 )
         return cls(
-            mcp=_normalize_paths(d.get("mcp")),
-            tool=_normalize_paths(d.get("tool")),
-            file_read=cls._parse_path_list(d.get("file.read")),
-            file_write=cls._parse_path_list(d.get("file.write")),
+            mcp=_normalize_paths(d.get(KEY_MCP)),
+            file_read=cls._parse_path_list(d.get(KEY_FILE_READ)),
+            file_write=cls._parse_path_list(d.get(KEY_FILE_WRITE)),
             # "python" key grants no runtime authority — PYTHON axis removed
             # (zero live enforcement). It is only inspected above to fail-closed
             # on a removed ``mode: unsafe`` declaration.
-            http_get=cls._parse_host_list(d.get("http.get")),
-            secret_write=cls._parse_secret_key_list(d.get("secret.write")),
-            env_expand=cls._parse_secret_key_list(d.get("env.expand")),
+            http_get=cls._parse_host_list(d.get(KEY_HTTP_GET)),
+            secret_write=cls._parse_secret_key_list(d.get(KEY_SECRET_WRITE)),
+            env_expand=cls._parse_secret_key_list(d.get(KEY_ENV_EXPAND)),
             # #3901 PR-B ①: compat default (True) when the key is omitted —
-            # ``d.get("subprocess", True)`` mirrors omitted-key-keeps-the-
+            # ``d.get(KEY_SUBPROCESS, True)`` mirrors omitted-key-keeps-the-
             # default everywhere else in this method (mcp/tool/etc. default
             # to their field's own empty-list default via _normalize_paths
             # on None). An explicit ``subprocess: false`` denies.
-            subprocess=bool(d.get("subprocess", True)),
-            env=cls._parse_secret_key_list(d.get("env")),
+            subprocess=bool(d.get(KEY_SUBPROCESS, True)),
+            env=cls._parse_secret_key_list(d.get(KEY_ENV)),
         )
 
 
@@ -457,6 +468,149 @@ def env_expand_allowed(decl: PermissionDecl, name: str) -> bool:
 
     return EffectivePermission([AgentLayer(decl)]).allows(
         CapabilityAxis.ENV_EXPAND, name,
+    )
+
+
+#: #5849③ (architect ruling — "これが本件の本体"): the registry of valid
+#: ``permissions:`` top-level keys, derived from the REAL consumers below
+#: rather than hand-maintained. Today it has exactly ONE reader:
+#: ``config/infra.py``'s ``config_schema`` registration — the #4174 T0
+#: unified unknown-key WARN mechanism, for reyn.yaml's own ``permissions:``
+#: block (this module does not import ``config_schema`` itself, preserving
+#: the leaf's dependency direction — see ``register_freeform_leaf_
+#: validator``'s own docstring).
+#:
+#: ``PermissionDecl.from_dict`` (this class, below) is deliberately NOT a
+#: second reader of this registry, by design, not by gap: its one
+#: production caller (``session.py``'s ``:skill`` invocation path) hands
+#: it ``PermissionResolver._config`` — the SAME ``permissions:`` dict
+#: ``config_schema`` already ran the unknown-key check against at config
+#: LOAD time. Consulting this registry again inside ``from_dict`` would
+#: re-report the identical stray key a second time on every read — the
+#: exact double-report the legacy-bool-axis keys are folded into this
+#: registry to AVOID (see their own comment below). ``from_dict``
+#: continues to silently drop a key it doesn't parse (never a warning of
+#: its own) because the dict it reads has already been checked once, not
+#: because nobody looked. If a permissions dict from a source OTHER than
+#: reyn.yaml's own OUT-set config load ever exists (never checked once
+#: upstream), THAT call site is where ``unknown_permissions_config_keys``
+#: gets called a second time — not here.
+#:
+#: Root cause this closes (#5849): ``config_schema.py`` previously
+#: treated ``permissions:`` as an OPAQUE free-form leaf (any sub-key
+#: accepted silently) — not specific to ``exec``, structural to the
+#: whole block. A key present here with no real reader would be exactly
+#: the "declared, never reached" class #5818/#5841/#5848 already closed;
+#: this registry is what keeps that claim checkable instead of asserted.
+#:
+#: ``EXACT`` keys match a ``permissions:`` child verbatim.
+#: ``PREFIX`` keys match anything STARTING WITH the prefix (a literal
+#: ``.`` boundary) — the composite flat-string keys ``_is_config_approved``/
+#: ``_is_config_denied`` build via f-string (e.g. ``f"http.get.{host}"``,
+#: below) are the ONLY shape their own single-dot ``top.sub`` fallback
+#: split does NOT mis-resolve for a multi-dot literal key; the exact-match
+#: branch (checked FIRST, before that fallback) is what actually reads
+#: them. A nested ``http.get: {host: allow}`` shape does NOT reach the
+#: same pre-approval check correctly (the fallback's dot-split reads
+#: ``top="http"``, not ``"http.get"``) — a pre-existing, narrower issue
+#: than #5849's own scope, not fixed here; ``http.get`` itself stays a
+#: valid EXACT key regardless, since ``from_dict`` genuinely reads it for
+#: the DECLARED-authority grant list (``d.http_get``), a separate
+#: mechanism from pre-approval.
+#:
+#: ``tool`` is deliberately ABSENT (#5848: its only would-be consumer,
+#: ``require_tool``'s confirm half via ``_approve(f"tool.{tool}", ...)``,
+#: has ZERO production callers per #5841's own investigation — nothing
+#: currently reads a ``permissions.tool:`` key in any shape). A future PR
+#: that gives ``require_tool`` real production callers (FP-0069) adds
+#: ``tool``/``tool.`` back here alongside that wiring.
+#:
+#: #5849③ follow-up (architect co-vet on #5862, 🔴-2): a hand-copied
+#: frozenset of string LITERALS would be a TRANSCRIPTION, not a
+#: derivation — the exact "declared, never reached" shape this registry
+#: exists to close, just moved one level up (a consumer's own literal
+#: could be renamed/removed with nobody updating this copy). Every key
+#: below is instead built from the SAME named constant every real
+#: consumer call site (``from_dict``, ``_is_config_approved``/
+#: ``_is_config_denied``) also imports and uses — see each constant's own
+#: use below; a `git grep` for the bare string literal (e.g. ``"file.write"``)
+#: outside this constant's own definition should find zero consumer call
+#: sites remaining.
+KEY_MCP = "mcp"
+KEY_FILE_READ = "file.read"
+KEY_FILE_WRITE = "file.write"
+KEY_HTTP_GET = "http.get"
+KEY_SECRET_WRITE = "secret.write"
+KEY_ENV_EXPAND = "env.expand"
+KEY_SUBPROCESS = "subprocess"
+KEY_ENV = "env"
+#: Grants no runtime authority (PYTHON axis removed) but from_dict still
+#: INSPECTS it — fail-closed on a stray `mode: unsafe` (see from_dict's
+#: own comment at that key).
+KEY_PYTHON = "python"
+#: Pre-approval-only keys (`_is_config_approved`/`_is_config_denied`
+#: literal args, below) — no from_dict counterpart, consumed directly at
+#: the op gate (`require_web_fetch`/`require_media_load`).
+KEY_WEB_FETCH = "web.fetch"
+KEY_MEDIA_OVERSIZE = "media.oversize"
+#: The composite flat-string pre-approval key prefix (see the docstring
+#: above for why the fallback split cannot resolve a nested
+#: ``http.get: {host: ...}`` shape, so this flat form is the one that
+#: actually works).
+HTTP_GET_HOST_PREFIX = "http.get."
+#: Same flat-composite shape as ``HTTP_GET_HOST_PREFIX`` above, for the
+#: PYTHON axis's own pre-approval mode key (``python.safe: allow`` /
+#: ``python.unsafe: allow``) — ``reyn init``'s own generated `reyn.yaml`
+#: template ships `python.safe: allow` verbatim (`interfaces/cli/
+#: templates.py`), so this prefix must be recognized regardless of
+#: whether a live reader currently exists. **It does not, today**:
+#: `_approve`'s own docstring cites `"python.safe"` as the worked example
+#: of its composite-key ("<actor>/python.safe/./mod.py:fn") fallback, but
+#: no `require_python_step` (or any other caller) in `src/` actually
+#: builds such a key — the PYTHON axis's runtime gate was fully removed
+#: (see `KEY_PYTHON`'s own comment above). Same "declared, never reached"
+#: shape as `exec: allow` (#5849①) and `PermissionDecl.tool` (#5848) —
+#: disclosed here, not silently fixed by deleting the template line;
+#: that is a judgment call for whoever owns `reyn init`'s own template,
+#: not this registry's job to make unilaterally.
+PYTHON_MODE_PREFIX = "python."
+
+PERMISSIONS_EXACT_CONFIG_KEYS: frozenset[str] = frozenset({
+    KEY_MCP, KEY_FILE_READ, KEY_FILE_WRITE, KEY_HTTP_GET, KEY_SECRET_WRITE,
+    KEY_ENV_EXPAND, KEY_SUBPROCESS, KEY_ENV, KEY_PYTHON,
+    KEY_WEB_FETCH, KEY_MEDIA_OVERSIZE,
+}) | frozenset(
+    # Legacy bool axes (#571 collapse arc Phase 5) — recognized here so
+    # their OWN DeprecationWarning fires (from_dict's own loop over this
+    # SAME class attribute, below) instead of ALSO being double-reported
+    # as unknown. Reads PermissionDecl's own tuple directly rather than
+    # copying its 4 strings — the exact same derivation discipline this
+    # whole registry exists to apply everywhere else.
+    PermissionDecl._LEGACY_BOOL_AXIS_KEYS
+)
+PERMISSIONS_PREFIX_CONFIG_KEYS: frozenset[str] = frozenset({
+    HTTP_GET_HOST_PREFIX, PYTHON_MODE_PREFIX,
+})
+
+
+def unknown_permissions_config_keys(raw: "dict | None") -> frozenset[str]:
+    """Return the subset of *raw*'s (a ``permissions:`` dict) keys that
+    match neither :data:`PERMISSIONS_EXACT_CONFIG_KEYS` nor a
+    :data:`PERMISSIONS_PREFIX_CONFIG_KEYS` prefix.
+
+    The one detection primitive both the #4174 T0 unified unknown-key WARN
+    mechanism (registered onto ``config_schema`` from
+    ``reyn.config.infra`` — this module does not import ``config_schema``
+    itself, preserving the leaf's dependency direction) and any future
+    direct caller read from — never two independently-maintained "is this
+    key known" checks (mirrors ``security.sandbox.policy``'s own
+    ``unknown_sandbox_policy_config_keys`` precedent)."""
+    if not isinstance(raw, dict):
+        return frozenset()
+    return frozenset(
+        key for key in raw
+        if key not in PERMISSIONS_EXACT_CONFIG_KEYS
+        and not any(key.startswith(p) for p in PERMISSIONS_PREFIX_CONFIG_KEYS)
     )
 
 
@@ -1127,6 +1281,12 @@ class PermissionResolver:
         # a kind-level blanket grant in config (e.g. "python.safe: allow").
         # Honor the same config blanket-grant here at the
         # runtime check so config and runtime stay consistent.
+        # #5849③ disclosure: this worked example is itself unreachable
+        # today — no caller in src/ builds a "<actor>/python.<mode>/..."
+        # key (the PYTHON axis's runtime gate was fully removed; see
+        # PERMISSIONS_EXACT_CONFIG_KEYS' own PYTHON_MODE_PREFIX comment).
+        # Kept as documentation of the SPLIT MECHANISM this loop
+        # implements, not a claim that this specific example fires.
         for part in key.split("/"):
             if "." in part and self._is_config_approved(part):
                 return True
@@ -1710,12 +1870,12 @@ class PermissionResolver:
         safe.http subprocess) must use specific declarations only.
         """
         # Config-tier deny always wins.
-        if self._is_config_denied("web.fetch"):
+        if self._is_config_denied(KEY_WEB_FETCH):
             raise PermissionError(
                 f"HTTP access to host {host!r} denied by config "
                 f"(web.fetch: deny)."
             )
-        if self._is_config_denied(f"http.get.{host}"):
+        if self._is_config_denied(f"{HTTP_GET_HOST_PREFIX}{host}"):
             raise PermissionError(
                 f"HTTP access to host {host!r} denied by config "
                 f"(http.get.{host}: deny)."
@@ -1747,9 +1907,9 @@ class PermissionResolver:
 
         # Config-tier allow short-circuits everything (= operator's
         # blanket pre-approval — present today as ``web.fetch: allow``).
-        if self._is_config_approved("web.fetch"):
+        if self._is_config_approved(KEY_WEB_FETCH):
             return
-        if self._is_config_approved(f"http.get.{host}"):
+        if self._is_config_approved(f"{HTTP_GET_HOST_PREFIX}{host}"):
             return
 
         # Persisted per-host approval (from a prior interactive
@@ -1760,7 +1920,7 @@ class PermissionResolver:
             return
         # Legacy session/saved ``web.fetch`` approval still authorises
         # every host while the deprecation window is open.
-        if self._saved.get("web.fetch") or self._session.get("web.fetch"):
+        if self._saved.get(KEY_WEB_FETCH) or self._session.get(KEY_WEB_FETCH):
             return
 
         # #1199 S3.1b-2c-2: the host-MEMBERSHIP decision (specific OR wildcard)
@@ -1832,7 +1992,7 @@ class PermissionResolver:
                 f"interactive bus available for legacy compat prompt."
             )
         approved = await self._approve(
-            "web.fetch",  # legacy key — shared across all hosts during the compat window
+            KEY_WEB_FETCH,  # legacy key — shared across all hosts during the compat window
             f"web fetch from host: {host!r} (legacy compat)",
             bus,
             user_prompt=f"Allow fetching from {host!r}?",
@@ -2131,6 +2291,21 @@ class PermissionResolver:
         self, decl: PermissionDecl, tool: str, bus: RequestBus,
         *, contextual: "object | None" = None,
     ) -> None:
+        """#5848 disposition (architect ruling): kept, not deleted — its
+        RESTRICT half is superseded by #5841's ``dispatch_tool`` call-time
+        check (the real, wired seam every caller funnels through; this
+        method itself has zero production callers, per #5841's own
+        investigation), and its CONFIRM half ("Allow tool X?", below)
+        awaits FP-0069's own posture-dial decision on whether/how a
+        per-tool ``ask`` prompt gets wired at all. Whichever way FP-0069
+        lands decides whether this method is finished wiring or retired.
+
+        Consequence of #5848 (``AgentLayer`` no longer constrains TOOL —
+        the static ``decl.tool`` field is gone): the restrict branch below
+        is presently a no-op except for ``contextual`` — ``static_ok`` is
+        now unconditionally True, so the "not declared in actor
+        permissions" raise is unreachable until/unless a future PR gives
+        this axis a real declared-authority source again."""
         # #1199 S3.1b-2c: the static tool authority (decl.tool) flows through the
         # unified model (TOOL axis). Byte-identical; the _approve prompt remains.
         #
@@ -2169,10 +2344,12 @@ class PermissionResolver:
                     + " It IS declared in actor permissions — the static authority "
                     "grants it; only the narrowing above removes it."
                 )
-            raise PermissionError(
-                f"tool {tool!r} not declared in actor permissions. "
-                f"Add `permissions:\\n  tool: [{tool}]` to reyn.yaml permissions."
-            )
+            # #5848: unreachable today (see this method's own docstring) —
+            # kept as the correct behaviour IF a future PR restores a real
+            # declared-authority source for this axis. The stale
+            # `permissions: tool: [...]` advice is deliberately NOT
+            # repeated here — that config shape has no reader any more.
+            raise PermissionError(f"tool {tool!r} not declared in actor permissions.")
         if not await self._approve(
             f"tool.{tool}",
             f"tool: {tool!r}",
@@ -2229,7 +2406,7 @@ class PermissionResolver:
             f"Limit is {limit_mb:.1f}MB."
         )
         if not await self._approve(
-            "media.oversize",
+            KEY_MEDIA_OVERSIZE,
             description,
             bus,
             user_prompt="Load this oversize media into context?",
@@ -2256,12 +2433,12 @@ class PermissionResolver:
         ``web.fetch: allow`` existing config entries continue to work unchanged —
         _is_config_approved() handles them at Layer 1b.
         """
-        if self._is_config_denied("web.fetch"):
+        if self._is_config_denied(KEY_WEB_FETCH):
             raise PermissionError(
                 "web fetch denied by config (web.fetch: deny)"
             )
         if not await self._approve(
-            "web.fetch",
+            KEY_WEB_FETCH,
             f"web fetch: {url}",
             bus,
             user_prompt="Allow fetching this URL?",

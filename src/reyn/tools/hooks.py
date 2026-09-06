@@ -22,9 +22,13 @@ existing hook safeguards:
 - **validate-before-apply** (S2b) rejects a malformed reload; **boot-resilience**
   (S2b) degrades a malformed persisted layer at the next boot. Plus write-time
   validation here (a bad hook → an op error, not a silent bad write).
-- **Permission** is the TOOL axis: the calling agent must list ``hooks_add`` in
-  ``permissions.tool`` (``require_tool``) and the #2074 capability profile
-  (``tool_deny``) can deny self-reload. The damage is bounded — F is sandboxed,
+- **Permission** is the TOOL axis: catalog visibility and #5841's
+  ``dispatch_tool`` call-time check are the actual live gate (#2074
+  capability profile / ``ContextualLayer``, ``tool_deny`` can deny
+  self-reload) — corrected from an earlier version of this comment that
+  named ``permissions.tool``/``require_tool``, which #5848 confirmed has
+  zero production callers and (as of #5848) no declared-authority
+  backing at all. The damage is bounded — F is sandboxed,
   C is benign. (Pre-#5561 E was also bounded by the ``max_hook_driven_turns``
   loop valve; that valve is retired — see ``CostConfig``/#5516 folding/
   ``spillability_max_chars`` for the current bounding mechanisms.)
@@ -171,10 +175,13 @@ def _hooks_list(data: dict) -> list:
 async def _gate(ctx: ToolContext) -> None:
     """Permission gate: ``require_file_write`` against the session-local write target
     (#4215① — :func:`_hooks_yaml_path`: this session's own
-    ``<session_state_dir>/hooks.yaml``). TOOL-level authorisation
-    already happened at agent startup (``require_tool`` against the agent's
-    ``permissions.tool``) + the #2074 capability profile. No-op in unit-test contexts
-    (``ctx.permission_resolver`` is None)."""
+    ``<session_state_dir>/hooks.yaml``). TOOL-level authorisation is
+    catalog visibility + the #2074 capability profile (corrected #5848 —
+    an earlier version of this comment named ``require_tool``/
+    ``permissions.tool``, which has zero production callers and, as of
+    #5848, no declared-authority backing at all; see #5841's
+    ``dispatch_tool`` for the real call-time check). No-op in unit-test
+    contexts (``ctx.permission_resolver`` is None)."""
     from reyn.security.permissions.permissions import PermissionDecl
     if ctx.permission_resolver is None:
         return

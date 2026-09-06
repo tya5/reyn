@@ -56,6 +56,13 @@ which is `reyn.yaml`'s `permissions:` block, never anything parsed out of a
 with a `permissions:` key in its frontmatter, that key is inert — nothing
 reads it.
 
+There is no `tool` declaration key either — #5848 deleted `PermissionDecl.tool`
+(zero production populators). The named-tool axis's only authority is
+`CapabilityProfile` (catalog visibility + `dispatch_tool`'s call-time check —
+see [the permission model](../../concepts/runtime/permission-model.md)'s
+`tool` axis row). A `permissions.tool:` key in `reyn.yaml` now surfaces as an
+unrecognized-key warning at config-load time (#5849③'s registry).
+
 ## Web ops
 
 `web_search` is **Tier 1**: passes through by default without any declaration. Restrict project-wide via `permissions.web.search: deny`.
