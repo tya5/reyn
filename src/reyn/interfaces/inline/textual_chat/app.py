@@ -2353,17 +2353,96 @@ class TextualChatApp(App):
         different questions: the status line for "notice this now", and the
         log for "what happened, read later" — the status line is transient,
         so it alone could not justify a watchdog that is always on.
+
+        **#5870 stage 1 (owner report: "unresponsive N.Ns" firing often,
+        sometimes idle)**: lateness alone says the loop stalled, never WHAT
+        stalled it — #3539's own original investigation stalled out on
+        exactly that gap ("the condition is unidentified"). This tick loop
+        now doubles as a dead-man's switch on ``reyn.runtime.stall_trace``'s
+        one process-wide ``faulthandler`` timer (re-armed every tick,
+        ``repeat=False`` — see that module's own updated docstring for why
+        this shape, not the turn-arm's ``repeat=True``): if a tick fails to
+        land within :data:`_TRIPWIRE_MS`, the PENDING timer fires on its own
+        OS thread — independent of this asyncio loop, so it fires even when
+        the loop itself is the thing blocked — and dumps the main thread's
+        stack to ``reyn.log`` mid-stall, not after. This is armed
+        UNCONDITIONALLY (no ``REYN_STALL_TRACE`` opt-in), matching the
+        tripwire's own "arrives unannounced" reasoning above; see
+        ``stall_trace.py``'s own docstring for what this costs the OTHER
+        (turn-scoped) caller of the same global timer once this worker has
+        started.
+
+        **CI incident, same-day follow-up (#5877 — architect ruling,
+        real-machine measurement)**: the FIRST version of this re-armed
+        against ``stall_trace``'s own default destination lookup on
+        EVERY tick. That lookup (or a naive "resolve a stable stream
+        once" fix this method's own history briefly tried) is unsafe for
+        a caller that stays armed across MANY of its own calls:
+        ``faulthandler.dump_traceback_later`` captures the ``file``
+        argument's underlying FILE-DESCRIPTOR NUMBER at arm time, not a
+        live object reference (reproduced directly, architect finding —
+        see :func:`~reyn.runtime.stall_trace.find_file_handler_path`'s
+        own docstring for the exact repro). Under pytest, per-test
+        fd-capture opens and closes tmpfiles constantly, freeing and
+        reusing fd numbers; a pending timer armed against a stream
+        object whose fd number gets reused for something ELSE (an
+        ``execnet`` socket, in the CI hang this explains) silently
+        redirects its dump there instead — hanging the READER on the
+        other end. Not pytest-specific either: a log-rotation reopen
+        (#5873) reuses a fd number the exact same way.
+
+        Fixed by opening this worker's OWN fd, once, against the root
+        logger's ``FileHandler`` path (never borrowing the handler's own
+        ``stream``) and holding it for the worker's ENTIRE lifetime — a
+        self-opened fd is immune to anything else's later open/close
+        churn on that same number. **No ``FileHandler`` installed (every
+        TUI test in this repo constructs ``TextualChatApp`` directly,
+        with none) means this dead-man's switch never arms at all** —
+        deliberately, not a fail-open: a dump with no genuinely stable
+        destination was never a safe thing to attempt, in a test or
+        anywhere else, so skipping it there costs nothing a real
+        incident depended on.
         """
         import asyncio  # noqa: PLC0415
+        import os  # noqa: PLC0415
         import time  # noqa: PLC0415
         from collections import deque  # noqa: PLC0415
 
+        from reyn.runtime.stall_trace import arm as _arm_stall_trace
+        from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
+        from reyn.runtime.stall_trace import (
+            find_file_handler_path as _find_file_handler_path,
+        )
+
         from .loop_probe import (  # noqa: PLC0415
             _TICK_SECONDS,
+            _TRIPWIRE_MS,
             stall_banner,
             stall_log_line,
             stall_recovered_log_line,
         )
+
+        # #5870 stage 1: the SAME threshold the tripwire itself reports on,
+        # in seconds rather than ms — one deadline, read by both this
+        # dead-man's switch and LoopTripwire.observe()'s own comparison, so
+        # "did the loop stall" and "should a stack have been dumped for it"
+        # can never disagree about WHERE the line is.
+        _STACK_DUMP_SECONDS = _TRIPWIRE_MS / 1000
+        # #5877: this worker's OWN fd, opened once and held for its whole
+        # lifetime — see this method's own CI-incident docstring paragraph
+        # above for why borrowing anything else's fd/stream is unsafe here.
+        # `None` (no FileHandler installed) means this dead-man's switch
+        # never arms at all for this worker's lifetime.
+        _dump_fd: "int | None" = None
+        _log_path = _find_file_handler_path()
+        if _log_path is not None:
+            try:
+                _dump_fd = os.open(_log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+            except OSError:
+                logger.exception(
+                    "textual chat: could not open the tripwire's own stall-dump fd"
+                )
+                _dump_fd = None
 
         # #4761 ② (lead-coder review): a stall that never recovers — #4761's
         # own report, the operator killed the process rather than waiting —
@@ -2392,73 +2471,120 @@ class TextualChatApp(App):
         pump_history: "deque[tuple[float, int, int]]" = deque()
 
         last = time.perf_counter()
-        while True:
-            await asyncio.sleep(_TICK_SECONDS)
-            now = time.perf_counter()
-            lateness_ms = (now - last - _TICK_SECONDS) * 1000
-            last = now
-            pump_history.append((now, self._pump_ticks, self._keys_received))
-            while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
-                pump_history.popleft()
-            # #4761 (architect's outstanding point, unimplemented when
-            # ①②③ landed): whether a turn was running THE INSTANT this tick
-            # was observed. ``ActivityRow.state`` is the app's existing
-            # "is a turn running" surface (already read the same way at the
-            # compact-caps call site, ``turn_active=self._activity.state is
-            # not None``) — reused here rather than adding a second signal
-            # for the same question. ``getattr`` defensively: this loop is
-            # scheduled in ``on_mount``, well after ``self._activity`` is
-            # created in ``compose()``, but matches the defensive idiom this
-            # module already uses for lazily-created widgets read from a
-            # long-lived background loop.
-            activity = getattr(self, "_activity", None)
-            turn_active = None if activity is None else activity.state is not None
-            fired = self._loop_tripwire.observe(
-                lateness_ms, pump_ticks=self._pump_ticks, turn_active=turn_active,
-            )
-            if fired is not None:
-                pump_delta = (
-                    self._pump_ticks - pump_history[0][1] if pump_history else 0
+        # #5870 stage 1: arm the dead-man's switch for the FIRST wait too —
+        # otherwise a stall on the very first tick (before the loop below
+        # ever re-arms it) would go undumped, the one case a `while True:
+        # re-arm at the top` shape would silently miss. A no-op when
+        # `_dump_fd` is `None` (#5877 — see above).
+        if _dump_fd is not None:
+            _arm_stall_trace(_STACK_DUMP_SECONDS, file=_dump_fd, repeat=False)
+        try:
+            while True:
+                await asyncio.sleep(_TICK_SECONDS)
+                now = time.perf_counter()
+                lateness_ms = (now - last - _TICK_SECONDS) * 1000
+                last = now
+                stack_dumped: "bool | None" = None
+                if _dump_fd is not None:
+                    # Re-arm for the NEXT wait immediately — cancels the
+                    # pending one-shot from the wait that just ended (whether
+                    # or not it already fired; faulthandler.cancel_dump_
+                    # traceback_later is a no-op either way, stall_trace.
+                    # disarm's own docstring) and re-points it :data:
+                    # `_STACK_DUMP_SECONDS` into the future, against the SAME
+                    # self-opened fd every time (#5877 — never re-resolved,
+                    # see this method's own docstring for why). A tick that
+                    # lands on time always beats this deadline, so a healthy
+                    # loop never triggers a dump; one that doesn't land in
+                    # time leaves the PENDING timer to fire on its own,
+                    # mid-stall, on faulthandler's own OS thread.
+                    _arm_stall_trace(_STACK_DUMP_SECONDS, file=_dump_fd, repeat=False)
+                    # Best-effort proxy for "did the dump above just fire" —
+                    # see LoopTripwire.observe's own docstring for why this
+                    # is the same comparison it already makes internally,
+                    # not a separate readback of faulthandler's own
+                    # (nonexistent) fired-or-not state.
+                    stack_dumped = lateness_ms > _TRIPWIRE_MS
+                pump_history.append((now, self._pump_ticks, self._keys_received))
+                while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
+                    pump_history.popleft()
+                # #4761 (architect's outstanding point, unimplemented when
+                # ①②③ landed): whether a turn was running THE INSTANT this tick
+                # was observed. ``ActivityRow.state`` is the app's existing
+                # "is a turn running" surface (already read the same way at the
+                # compact-caps call site, ``turn_active=self._activity.state is
+                # not None``) — reused here rather than adding a second signal
+                # for the same question. ``getattr`` defensively: this loop is
+                # scheduled in ``on_mount``, well after ``self._activity`` is
+                # created in ``compose()``, but matches the defensive idiom this
+                # module already uses for lazily-created widgets read from a
+                # long-lived background loop.
+                activity = getattr(self, "_activity", None)
+                turn_active = None if activity is None else activity.state is not None
+                fired = self._loop_tripwire.observe(
+                    lateness_ms, pump_ticks=self._pump_ticks, turn_active=turn_active,
+                    stack_dumped=stack_dumped,
                 )
-                keys_delta = (
-                    self._keys_received - pump_history[0][2] if pump_history else 0
-                )
-                logger.warning(
-                    "textual chat: %s",
-                    stall_log_line(
-                        fired,
-                        pump_ticks=self._pump_ticks,
-                        pump_delta=pump_delta,
-                        pump_window_s=_PUMP_WINDOW_S,
-                        keys_received=self._keys_received,
-                        keys_delta=keys_delta,
-                        turn_active=turn_active,
-                    ),
-                )
+                if fired is not None:
+                    pump_delta = (
+                        self._pump_ticks - pump_history[0][1] if pump_history else 0
+                    )
+                    keys_delta = (
+                        self._keys_received - pump_history[0][2] if pump_history else 0
+                    )
+                    logger.warning(
+                        "textual chat: %s",
+                        stall_log_line(
+                            fired,
+                            pump_ticks=self._pump_ticks,
+                            pump_delta=pump_delta,
+                            pump_window_s=_PUMP_WINDOW_S,
+                            keys_received=self._keys_received,
+                            keys_delta=keys_delta,
+                            turn_active=turn_active,
+                        ),
+                    )
+                    try:
+                        self.notify(stall_banner(fired), severity="warning")
+                    except Exception:
+                        logger.exception("textual chat: loop tripwire notice failed")
+                elif self._loop_tripwire.consume_recovered():
+                    # #4797 follow-up (architect finding): default-visible, no
+                    # REYN_PROF_DUMP required — everything else this tripwire
+                    # writes goes through write_record, a no-op on the shipped
+                    # default. logger.warning, matching the stall notice above
+                    # (revised from an initial logger.info ruling, self-caught
+                    # and corrected before landing: the interactive CUI's own
+                    # _setup_interactive_logging sets the ROOT logger's level to
+                    # WARNING, so an INFO call from a logger with no override of
+                    # its own is silently dropped in the real interactive path —
+                    # not "quieter", genuinely absent. Raising just this logger's
+                    # level was rejected too: it would make "the operator's
+                    # chosen floor" mean two different things depending which
+                    # module emitted the record. Stall and recovery are the
+                    # start and end of ONE episode; one line per episode at the
+                    # same severity is not a second alarm).
+                    logger.warning(
+                        "textual chat: %s",
+                        stall_recovered_log_line(pump_ticks=self._pump_ticks),
+                    )
+        finally:
+            # #5870 stage 1: this worker only ever stops via cancellation
+            # (app shutdown) — clean up the one process-wide timer rather
+            # than leaving a dangling pending dump behind. Safe even though
+            # this may already be disarmed or re-pointed by another caller
+            # by the time this runs (stall_trace.disarm's own docstring:
+            # a no-op when nothing is armed). #5877: disarm BEFORE closing
+            # this worker's own fd — the reverse order would let a timer
+            # still theoretically pending fire against an already-closed
+            # (and possibly already-reused) fd number, the exact hazard
+            # this whole fix exists to avoid.
+            if _dump_fd is not None:
+                _disarm_stall_trace()
                 try:
-                    self.notify(stall_banner(fired), severity="warning")
-                except Exception:
-                    logger.exception("textual chat: loop tripwire notice failed")
-            elif self._loop_tripwire.consume_recovered():
-                # #4797 follow-up (architect finding): default-visible, no
-                # REYN_PROF_DUMP required — everything else this tripwire
-                # writes goes through write_record, a no-op on the shipped
-                # default. logger.warning, matching the stall notice above
-                # (revised from an initial logger.info ruling, self-caught
-                # and corrected before landing: the interactive CUI's own
-                # _setup_interactive_logging sets the ROOT logger's level to
-                # WARNING, so an INFO call from a logger with no override of
-                # its own is silently dropped in the real interactive path —
-                # not "quieter", genuinely absent. Raising just this logger's
-                # level was rejected too: it would make "the operator's
-                # chosen floor" mean two different things depending which
-                # module emitted the record. Stall and recovery are the
-                # start and end of ONE episode; one line per episode at the
-                # same severity is not a second alarm).
-                logger.warning(
-                    "textual chat: %s",
-                    stall_recovered_log_line(pump_ticks=self._pump_ticks),
-                )
+                    os.close(_dump_fd)
+                except OSError:
+                    pass
 
     def on_stray_output_captured(self, message: "StrayOutputCaptured") -> None:
         """#5168: a stray ``stdout``/``stderr`` write was captured (a

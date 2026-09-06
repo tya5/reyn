@@ -26,11 +26,46 @@ you touch either call site.
 """
 from __future__ import annotations
 
+import logging
+import os
+import sys
+from pathlib import Path
+
 import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.runtime import stall_trace
 from tests._support.textual_chat_test_helpers import QueueTransport
+
+
+@pytest.fixture
+def installed_file_handler(tmp_path: Path):
+    """A REAL ``logging.FileHandler`` installed on the root logger, torn
+    down unconditionally — #5877 (architect ruling): the tripwire's own
+    dead-man's switch only arms when one of these exists (never a
+    ``sys.stderr`` fallback). Root-logger mutation is global process
+    state, so this fixture is the one place that installs/removes it,
+    rather than each test hand-rolling its own (a leaked handler would
+    silently arm every OTHER test's own tripwire worker too).
+
+    Path is exactly ``.reyn/logs/reyn.log`` under ``tmp_path`` — the SAME
+    shape ``chat.py``'s own ``_setup_interactive_logging`` uses, and the
+    ONE shape ``stall_trace.find_file_handler_path`` actually matches
+    (measured directly: pytest's OWN logging plugin unconditionally
+    installs its own ``logging.FileHandler`` subclass pointed at
+    ``/dev/null`` on the root logger — a bare ``tmp_path / "reyn.log"``
+    here would sit BEHIND that pytest-owned handler in the lookup order
+    and never be the one this fixture's own callers actually want)."""
+    log_dir = tmp_path / ".reyn" / "logs"
+    log_dir.mkdir(parents=True)
+    log_path = log_dir / "reyn.log"
+    handler = logging.FileHandler(str(log_path))
+    logging.getLogger().addHandler(handler)
+    try:
+        yield log_path
+    finally:
+        logging.getLogger().removeHandler(handler)
+        handler.close()
 
 
 @pytest.mark.asyncio
@@ -93,7 +128,9 @@ async def test_stall_trace_not_touched_when_env_unset(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stall_trace_disarmed_at_first_frame_via_on_mount(monkeypatch) -> None:
+async def test_stall_trace_disarmed_at_first_frame_via_on_mount(
+    monkeypatch, installed_file_handler: Path,
+) -> None:
     """Tier 2: the REAL boundary — a real, headless TextualChatApp
     (``run_test()``, matching ``test_loop_probe_3539.py``'s own
     technique) reaching ``on_mount()``'s ``mark_first_frame()`` call
@@ -101,7 +138,22 @@ async def test_stall_trace_disarmed_at_first_frame_via_on_mount(monkeypatch) -> 
     (pinned separately above) — this test never goes through
     run_textual_chat at all, since the site under test here
     (``on_mount``) is reached the same way regardless of which function
-    constructed the app."""
+    constructed the app.
+
+    **#5870 stage 1 / #5877**: a SECOND, later ``disarm()`` is now
+    expected too — ``_watch_loop_responsiveness``'s own worker (started
+    right after this first-frame disarm, see that method's own
+    docstring) holds the SAME global timer continuously re-armed for as
+    long as the app runs, and disarms it in its own ``finally`` when the
+    app shuts down and the worker is cancelled (the assertion below is
+    deliberately OUTSIDE the ``async with`` block, so it reads state
+    AFTER that shutdown has already happened). Both are real, distinct
+    cleanup events now — the first-frame handoff this test is actually
+    about, and the tripwire's own worker-exit cleanup — not a regression
+    of the first. Needs ``installed_file_handler``: the worker's own
+    dead-man's switch only arms (and so only later disarms) when a real
+    reyn.log-shaped destination exists (#5877 architect ruling) — without
+    it this test's own SECOND-disarm premise would not hold at all."""
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
 
     calls: list[str] = []
@@ -110,9 +162,155 @@ async def test_stall_trace_disarmed_at_first_frame_via_on_mount(monkeypatch) -> 
     app = TextualChatApp(transport=QueueTransport())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        assert calls == ["disarm"], (
+            "on_mount()'s own mark_first_frame() call must disarm the trace "
+            "directly, before the app has even shut down — this is the "
+            "real, intended boundary, not just the finally-block safety net"
+        )
 
-    assert calls == ["disarm"], (
-        "on_mount()'s own mark_first_frame() call must disarm the trace "
-        "directly — this is the real, intended boundary, not just the "
-        "finally-block safety net"
+    assert calls == ["disarm", "disarm"], (
+        "expected exactly ONE further disarm() after app shutdown — the "
+        "tripwire worker's own finally cleanup (#5870 stage 1) — not zero "
+        f"(a dangling timer) or more than one: {calls!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
+    monkeypatch, installed_file_handler: Path,
+) -> None:
+    """Tier 2: #5870 stage 1 / #5877 review (architect ruling,
+    real-machine measurement) — right after ``on_mount()``'s own disarm
+    above hands the one process-wide timer off, ``_watch_loop_
+    responsiveness``'s own worker arms it AGAIN itself, with
+    ``repeat=False`` — the per-tick dead-man's switch, not the
+    ``REYN_STALL_TRACE`` bracket's own ``repeat=True`` shape.
+
+    ``file`` must be the worker's OWN ``os.open()``-ed integer fd against
+    the installed ``FileHandler``'s ``baseFilename`` — asserted by
+    ``os.fstat().st_ino`` matching the path's own inode, never by
+    comparing file/stream OBJECTS (the whole point of #5877's fix: a
+    borrowed stream object's fd number can be silently reused once that
+    stream closes — see ``find_file_handler_path``'s own docstring for
+    the reproduced mechanism). Deliberately with ``REYN_STALL_TRACE``
+    UNSET: this arm must fire regardless, the same "arrives unannounced,
+    so it cannot wait for a manual opt-in" reasoning ``loop_probe.py``'s
+    own module docstring already states for the tripwire itself. Wiring
+    only — no real delay, no threshold crossing (banned by testing
+    policy's duration rules, this file's own module docstring)."""
+    monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+
+    calls: "list[tuple[float, object, bool | None]]" = []
+    monkeypatch.setattr(
+        stall_trace, "arm",
+        lambda seconds, **kw: calls.append((seconds, kw.get("file"), kw.get("repeat"))),
+    )
+    monkeypatch.setattr(stall_trace, "disarm", lambda: None)
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        # Asserted INSIDE the ``async with`` block, deliberately: the
+        # worker's own REAL ``finally`` (``stall_trace.disarm`` is stubbed
+        # above, but this test does not stub ``os.close``) closes this fd
+        # for real the moment the app shuts down at block-exit — reading
+        # it afterward would race an already-closed descriptor.
+        assert calls, (
+            "the tripwire's own worker never armed the dead-man's switch — "
+            "expected it to fire right after on_mount()'s own disarm, with a "
+            "FileHandler installed and no REYN_STALL_TRACE opt-in required"
+        )
+        seconds, file_arg, repeat = calls[0]
+        assert seconds == pytest.approx(0.25), f"expected the 250ms tripwire threshold, got {seconds!r}"
+        assert repeat is False, (
+            "the tripwire's own arm must use repeat=False (a re-armed "
+            "dead-man's switch), not repeat=True (a fixed-cadence alarm)"
+        )
+        assert isinstance(file_arg, int), (
+            f"expected the worker's OWN os.open()-ed int fd, got {file_arg!r} "
+            "(a stream/file OBJECT here would be exactly the #5877 hazard — "
+            "its fd number can be reused once IT closes, silently redirecting "
+            "a still-pending dump)"
+        )
+        assert os.fstat(file_arg).st_ino == installed_file_handler.stat().st_ino, (
+            "the armed fd does not point at the installed FileHandler's "
+            "own baseFilename"
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_never_arms_without_a_file_handler(monkeypatch) -> None:
+    """Tier 2: accept-side pair — #5877 architect ruling: "FileHandlerが
+    無ければarmしない...決定論で、pytest特有のband-aidではない". No REYN
+    ``reyn.log``-shaped ``FileHandler`` installed (the ordinary state for
+    every OTHER test in this repo, which construct ``TextualChatApp``
+    directly) — the tripwire's own worker must never call ``arm`` at
+    all, not even once, for its entire lifetime. This is the exact case
+    that hung a real CI run before this fix (a fallback to ``sys.
+    stderr``, repeatedly re-armed against a fd number pytest's own
+    capture manager could — and did — reuse for something else).
+
+    Premise is ``find_file_handler_path() is None``, NOT "no
+    ``FileHandler`` at all" — measured directly (a real pytest run):
+    pytest's OWN logging plugin unconditionally installs its own
+    ``logging.FileHandler`` subclass pointed at ``/dev/null`` on the
+    root logger; :func:`~reyn.runtime.stall_trace.find_file_handler_path`
+    is specifically built to see through that one (its own docstring),
+    so ITS answer, not a bare handler-type scan, is this test's real
+    premise."""
+    monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+    # Belt-and-braces: this test's OWN premise is "no REYN FileHandler
+    # exists" — assert that's actually true rather than assuming no
+    # earlier test leaked one onto the root logger (the shared, global
+    # object every test in this file also touches).
+    assert stall_trace.find_file_handler_path() is None, (
+        "setup: a reyn.log-shaped FileHandler is already installed -- "
+        "this test's own premise does not hold"
+    )
+
+    calls: list[object] = []
+    monkeypatch.setattr(stall_trace, "arm", lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(stall_trace, "disarm", lambda: None)
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+    assert calls == [], (
+        f"the tripwire armed with no stable destination available: {calls!r} "
+        "-- this is the exact #5877 CI hang shape (a fallback stream a "
+        "third party can swap/close out from under a still-pending timer)"
+    )
+
+
+def test_log_stream_falls_back_to_the_original_stderr_not_the_reassignable_name(
+    monkeypatch,
+) -> None:
+    """Tier 1: #5877 architect ruling — with no REYN ``reyn.log``-shaped
+    ``FileHandler`` installed, ``stall_trace.default_log_stream()``
+    returns ``sys.__stderr__`` (the process's ORIGINAL stderr, fd 2, never closed
+    for the process's lifetime), not ``sys.stderr`` (a NAME anything —
+    pytest's own capture manager included — can rebind mid-session).
+    Reassigning ``sys.stderr`` to something else must not change the
+    answer.
+
+    Premise is ``find_file_handler_path() is None``, not "no
+    ``FileHandler`` at all" — see ``test_the_tripwire_never_arms_
+    without_a_file_handler``'s own docstring, right above, for the
+    measured reason (pytest's own ``/dev/null`` handler)."""
+    assert stall_trace.find_file_handler_path() is None, (
+        "setup: a reyn.log-shaped FileHandler is already installed -- "
+        "this test's own premise does not hold"
+    )
+
+    import io
+
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+
+    assert stall_trace.default_log_stream() is sys.__stderr__, (
+        "expected the fallback to be sys.__stderr__, unaffected by "
+        "reassigning sys.stderr"
     )

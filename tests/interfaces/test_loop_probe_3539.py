@@ -208,6 +208,27 @@ def test_the_environment_axes_name_what_differed() -> None:
     assert "python" in axes
 
 
+def test_the_environment_axes_carry_host_load_and_process_footprint() -> None:
+    """Tier 2: #5870 stage 1 — the owner's own "idle でも出る" report named
+    a stall the code-path census alone cannot explain (nothing was running
+    to census), leaving host-side starvation as the live alternative
+    hypothesis; these two axes are what tells the two apart from the SAME
+    record a stall wrote, without a second, separately-timed capture.
+
+    Both readers are real (``os.getloadavg()``, ``reyn.runtime.
+    process_memory``'s own darwin/linux reader) and this suite runs on
+    POSIX — asserted present, not by value, matching this function's own
+    established convention for ``platform``/``python`` above (which
+    environment is running the suite is not this test's business)."""
+    axes = environment_axes()
+
+    assert "loadavg_1m" in axes, f"host load axis missing: {axes!r}"
+    assert isinstance(axes["loadavg_1m"], float)
+    assert "process_footprint_bytes" in axes, f"process footprint axis missing: {axes!r}"
+    assert axes["process_footprint_bytes"] > 0
+    assert axes["process_footprint_metric"] in ("phys_footprint", "rss")
+
+
 def test_the_tripwire_stays_quiet_on_a_healthy_loop() -> None:
     """Tier 2: a healthy stream never trips it.
 
@@ -1089,6 +1110,58 @@ def test_observe_threads_turn_active_into_both_durable_record_kinds(
     by_kind = {r["kind"]: r for r in records}
     assert by_kind["tripwire"]["turn_active"] is True
     assert by_kind["tripwire_recovered"]["turn_active"] is False
+
+
+def test_observe_threads_stack_dumped_into_the_durable_record(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #5870 stage 1 — mirrors ``pump_ticks``/``turn_active``'s own
+    coverage above, same reasoning: the caller (``TextualChatApp._watch_
+    loop_responsiveness``) derives whether its own ``stall_trace`` re-arm
+    just dumped a stack, and that value must reach the SAME durable
+    ``"tripwire"`` record the magnitude does — a later reader correlating
+    "how late" with "is there a stack for it" needs both from one line,
+    not two separately-timed captures. ``False`` is asserted explicitly
+    (not merely absent) — a caller that HAS the signal and it happens to
+    be ``False`` must say so, the same distinction ``turn_active=False``
+    vs. omitted already makes above."""
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0, stack_dumped=True)
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    (record,) = [r for r in records if r["kind"] == "tripwire"]
+    assert record["stack_dumped"] is True
+
+
+def test_observe_omits_stack_dumped_when_the_caller_has_no_signal(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Tier 2: accept-side pair — a caller that never passes ``stack_
+    dumped`` (this module's own tests above, every call site before
+    #5870) gets a record with no such key at all, not a fabricated
+    ``False`` — the same "fully optional, no assumption about what the
+    caller tracks" discipline ``pump_ticks``/``turn_active`` already
+    established."""
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0)
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    (record,) = [r for r in records if r["kind"] == "tripwire"]
+    assert "stack_dumped" not in record
 
 
 @pytest.mark.asyncio
