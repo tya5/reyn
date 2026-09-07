@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 
 logger = logging.getLogger(__name__)
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 from reyn.config import (  # noqa: F401
@@ -4367,11 +4367,23 @@ class Session:
         and tests that reassign ``s.history`` directly to simulate a bounded
         load), so an incrementally-maintained counter would silently drift
         from the true resident set the first time any of those paths ran
-        without also updating it. Recomputing is O(n) per append, but n is
-        bounded by construction (that is the entire point of this cap), so
-        the cost stays small — and the invariant "resident size <= cap after
-        every append" holds by construction, with no cached state that could
-        desync from reality.
+        without also updating it. Recomputing the SUM is O(n) per append,
+        but n is bounded by construction (that is the entire point of this
+        cap), so the cost stays small — and the invariant "resident size <=
+        cap after every append" holds by construction, with no cached SUM
+        that could desync from reality.
+
+        #5939 P0 (owner-hit, 2026-09-07): the PER-MESSAGE serialization
+        underneath that sum used to be redone from scratch too, every
+        call, for every still-resident message — ``m.resident_bytes()``
+        (``ChatMessage``'s own method) now caches each message's OWN size
+        the first time it's asked, so a message that survives N eviction
+        passes gets serialized once, not N times. This is a different
+        claim from the paragraph above: the per-row VALUE never goes
+        stale (content/meta are immutable after append — see
+        ``resident_bytes()``'s own docstring for the exact sites checked),
+        so caching IT is safe even though caching the resident-set SUM
+        would not be.
 
         ONLY called from the tail-growth path (:meth:`_append_history`, a
         normal turn appending the newest entry) — deliberately NOT called
@@ -4387,10 +4399,7 @@ class Session:
 
         Returns the count evicted (0 = already within budget)."""
         cap = self._history_resident_config.max_bytes
-        sizes = [
-            len(json.dumps(asdict(m), ensure_ascii=False).encode("utf-8"))
-            for m in self.history
-        ]
+        sizes = [m.resident_bytes() for m in self.history]
         total = sum(sizes)
         evict_count = 0
         # Never evict the newest (last) entry, even if it alone exceeds the

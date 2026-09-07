@@ -809,6 +809,44 @@ class ChatMessage:
         self.name = name
         self.spillability = _normalize_spillability(spillability)
         self.disclosure = _normalize_disclosure(disclosure, role=role, meta=self.meta)
+        # #5939 P0 (owner-hit, 2026-09-07): a plain instance attribute, NOT
+        # a dataclass field — deliberately NO class-level annotation, so
+        # `dataclasses.fields()`/`asdict()`/`__eq__`/`repr()` never see it.
+        # If it WERE a declared field, `resident_bytes()`'s own
+        # `asdict(self)` call below would include this cache slot in what
+        # it measures, drifting the computed size from what the pre-fix
+        # `json.dumps(asdict(m))` call (still used verbatim as the
+        # equivalence baseline in tests) would have produced.
+        self._resident_bytes_cache: "int | None" = None
+
+    def resident_bytes(self) -> int:
+        """This message's own serialized size in bytes — computed the
+        FIRST time this is called, cached for the rest of this object's
+        lifetime. Owner-hit incident (2026-09-07): ``Session.
+        _evict_oldest_resident_entries`` used to run
+        ``len(json.dumps(asdict(m), ensure_ascii=False).encode("utf-8"))``
+        for EVERY resident message on EVERY eviction pass (every append) —
+        a single 369 MB row on the owner's real history made that ONE
+        re-serialize cost another 369 MB copy, on the hot append path.
+
+        Caching here is safe (never goes stale) because nothing in this
+        codebase mutates a ``ChatMessage``'s ``content``/``meta`` after it
+        becomes resident: the sole in-place ``.content =`` write outside
+        this class (``Session._parse_history_line``'s ref-resolve) runs on
+        a freshly-parsed message strictly BEFORE it is appended to
+        ``self.history``, and the sole in-place ``.meta[...] =`` write
+        (``Session._append_history``'s ``wal_seq`` stamp) runs before that
+        same append too — confirmed by reading every ``.content =`` /
+        ``.meta[...] =`` site in ``runtime/session.py`` and
+        ``runtime/services/*.py``, not assumed. A message built via
+        ``dataclasses.replace()`` goes back through ``__init__`` (this
+        cache is reset to ``None`` there), so a copy never inherits a
+        stale value from the original."""
+        if self._resident_bytes_cache is None:
+            self._resident_bytes_cache = len(
+                json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
+            )
+        return self._resident_bytes_cache
 
     @property
     def text(self) -> str:
