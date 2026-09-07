@@ -707,6 +707,20 @@
 # actually echo conversation content in their error bodies is a separate,
 # unmeasured question tracked in #4975's own issue — this knob only
 # builds the permission surface for when that's confirmed.
+#
+# ``tool_result_max_chars`` (#5891, architect ruling, default 4000): a
+# plain SIZE bound on a TOOL's own return value, always applied — unlike
+# the 4 knobs above, not gated by any content-visibility opt-in (a
+# tool's structured output is not one of #4666's 3 content classes).
+# Measured on reyn-self: a raw ``exec`` ``tool_returned.data["result"]``
+# reached ~2.79MB and ~5.94MB, written straight into one audit-event
+# line. Own dedicated field, not a reuse of ``provider_body_max_chars``
+# above (conflating the two would make an operator's provider-body
+# opt-in accidentally also resize every tool result, or vice versa);
+# same 4000-char default and rationale, though: long enough for triage
+# without being the multi-MB body itself. A truncated excerpt always
+# keeps ``result_bytes``/``result_sha256`` over the FULL untruncated
+# body alongside it, never silent about a cut having happened.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
@@ -721,6 +735,7 @@
 #   user_input_include_text: false          # keep the user's own words in the durable record?
 #   provider_body_include_text: false       # keep a provider's own error-response body/text? (lattice-meet, see above)
 #   provider_body_max_chars: 4000           # cap on the kept provider_body/provider_response, when shown
+#   tool_result_max_chars: 4000             # cap on a kept tool return value (unconditional, no opt-in)
 
 
 # -----------------------------------------------------------------------------
