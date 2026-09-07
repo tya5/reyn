@@ -108,7 +108,7 @@ async def test_a_pipeline_hooks_add_step_is_denied_outright(tmp_path: Path) -> N
     assert session is not None
 
     driver = _bound_driver(reg, session)
-    dispatch = await driver._make_dispatch()
+    dispatch = await driver._make_dispatch("chain-4244")  # #5889: now required
 
     with pytest.raises(PipelineExecutionError, match="hooks_add"):
         await dispatch("hooks_add", {"on": "turn_end", "message": "from-pipeline"})
