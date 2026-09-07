@@ -271,6 +271,7 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     assert "waiting_on" in ev, f"Missing 'waiting_on' in WAL event: {ev}"
 
     # Snapshot must reflect the chain as pending.
+    await session.journal.flush()  # #5914: the register's snapshot save is queued (save_nowait)
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert "chain-reg-001" in snapshot.pending_chains, (
         f"chain-reg-001 not found in snapshot.pending_chains: {snapshot.pending_chains}"
@@ -325,6 +326,13 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     })
 
     # Snapshot must NOT contain the chain after resolve.
+    # #5914: the resolve persists its snapshot with ``save_nowait`` (#2259
+    # PR-2b — a queued durable write, the hot path never awaits it), so the
+    # on-disk file is only guaranteed current after the journal's barrier.
+    # Measured on main: the chain was still on disk right after the await
+    # and gone 2.6 ms later — a late write, not a lost one — which read as
+    # a 1-in-3 red on unrelated PRs.
+    await session.journal.flush()
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert "chain-res-001" not in snapshot.pending_chains, (
         f"chain-res-001 still present in snapshot after resolve: {snapshot.pending_chains}"
@@ -694,6 +702,7 @@ async def test_inbox_put_consume_emits_wal_events_with_monotonic_seq(tmp_path, m
 
     # Snapshot applied_seq must equal the highest seq in the WAL.
     max_seq = max(all_seqs)
+    await session.journal.flush()  # #5914: applied_seq is stamped by the queued snapshot job
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert snapshot.applied_seq == max_seq, (
         f"snapshot.applied_seq {snapshot.applied_seq} != max WAL seq {max_seq}"
@@ -987,6 +996,7 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
         )
 
     # External snapshot read — verify pending_chains is empty post-resolve.
+    await session.journal.flush()  # #5914: same queued save as the resolve test above
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert snapshot.pending_chains == {}, (
         f"pending_chains must be empty after resolve, got: {snapshot.pending_chains!r}"

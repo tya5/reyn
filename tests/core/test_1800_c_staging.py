@@ -385,6 +385,7 @@ async def test_c_staging_cleared_durably_after_injection(
     )
 
     # Snapshot must have empty next_turn_context.
+    await session.journal.flush()  # #5914: the clear is a queued snapshot save (save_nowait)
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     n_ntc = len(snapshot.next_turn_context)
     assert n_ntc == 0, (
@@ -461,6 +462,7 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
         f"returns (in run_one_iteration), so the WAL would still be empty here."
     )
 
+    await session.journal.flush()  # #5914: the staging is a queued snapshot save (save_nowait)
     snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     n_snap = len(snap.next_turn_context)
     assert n_snap == 1, (
@@ -485,6 +487,11 @@ async def test_c_staging_durable_during_drain_wait(tmp_path) -> None:
         state_log=StateLog(tmp_path / "state2.wal"),
         snapshot_path=session._snapshot_path,
     )
+    # #5914: the staged entry's snapshot save was queued by the (now cancelled)
+    # drain task; the WAL worker still lands it — "crash" here means the
+    # drain task died, not the durability worker — so wait for it before
+    # reading what a real restore would find on disk.
+    await session.journal.flush()
     recovered_snap = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     session2.restore_state(recovered_snap)
 
