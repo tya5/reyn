@@ -234,6 +234,41 @@ These labels exist in the repo now, carrying the meanings below:
   re-derive it. Both wrong-when-applied cases above were the lead's own
   labels, and in both the party being waited on was never asked anything.
 
+  **A held issue needs three things, not two, and the audits above only
+  check the first two.** `blocked:external` correctly applied plus a
+  written condition ("resolve once X") passes every check above — and
+  still silently never moves, because nobody told the party who could
+  satisfy the condition that it exists. #5757's own body had both a
+  condition and a named observer, verbatim: 観測条件 (a trace from a real
+  reproduction) and 観測者 (the owner — only the owner can see the real
+  TTY). **It still sat.** The owner did not know it existed. A body-content
+  audit of all 32 open issues (#5935) that extracted every "waiting on X"
+  claim and asked "does a notification to X actually exist" — not a
+  label-presence check, not a condition-text check — found 45 findings
+  across 27 issues carrying a waiting-phrase; **15 findings failed,
+  spread over 11 distinct issues**, two of them (including #5757) with an
+  otherwise-correct hold: right label, right condition, right observer,
+  missing only the one act that makes any of it reachable. **A
+  label-anchored audit cannot find
+  this class** — the label is correctly present, the condition is
+  correctly written, so a check that stops at "is this issue properly
+  labeled and worded" reads it as a healthy hold. Only tracing the body's
+  own claim out to where it should land — a broker post, a Telegram
+  message, a comment on the other party's own issue — surfaces the gap.
+
+  **Trigger**: the moment you decide to hold an issue — in that same
+  turn, not "I'll tell them later" (later doesn't fire; nothing schedules
+  it). **The complete form of a hold is condition + observer +
+  notification to that observer.** The first two are satisfied inside the
+  issue body alone; the third is an act OUTSIDE the issue and is not
+  satisfied by writing it down — a sentence describing who should be told
+  is not the same event as telling them. **How to verify a hold is
+  actually complete**: paste the notification itself — the broker message
+  permalink, the Telegram send, the link to the comment left on the other
+  party's own issue or PR — into the held issue. If you cannot paste a
+  link, the notification has not happened yet, regardless of how complete
+  the condition and observer fields read.
+
 A new issue gets its axis label(s) when it is filed, not later. Deferring
 the label is how a backlog ends up with 35 issues at equal, unlabeled
 weight.
