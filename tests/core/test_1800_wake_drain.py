@@ -141,6 +141,7 @@ async def test_wake_drain_equivalence_single_message(tmp_path, monkeypatch) -> N
     )
 
     # Snapshot inbox must be empty: message was consumed.
+    await session.journal.flush()  # #5914: consume_inbox persists via save_nowait (queued)
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert snapshot.inbox == [], (
         f"Snapshot inbox must be empty after consumption; got {snapshot.inbox}"
@@ -333,6 +334,7 @@ async def test_drain_to_wake_inbox_consume_per_message(tmp_path) -> None:
     )
 
     # Snapshot inbox must be empty: both messages consumed.
+    await session.journal.flush()  # #5914: consume_inbox persists via save_nowait (queued)
     snapshot = AgentSnapshot.load(session.agent_name, session._snapshot_path)
     assert snapshot.inbox == [], (
         f"Snapshot inbox must be empty after drain; got {snapshot.inbox}"
