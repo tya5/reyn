@@ -4614,7 +4614,16 @@ class Session:
         from reyn.runtime.history_tail_reader import read_history_after
 
         lines, truncated = read_history_after(self.history_path, after_seq=after_seq)
-        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
+        # #5949 stage ①-b: hydrate=True — _measure_and_select (compaction_
+        # controller.py) computes real token estimates directly over these
+        # candidates' .content, before any wire is built; see
+        # _parse_history_line's own docstring for why this is the ONE
+        # caller of this method that genuinely needs the real body here
+        # rather than at wire-serialise time.
+        parsed = [
+            m for line in lines
+            if (m := self._parse_history_line(line, hydrate=True)) is not None
+        ]
         if self._state_log is None:
             return parsed, truncated
         from reyn.core.events.snapshot_generations import build_active_predicate
@@ -5008,7 +5017,7 @@ class Session:
         )
 
     def _parse_history_line(
-        self, line: str, *, preview_only: bool = False,
+        self, line: str, *, hydrate: bool,
     ) -> "ChatMessage | None":
         """Parse one ``history.jsonl`` line into a ``ChatMessage``, or
         ``None`` if malformed (skipped, never raised — byte-identical to
@@ -5019,49 +5028,67 @@ class Session:
         history.jsonl GC, which runs from ``AgentRegistry`` with no live
         ``Session``, has one parser to call instead of a second copy).
 
-        #5896 (#5364 §1.1 "A"): a tool row written since #5896 carries no
-        body on its line (``history_record``) — it is hydrated HERE, once,
-        from its ``history-content/`` file through the ONE resolver
-        (``resolve_history_content`` → ``history_content_resolve.resolve``),
-        so every reader of ``self.history`` — the live ``build_history``,
-        restore's ``project_restored_frames``, the read model, the
-        compaction candidate read (:meth:`_durable_active_history_after`,
-        which parses through this same method) — sees the same resident
-        shape a row appended in THIS process has: body on the message, ref
-        in meta. This is the same bytes the pre-#5896 parse read from the
-        history.jsonl line itself, now read from N files instead of one;
-        every one of this method's callers already reads from disk, so no
-        reader gains a disk read it did not have. A missing file hydrates
-        to the resolver's "lost" notice (reason ``EXTERNAL`` — stage ①
-        excludes un-spilled files from GC) and emits
-        ``offloaded_content_unavailable`` once per parse; a session with no
-        ``MediaStore`` (no multimodal config — every production factory
-        wires one) cannot validate the path boundary and leaves the row
-        as parsed, disclosed here rather than read around the store.
+        #5949 stage ①-b (P0, owner-hit — architect's structural ruling,
+        issuecomment-5576144700): ``hydrate`` has **no default** and is
+        **required** at every call site, and its polarity is the INVERSE
+        of the pre-①-b ``preview_only`` flag it replaces —
+        ``hydrate=False`` (cheap, the caller wants the row for DISPLAY or
+        candidate-selection scanning, not for materializing a body) is
+        what an un-decided call now falls back to only by being FORCED to
+        decide, never silently: a caller that forgets to reason about this
+        gets a ``TypeError`` at import/call time, not a defect that ships.
+        Before this: ``preview_only: bool = False`` meant "materialize by
+        default," so a NEW caller landed on the expensive path unless it
+        remembered to opt out — the exact shape that let stage ① fix only
+        ONE of 4 real ``_parse_history_line`` call sites while owner's
+        real backward-page-heavy path (``extend_history_backward_async``)
+        kept eager-hydrating, unchanged, silently.
 
-        ``preview_only`` (#5949, owner-hit P0): the caller wants the row
-        for DISPLAY (scrollback), not for the LLM wire. ``content`` stays
-        EMPTY here (never eager-hydrated) — a bounded preview is filled
-        in SEPARATELY, by :meth:`_fill_content_previews`, into
+        ``hydrate=False``: ``content`` stays EMPTY here (never eager-
+        hydrated) — for a content_ref row, a bounded preview is filled in
+        SEPARATELY by :meth:`_fill_content_previews`, into
         ``meta[CONTENT_PREVIEW_META_KEY]``, never into ``.content`` itself.
-        This is the ONE thing that makes the fix safe: the LLM wire path
-        (``RouterHistoryBuffer._serialise_turn``) reads ``.content``, which
-        stays exactly what an un-hydrated row already looks like — its own
-        EXISTING ``resolve_history_content`` call there lazily fetches the
-        REAL full body at wire-build time, regardless of whether a preview
-        was also computed for display. See module docstring at the top of
-        :func:`_fill_content_previews` for why this must be a caller-scoped
-        SECOND pass, not done inline here (the same file being referenced
-        by two different rows — a ``tool`` row and its own ``spill_record``
-        — must be read at most once per :meth:`_load_older_entries` call,
-        which requires a cache shared ACROSS lines, not per-line state)."""
+        This is safe because the LLM wire path
+        (``RouterHistoryBuffer._serialise_turn``) calls
+        ``resolve_history_content`` UNCONDITIONALLY on every message it
+        serialises (not gated on "was this row hydrated at parse time") —
+        an entry that already holds its body passes through untouched (no
+        disk read); one that doesn't gets hydrated THERE, lazily, at the
+        one place the real bytes are actually needed. So ``hydrate=False``
+        never starves the wire — it only stops a body from being
+        materialized somewhere upstream of it that never reads ``.content``
+        directly.
+
+        ``hydrate=True``: the caller reads ``.content`` itself, directly,
+        for something OTHER than wire serialisation — currently exactly
+        one such caller, :meth:`_durable_active_history_after` (compaction
+        candidate read): its own ``_measure_and_select`` computes real
+        token estimates over every candidate's ``.content`` BEFORE any
+        wire is built, so an empty/preview body there would silently
+        under-count every content_ref turn's true size and mis-select what
+        to fold. Hydrates from the ``history-content/`` file through the
+        ONE resolver (``resolve_history_content`` →
+        ``history_content_resolve.resolve``) exactly as before #5949. A
+        missing file hydrates to the resolver's "lost" notice (reason
+        ``EXTERNAL`` — stage ① excludes un-spilled files from GC) and
+        emits ``offloaded_content_unavailable`` once per parse; a session
+        with no ``MediaStore`` (no multimodal config — every production
+        factory wires one) cannot validate the path boundary and leaves
+        the row as parsed, disclosed here rather than read around the
+        store.
+
+        ``scripts/check_parse_history_line_hydrate_gate.py`` (structural
+        backstop, architect's ③) enumerates every call site of this
+        method across ``src/`` and ``tests/`` and fails if any of them
+        omits ``hydrate=`` — the enumeration this docstring names must
+        stay the actual population, not a snapshot of it."""
         msg = parse_history_line(line)
         if msg is None or msg.role != "tool" or msg.content != "":
             return msg
         meta = msg.meta or {}
         if not meta.get(CONTENT_REF_META_KEY) or meta.get(SPILLED_META_KEY):
             return msg
-        if preview_only:
+        if not hydrate:
             return msg
         if self._media_store is None:
             return msg
@@ -5076,8 +5103,22 @@ class Session:
 
     def _append_parsed_history_line(self, line: str) -> None:
         """Parse one ``history.jsonl`` line and append it to ``self.history``
-        — the per-line body shared by both of :meth:`load_history`'s paths."""
-        msg = self._parse_history_line(line)
+        — the per-line body shared by both of :meth:`load_history`'s paths
+        (the fast tail read and the fallback full read), AND the live-
+        append path a normal running turn uses to keep ``self.history`` in
+        sync with what it just wrote durably.
+
+        #5949 stage ①-b: ``hydrate=False`` — a resident content_ref row
+        stays preview-only here too. Safe for the SAME reason
+        :meth:`_parse_history_line`'s own docstring gives:
+        ``RouterHistoryBuffer._serialise_turn`` hydrates any still-empty
+        body unconditionally at wire-build time, regardless of how the
+        resident row got there. A desirable side effect for a migration
+        that hasn't reached a given row yet (#5896 stage ③, owner-
+        confirmation-pending): even an un-migrated, still-inline row that
+        this method parses stays exactly as cheap to hold resident as a
+        migrated one — nothing here depends on migration having run."""
+        msg = self._parse_history_line(line, hydrate=False)
         if msg is not None:
             self.history.append(msg)
 
@@ -5122,8 +5163,11 @@ class Session:
         ``meta[CONTENT_PREVIEW_META_KEY]`` for every content_ref
         ``role="tool"`` row in *parsed* whose ``content`` is empty (i.e.
         every row :meth:`_parse_history_line` returned with
-        ``preview_only=True``) — called ONCE per :meth:`_load_older_entries`
-        invocation, over the WHOLE batch it just parsed, not per line.
+        ``hydrate=False``) — called ONCE per
+        :meth:`_read_and_parse_older_entries` invocation (shared by both
+        :meth:`_load_older_entries` and :meth:`extend_history_backward_async`
+        — #5949 stage ①-b), over the WHOLE batch it just parsed, not per
+        line.
 
         Two guards, both load-bearing (architect's own two derived
         findings, #5949):
@@ -5155,6 +5199,46 @@ class Session:
                 cache[ref] = self._build_content_preview(ref)
             msg.meta[CONTENT_PREVIEW_META_KEY] = cache[ref]
 
+    def _read_and_parse_older_entries(
+        self, *, before_seq: int, min_lines: int,
+    ) -> "list[ChatMessage]":
+        """#5949 stage ①-b (P0, owner-hit — stage ① alone made owner's
+        real ``reyn:web``/``reyn:chat`` peak WORSE, 11 GB / 14 GB, because
+        it only fixed :meth:`_load_older_entries`, the SYNC backward-page
+        primitive; the path attach actually drives,
+        :meth:`extend_history_backward_async`, had its OWN, separate parse
+        loop — no ``hydrate`` flag at all, no preview fill — that stage ①
+        never touched). This method is the ONE place the disk-read + parse +
+        preview-fill sequence exists: both callers below now call THIS,
+        not each other, closing the "same parse duplicated in two places"
+        shape that let ① land selectively.
+
+        Deliberately touches nothing on ``self`` except read-only state
+        (``self.history_path``, ``self._media_store``) — it constructs
+        and returns a VALUE, no ``self.history`` mutation — so it is
+        exactly what :meth:`extend_history_backward_async` needs to keep
+        running fully off the event loop via ``asyncio.to_thread`` (the
+        #5079/#4995 read/apply split is unchanged: this method IS the
+        "read" half, splicing into ``self.history`` stays the caller's
+        own job, on the loop).
+
+        Returns an empty list when nothing qualifies (already at the
+        file's start, or every line failed to parse) — callers treat that
+        as "prepend nothing," identically."""
+        from reyn.runtime.history_tail_reader import read_history_before
+
+        lines = read_history_before(
+            self.history_path, before_seq=before_seq, min_lines=min_lines,
+        )
+        if not lines:
+            return []
+        parsed = [
+            m for line in lines
+            if (m := self._parse_history_line(line, hydrate=False)) is not None
+        ]
+        self._fill_content_previews(parsed)
+        return parsed
+
     def _load_older_entries(self, *, before_seq: int, min_lines: int = _HISTORY_HYDRATE_MIN_LINES) -> int:
         """#4387 Phase B ②: extend ``self.history`` BACKWARD from
         ``history.jsonl``, prepending up to ``min_lines`` entries older
@@ -5173,30 +5257,20 @@ class Session:
         back a rewind can reach, which is an owner-facing capability
         question, not one this stage answers.
 
-        #5949 (owner-hit P0): parses with ``preview_only=True`` — this is
-        a backward, DISPLAY-oriented read (scrollback paging, attach), not
-        a wire-building one, so a content_ref row's body is never eagerly
-        materialized here. :meth:`_fill_content_previews` then fills a
-        BOUNDED preview for the whole batch in one pass (see its own
-        docstring for the two guards — spill_record exclusion, same-ref
-        read-once). ``.content`` itself stays untouched (empty) either
+        #5949 (owner-hit P0): the read+parse+preview sequence is
+        :meth:`_read_and_parse_older_entries` — this method's own body is
+        now just that call plus the splice, so the SAME sequence backs
+        both this method and :meth:`extend_history_backward_async` (see
+        that helper's docstring for why stage ① alone did not reach the
+        async path). ``.content`` itself stays untouched (empty) either
         way — the LLM wire path's own lazy resolve
         (``RouterHistoryBuffer._serialise_turn``) is unaffected by this
-        change; see :meth:`_parse_history_line`'s own ``preview_only``
+        change; see :meth:`_parse_history_line`'s own ``hydrate``
         docstring for why that is what makes this safe.
         """
-        from reyn.runtime.history_tail_reader import read_history_before
-
-        lines = read_history_before(
-            self.history_path, before_seq=before_seq, min_lines=min_lines,
-        )
-        if not lines:
+        parsed = self._read_and_parse_older_entries(before_seq=before_seq, min_lines=min_lines)
+        if not parsed:
             return 0
-        parsed = [
-            m for line in lines
-            if (m := self._parse_history_line(line, preview_only=True)) is not None
-        ]
-        self._fill_content_previews(parsed)
         self.history[0:0] = parsed
         return len(parsed)
 
@@ -5234,10 +5308,9 @@ class Session:
         apply on the loop" split, applied to a second place, no new
         mechanism:
 
-        - Step ① (the disk read, :func:`~reyn.runtime.history_tail_
-          reader.read_history_before`, plus the pure
-          :meth:`_parse_history_line` parse) is not ``Session``'s own —
-          it constructs a VALUE, touching nothing mutable — so it runs
+        - Step ① (the disk read + parse + preview-fill,
+          :meth:`_read_and_parse_older_entries`) is not ``Session``'s own
+          — it constructs a VALUE, touching nothing mutable — so it runs
           OFF the loop via ``asyncio.to_thread``, freeing the worker loop
           (once #5048 wires this in) to keep servicing everything else —
           router turns, other frames — while the read is in flight.
@@ -5245,6 +5318,19 @@ class Session:
           ``Session``'s own — a small, in-memory, synchronous mutation —
           so it stays exactly where :meth:`_load_older_entries` already
           puts it.
+
+        #5949 stage ①-b (P0, owner-hit — the reason this docstring changed
+        from stage ①): this is the path attach ACTUALLY drives
+        (``endpoint.py``'s backlog send calls this async method, never the
+        sync :meth:`extend_history_backward`) — stage ① fixed only the
+        sync :meth:`_load_older_entries`'s own parse loop, and this method
+        had a SEPARATE, un-fixed one (no ``hydrate`` flag at all, no
+        preview fill), so owner's real backward-page-heavy path kept eager-
+        materializing every content_ref body, unchanged. Now sharing
+        :meth:`_read_and_parse_older_entries` with the sync path closes
+        that — see that method's own docstring for why this was a
+        duplicated-implementation defect, not two independently-correct
+        mechanisms.
 
         Guarded against the same race #4983 solved, reusing the EXISTING
         ``before_seq`` value as the staleness token (architect's explicit
@@ -5256,16 +5342,13 @@ class Session:
         stale read would duplicate or misorder entries, so it is skipped:
         a no-op, the same word #4983's own docstring uses for its
         supersede case, not a new concept."""
-        from reyn.runtime.history_tail_reader import read_history_before
-
         before_seq = self.history[0].seq if self.history else 0
-        lines = await asyncio.to_thread(
-            read_history_before,
-            self.history_path, before_seq=before_seq, min_lines=min_lines,
+        parsed = await asyncio.to_thread(
+            self._read_and_parse_older_entries,
+            before_seq=before_seq, min_lines=min_lines,
         )
-        if not lines:
+        if not parsed:
             return 0
-        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
         current_oldest_seq = self.history[0].seq if self.history else 0
         if current_oldest_seq != before_seq:
             return 0

@@ -72,6 +72,30 @@ async def _write_one_content_ref_row(tmp_path: Path, agent_name: str, body: str)
     await loop.persist_feedback()
 
 
+async def _write_content_ref_row_then_filler_turns(
+    tmp_path: Path, agent_name: str, body: str, *, n_filler_turns: int,
+) -> None:
+    """Like :func:`_write_one_content_ref_row`, plus *n_filler_turns* plain
+    user/assistant turns appended AFTER it — pushes the content_ref row far
+    enough into the past that a fresh session's own bounded in-memory tail
+    (mirroring ``test_5139c_older_backlog_wire_roundtrip.py``'s own
+    ``session.history = session.history[-2:]`` idiom) genuinely excludes
+    it, forcing a real on-disk extend to bring it back — needed for
+    :func:`test_attach_endpoint_backlog_page_never_eager_hydrates_via_the_
+    async_path` below, which must drive the row through a REAL disk
+    extend, not just a freshly-loaded in-memory tail that happens to
+    already contain it."""
+    from reyn.runtime.chat_message import ChatMessage
+
+    session = _session(agent_name, tmp_path)
+    loop = RouterLoop(host=session.router_host, chain_id="c1", router_model=_MODEL)
+    loop.feedback(_round(body))
+    await loop.persist_feedback()
+    for i in range(n_filler_turns):
+        session._append_history(ChatMessage(role="user", content=f"filler question {i}"))  # noqa: SLF001 - real durable-write seam, same as test_5139c's own helper
+        session._append_history(ChatMessage(role="assistant", content=f"filler answer {i}"))  # noqa: SLF001
+
+
 # ── 1. backward-paging never eager-hydrates .content ────────────────────
 
 
@@ -85,7 +109,7 @@ async def test_backward_paged_content_ref_row_keeps_content_empty(
     materialized into ``.content``/`.text`` — this is the whole point:
     materializing it is exactly what blew up 566 MB -> 8 GB.
 
-    Strip witness: passing ``preview_only=False`` (the pre-fix default)
+    Strip witness: passing ``hydrate=True`` (the pre-①-b default polarity)
     from ``_load_older_entries`` makes ``.text`` equal the full 20000-char
     body instead of empty — verified directly, restored after."""
     monkeypatch.chdir(tmp_path)
@@ -115,13 +139,89 @@ async def test_backward_paged_content_ref_row_keeps_content_empty(
     assert tool_msg.meta.get(CONTENT_REF_META_KEY), "sanity: this must genuinely be a content_ref row"
 
 
+# ── 1b. the REAL owner-driving path: endpoint.session_backlog_page ──────
+
+
+@pytest.mark.asyncio
+async def test_attach_endpoint_backlog_page_never_eager_hydrates_via_the_async_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5949 stage ①-b acceptance (owner-hit P0, architect
+    structural ruling issuecomment-5576144700) — drives the REAL path
+    attach actually uses (``endpoint.session_backlog_page`` ->
+    ``Session.extend_history_backward_async``, via ``endpoint.py``'s
+    backlog send), never ``_load_older_entries``/the private primitive
+    directly. Stage ① alone left THIS path unfixed: it had its own,
+    separate parse loop with no ``hydrate`` awareness at all, so owner's
+    real backward-page-heavy path kept eager-materializing every
+    content_ref body, unchanged, after stage ① landed — owner's real
+    measurement got WORSE (11 GB / 14 GB peak), not better. This is the
+    acceptance lead-coder's own review named as missing from stage ①'s
+    TESTS-READ: "test は attach の経路を driving していませんでした."
+
+    Strip witness: reverting :meth:`Session.extend_history_backward_async`
+    to its pre-①-b form (its own separate
+    ``self._parse_history_line(line)`` call, the eager-hydrate-by-default
+    polarity ``hydrate`` replaced) turns this red — verified directly,
+    restored after."""
+    from reyn.interfaces.transport.agui.endpoint import session_backlog_page
+    from reyn.runtime.profile import AgentProfile
+    from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
+
+    monkeypatch.chdir(tmp_path)
+    agent_name = "endpoint-agent"
+    await _write_content_ref_row_then_filler_turns(
+        tmp_path, agent_name, _BODY, n_filler_turns=5,
+    )
+
+    def factory(profile: AgentProfile):
+        s = _session(profile.name, tmp_path)
+        s.load_history()
+        return s
+
+    reg = AgentRegistry(project_root=tmp_path, session_factory=factory)
+    reg.create(agent_name)
+    try:
+        await reg.attach(agent_name)
+        session = reg.get_session(agent_name, _DEFAULT_SID)
+        assert session is not None
+        (loaded_seq,) = [m.seq for m in session.history if m.role == "tool"]
+        # Bound the in-memory tail BELOW the tool row -- forces a REAL
+        # on-disk extend (mirrors test_5139c_older_backlog_wire_roundtrip.
+        # py's own test_has_more_extends_from_disk_past_the_in_memory_tail
+        # idiom) rather than letting a freshly-loaded tail happen to
+        # already contain the row under test.
+        session.history = [m for m in session.history if m.seq > loaded_seq]
+        assert session.history, "sanity: filler turns must still be resident"
+        assert not any(m.role == "tool" for m in session.history), (
+            "sanity: the tool row must genuinely be excluded from the "
+            "bounded in-memory tail, or the extend below proves nothing"
+        )
+
+        await session_backlog_page(reg, agent_name, _DEFAULT_SID)
+
+        (tool_msg,) = [m for m in session.history if m.role == "tool"]
+        assert tool_msg.content == "", (
+            f"a content_ref row pulled back via the REAL attach/endpoint "
+            f"path (session_backlog_page -> extend_history_backward_async) "
+            f"must NOT have its body materialized; got "
+            f"{len(tool_msg.content)} chars"
+        )
+        assert tool_msg.meta.get(CONTENT_PREVIEW_META_KEY), (
+            "a bounded preview must still be filled for display, via the "
+            "same _fill_content_previews pass the sync path uses"
+        )
+    finally:
+        await reg.shutdown()
+
+
 def test_preview_only_parse_leaves_content_empty_directly(tmp_path: Path) -> None:
     """Tier 1: the same claim as above, isolated to ``_parse_history_line``
     itself (no Session-level paging machinery involved) — a durable line
-    with a content_ref, parsed with ``preview_only=True``, returns a
-    message whose ``.content`` is still ``""``.
+    with a content_ref, parsed with ``hydrate=False``, returns a message
+    whose ``.content`` is still ``""``.
 
-    Strip witness: removing the ``if preview_only: return msg`` guard
+    Strip witness: removing the ``if not hydrate: return msg`` guard
     (falling through to the eager resolve) makes ``.content`` equal the
     full body — verified directly, restored after."""
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
@@ -140,10 +240,10 @@ def test_preview_only_parse_leaves_content_empty_directly(tmp_path: Path) -> Non
         "spillability": "last_resort", "disclosure": None,
     })
 
-    msg = session._parse_history_line(line, preview_only=True)
+    msg = session._parse_history_line(line, hydrate=False)
 
     assert msg is not None
-    assert msg.content == "", f"preview_only=True must leave content empty, got {len(msg.content)} chars"
+    assert msg.content == "", f"hydrate=False must leave content empty, got {len(msg.content)} chars"
 
 
 # ── 2. a bounded preview is filled, with the "+N MB" notice ─────────────

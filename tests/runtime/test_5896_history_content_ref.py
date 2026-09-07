@@ -141,19 +141,33 @@ async def test_build_history_wire_is_the_same_live_and_after_a_restart(
     form only (architect: "build_history の出力が A の前後で byte 一致"):
     the wire the model would see from the LIVE session (resident rows,
     body cached) equals the wire a SECOND session rebuilds from disk
-    alone (rows parsed from ``history.jsonl``, body hydrated from the
-    file by ``Session._parse_history_line`` through the one resolver).
+    alone (rows parsed from ``history.jsonl``, body resolved via the
+    ONE resolver, ``RouterHistoryBuffer._serialise_turn``'s own
+    unconditional ``resolve_history_content`` call, at wire-build time).
 
     This is also acceptance ③'s restart half: the on-disk state the
     second session reads is exactly what a kill right after
     ``persist_feedback`` leaves behind (nothing else runs between the
     append and this test's own restart), and the body resolves — it is
-    not ``lost``. The restored ``session.history`` row itself holds the
-    body, which is what ``project_restored_frames`` and the read model
-    project without any change of their own.
+    not ``lost``.
 
-    Strip-falsify: remove the hydration in ``_parse_history_line`` → the
-    restarted wire carries an empty tool body → red."""
+    #5949 stage ①-b (P0, owner-hit — architect's structural ruling): the
+    RESIDENT row (``restarted.history``'s own ``ChatMessage``) is no
+    longer required to hold the body itself — ``Session.load_history()``
+    now parses with ``hydrate=False`` (same as backward-paging since
+    stage ①), so ``restored_row.text`` is legitimately empty; only the
+    WIRE (``build_history()``'s own output) is the load-bearing claim
+    this test makes, and it stays byte-identical regardless of whether
+    the resident row that fed it was hydrated at parse time or resolved
+    lazily at serialise time — that equivalence is the whole point of
+    this restructuring, not something it weakens.
+
+    Strip-falsify: reverting :meth:`Session._append_parsed_history_line`
+    to ``hydrate=True`` still keeps this GREEN (a stronger resident row is
+    still a valid resident row) — the test that actually goes RED on a
+    real regression here is :meth:`RouterHistoryBuffer._serialise_turn`'s
+    own ``resolve_history_content`` call being removed or skipped, which
+    is exactly what the assert below still catches."""
     monkeypatch.chdir(tmp_path)
     live = _session("restart-agent", tmp_path)
     loop = RouterLoop(host=live.router_host, chain_id="c1", router_model=_MODEL)
@@ -166,10 +180,7 @@ async def test_build_history_wire_is_the_same_live_and_after_a_restart(
     restarted = _session("restart-agent", tmp_path)
     restarted.load_history()
 
-    (restored_row,) = [m for m in restarted.history if m.role == "tool"]
-    (live_row,) = [m for m in live.history if m.role == "tool"]
     restarted_wire = restarted._loop_driver._history_buffer.build_history()
-    assert restored_row.text == live_row.text
     assert restarted_wire == live_wire
 
 
