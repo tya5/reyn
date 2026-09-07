@@ -611,8 +611,9 @@ specific purpose; an unset purpose falls back to `model`.
 | Purpose | What it covers |
 |---|---|
 | `router` | The per-turn chat router / intent classification. |
+| `control_ir` | Registered as a valid key (`MODEL_CLASS_PURPOSES`, `src/reyn/config/infra.py`) so setting it doesn't warn as an unknown purpose — no production call site resolves a model class through it yet, so setting it currently has no observable effect; an unset or set value both fall back to `model`. |
 | `tool` | The default class for tool-spawned skill runs. |
-| `judge` | Output-judging / evaluation calls. |
+| `judge` | Registered as a valid key (`MODEL_CLASS_PURPOSES`, `src/reyn/config/infra.py`) so setting it doesn't warn as an unknown purpose — no production call site resolves a model class through it yet, so setting it currently has no observable effect; an unset or set value both fall back to `model`. (A same-spelled but unrelated `"judge"` exists in `llm.py`'s `LLM_PURPOSES` cost-attribution tags, consumed by a hardcoded-model dogfood judge call that explicitly bypasses this lookup — don't confuse the two.) |
 
 ```yaml
 llm:
