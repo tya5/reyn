@@ -847,6 +847,14 @@ class MediaStore:
         # reaches :meth:`save_tool_result`; never read for a path whose
         # entry is absent — see :meth:`is_open_turn_file`.
         self._chain_by_path: "dict[Path, str]" = {}
+        # #5896 (architect co-vet 🔴): per-scope latch behind the ONE
+        # "cap cannot be met" WARNING — True while the last eviction pass
+        # for that scope ended still over cap. Logged on the False→True
+        # transition only (a line per write would be #5873's class);
+        # cleared the moment a pass ends under cap, so a later overflow
+        # warns again. Keyed "session" (this session's own
+        # history_content_max_bytes) / "project" (storage.max_bytes).
+        self._cap_unsatisfiable: "dict[str, bool]" = {}
         # #5512 (owner: "base64 の memo/cache 化は issue 化しておいて —
         # 優先度は高くしなくて良い"): a path-ref's file is re-read and
         # re-base64'd on EVERY wire-materialisation call while it's still
@@ -1454,6 +1462,7 @@ class MediaStore:
         directory = self._history_content_dir()
         _, total = _dir_stats_recursive(directory)
         if total <= cap:
+            self._note_cap_state("session", total=total, cap=cap, directory=directory)
             return
         protect_open_turn = self._config.protect_open_turn_from_gc
         for path in _eviction_order(directory):
@@ -1476,6 +1485,55 @@ class MediaStore:
                 )
                 continue
             total -= size
+        # #5896 (architect co-vet 🔴): before this PR every file here was a
+        # spill, so a pass could always get back under cap; now every
+        # un-spilled body is excluded, and a pass can end over cap having
+        # deleted nothing — say so ONCE, with the reason, never silently.
+        self._note_cap_state("session", total=total, cap=cap, directory=directory)
+
+    def _note_cap_state(self, scope: str, *, total: int, cap: int, directory: Path) -> None:
+        """#5896 stage ① (architect co-vet 🔴 — "上限が満たせなくなったのに何
+        も言わない"): record whether an eviction pass for *scope* ended
+        still over *cap*, and WARN exactly once per False→True transition
+        — naming what made the cap unsatisfiable (how many un-spilled
+        bodies, how many bytes, and that stage ② is what will make them
+        evictable again) so an operator who set the number sees WHY the
+        tree keeps growing past it. Not per write: one line per tool
+        result is the class #5873 closed. Cleared when a pass ends under
+        cap, so the NEXT overflow warns again (a latch, not a one-shot).
+
+        CLAUDE.md's three questions: Q1 (who stops it if it repeats) — the
+        operator, now that they can see it; Q2 (visible with the shipped
+        config) — a WARNING on reyn's own log, no setting needed; Q3 (does
+        the repair destroy evidence) — nothing is deleted here."""
+        over = total > cap
+        was = self._cap_unsatisfiable.get(scope, False)
+        if over and not was:
+            n_unspilled, unspilled_bytes = self._unspilled_stats_under(directory)
+            logger.warning(
+                "#5896: the %s history-content cap (%d bytes) cannot be met — "
+                "%d bytes on disk after eviction; %d file(s) / %d bytes are "
+                "un-spilled tool bodies the model still sees inline, excluded "
+                "from eviction until a spill supersedes them (stage ②)",
+                scope, cap, total, n_unspilled, unspilled_bytes,
+            )
+        self._cap_unsatisfiable[scope] = over
+
+    def _unspilled_stats_under(self, directory: Path) -> "tuple[int, int]":
+        """(count, bytes) of the un-spilled files under *directory* that
+        still exist — the WARNING's own figures, computed only when it
+        fires."""
+        root = directory.resolve()
+        count = 0
+        total = 0
+        for path in self._unspilled_paths:
+            try:
+                path.relative_to(root)
+                total += path.stat().st_size
+            except (ValueError, OSError):
+                continue
+            count += 1
+        return count, total
 
     def _evict_cross_session_over_cap(self) -> None:
         """#5366 §3 (architect design, final ruling — issuecomment-
@@ -1553,6 +1611,9 @@ class MediaStore:
         _, media_total = _dir_stats_recursive(self._media_dir)
         total = history_content_total + media_total
         if total <= max_bytes:
+            self._note_cap_state(
+                "project", total=total, cap=max_bytes, directory=history_content_root,
+            )
             return
         history_content_candidates = cross_session_eviction_candidates(
             history_content_root, pin=self._storage.pin, unspilled=self._unspilled_paths,
@@ -1579,6 +1640,13 @@ class MediaStore:
                 )
                 continue
             total -= size
+        # #5896 (architect co-vet 🔴): same shape as the per-session pass —
+        # the refusal below already stops the write, but WHY the cap is
+        # unsatisfiable (un-spilled bodies, not a full tree of spills) is
+        # only said here, once per transition.
+        self._note_cap_state(
+            "project", total=total, cap=max_bytes, directory=history_content_root,
+        )
         if total > max_bytes:
             raise MediaStoreWriteUnavailable(
                 f"project-wide storage.max_bytes ({max_bytes}) is "

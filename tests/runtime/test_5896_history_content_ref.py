@@ -319,3 +319,80 @@ def test_cross_session_gc_never_lists_an_unspilled_file(tmp_path: Path) -> None:
     ).cross_session_eviction_preview()
     assert (tmp_path / evictable["path"]).resolve() in {p.resolve() for p in preview}
     assert (tmp_path / kept["path"]).resolve() not in {p.resolve() for p in preview}
+
+
+_CAP_WARNING = "cannot be met"
+
+
+def _cap_warnings(caplog) -> list[str]:
+    return [
+        r.getMessage() for r in caplog.records
+        if r.levelname == "WARNING" and _CAP_WARNING in r.getMessage()
+    ]
+
+
+def test_an_unsatisfiable_session_cap_warns_once_per_transition(tmp_path: Path, caplog) -> None:
+    """Tier 2: architect co-vet 🔴 on #5901 — "上限が満たせなくなったのに
+    何も言わない". With the cap narrowed to less than one file, two
+    un-spilled writes leave the tree over cap with nothing evictable:
+    exactly ONE WARNING naming the reason (un-spilled bodies, excluded
+    until a spill supersedes them); a third write adds no second line
+    (one per tool result is #5873's class). Once the tree is back under
+    cap the latch clears, so the NEXT overflow warns again — a latch, not
+    a one-shot. Strip-falsify: drop the transition condition in
+    ``_note_cap_state`` → three lines → red; drop the clear → the second
+    overflow stays silent → red."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="reyn.data.workspace.media_store")
+    config = MediaStoreConfig(history_content_max_bytes=50)
+    store = MediaStore(config, project_root=tmp_path, agent_name="alice", session_id="main")
+
+    first = store.save_tool_result("payload number 0 " * 2, seq=0, spilled=False)
+    assert _cap_warnings(caplog) == [], "one file under cap: nothing to warn about"
+    _bump_all_mtimes_forward(store.history_content_dir)
+    second = store.save_tool_result("payload number 1 " * 2, seq=1, spilled=False)
+    (warning,) = _cap_warnings(caplog)
+    assert "un-spilled" in warning and "2 file(s)" in warning, warning
+    _bump_all_mtimes_forward(store.history_content_dir)
+    store.save_tool_result("payload number 2 " * 2, seq=2, spilled=False)
+    assert len(_cap_warnings(caplog)) == 1, "still unsatisfiable: no second line"
+
+    for block in (first, second):
+        (tmp_path / block["path"]).unlink()  # an operator freeing space by hand
+    _bump_all_mtimes_forward(store.history_content_dir)
+    store.save_tool_result("payload number 3 " * 2, seq=3)  # spilled: evictable → back under cap
+    assert len(_cap_warnings(caplog)) == 1, "recovering clears the latch silently"
+    _bump_all_mtimes_forward(store.history_content_dir)
+    store.save_tool_result("payload number 4 " * 2, seq=4, spilled=False)
+    _bump_all_mtimes_forward(store.history_content_dir)
+    store.save_tool_result("payload number 5 " * 2, seq=5, spilled=False)
+    assert len(_cap_warnings(caplog)) == 2, "a NEW overflow after recovery warns again"
+
+
+def test_an_unsatisfiable_project_cap_warns_once_alongside_the_refusal(tmp_path: Path, caplog) -> None:
+    """Tier 2: the same transition rule on the project-wide pass
+    (#5366's ``storage.max_bytes``): the pre-write check already REFUSES
+    the write (``MediaStoreWriteUnavailable``, §1.5 keeps the body
+    inline) — this witnesses that the reason is said once, not on every
+    refused write. Strip-falsify: drop the ``_note_cap_state`` call in
+    ``_evict_cross_session_over_cap`` → no line at all → red."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="reyn.data.workspace.media_store")
+    store = MediaStore(
+        project_root=tmp_path, agent_name="alice", session_id="main",
+        storage=StorageConfig(max_bytes=10),
+    )
+    store.save_tool_result("payload number 0 " * 2, seq=0, spilled=False)  # empty tree: allowed
+    assert _cap_warnings(caplog) == []
+
+    from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+
+    with pytest.raises(MediaStoreWriteUnavailable):
+        store.save_tool_result("payload number 1 " * 2, seq=1, spilled=False)
+    (warning,) = _cap_warnings(caplog)
+    assert "project" in warning and "un-spilled" in warning, warning
+    with pytest.raises(MediaStoreWriteUnavailable):
+        store.save_tool_result("payload number 2 " * 2, seq=2, spilled=False)
+    assert len(_cap_warnings(caplog)) == 1, "a second refused write adds no second line"

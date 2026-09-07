@@ -514,6 +514,10 @@ TOOL_ERROR_MESSAGE_META_KEY = "error_message"
 # ABSENCE of ``SPILLED_META_KEY`` (pre-#5364 history) means "never
 # spilled" (today's only possible history — nothing offloaded a tool
 # result into this store before #5364 existed), never "unknown".
+# #5896 writes an explicit ``False`` on every un-spilled tool row; every
+# reader is a ``meta.get(SPILLED_META_KEY)`` truth read, so absence and
+# False are ONE observation. Never add a membership read (``KEY in
+# meta``) — it would split them into two facts, and that class fails open.
 SPILLED_META_KEY = "spilled"
 # The backing file's project-relative path. #5364 §1.1 "A" (#5896: now
 # delivered at return time, not only on spill): EVERY tool result whose
