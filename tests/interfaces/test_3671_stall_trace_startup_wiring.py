@@ -26,7 +26,6 @@ you touch either call site.
 """
 from __future__ import annotations
 
-import faulthandler
 import logging
 import os
 import sys
@@ -434,41 +433,41 @@ def test_log_stream_falls_back_to_the_original_stderr_not_the_reassignable_name(
     )
 
 
-#: Shared between the two witness tests below — must live in THIS module
-#: (not tests/conftest.py) so both halves read/write the SAME process's
-#: state; xdist_group below is what guarantees they land on that same
-#: process in the first place.
-_faulthandler_safety_net_witness_baseline: "list[int]" = []
+pytest_plugins = ["pytester"]
 
+#: Inner conftest for the witness below — puts the repo root AND its own
+#: ``src`` on ``sys.path`` (a subprocess gets none of this outer session's
+#: own ``pyproject.toml`` ``pythonpath`` favour — ``out_of_process_reyn``'s
+#: own docstring in tests/conftest.py has the full reasoning) then imports
+#: the REAL fixture under test from the REAL tests/conftest.py, never a
+#: reimplementation — pytest activates any ``@pytest.fixture``-decorated
+#: callable present in a conftest module's namespace, imported or not.
+_INNER_CONFTEST = """
+import sys
+sys.path.insert(0, {repo_root!r})
+sys.path.insert(0, {src_root!r})
+from tests.conftest import _cancel_any_pending_faulthandler_dump  # noqa: F401
+"""
 
-@pytest.mark.xdist_group(name="test_3671_faulthandler_safety_net_witness")
-def test_a_leaves_a_faulthandler_dump_armed_without_disarming(tmp_path: Path) -> None:
-    """Tier 2: #5909 (architect prescription 1) witness, half 1 of 2 —
-    paired with the very next test below via the SAME ``xdist_group``
-    (pytest-xdist's own scheduling guarantee: same-group items land on
-    the SAME worker process — required here since what's being witnessed
-    is THIS PROCESS's own module-level state, invisible to any other
-    worker). Deliberately arms a REAL ``faulthandler.dump_traceback_
-    later`` one-shot and returns WITHOUT disarming it — the exact shape
-    ``test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists``
-    (above, this file) leaves behind when its own ``stall_trace.disarm``
-    stub lets the app's real shutdown close the armed fd out from under a
-    still-pending timer.
+#: The inner test pair itself — same shape as the removed xdist_group
+#: version, but ordering and same-process-ness now come from pytest's own
+#: normal (non-distributed) collection order inside ONE real inner
+#: session, not from an xdist scheduling guarantee this repo's CI
+#: invocation does not actually provide (lead-coder finding, #5926:
+#: ``pytest -n auto`` with no ``--dist`` defaults xdist's own ``load``
+#: scheduler, which ignores ``xdist_group`` entirely — only ``loadgroup``
+#: honors it, and this repo's CI passes neither).
+_INNER_TEST = """
+import faulthandler
+import os
+from pathlib import Path
 
-    Records ``tests/conftest.py``'s own public
-    ``faulthandler_safety_net_call_count()`` BEFORE this test's own
-    teardown runs, so the paired test below can assert it moved after —
-    the only public signal available (``faulthandler``'s own API has no
-    "is a timer currently armed" getter — see ``tests/conftest.py``'s
-    ``_cancel_any_pending_faulthandler_dump`` fixture docstring for the
-    confirmed absence). 9999 seconds and a throwaway ``tmp_path``
-    destination fd, closed immediately after arming: even if the safety
-    net this test exists to witness were itself broken, this dump could
-    never fire within any real test run's lifetime, and would land only
-    in a file nothing else ever reads."""
-    from tests.conftest import faulthandler_safety_net_call_count
+from tests.conftest import faulthandler_safety_net_call_count
 
-    _faulthandler_safety_net_witness_baseline.append(faulthandler_safety_net_call_count())
+_baseline = []
+
+def test_a_leaves_a_faulthandler_dump_armed_without_disarming(tmp_path):
+    _baseline.append(faulthandler_safety_net_call_count())
     sink = tmp_path / "leaked_dump.txt"
     fd = os.open(str(sink), os.O_WRONLY | os.O_CREAT)
     try:
@@ -476,29 +475,56 @@ def test_a_leaves_a_faulthandler_dump_armed_without_disarming(tmp_path: Path) ->
     finally:
         os.close(fd)
 
+def test_b_the_conftest_safety_net_cancelled_it():
+    assert _baseline, "setup: test_a must run first, in this same process"
+    assert faulthandler_safety_net_call_count() > _baseline[-1]
+"""
 
-@pytest.mark.xdist_group(name="test_3671_faulthandler_safety_net_witness")
-def test_b_the_conftest_safety_net_cancelled_it() -> None:
-    """Tier 2: #5909 (architect prescription 1) witness, half 2 of 2 — see
-    ``test_a_leaves_a_faulthandler_dump_armed_without_disarming`` (right
-    above) for the setup. Asserts ``tests/conftest.py``'s
-    ``_cancel_any_pending_faulthandler_dump`` autouse fixture's own public
-    call counter advanced across test A's own teardown — evidence the
-    fixture actually RAN and reached its own
-    ``faulthandler.cancel_dump_traceback_later()`` call, not merely that
-    this suite stayed green (a timer left armed for 9999s would ALSO
-    leave this suite green, since nothing in it runs anywhere near that
-    long — the counter, not "did the run finish", is this witness's real
-    evidence)."""
-    from tests.conftest import faulthandler_safety_net_call_count
 
-    assert _faulthandler_safety_net_witness_baseline, (
-        "setup: test_a_leaves_a_faulthandler_dump_armed_without_disarming "
-        "must have run first (same xdist_group => same worker, collection "
-        "order preserved) and recorded its own baseline"
-    )
-    assert faulthandler_safety_net_call_count() > _faulthandler_safety_net_witness_baseline[-1], (
-        "tests/conftest.py's own safety-net call counter did not advance "
-        "across test A's teardown -- either the autouse fixture did not "
-        "run, or it ran but never reached its own increment"
-    )
+def test_the_conftest_safety_net_cancels_a_dump_a_test_left_armed(
+    pytester: pytest.Pytester,
+) -> None:
+    """Tier 2: #5909 (architect prescription 1) witness — a REAL, isolated
+    inner pytest session (pytester's own subprocess seam, same technique
+    ``tests/dev/test_stall_dump_4986.py`` already uses for a real
+    ``faulthandler`` timer) runs two tests that could only observe each
+    other if they land in the SAME process, in order: the first arms a
+    REAL ``faulthandler.dump_traceback_later`` one-shot and returns
+    WITHOUT disarming it — the exact shape ``test_the_tripwire_arms_its_
+    own_fd_when_a_file_handler_exists`` (above, this same outer file)
+    leaves behind when its own ``stall_trace.disarm`` stub lets the app's
+    real shutdown close the armed fd out from under a still-pending
+    timer; the second asserts ``tests/conftest.py``'s own public
+    ``faulthandler_safety_net_call_count()`` counter advanced across the
+    first test's own teardown.
+
+    Subprocess (not pytester's in-process ``runpytest()``): this outer
+    test's own ``faulthandler`` state must never interact with the inner
+    session's — same reasoning ``test_stall_dump_4986.py``'s own module
+    docstring states for its own inner runs.
+
+    The counter, not "the inner session exited 0", is this witness's real
+    evidence — ``faulthandler``'s own public API (``enable``/``disable``/
+    ``is_enabled``/``dump_traceback``/``dump_traceback_later``/
+    ``cancel_dump_traceback_later``/``register``/``unregister`` — the
+    complete list, confirmed by reading the stdlib module) exposes no
+    getter for "is a timer currently armed", so a green inner session
+    alone cannot distinguish "the safety net fired" from "nothing ever
+    checked" (a dump left armed for 9999s would ALSO exit 0, since
+    nothing in the inner session runs anywhere near that long).
+
+    Strip-falsifier: comment out this fixture's own
+    ``faulthandler.cancel_dump_traceback_later()`` call in
+    ``tests/conftest.py`` and ``test_b`` inside the inner session goes
+    red (the counter never advances) — this test's own assertion below
+    then reports that inner failure via ``result.assert_outcomes``."""
+    import reyn
+
+    repo_root = Path(reyn.__file__).resolve().parents[2]
+    src_root = str(repo_root / "src")
+
+    pytester.makeconftest(_INNER_CONFTEST.format(repo_root=str(repo_root), src_root=src_root))
+    pytester.makepyfile(test_inner=_INNER_TEST)
+
+    result = pytester.runpytest_subprocess("test_inner.py")
+    result.assert_outcomes(passed=2)
