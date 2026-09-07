@@ -207,18 +207,33 @@ jobs:
       # #5909: name the killer of a worker that died with no Python-side
       # record. `tests/conftest.py` (`reyn.dev.testing.worker_forensics`)
       # writes `.reyn-worker-down.log` from xdist's own `pytest_testnodedown`
-      # hook — the dead worker's EXIT CODE (`-9` = SIGKILL: the host's OOM
-      # killer or a reaper, never reyn; `1` = pytest-timeout's thread-method
+      # hook, but ONLY when that hook's own `error` argument is not `None`
+      # — the worker's EXIT CODE (`-9` = SIGKILL: the host's OOM killer or
+      # a reaper, never reyn; `1` = pytest-timeout's thread-method
       # `os._exit`; `97` = reyn's memory ceiling) and the last tests it ran
       # (from `.reyn-worker-trace/<gw>.log`, one nodeid per test start).
-      # Every worker's peak RSS lands in its trace at session end — the
-      # figure a host OOM kill judges, which the memory-ceiling log above
-      # never shows for a worker that stayed under reyn's own 2 GB. `dmesg`
-      # is the host's side of the same story (an OOM kill logs there and
-      # nowhere else); `|| true` because a runner that denies dmesg must
-      # not turn this informational step red. `if: always()`: forensics
-      # must print on exactly the runs that failed.
-      - name: Worker forensics (#5909 — only non-empty if a worker died)
+      # BUG FOUND AND FIXED (lead-coder review, #5934): an earlier version
+      # of the hook wrote a line on EVERY call — xdist's own `dsession.py`
+      # calls this same hook, with `error=None`, from
+      # `worker_workerfinished`, the ORDINARY per-worker completion path,
+      # not only a crash path (`worker_errordown`) — so this file was
+      # non-empty on EVERY run, always, and this step's own
+      # `[ -s .reyn-worker-down.log ]` "did anything die" check fired its
+      # `::warning::` unconditionally as a result. Confirmed directly: 3
+      # real CI job logs (one of them fully GREEN) all showed 4 lines,
+      # `error=None` every time. `error is None` is exactly xdist's own
+      # discriminator between the two call sites (confirmed by reading
+      # `dsession.py` itself) — see `worker_forensics.py`'s own
+      # `pytest_testnodedown` for the fix; this file is now genuinely
+      # non-empty only when a worker actually died. Every worker's peak
+      # RSS lands in its trace at session end — the figure a host OOM kill
+      # judges, which the memory-ceiling log above never shows for a
+      # worker that stayed under reyn's own 2 GB. `dmesg` is the host's
+      # side of the same story (an OOM kill logs there and nowhere else);
+      # `|| true` because a runner that denies dmesg must not turn this
+      # informational step red. `if: always()`: forensics must print on
+      # exactly the runs that failed.
+      - name: Worker forensics (#5909 — only non-empty if a worker actually died)
         if: always()
         run: |
           if [ -s .reyn-worker-down.log ]; then
@@ -229,20 +244,19 @@ jobs:
           fi
           echo "--- per-worker peak RSS (MB) ---"
           grep -H "peak_rss_mb=" .reyn-worker-trace/*.log 2>/dev/null || echo "(no worker traces)"
-          # part of #5909: `.reyn-worker-down.log`'s own `last_test=`/
-          # `before_it=` fields are written by `pytest_testnodedown`, which
-          # only fires when the CONTROLLER is alive to observe the node
-          # going down. Three same-day #5909 recurrences (#5926, #5916,
-          # #5931) left `.reyn-worker-down.log` EMPTY — the controller
-          # never got a chance to run that hook — so the trace files
-          # (`.reyn-worker-trace/<gw>.log`, written incrementally as each
-          # test STARTS, independent of the controller) were the only
-          # surviving test-order evidence, and this step never printed
-          # them: the `grep` above only ever pulled the one `peak_rss_mb=`
-          # line, never the nodeid lines above it. Print each worker's
-          # full test-order trace here too, so the next silent-death CI
-          # run names what was running without a second investigation
-          # round-trip.
+          # part of #5909: this step's own `grep` above only ever pulled
+          # the one `peak_rss_mb=` line out of each worker's trace file,
+          # never the nodeid lines above it — the actual per-worker
+          # test-order trace was written to disk every run and never
+          # printed or kept. That gap is real independent of the
+          # down-log bug above (fixed in this same PR): even once
+          # `.reyn-worker-down.log` correctly names ONLY a worker that
+          # died, its own `last_test=`/`before_it=` fields are a short,
+          # fixed-length tail (`RECENT_TESTS = 5` in worker_forensics.py)
+          # — for a run that needs the FULL order, or needs a dead
+          # worker's trace that was too large for the job log's own size
+          # ceiling, printing (and uploading, below) the whole file is
+          # still the thing worth doing.
           echo "--- per-worker test-order trace (last test each ran = last line) ---"
           if ls .reyn-worker-trace/*.log >/dev/null 2>&1; then
             for f in .reyn-worker-trace/*.log; do
