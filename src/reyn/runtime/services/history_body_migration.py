@@ -67,6 +67,25 @@ FILE-LEVEL ATOMICITY AND ``.bak``
     original's place (also atomic). A ``.bak`` from an earlier run is
     NEVER silently overwritten — see below.
 
+PEAK MEMORY IS BOUND BY THE LARGEST SINGLE LINE, NOT THE FILE SIZE
+    (architect ruling, follow-up to PR #5947's BLOCKING) — this is the
+    property the streaming design above actually establishes, said
+    directly rather than left implicit in "stream-read" mechanics: this
+    module never holds ``history.jsonl``'s FULL TEXT resident (neither
+    pass ever calls ``Path.read_text()``/``readlines()`` on it — see
+    :func:`_spill_supersede_refs` and :func:`migrate_inline_history_bodies`'s
+    own bodies, both ``for raw in <file>``), so a 663 MB file with a
+    369 MB single row costs a peak proportional to that ONE largest
+    row, never to the whole file. ``tests/runtime/
+    test_5896_stage3_migrate_bodies.py::test_migration_never_reads_the_whole_file_at_once``
+    is the pin that keeps this true (a real ``Path.read_text`` call-spy,
+    strip-falsified in both directions against this exact regression). A
+    single oversized row is still a real, unavoidable transient peak
+    for the ONE line being processed (unavoidable without changing what
+    a JSON line IS) — what streaming closes is "whole file" (or worse,
+    "whole file twice," the actual PR #5947 BLOCKING defect), not that
+    single-line floor.
+
 WHAT AN INTERRUPTED RUN LEAVES BEHIND (owner-hit correction: this must be
 designed, not assumed)
     - Crash during the per-row scan/write phase: ``history.jsonl`` is

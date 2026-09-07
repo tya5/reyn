@@ -24,6 +24,14 @@ stopped** — this rewrites ``history.jsonl`` on disk; a live session's own
 in-memory ``self.history`` would not see the change and a concurrent
 write from that session could race this command's own read.
 
+Also prints THIS process's own ``phys_footprint``/``rss`` at start and
+end (architect ruling, follow-up to PR #5947 — #5851's own reader,
+``reyn.runtime.process_memory``): pairs this run's own cost against the
+effect the owner's own acceptance criterion measures separately (a
+post-migration STARTUP peak an order of magnitude smaller) — both
+numbers from the SAME run, not two an operator has to correlate by
+hand. Two snapshots only, never a duration.
+
 Named ``storage``, not ``media`` (renamed from the original #4485 name once
 #4476 landed on the same command — lead-coder review on #4488): once
 ``history.jsonl`` reports through here too, "media" no longer describes
@@ -52,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Callable
 
 
 def register(sub) -> None:
@@ -174,6 +183,14 @@ def run_migrate_manifest(args: argparse.Namespace) -> None:
     )
 
 
+def _print_footprint(label: str, reader: "Callable[[], int | None]", metric: "str | None") -> None:
+    value = reader()
+    if metric is not None and value is not None:
+        print(f"footprint ({label}): {value:,} bytes ({metric})")
+    else:
+        print(f"footprint ({label}): not measurable on this platform")
+
+
 def run_migrate_bodies(args: argparse.Namespace) -> None:
     """#5896 stage ③ (owner-hit P0) — see
     ``history_body_migration.migrate_inline_history_bodies``'s own
@@ -183,18 +200,40 @@ def run_migrate_bodies(args: argparse.Namespace) -> None:
     ``session_id="storage-migrate"`` is a fixed, clearly-labeled value
     for this offline tool, not tied to any live session (nothing else
     ever needs to guess it back; the row's own ``content_ref`` is the
-    only thing a future reader follows)."""
+    only thing a future reader follows).
+
+    Also reports THIS process's own footprint at start and end (#5851's
+    own reader, ``reyn.runtime.process_memory`` — architect ruling,
+    follow-up to PR #5947): pairs this run's own COST (it streams one
+    row at a time — see ``migrate_inline_history_bodies``'s own
+    docstring for why a single oversized row is still a real, bounded
+    peak — but writing N migrated bodies and rewriting the file is real
+    work) against the EFFECT the owner's own acceptance criterion
+    measures separately (a post-migration startup peak an order of
+    magnitude smaller) — both numbers from the SAME run, not two
+    separate ones an operator has to correlate by hand. Two points only
+    (start, end) — never a byte figure derived from elapsed time, this
+    is a snapshot pair, not a duration."""
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.runtime.process_memory import (
+        make_process_memory_reader,
+        process_memory_metric_name,
+    )
     from reyn.runtime.services.history_body_migration import (
         DEFAULT_MIN_BYTES,
         migrate_inline_history_bodies,
     )
+
+    metric = process_memory_metric_name()
+    reader = make_process_memory_reader()
+    _print_footprint("start", reader, metric)
 
     project_root = Path(args.project_root).resolve()
     min_bytes = args.min_bytes if args.min_bytes is not None else DEFAULT_MIN_BYTES
     agents_dir = project_root / ".reyn" / "agents"
     if not agents_dir.is_dir():
         print("no .reyn/agents/ directory — nothing to migrate.")
+        _print_footprint("end", reader, metric)
         return
 
     if args.agent is not None:
@@ -240,6 +279,7 @@ def run_migrate_bodies(args: argparse.Namespace) -> None:
         else:
             print(f"{agent_name}: nothing over {min_bytes:,} bytes to migrate.")
 
+    _print_footprint("end", reader, metric)
     print(
         f"\ntotal: {total_migrated} row(s) migrated, {total_reused} reused "
         f"an existing ref, {total_written:,} new byte(s) written.",

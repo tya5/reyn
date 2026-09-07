@@ -186,3 +186,78 @@ def test_migrate_bodies_honors_the_agent_filter(tmp_path: Path):
     )
     assert alice_line["content"] == "", "the targeted agent must be migrated"
     assert bob_line["content"] == big, "an un-targeted agent must be left untouched"
+
+
+def test_migrate_bodies_reports_start_and_end_footprint_bracketing_the_work(
+    tmp_path: Path, capsys,
+):
+    """Tier 1: architect ruling, follow-up to PR #5947 — the command
+    reports THIS process's own footprint at start AND end (2 points,
+    #5851's own reader), and does so BRACKETING the actual migration
+    work — start before any row is touched, end after every agent has
+    been processed but before the final total summary. Ordering
+    (``<``), not a line count, is the claim: a duplicate or missing
+    footprint line would break this chain regardless of how many total
+    lines happen to appear.
+
+    Real reader, no mock (same platform-variance idiom
+    ``test_5851a_process_memory_observe.py`` already established): on a
+    platform this repo declares supported (darwin/linux), both lines
+    carry the real metric name; on any other platform both say "not
+    measurable"."""
+    import json
+
+    from reyn.interfaces.cli.commands.storage import run_migrate_bodies
+    from reyn.runtime.process_memory import process_memory_metric_name
+
+    d = tmp_path / ".reyn" / "agents" / "alice"
+    d.mkdir(parents=True)
+    row = {
+        "role": "tool", "content": "x" * 2000, "ts": "", "seq": 1, "meta": {},
+        "tool_calls": None, "tool_call_id": "c1", "name": "t",
+        "spillability": "last_resort", "disclosure": None,
+    }
+    (d / "history.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    run_migrate_bodies(
+        Namespace(project_root=str(tmp_path), agent=None, min_bytes=1000),
+    )
+    lines = capsys.readouterr().out.splitlines()
+
+    start_idx = next(i for i, ln in enumerate(lines) if ln.startswith("footprint (start):"))
+    migrated_idx = next(i for i, ln in enumerate(lines) if ln.startswith("alice: migrated"))
+    end_idx = next(i for i, ln in enumerate(lines) if ln.startswith("footprint (end):"))
+    total_idx = next(i for i, ln in enumerate(lines) if ln.startswith("total:"))
+    assert start_idx < migrated_idx < end_idx < total_idx, (
+        f"footprint must bracket the migration work, in this order; got {lines!r}"
+    )
+
+    metric = process_memory_metric_name()
+    if metric is None:
+        assert "not measurable on this platform" in lines[start_idx]
+        assert "not measurable on this platform" in lines[end_idx]
+    else:
+        assert metric in lines[start_idx] and metric in lines[end_idx]
+
+
+def test_migrate_bodies_reports_footprint_even_with_nothing_to_migrate(
+    tmp_path: Path, capsys,
+):
+    """Tier 1: accept-side — the "no .reyn/agents/ directory" early-
+    return path still reports both footprint points, not just the
+    common (work-to-do) path. A tool meant to pair cost against effect
+    must report ITS OWN cost even on a run that changed nothing. The
+    start line must be the FIRST line printed and the end line the
+    LAST — position, not a count, is the claim."""
+    from reyn.interfaces.cli.commands.storage import run_migrate_bodies
+
+    run_migrate_bodies(Namespace(project_root=str(tmp_path), agent=None, min_bytes=None))
+    lines = capsys.readouterr().out.splitlines()
+
+    assert lines[0].startswith("footprint (start):"), (
+        f"the start footprint must be the very first line printed; got {lines!r}"
+    )
+    assert lines[-1].startswith("footprint (end):"), (
+        f"the end footprint must be the very last line printed on this no-op "
+        f"path; got {lines!r}"
+    )
