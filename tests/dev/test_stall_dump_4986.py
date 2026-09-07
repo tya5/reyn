@@ -25,6 +25,7 @@ genuinely is the subject, not a guessed wait.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -58,6 +59,24 @@ def test_body():
 """
 
 _INNER_TEST_NORMAL = "def test_body():\n    assert True\n"
+
+_INNER_TEST_WORKER_HANGS_AT_TEARDOWN = """
+from pathlib import Path
+import pytest
+
+@pytest.fixture(scope="session", autouse=True)
+def _hang_forever_at_teardown():
+    yield
+    # A FIFO, not stdin: see the outer test's own docstring for why —
+    # execnet remaps a worker's sys.stdin, so the controller-hang tests'
+    # own readline() idiom does not reach into a worker.
+    with open("release.fifo") as f:
+        f.read()
+
+def test_body():
+    Path("test_started.marker").write_text("started")
+    assert True
+"""
 
 _INNER_TEST_HANGS_AT_ATEXIT = """
 import atexit
@@ -228,6 +247,100 @@ def test_a_normal_session_produces_no_stall_dump(
         "#4986 REGRESSION: a normal, fast session must not leave a "
         "stall-trace DUMP (non-empty content) behind"
     )
+
+
+def test_an_xdist_worker_teardown_hang_produces_its_own_worker_dump(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: #4986/#5909 tool ticket — architect's finding that a hang
+    strictly INSIDE an xdist worker's own session teardown is invisible to
+    the CONTROLLER's own dump (the controller is idle in ``queue.get()``,
+    nothing of its own is stuck). ``stall_dump.py`` now arms a SEPARATE
+    watchdog inside the worker itself, writing to the worker's OWN file
+    (``worker_log_path``) rather than the controller's ``LOG_PATH`` — this
+    is the property that changed decision (see module docstring's "WHY
+    ALSO ARMED PER xdist WORKER").
+
+    Strip witness: reverting ``pytest_configure``'s worker branch to the
+    module's original early ``return`` on ``_is_xdist_worker(config)``
+    leaves NO file under ``.reyn-ci-stall-trace.gw0.log`` here — verified
+    directly, restored after.
+
+    No duration anywhere the assertion depends on: the inner worker's
+    teardown hang is a real, deterministic block on a FIFO ``open()``/
+    ``read()``, released by opening its write end and closing it; the
+    outer wait for the worker's dump file is an unbounded poll. A FIFO
+    rather than ``sys.stdin`` (the sibling controller-hang tests' own
+    idiom): measured directly while building this test — execnet remaps
+    an xdist WORKER's own ``sys.stdin``, so ``readline()`` inside a
+    worker returns immediately instead of blocking; a FIFO blocks at the
+    kernel level regardless of what execnet did to this process's stdio."""
+    pytester.makeconftest(_INNER_CONFTEST)
+    pytester.makepyfile(test_inner=_INNER_TEST_WORKER_HANGS_AT_TEARDOWN)
+    monkeypatch.setenv("REYN_STALL_TRACE_CI", "1")
+
+    fifo_path = Path(pytester.path) / "release.fifo"
+    os.mkfifo(fifo_path)
+
+    worker_log = Path(pytester.path) / ".reyn-ci-stall-trace.gw0.log"
+    assert not worker_log.exists(), "test setup invariant: no stale worker dump file"
+
+    proc = pytester.popen(
+        [sys.executable, "-m", "pytest", "-q", "-s", "-n", "1", "test_inner.py"],
+    )
+    try:
+        # Same staged-write wait as the sibling tests: a real stack frame
+        # line is "the dump finished writing", not a guessed duration.
+        content = ""
+        while "File \"" not in content:
+            if worker_log.exists():
+                content = worker_log.read_text()
+            if "File \"" not in content:
+                time.sleep(0)
+    finally:
+        # Releases the worker's blocked FIFO ``open()``: opening the write
+        # end lets the read-side ``open()`` return, and closing it
+        # immediately hands the worker's own ``read()`` an EOF.
+        write_fd = os.open(str(fifo_path), os.O_WRONLY)
+        os.close(write_fd)
+        proc.wait()
+
+    header_at = content.find("Timeout")
+    thread_at = content.find("Thread")
+    frame_at = content.find("File \"")
+    assert -1 < header_at < thread_at < frame_at, (
+        f"the worker's own dump should write its header, then the thread "
+        f"line, then stack frames, in that order — got header@{header_at}, "
+        f"thread@{thread_at}, frame@{frame_at} in {content!r}"
+    )
+    # NOTE: this does NOT assert the controller's own dump stays empty —
+    # with a hanging worker, the controller's own session also never
+    # finishes (it is waiting on that worker), so its own watchdog fires
+    # too; that is expected, not a shared-timer bug. See
+    # test_worker_seconds_from_stays_below_the_controllers_own_threshold
+    # for the actual causal-ordering property (a unit check on the exact
+    # offset arithmetic, not a real-time race between the two).
+
+
+def test_worker_seconds_from_stays_below_the_controllers_own_threshold() -> None:
+    """Tier 1: Contract — ``worker_seconds_from`` (used by
+    ``pytest_configure``'s worker branch) always returns a value strictly
+    below the controller's own configured seconds, clamped to a 1s floor.
+    This is the causal-ordering property module docstring's "WHY ALSO
+    ARMED PER xdist WORKER" names (a worker's own dump should fire before
+    the controller's, so a run where both fire reads in causal order) —
+    checked exactly, as a pure function, rather than raced against real
+    subprocess timing (which the integration test above deliberately does
+    NOT attempt, for exactly this reason)."""
+    from reyn.dev.testing.stall_dump import WORKER_OFFSET_SECONDS, worker_seconds_from
+
+    assert worker_seconds_from(600.0) == 600.0 - WORKER_OFFSET_SECONDS
+    assert worker_seconds_from(600.0) < 600.0
+    # Floored at 1s (never zero/negative — arm()'s own faulthandler call
+    # rejects a non-positive delay) when the controller's own value is
+    # already at or below the offset.
+    assert worker_seconds_from(1.0) == 1.0
+    assert worker_seconds_from(WORKER_OFFSET_SECONDS) == 1.0
 
 
 def test_the_watchdog_stays_off_when_unset(
