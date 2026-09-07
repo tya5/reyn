@@ -26,6 +26,7 @@ you touch either call site.
 """
 from __future__ import annotations
 
+import faulthandler
 import logging
 import os
 import sys
@@ -291,7 +292,28 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
     # and reopens the SAME path with no rename, which keeps the SAME
     # inode — no rotation for this test to detect at all.
     handler = RotatingFileHandler(str(log_path), maxBytes=1, backupCount=2)
-    logging.getLogger().addHandler(handler)
+    # #5909 (architect prescription 2, #5922 CI finding): a DEDICATED,
+    # non-propagating logger — never ``logging.getLogger()`` (root) — owns
+    # this handler. Root is a process-wide SHARED sink: any unrelated
+    # ``logging.warning(...)`` reaching it (this test's own real,
+    # headless ``TextualChatApp`` runs live below) is one record through
+    # this handler, and with ``maxBytes=1`` ANY record rolls it over —
+    # replacing ``log_path``'s inode BEFORE this test's own controlled
+    # ``handler.doRollover()`` call below, falsifying the setup premise at
+    # ``pre_ino == log_path.stat().st_ino``. The subject under test here
+    # is ``_watch_loop_responsiveness``'s own fd/inode-reopen logic keyed
+    # on the PATH ``stall_trace.register_file_handler_path`` declares
+    # (below) — never which logger owns the handler feeding that path
+    # (``find_file_handler_path`` is a plain declared-path lookup since
+    # #5873, not a root-logger handler scan — see its own docstring), so
+    # this narrows WHO can write through this handler without changing
+    # what the test proves. ``maxBytes=1`` stays as small as it was
+    # (that's what makes ``doRollover()`` a real rollover to detect, not
+    # the bug) — the fix is limiting the WRITER, never loosening the
+    # threshold.
+    private_logger = logging.getLogger(f"{__name__}.log_rotation_witness")
+    private_logger.propagate = False
+    private_logger.addHandler(handler)
     # Registration restore is tests/conftest.py's own autouse
     # _isolate_stall_trace_file_handler_registration fixture's job — see
     # installed_file_handler's own docstring above for why this file no
@@ -331,7 +353,8 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
             while os.fstat(calls[-1][1]).st_ino != post_ino:  # type: ignore[arg-type]
                 await pilot.pause()
     finally:
-        logging.getLogger().removeHandler(handler)
+        private_logger.removeHandler(handler)
+        private_logger.propagate = True
         handler.close()
 
 
@@ -408,4 +431,74 @@ def test_log_stream_falls_back_to_the_original_stderr_not_the_reassignable_name(
     assert stall_trace.default_log_stream() is sys.__stderr__, (
         "expected the fallback to be sys.__stderr__, unaffected by "
         "reassigning sys.stderr"
+    )
+
+
+#: Shared between the two witness tests below — must live in THIS module
+#: (not tests/conftest.py) so both halves read/write the SAME process's
+#: state; xdist_group below is what guarantees they land on that same
+#: process in the first place.
+_faulthandler_safety_net_witness_baseline: "list[int]" = []
+
+
+@pytest.mark.xdist_group(name="test_3671_faulthandler_safety_net_witness")
+def test_a_leaves_a_faulthandler_dump_armed_without_disarming(tmp_path: Path) -> None:
+    """Tier 2: #5909 (architect prescription 1) witness, half 1 of 2 —
+    paired with the very next test below via the SAME ``xdist_group``
+    (pytest-xdist's own scheduling guarantee: same-group items land on
+    the SAME worker process — required here since what's being witnessed
+    is THIS PROCESS's own module-level state, invisible to any other
+    worker). Deliberately arms a REAL ``faulthandler.dump_traceback_
+    later`` one-shot and returns WITHOUT disarming it — the exact shape
+    ``test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists``
+    (above, this file) leaves behind when its own ``stall_trace.disarm``
+    stub lets the app's real shutdown close the armed fd out from under a
+    still-pending timer.
+
+    Records ``tests/conftest.py``'s own public
+    ``faulthandler_safety_net_call_count()`` BEFORE this test's own
+    teardown runs, so the paired test below can assert it moved after —
+    the only public signal available (``faulthandler``'s own API has no
+    "is a timer currently armed" getter — see ``tests/conftest.py``'s
+    ``_cancel_any_pending_faulthandler_dump`` fixture docstring for the
+    confirmed absence). 9999 seconds and a throwaway ``tmp_path``
+    destination fd, closed immediately after arming: even if the safety
+    net this test exists to witness were itself broken, this dump could
+    never fire within any real test run's lifetime, and would land only
+    in a file nothing else ever reads."""
+    from tests.conftest import faulthandler_safety_net_call_count
+
+    _faulthandler_safety_net_witness_baseline.append(faulthandler_safety_net_call_count())
+    sink = tmp_path / "leaked_dump.txt"
+    fd = os.open(str(sink), os.O_WRONLY | os.O_CREAT)
+    try:
+        faulthandler.dump_traceback_later(9999, file=fd, repeat=False)
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.xdist_group(name="test_3671_faulthandler_safety_net_witness")
+def test_b_the_conftest_safety_net_cancelled_it() -> None:
+    """Tier 2: #5909 (architect prescription 1) witness, half 2 of 2 — see
+    ``test_a_leaves_a_faulthandler_dump_armed_without_disarming`` (right
+    above) for the setup. Asserts ``tests/conftest.py``'s
+    ``_cancel_any_pending_faulthandler_dump`` autouse fixture's own public
+    call counter advanced across test A's own teardown — evidence the
+    fixture actually RAN and reached its own
+    ``faulthandler.cancel_dump_traceback_later()`` call, not merely that
+    this suite stayed green (a timer left armed for 9999s would ALSO
+    leave this suite green, since nothing in it runs anywhere near that
+    long — the counter, not "did the run finish", is this witness's real
+    evidence)."""
+    from tests.conftest import faulthandler_safety_net_call_count
+
+    assert _faulthandler_safety_net_witness_baseline, (
+        "setup: test_a_leaves_a_faulthandler_dump_armed_without_disarming "
+        "must have run first (same xdist_group => same worker, collection "
+        "order preserved) and recorded its own baseline"
+    )
+    assert faulthandler_safety_net_call_count() > _faulthandler_safety_net_witness_baseline[-1], (
+        "tests/conftest.py's own safety-net call counter did not advance "
+        "across test A's teardown -- either the autouse fixture did not "
+        "run, or it ran but never reached its own increment"
     )
