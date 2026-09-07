@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Shared marker-detection primitives for declaration/exemption/closing-note
-gates (#5919 stage 1).
+gates (#5919 stage 1, extended by stage 2).
 
 ## The class this closes
 
 Five `scripts/` gates each read prose (a PR comment, a PR body, a source
 comment) looking for a human's *declaration* — "TESTS-READ", "RE-READ",
 "BLOCKING-CLEARED", "this file is exempt", "this PR closes #N". Four of
-them (the ones this module serves; the fifth, `check_open_blocking_
-checkboxes.py`'s `_resolves_via_body`, is a separate PR — house-rule
-change, architect's call) used to detect a declaration by `.search()`-ing
-free text for a keyword, unanchored. #5919's census found the shared
+them (the ones stage 1 served; the fifth, `check_open_blocking_
+checkboxes.py`'s `_resolves_via_body` / marker anchoring, landed in
+stage 2, also via this module) used to detect a declaration by
+`.search()`-ing free text for a keyword, unanchored. #5919's census found
+the shared
 defect: **a sentence saying the declaration does NOT apply still contains
 the keyword**, so "no TESTS-READ note yet" and "No RE-READ needed here"
 both read as the note they deny. Each gate had grown its own regex to do
@@ -60,6 +61,16 @@ Three shapes cover the four gates:
   *mentioning* the same fixture name mid-sentence does not start there.
   Used by `check_subprocess_reyn_pin.py`'s exemption declaration.
 
+`undecorated_after_role_prefix` (stage 2) is a companion to
+`role_prefixed_marker`, not a fourth shape: once a gate strips its own
+markdown decoration (backtick/`*`) before matching, a blanket strip over
+the WHOLE line would erase a real role prefix's own literal `**[...]**`
+syntax right along with it — this function strips only AFTER a detected
+role prefix, so `role_prefixed_marker`'s anchor still has something to
+match. Used by `check_open_blocking_checkboxes.py` and (reusing THAT
+gate's own marker regex + decoration pattern, not a second copy)
+`check_blocking_has_reread_note.py`.
+
 ## What this module deliberately does NOT do
 
 It does not decide what counts as a declaration for any one gate — each
@@ -95,6 +106,35 @@ def role_prefixed_marker(keyword_pattern: str, *, flags: int = re.IGNORECASE) ->
     line — never a whole multi-line comment, or the anchor is
     meaningless."""
     return re.compile(rf"^(?:{ROLE_PREFIX})?{keyword_pattern}", flags)
+
+
+def undecorated_after_role_prefix(line: str, decoration: "re.Pattern[str]") -> str:
+    """*line*, with *decoration* stripped EVERYWHERE EXCEPT a leading
+    CLAUDE.md role prefix (:data:`ROLE_PREFIX`), if one opens the line.
+
+    #5919 stage 2 (`check_open_blocking_checkboxes.py`'s own real
+    incident, then reused by `check_blocking_has_reread_note.py` when its
+    own consumption of that gate's rename surfaced the same shape): a role
+    prefix is ITSELF written with literal ``**...**`` — the same character
+    class a gate's own decoration-tolerance (backtick/`*`, #5522) strips.
+    A blanket, unconditional strip run over the WHOLE line would erase the
+    role prefix's own asterisks right along with any decoration AROUND a
+    marker that follows it, so a real, decorated comment like
+    ``**[lead-coder]** — **BLOCKING (head `abc1234`)**`` would never match
+    :func:`role_prefixed_marker`'s own anchored pattern at all post-strip
+    (its `ROLE_PREFIX` requires the literal ``**[...]** — `` a blanket
+    strip would have just erased). Stripping only AFTER the detected role
+    prefix keeps that pattern intact while still tolerating decoration
+    around the marker itself.
+
+    *decoration* is caller-supplied (never a single frozen pattern here)
+    because :mod:`_markers` does not own any one gate's decoration
+    vocabulary — the same "shape here, vocabulary there" boundary
+    :func:`role_prefixed_marker` already draws for the keyword itself."""
+    prefix_match = re.match(ROLE_PREFIX, line)
+    if prefix_match is None:
+        return decoration.sub("", line)
+    return line[:prefix_match.end()] + decoration.sub("", line[prefix_match.end():])
 
 
 def first_line(text: str) -> str:
