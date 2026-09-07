@@ -1199,6 +1199,51 @@ missing one.
   they share its age. Here that was 5 claims re-run against
   `origin/main`, of which 4 held and only the reported one fell.
 
+- A PR sat `mergeStateStatus=BLOCKED` for hours with every visible signal
+  reading green: `gh pr checks` SUCCESS, the GitHub UI's own rollup SUCCESS,
+  no required review, no ruleset shown. The only place the real reason
+  surfaced was the literal rejection text of a direct `gh api -X PUT
+  .../merge` call: `"2 of 7 required status checks are expected."`
+  `expected` means "no report under that name exists yet" — not "pending,"
+  not "failed," and nothing in the rollup or `gh pr checks` distinguishes
+  it from either. **Two check suites on one head is the NORMAL case, not
+  the hazard** — of five heads measured the same night, three carried two
+  suites, and two of those three were perfectly healthy (including the PR
+  this very instance was added by). The hazard is specifically WHICH suite
+  is newer getting reversed: branch protection consults the LATEST suite
+  per workflow, and here the suite that had actually run the full matrix
+  (with the two expanded names, `pytest (Python 3.11)` / `(Python 3.12)`,
+  branch protection requires) was an OLDER attempt — a re-run of a prior
+  run, which reuses its existing suite rather than creating a new one — so
+  a later, path-filter-skipped `pull_request` run became the newer suite,
+  and reported a single job still literally named `pytest (Python ${{
+  matrix.python-version }})`, never the two expanded names. Branch
+  protection then read the newer, skipped suite and saw a genuine absence
+  at the exact (name, suite) pair it checks, invisible to every aggregate
+  view that blends across suites instead of asking "does THIS suite's
+  report for THIS name exist" (#5912). The discriminant a reader can pull
+  directly must scope the "which is newer" comparison to suites of the
+  SAME workflow, not every suite on the head — a head carries one suite
+  per workflow, so the head-wide maximum id is almost always a different
+  workflow's, and comparing against it false-positives on every healthy
+  PR (measured directly against this instance's own head: false-positive
+  confirmed, then fixed and re-measured 4/4 against known-good and the
+  one known-BLOCKED head):
+
+  ```sh
+  gh api "repos/<org>/<repo>/commits/<sha>/check-runs?per_page=100" --jq '
+    [.check_runs[] | select(.name | test("^pytest \\(Python"))]
+    | (map(.check_suite.id) | max) as $newest
+    | map(select(.check_suite.id == $newest) | .name)
+    | if any(.[]; test("matrix")) then "BLOCKED shape" else "OK" end'
+  ```
+
+  — find the newest suite among only the ones reporting a name in the
+  required family, and check whether THAT suite's names are still
+  unexpanded (`matrix.python-version` literal) rather than the real
+  values. The rollup's SUCCESS was real; it just
+  never named which suite, of the two, it was a rollup of.
+
 **This is where B combines with §16**, not a coincidence: the sessions that
 trusted a stale environment did so *because* their result matched `main`'s
 — an equality read as confirmation, when both sides were victims of the
