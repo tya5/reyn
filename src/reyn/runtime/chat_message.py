@@ -571,12 +571,19 @@ class LostReason(StrEnum):
     ``EXTERNAL`` (#5896 stage ①) is likewise NEVER written, derived the
     same way for an UN-SPILLED entry (``SPILLED_META_KEY`` False, a
     ``CONTENT_REF_META_KEY`` present): no eviction pass selects an
-    un-spilled file (``MediaStore.is_unspilled_file``), so a missing one
-    can only have been removed by something outside reyn's own GC — the
-    one case #5438's caveat above could not name for a spilled entry is
-    the ONLY case for an un-spilled one. Stage ② (spilled-first ordering
-    with un-spilled eviction, pending owner ruling) is where this would
-    stop being derivable and would need its own record."""
+    un-spilled file — the per-session pass by this store's own record,
+    the project-wide pass by re-reading every session's manifest lines
+    at pass time (``MediaStore._unspilled_paths_project_wide``, architect
+    co-vet 🔴 #2: a pass that used only the calling store's own view
+    evicted a neighbour's un-spilled body, and this reason then LIED
+    about it) — so a missing one was removed by something outside reyn's
+    own GC. Disclosed exception, not claimed closed: a neighbouring
+    store's body whose content landed while its manifest line was still
+    queued (the next job in the same FIFO worker) is invisible to a
+    project-wide pass run by a DIFFERENT store in that instant; a loss
+    in that window also reads as ``EXTERNAL``. Stage ② (spilled-first
+    ordering with un-spilled eviction, pending owner ruling) is where
+    this stops being derivable at all and needs its own record."""
 
     GC = "gc"
     NEVER_PERSISTED = "never_persisted"

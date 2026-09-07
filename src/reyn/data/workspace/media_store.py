@@ -961,6 +961,42 @@ class MediaStore:
             self._persist_spill_manifest(paths, unspilled)
         return paths, unspilled
 
+    def _unspilled_paths_project_wide(self) -> "set[Path]":
+        """#5896 (architect co-vet 🔴 #2 — "木を歩く pass の除外は木から導く"):
+        the un-spilled set a PROJECT-wide pass must exclude — every session's,
+        not just this store's. ``_unspilled_paths`` is this store's own view,
+        read from the (project-wide) manifest ONCE at construction plus its
+        own later writes; a neighbouring store's writes after that never
+        reach it, so a pass over the whole tree that used it would evict a
+        neighbour's un-spilled body (measured, architect: alice's pass
+        listed bob's file). So this re-reads the manifest fresh from disk —
+        the tree's own record, no caller state — and unions this store's
+        own in-memory set (its own lines may still be queued in its worker).
+
+        Disclosed window, not closed: a neighbour's body whose content
+        write has landed but whose manifest line is still queued (same
+        worker, FIFO, the next job) is not yet in the file this reads. Only
+        a project-wide pass from a DIFFERENT store in that instant could
+        select it; the neighbour's own per-session pass never does. See
+        ``LostReason.EXTERNAL``'s docstring for what that means for the
+        reason a reader derives."""
+        fresh: "set[Path]" = set()
+        manifest = self._spill_manifest_path()
+        try:
+            for line in manifest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("spilled", True) is False:
+                        fresh.add(Path(entry["path"]))
+                except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+                    continue
+        except OSError:
+            pass  # no manifest yet / unreadable → only this store's own view below
+        return fresh | self._unspilled_paths
+
     @staticmethod
     def _manifest_line(path: Path, *, spilled: bool) -> str:
         """The ONE encoding of a manifest line (the append in
@@ -1491,7 +1527,10 @@ class MediaStore:
         # deleted nothing — say so ONCE, with the reason, never silently.
         self._note_cap_state("session", total=total, cap=cap, directory=directory)
 
-    def _note_cap_state(self, scope: str, *, total: int, cap: int, directory: Path) -> None:
+    def _note_cap_state(
+        self, scope: str, *, total: int, cap: int, directory: Path,
+        unspilled: "set[Path] | None" = None,
+    ) -> None:
         """#5896 stage ① (architect co-vet 🔴 — "上限が満たせなくなったのに何
         も言わない"): record whether an eviction pass for *scope* ended
         still over *cap*, and WARN exactly once per False→True transition
@@ -1505,11 +1544,20 @@ class MediaStore:
         CLAUDE.md's three questions: Q1 (who stops it if it repeats) — the
         operator, now that they can see it; Q2 (visible with the shipped
         config) — a WARNING on reyn's own log, no setting needed; Q3 (does
-        the repair destroy evidence) — nothing is deleted here."""
+        the repair destroy evidence) — nothing is deleted here.
+
+        ``unspilled`` (#5896 🔴 #2): the exclusion set the pass actually
+        used — the project-wide pass passes its tree-derived set so the
+        figures count EVERY session's un-spilled bodies (a caller-only
+        count could say "0 file(s) un-spilled" for a cap another session
+        filled — a self-contradicting line). ``None`` = this store's own
+        set (the per-session pass, whose tree IS this store's)."""
         over = total > cap
         was = self._cap_unsatisfiable.get(scope, False)
         if over and not was:
-            n_unspilled, unspilled_bytes = self._unspilled_stats_under(directory)
+            n_unspilled, unspilled_bytes = self._unspilled_stats_under(
+                directory, unspilled=unspilled,
+            )
             logger.warning(
                 "#5896: the %s history-content cap (%d bytes) cannot be met — "
                 "%d bytes on disk after eviction; %d file(s) / %d bytes are "
@@ -1519,14 +1567,17 @@ class MediaStore:
             )
         self._cap_unsatisfiable[scope] = over
 
-    def _unspilled_stats_under(self, directory: Path) -> "tuple[int, int]":
+    def _unspilled_stats_under(
+        self, directory: Path, *, unspilled: "set[Path] | None" = None,
+    ) -> "tuple[int, int]":
         """(count, bytes) of the un-spilled files under *directory* that
         still exist — the WARNING's own figures, computed only when it
-        fires."""
+        fires. *unspilled* defaults to this store's own set; a project-wide
+        caller passes the tree-derived set (see ``_note_cap_state``)."""
         root = directory.resolve()
         count = 0
         total = 0
-        for path in self._unspilled_paths:
+        for path in (self._unspilled_paths if unspilled is None else unspilled):
             try:
                 path.relative_to(root)
                 total += path.stat().st_size
@@ -1615,8 +1666,12 @@ class MediaStore:
                 "project", total=total, cap=max_bytes, directory=history_content_root,
             )
             return
+        # #5896 🔴 #2: the exclusion for a pass over the WHOLE tree comes
+        # from the tree (every session's manifest lines), never from this
+        # store's own view alone — see _unspilled_paths_project_wide.
+        unspilled = self._unspilled_paths_project_wide()
         history_content_candidates = cross_session_eviction_candidates(
-            history_content_root, pin=self._storage.pin, unspilled=self._unspilled_paths,
+            history_content_root, pin=self._storage.pin, unspilled=unspilled,
         )
         # #4478: a NEW (post-#4478) nested media write's own pin match
         # works exactly like history-content's; a pre-#4478 flat file's
@@ -1646,6 +1701,7 @@ class MediaStore:
         # only said here, once per transition.
         self._note_cap_state(
             "project", total=total, cap=max_bytes, directory=history_content_root,
+            unspilled=unspilled,
         )
         if total > max_bytes:
             raise MediaStoreWriteUnavailable(
@@ -1682,7 +1738,8 @@ class MediaStore:
         if total <= max_bytes:
             return []
         history_content_candidates = cross_session_eviction_candidates(
-            history_content_root, pin=self._storage.pin, unspilled=self._unspilled_paths,
+            history_content_root, pin=self._storage.pin,
+            unspilled=self._unspilled_paths_project_wide(),
         )
         media_candidates = cross_session_eviction_candidates(
             self._media_dir, pin=self._storage.pin,

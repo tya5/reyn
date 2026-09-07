@@ -294,31 +294,63 @@ def test_gc_never_selects_an_unspilled_file(tmp_path: Path) -> None:
     )
 
 
-def test_cross_session_gc_never_lists_an_unspilled_file(tmp_path: Path) -> None:
+def test_cross_session_gc_never_lists_a_neighbours_unspilled_file(tmp_path: Path) -> None:
     """Tier 2: the same condition on the PROJECT-wide pass (#5366's
-    ``storage.max_bytes``): another session's store, well over the
-    project cap, previews no eviction of alice's un-spilled bodies — the
-    manifest is project-wide, so bob's store knows them — while alice's
-    later spilled write does appear. Strip-falsify: drop the
-    ``unspilled`` filter in ``cross_session_eviction_candidates`` → the
-    preview lists alice's un-spilled files → red."""
-    alice = MediaStore(project_root=tmp_path, agent_name="alice", session_id="main")
-    kept = alice.save_tool_result("payload number 0 " * 2, seq=0, spilled=False)
-    _bump_all_mtimes_forward(alice.history_content_dir)
-
+    ``storage.max_bytes``), in the order that broke (architect co-vet 🔴
+    #2, measured): bob's store is constructed FIRST, alice writes an
+    un-spilled body AFTER — so bob's construction-time view of the
+    manifest cannot know it — and bob's pass over the whole tree must
+    still not list it: the exclusion is derived from the tree at pass
+    time, not from the caller's own view. Alice's later spilled write
+    does appear. Strip-falsify: pass ``self._unspilled_paths`` (the
+    caller's own set) instead of ``_unspilled_paths_project_wide()`` →
+    bob lists alice's un-spilled body → red."""
     bob = MediaStore(
         project_root=tmp_path, agent_name="bob", session_id="main",
         storage=StorageConfig(max_bytes=10),
     )
+    alice = MediaStore(project_root=tmp_path, agent_name="alice", session_id="main")
+    kept = alice.save_tool_result("payload number 0 " * 2, seq=0, spilled=False)
+    _bump_all_mtimes_forward(alice.history_content_dir)
+    assert not bob.is_unspilled_file(kept["path"]), (
+        "test setup sanity: bob's construction-time view genuinely does not know alice's write"
+    )
+
     assert bob.cross_session_eviction_preview() == []
 
     evictable = alice.save_tool_result("payload number 1 " * 2, seq=1)
-    preview = MediaStore(
-        project_root=tmp_path, agent_name="bob", session_id="main",
-        storage=StorageConfig(max_bytes=10),
-    ).cross_session_eviction_preview()
+    preview = bob.cross_session_eviction_preview()
     assert (tmp_path / evictable["path"]).resolve() in {p.resolve() for p in preview}
     assert (tmp_path / kept["path"]).resolve() not in {p.resolve() for p in preview}
+
+
+def test_cross_session_gc_pass_leaves_a_neighbours_unspilled_body_on_disk(
+    tmp_path: Path, caplog,
+) -> None:
+    """Tier 2: the DELETING pass, same order — bob's own write triggers the
+    project-wide pre-check over cap; alice's un-spilled body survives it
+    (bob's write is refused instead, §1.5), and the one WARNING counts
+    alice's body — never "0 file(s) un-spilled" for a cap another session
+    filled. Strip-falsify as the preview test above."""
+    import logging
+
+    from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
+
+    caplog.set_level(logging.WARNING, logger="reyn.data.workspace.media_store")
+    bob = MediaStore(
+        project_root=tmp_path, agent_name="bob", session_id="main",
+        storage=StorageConfig(max_bytes=10),
+    )
+    alice = MediaStore(project_root=tmp_path, agent_name="alice", session_id="main")
+    kept = alice.save_tool_result("payload number 0 " * 2, seq=0, spilled=False)
+    _bump_all_mtimes_forward(alice.history_content_dir)
+
+    with pytest.raises(MediaStoreWriteUnavailable):
+        bob.save_tool_result("payload number 1 " * 2, seq=1, spilled=False)
+
+    assert (tmp_path / kept["path"]).is_file(), "a neighbour's un-spilled body is never evicted"
+    (warning,) = _cap_warnings(caplog)
+    assert "1 file(s)" in warning, warning
 
 
 _CAP_WARNING = "cannot be met"
