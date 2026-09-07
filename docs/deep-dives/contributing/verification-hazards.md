@@ -17,14 +17,18 @@ and a measured detection, it doesn't belong in this doc.
 
 ## 1. The six faces of "observation ≠ referent"
 
-| Face | What's missing | Instance |
+| Face | What's missing | Representative instance |
 |---|---|---|
-| **Measures a different quantity** | The observation runs, hits something real, and can go red — but the QUANTITY it measures is not the one the claim names | A docstring named itself "the compact()-side witness that spill_fn's replacement actually reached `engine.compact()`, not just retry_loop's own state" — but `compact_calls` increments at `compact()`'s own ENTRY, so it is `>= 1` whether or not the replaced content ever arrived; the one property the docstring claimed to witness was never asserted on at all (#5386). Separately: a manifest-append-ordering claim was checked by reading BOTH the content file and the manifest AFTER `flush()` — the barrier drains both jobs regardless of which order they ran in, so the read sees the same state under either order and the assert cannot tell them apart (#5384③). Separately again: `assert "gone.txt" in tool_msg["content"]` was meant to witness a spilled entry's missing-backing-file resolving to a "lost" notice — but the STALE, un-resolved preview text (`read_file(path="gone.txt")`) also contains the substring `"gone.txt"`, so the assert passes identically whether resolution ran or never touched the entry at all (#5372). A fourth instance, about completion rather than counting: `while not (log_path.exists() and log_path.stat().st_size > 0): ...; content = log_path.read_text(); assert "Thread" in content` waited for "non-empty," not "finished" — `faulthandler`'s dump writes its header (`Timeout (0:00:01)!`) BEFORE the thread-stack body, so a read landing between the two writes sees a genuinely non-empty file with no `"Thread"` in it yet, flaking on machine speed alone with the exact same tree passing or failing (#5394 → #5397). A fifth instance, about a test construction accidentally selecting an existing explanation instead of the new one: an open-turn GC-exclusion feature's tests used only 2 files where the triggering chain's own file was ALSO the newest by mtime — eviction's pre-existing oldest-first order produces the identical pass/fail outcome with the new exclusion rule deleted outright, so 3 green tests said nothing about whether the exclusion code ran at all (#5399). Two of these five were prescribed by the same reviewer who later named the face — "the observation point has a name" was mistaken for "the observation point measures the claim," on both sides of the exchange. |
-| **Record is a lie** | The claim itself is false | `landlock.py` blamed network denial on "the no-network-fd / proxy gate" — a named mechanism that appears nowhere in the repo but that one comment (#3031). What actually denied `connect()` was a seccomp default-deny, itself skipped under `allow_subprocess=True` (#3030). |
-| **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). A repro can fail the SAME way a test can: investigating whether a secret leaks through `Session._run_router_loop`'s TUI/outbox path (#3830), a reproduction was built that raised the exception WITHOUT going through `scrub_exception_in_place` — the then-production path (removed by #4353; the leak surface itself was also closed by #4348) — and reported the fixed code as still leaking. Self-corrected once rebuilt to raise through the real call path, which produced the REDACTED text the first repro never could have shown either way (#4343). The repro environment, not a test, was the thing that couldn't witness the real path this time. |
-| **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. CLAUDE.md asserted the sandbox 3-tuple axis contract (deny/exception-boundary/workload) was "CI-conformance-only" — a claim about subsystem B (CI) written in subsystem A (the hard-rules doc) — with no one on B's side ever checking it was true: `test_sandbox_axis_contract_2983.py`'s network-axis arms skipped in every pytest job (no `sandbox-linux` extra) and were never collected by the one job that DID have Landlock available, so the "CI-conformance" layer ran on zero jobs, not the CI-conformance-only-but-still-real coverage the sentence implied. Distinct from the "environment can't witness" row above: the deny-gate job's environment COULD witness the risky path fine — once the file was added to its `pytest` invocation it ran and passed (34/34) — the gap was never a capability gap, only that nothing on the CI side had ever checked the claim against what actually ran (#4333, found via #4331's skip census cross-referenced against which job collects which file). |
-| **Observed-target identity unverified** | Green about the wrong object | Agent worktrees share the main checkout's `.venv` (0 of 136 have their own) — in-process and subprocess-imported `reyn` are two different trees "by construction, not staleness" (#3033). Separately: the same heading anchor resolves to two different slugs on GitHub vs mkdocs — "valid" is renderer-specific (#3039). Separately again: a SHARED venv's editable install can be silently re-pointed to a DIFFERENT worktree by someone else's concurrent `uv pip install -e .` (`VIRTUAL_ENV` resolves to the parent venv from inside a worktree, so the parent's `.pth` re-links to that worktree) — a strip-falsify then measures a tree nobody touched (#3363/#3370, 2026-07-27). Central audit can't catch this: a session can only resolve its OWN `python`'s import, never another session's PATH. The fix is measurement-time self-check, not a periodic audit — `python -c "import reyn; assert reyn.__file__.startswith('$PWD/src')"` before trusting any local strip result, reading the RESOLVED path (`reyn.__file__`), not the DECLARED one (the `.pth` file's contents). CI is structurally exempt (`actions/checkout` + a fresh editable install every run leaves no other tree to point at) — only local strip results are at risk. A second axis of the same identity question, this time TEMPORAL rather than spatial: analyzing a central file (`session.py`) on a shared tree, then applying that analysis later by line number, silently broke when `main` moved underneath the analysis (+107 lines from 3 intervening merges) — the same file at two different times is as much "a different object" as two different worktrees are. Caught only because the applying agent inserted a content-based line-anchor check before applying and got 87/100 mismatches; without that check the file would have been silently corrupted. Recovery reached 381/389 sites, and the 8 unrecoverable ones all fell inside the one region a concurrent merge had actually touched — a mechanistic explanation, not randomness (2026-07-28). Line numbers are not identifiers across a moving `main`; re-anchor by content immediately before applying whenever measurement and use are separated in time. A third axis, this time about the isolation boundary itself rather than what's inside it: a session's dedicated worktree can vanish MID-SESSION (the cause was never established — only that a registered tree later no longer existed), and because a tool-calling agent's shell `cwd` resets between calls, every subsequent command silently fell back to the shared checkout instead of erroring — a commit believed isolated was made on the shared tree (#3581). "Worktree-isolated" is a fact true at session START, not an invariant that holds for its duration. The only way to catch this is a self-check at the moment of measuring, committing, or pushing — `pwd`, `git worktree list`, and venv/`reyn.__file__` identity — not trusting that isolation, once true, stays true. A fourth axis, this time about which TREE a claim is even about: `git diff origin/main <branch>` (two-dot) and `git show <branch>:<path>` both read the BRANCH's own tree, but a merge applies only the branch's diff from the merge-base (three-dot) — so a branch that is merely BEHIND `main` shows files it never touched and file content that is simply pre-merge, and both were read as "this PR reverts main." Three different methods reached that same wrong conclusion on the same five PRs in one night (a `--numstat` deletion-column read, a `git show <branch>:<path>` content read, and a purpose-built two-dot/three-dot set-difference gate written specifically to catch reverts) — ~14 forced `update-branch` cycles were paid chasing it, and every gate stayed green throughout: the green was correct, not a miss. When three different methods produce the same wrong answer, the error is in the reader, not the method. Read the object that actually ships: `git diff origin/main...<branch> --diff-filter=D --name-only` for what the branch itself removes, or build the merge and read THAT — `git merge-tree --write-tree origin/main <branch>` then `git show <tree>:<path>` — for the merged content a reviewer is actually claiming about. When "this gate doesn't see this class" explains away an unexpected green or red, check whether that is the only explanation before trusting it. |
-| **Run doesn't support the claim** | The execution was real; the CONDITION or the FAILURE wasn't | A flake documented as *load-sensitive* passed 25/25 — run sequentially, one test, on a quiet machine: the condition was avoided, not created, and it read as "fixed" (2026-07-30). Correcting for that by running six copies of the SAME test concurrently produced 17/18 red — all `FileExistsError: agent 'operator' already exists`, six copies fighting over one workspace. That number would have contradicted a peer's bisect, first blamed on an artefact of the harness — but it was a real single-occupancy defect in the test itself (a machine-global base dir it wipes on entry, #3473/#3519): a valid reproduction of a DIFFERENT defect than the one being asked about, not a broken measurement. Only the third attempt — DIFFERENT tests in parallel, the actual CI shape — was evidence for the ORIGINAL question, and it surfaced a third failure face (`No fixture entry for model=…`) distinct from both tracked causes, redirecting a peer who was hunting a symptom that no longer reproduced. Same family, counting rather than conditions: "the residue is 2 cells" counted OCCURRENCES of an SGR escape; one had no following text and SGR runs to end of line, so the number understated it — the count was executed, the unit was never settled (#3504/#3505). A fourth mechanism, same face: green can mean the EXECUTION MODE itself changed the condition. The same race-prone test read 2/30 and 8/30 failed in a fast, in-process regime (short pauses, tight timing window), then 0/20 failed when run the normal way, through `pytest` — the wrapper's own overhead widened the timing window enough to make the race stop landing (#3581). A local `pytest` re-run reading green after a fix therefore proves nothing about the defect; it only shows the race's condition wasn't present in THAT regime, same as the sequential flake above. |
+| **Measures a different quantity** | The observation runs, hits something real, and can go red — but the QUANTITY it measures is not the one the claim names | [#5386](#instances-measures-a-different-quantity) |
+| **Record is a lie** | The claim itself is false | [#3031](#instances-record-is-a-lie) |
+| **Environment can't witness** | A green test never ran the risky path | [#2980](#instances-environment-cant-witness) |
+| **Claim has no owner** | No one on the claimed subsystem's side checks it | [#4333](#instances-claim-has-no-owner) |
+| **Observed-target identity unverified** | Green about the wrong object | [#3033](#instances-observed-target-identity-unverified) |
+| **Run doesn't support the claim** | The execution was real; the CONDITION or the FAILURE wasn't | [#3473](#instances-run-doesnt-support-the-claim) |
+
+Full instances for each face — verbatim, dated and issue-numbered, appended to
+as new ones surface — live in [§1 Instances](#1-instances) at the end of this
+section.
 
 **Apply**: before trusting a green result, name what it actually observed,
 not what you're using it to conclude. For a rate or a count, also name the
@@ -59,21 +63,22 @@ parallelism, a regime); here the condition is fully met and the code path
 the claim names did run — the observation POINT itself answers a different
 question than the one asserted.
 
-Detection technique, one per instance above: for a counter/flag, find the
-single moment it changes and name what triggers that moment — an ENTRY
-point is not the same claim as a downstream effect (#5386). Never place the
-observation after a barrier (`flush`/`join`/await-all) that a divergent
-order would drain identically either way — the barrier is exactly what
-erases the difference being tested (#5384③). For an "expected failure,"
-check that the failure mode itself is diagnostic, not merely present —
-absence, an error, and an empty result can all look identical regardless of
-WHY (#5372). "Non-empty" or "at least one line" is not "complete" if the
-underlying write can land in more than one piece — wait for the terminal
-shape the claim actually depends on (#5394). And before trusting a fixture
-that produces the expected result, check whether an OLDER, already-existing
-rule (sort order, priority, eviction policy) would produce the identical
-result with the new code deleted — a construction is only a witness once
-the new rule is the SOLE explanation left standing (#5399).
+Detection technique, one per instance in [§1 Instances](#1-instances): for a
+counter/flag, find the single moment it changes and name what triggers that
+moment — an ENTRY point is not the same claim as a downstream effect
+(#5386). Never place the observation after a barrier (`flush`/`join`/
+await-all) that a divergent order would drain identically either way — the
+barrier is exactly what erases the difference being tested (#5384③). For an
+"expected failure," check that the failure mode itself is diagnostic, not
+merely present — absence, an error, and an empty result can all look
+identical regardless of WHY (#5372). "Non-empty" or "at least one line" is
+not "complete" if the underlying write can land in more than one piece —
+wait for the terminal shape the claim actually depends on (#5394). And
+before trusting a fixture that produces the expected result, check whether
+an OLDER, already-existing rule (sort order, priority, eviction policy)
+would produce the identical result with the new code deleted — a
+construction is only a witness once the new rule is the SOLE explanation
+left standing (#5399).
 
 **The same question binds the PRESCRIBER, not only the writer.** The face
 above reads as advice to whoever writes the assert — but "the observation
@@ -98,6 +103,198 @@ specifically: before recommending or approving a new mechanism to close a
 gap, ask whether an existing one — searched for directly, not assumed
 absent because the first grep came back empty — already answers the same
 question one layer away.
+
+### §1 Instances
+
+Verbatim, one paragraph per instance, grouped by face and appended to as new
+ones surface — never rewritten, only added to (the same discipline an ADR's
+own correction notes use). Moving an instance here is a relocation, not a
+rewrite: the wording below is unchanged from where it lived in the table
+before this restructuring (2026-09-07, part of #5900).
+
+#### Instances: Measures a different quantity
+
+A docstring named itself "the compact()-side witness that spill_fn's
+replacement actually reached `engine.compact()`, not just retry_loop's own
+state" — but `compact_calls` increments at `compact()`'s own ENTRY, so it is
+`>= 1` whether or not the replaced content ever arrived; the one property
+the docstring claimed to witness was never asserted on at all (#5386).
+
+Separately: a manifest-append-ordering claim was checked by reading BOTH the
+content file and the manifest AFTER `flush()` — the barrier drains both jobs
+regardless of which order they ran in, so the read sees the same state
+under either order and the assert cannot tell them apart (#5384③).
+
+Separately again: `assert "gone.txt" in tool_msg["content"]` was meant to
+witness a spilled entry's missing-backing-file resolving to a "lost" notice
+— but the STALE, un-resolved preview text (`read_file(path="gone.txt")`)
+also contains the substring `"gone.txt"`, so the assert passes identically
+whether resolution ran or never touched the entry at all (#5372).
+
+A fourth instance, about completion rather than counting: `while not
+(log_path.exists() and log_path.stat().st_size > 0): ...; content =
+log_path.read_text(); assert "Thread" in content` waited for "non-empty,"
+not "finished" — `faulthandler`'s dump writes its header (`Timeout
+(0:00:01)!`) BEFORE the thread-stack body, so a read landing between the two
+writes sees a genuinely non-empty file with no `"Thread"` in it yet,
+flaking on machine speed alone with the exact same tree passing or failing
+(#5394 → #5397).
+
+A fifth instance, about a test construction accidentally selecting an
+existing explanation instead of the new one: an open-turn GC-exclusion
+feature's tests used only 2 files where the triggering chain's own file was
+ALSO the newest by mtime — eviction's pre-existing oldest-first order
+produces the identical pass/fail outcome with the new exclusion rule deleted
+outright, so 3 green tests said nothing about whether the exclusion code ran
+at all (#5399).
+
+Two of these five were prescribed by the same reviewer who later named the
+face — "the observation point has a name" was mistaken for "the observation
+point measures the claim," on both sides of the exchange.
+
+#### Instances: Record is a lie
+
+`landlock.py` blamed network denial on "the no-network-fd / proxy gate" — a
+named mechanism that appears nowhere in the repo but that one comment
+(#3031). What actually denied `connect()` was a seccomp default-deny, itself
+skipped under `allow_subprocess=True` (#3030).
+
+#### Instances: Environment can't witness
+
+The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that
+don't exist in the pinned `landlock==1.0.0.dev5` — every call raised
+`AttributeError` in production for 41 days, while its own test called the
+shim's internals directly, bypassing the broken production entry point
+(#2980).
+
+A repro can fail the SAME way a test can: investigating whether a secret
+leaks through `Session._run_router_loop`'s TUI/outbox path (#3830), a
+reproduction was built that raised the exception WITHOUT going through
+`scrub_exception_in_place` — the then-production path (removed by #4353;
+the leak surface itself was also closed by #4348) — and reported the fixed
+code as still leaking. Self-corrected once rebuilt to raise through the
+real call path, which produced the REDACTED text the first repro never
+could have shown either way (#4343). The repro environment, not a test,
+was the thing that couldn't witness the real path this time.
+
+#### Instances: Claim has no owner
+
+Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem
+B's behavior, with no owner on B's side to catch it wrong — "plausible and
+unowned" is why it survived. CLAUDE.md asserted the sandbox 3-tuple axis
+contract (deny/exception-boundary/workload) was "CI-conformance-only" — a
+claim about subsystem B (CI) written in subsystem A (the hard-rules doc) —
+with no one on B's side ever checking it was true:
+`test_sandbox_axis_contract_2983.py`'s network-axis arms skipped in every
+pytest job (no `sandbox-linux` extra) and were never collected by the one
+job that DID have Landlock available, so the "CI-conformance" layer ran on
+zero jobs, not the CI-conformance-only-but-still-real coverage the sentence
+implied. Distinct from the "environment can't witness" row above: the
+deny-gate job's environment COULD witness the risky path fine — once the
+file was added to its `pytest` invocation it ran and passed (34/34) — the
+gap was never a capability gap, only that nothing on the CI side had ever
+checked the claim against what actually ran (#4333, found via #4331's skip
+census cross-referenced against which job collects which file).
+
+#### Instances: Observed-target identity unverified
+
+Agent worktrees share the main checkout's `.venv` (0 of 136 have their own)
+— in-process and subprocess-imported `reyn` are two different trees "by
+construction, not staleness" (#3033).
+
+Separately: the same heading anchor resolves to two different slugs on
+GitHub vs mkdocs — "valid" is renderer-specific (#3039).
+
+Separately again: a SHARED venv's editable install can be silently
+re-pointed to a DIFFERENT worktree by someone else's concurrent `uv pip
+install -e .` (`VIRTUAL_ENV` resolves to the parent venv from inside a
+worktree, so the parent's `.pth` re-links to that worktree) — a
+strip-falsify then measures a tree nobody touched (#3363/#3370,
+2026-07-27). Central audit can't catch this: a session can only resolve its
+OWN `python`'s import, never another session's PATH. The fix is
+measurement-time self-check, not a periodic audit — `python -c "import
+reyn; assert reyn.__file__.startswith('$PWD/src')"` before trusting any
+local strip result, reading the RESOLVED path (`reyn.__file__`), not the
+DECLARED one (the `.pth` file's contents). CI is structurally exempt
+(`actions/checkout` + a fresh editable install every run leaves no other
+tree to point at) — only local strip results are at risk.
+
+A second axis of the same identity question, this time TEMPORAL rather than
+spatial: analyzing a central file (`session.py`) on a shared tree, then
+applying that analysis later by line number, silently broke when `main`
+moved underneath the analysis (+107 lines from 3 intervening merges) — the
+same file at two different times is as much "a different object" as two
+different worktrees are. Caught only because the applying agent inserted a
+content-based line-anchor check before applying and got 87/100 mismatches;
+without that check the file would have been silently corrupted. Recovery
+reached 381/389 sites, and the 8 unrecoverable ones all fell inside the one
+region a concurrent merge had actually touched — a mechanistic explanation,
+not randomness (2026-07-28). Line numbers are not identifiers across a
+moving `main`; re-anchor by content immediately before applying whenever
+measurement and use are separated in time.
+
+A third axis, this time about the isolation boundary itself rather than
+what's inside it: a session's dedicated worktree can vanish MID-SESSION
+(the cause was never established — only that a registered tree later no
+longer existed), and because a tool-calling agent's shell `cwd` resets
+between calls, every subsequent command silently fell back to the shared
+checkout instead of erroring — a commit believed isolated was made on the
+shared tree (#3581). "Worktree-isolated" is a fact true at session START,
+not an invariant that holds for its duration. The only way to catch this is
+a self-check at the moment of measuring, committing, or pushing — `pwd`,
+`git worktree list`, and venv/`reyn.__file__` identity — not trusting that
+isolation, once true, stays true.
+
+A fourth axis, this time about which TREE a claim is even about: `git diff
+origin/main <branch>` (two-dot) and `git show <branch>:<path>` both read
+the BRANCH's own tree, but a merge applies only the branch's diff from the
+merge-base (three-dot) — so a branch that is merely BEHIND `main` shows
+files it never touched and file content that is simply pre-merge, and both
+were read as "this PR reverts main." Three different methods reached that
+same wrong conclusion on the same five PRs in one night (a `--numstat`
+deletion-column read, a `git show <branch>:<path>` content read, and a
+purpose-built two-dot/three-dot set-difference gate written specifically to
+catch reverts) — ~14 forced `update-branch` cycles were paid chasing it, and
+every gate stayed green throughout: the green was correct, not a miss. When
+three different methods produce the same wrong answer, the error is in the
+reader, not the method. Read the object that actually ships: `git diff
+origin/main...<branch> --diff-filter=D --name-only` for what the branch
+itself removes, or build the merge and read THAT — `git merge-tree
+--write-tree origin/main <branch>` then `git show <tree>:<path>` — for the
+merged content a reviewer is actually claiming about. When "this gate
+doesn't see this class" explains away an unexpected green or red, check
+whether that is the only explanation before trusting it.
+
+#### Instances: Run doesn't support the claim
+
+A flake documented as *load-sensitive* passed 25/25 — run sequentially, one
+test, on a quiet machine: the condition was avoided, not created, and it
+read as "fixed" (2026-07-30). Correcting for that by running six copies of
+the SAME test concurrently produced 17/18 red — all `FileExistsError: agent
+'operator' already exists`, six copies fighting over one workspace. That
+number would have contradicted a peer's bisect, first blamed on an artefact
+of the harness — but it was a real single-occupancy defect in the test
+itself (a machine-global base dir it wipes on entry, #3473/#3519): a valid
+reproduction of a DIFFERENT defect than the one being asked about, not a
+broken measurement. Only the third attempt — DIFFERENT tests in parallel,
+the actual CI shape — was evidence for the ORIGINAL question, and it
+surfaced a third failure face (`No fixture entry for model=…`) distinct from
+both tracked causes, redirecting a peer who was hunting a symptom that no
+longer reproduced.
+
+Same family, counting rather than conditions: "the residue is 2 cells"
+counted OCCURRENCES of an SGR escape; one had no following text and SGR
+runs to end of line, so the number understated it — the count was executed,
+the unit was never settled (#3504/#3505).
+
+A fourth mechanism, same face: green can mean the EXECUTION MODE itself
+changed the condition. The same race-prone test read 2/30 and 8/30 failed
+in a fast, in-process regime (short pauses, tight timing window), then
+0/20 failed when run the normal way, through `pytest` — the wrapper's own
+overhead widened the timing window enough to make the race stop landing
+(#3581). A local `pytest` re-run reading green after a fix therefore proves
+nothing about the defect; it only shows the race's condition wasn't present
+in THAT regime, same as the sequential flake above.
 
 ## 2. False-capability vs. false-prohibition — the dual, and only one is self-sealing
 
