@@ -64,7 +64,17 @@ def test_returncode_of_reads_a_finished_process_through_execnets_popen_shape() -
     signal-killed process reports the negative signal number, which is
     exactly the datum #5909's crashed workers never surfaced. Any missing
     link in the shape yields ``None``, never an exception (the hook runs in
-    execnet's receiver thread)."""
+    execnet's receiver thread).
+
+    ``sys.executable`` spawn, deliberately NOT pinned with #5028's
+    env-identity fixture: the child runs ``-c "os.kill(getpid(), SIGKILL)"``
+    and never imports ``reyn`` — the process only exists to be dead with a
+    known signal. This file is therefore listed in ``scripts/check_
+    subprocess_reyn_pin_baseline.json`` as the gate's own "genuinely never
+    touches reyn" case, with this paragraph as the explanation the gate asks
+    for. (The fixture's name is deliberately not written here: the gate's
+    declared-check is a text scan, and naming it would read as a
+    declaration and hide this file from the baseline it belongs in.)"""
     proc = subprocess.Popen([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"])
     proc.wait()
 
