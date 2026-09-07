@@ -2119,6 +2119,57 @@ class MediaStore:
             f"{self._history_content_root} — refusing to read"
         )
 
+    def read_tool_result_preview(
+        self, path_str: str, *, max_bytes: int,
+    ) -> "tuple[str, bool, int]":
+        """#5949 (owner-hit P0): a GENUINELY bounded read — never loads
+        more than ``max_bytes`` of the file into memory, unlike
+        :func:`~reyn.services.offload.store.read_offloaded`'s own
+        ``offset``/``limit`` (which reads the WHOLE file via
+        ``Path.read_text()`` first and only slices AFTER — useless for a
+        preview of a file that is one giant line, exactly this incident's
+        own shape: a 369 MB tool-result body with no internal newlines,
+        where ``limit=1`` would still return the entire line). Opens the
+        file and calls ``f.read(max_bytes)`` directly — the same
+        genuinely-bounded discipline PR #5947's own streaming fix
+        established for ``history.jsonl`` itself, applied here to a
+        single history-content file.
+
+        Returns ``(preview_text, found, total_bytes)`` — ``found=False``
+        (empty preview, ``total_bytes=0``) when the file does not exist.
+        ``total_bytes`` is the file's REAL on-disk size (``os.path.
+        getsize`` — a cheap stat, not a read), read independently of any
+        meta field a caller might already have, since a #5896-stage-③-
+        migrated file predates ``CONTENT_BYTES_META_KEY`` and does not
+        carry one.
+
+        Same path-boundary validation as :meth:`read_tool_result` (both
+        directories checked, ``PermissionError`` on neither matching) —
+        this is a read primitive, not a laxer sibling."""
+        import os
+
+        abs_path = (self._project_root / path_str).resolve()
+        boundary_ok = False
+        for base_dir in (self._history_content_root, self._tool_results_dir):
+            try:
+                abs_path.relative_to(base_dir.resolve())
+                boundary_ok = True
+                break
+            except ValueError:
+                continue
+        if not boundary_ok:
+            raise PermissionError(
+                f"path {path_str!r} is outside both tool_results_dir "
+                f"{self._tool_results_dir} and history_content_root "
+                f"{self._history_content_root} — refusing to read"
+            )
+        if not abs_path.exists():
+            return "", False, 0
+        total_bytes = os.path.getsize(abs_path)
+        with abs_path.open("r", encoding="utf-8", errors="replace") as f:
+            preview = f.read(max_bytes)
+        return preview, True, total_bytes
+
     # ── Cross-host routing (#385 β core impl sub-task 1) ──────────────
 
     def _attach_cross_host_fields(

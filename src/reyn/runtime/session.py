@@ -73,6 +73,7 @@ from reyn.runtime.budget.budget import (
 )
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
+    CONTENT_PREVIEW_META_KEY,
     CONTENT_REF_META_KEY,
     SPILLED_META_KEY,
     ChatMessage,
@@ -5006,7 +5007,9 @@ class Session:
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
         )
 
-    def _parse_history_line(self, line: str) -> "ChatMessage | None":
+    def _parse_history_line(
+        self, line: str, *, preview_only: bool = False,
+    ) -> "ChatMessage | None":
         """Parse one ``history.jsonl`` line into a ``ChatMessage``, or
         ``None`` if malformed (skipped, never raised — byte-identical to
         the pre-#4387 behavior). Pure: does not touch ``self.history``.
@@ -5034,12 +5037,31 @@ class Session:
         ``offloaded_content_unavailable`` once per parse; a session with no
         ``MediaStore`` (no multimodal config — every production factory
         wires one) cannot validate the path boundary and leaves the row
-        as parsed, disclosed here rather than read around the store."""
+        as parsed, disclosed here rather than read around the store.
+
+        ``preview_only`` (#5949, owner-hit P0): the caller wants the row
+        for DISPLAY (scrollback), not for the LLM wire. ``content`` stays
+        EMPTY here (never eager-hydrated) — a bounded preview is filled
+        in SEPARATELY, by :meth:`_fill_content_previews`, into
+        ``meta[CONTENT_PREVIEW_META_KEY]``, never into ``.content`` itself.
+        This is the ONE thing that makes the fix safe: the LLM wire path
+        (``RouterHistoryBuffer._serialise_turn``) reads ``.content``, which
+        stays exactly what an un-hydrated row already looks like — its own
+        EXISTING ``resolve_history_content`` call there lazily fetches the
+        REAL full body at wire-build time, regardless of whether a preview
+        was also computed for display. See module docstring at the top of
+        :func:`_fill_content_previews` for why this must be a caller-scoped
+        SECOND pass, not done inline here (the same file being referenced
+        by two different rows — a ``tool`` row and its own ``spill_record``
+        — must be read at most once per :meth:`_load_older_entries` call,
+        which requires a cache shared ACROSS lines, not per-line state)."""
         msg = parse_history_line(line)
         if msg is None or msg.role != "tool" or msg.content != "":
             return msg
         meta = msg.meta or {}
         if not meta.get(CONTENT_REF_META_KEY) or meta.get(SPILLED_META_KEY):
+            return msg
+        if preview_only:
             return msg
         if self._media_store is None:
             return msg
@@ -5059,6 +5081,80 @@ class Session:
         if msg is not None:
             self.history.append(msg)
 
+    #: #5949: a bounded preview reads at most this many bytes of a large
+    #: tool-result body — not derived from any existing per-row cap (there
+    #: is none for a DISPLAY preview; #5896's `history_resident` bounds the
+    #: RESIDENT set, a different resource role). Round, conservative:
+    #: comfortably enough to show a human something recognizable (a file
+    #: read's opening lines, a command's initial output) while staying
+    #: orders of magnitude below the owner's own 369 MB/157.8 MB incident
+    #: rows regardless of how many are backward-paged at once.
+    _CONTENT_PREVIEW_MAX_BYTES = 4000
+
+    def _build_content_preview(self, ref: str) -> str:
+        """#5949 (owner-hit P0): a bounded, cheap-to-show text for a
+        content_ref row's body — read via :meth:`MediaStore.
+        read_tool_result_preview`, which never loads more than
+        :data:`_CONTENT_PREVIEW_MAX_BYTES` of the backing file (unlike
+        :func:`~reyn.services.offload.store.read_offloaded`'s own
+        ``offset``/``limit``, which reads the WHOLE file first — see that
+        method's own docstring). Format matches architect's own ruling:
+        head bytes, then ``…(+N MB)`` when the file held more than the
+        preview bound; the file's REAL size (a cheap ``os.path.getsize``,
+        never a full read) drives the figure, not any meta field a
+        caller might already carry (a #5896-stage-③-migrated file
+        predates ``CONTENT_BYTES_META_KEY`` and has none)."""
+        if self._media_store is None:
+            return ""
+        head, found, total_bytes = self._media_store.read_tool_result_preview(
+            ref, max_bytes=self._CONTENT_PREVIEW_MAX_BYTES,
+        )
+        if not found:
+            return "(content unavailable — the backing file is missing)"
+        head_bytes = len(head.encode("utf-8"))
+        if head_bytes >= total_bytes:
+            return head
+        remaining_mb = (total_bytes - head_bytes) / (1024 * 1024)
+        return f"{head}…(+{remaining_mb:.1f} MB)"
+
+    def _fill_content_previews(self, parsed: "list[ChatMessage]") -> None:
+        """#5949 (owner-hit P0, architect ruling): fills
+        ``meta[CONTENT_PREVIEW_META_KEY]`` for every content_ref
+        ``role="tool"`` row in *parsed* whose ``content`` is empty (i.e.
+        every row :meth:`_parse_history_line` returned with
+        ``preview_only=True``) — called ONCE per :meth:`_load_older_entries`
+        invocation, over the WHOLE batch it just parsed, not per line.
+
+        Two guards, both load-bearing (architect's own two derived
+        findings, #5949):
+
+        1. A ``spill_record`` row is NEVER a candidate here — the
+           ``msg.role != "tool"`` check alone already excludes it (a
+           ``spill_record``'s own persisted ``content`` is its small
+           ref-preview text, never emptied by ``history_record`` — see
+           that function's own docstring — so it would also fail the
+           ``msg.content != ""`` gate even without the role check). A
+           ledger row never needs a body materialized for it at all.
+        2. ``cache`` is scoped to THIS call, keyed by ``ref`` — when the
+           SAME backing file is named by more than one row in the same
+           batch (measured directly on the owner's own history: a
+           ``tool`` row and its own ``spill_record`` can point at the
+           identical file), the file is read at most ONCE, not once per
+           referencing row."""
+        if self._media_store is None:
+            return
+        cache: "dict[str, str]" = {}
+        for msg in parsed:
+            if msg.role != "tool" or msg.content != "":
+                continue
+            meta = msg.meta or {}
+            ref = meta.get(CONTENT_REF_META_KEY)
+            if not ref or meta.get(SPILLED_META_KEY):
+                continue
+            if ref not in cache:
+                cache[ref] = self._build_content_preview(ref)
+            msg.meta[CONTENT_PREVIEW_META_KEY] = cache[ref]
+
     def _load_older_entries(self, *, before_seq: int, min_lines: int = _HISTORY_HYDRATE_MIN_LINES) -> int:
         """#4387 Phase B ②: extend ``self.history`` BACKWARD from
         ``history.jsonl``, prepending up to ``min_lines`` entries older
@@ -5076,6 +5172,18 @@ class Session:
         memory) and left that way deliberately: bounding it caps how far
         back a rewind can reach, which is an owner-facing capability
         question, not one this stage answers.
+
+        #5949 (owner-hit P0): parses with ``preview_only=True`` — this is
+        a backward, DISPLAY-oriented read (scrollback paging, attach), not
+        a wire-building one, so a content_ref row's body is never eagerly
+        materialized here. :meth:`_fill_content_previews` then fills a
+        BOUNDED preview for the whole batch in one pass (see its own
+        docstring for the two guards — spill_record exclusion, same-ref
+        read-once). ``.content`` itself stays untouched (empty) either
+        way — the LLM wire path's own lazy resolve
+        (``RouterHistoryBuffer._serialise_turn``) is unaffected by this
+        change; see :meth:`_parse_history_line`'s own ``preview_only``
+        docstring for why that is what makes this safe.
         """
         from reyn.runtime.history_tail_reader import read_history_before
 
@@ -5084,7 +5192,11 @@ class Session:
         )
         if not lines:
             return 0
-        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
+        parsed = [
+            m for line in lines
+            if (m := self._parse_history_line(line, preview_only=True)) is not None
+        ]
+        self._fill_content_previews(parsed)
         self.history[0:0] = parsed
         return len(parsed)
 

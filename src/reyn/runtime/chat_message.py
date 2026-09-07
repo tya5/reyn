@@ -538,6 +538,18 @@ CONTENT_REF_META_KEY = "content_ref"
 # longer carries the bytes they used to measure) without opening files.
 CONTENT_BYTES_META_KEY = "bytes"
 CONTENT_MIME_META_KEY = "mime"
+# #5949 (owner-hit P0): a BOUNDED preview of an un-spilled tool row's body
+# — set ONLY by Session._fill_content_previews, for a row loaded via
+# backward-paging (extend_history_backward/_async, attach's own scrollback
+# read) whose `content` stays EMPTY (durable shape, untouched — this is a
+# SEPARATE field, never a substitute for `.content`, precisely so the LLM
+# wire path's own lazy resolve at _serialise_turn — which reads `.content`,
+# not this key — always sees the REAL full body, never the preview). A
+# reader that wants a bounded, cheap-to-show text for a row it has NOT
+# hydrated reads this key when present; every other reader (build_history,
+# compaction, a live in-process row) is completely unaffected — this key is
+# additive-only, never read by the wire-serialise path.
+CONTENT_PREVIEW_META_KEY = "content_preview"
 # Set once `resolve()` (reyn.core.offload.history_content_resolve) has
 # actually observed the backing file missing — never guessed ahead of
 # that check. ABSENCE means "not (yet) known to be lost", never "present".
