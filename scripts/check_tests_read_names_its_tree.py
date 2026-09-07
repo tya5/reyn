@@ -52,6 +52,19 @@ in a multi-line comment is merely less likely to be read as a claim, it is
 structurally excluded, because ``evaluate`` never hands anything past a
 comment's first line to either the marker regex or the SHA search.
 
+#5919: the first-line restriction above closes self-reference from a
+MULTI-line comment, but was not by itself enough to close it within the
+first line — a one-line comment that merely DENIES a note ("This PR is not
+ready for a TESTS-READ note yet — still investigating 9cc1006.") is still
+entirely "first line" and, under a bare ``.search()`` for the keyword,
+matched exactly like a real claim, with the trailing SHA-shaped token then
+read as the tree it names. ``_NOTE_MARKER`` (:mod:`_markers`) now requires
+the marker to OPEN the line, immediately after the CLAUDE.md rule-2 role
+prefix every comment already carries — ordinary prose discussing the
+marker does not open a comment with a role prefix followed directly by the
+keyword, so this excludes the denial case the same way the first-line
+restriction excludes the multi-line one: syntactically, not statistically.
+
 The claim is also deliberately NOT read from the PR **body**. A body is one
 document serving many purposes at once — description, Test plan, reviewer
 blocking points, bootstrap notes — and a whole-body search cannot tell
@@ -102,14 +115,23 @@ import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
-#: A TESTS-READ note's claim line is recognised by this marker appearing on a
-#: comment's FIRST LINE (see ``_first_line`` / ``evaluate``) — never a line 2+
-#: only appearance, and never the PR body. Matched case-insensitively and
-#: tolerating the ``TESTS-READY`` typo that several sessions produce, because
-#: the gate must not turn a typo into "no note landed" (that would fail the
-#: PR for the wrong reason).
-_NOTE_MARKER = re.compile(r"TESTS-READ(?:Y)?", re.IGNORECASE)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _markers  # noqa: E402 -- sibling module, see _markers.py's own docstring
+
+#: A TESTS-READ note's claim line is recognised by this marker ONLY when it
+#: OPENS a comment's FIRST LINE, immediately after the CLAUDE.md rule-2 role
+#: prefix (see ``_markers.role_prefixed_marker``) — never a bare `.search()`
+#: over free text (#5919: "This PR is not ready for a TESTS-READ note yet"
+#: used to match, because the keyword appeared anywhere on the line; a
+#: sentence DENYING the note is not distinguishable from one STATING it by
+#: keyword search alone). Matched case-insensitively and tolerating the
+#: ``TESTS-READY`` typo that several sessions produce, because the gate must
+#: not turn a typo into "no note landed" (that would fail the PR for the
+#: wrong reason). Required syntax: a comment's first line reading
+#: ``**[role]** — TESTS-READ (...) (head <sha>)``.
+_NOTE_MARKER = _markers.role_prefixed_marker(r"TESTS-READ(?:Y)?\b")
 
 #: A 7-40 char hex run, the shape `git rev-parse` prints. Bounded on both sides
 #: by a non-hex boundary so a longer word containing hex letters is not read as
@@ -259,9 +281,13 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         return 1, [
             "RED — this PR touches tests/ but carries no TESTS-READ note.",
             "  House rule 8: a PR touching tests/ does not self-merge until a",
-            "  reviewer's TESTS-READ note lands on it — the marker and the head",
-            "  SHA must both be on a comment's FIRST line; a marker mentioned",
-            "  only from line 2 onward does not count as a note.",
+            "  reviewer's TESTS-READ note lands on it. Required syntax (#5919):",
+            "  a comment's FIRST line must OPEN with the role prefix immediately",
+            "  followed by the marker and the head SHA, e.g.",
+            "  `**[role]** — TESTS-READ (head abc1234)` — a marker appearing",
+            "  anywhere else on the line, or only from line 2 onward, does not",
+            "  count as a note (a sentence merely discussing TESTS-READ, e.g.",
+            "  \"not ready for a TESTS-READ note yet\", must not read as one).",
             f"  tests/ files touched: {len(touched_tests)}",
         ]
 

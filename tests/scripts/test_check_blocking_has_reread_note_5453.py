@@ -192,3 +192,53 @@ def test_a_tests_read_note_with_no_resolvable_sha_is_rejected():
     ))
     assert code == 1
     assert "none of them names a" in "\n".join(lines)
+
+
+# ── #5919: fixed-marker syntax, census + architect deny fixtures ────────────
+
+
+def test_a_sentence_denying_a_re_read_is_not_read_as_one():
+    """Tier 1: deny side — #5919's own census input. Before the fix,
+    `_RE_READ_MARKER.search` matched "RE-READ" anywhere on the first line,
+    so a comment DENYING that a re-read is needed read as the note itself
+    ("No RE-READ (head start) needed here..." even carries a SHA-shaped
+    token, "start", that this gate must not treat as a real claim)."""
+    code, lines = _MOD.evaluate(_pr(
+        comments=[
+            _blocking("bbbbbbb"),
+            {"body": "No RE-READ (head start) needed here, this is a docs-only typo fix."},
+        ],
+        commits=[_commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 1
+    assert "no TESTS-READ- or RE-READ-shaped" in "\n".join(lines)
+
+
+def test_a_backtick_fenced_re_read_marker_is_not_a_claim():
+    """Tier 1: architect (#5919) — column-0 alone is not enough; a
+    backtick-fenced marker can open a line while still being a mention."""
+    code, lines = _MOD.evaluate(_pr(
+        comments=[
+            _blocking("bbbbbbb"),
+            {"body": "`RE-READ (head bbbbbbb)` is the syntax, per the gate."},
+        ],
+        commits=[_commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 1
+    assert "no TESTS-READ- or RE-READ-shaped" in "\n".join(lines)
+
+
+def test_a_quoted_re_read_marker_is_not_a_claim():
+    """Tier 1: architect (#5919) — a markdown-quoted line."""
+    code, lines = _MOD.evaluate(_pr(
+        comments=[
+            _blocking("bbbbbbb"),
+            {"body": "> RE-READ (head bbbbbbb)"},
+        ],
+        commits=[_commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 1
+    assert "no TESTS-READ- or RE-READ-shaped" in "\n".join(lines)
