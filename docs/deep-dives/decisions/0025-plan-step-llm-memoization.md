@@ -1,6 +1,6 @@
 # ADR-0025: Plan-step sub-loop LLM call memoization (R-D2 mirror)
 
-**Status**: Accepted (2026-05-08)
+**Status**: SUPERSEDED — the mechanism was removed by #1953 (PR #2018, 2026-06-21)
 **Track**: Plan-mode persistence — closes ADR-0023 §3.4 "Sub-loop work
 re-paid" deferred trade-off (LLM-cost subset).
 

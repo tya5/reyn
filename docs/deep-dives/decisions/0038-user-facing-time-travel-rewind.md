@@ -20,14 +20,17 @@ the WAL/generation GC already runs correctly on the default live-only floor (thr
 every chat-turn boundary — `session.py`'s `maybe_truncate_for_size`), with no
 unbounded-disk-growth risk; the only thing config wiring would have added is a *deeper*
 undo window than live, a capability nobody had asked for while it sat unconfigurable.
-`from_config` removed rather than left dead. **2b's tree-layout UI remains OPEN,
-substrate-only**: the underlying branch-topology data (`list_branches`,
-`list_rewind_points(include_abandoned=True)`) is real and load-bearing for other
-production paths (`checkout`'s fork-switch, the 2c edit flow's lineage lookup), but
-`build_branch_tree_rows` — the function that would render it as a picker tree — has
-no production caller; `/rewind`'s actual picker shows only the active branch's flat
-checkpoint list. Decision on whether to build that UI is owner-pending, tracked
-in #3987.
+`from_config` removed rather than left dead. **2b's tree-layout UI was OPEN,
+substrate-only** at this correction's own time (2026-08-11): the underlying
+branch-topology data (`list_branches`, `list_rewind_points(include_abandoned=True)`)
+was real and load-bearing for other production paths (`checkout`'s fork-switch,
+the 2c edit flow's lineage lookup), but `build_branch_tree_rows` — the function
+that would render it as a picker tree — had no production caller.
+**Status correction, resolved** (2026-09-07, ADR witness audit): #3987 was
+subsequently closed — `61135c9cf` ("feat(#3987): wire the branch tree into the
+`/rewind` picker (#5655)") gave `build_branch_tree_rows` a real production
+caller, `rewind_picker.py:250`. This correction note had itself gone stale;
+the 2b gap it flagged no longer exists on `origin/main`.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),
 ADR-0002 (forward-replay), ADR-0023 (PlanSnapshot).
 **Owner status**: design judgments co-designed + confirmed with owner (issue

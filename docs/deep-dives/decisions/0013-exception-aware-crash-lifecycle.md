@@ -1,6 +1,6 @@
 # ADR-0013: Exception-aware skill completion in finally clause
 
-**Status**: Accepted (2026-05-04)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: R-D1 (commit `c12c5b9`)
 
 ## Context

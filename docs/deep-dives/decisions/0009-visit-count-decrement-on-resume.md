@@ -1,6 +1,6 @@
 # ADR-0009: Pre-decrement visit_count on resume
 
-**Status**: Accepted (2026-05-03)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: PR-llm-memo (R-D2) — surfaced during e2e
 
 ## Context

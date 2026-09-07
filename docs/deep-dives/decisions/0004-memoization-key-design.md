@@ -1,6 +1,6 @@
 # ADR-0004: Memoization key — (op_invocation_id, phase, args_hash)
 
-**Status**: Accepted (2026-05-02)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: D-track (D3b-1), PR-llm-memo (R-D2)
 
 ## Context

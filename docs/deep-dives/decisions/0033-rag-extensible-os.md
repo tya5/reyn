@@ -11,6 +11,13 @@
 > decision record, not a living doc); see
 > [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)
 > for the current mechanism.
+
+> **Superseding note (#2434, 2026-07-03; found in a 2026-09-07 ADR witness audit)**: the
+> `index_docs` stdlib **skill** this record's narrative is built on ("your RAG, written in
+> skill.md") was deleted whole by #2434 (PR #2438), the skill/phase-engine bulk-delete. The
+> op layer (`embed`/`index_write`/`index_query`/`recall`/`index_drop`, `IndexBackend`) is
+> unaffected and still live (`src/reyn/data/index/`) — this note concerns only the
+> Consequence-level narrative, not a Decision item.
 **Track**: Architecture — RAG infrastructure (= 1.0 release narrative core)
 **Implementation commits**: `d2db332` (foundational) → `1e6f153` (Wave 2b CLI/Tools); 12 commits total, 2073 → 2204 passed (+131 net new tests). Full chain: schemas + registry → IndexBackend (sqlite) + EmbeddingProvider (LiteLLM) + SourceManifest + embedding config → 5 op handlers + permission gate → router Indexed sources section + empty state hint → index_docs stdlib skill + chunkers + cost preflight → recall/drop_source ToolDefinition + reyn source CLI → user-facing docs (concepts/rag + reference/cli/source).
 

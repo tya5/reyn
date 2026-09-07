@@ -1,6 +1,6 @@
 # ADR-0022: Plan-Mode Crash Resilience — Phase 1 (Fail-Safe + Observability)
 
-**Status**: Accepted (2026-05-07)
+**Status**: SUPERSEDED — the mechanism was removed by #1953 (PR #2018, 2026-06-21)
 **Track**: Plan-mode crash recovery (= step toward Phase 2 forward replay,
 ADR-future)
 
