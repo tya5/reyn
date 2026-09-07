@@ -403,9 +403,26 @@ class ToolContext:
     # #5654: widened from Literal["router"] — an operator-driven op call
     # (e.g. /tasks) has no LLM tool_calls round behind it, so the router
     # value would misattribute the audit trail to the wrong actor.
-    caller_kind: Literal["router", "operator"]        # audit field emitted into tool_* events
+    # #5889: widened again to add "pipeline" — a pipeline `tool:` step
+    # dispatch (``pipeline_verbs._make_tool_dispatch``, driven by
+    # ``PipelineExecutorDriver``/``reyn pipe run``) was constructing this
+    # SAME ToolContext with the stale literal "router" while the
+    # DispatchContext the SAME call builds already said "pipeline" (#5865)
+    # — one call, two answers. A tool handler that reads ``ctx.caller_kind``
+    # directly now sees the same value the call's own audit trail does.
+    caller_kind: Literal["router", "operator", "pipeline"]  # audit field emitted into tool_* events
     # Router-specific state sub-object.
     router_state: RouterCallerState | None = None    # populated for caller_kind="router"
+    # #5889: the pipeline RUN's own chain_id (threaded from ``PipelineExecutor
+    # Driver.run_turn``'s own ``chain_id`` parameter down through
+    # ``_make_dispatch`` to here), so a pipeline `tool:` step's
+    # ``tool_called``/``tool_returned`` audit events join the SAME chain the
+    # rest of that run's events use (lens 7 Observability) instead of a
+    # hardcoded ``None`` that could never join anything. ``None`` for every
+    # OTHER caller_kind, and for the one genuinely chain-less pipeline path
+    # — the session-less ``reyn pipe run`` CLI (``_build_run_tool_context``),
+    # which has no live turn/chain to report.
+    chain_id: str | None = None                      # str | None — audit field emitted into tool_* events
     # #1673: the config-aware ModelResolver, threaded so tool handlers that spawn a
     # sub-run hand the spawned OpContext a REAL resolver + a config-following model
     # class instead of resolver=None + the literal "standard" (which litellm rejects

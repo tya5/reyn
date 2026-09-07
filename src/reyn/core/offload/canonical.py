@@ -281,9 +281,24 @@ def _extract_error_message(result: dict) -> str:
     """The union message extractor: read the first present error-message field in priority order,
     ALWAYS returning a non-empty string (so an error never renders to empty ``text`` — the M1 fix).
     A shape with an error signal but no readable message (e.g. a bare ``{error_kind}``) still yields a
-    non-empty line; the full dict is preserved in the structured attachment by :func:`error_to_canonical`."""
+    non-empty line; the full dict is preserved in the structured attachment by :func:`error_to_canonical`.
+
+    #5889 (architect, #5883 co-vet follow-up): ``error``/``error_message`` can themselves be a NESTED
+    ``{"kind", "message"}`` dict — ``run_pipeline``'s own envelope shape
+    (``{"status": "error", "error": {"kind", "message"}}``) and ``dispatch_tool``'s own error result
+    (``core/dispatch/dispatcher.py``) both produce exactly this. Pre-#5889, ``str(value)`` on that dict
+    rendered a Python repr (``"{'kind': 'nope', 'message': '...'}"``) as the chat-visible text instead of
+    the message — the SAME nested-dict extraction ``dispatch_tool``'s own internal classifier already
+    does correctly (see that module's error-envelope handling) was missing here, one seam over. A dict
+    value is unwrapped to its own ``message`` (falling back to its own ``kind``) BEFORE the generic
+    ``str(value)`` path — never repr'd."""
     for field in ("error_message", "error"):
         value = result.get(field)
+        if isinstance(value, dict):
+            nested = value.get("message") or value.get("kind")
+            if nested:
+                return str(nested)
+            continue  # a dict with neither key is not a message — try the next field
         if value:
             return str(value)
     error_kind = result.get("error_kind")

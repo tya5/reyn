@@ -258,7 +258,7 @@ class PipelineExecutorDriver:
                 result = await executor.run(
                     pipeline,
                     dict(wo.input) if wo.input else None,
-                    tool_dispatch=await self._make_dispatch(),
+                    tool_dispatch=await self._make_dispatch(chain_id),
                     state_log=self._state_log,
                     run_id=wo.run_id,
                     registry=self._registry,
@@ -282,7 +282,7 @@ class PipelineExecutorDriver:
                 result = await executor.resume(
                     wo.run_id,
                     pipeline=pipeline,
-                    tool_dispatch=await self._make_dispatch(),
+                    tool_dispatch=await self._make_dispatch(chain_id),
                     state_log=self._state_log,
                     snapshot=snapshot,
                     registry=self._registry,
@@ -384,7 +384,7 @@ class PipelineExecutorDriver:
             )
         return pipeline_run_dir(root, self._work_order.run_id)
 
-    async def _make_dispatch(self) -> Any:
+    async def _make_dispatch(self, chain_id: str) -> Any:
         """The SAME tool-step dispatch the sync ``run_pipeline`` tool builds
         (``pipeline_verbs._make_tool_dispatch``), fed a ToolContext from THIS
         session's host adapter. #2567: ``router_state`` is now a real
@@ -392,7 +392,15 @@ class PipelineExecutorDriver:
         — the same host-derived mcp/rag/skills/sandbox/agent-registry/
         pipeline-registry resource wiring a live RouterLoop turn gets (S3
         pipeline-step tool deny is unaffected — it gates on the tool name
-        string before any router_state access)."""
+        string before any router_state access).
+
+        ``chain_id`` (#5889, REQUIRED — no default): this driver-session's
+        own ``run_turn`` receives one per nudge (the SAME chain a pipeline
+        run's other audit events already carry); threading it here closes
+        the "#5865 co-vet follow-up" gap where a pipeline tool-step's
+        ``tool_called``/``tool_returned`` events could never join their own
+        run's chain. Required rather than defaulted so a future call site
+        cannot silently repeat the omission this fixes."""
         from reyn.tools.pipeline_verbs import _make_tool_dispatch
         from reyn.tools.types import ToolContext, build_resource_caller_state
 
@@ -406,7 +414,13 @@ class PipelineExecutorDriver:
             events=host.events,
             permission_resolver=getattr(host, "permission_resolver", None),
             workspace=getattr(host, "workspace", None),
-            caller_kind="router",
+            # #5889: was "router" — stale since #5865 gave the SAME call's
+            # DispatchContext (built by _make_tool_dispatch below)
+            # caller_kind="pipeline" unconditionally; a handler reading
+            # ctx.caller_kind directly saw the wrong answer for the same
+            # call the audit trail correctly labelled "pipeline".
+            caller_kind="pipeline",
+            chain_id=chain_id,
             router_state=await build_resource_caller_state(host),
             resolver=getattr(host, "resolver", None),
             hot_reloader=getattr(host, "hot_reloader", None),
