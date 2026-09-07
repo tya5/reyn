@@ -169,7 +169,7 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
     when the gate rejects the echo; a hang, disclosed at the wait site).
     The turn behind it runs against ``@pytest.mark.llm_stub`` so no real
     network call is on the wire.
-
+    """
     from reyn.interfaces.transport.agui import endpoint as endpoint_mod
     from reyn.interfaces.transport.agui.endpoint import router
     from reyn.interfaces.web.auth import AuthContext
