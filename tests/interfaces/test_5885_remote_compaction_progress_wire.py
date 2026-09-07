@@ -60,6 +60,7 @@ from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.registry import AgentRegistry
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
@@ -264,6 +265,9 @@ async def test_the_settle_after_compact_reaches_the_wire_without_a_display_frame
             InProcessTransport(reg, intervention_channel="test-5885"), "/compact",
         )
         assert handled, "setup: /compact was not dispatched by the slash layer"
+        # #4966: the two lists above are filled by audit subscribers off the
+        # log's own dispatch queue — settle it before any synchronous read.
+        await settle(session.router_host.events)
         await session._put_outbox(OutboxMessage(kind="__end__", text=""))
         await collector
     finally:
