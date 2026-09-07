@@ -29,6 +29,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # #5959 stage ③: arm tracemalloc (opt-in, REYN_MEMORY_TRACE) FIRST,
+    # before anything else in this function runs — tracemalloc only
+    # attributes allocations that happen AFTER it starts, so arming it any
+    # later than the earliest reasonable point already misses whatever ran
+    # before. A no-op single os.environ read, no tracemalloc import, when
+    # the env var is unset — see memory_breakdown.py's own docstring.
+    from reyn.runtime.memory_breakdown import arm_tracemalloc_if_requested  # noqa: PLC0415
+
+    arm_tracemalloc_if_requested()
     # #3671: closes the ``import`` stage. Everything before this line is the
     # interpreter starting plus the import tree — measured at 1.75s for
     # ``litellm`` alone here, and the owner's machine spends ~3.4x longer in

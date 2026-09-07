@@ -206,6 +206,7 @@ presented
 process_footprint
 process_footprint_unavailable
 process_marker_reaped
+process_memory_breakdown
 project_context_changed
 project_context_unreadable
 pump_exception_swallowed
@@ -749,6 +750,7 @@ avoid when memory is already tight), ~39µs per read.
 |------|------|-------------|
 | `process_footprint` | Two record points (of the ruling's 4 observation points — the other two, `run_one_iteration`'s process-edge and the router-loop's in-turn iteration head, are DECISION points for a halt check that does not exist until a later stage; nothing to record there yet in stage (a)): `Session.load_history()`'s own `finally` (every `load_history()` caller — registry_bootstrap.py/chat.py/web/deps.py/mcp.py/dogfood.py — funnels through this ONE method, so the emit lives there rather than at 5 separate call sites), and `_run_router_loop`'s `finally`, next to the `turn_end` hook dispatch (once per turn). `metric` rides with every `bytes` value — a `phys_footprint` reading and an `rss` reading are not comparable numbers, and this repo's own verification-hazards discipline is "an observation does not name its own referent" without help. | `bytes`, `metric` (`"phys_footprint"` \| `"rss"`), `cap_bytes` (`None` = observe-only), `enforce`, `chain_id` (turn-end emit only) |
 | `process_footprint_unavailable` | This platform has no reader (`process_memory_metric_name()` is `None` — today, anything but darwin/linux). Fires at MOST ONCE PER PROCESS (`ProcessMemoryGuard` is the one shared instance every session's factory_config carries, so the "announced once" latch is process-scoped, not per-session) — a value is never fabricated to fill the gap. | `platform` (`sys.platform`) |
+| `process_memory_breakdown` | `reyn doctor-memory` (#5959, owner-hit — "leak 容疑を process の外から判定できない"; `vmmap`/#5957 cannot tell an allocator-held free region from a live Python reference). Two populations, one snapshot: `type_breakdown`/`largest_objects` are ⓐ discovery — every live object `gc.get_objects()` can see, grouped/ranked, no curated list; `bounding_census` is ⓑ completeness — every config field carrying `Axis.BOUNDING`, DERIVED from `walk_config_schema()` (never a second hand-written list — adding a `Axis.BOUNDING` field makes it appear here automatically), paired with its declared cap and current measured value (`None` = `unmeasured`, distinct from a real `0`). `sys.getsizeof` is shallow (a container's own size, not its contents') — `estimate_note` carries that disclosure into the event itself, not just the CLI's prose. | `type_breakdown`, `largest_objects`, `bounding_census`, `estimate_note` |
 
 ## Process registry
 

@@ -336,6 +336,18 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # most once per PROCESS (``ProcessMemoryGuard.claim_unavailable_
     # announcement``), never a fabricated ``bytes`` value.
     "process_footprint_unavailable": frozenset({"platform"}),
+    # process_memory_breakdown (#5959, owner-hit): the in-process answer to
+    # "who is holding this" -- a vmmap/region read (#5957) cannot tell an
+    # allocator-held free region from a live Python reference; this walks
+    # gc.get_objects() itself. type_breakdown/largest_objects are the ⓐ
+    # discovery tables (no curated list -- whatever is actually alive);
+    # bounding_census is the ⓑ completeness table, DERIVED from
+    # walk_config_schema()'s Axis.BOUNDING population, never a second
+    # hand-written list -- see memory_breakdown.py's own module docstring
+    # for the ⓐ/ⓑ split and why this tool does not mechanically join them.
+    "process_memory_breakdown": frozenset(
+        {"type_breakdown", "largest_objects", "bounding_census", "estimate_note"},
+    ),
     # turn_settled: emitted in Session.run_one_iteration()'s finally for EVERY
     #   turn kind (including slash / intervention short-circuits that return
     #   before the router). Unlike turn_completed (router path only), this is the
@@ -591,6 +603,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "process_footprint",
     "process_footprint_unavailable",
     "process_marker_reaped",
+    "process_memory_breakdown",
     "project_context_changed",
     # #5742 (architect ruling): an operator EXPLICITLY specified a
     # project-context or agent-context file (project_context_path /
