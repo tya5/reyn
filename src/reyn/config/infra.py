@@ -645,6 +645,28 @@ class AuditEventsConfig:
     # length, truncation-independent, so a truncated body is still
     # honestly labeled).
     provider_body_max_chars: int = field(default=4000, metadata={"axis": Axis.PROJECT})
+    # #5891 (architect ruling): a TOOL's own return value can be
+    # arbitrarily large (measured on reyn-self: two `exec`
+    # `tool_returned.data["result"]` values were ~2.79MB and ~5.94MB, one
+    # raw return value written straight into ONE audit-event line) — not
+    # a content-visibility question like the 4 knobs above (none of which
+    # this field is gated by: a tool's own structured output is not one
+    # of #4666's 3 content classes), a plain SIZE bound, always applied.
+    # Its own dedicated field, not a reuse of `provider_body_max_chars`
+    # above: that field caps a PROVIDER's own error-body text under a
+    # lattice-meet visibility gate (#4975) that this field has no part
+    # in — conflating the two would make an operator's provider-body
+    # opt-in accidentally also resize every tool result, or vice versa.
+    # Same 4000-char default as `provider_body_max_chars`, same
+    # rationale: long enough to be useful for triage (a stack trace, an
+    # error message, the shape of a large payload) without being the
+    # multi-MB body itself. `LocalEventBackend._persist_tool_returned`
+    # (`core/events/backend.py`) is the write-side consumer; a truncated
+    # excerpt always keeps `result_bytes`/`result_sha256` over the FULL
+    # untruncated body alongside it, never silent about a cut having
+    # happened (CLAUDE.md: never a baseless embedded constant — this is
+    # the operator-adjustable knob).
+    tool_result_max_chars: int = field(default=4000, metadata={"axis": Axis.PROJECT})
 
 
 @dataclass
@@ -1757,6 +1779,17 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
             provider_body_max_chars_val = defaults.provider_body_max_chars
     except (TypeError, ValueError):
         provider_body_max_chars_val = defaults.provider_body_max_chars
+    # #5891: same "malformed/non-positive falls back to the default"
+    # discipline as every other numeric field above.
+    tool_result_max_chars = raw.get(
+        "tool_result_max_chars", defaults.tool_result_max_chars,
+    )
+    try:
+        tool_result_max_chars_val = int(tool_result_max_chars)
+        if tool_result_max_chars_val <= 0:
+            tool_result_max_chars_val = defaults.tool_result_max_chars
+    except (TypeError, ValueError):
+        tool_result_max_chars_val = defaults.tool_result_max_chars
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
@@ -1787,6 +1820,10 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
             raw.get("provider_body_include_text", defaults.provider_body_include_text)
         ),
         provider_body_max_chars=provider_body_max_chars_val,
+        # #5891: same convention, its own dedicated knob (see the
+        # field's own docstring for why it is not a reuse of
+        # `provider_body_max_chars`).
+        tool_result_max_chars=tool_result_max_chars_val,
     )
 
 
