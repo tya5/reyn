@@ -7836,19 +7836,61 @@ class TextualChatApp(App):
             sent_queue.remove_item(msg_id)
 
     async def _submit(self, text: str, *, local_id: str) -> None:
-        """Route one submitted line through the transport send seam — on a
-        worker (#5894 ①-2). This method itself returns as soon as the
-        worker is scheduled; every caller's own local work (the placeholder
-        row, clearing the composer) already happened synchronously before
-        it, and the placeholder resolves off the ``user_submitted`` echo,
-        never off this call's return. An Enter against a server that has
-        stopped answering therefore no longer holds the pump — the same
-        class as Ctrl-C's (see :meth:`action_cancel_turn`), which the
-        ruling named explicitly: "server が塞がれば Enter でも同じ症状".
+        """Route one submitted line: the client-side slash layer FIRST,
+        synchronously on this handler; only a real turn's wire round-trip
+        goes to a worker (#5894 ①-2, lead-coder's BLOCKING on PR #5902).
+
+        ``maybe_dispatch_slash`` is local work — ``/help``, a typo's "unknown
+        command", the picker commands — and the operator expects its answer
+        the instant Enter lands, exactly as the CUI gives it (the shared
+        layer is the point of #3595 S5: one implementation, one answer).
+        Running it on the worker deferred that answer past the handler's
+        return, which is what CI caught (``shown=[]``). The ruling's line is
+        "the pump never awaits the WIRE": a dispatched command that itself
+        touches the wire (``/cancel`` → ``cancel_inflight``) does so through
+        the transport's own bounded control timeout (#5894 ①-1), not the
+        unbounded read that held the pump — a residual named in the PR, not
+        a hole this method hides.
+
+        A non-command line returns as soon as the worker is scheduled: every
+        caller's own local work (the placeholder row, clearing the composer)
+        already happened synchronously before it, and the placeholder
+        resolves off the ``user_submitted`` echo, never off this call's
+        return. An Enter against a server that has stopped answering
+        therefore no longer holds the pump — the same class as Ctrl-C's
+        (see :meth:`action_cancel_turn`): "server が塞がれば Enter でも同じ症状".
         """
+        try:
+            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
+
+            if await maybe_dispatch_slash(self._transport, text):
+                # A dispatched command is never queued (#3595 S5) — drop the
+                # placeholder row the composer handler already showed.
+                self._maybe_sent_queue_remove(local_id)
+                return
+        except Exception as exc:
+            self._submit_failed(local_id, exc)
+            return
         self.run_worker(
             self._submit_over_wire(text, local_id=local_id), name="submit", exclusive=False,
         )
+
+    def _submit_failed(self, local_id: str, exc: BaseException) -> None:
+        """Shared failure path of :meth:`_submit` (slash) and
+        :meth:`_submit_over_wire` (wire): drop the placeholder, log, and
+        surface an error frame — a silent input drop is the worst failure
+        for a chat box."""
+        self._maybe_sent_queue_remove(local_id)
+        logger.exception("textual chat: submit failed")
+        from reyn.runtime.outbox import OutboxMessage
+
+        detail = f"{type(exc).__name__}: {exc}"
+        try:
+            self._ingest_frame(
+                OutboxMessage(kind="error", text=f"input could not be submitted: {detail}")
+            )
+        except Exception:
+            pass
 
     async def _submit_over_wire(self, text: str, *, local_id: str) -> None:
         """The body :meth:`_submit` used to run inline.
@@ -7908,31 +7950,9 @@ class TextualChatApp(App):
         no-op — fixed since, #5107, but this call site's OWN reason to
         bypass it stands independent of that fix)."""
         try:
-            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
-            if await maybe_dispatch_slash(self._transport, text):
-                self._maybe_sent_queue_remove(local_id)
-                return
-            # #5833: no longer reconciled against this call's own return
-            # value (see ``ClientTransport.submit_user_text``'s docstring)
-            # — the echo (:meth:`_handle_user_submitted_event`) carries
-            # ``meta.client_ref`` == ``local_id`` and promotes this
-            # placeholder itself, the moment it arrives, whether that is
-            # before or after this call returns. The returned id has no
-            # remaining local use.
             await self._transport.submit_user_text(text, client_ref=local_id)
         except Exception as exc:
-            self._maybe_sent_queue_remove(local_id)
-            logger.exception("textual chat: submit failed")
-            from reyn.runtime.outbox import OutboxMessage
-            detail = f"{type(exc).__name__}: {exc}"
-            try:
-                self._ingest_frame(
-                    OutboxMessage(
-                        kind="error", text=f"input could not be submitted: {detail}"
-                    )
-                )
-            except Exception:
-                pass
+            self._submit_failed(local_id, exc)
 
 
 async def run_textual_chat(
