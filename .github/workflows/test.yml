@@ -229,9 +229,50 @@ jobs:
           fi
           echo "--- per-worker peak RSS (MB) ---"
           grep -H "peak_rss_mb=" .reyn-worker-trace/*.log 2>/dev/null || echo "(no worker traces)"
+          # part of #5909: `.reyn-worker-down.log`'s own `last_test=`/
+          # `before_it=` fields are written by `pytest_testnodedown`, which
+          # only fires when the CONTROLLER is alive to observe the node
+          # going down. Three same-day #5909 recurrences (#5926, #5916,
+          # #5931) left `.reyn-worker-down.log` EMPTY — the controller
+          # never got a chance to run that hook — so the trace files
+          # (`.reyn-worker-trace/<gw>.log`, written incrementally as each
+          # test STARTS, independent of the controller) were the only
+          # surviving test-order evidence, and this step never printed
+          # them: the `grep` above only ever pulled the one `peak_rss_mb=`
+          # line, never the nodeid lines above it. Print each worker's
+          # full test-order trace here too, so the next silent-death CI
+          # run names what was running without a second investigation
+          # round-trip.
+          echo "--- per-worker test-order trace (last test each ran = last line) ---"
+          if ls .reyn-worker-trace/*.log >/dev/null 2>&1; then
+            for f in .reyn-worker-trace/*.log; do
+              echo "== $f =="
+              cat "$f"
+            done
+          else
+            echo "(no worker traces)"
+          fi
           echo "--- host OOM kills (dmesg) ---"
           (sudo dmesg -T 2>/dev/null || dmesg -T 2>/dev/null) | grep -iE "out of memory|killed process|oom" || echo "no OOM kill in dmesg (or dmesg unavailable)"
           true
+
+      # part of #5909: the step above prints to the job LOG, which GitHub
+      # Actions truncates past its own size ceiling and which is awkward
+      # to diff/grep after the fact. Upload the raw files too, so a full
+      # trace survives even past that ceiling and is fetchable long after
+      # the run without re-triggering CI. `if-no-files-found: ignore`
+      # (not `error`) because "no worker died" is the common, correct
+      # case — most runs have nothing under `.reyn-worker-trace/`.
+      - name: Upload worker forensics artifact (#5909)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-forensics-py${{ matrix.python-version }}-${{ github.run_attempt }}
+          path: |
+            .reyn-worker-trace/
+            .reyn-worker-down.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       # #4331: what a green run above does NOT say — the skip census (count
       # + reason breakdown) and the collection-error count, on the SAME

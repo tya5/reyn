@@ -57,7 +57,19 @@ WHAT THIS RECORDS (all under the repo cwd, like ``memory_ceiling``'s log)
     ``.github/workflows/test.yml`` prints both after every run (with the
     host's ``dmesg`` OOM lines and ``free -m``/``nproc`` before), so the next
     crash names its killer in the job log instead of costing another
-    investigation round-trip.
+    investigation round-trip. ``.reyn-worker-down.log`` needs the
+    CONTROLLER alive to observe the node going down (its own
+    ``pytest_testnodedown`` hook), so it stays empty on a run where the
+    whole job dies before the controller gets that chance — the per-worker
+    trace files are written incrementally as each test STARTS, independent
+    of the controller, and are the only test-order evidence left in that
+    case (measured on three same-day #5909 recurrences: #5926, #5916,
+    #5931 — ``.reyn-worker-down.log`` empty all three times). Because of
+    that, the workflow prints each worker's FULL trace (part of #5909),
+    not only the down-worker's, and also uploads ``.reyn-worker-trace/``
+    and ``.reyn-worker-down.log`` as a build artifact — a run's job log is
+    truncated past GitHub's own size ceiling, and the artifact survives
+    that and stays fetchable long after the run without re-triggering CI.
 
 COST
     One small append per test start (open/append/close — no held fd, so
