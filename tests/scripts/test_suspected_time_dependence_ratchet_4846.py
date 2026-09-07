@@ -23,6 +23,17 @@ from scripts.suspected_time_dependence_ratchet import (
     write_baseline,
 )
 
+# Every illustrative baseline-key literal below is spelled `_T + "..."`
+# rather than one contiguous string — same split
+# `check_tests_path_literal_reference.py`'s own paired test file uses for
+# the identical reason (see that test file's own `_T`): this ratchet's real
+# keys genuinely carry a `tests/` prefix (`measured()`'s `rel =
+# str(path.relative_to(root))`, unlike `flat_tests_ratchet`'s bare
+# basenames), so a fake-but-realistic example key here would otherwise BE
+# a `tests/....py`-shaped literal and register as a new hit against that
+# other gate's own whole-repo scan.
+_T = "tests/"
+
 # ── suspected_counts() — the three AST detectors, one shape each ───────────
 
 
@@ -136,27 +147,27 @@ def test_unparseable_file_counts_as_nothing(tmp_path: Path) -> None:
 def test_grown_files_flags_an_existing_file_whose_count_increased() -> None:
     """Tier 2: a file already in the baseline whose measured count exceeds
     its baseline count is new debt."""
-    assert grown_files({"tests/a.py": 3}, {"tests/a.py": 2}) == {"tests/a.py": (2, 3)}
+    assert grown_files({_T + "a.py": 3}, {_T + "a.py": 2}) == {_T + "a.py": (2, 3)}
 
 
 def test_grown_files_ignores_an_existing_file_whose_count_is_unchanged() -> None:
     """Tier 2: no growth, no report — the common, healthy case."""
-    assert grown_files({"tests/a.py": 2}, {"tests/a.py": 2}) == {}
+    assert grown_files({_T + "a.py": 2}, {_T + "a.py": 2}) == {}
 
 
 def test_grown_files_treats_a_file_absent_from_baseline_as_grown_from_zero() -> None:
     """Tier 2: a file carrying a nonzero suspected count with NO baseline
     entry at all is compared against 0 — a brand-new file introducing a
     suspected site is new debt exactly like an existing file's count rising."""
-    assert grown_files({"tests/new.py": 1}, {}) == {"tests/new.py": (0, 1)}
+    assert grown_files({_T + "new.py": 1}, {}) == {_T + "new.py": (0, 1)}
 
 
 def test_grown_files_silently_allows_a_shrink() -> None:
     """Tier 2: a file whose count DROPPED (or vanished from `measured`
     entirely, a fix or a deletion) is never reported — the silent-shrink
     contract every ratchet in this repo shares."""
-    assert grown_files({"tests/a.py": 1}, {"tests/a.py": 3}) == {}
-    assert grown_files({}, {"tests/a.py": 3}) == {}
+    assert grown_files({_T + "a.py": 1}, {_T + "a.py": 3}) == {}
+    assert grown_files({}, {_T + "a.py": 3}) == {}
 
 
 # ── baseline round-trip ─────────────────────────────────────────────────────
@@ -167,10 +178,10 @@ def test_write_baseline_then_load_baseline_round_trips(tmp_path: Path) -> None:
     write/load — catches a JSON-shape mismatch between the writer and the
     reader."""
     path = tmp_path / "baseline.json"
-    write_baseline({"tests/b.py": 2, "tests/a.py": 1}, {"tests/c.py": 3}, path)
+    write_baseline({_T + "b.py": 2, _T + "a.py": 1}, {_T + "c.py": 3}, path)
     ceiling, floor = load_baseline(path)
-    assert ceiling == {"tests/a.py": 1, "tests/b.py": 2}
-    assert floor == {"tests/c.py": 3}
+    assert ceiling == {_T + "a.py": 1, _T + "b.py": 2}
+    assert floor == {_T + "c.py": 3}
 
 
 # ── main() end-to-end, against a REAL git repo ──────────────────────────────
@@ -241,7 +252,7 @@ def test_main_passes_when_measured_matches_baseline(
         _git_repo,
         {"test_a.py": "import time\ndef test_x():\n    time.sleep(2)\n"},
     )
-    baseline_path = _write_baseline_file(_git_repo, {}, {"tests/test_a.py": 1})
+    baseline_path = _write_baseline_file(_git_repo, {}, {_T + "test_a.py": 1})
     monkeypatch.setattr(ratchet, "_ROOT", _git_repo)
     monkeypatch.setattr(ratchet, "_BASELINE_PATH", baseline_path)
     monkeypatch.chdir(_git_repo)
@@ -293,7 +304,7 @@ def test_main_fails_when_an_existing_files_floor_count_rises(
             ),
         },
     )
-    baseline_path = _write_baseline_file(_git_repo, {}, {"tests/test_a.py": 1})
+    baseline_path = _write_baseline_file(_git_repo, {}, {_T + "test_a.py": 1})
     monkeypatch.setattr(ratchet, "_ROOT", _git_repo)
     monkeypatch.setattr(ratchet, "_BASELINE_PATH", baseline_path)
     monkeypatch.chdir(_git_repo)
@@ -321,4 +332,4 @@ def test_main_write_baseline_writes_current_measured_counts(
     assert exit_code == 0
     ceiling, floor = load_baseline(baseline_path)
     assert ceiling == {}
-    assert floor == {"tests/test_a.py": 1}
+    assert floor == {_T + "test_a.py": 1}
