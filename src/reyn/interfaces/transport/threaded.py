@@ -301,6 +301,12 @@ class ThreadedTransportProxy(ClientTransport):
     def attach_failed(self) -> bool:
         return self._latest.attach_failed
 
+    def last_control_outcome(self):
+        # #5907 ②: an immutable record set by the worker's own last POST —
+        # a cross-thread read of one attribute, no live object crosses.
+        inner = self._inner
+        return inner.last_control_outcome() if inner is not None else None
+
     def pending_intervention_head(self) -> "str | None":
         return self._latest.pending_intervention_head
 

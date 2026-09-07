@@ -458,9 +458,16 @@ cancel, the heartbeat) is a bounded round-trip and gets its own read timeout,
 place — `remote_client.post_control`). A control POST the server does not
 answer within it is a **non-delivery**, not a wait: `cancel_inflight` returns
 the empty summary the `ClientTransport` contract reserves for "not
-delivered", and the Textual TUI draws it as `interrupt: the server did not
-acknowledge the cancel (not responding)` under the `cancel requested…` row it
-drew the instant the key was pressed. The TUI's message pump never awaits
+confirmed", and the Textual TUI draws a row under the `cancel requested…` row
+it drew the instant the key was pressed. Which failure it was is TYPED
+(#5907 ②): `post_control` returns a `ControlOutcome` — `delivered` /
+`refused` (the server's own reason) / `not_delivered` (no answer within T;
+the request may not have reached the server) — the transport records the
+latest one (`ClientTransport.last_control_outcome`), and ONE describer
+(`describe_control_failure`) words it for every surface: the slash layer's
+`reply_error` and the dispatcher's error lines append it, so a refusal and a
+timeout never read the same on any of the 27 wire-touching commands, without
+any handler being edited. The TUI's message pump never awaits
 the wire for any of these — the handler draws what it requested and returns,
 and the round-trip runs on a Textual worker — so a server that has stopped
 answering cannot hold the keyboard (the owner-hit shape: Ctrl-C's cancel POST

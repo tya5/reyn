@@ -4201,13 +4201,16 @@ class TextualChatApp(App):
             )
             return
         if not summary:
+            # #5907 ②: the typed outcome says whether the server refused
+            # or never answered — one describer, shared with the slash layer.
+            from reyn.interfaces.transport.control_outcome import describe_control_failure
+
+            detail = describe_control_failure(self._transport.last_control_outcome())
+            why = detail or "the server did not acknowledge the cancel"
             self._ingest_frame(
                 OutboxMessage(
                     kind="error",
-                    text=(
-                        "interrupt: the server did not acknowledge the cancel "
-                        "(not responding) — the turn may still be running"
-                    ),
+                    text=f"interrupt: {why} — the turn may still be running",
                 )
             )
 

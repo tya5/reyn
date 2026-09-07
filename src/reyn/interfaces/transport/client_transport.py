@@ -50,6 +50,7 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from reyn.interfaces.transport.control_outcome import ControlOutcome
     from reyn.interfaces.transport.frames import BacklogBatch, Frame
     from reyn.runtime.outbox import OutboxMessage
 
@@ -147,6 +148,15 @@ class ClientTransport(ABC):
     @abstractmethod
     def has_session(self) -> bool:
         """Whether a session is currently attached (client input guard)."""
+
+    def last_control_outcome(self) -> "ControlOutcome | None":
+        """#5907 ②: the typed outcome of the most recent control POST this
+        transport made (``ControlOutcome``), or ``None`` when there is no
+        wire (the local transports) or no typed record. Read by the shared
+        failure renderers (``slash.reply_error`` / ``dispatch._display``)
+        so a refusal and a non-delivery never share a line. Not abstract:
+        a transport without a wire has nothing to report."""
+        return None
 
     @abstractmethod
     def attach_failed(self) -> bool:
@@ -708,6 +718,9 @@ class DelegatingClientTransport(ClientTransport):
 
     def has_session(self) -> bool:
         return self._inner.has_session()
+
+    def last_control_outcome(self) -> "ControlOutcome | None":
+        return self._inner.last_control_outcome()
 
     def attach_failed(self) -> bool:
         return self._inner.attach_failed()
