@@ -155,8 +155,40 @@ jobs:
         # cancel their own watchdog the instant the last item's protocol
         # returns (`_pytest/faulthandler.py`'s own source, confirmed, not
         # guessed). See `reyn/dev/testing/stall_dump.py`'s own docstring.
+        # `( sleep 620; ... ) &` (part of #4986/#5909 tool ticket, architect's
+        # tool ②): a stall dump can only show what its OWN process's threads
+        # are doing — whether the pytest CONTROLLER process is even still
+        # ALIVE at all is an OS-level fact no Python-side dump can answer
+        # from inside itself. This backgrounded watcher asks the OS directly,
+        # once, 20s after `REYN_STALL_TRACE_CI=600`'s own dump would have
+        # fired and comfortably before the `timeout 12m` (720s) kill below —
+        # so a genuinely still-running controller has already had its stack
+        # dumped by the time this fires, and the two diagnostics read in the
+        # same causal order the stall-trace file and the per-worker files
+        # already do. On a healthy run (~7-8 min, well under 620s) the
+        # `sleep 620` never returns before this step's own foreground command
+        # exits, so nothing is ever written to `/tmp/hang-ps.log` and the
+        # backgrounded subshell is reaped with the step — no added cost on
+        # the common path. `pgrep -f "pytest -q -n auto"` re-derives the
+        # controller's PID from its own command line rather than threading a
+        # PID through — this stays a single independent watcher, not another
+        # moving part the main run has to hand anything to.
         run: |
           set -o pipefail
+          (
+            sleep 620
+            {
+              echo "=== ps -ef @620s ==="
+              ps -ef
+              echo "=== pgrep -a python @620s ==="
+              pgrep -a python
+              echo "=== controller fd table @620s (Linux only) ==="
+              for pid in $(pgrep -f "pytest -q -n auto"); do
+                echo "--- pid=$pid ---"
+                ls -l "/proc/$pid/fd" 2>/dev/null || echo "(no /proc/$pid/fd for pid=$pid)"
+              done
+            } > /tmp/hang-ps.log 2>&1
+          ) &
           REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
 
       # #4986: surface the stall dump above if (and only if) it fired. The
@@ -176,6 +208,38 @@ jobs:
             cat .reyn-ci-stall-trace.log
           else
             echo "no stall-trace dump (pytest session finished normally)"
+          fi
+          # part of #4986/#5909 tool ticket: each xdist WORKER now arms its
+          # own separate watchdog too (`stall_dump.py`'s own "WHY ALSO ARMED
+          # PER xdist WORKER" — a hang strictly inside a worker's own
+          # teardown is invisible to the controller's dump above, since the
+          # controller is merely idle in `queue.get()`, nothing of its own
+          # is stuck). One file per worker
+          # (`.reyn-ci-stall-trace.<workerid>.log`), at a threshold BELOW
+          # the controller's own so the two dumps read in causal order —
+          # print every one that actually fired.
+          shopt -s nullglob
+          worker_dumps=(.reyn-ci-stall-trace.*.log)
+          shopt -u nullglob
+          fired=0
+          for f in "${worker_dumps[@]}"; do
+            if [ -s "$f" ]; then
+              fired=1
+              echo "::warning::#4986 per-worker stall-trace fired — $f"
+              cat "$f"
+            fi
+          done
+          if [ "$fired" -eq 0 ]; then
+            echo "no per-worker stall-trace dump (every worker's own session finished normally)"
+          fi
+          # part of #4986/#5909 tool ticket (architect's tool ②): the OS
+          # process snapshot the run step's own backgrounded watcher takes
+          # at 620s — only written on a run that took that long.
+          echo "--- OS process snapshot @620s (only written if the run was still going) ---"
+          if [ -s /tmp/hang-ps.log ]; then
+            cat /tmp/hang-ps.log
+          else
+            echo "(no snapshot — the run finished before 620s)"
           fi
 
       # #5878 (architect follow-up, #5877 co-vet): the same visibility gap
