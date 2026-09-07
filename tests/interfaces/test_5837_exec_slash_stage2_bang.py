@@ -68,8 +68,8 @@ async def test_bang_bang_and_slash_exec_produce_the_same_reply(tmp_path):
     assert reply_kind_bang == reply_kind_slash
     assert any("exit 0" in t and "4" in t for t in slash_texts), slash_texts
 
-    bang_queue = bang_session._pending_user_attachments
-    slash_queue = slash_session._pending_user_attachments
+    bang_queue = bang_session.pending_user_attachments
+    slash_queue = slash_session.pending_user_attachments
     assert not bang_queue
     assert not slash_queue
 
@@ -89,8 +89,8 @@ async def test_bang_and_slash_exec_attach_both_queue_the_same_block(tmp_path):
     slash_ctx_ = slash_ctx(slash_session)
     await maybe_dispatch_slash(slash_ctx_.transport, f"/exec-attach {cmdline}")
 
-    (bang_block,) = bang_session._pending_user_attachments
-    (slash_block,) = slash_session._pending_user_attachments
+    (bang_block,) = bang_session.pending_user_attachments
+    (slash_block,) = slash_session.pending_user_attachments
     assert bang_block["type"] == slash_block["type"] == "text"
     assert "2" in bang_block["text"] and "exit 0" in bang_block["text"]
     assert bang_block["text"] == slash_block["text"], (
@@ -112,7 +112,7 @@ async def test_double_bang_is_not_misrouted_to_exec_attach(tmp_path):
     ctx = slash_ctx(session)
     await maybe_dispatch_slash(ctx.transport, '!!python3 -c "print(3+3)"')
 
-    queue = session._pending_user_attachments
+    queue = session.pending_user_attachments
     assert not queue, "!! must never queue an attachment -- that is /exec-attach's job"
     texts = _texts(ctx)
     assert any("6" in t for t in texts), texts
@@ -135,7 +135,7 @@ async def test_bare_bang_is_an_explicit_error_not_a_submitted_message(tmp_path, 
     assert consumed is True, f"{bare!r} alone must be consumed, not forwarded as a turn"
     kinds = [m.kind for m in ctx.transport.displayed]
     assert "error" in kinds, ctx.transport.displayed
-    queue = session._pending_user_attachments
+    queue = session.pending_user_attachments
     assert not queue
 
 
