@@ -1,6 +1,7 @@
 # ADR-0006: Schema version refuse + --reset (pre-1.0 policy)
 
 **Status**: Accepted (2026-05-03)
+**Status correction** (2026-09-08, ADR witness audit follow-up, #5900): the `skill_snapshot.py` half of this decision's implementation (the `SKILL_SNAPSHOT_VERSION` constant) was removed whole by #2434 (PR #2438, 2026-07-03), the same skill/phase-engine bulk-delete that superseded ADR-0003/0004/0009/0011/0012/0013/0015/0020/0036. The `agent_snapshot.py` half (`SNAPSHOT_VERSION`, `SchemaVersionError`, the CLI's clean-exit catch) survives unchanged and is still satisfied — this ADR remains ACCEPTED, not superseded; only the decision's skill-snapshot-facing scope has no remaining consumer.
 **Track**: PR-resume-ux β U4
 
 ## Context
