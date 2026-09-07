@@ -291,7 +291,28 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
     # and reopens the SAME path with no rename, which keeps the SAME
     # inode — no rotation for this test to detect at all.
     handler = RotatingFileHandler(str(log_path), maxBytes=1, backupCount=2)
-    logging.getLogger().addHandler(handler)
+    # #5909 (architect prescription 2, #5922 CI finding): a DEDICATED,
+    # non-propagating logger — never ``logging.getLogger()`` (root) — owns
+    # this handler. Root is a process-wide SHARED sink: any unrelated
+    # ``logging.warning(...)`` reaching it (this test's own real,
+    # headless ``TextualChatApp`` runs live below) is one record through
+    # this handler, and with ``maxBytes=1`` ANY record rolls it over —
+    # replacing ``log_path``'s inode BEFORE this test's own controlled
+    # ``handler.doRollover()`` call below, falsifying the setup premise at
+    # ``pre_ino == log_path.stat().st_ino``. The subject under test here
+    # is ``_watch_loop_responsiveness``'s own fd/inode-reopen logic keyed
+    # on the PATH ``stall_trace.register_file_handler_path`` declares
+    # (below) — never which logger owns the handler feeding that path
+    # (``find_file_handler_path`` is a plain declared-path lookup since
+    # #5873, not a root-logger handler scan — see its own docstring), so
+    # this narrows WHO can write through this handler without changing
+    # what the test proves. ``maxBytes=1`` stays as small as it was
+    # (that's what makes ``doRollover()`` a real rollover to detect, not
+    # the bug) — the fix is limiting the WRITER, never loosening the
+    # threshold.
+    private_logger = logging.getLogger(f"{__name__}.log_rotation_witness")
+    private_logger.propagate = False
+    private_logger.addHandler(handler)
     # Registration restore is tests/conftest.py's own autouse
     # _isolate_stall_trace_file_handler_registration fixture's job — see
     # installed_file_handler's own docstring above for why this file no
@@ -331,7 +352,8 @@ async def test_the_tripwire_reopens_its_fd_after_a_log_rotation(monkeypatch, tmp
             while os.fstat(calls[-1][1]).st_ino != post_ino:  # type: ignore[arg-type]
                 await pilot.pause()
     finally:
-        logging.getLogger().removeHandler(handler)
+        private_logger.removeHandler(handler)
+        private_logger.propagate = True
         handler.close()
 
 
@@ -409,3 +431,100 @@ def test_log_stream_falls_back_to_the_original_stderr_not_the_reassignable_name(
         "expected the fallback to be sys.__stderr__, unaffected by "
         "reassigning sys.stderr"
     )
+
+
+pytest_plugins = ["pytester"]
+
+#: Inner conftest for the witness below — puts the repo root AND its own
+#: ``src`` on ``sys.path`` (a subprocess gets none of this outer session's
+#: own ``pyproject.toml`` ``pythonpath`` favour — ``out_of_process_reyn``'s
+#: own docstring in tests/conftest.py has the full reasoning) then imports
+#: the REAL fixture under test from the REAL tests/conftest.py, never a
+#: reimplementation — pytest activates any ``@pytest.fixture``-decorated
+#: callable present in a conftest module's namespace, imported or not.
+_INNER_CONFTEST = """
+import sys
+sys.path.insert(0, {repo_root!r})
+sys.path.insert(0, {src_root!r})
+from tests.conftest import _cancel_any_pending_faulthandler_dump  # noqa: F401
+"""
+
+#: The inner test pair itself — same shape as the removed xdist_group
+#: version, but ordering and same-process-ness now come from pytest's own
+#: normal (non-distributed) collection order inside ONE real inner
+#: session, not from an xdist scheduling guarantee this repo's CI
+#: invocation does not actually provide (lead-coder finding, #5926:
+#: ``pytest -n auto`` with no ``--dist`` defaults xdist's own ``load``
+#: scheduler, which ignores ``xdist_group`` entirely — only ``loadgroup``
+#: honors it, and this repo's CI passes neither).
+_INNER_TEST = """
+import faulthandler
+import os
+from pathlib import Path
+
+from tests.conftest import faulthandler_safety_net_call_count
+
+_baseline = []
+
+def test_a_leaves_a_faulthandler_dump_armed_without_disarming(tmp_path):
+    _baseline.append(faulthandler_safety_net_call_count())
+    sink = tmp_path / "leaked_dump.txt"
+    fd = os.open(str(sink), os.O_WRONLY | os.O_CREAT)
+    try:
+        faulthandler.dump_traceback_later(9999, file=fd, repeat=False)
+    finally:
+        os.close(fd)
+
+def test_b_the_conftest_safety_net_cancelled_it():
+    assert _baseline, "setup: test_a must run first, in this same process"
+    assert faulthandler_safety_net_call_count() > _baseline[-1]
+"""
+
+
+def test_the_conftest_safety_net_cancels_a_dump_a_test_left_armed(
+    pytester: pytest.Pytester,
+) -> None:
+    """Tier 2: #5909 (architect prescription 1) witness — a REAL, isolated
+    inner pytest session (pytester's own subprocess seam, same technique
+    ``tests/dev/test_stall_dump_4986.py`` already uses for a real
+    ``faulthandler`` timer) runs two tests that could only observe each
+    other if they land in the SAME process, in order: the first arms a
+    REAL ``faulthandler.dump_traceback_later`` one-shot and returns
+    WITHOUT disarming it — the exact shape ``test_the_tripwire_arms_its_
+    own_fd_when_a_file_handler_exists`` (above, this same outer file)
+    leaves behind when its own ``stall_trace.disarm`` stub lets the app's
+    real shutdown close the armed fd out from under a still-pending
+    timer; the second asserts ``tests/conftest.py``'s own public
+    ``faulthandler_safety_net_call_count()`` counter advanced across the
+    first test's own teardown.
+
+    Subprocess (not pytester's in-process ``runpytest()``): this outer
+    test's own ``faulthandler`` state must never interact with the inner
+    session's — same reasoning ``test_stall_dump_4986.py``'s own module
+    docstring states for its own inner runs.
+
+    The counter, not "the inner session exited 0", is this witness's real
+    evidence — ``faulthandler``'s own public API (``enable``/``disable``/
+    ``is_enabled``/``dump_traceback``/``dump_traceback_later``/
+    ``cancel_dump_traceback_later``/``register``/``unregister`` — the
+    complete list, confirmed by reading the stdlib module) exposes no
+    getter for "is a timer currently armed", so a green inner session
+    alone cannot distinguish "the safety net fired" from "nothing ever
+    checked" (a dump left armed for 9999s would ALSO exit 0, since
+    nothing in the inner session runs anywhere near that long).
+
+    Strip-falsifier: comment out this fixture's own
+    ``faulthandler.cancel_dump_traceback_later()`` call in
+    ``tests/conftest.py`` and ``test_b`` inside the inner session goes
+    red (the counter never advances) — this test's own assertion below
+    then reports that inner failure via ``result.assert_outcomes``."""
+    import reyn
+
+    repo_root = Path(reyn.__file__).resolve().parents[2]
+    src_root = str(repo_root / "src")
+
+    pytester.makeconftest(_INNER_CONFTEST.format(repo_root=str(repo_root), src_root=src_root))
+    pytester.makepyfile(test_inner=_INNER_TEST)
+
+    result = pytester.runpytest_subprocess("test_inner.py")
+    result.assert_outcomes(passed=2)

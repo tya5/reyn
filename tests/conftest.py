@@ -46,6 +46,7 @@ the tree I am measuring" is not something a test may assume.
 """
 from __future__ import annotations
 
+import faulthandler
 import importlib.util
 import os
 import sys
@@ -609,6 +610,91 @@ def _isolate_stall_trace_file_handler_registration(request: pytest.FixtureReques
     stall_trace.register_file_handler_path(saved)
     if hasattr(request.config, "workerinput") or not os.environ.get("REYN_STALL_TRACE_CI"):
         stall_trace.disarm()
+
+
+#: #5909 (architect prescription 1) — public witness counter for
+#: :func:`_cancel_any_pending_faulthandler_dump` below. ``faulthandler``'s
+#: own public API (``enable``/``disable``/``is_enabled``/``dump_traceback``/
+#: ``dump_traceback_later``/``cancel_dump_traceback_later``/``register``/
+#: ``unregister`` — confirmed by reading the stdlib module, no other names
+#: exist) exposes no getter for "is a ``dump_traceback_later`` timer
+#: currently armed", so there is no way to observe the fixture's effect by
+#: reading ``faulthandler`` state after the fact. This counter is the
+#: public face this module offers instead: incremented from INSIDE the
+#: fixture's own teardown, once per test, unconditionally — a test can
+#: read it via :func:`faulthandler_safety_net_call_count` to witness the
+#: fixture actually ran, without reaching into any private state.
+_faulthandler_safety_net_calls = 0
+
+
+def faulthandler_safety_net_call_count() -> int:
+    """Public accessor for the counter above — see its own comment."""
+    return _faulthandler_safety_net_calls
+
+
+@pytest.fixture(autouse=True)
+def _cancel_any_pending_faulthandler_dump() -> Iterator[None]:
+    """#5909 (architect prescription 1, real-machine measurement): a
+    process-global safety net for ``faulthandler.dump_traceback_later`` —
+    the OTHER process-global ``tests/interfaces/test_3671_stall_trace_
+    startup_wiring.py`` touches, independent of the file-handler
+    registration :func:`_isolate_stall_trace_file_handler_registration`
+    (above) already isolates.
+
+    ``faulthandler.dump_traceback_later`` captures the armed destination's
+    FILE-DESCRIPTOR NUMBER at arm time, not a live object reference
+    (``reyn.runtime.stall_trace.find_file_handler_path``'s own docstring
+    has the reproduced mechanism, #5877). A test that arms the REAL
+    tripwire with ``stall_trace.disarm`` stubbed out — exactly what
+    ``test_3671_stall_trace_startup_wiring.py::test_the_tripwire_arms_
+    its_own_fd_when_a_file_handler_exists`` does, deliberately, to observe
+    the real ``arm()`` call without letting production's own disarm
+    interfere — leaves a pending one-shot dump when the app's own
+    ``finally`` closes that fd for real at shutdown. Production closes this
+    hole for ITSELF (``app.py``'s own ``_watch_loop_responsiveness``
+    worker: "#5877: disarm BEFORE closing this worker's own fd" — see that
+    method's ``finally`` block) but nothing analogous existed on the test
+    side before this fixture (confirmed by reading this file: no fixture
+    here called ``faulthandler.cancel_dump_traceback_later()``
+    unconditionally).
+
+    Calls ``faulthandler.cancel_dump_traceback_later()`` BY NAME, directly
+    — deliberately never ``stall_trace.disarm()`` (which
+    :func:`_isolate_stall_trace_file_handler_registration` above already
+    calls, conditionally). Several tests in this suite monkeypatch
+    ``stall_trace.disarm`` itself (``monkeypatch.setattr(stall_trace,
+    "disarm", ...)``) to observe wiring without letting the real disarm
+    run — going through that same name here would make this safety net's
+    own effect depend on fixture-teardown ORDERING relative to
+    ``monkeypatch``'s own undo (an implicit assumption, not a guarantee).
+    ``faulthandler.cancel_dump_traceback_later`` is stdlib and never
+    monkeypatched anywhere in this suite (confirmed: ``grep -rn
+    'faulthandler\\.' tests/`` has no ``setattr``/``patch`` hit on it), so
+    calling it by this name is unconditional by CONSTRUCTION — "a test
+    that leaves something armed" cannot exist structurally, regardless of
+    what any given test does to ``stall_trace``'s own names.
+
+    Deliberately function-scoped, not session-scoped, and deliberately NOT
+    gated the way :func:`_isolate_stall_trace_file_handler_registration`'s
+    own ``stall_trace.disarm()`` call is: that gate exists ONLY to protect
+    ``stall_dump.py``'s session-scoped #4986 CONTROLLER watchdog from a
+    per-test cancel (armed once, for the whole session, only on the xdist
+    controller — never inside a worker, that module's own docstring). This
+    repo's CI always runs pytest under xdist WHEN ``REYN_STALL_TRACE_CI``
+    is set (``.github/workflows/test.yml``: ``REYN_STALL_TRACE_CI=600
+    ... pytest -q -n auto`` — same shell invocation, always together), so
+    every process that ever runs a test ITEM body in CI is a worker, never
+    the controller — the one case an unconditional cancel here WOULD
+    defeat (``REYN_STALL_TRACE_CI`` set on a genuinely serial, no ``-n``,
+    invocation) is not this repo's CI shape today. Documented here as the
+    known, accepted narrowing per the architect's #5909 ruling (structural
+    safety net over per-test discipline), not silently assumed away — a
+    future CI shape that runs a serial job WITH ``REYN_STALL_TRACE_CI``
+    set would need to revisit this."""
+    global _faulthandler_safety_net_calls
+    yield
+    faulthandler.cancel_dump_traceback_later()
+    _faulthandler_safety_net_calls += 1
 
 # ── Marker registration ────────────────────────────────────────────────────────
 
