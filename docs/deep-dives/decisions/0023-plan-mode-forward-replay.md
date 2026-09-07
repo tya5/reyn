@@ -1,6 +1,6 @@
 # ADR-0023: Plan-Mode Crash Resilience — Phase 2 (Forward Replay)
 
-**Status**: Accepted + Implemented (2026-05-07);
+**Status**: SUPERSEDED — the mechanism was removed by #1953 (PR #2018, 2026-06-21). Was: Accepted + Implemented (2026-05-07);
 **amended 2026-05-08** (Phase 2.1 — async dispatch + multi-plan).
 **Track**: Plan-mode crash recovery — successor to ADR-0022 Phase 1.
 **Synthesized from**: 4 parallel design proposals (snapshot / analyzer / policy

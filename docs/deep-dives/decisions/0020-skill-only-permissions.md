@@ -1,6 +1,6 @@
 # ADR-0020: Skill-only permissions — Phase.permissions field removed
 
-**Status**: Accepted (2026-05-04)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03). The decision (permissions unify onto skill.md) was satisfied at the time; the skill concept it applied to was later deleted whole — not an unmet decision.
 **Track**: Wave 2 of postprocessor follow-up; supersedes implicit phase-level permission semantics
 
 ## Context

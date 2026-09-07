@@ -1,6 +1,6 @@
 # ADR-0024: Plan step result spill-to-file (R-D10 mirror)
 
-**Status**: Accepted (2026-05-08)
+**Status**: SUPERSEDED — the mechanism was removed by #1953 (PR #2018, 2026-06-21)
 **Track**: Plan-mode persistence — closes ADR-0023 "Open issues:
 Step result size cap" deferred item.
 

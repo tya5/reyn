@@ -1,6 +1,6 @@
 # ADR-0011: World-purity memo invalidation on resume
 
-**Status**: Accepted (2026-05-04)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: PR-memo-purity-fix (commit `7e764ce`)
 
 ## Context

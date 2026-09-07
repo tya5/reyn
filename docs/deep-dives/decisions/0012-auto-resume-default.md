@@ -1,6 +1,6 @@
 # ADR-0012: Auto-resume default + retry policy
 
-**Status**: Accepted (2026-05-04). Supersedes [ADR-0007](0007-bulk-resume-prompt-ux.md).
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03). Supersedes [ADR-0007](0007-bulk-resume-prompt-ux.md).
 **Track**: PR-resume-auto (commit `2177f55`)
 
 ## Context

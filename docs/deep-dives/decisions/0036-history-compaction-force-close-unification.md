@@ -1,6 +1,7 @@
 # ADR-0036 (#1092) — chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence)
 
 **Status**: ACCEPTED — **"Implementation note: PR-F2b force-close handoff cap" superseded by [ADR-0042](0042-force-close-layer2-removal.md)** (2026-08-12); every other part stands unchanged. (user GO 2026-06-02 "懸念点なし、進められるなら進めて"; e2e technical review APPROVE, 3 precisions folded).
+**Status correction** (2026-09-07, ADR witness audit): FD1's phase-side convergence target — `control_ir_executor` / a `PhaseRouterLoopHost` — was removed whole by #2434 (PR #2438, 2026-07-03), the same skill/phase-engine bulk-delete that superseded ADR-0003/0004/0009/0011/0012/0013/0015/0020. The `RouterLoopCore` extraction FD1 introduced (`runtime/router_loop.py:886`) survives and is still satisfied by chat's `RouterHostAdapter` — infrastructure MET, but the decision's primary aim (phase converging onto it) has no remaining consumer.
 **Track**: #1092 (umbrella). **Canonical contract / staging**: GitHub issue **#1234** (FD1–FD7 + staging PR-A..E + test discipline + scope boundary).
 **Builds on**: **ADR-0035** (#1212 — phase op-loop / separate-decide / frame-fed; a landed file at `docs/deep-dives/decisions/0035-phase-tool-calls-unification.md`). This ADR **PRESERVES** #1212's separate-decide and converges only the within-unit act-loop history representation (frame-fed → RouterLoop message-history).
 **Recon foundation**: e2e DEEP_DIVE.md / DEEP_DIVE_2.md / DEEP_DIVE_3.md (primary-evidence flow-trace on main).

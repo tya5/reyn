@@ -1,6 +1,6 @@
 # ADR-0015: LLM result workspace ref threshold
 
-**Status**: Accepted (2026-05-04)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: R-D10 (commit `20bf16d`)
 
 ## Context

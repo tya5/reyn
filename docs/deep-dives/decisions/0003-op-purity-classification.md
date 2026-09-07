@@ -1,6 +1,6 @@
 # ADR-0003: Op purity classification for step events
 
-**Status**: Accepted (2026-05-02)
+**Status**: SUPERSEDED — the mechanism was removed by #2434 (PR #2438, 2026-07-03)
 **Track**: PR-step-events, PR-state-foundation
 
 ## Context

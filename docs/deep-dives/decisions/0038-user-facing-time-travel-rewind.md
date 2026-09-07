@@ -28,6 +28,11 @@ production paths (`checkout`'s fork-switch, the 2c edit flow's lineage lookup), 
 no production caller; `/rewind`'s actual picker shows only the active branch's flat
 checkpoint list. Decision on whether to build that UI is owner-pending, tracked
 in #3987.
+**Status correction, resolved** (2026-09-07, ADR witness audit, #5900): the 2b gap the
+2026-08-11 correction above flagged has since closed — `61135c9cf` ("feat(#3987): wire the
+branch tree into the `/rewind` picker (#5655)") gave `build_branch_tree_rows` a real
+production caller, `rewind_picker.py:250`. **The correction note above had itself gone
+stale**, which is what this audit found.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),
 ADR-0002 (forward-replay), ADR-0023 (PlanSnapshot).
 **Owner status**: design judgments co-designed + confirmed with owner (issue
