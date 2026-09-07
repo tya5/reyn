@@ -573,7 +573,7 @@ class LostReason(StrEnum):
     ``CONTENT_REF_META_KEY`` present): no eviction pass selects an
     un-spilled file — the per-session pass by this store's own record,
     the project-wide pass by re-reading every session's manifest lines
-    at pass time (``MediaStore._unspilled_paths_project_wide``, architect
+    at pass time (``MediaStore._manifest_paths_project_wide``, architect
     co-vet 🔴 #2: a pass that used only the calling store's own view
     evicted a neighbour's un-spilled body, and this reason then LIED
     about it) — so a missing one was removed by something outside reyn's
@@ -581,9 +581,10 @@ class LostReason(StrEnum):
     store's body whose content landed while its manifest line was still
     queued (the next job in the same FIFO worker) is invisible to a
     project-wide pass run by a DIFFERENT store in that instant; a loss
-    in that window also reads as ``EXTERNAL``. Stage ② (spilled-first
-    ordering with un-spilled eviction, pending owner ruling) is where
-    this stops being derivable at all and needs its own record."""
+    in that window also reads as ``EXTERNAL``. Stage ③ (spilled-first
+    ordering with un-spilled eviction, owner-confirmation-pending — NOT
+    part of this change) is where this stops being derivable at all and
+    needs its own record."""
 
     GC = "gc"
     NEVER_PERSISTED = "never_persisted"

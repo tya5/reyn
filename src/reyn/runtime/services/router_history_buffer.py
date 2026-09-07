@@ -42,7 +42,7 @@ from reyn.runtime.chat_message import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 # #5612: the reactive overflow-recovery spill's own durable supersede
 # record role — see chat_message.py's own role-vocabulary entry and
@@ -260,7 +260,9 @@ def resolve_history_content(
     docstring for the disclosed, not-exhaustive caveat) and
     ``LostReason.EXTERNAL`` for an un-spilled one (#5896 stage ①: no
     eviction pass selects an un-spilled file, so only something outside
-    reyn's own GC can have removed it). Surfaced on 2 operator-facing
+    reyn's own GC can have removed it — stage ③, owner-confirmation-
+    pending and NOT part of this change, is where that premise would
+    stop holding). Surfaced on 2 operator-facing
     faces, per architect's own text — never a THIRD hidden one: (1) the
     reason named inline in the placeholder text every reader (model +
     transcript) already sees, (2) one ``offloaded_content_unavailable``
@@ -324,6 +326,62 @@ def resolve_history_content(
             f"(reason: {reason})]"
         )
     return content
+
+
+def iter_history_content_refs(project_root: "Path") -> "list[tuple[str, bool]]":
+    """#5896 stage ② item ① — the ``iter_content_refs`` collaborator
+    :func:`reyn.data.workspace.media_store.migrate_history_content_manifest`
+    injects: every ``(content_ref, spilled)`` pair recorded across EVERY
+    ``history.jsonl`` this project holds (``.reyn/agents/**/history.jsonl``
+    — the same glob :func:`reyn.runtime.history_tail_reader.
+    aggregate_history_stats` already uses to enumerate them).
+
+    This is the RUNTIME-layer half of the migration: it alone knows the
+    wire vocabulary (``CONTENT_REF_META_KEY``/``SPILLED_META_KEY``) a
+    ``history.jsonl`` row carries — the data-layer migration function
+    must not import it directly (layering: a data-layer module reading a
+    runtime-layer wire format would be backwards), so this function is
+    handed in rather than called from there. A row is read with a bare
+    ``json.loads`` (never ``parse_history_line``/``ChatMessage`` — this is
+    a read-only census over rows this project itself already wrote, not a
+    reconstruction that needs the full migration/normalisation a resident
+    ``ChatMessage`` requires) — a malformed line is skipped, same
+    "one bad line never invalidates the rest" policy every other reader
+    of this file already applies.
+
+    Last writer wins when more than one row names the same ref (never
+    expected in practice — a ref is written once, by exactly one
+    ``save_tool_result`` call — so this has no real effect, only a
+    defined one)."""
+    from pathlib import Path as _Path
+
+    root = _Path(project_root) / ".reyn" / "agents"
+    if not root.is_dir():
+        return []
+    refs: "dict[str, bool]" = {}
+    for hist_path in sorted(root.glob("**/history.jsonl")):
+        try:
+            with hist_path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict) or entry.get("role") != "tool":
+                        continue
+                    meta = entry.get("meta") or {}
+                    if not isinstance(meta, dict):
+                        continue
+                    ref = meta.get(CONTENT_REF_META_KEY)
+                    if not ref:
+                        continue
+                    refs[ref] = bool(meta.get(SPILLED_META_KEY))
+        except OSError:
+            continue
+    return list(refs.items())
 
 
 # #4381 PR-1: warn-once cache for the resource/budget invariant below, keyed
