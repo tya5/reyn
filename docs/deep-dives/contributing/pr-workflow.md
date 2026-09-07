@@ -293,11 +293,41 @@ These rules then keep multi-session work coherent:
    above already covers the implementer side (finish your OWN Test plan
    before merge). A reviewing session that has a blocking point edits the
    PR body to add it as `- [ ] 🔴 <point>` (append, don't remove the
-   author's own items) — or posts the equivalent `BLOCKING (head <sha>)`
-   comment form — and does not merge while it's unresolved. Ticking the
-   box alone no longer closes it: closing takes a comment quoting that
-   line verbatim (`BLOCKING-CLEARED (head <sha>)` for the comment form),
-   or the gate stays red (#5314). The author reports the fix and asks the
+   author's own items) — or posts a `BLOCKING (head <sha>)` comment — and
+   does not merge while it's unresolved. **Both are closed by ONE shape**
+   (#5919, architect ruling 2026-09-07): a comment whose FIRST line is
+   `BLOCKING-CLEARED (head <sha>)` naming the CURRENT head, and whose body
+   quotes verbatim the line it closes — a `BLOCKING` comment's identifying
+   line (its first non-empty line after the marker), never a summary; or
+   the checkbox line itself, not restated. One comment can cover several
+   closed lines. Ticking the box alone does not close it, or the gate
+   stays red (#5314).
+
+   The two forms used to be closed differently — a checked box needed only
+   a comment *containing* the quoted line, with no marker. That is a
+   substring test, and quoting is also how a reviewer **disagrees**: a
+   comment arguing against the point, quoting it to say what it argues
+   with, satisfied the gate and turned it green. Detection cannot separate
+   "quoted to resolve" from "quoted to rebut" by text, so the marker line
+   carries that fact instead (`scripts/check_open_blocking_checkboxes.py`'s
+   `_resolves_via_body`, #5919's census).
+
+   **A moved head lapses every live marker at once.** The gate asks each
+   marker to name the PR's CURRENT head, so a `BLOCKING-CLEARED` or
+   `TESTS-READ` posted against an earlier head silently stops counting —
+   re-issue every live marker, not the ones posted this turn (#5901: a
+   CLEARED naming a two-generations-old head left the gate red while its
+   author believed the point closed; three instances in one day, across
+   two sessions, one of them a full SHA typed from a short one). Never
+   type a SHA — expand `$(gh pr view <N> --json headRefOid --jq
+   .headRefOid)` into the comment body. **That read can lag your own push
+   by seconds** (measured 2026-09-07 while writing this section: a
+   `gh pr view` run immediately after `git push` returned the PRE-push
+   head), so when you have just pushed, compare it against `git rev-parse
+   HEAD` on the branch you pushed and use the local value if they differ —
+   an expansion is only as current as the API answering it. List what is
+   live with
+   `gh pr view <N> --json comments --jq '.comments[] | select(.body|test("^(BLOCKING|BLOCKING-CLEARED|TESTS-READ)")) | .body|split("\n")[0]'`. The author reports the fix and asks the
    reviewer to confirm — the author does not tick the reviewer's own box,
    **and does not post the `BLOCKING-CLEARED` comment form either — same
    asymmetry, both forms of the same marker.** This was ambiguous enough to
