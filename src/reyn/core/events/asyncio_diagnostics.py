@@ -37,9 +37,87 @@ import asyncio
 import logging
 import sys
 import traceback
-from typing import Any
+from typing import Any, Callable
 
 _EVENT_KIND = "asyncio_unhandled_exception"
+
+# #5951 (P0, owner-hit): resolved ONCE, on first successful use, and cached
+# here -- never re-imported on every call. The exception handler this backs
+# fires from asyncio's OWN teardown machinery (`Task was destroyed but it is
+# pending!` -- exactly the shutdown-only event this module exists to durably
+# capture), which can run AFTER `sys.meta_path` has been set to `None`
+# (CPython's own interpreter-shutdown signal) -- at that point ANY fresh
+# `import` unconditionally raises `ImportError: sys.meta_path is None,
+# Python is likely shutting down`, regardless of whether the target module
+# was already importable seconds earlier. A function-local import (the
+# previous shape) re-attempted this EVERY call, so a process that had
+# emitted successfully a hundred times could still hit this on the
+# hundred-and-first call, specifically the shutdown one -- the exact call
+# this module's whole docstring says must not fail. Caching the FIRST
+# success means every later call (shutdown included) reuses the already-
+# bound reference and touches `sys.meta_path` not at all.
+_emit_cli_event: "Callable[..., None] | None" = None
+
+
+def _resolve_emit_cli_event() -> "Callable[..., None] | None":
+    """Returns the cached ``emit_cli_event`` once resolved; on the FIRST
+    call, attempts the import once and caches success. If that first
+    attempt itself lands during shutdown (a process that raised its very
+    first unhandled exception AFTER `sys.meta_path` went `None` -- no prior
+    successful emit to have cached), the ``ImportError`` is swallowed here
+    and every call returns ``None`` for the rest of the process: this
+    diagnostic gives up quietly rather than crash the loop or bury the
+    original exception context in its OWN traceback (the failure mode
+    #5951 reports)."""
+    global _emit_cli_event
+    if _emit_cli_event is not None:
+        return _emit_cli_event
+    try:
+        from reyn.core.events.events import emit_cli_event
+    except ImportError:
+        return None
+    _emit_cli_event = emit_cli_event
+    return _emit_cli_event
+
+
+# #5951: `_surface_while_app_running`'s two prompt_toolkit imports were
+# already exception-guarded (never the bug this issue reports), but the
+# SAME shape -- a function-local import re-attempted on every call, when a
+# process that resolved it once will keep resolving it the same way for
+# the rest of its life -- applies equally: cache each on first success, the
+# same as `_resolve_emit_cli_event` above (lead-coder review note, #5951).
+_get_app_or_none: "Callable[[], object | None] | None" = None
+_run_in_terminal: "Callable[..., Any] | None" = None
+
+
+def _resolve_get_app_or_none() -> "Callable[[], object | None] | None":
+    """Cached ``prompt_toolkit.application.current.get_app_or_none``, or
+    ``None`` once-and-for-all for a process where prompt_toolkit is not
+    installed / not importable (optional dependency of this diagnostic
+    path) or the import landed during shutdown with nothing cached yet."""
+    global _get_app_or_none
+    if _get_app_or_none is not None:
+        return _get_app_or_none
+    try:
+        from prompt_toolkit.application.current import get_app_or_none
+    except Exception:  # noqa: BLE001 -- optional at import time, never fatal
+        return None
+    _get_app_or_none = get_app_or_none
+    return _get_app_or_none
+
+
+def _resolve_run_in_terminal() -> "Callable[..., Any] | None":
+    """Cached ``prompt_toolkit.application.run_in_terminal``, same shape as
+    :func:`_resolve_get_app_or_none` above."""
+    global _run_in_terminal
+    if _run_in_terminal is not None:
+        return _run_in_terminal
+    try:
+        from prompt_toolkit.application import run_in_terminal
+    except Exception:  # noqa: BLE001 -- optional at import time, never fatal
+        return None
+    _run_in_terminal = run_in_terminal
+    return _run_in_terminal
 
 
 def install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
@@ -49,7 +127,30 @@ def install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
     (e.g. obtained via ``asyncio.get_running_loop()`` from inside the
     entrypoint's top-level coroutine, or the loop just created by
     ``asyncio.new_event_loop()``).
+
+    #5952 BLOCKING (lead-coder, measured): resolves ``emit_cli_event`` HERE,
+    once, at install time -- not left to warm on the handler's own first
+    call. Measured: ``_resolve_emit_cli_event`` was reachable ONLY from
+    inside the handler itself, so a process whose FIRST-EVER unhandled
+    exception is a genuinely shutdown-only one (``Task was destroyed but
+    it is pending!`` -- #5951's own reported symptom, fired from asyncio's
+    OWN teardown machinery, never from ordinary running code) would still
+    lose it: nothing earlier ever warmed the cache, so the handler's first
+    (and only) call resolves for the first time AFTER `sys.meta_path` is
+    already `None`, hits the exact `ImportError` #5951 reports, and gives
+    up quietly -- #5951's own event, unrecorded, the fix's whole point
+    defeated for the single-failure process it was written for. Installing
+    the handler happens far ahead of any shutdown (this function's own
+    docstring: called once per real loop-owning entrypoint, right after
+    the loop is obtained, before the main work starts), so warming here
+    means the cache is already populated before ANY exception -- shutdown
+    or not -- can ever reach the handler. Grep-confirmed no import cycle
+    (`events.py` does not import `asyncio_diagnostics`; both import
+    cleanly together) -- the original deferred-import's real benefit is
+    only "an entrypoint that never installs this handler pays nothing",
+    which a call here (only reached BY an installer) still preserves.
     """
+    _resolve_emit_cli_event()
     loop.set_exception_handler(_make_handler())
 
 
@@ -66,11 +167,16 @@ def _make_handler():
 
 
 def _durably_capture(context: dict[str, Any]) -> None:
-    # Local import: keeps this module import-cheap for entrypoints that
-    # install the handler before the rest of reyn's config/event machinery
-    # is set up, and avoids import-cycle risk (events.py is a low-level
-    # module several higher layers import).
-    from reyn.core.events.events import emit_cli_event
+    # #5951: resolved via the cached, once-only import above -- never a
+    # fresh function-local import on every call (see _resolve_emit_cli_event's
+    # own docstring for why that shape was the bug). `emit` is `None` only
+    # when this process has never once successfully resolved it (including
+    # "the very first call landed during shutdown") -- give up quietly
+    # rather than let an ImportError propagate and bury the diagnostic this
+    # function exists to preserve.
+    emit = _resolve_emit_cli_event()
+    if emit is None:
+        return
 
     exc = context.get("exception")
     if exc is not None:
@@ -88,7 +194,7 @@ def _durably_capture(context: dict[str, Any]) -> None:
     task = context.get("task") or context.get("future")
 
     try:
-        emit_cli_event(
+        emit(
             _EVENT_KIND,
             exception_type=exception_type,
             exception_message=exception_message,
@@ -166,9 +272,8 @@ def _surface_while_app_running(context: dict[str, Any]) -> None:
     server, cron, dogfood -- are unaffected; their unredirected
     logging already surfaces the message via the call above).
     """
-    try:
-        from prompt_toolkit.application.current import get_app_or_none
-    except Exception:  # noqa: BLE001 -- optional at import time, never fatal
+    get_app_or_none = _resolve_get_app_or_none()
+    if get_app_or_none is None:
         return
     if get_app_or_none() is None:
         return
@@ -190,8 +295,10 @@ def _surface_while_app_running(context: dict[str, Any]) -> None:
         if tb_text:
             print(tb_text)
 
+    run_in_terminal = _resolve_run_in_terminal()
+    if run_in_terminal is None:
+        return
     try:
-        from prompt_toolkit.application import run_in_terminal
         run_in_terminal(_emit)
     except Exception:  # noqa: BLE001 -- surfacing must never crash the loop
         pass
