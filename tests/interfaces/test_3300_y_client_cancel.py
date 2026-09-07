@@ -157,6 +157,14 @@ async def test_cancel_removes_row_only_on_inbox_cancel_delta_not_on_call_return(
         assert sent_queue.has_items()
 
         await app.on_sent_queue_cancelled(SentQueue.Cancelled("m1"))
+        # #5894 ①-2: the wire call runs on a worker, so "it was called" is
+        # waited for — unconditionally, on the transport's own public
+        # record; a build that never calls it goes red only when CI's
+        # --timeout kills this loop — never read at the instant the
+        # handler returned. The test's subject (the row survives the
+        # call's RETURN; only the delta removes it) is unchanged.
+        while not transport.cancel_calls:
+            await pilot.pause()
         assert transport.cancel_calls == ["m1"]
         assert sent_queue.has_items(), (
             "the row must NOT be removed by the cancel_queued call's return "
@@ -445,6 +453,8 @@ async def test_enter_on_highlighted_row_cancels_it_and_escape_returns_focus() ->
 
         await pilot.press("enter")
         await pilot.pause()
+        while not transport.cancel_calls:  # #5894 ①-2: a worker's call — wait on the stub's record
+            await pilot.pause()
         assert transport.cancel_calls == ["m2"]
 
         await transport.push_event(_inbox_cancel(msg_id="m2", seq=3))
