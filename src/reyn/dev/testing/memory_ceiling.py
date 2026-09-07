@@ -58,13 +58,18 @@ _config: object | None = None
 LOG_PATH = os.path.join(os.getcwd(), ".reyn-memory-ceiling.log")
 
 
-def _peak_mb() -> float:
+def peak_mb() -> float:
     """This process's high-water RSS.
 
     ``ru_maxrss`` is a peak, not a current reading: it never falls. That is the
     right shape for a ceiling — a run that touched the limit and then freed is
     still a run that touched the limit — but it means this cannot be used to
     watch memory come back down.
+
+    Public since #5909: ``worker_forensics`` records each xdist worker's
+    figure at session end — the number a HOST OOM kill judges (per worker,
+    ``-n auto`` of them at once), which this module's own log never shows
+    for a worker that stayed under reyn's ceiling.
     """
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / _RSS_DIVISOR
 
@@ -81,7 +86,7 @@ def ceiling_mb() -> int:
 
 def _watch(limit_mb: int) -> None:
     while True:
-        peak = _peak_mb()
+        peak = peak_mb()
         if peak > limit_mb:
             # The test's name is the whole value here: "some pytest used 10 GB"
             # is where the 2026-08-09 investigation started, and it cost hours.

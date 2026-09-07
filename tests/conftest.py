@@ -552,7 +552,7 @@ def _clear_find_project_root_cache() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_stall_trace_file_handler_registration() -> Iterator[None]:
+def _isolate_stall_trace_file_handler_registration(request: pytest.FixtureRequest) -> Iterator[None]:
     """Save + restore ``reyn.runtime.stall_trace``'s registered log-handler
     path around every test (#5873 follow-up, #5879 CI finding).
 
@@ -581,12 +581,34 @@ def _isolate_stall_trace_file_handler_registration() -> Iterator[None]:
     ``register_file_handler_path`` anywhere in ``tests/``), matching
     ``_isolate_rich_style_ansi_memo``/``_isolate_budget_limit_context``
     above: process-global state a test can set is this file's own
-    responsibility to isolate, not each individual test's."""
+    responsibility to isolate, not each individual test's.
+
+    #5909: the SAME fixture also cancels any ``faulthandler.dump_traceback_
+    later`` timer a test left pending — the other process-global this
+    module's callers touch. Measured: ``test_3671_stall_trace_startup_
+    wiring.py::test_stall_trace_disarmed_at_first_frame_via_on_mount`` runs
+    the tripwire's REAL ``arm`` (a ``repeat=False`` 0.25 s one-shot against
+    the worker's own fd) with ``disarm`` stubbed, so the worker's
+    ``finally`` closes that fd with the one-shot still pending; a pending
+    dump against a closed fd lands in whatever REUSES the number (measured
+    in isolation: a ``socketpair`` received the 116-byte dump). In the
+    suite that one-shot was NOT observed landing anywhere (it fires inside
+    the app's own shutdown, at a number nobody holds yet) — so this is
+    hygiene closing the class, not the #5909 crash's mechanism, which is
+    what ``worker_forensics`` exists to name. Guarded: under a serial run
+    with ``REYN_STALL_TRACE_CI`` set, the ONE process-wide timer is #4986's
+    session watchdog (``stall_dump.py`` arms it only on the controller,
+    never in an xdist worker) — cancelling it per test would exclude
+    exactly the teardown-hang class that watchdog exists to catch, so the
+    cancel runs only where that watchdog cannot be: inside an xdist worker,
+    or with the CI watchdog unset."""
     from reyn.runtime import stall_trace
 
     saved = stall_trace.find_file_handler_path()
     yield
     stall_trace.register_file_handler_path(saved)
+    if hasattr(request.config, "workerinput") or not os.environ.get("REYN_STALL_TRACE_CI"):
+        stall_trace.disarm()
 
 # ── Marker registration ────────────────────────────────────────────────────────
 
@@ -702,10 +724,11 @@ def pytest_collection_modifyitems(
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    from reyn.dev.testing import memory_ceiling, network_gate
+    from reyn.dev.testing import memory_ceiling, network_gate, worker_forensics
 
     network_gate.pytest_runtest_setup(item)
     memory_ceiling.pytest_runtest_setup(item)
+    worker_forensics.pytest_runtest_setup(item)  # #5909: per-worker test trace
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
@@ -715,16 +738,33 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    from reyn.dev.testing import extra_skip_report, network_gate, replay_unconsumed
+    from reyn.dev.testing import (
+        extra_skip_report,
+        network_gate,
+        replay_unconsumed,
+        worker_forensics,
+    )
 
     network_gate.pytest_sessionfinish(session, exitstatus)
     extra_skip_report.pytest_sessionfinish(session, exitstatus)
     replay_unconsumed.pytest_sessionfinish(session, exitstatus)
+    worker_forensics.pytest_sessionfinish(session, exitstatus)  # #5909: per-worker peak RSS
     # #4986 (reyn.dev.testing.stall_dump): deliberately has no
     # pytest_sessionfinish hook — see that module's own "WHY THIS NEVER
     # DISARMS" docstring section (architect finding, PR #5362 review): a
     # cancel here would exclude exactly the interpreter-shutdown/atexit
     # hang class #4986 exists to catch.
+
+
+def pytest_testnodedown(node: object, error: object) -> None:
+    """#5909 (xdist hook, controller side): a worker went down — write the
+    one line that names HOW (its exit code: ``-9`` SIGKILL, ``1``
+    pytest-timeout's ``os._exit``, ``97`` reyn's memory ceiling) and what it
+    was running, to ``.reyn-worker-down.log``; the CI job prints it. Runs
+    in execnet's receiver thread, so it only appends a line."""
+    from reyn.dev.testing import worker_forensics
+
+    worker_forensics.pytest_testnodedown(node, error)
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────
