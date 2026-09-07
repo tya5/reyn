@@ -809,7 +809,7 @@ class ChatMessage:
         self.name = name
         self.spillability = _normalize_spillability(spillability)
         self.disclosure = _normalize_disclosure(disclosure, role=role, meta=self.meta)
-        # #5939 P0 (owner-hit, 2026-09-07): a plain instance attribute, NOT
+        # #5896 P0 (owner-hit, 2026-09-07): a plain instance attribute, NOT
         # a dataclass field — deliberately NO class-level annotation, so
         # `dataclasses.fields()`/`asdict()`/`__eq__`/`repr()` never see it.
         # If it WERE a declared field, `resident_bytes()`'s own

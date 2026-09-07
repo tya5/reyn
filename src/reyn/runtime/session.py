@@ -4373,7 +4373,7 @@ class Session:
         cap after every append" holds by construction, with no cached SUM
         that could desync from reality.
 
-        #5939 P0 (owner-hit, 2026-09-07): the PER-MESSAGE serialization
+        #5896 P0 (owner-hit, 2026-09-07): the PER-MESSAGE serialization
         underneath that sum used to be redone from scratch too, every
         call, for every still-resident message — ``m.resident_bytes()``
         (``ChatMessage``'s own method) now caches each message's OWN size

@@ -1,4 +1,4 @@
-"""#5939 P0 (owner-hit, 2026-09-07): ``Session._evict_oldest_resident_entries``
+"""#5896 P0 (owner-hit, 2026-09-07): ``Session._evict_oldest_resident_entries``
 used to re-serialize EVERY still-resident ``ChatMessage`` on EVERY eviction
 pass (every append) just to measure its size — on the owner's real machine a
 single 369 MB row made that ONE re-serialize cost another 369 MB copy, on the
