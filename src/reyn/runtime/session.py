@@ -5554,6 +5554,7 @@ class Session:
             user_input_include_text=self._events_config.user_input_include_text,
             provider_body_include_text=self._events_config.provider_body_include_text,
             provider_body_max_chars=self._events_config.provider_body_max_chars,
+            tool_result_max_chars=self._events_config.tool_result_max_chars,
         )
 
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
