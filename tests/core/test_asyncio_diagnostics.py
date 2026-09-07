@@ -23,6 +23,7 @@ import ast
 import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,8 +32,12 @@ from prompt_toolkit.application.current import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
+import reyn.core.events.asyncio_diagnostics as asyncio_diagnostics_mod
 import reyn.interfaces.repl.stream_client as stream_client_mod
-from reyn.core.events.asyncio_diagnostics import install_asyncio_exception_handler
+from reyn.core.events.asyncio_diagnostics import (
+    _durably_capture,
+    install_asyncio_exception_handler,
+)
 
 
 def _read_events_of_kind(events_dir: Path, kind: str) -> list[dict]:
@@ -222,4 +227,131 @@ def test_repl_prompt_call_sites_disable_prompt_toolkit_exception_handler() -> No
     assert _call_passes_set_exception_handler_false(stream_client_src, "prompt_async"), (
         "stream_client.py's prompt_session.prompt_async(...) must pass "
         "set_exception_handler=False (else prompt_toolkit re-masks #2637 capture)"
+    )
+
+
+def _simulate_shutdown_import_failure(module_dotted_name: str):
+    """A context manager-free helper pair reproducing the REAL production
+    failure (#5951's own traceback) precisely: evicts *module_dotted_name*
+    from ``sys.modules`` (forcing the NEXT ``import`` of it to genuinely
+    consult ``sys.meta_path`` instead of hitting the cache -- Python's
+    import statement checks ``sys.modules`` FIRST, so merely nulling
+    ``meta_path`` without this eviction would silently no-op if the module
+    happens to already be cached from an earlier import elsewhere in the
+    test session, the same technique
+    ``test_5059_core_dep_declarations.py``'s own ``_block_httpx_import``
+    fixture uses), then sets ``sys.meta_path = None`` -- CPython's own
+    interpreter-shutdown signal, the exact condition
+    ``importlib._bootstrap._find_spec`` checks to raise ``ImportError:
+    sys.meta_path is None, Python is likely shutting down``. Returns the
+    saved state for the caller to restore."""
+    saved_modules = {
+        k: v for k, v in sys.modules.items()
+        if k == module_dotted_name or k.startswith(module_dotted_name + ".")
+    }
+    for k in saved_modules:
+        del sys.modules[k]
+    saved_meta_path = sys.meta_path
+    sys.meta_path = None  # type: ignore[assignment]
+    return saved_modules, saved_meta_path
+
+
+def _restore_after_simulated_shutdown(saved_modules: dict, saved_meta_path) -> None:
+    sys.meta_path = saved_meta_path
+    sys.modules.update(saved_modules)
+
+
+@pytest.fixture(autouse=True)
+def _reset_asyncio_diagnostics_cache():
+    """Every test in this module starts from -- and leaves -- an
+    UN-cached ``_emit_cli_event`` (#5951's own module-level cache):
+    without this, whichever test happens to run first would silently warm
+    it for every test after, hiding the exact "never resolved before
+    shutdown" scenario the tests below exist to drive."""
+    asyncio_diagnostics_mod._emit_cli_event = None
+    try:
+        yield
+    finally:
+        asyncio_diagnostics_mod._emit_cli_event = None
+
+
+def test_shutdown_time_call_reuses_the_cache_and_still_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2b: #5951's actual fix, driven end to end. A process that
+    resolved ``emit_cli_event`` once (a normal, pre-shutdown call) durably
+    records a LATER call made during simulated interpreter shutdown
+    (``sys.meta_path = None``, the exact production condition) -- it
+    reuses the cached reference and never touches ``sys.meta_path`` again.
+    Checks a RECORDED EVENT (lead-coder's own review note: "no exception"
+    alone is also true of a silent swallow, which is the FAILURE mode,
+    not the fix) -- not merely the absence of a raise.
+
+    Strip: reverting ``_durably_capture`` to its pre-#5951 shape (a fresh,
+    unprotected ``from reyn.core.events.events import emit_cli_event``
+    inside the function body, every call) makes this go RED -- the SECOND
+    call's fresh import genuinely consults the nulled ``sys.meta_path``
+    (the module was evicted from ``sys.modules`` first, see
+    ``_simulate_shutdown_import_failure``'s own docstring) and raises
+    ``ImportError`` uncaught, exactly reproducing #5951's own traceback.
+    """
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    _durably_capture({"message": "warm-up-before-shutdown"})
+
+    saved_modules, saved_meta_path = _simulate_shutdown_import_failure(
+        "reyn.core.events.events"
+    )
+    try:
+        _durably_capture({"message": "during-simulated-shutdown"})
+    finally:
+        _restore_after_simulated_shutdown(saved_modules, saved_meta_path)
+
+    events = _read_events_of_kind(reyn_dir / "events", "asyncio_unhandled_exception")
+    messages = [e["data"]["context_message"] for e in events]
+    assert "warm-up-before-shutdown" in messages, (
+        "the normal, pre-shutdown call must still record -- the fix must "
+        "not have fallen to the 'give up quietly' side for the ordinary case"
+    )
+    assert "during-simulated-shutdown" in messages, (
+        "the call made during simulated shutdown must ALSO record -- this "
+        "is #5951's actual claim: caching means shutdown no longer loses "
+        "the event"
+    )
+
+
+def test_never_resolved_shutdown_call_gives_up_quietly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2b: #5951's other acceptance branch (architect: "黙って諦める")
+    -- a process whose VERY FIRST call to the durable-capture path happens
+    during simulated shutdown (nothing cached yet) raises no exception.
+    This is the genuinely-unrecoverable case (there is no earlier success
+    to have cached) -- the assertion is that it fails SILENTLY, not that
+    it still somehow records (it structurally cannot, by construction: the
+    import itself is what failed).
+    """
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    # Never warmed -- the autouse `_reset_asyncio_diagnostics_cache` fixture
+    # (this module) resets the cache before every test; this test relies on
+    # that reset, not a direct read of the private attribute itself.
+
+    saved_modules, saved_meta_path = _simulate_shutdown_import_failure(
+        "reyn.core.events.events"
+    )
+    try:
+        _durably_capture({"message": "first-ever-call-during-shutdown"})
+    finally:
+        _restore_after_simulated_shutdown(saved_modules, saved_meta_path)
+
+    events = _read_events_of_kind(reyn_dir / "events", "asyncio_unhandled_exception")
+    assert events == [], (
+        "a call that never resolved emit_cli_event before simulated "
+        "shutdown cannot genuinely record -- any event here would mean "
+        "this test's own simulation did not actually reproduce the "
+        "failure it claims to"
     )
