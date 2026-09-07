@@ -1325,13 +1325,45 @@ set (CI's own full run) or `REYN_FULL_SUITE_OK=1` is passed explicitly.
    the cause was identified (#3880). On any PR that moves or renames a
    `tests/...py` file, rebase onto latest `main` and run this gate again
    immediately before pushing — not once, earlier in the session.
+7. **suspected-time-dependence ratchet** — `scripts/suspected_time_dependence_ratchet.py`
+   (#4846). Same per-file-count ratchet skeleton as #5/#6, over three AST
+   shapes: `@pytest.mark.timeout(...)`, `for _ in range(N):` wrapping an
+   `await`/`sleep`/`pause`, and `time.sleep(x)`/`asyncio.sleep(x)` where `x`
+   is not provably `0`. The first two are **ceiling** (how long CI waits) —
+   pure syntax, gate-able with low false-positive risk. The third is
+   **floor** (how long something must take) — architect's ruling (#4846):
+   whether an assert actually DEPENDS on that sleep is semantic, not
+   syntactic, and no AST walk answers it. That's why every name in this
+   gate — the script, the baseline file, its own output — says
+   **suspected**, never "violation": a 2026-08-15 whole-`tests/` census
+   found 347 syntactically-suspicious sites and could not classify how many
+   are real:
+   ```bash
+   python scripts/suspected_time_dependence_ratchet.py
+   ```
+   🔴 **A green run here is not evidence a test's assert is
+   duration-independent.** It is evidence only that these three specific
+   syntax shapes did not grow. `sleep = time.sleep` then `sleep(5)`, a
+   `functools.partial`, or a project helper wrapping `sleep` internally are
+   all invisible to a plain name-matching AST walk — undercounting, not
+   miscounting. Worse, a test can be duration-dependent with NONE of these
+   three shapes present at all: #5918 (2026-09-07) drove a real call with
+   `timeout=5.0` and asserted on how many retries landed inside that
+   window — no `sleep()`, no `range()`, no `@pytest.mark.timeout` anywhere
+   in the test, and this gate does not and structurally cannot catch that
+   shape. Whether an assert depends on a duration is a six-questions/co-vet
+   judgment, not something this or any syntax-only gate can certify —
+   reading its green as "safe" is exactly the mistake this line exists to
+   head off (a recurrence-prevention clause: lead-coder closed a prior
+   detector 23 days earlier having conflated the detector's own reach with
+   the rule's).
 
 A green scoped `pytest` run alone has shipped PRs that CI then bounced on ruff
 (`I001`) or the tier audit (a `len(...) == 1` format pin). Report scope
-honestly: say which of the six you actually ran locally (e.g. "ruff +
+honestly: say which of the seven you actually ran locally (e.g. "ruff +
 tier-audit + mypy ratchet + path-literal ratchet + the tests I touched")
 rather than "suite passed" — that phrase implies the full local run this
-section no longer asks for, and CI is the only place all six now run
+section no longer asks for, and CI is the only place all seven now run
 together.
 
 **A PR that touches `docs/` also owes a seventh, separate check — the
