@@ -69,12 +69,6 @@ def _make_registry(tmp_path) -> AgentRegistry:
     return AgentRegistry(project_root=tmp_path, session_factory=factory)
 
 
-def _flow_error_seen(app: TextualChatApp) -> bool:
-    """Whether the failed turn's own ``kind="error"`` reply has rendered —
-    this test's FIFO ordering barrier (see its use site)."""
-    return any(e.item.kind == "error" for e in app.query_one(FlowView).entries)
-
-
 def _flow_user_texts(app: TextualChatApp) -> "list[str]":
     return [
         str(e.item.text) for e in app.query_one(FlowView).entries
@@ -157,6 +151,7 @@ async def _wait_until(pilot, condition) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_a_message_submitted_after_attach_reaches_the_conversation(
     tmp_path, monkeypatch, caplog,
 ) -> None:
@@ -169,16 +164,11 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
     duplicate stuck in the queue; "not stranded" alone passes a build that
     dropped the placeholder without ever rendering anything.
 
-    The verdict is read only after the failed turn's own ``kind="error"``
-    reply has rendered: delivery on this connection is FIFO and that reply
-    is produced strictly after ``turn_started``, so its arrival proves
-    every earlier frame — the ``user_submitted``/``turn_started`` pair this
-    test is about — was already drained by the pump. An ordering barrier,
-    not a duration.
-    """
-    from fastapi import FastAPI
-    from starlette.requests import Request
-    from starlette.responses import StreamingResponse
+    The verdict is waited for as the observable itself — the operator's own
+    message in the flow — unconditionally (CI's ``--timeout`` is the red
+    when the gate rejects the echo; a hang, disclosed at the wait site).
+    The turn behind it runs against ``@pytest.mark.llm_stub`` so no real
+    network call is on the wire.
 
     from reyn.interfaces.transport.agui import endpoint as endpoint_mod
     from reyn.interfaces.transport.agui.endpoint import router
@@ -276,17 +266,22 @@ async def test_a_message_submitted_after_attach_reaches_the_conversation(
             # does by default.
             gate.set()
 
-            # The FIFO barrier. The dispatched turn reaches the real
-            # litellm boundary, where this suite's network gate raises;
-            # the session CONTAINS that (``session.py``'s "router loop
-            # caught an exception no inner handler took … queued an error
-            # reply and returning normally") and sends a ``kind="error"``
-            # message. It is produced strictly AFTER ``turn_started``, so
-            # its arrival proves the ``user_submitted``/``turn_started``
-            # pair this test is about was already drained by the pump.
-            # An ordering barrier, not a duration — and one whose arrival
-            # is guaranteed, unlike matching on the error's own wording.
-            await _wait_until(pilot, lambda: _flow_error_seen(app_))
+            # The barrier IS the verdict's own observable, waited for
+            # unconditionally: the operator's message appearing in the flow
+            # (the ``user_submitted`` echo, drained by the pump). Under the
+            # defect the echo is rejected by the gate and this loop never
+            # ends — the red is a HANG that CI's ``--timeout`` kills, not an
+            # assertion; said here because a hang wears no colour of its
+            # own. (Two earlier forms waited for an ordering marker instead
+            # — the turn's ``kind="error"`` reply from a REAL litellm
+            # failure, then ``turn_active`` rising and falling — and both
+            # were timing-shaped: the failure took the retry path in CI and
+            # out-waited ``--timeout``; the flag is up too briefly for a
+            # ``pilot.pause()`` poll to ever see it. The stub turn
+            # (``@pytest.mark.llm_stub``) keeps the wire free of a real
+            # network call either way.) The precondition below is still read
+            # first, so a run that never built the racing state says so.
+            await _wait_until(pilot, lambda: _OWN_TEXT in _flow_user_texts(app_))
 
             # ── Did the run reach the state the bug lives in? ───────────
             # NOT the wire order (measured, and it does NOT invert here:
