@@ -1243,6 +1243,35 @@ missing one.
   unexpanded (`matrix.python-version` literal) rather than the real
   values. The rollup's SUCCESS was real; it just
   never named which suite, of the two, it was a rollup of.
+- A census of this repo's own `scripts/check_*.py` gates found 6 of 28 scan
+  raw prose to decide whether a declaration, exemption, or resolution
+  exists — and 5 of those 6 had a concrete false-positive input
+  constructible on the spot. The worst shape: a NEGATED sentence reads as
+  positive evidence. `This PR is not ready for a TESTS-READ note yet —
+  still investigating 9cc1006.` makes the TESTS-READ gate see a note
+  exists; `No RE-READ (head start) needed here, this is a docs-only typo
+  fix.` makes the RE-READ gate see one too — the sentence that SAYS a note
+  is absent is read as the note. A sibling gate's substring match
+  (`_resolves_via_body`) is worse than merely weak: it is **structurally
+  incapable** of the distinction it exists to make, because quoting the
+  checkbox text is the REQUIRED form for a rebuttal comment too — the
+  presence of a quote carries zero bits toward "resolved vs. disputed," at
+  any match strength, string or otherwise. Only one script in the census
+  avoided every false positive, via a double constraint: restrict the
+  scan target to `docstring.splitlines()[0]` (one line, not the whole
+  text) AND use `match` (anchored at the start), not `search` (anywhere).
+  The other five all used unanchored `search` over multi-line or
+  whole-file text. Discriminant for which false positives actually
+  matter: does the misread make the gate answer YES (a declaration,
+  exemption, or resolution exists) — a human reading the same sentence
+  and answering NO, while the gate answers YES, is fail-open regardless of
+  which direction (silent-pass or falsely-satisfied) it takes. The
+  author of the census fell into its own found shape the same day, twice:
+  once writing an ad hoc `jq` query to verify a colleague's enumeration
+  and picking up a mere prose MENTION of a checkbox as the checkbox
+  itself; and once by counting only the silent-pass direction of the
+  gates found and missing the negated-sentence-as-evidence direction
+  until asked the YES/NO discriminant directly (#5919).
 
 **This is where B combines with §16**, not a coincidence: the sessions that
 trusted a stale environment did so *because* their result matched `main`'s
