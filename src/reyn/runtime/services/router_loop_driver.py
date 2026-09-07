@@ -207,6 +207,15 @@ class RouterLoopDriver:
             yield
         finally:
             self._recovery_depth -= 1
+            if self._recovery_depth == 0:
+                # #5885: the ladder's episode is over — ``Session.is_
+                # compacting`` reads False from here on. Emitted after the
+                # decrement for the same reason CompactionController emits
+                # its own after the flag reset (event_schema.py's entry).
+                self._events.emit(
+                    "compaction_episode_ended", path="ladder",
+                    episode=self._recovery_episode_number,
+                )
 
     # ── Cancel lifecycle (#1468 / #1470) ─────────────────────────────────────
 

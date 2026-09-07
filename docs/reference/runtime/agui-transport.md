@@ -469,6 +469,31 @@ behind it). While one `cancel_inflight` POST is pending, a second is
 coalesced (`cancel already requested`), so a held Ctrl-C does not open one
 POST per key repeat.
 
+The shrink-flow (compaction) progress state rides the wire too (#5885,
+owner-hit on web/connect: "スピナーもなく進捗も不明 … 完了通知もなく").
+`project_status` carries `compaction_progress_raw` — the plain dict
+`Session.compaction_progress_raw()` builds (`is_compacting`, the #5592
+spill figures, `persisted_covers_through_seq`) — the same route
+`halted_reason` / `process_footprint_*` take, and the remote read model
+reports it (`compaction_progress_reported=True`), so a remote Textual client
+raises, updates and settles the SAME shrink-flow entry and Ctx "folded" row a
+local one does, from STATE_DELTAs. Because compaction produces no display
+frame of its own while it runs (and `/compact` over AG-UI replies
+client-side), the compaction audit-events — `compaction_started` /
+`compaction_completed` / `compaction_failed` / `compaction_shrink_recovered`
+/ `recovery_summary_persisted` / `router_context_overflow_unrecovered` — are
+members of `AgentRegistry`'s status-listener kinds: each one pings the
+connection (`_StatusFrameSource`, coalesced) and a STATE_DELTA follows when
+the projection changed. The settle is `compaction_episode_ended`, emitted
+AFTER the controller's flag reset / the ladder's episode-depth reset — the
+`completed`/`failed` events are emitted inside the episode and dispatched
+(deferred) before or after the reset as scheduling falls, so only this one
+is guaranteed to project "settled". The ladder path's completion additionally
+draws `[↑ shrink flow recovered · folded through seq N]` on
+`recovery_summary_persisted{outcome="persisted"}` (a `compaction_episode_
+marker` row the local TUI absorbs into the episode entry; a remote/generic
+client shows the line).
+
 The refusal is scoped **per intervention**: an intervention still answerable
 by another live surface (for example one an external agent peer is answering)
 is left pending even when the operator terminals are all gone.
