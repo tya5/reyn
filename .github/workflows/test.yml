@@ -172,8 +172,12 @@ jobs:
         # inherited its write end) is: **is the worker process still
         # alive at the moment of the hang.** Backgrounded here (started
         # BEFORE the pytest pipeline, reaped right after it returns) so a
-        # HEALTHY run — which reaps the watcher well under 620s — writes
-        # nothing; only a run still going at 620s (comfortably inside the
+        # HEALTHY run — which reaps the watcher well under 620s — leaves
+        # `/tmp/hang-ps.log` at 0 bytes (shell redirection creates the file
+        # the instant the subshell is backgrounded, not when it finally
+        # writes to it — measured, lead-coder, `( sleep 5; echo x ) >
+        # file 2>&1 &` then `sleep 1`: the file exists at size 0
+        # immediately); only a run still going at 620s (comfortably inside the
         # stall-trace's own 600s-to-720s margin, so this snapshot lands
         # just after stall-trace has already fired and well before
         # `timeout 12m`'s hard kill) gets a real snapshot: `ps -ef` (is
@@ -206,8 +210,9 @@ jobs:
 
           # Reap the watcher the instant pytest itself returns (pass or
           # fail) — on a healthy run this happens long before 620s, so
-          # /tmp/hang-ps.log never gets written at all (the same
-          # "silent unless it fires" contract the dump step below reads).
+          # /tmp/hang-ps.log stays at the 0 bytes redirection already gave
+          # it (never written TO) — the same "-s says not-fired" contract
+          # the dump step below reads.
           kill "$HANG_PS_WATCHER" 2>/dev/null || true
           wait "$HANG_PS_WATCHER" 2>/dev/null || true
           exit "$PYTEST_RC"
@@ -232,12 +237,14 @@ jobs:
           fi
 
       # #4986 "tool②" (architect design, see the "Run tests" step's own
-      # comment above for the full rationale): unlike the stall-trace
-      # file above, THIS one is never pre-created — the background
-      # watcher only ever opens/writes it if it survives to fire, so a
-      # healthy run (watcher reaped well under 620s) leaves no file at
-      # all; `-s` (exists AND non-empty) is still the right test either
-      # way.
+      # comment above for the full rationale): the background watcher's
+      # redirection creates this file at 0 bytes the instant it is
+      # backgrounded, regardless of whether it ever survives to write to
+      # it (lead-coder, measured — see the "Run tests" step's own comment)
+      # — a healthy run (watcher reaped well under 620s) therefore leaves
+      # an EMPTY file, same as the stall-trace file above, not a missing
+      # one; `-s` (exists AND non-empty) is the right test for the same
+      # reason it is there.
       - name: Hang process snapshot (#4986 tool② — only non-empty if the run was still going at 620s)
         if: always()
         run: |
