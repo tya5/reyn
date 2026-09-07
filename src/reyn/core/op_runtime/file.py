@@ -937,20 +937,68 @@ def _execute_grep_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None]:
         return {"kind": "file", "op": "grep", "status": "ok",
                 "output_mode": "count", "count": result.count}, result.count
 
+    # #5944 P0 (owner-hit): grep's matched LINE has no per-item size bound —
+    # unlike glob (paths, tens of bytes each), a `.reyn/` JSONL line is a
+    # whole conversation message, up to hundreds of MB observed live. head_limit
+    # (match COUNT) alone does not bound that; this is the other half of the
+    # fix — the SAME shared inline byte cap read/load_skill already use
+    # (`control_ir_inline_cap`, config-driven via `ctx.read_cap_config`, no
+    # new ungrounded constant), applied per match/context-line here in the
+    # presentation layer (the backend returns matched lines verbatim — see
+    # its own Protocol docstring).
+    from reyn.core.context_builder import byte_safe_prefix, control_ir_inline_cap
+
+    cap = control_ir_inline_cap(ctx.read_cap_config)
+
+    def _cap_line(text: str) -> tuple[str, bool]:
+        """Byte-cap one line for presentation. Returns (display_text,
+        was_truncated) — a truncated line gets an explicit ``...(+N bytes)``
+        suffix (never silent) naming exactly how much was cut, mirroring
+        read's own self-bounding truncation contract."""
+        raw_bytes = len(text.encode("utf-8"))
+        if raw_bytes <= cap:
+            return text, False
+        prefix = byte_safe_prefix(text, cap)
+        cut = raw_bytes - len(prefix.encode("utf-8"))
+        return f"{prefix}...(+{cut} bytes)", True
+
     matches: list[dict] = []
+    returned_bytes = 0
+    content_truncated = False
     for hit in result.matches:
+        content, was_cut = _cap_line(hit["content"])
+        content_truncated = content_truncated or was_cut
         entry: dict[str, Any] = {
             "path": _rel(hit["path"]),
             "line_number": hit["line_number"],
-            "content": hit["content"],
+            "content": content,
         }
+        returned_bytes += len(content.encode("utf-8"))
         if "context" in hit:
-            entry["context"] = hit["context"]
+            capped_context = []
+            for c in hit["context"]:
+                c_content, c_cut = _cap_line(c["content"])
+                content_truncated = content_truncated or c_cut
+                returned_bytes += len(c_content.encode("utf-8"))
+                capped_context.append({**c, "content": c_content})
+            entry["context"] = capped_context
         matches.append(entry)
 
-    return {"kind": "file", "op": "grep", "status": "ok",
-            "output_mode": "content", "pattern": op.pattern,
-            "matches": matches, "count": len(matches)}, len(matches)
+    out: dict[str, Any] = {"kind": "file", "op": "grep", "status": "ok",
+                            "output_mode": "content", "pattern": op.pattern,
+                            "matches": matches, "count": len(matches),
+                            "returned_bytes": returned_bytes}
+    if content_truncated:
+        out["content_truncated"] = True
+    # #2998's glob precedent, same field names: `truncated` + a real N-of-M,
+    # not just "there might be more" — result.total_matches is exact (see
+    # GrepResult's own docstring for why counting past head_limit is cheap).
+    if result.total_matches > len(matches):
+        out["truncated"] = True
+        out["total_count"] = result.total_matches
+        out["returned_count"] = len(matches)
+
+    return out, len(matches)
 
 
 async def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:

@@ -328,19 +328,24 @@ _GREP = (
     "    except OSError: pass\n"
     "  out['count']=t\n"
     "else:\n"
-    "  done=False\n"
+    # #5944: no early break on hl -- keep scanning every candidate to report
+    # an accurate `total_matches` (mirrors host_backend.py's own comment):
+    # matches past the cap are counted (`t`) but never dict-built, so memory
+    # stays bounded by hl while the total is still exact.
+    "  t=0\n"
     "  for f in cands:\n"
-    "    if done: break\n"
     "    try: lines=f.read_text('utf-8','replace').splitlines()\n"
     "    except OSError: continue\n"
     "    for i,line in enumerate(lines):\n"
     "      if not rx.search(line): continue\n"
+    "      t+=1\n"
+    "      if hl>=0 and len(out['matches'])>=hl: continue\n"
     "      e={'path':str(f),'line_number':i+1,'content':line}\n"
     "      if cb or ca:\n"
     "        s=max(0,i-cb); en=min(len(lines),i+ca+1)\n"
     "        e['context']=[{'line_number':j+1,'content':lines[j],'is_match':j==i} for j in range(s,en)]\n"
     "      out['matches'].append(e)\n"
-    "      if hl>=0 and len(out['matches'])>=hl: done=True; break\n"
+    "  out['total_matches']=t\n"
     "print(json.dumps(out))\n"
 )
 
@@ -514,6 +519,7 @@ class DockerEnvironmentBackend:
             files=[Path(s) for s in data.get("files", [])],
             count=int(data.get("count", 0)),
             matches=[{**m, "path": Path(m["path"])} for m in data.get("matches", [])],
+            total_matches=int(data.get("total_matches", 0)),
         )
 
     # ── Environment info (#1481 — in-container probe for SP Environment) ───────
