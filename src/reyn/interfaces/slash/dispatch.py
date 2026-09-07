@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine
 
 from reyn.interfaces.slash import REGISTRY, SlashContext, suggest_for_unknown
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -96,6 +96,7 @@ def with_control_failure(transport: "ClientTransport", text: str) -> str:
 
 async def maybe_dispatch_slash(
     transport: "ClientTransport", text: str, *, echo: bool = True,
+    runner: "Callable[[Coroutine[Any, Any, None]], None] | None" = None,
 ) -> bool:
     """Interpret ``text`` as a slash command; ``True`` iff it was consumed.
 
@@ -212,16 +213,29 @@ async def maybe_dispatch_slash(
     # answer "attach a different agent") instead of ever reaching
     # AgUiTransport's own correctly-implemented request_attach.
     locus = cmd.locus(args) if callable(cmd.locus) else cmd.locus
-    if locus == "session":
-        ran = await transport.run_slash_command(name, args)
-    else:
-        ctx = SlashContext(transport=transport, session=None)
-        ran = await execute_slash_command(ctx, name, args)
-    if not ran:
-        _display(
-            transport, "error",
-            f"/{name} could not run: this client has no session to run it on.",
-        )
+
+    async def _run() -> None:
+        # #5907 ①: the run UNIT — the one place a command touches the wire
+        # (a session-locus command is one control POST; a connection-locus
+        # / client-locus handler awaits its own transport call inside).
+        # Handed to ``runner`` when the caller has one, so a UI's message
+        # pump never awaits it; awaited inline otherwise (the plain CUI's
+        # input loop is not a pump).
+        if locus == "session":
+            ran = await transport.run_slash_command(name, args)
+        else:
+            ctx = SlashContext(transport=transport, session=None)
+            ran = await execute_slash_command(ctx, name, args)
+        if not ran:
+            _display(
+                transport, "error",
+                f"/{name} could not run: this client has no session to run it on.",
+            )
+
+    if runner is not None:
+        runner(_run())
+        return True
+    await _run()
     return True
 
 

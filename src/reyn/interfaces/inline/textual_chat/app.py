@@ -38,7 +38,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -1547,6 +1547,13 @@ class TextualChatApp(App):
         #: unreachable dead code for the actual failure mode it would
         #: exist to fix.
         self._loop_tripwire = LoopTripwire()
+        #: #5907 ①: the single-in-flight FIFO every wire-touching unit
+        #: (a slash command's run unit, a submit round-trip) goes through,
+        #: and its one worker — see :meth:`_enqueue_wire`.
+        import asyncio as _asyncio
+
+        self._wire_fifo: "_asyncio.Queue[Coroutine[Any, Any, None]]" = _asyncio.Queue()
+        self._wire_fifo_worker: "object | None" = None
         #: #4761 ②: the App's own message-pump heartbeat — incremented by
         #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
         #: ticks, which (no ``callback=`` given to ``set_interval``) post an
@@ -7880,34 +7887,29 @@ class TextualChatApp(App):
             sent_queue.remove_item(msg_id)
 
     async def _submit(self, text: str, *, local_id: str) -> None:
-        """Route one submitted line: the client-side slash layer FIRST,
-        synchronously on this handler; only a real turn's wire round-trip
-        goes to a worker (#5894 ①-2, lead-coder's BLOCKING on PR #5902).
+        """Route one submitted line onto this app's single-in-flight wire
+        FIFO (#5907 ①, architect ruling): the slash dispatcher hands its run
+        unit to :meth:`_enqueue_wire` and returns at once; a non-command
+        line's ``submit_user_text`` round-trip is enqueued the same way.
+        This handler therefore never awaits the wire — the pump stays
+        alive whatever the server does — while the FIFO keeps the EFFECT
+        order the pump's serial delivery used to guarantee (``/model X``
+        then a message; ``/session switch`` then ``/compact``): one unit
+        in flight at a time, the next waits for it. A stuck unit delays
+        the next, visibly (the UI is alive, the operator can see and
+        judge); the control read timeout (#5894 ①-1) is its backstop.
 
-        ``maybe_dispatch_slash`` is local work — ``/help``, a typo's "unknown
-        command", the picker commands — and the operator expects its answer
-        the instant Enter lands, exactly as the CUI gives it (the shared
-        layer is the point of #3595 S5: one implementation, one answer).
-        Running it on the worker deferred that answer past the handler's
-        return, which is what CI caught (``shown=[]``). The ruling's line is
-        "the pump never awaits the WIRE": a dispatched command that itself
-        touches the wire (``/cancel`` → ``cancel_inflight``) does so through
-        the transport's own bounded control timeout (#5894 ①-1), not the
-        unbounded read that held the pump — a residual named in the PR, not
-        a hole this method hides.
-
-        A non-command line returns as soon as the worker is scheduled: every
-        caller's own local work (the placeholder row, clearing the composer)
-        already happened synchronously before it, and the placeholder
-        resolves off the ``user_submitted`` echo, never off this call's
-        return. An Enter against a server that has stopped answering
-        therefore no longer holds the pump — the same class as Ctrl-C's
-        (see :meth:`action_cancel_turn`): "server が塞がれば Enter でも同じ症状".
+        Everything local that must be on screen the instant Enter lands
+        already is: the echo and the "unknown command" line are drawn by
+        the dispatcher BEFORE it hands the unit over, the sent-queue
+        placeholder by the composer handler before this method, and the
+        placeholder resolves off the ``user_submitted`` echo, never off
+        this call's return.
         """
         try:
             from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 
-            if await maybe_dispatch_slash(self._transport, text):
+            if await maybe_dispatch_slash(self._transport, text, runner=self._enqueue_wire):
                 # A dispatched command is never queued (#3595 S5) — drop the
                 # placeholder row the composer handler already showed.
                 self._maybe_sent_queue_remove(local_id)
@@ -7915,9 +7917,31 @@ class TextualChatApp(App):
         except Exception as exc:
             self._submit_failed(local_id, exc)
             return
-        self.run_worker(
-            self._submit_over_wire(text, local_id=local_id), name="submit", exclusive=False,
-        )
+        self._enqueue_wire(self._submit_over_wire(text, local_id=local_id))
+
+    def _enqueue_wire(self, unit: "Coroutine[Any, Any, None]") -> None:
+        """Append one wire-touching unit to the single-in-flight FIFO
+        (#5907 ①) and make sure its one worker is running. The worker is
+        a Textual worker (never the pump); ``exclusive=False`` because an
+        exclusive worker would cancel the frames pump."""
+        self._wire_fifo.put_nowait(unit)
+        worker = self._wire_fifo_worker
+        if worker is None or worker.is_finished:
+            self._wire_fifo_worker = self.run_worker(
+                self._drain_wire_fifo(), name="wire-fifo", exclusive=False,
+            )
+
+    async def _drain_wire_fifo(self) -> None:
+        """The FIFO's one consumer: units run strictly one after another, in
+        arrival order. A unit's own failure is its own to report (the
+        dispatcher and :meth:`_submit_over_wire` both catch and draw);
+        this loop only guards against one escaping and stopping the rest."""
+        while True:
+            unit = await self._wire_fifo.get()
+            try:
+                await unit
+            except Exception:
+                logger.exception("textual chat: wire FIFO unit failed")
 
     def _submit_failed(self, local_id: str, exc: BaseException) -> None:
         """Shared failure path of :meth:`_submit` (slash) and

@@ -472,7 +472,16 @@ the wire for any of these — the handler draws what it requested and returns,
 and the round-trip runs on a Textual worker — so a server that has stopped
 answering cannot hold the keyboard (the owner-hit shape: Ctrl-C's cancel POST
 waiting forever, and Ctrl-Q, which touches no wire at all, never delivered
-behind it). While one `cancel_inflight` POST is pending, a second is
+behind it). The slash layer's own wire calls go the same way (#5907 ①): the
+dispatcher (`maybe_dispatch_slash`) hands its run unit — one `run_slash_
+command` POST for a session-locus command, the handler's own transport call
+for a connection-locus one — to a `runner` the TUI supplies, and returns at
+once; the TUI's runner is a **single-in-flight FIFO** (one Textual worker),
+which every submit round-trip joins too, so `/model X` → message and
+`/session switch` → `/compact` keep the effect order the serial pump used to
+give. A stuck unit delays the next one visibly; the control timeout is its
+backstop. The plain CUI passes no runner and awaits inline (its input loop
+is not a pump). While one `cancel_inflight` POST is pending, a second is
 coalesced (`cancel already requested`), so a held Ctrl-C does not open one
 POST per key repeat.
 
