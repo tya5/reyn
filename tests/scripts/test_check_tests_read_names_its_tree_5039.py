@@ -546,3 +546,27 @@ def test_a_mid_sentence_mention_is_not_a_claim():
     ))
     assert code == 1
     assert "no TESTS-READ note" in "\n".join(lines)
+
+
+# ── #5919 stage 3: a note opening with a blank line ──────────────────────
+
+
+def test_a_note_opening_with_a_blank_line_is_still_recognised_as_a_claim():
+    """Tier 1: LOAD-BEARING — #5919 stage 3's own real finding (architect
+    requested direct verification, not inference from the two pre-stage-3
+    implementations' textual difference): a comment carrying a real
+    TESTS-READ claim, but opening with a blank line before it, is a
+    previously-uncounted 5th silent-miss instance in #5919's own original
+    census (architect's own self-correction on the issue thread). Strip
+    witness: the pre-stage-3 bare ``text.split("\\n", 1)[0]`` this gate's
+    own ``_first_line`` used returns an empty string for this exact
+    input, which fails ``_NOTE_MARKER`` trivially — verified directly by
+    constructing this input and running it through the real gate."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "\n**[e2e-coder]** — TESTS-READ (head 9cc1006aa)"}],
+        commits=[_commit("9cc1006aa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="9cc1006aa",
+    ))
+    assert code == 0
+    assert "names the current head" in "\n".join(lines)

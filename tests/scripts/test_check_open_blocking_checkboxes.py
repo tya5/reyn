@@ -403,7 +403,8 @@ def test_near_miss_regex_must_stay_unanchored_or_it_would_miss_real_near_misses(
     already miss, silently erasing the watcher's entire purpose (the
     same "no marker" / "marker written wrong" silence #5522 fixed, now
     for the near-miss side specifically)."""
-    from scripts.check_open_blocking_checkboxes import _NEAR_MISS_BARE_WORD, _undecorated
+    from scripts import _markers
+    from scripts.check_open_blocking_checkboxes import _NEAR_MISS_BARE_WORD
 
     real_near_miss_first_lines = [
         "**[x]** — BLOCKING, needs a fix here.",
@@ -411,7 +412,7 @@ def test_near_miss_regex_must_stay_unanchored_or_it_would_miss_real_near_misses(
     ]
     anchored_would_be = re.compile(r"^BLOCKING\b")
     for line in real_near_miss_first_lines:
-        undecorated = _undecorated(line)
+        undecorated = _markers.undecorated(line)
         assert _NEAR_MISS_BARE_WORD.search(undecorated), (
             f"the real (unanchored) near-miss regex must still catch {line!r}"
         )
