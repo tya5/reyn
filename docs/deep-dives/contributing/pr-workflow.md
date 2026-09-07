@@ -113,6 +113,22 @@ whose root, resolved from the file's OWN current location, escapes
 static, add-time proxy for "this path expression won't survive a
 future move," not a check that anything has actually moved yet.
 
+**Also run `python scripts/check_no_core_dep_importorskip.py`** (#5058)
+— a third dedicated, path-filtered workflow (triggered on `tests/**`
+*and* `pyproject.toml`, an AST whole-tree scan against a baseline of
+zero, not part of `test.yml`). Rejects `pytest.importorskip(...)` /
+bare `importorskip(...)` naming a `pyproject.toml` `[project].
+dependencies` (core) package — its absence is a broken install, not a
+normal missing-extra path, so the correct behaviour is a loud
+collection failure, not a silent skip. The core/non-core classifier is
+declaration-derived (`pyproject.toml`'s own dependency list), never
+read off the test file itself, via an explicit, exhaustive distribution-
+name→import-name manifest (the gate fails loud, distinctly, if a new
+core dependency has no manifest entry — the `pillow`→`PIL` /
+`pyyaml`→`yaml` mismatch class must be a deliberate decision, not a
+silent miss). An `importorskip` naming an OPTIONAL extra stays green —
+only core-dependency names are in scope.
+
 A green scoped `pytest` alone is
 **not** a green CI run (`pytest-green ≠ CI-green`): ruff `I001` import-sort
 and a Tier-4 format pin (`len(...) == N`) both fail CI while `pytest`
