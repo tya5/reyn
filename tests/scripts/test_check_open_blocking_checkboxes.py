@@ -14,6 +14,7 @@ CLI, mirroring `evaluate`'s own combined return)."""
 from __future__ import annotations
 
 import json
+import re
 
 from scripts.check_open_blocking_checkboxes import evaluate, main, run_gate
 
@@ -47,12 +48,20 @@ def test_open_blocking_checkbox_variants_fail() -> None:
 
 
 def test_checked_checkbox_with_verbatim_comment_passes() -> None:
-    """Tier 1: ② a checked checkbox WITH a comment quoting its own text
-    verbatim passes — ticking is not enough on its own, but ticking PLUS
-    a corroborating comment is what #5314 asks authors to do."""
+    """Tier 1: ② a checked checkbox WITH a BLOCKING-CLEARED comment
+    quoting its own text verbatim passes — ticking is not enough on its
+    own, but ticking PLUS a marked, corroborating comment is what #5314
+    (extended by #5919 stage 2's house rule 7 unification) asks authors
+    to do. Pre-#5919 this passed on plain "Fixed — ..." prose alone
+    (`_resolves_via_body`'s bare substring check); that no longer
+    resolves anything — a comment quoting the line WHILE DISPUTING it
+    looked identical to one quoting it while resolving it."""
     code, _ = evaluate(_pr(
         "- [x] 🔴 the widget must validate input",
-        comments=["Fixed — the widget must validate input, confirmed on every call."],
+        comments=[
+            f"BLOCKING-CLEARED (head {_HEAD})\n"
+            "the widget must validate input, confirmed on every call.",
+        ],
     ))
     assert code == 0
 
@@ -328,8 +337,9 @@ def test_blocking_word_only_in_the_middle_of_the_body_is_not_a_near_miss() -> No
 
 def test_blocking_cleared_word_alone_with_no_sha_is_also_a_near_miss() -> None:
     """Tier 1: the bare-word check also catches a decorated/malformed
-    BLOCKING-CLEARED attempt, not just BLOCKING — `_BARE_WORD` matches
-    inside "BLOCKING-CLEARED" too (the hyphen is a word boundary)."""
+    BLOCKING-CLEARED attempt, not just BLOCKING — `_NEAR_MISS_BARE_WORD`
+    matches inside "BLOCKING-CLEARED" too (the hyphen is a word
+    boundary)."""
     code, lines = evaluate(_pr(
         "", comments=["**[x]** — BLOCKING-CLEARED, see above."],
     ))
@@ -351,6 +361,65 @@ def test_a_real_marker_never_also_reports_as_a_near_miss() -> None:
     ))
     assert code == 0
     assert not any("near-miss" in line for line in lines)
+
+
+def test_negating_sentence_with_marker_shape_is_not_a_real_raise() -> None:
+    """Tier 1: LOAD-BEARING — #5919 stage 2's own anchoring fix. A
+    negating sentence containing the full marker shape mid-line ("Not
+    BLOCKING (head <sha>) anymore, already fixed.") must NOT be read as
+    a real BLOCKING raise. Pre-#5919 this satisfied the old
+    `_BLOCKING_MARKER` (a bare `\\b...` search, no column-0 anchor) —
+    the exact class of defect #5927 already closed for TESTS-READ/RE-
+    READ/the subprocess-pin exemption, and #5919 stage 2 closes here:
+    the sentence does not OPEN with the keyword or a role prefix
+    immediately followed by it, so `_MARKER_BLOCKING` correctly does
+    not match. Near-miss detection still catches it (the bare word is
+    present) — anchoring the DECIDING marker does not mean the comment
+    goes unremarked, only that it is no longer misread as a formal
+    raise requiring a CLEARED comment."""
+    code, lines = evaluate(_pr(
+        "",
+        comments=[f"**[x]** — Not BLOCKING (head {_HEAD}) anymore, already fixed."],
+    ))
+    assert code != 0
+    assert any("near-miss" in line for line in lines)
+    assert not any("BLOCKING comment has no matching" in line for line in lines)
+
+
+def test_near_miss_regex_must_stay_unanchored_or_it_would_miss_real_near_misses() -> None:
+    """Tier 1: LOAD-BEARING deny-side witness (architect mandate, #5919
+    stage 2) — `_NEAR_MISS_BARE_WORD` must NOT be column-0-anchored the
+    way `_MARKER_BLOCKING`/`_MARKER_CLEARED` now are, using the exact two
+    real inputs that fire near-miss detection elsewhere in THIS file
+    today (`test_bare_word_on_first_line_with_no_sha_at_all_is_a_near_
+    miss` and `test_near_miss_fires_specifically_not_just_condition_a_
+    reusing_the_message`'s own fixtures). Both open with the CLAUDE.md
+    role prefix (`**[x]** — `), not the bare word itself — a real
+    reviewer's comment always carries that prefix (rule 2). Architect's
+    discriminator: a regex on the YES-DECIDING side earns anchoring
+    (ordinary prose must not satisfy it); a regex that WATCHES FOR WHAT
+    THE DECIDERS MISSED must never be anchored, because anchoring it
+    would make it miss exactly the same role-prefixed cases the deciders
+    already miss, silently erasing the watcher's entire purpose (the
+    same "no marker" / "marker written wrong" silence #5522 fixed, now
+    for the near-miss side specifically)."""
+    from scripts.check_open_blocking_checkboxes import _NEAR_MISS_BARE_WORD, _undecorated
+
+    real_near_miss_first_lines = [
+        "**[x]** — BLOCKING, needs a fix here.",
+        "**[x]** — **BLOCKING** (head `not-hex-at-all`)",
+    ]
+    anchored_would_be = re.compile(r"^BLOCKING\b")
+    for line in real_near_miss_first_lines:
+        undecorated = _undecorated(line)
+        assert _NEAR_MISS_BARE_WORD.search(undecorated), (
+            f"the real (unanchored) near-miss regex must still catch {line!r}"
+        )
+        assert not anchored_would_be.match(undecorated), (
+            f"a column-0-anchored near-miss regex would WRONGLY miss "
+            f"{line!r} -- this is exactly why _NEAR_MISS_BARE_WORD must "
+            "stay unanchored"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +447,7 @@ def test_fixture_cli_supports_both_states(tmp_path) -> None:
     fixture.write_text(
         json.dumps(_pr(
             "- [x] 🔴 done",
-            comments=["Fixed — done."],
+            comments=[f"BLOCKING-CLEARED (head {_HEAD})\ndone."],
         )),
         encoding="utf-8",
     )

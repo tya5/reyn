@@ -65,7 +65,7 @@ names `BLOCKING`/`BLOCKING-CLEARED` but does not parse as either marker
 regex is RED — a THIRD failure mode neither A nor B could see. Real
 incident (lead-coder, 2026-08-29): a BLOCKING comment's first line read
 ``**BLOCKING (head `9862413f0`)**`` — the backtick around the SHA broke
-`_BLOCKING_MARKER`'s match, and the gate said nothing at all for 12
+`_MARKER_BLOCKING`'s match, and the gate said nothing at all for 12
 minutes; the PR only stayed red by the accident of an unrelated
 BLOCKING from a different reviewer. Before #5522, "no marker on this
 comment" and "a marker written wrong" were the same silence — condition
@@ -75,12 +75,28 @@ mid-body mention, including this docstring's OWN repeated use of the
 word, must never trip it).
 
 Same PR (#5522) also strips backtick/`*` decoration from a line before
-either marker regex runs (`_undecorated`) — the root cause of the
-specific incident above, not just its silence. Aligns this gate with
-`check_tests_read_names_its_tree.py`'s own already-permissive `_SHA`
-regex (architect ruling: "許容側が自然" — people decorate SHAs and
-keywords by hand, a machine stripping it once is cheaper than asking
-every writer never to).
+either marker regex runs (`_undecorated`, and — #5919 stage 2 — its
+role-prefix-preserving sibling `_undecorated_for_marker_match`) — the
+root cause of the specific incident above, not just its silence. Aligns
+this gate with `check_tests_read_names_its_tree.py`'s own
+already-permissive `_SHA` regex (architect ruling: "許容側が自然" —
+people decorate SHAs and keywords by hand, a machine stripping it once
+is cheaper than asking every writer never to).
+
+## #5919 stage 2 — anchoring the two DECIDING markers, never the WATCHER
+
+The marker regexes above (`_MARKER_BLOCKING`/`_MARKER_CLEARED`) used to
+be unanchored `\b...` searches over an undecorated first line — #5919's
+census found this let 4 ordinary-prose shapes (a negating sentence, a
+backtick span, a `>` quote, mid-sentence mention) satisfy them exactly
+as `check_tests_read_names_its_tree.py`'s pre-#5919-stage-1 regex could.
+Both are now built with `scripts/_markers.role_prefixed_marker(...)`,
+column-0-anchored exactly like that gate's own `_NOTE_MARKER`.
+
+`_NEAR_MISS_BARE_WORD` (condition C) is deliberately NOT anchored and
+NOT routed through `_markers.py` — see its own docstring for why
+anchoring the WATCHER that exists to catch what the DECIDERS miss would
+eliminate the watcher's entire purpose.
 
 ## What this does NOT buy (disclosed, not hidden)
 
@@ -134,6 +150,9 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _markers  # noqa: E402 -- sibling module, see _markers.py's own docstring
+
 #: An open (unchecked) red blocking checkbox line — unchanged from #5135.
 _OPEN_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[ \t]*\][ \t]*(?:\*\*[ \t]*)*🔴(.*)$", re.MULTILINE)
 
@@ -142,64 +161,104 @@ _OPEN_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[ \t]*\][ \t]*(?:\*\*[ \t]*)*🔴
 _CHECKED_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[xX]\][ \t]*(?:\*\*[ \t]*)*🔴(.*)$", re.MULTILINE)
 
 #: A comment's first line raising or clearing a blocking point (#5314
-#: condition A). Requires the FULL `BLOCKING (head <sha>)` / `BLOCKING-
-#: CLEARED (head <sha>)` shape co-located on one line — not the bare word
-#: found anywhere on the line. Case-sensitive and unanchored otherwise
-#: (a real comment's first line is `**[<role>]** — BLOCKING (head
-#: <sha>)`, the SAME "role prefix before the marker" shape every comment
-#: in this repo already uses, so the marker itself is not required to
-#: start the line — only to be followed by its own `(head <sha>)`).
+#: condition A; #5919 stage 2: now column-0 anchored, via the SAME
+#: `_markers.role_prefixed_marker` shape `check_tests_read_names_its_
+#: tree.py`'s `_NOTE_MARKER` already uses). The marker keyword must OPEN
+#: the line — bare, or immediately after the CLAUDE.md rule-2 role prefix
+#: (`**[role]** — `) — never merely appear somewhere on it.
 #:
-#: architect's TESTS-READ catch, lead-coder's real-world falsification
-#: (#5318, "gate側の読み（1件、非blocking）。" — a review comment
-#: genuinely discussing whether something IS a blocking point, containing
-#: the bare word with no `(head <sha>)` anywhere near it): an EARLIER,
-#: looser version of this regex matched the bare word "BLOCKING" anywhere
-#: on line 1, so an everyday sentence mentioning it ("my blocking is
-#: closed") was miscounted as a formal raise, permanently reddening any
-#: PR whose review prose happened to use the word this way. Requiring the
-#: `(head <sha>)` immediately after the marker (whitespace only between)
-#: is what makes this a FORM check, not a word search — the same
-#: distinction `check_tests_read_names_its_tree.py`'s own marker+SHA
-#: co-location rule draws on its claim side. `IGNORECASE` is dropped
-#: (not just made stricter) for the same reason: prose is far more likely
-#: to write "blocking" lowercase than a deliberate marker is.
-_BLOCKING_MARKER = re.compile(r"\bBLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
-_CLEARED_MARKER = re.compile(r"\bBLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
+#: #5919 (lead-coder census + architect ruling): the PRE-anchoring shape
+#: (`\bBLOCKING...`, unanchored) let 4 prose shapes read as a real marker
+#: — a NEGATING sentence ("my blocking is closed, thanks"), the keyword
+#: inside a backtick span, inside a `>` quote, or mid-sentence — because a
+#: bare `.search()` cannot tell a DECLARATION from a DISCUSSION of the
+#: same word. Column-0 anchoring (with the co-located `(head <sha>)` this
+#: gate already required) closes all four the same way #5919 stage 1
+#: closed them for TESTS-READ/RE-READ/the subprocess-pin exemption: an
+#: ordinary sentence about the topic does not open a comment's first line
+#: with the literal keyword or a role prefix immediately followed by it.
+#:
+#: `IGNORECASE` is dropped (`flags=0`, overriding `role_prefixed_marker`'s
+#: own IGNORECASE default) for the SAME reason the pre-#5919 regex already
+#: gave: prose is far more likely to write "blocking" lowercase than a
+#: deliberate marker is.
+_MARKER_BLOCKING = _markers.role_prefixed_marker(
+    r"BLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
+)
+_MARKER_CLEARED = _markers.role_prefixed_marker(
+    r"BLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
+)
 
-#: #5522 — a bare word check, deliberately NOT anchored to the marker's own
-#: "(head <sha>)" shape: this is what NEAR-MISS DETECTION runs against, so
-#: it must catch exactly the cases the marker regexes above miss. Matches
-#: inside "BLOCKING-CLEARED" too (the `-` after "BLOCKING" is a non-word
-#: char, satisfying `\b` on both sides of the bare word) — deliberate, not
-#: an oversight: a decorated BLOCKING-CLEARED that fails _CLEARED_MARKER
-#: must ALSO be caught, and this one check does both without a second
-#: pattern. Case-sensitive, matching the marker regexes' own
-#: IGNORECASE-dropped posture (module docstring: prose is more likely to
-#: write "blocking" lowercase than a deliberate marker is).
-_BARE_WORD = re.compile(r"\bBLOCKING\b")
+#: #5522 — a bare word check for NEAR-MISS DETECTION (condition C).
+#:
+#: 🔴 #5919 stage 2 (architect ruling, explicit): deliberately NOT routed
+#: through `_markers.role_prefixed_marker` and deliberately NOT anchored
+#: to column 0 or to the marker's own "(head <sha>)" shape, unlike
+#: `_MARKER_BLOCKING`/`_MARKER_CLEARED` directly above. Those two DECIDE
+#: ("does a real marker exist here?" — YES must be earned, so they are
+#: anchored against ordinary prose producing a false YES). This one
+#: WATCHES FOR WHAT THE DECIDERS MISSED ("did a marker attempt land here
+#: at all, even a malformed one?" — a NO-side safety net, so anchoring it
+#: would remove the exact cases it exists to catch: a decorated/malformed
+#: marker that `_MARKER_BLOCKING`/`_MARKER_CLEARED` correctly reject).
+#: Anchoring this one would make it redundant with — and therefore
+#: silently subsumed by — the deciders it is supposed to be watching,
+#: which is exactly the "one incident, no signal for 12 minutes" failure
+#: #5522 fixed. The distinguishing question (architect, #5919): "is this
+#: regex on the YES-deciding side, or the YES-was-missed watching side?"
+#: Only the former gets anchored.
+#:
+#: Matches inside "BLOCKING-CLEARED" too (the `-` after "BLOCKING" is a
+#: non-word char, satisfying `\b` on both sides of the bare word) —
+#: deliberate, not an oversight: a decorated BLOCKING-CLEARED that fails
+#: `_MARKER_CLEARED` must ALSO be caught, and this one check does both
+#: without a second pattern. Case-sensitive, matching the deciding
+#: markers' own IGNORECASE-dropped posture.
+_NEAR_MISS_BARE_WORD = re.compile(r"\bBLOCKING\b")
 
 #: #5522 (architect ruling on the issue thread): markdown decoration —
 #: backtick code-spans and `**`/`*` emphasis — is stripped from a line
-#: BEFORE either marker regex runs against it, aligning this gate's
-#: previously-strict posture with `check_tests_read_names_its_tree.py`'s
-#: own already-permissive one (that gate's `_SHA` regex tolerates a
-#: backtick between "head" and the hex run structurally; this one's
-#: `\s*` did not). "Align to the permissive side" (architect, quoting
-#: the reasoning): people decorate SHAs and keywords when they write by
-#: hand (lead-coder's own #5517 BLOCKING, architect's own separate
-#: instance, both real, both this same night) — a machine stripping
+#: before the near-miss check (`_NEAR_MISS_BARE_WORD`) runs against it, and
+#: from whatever follows a detected role prefix before either DECIDING
+#: marker (`_MARKER_BLOCKING`/`_MARKER_CLEARED`) runs (see
+#: `_undecorated_for_marker_match` below — the role prefix's OWN `**...**`
+#: syntax must survive, or #5919's new anchoring could never match a
+#: decorated marker that follows a real role prefix). "Align to the
+#: permissive side" (architect, quoting the reasoning): people decorate
+#: SHAs and keywords when they write by hand — a machine stripping
 #: decoration once is cheaper than asking every human writer never to.
-#: Precedent: `check_claude_md_doc_overlap.py` (#4928) already strips
-#: markdown decoration before tokenizing for the same reason. Neither
-#: a SHA nor the BLOCKING/BLOCKING-CLEARED keywords themselves ever
-#: contain a backtick or asterisk, so stripping cannot turn a
+#: Neither a SHA nor the BLOCKING/BLOCKING-CLEARED keywords themselves
+#: ever contain a backtick or asterisk, so stripping cannot turn a
 #: non-marker line into a false-positive match.
 _DECORATION = re.compile(r"[`*]")
 
 
 def _undecorated(line: str) -> str:
     return _DECORATION.sub("", line)
+
+
+def _undecorated_for_marker_match(line: str) -> str:
+    """*line*, with markdown decoration stripped EVERYWHERE EXCEPT a
+    leading CLAUDE.md role prefix (`_markers.ROLE_PREFIX`), if one opens
+    the line.
+
+    #5919 stage 2: a role prefix is itself written with literal `**...**`
+    (`**[role]** — `) — the SAME character class :data:`_DECORATION`
+    strips. A blanket `_undecorated(line)` (the pre-anchoring shape,
+    still used for near-miss detection below, which never has to
+    recognise a role prefix) would strip the role prefix's own asterisks
+    right along with any decoration AROUND the marker that follows it,
+    so a real, decorated comment like ``**[lead-coder]** — **BLOCKING
+    (head `abc1234`)**`` would never match `_markers.role_prefixed_marker`
+    at all post-strip (its own `ROLE_PREFIX` pattern requires the literal
+    `**[...]** — ` it would have just erased). Stripping only AFTER the
+    detected role prefix keeps that pattern intact while still tolerating
+    decoration around the marker itself — the same real-incident shape
+    #5522 fixed, now compatible with #5919's anchoring."""
+    prefix_match = re.match(_markers.ROLE_PREFIX, line)
+    if prefix_match is None:
+        return _undecorated(line)
+    return line[:prefix_match.end()] + _undecorated(line[prefix_match.end():])
 
 
 def _normalize(text: str) -> str:
@@ -242,9 +301,35 @@ def _checked_lines(body: str) -> "list[str]":
     return [_normalize(m.group(1)) for m in _CHECKED_BLOCK.finditer(body) if _normalize(m.group(1))]
 
 
-def _resolves_via_body(text: str, comments: "list[str]") -> bool:
-    normalized = _normalize(text)
-    return any(normalized in _normalize(c) for c in comments if normalized)
+def _cleared_after(identifying_text: str, candidate_bodies: "list[str]", head: str) -> bool:
+    """Does one of *candidate_bodies* clear *identifying_text* for *head*?
+
+    #5919 stage 2 (house rule 7 unification): replaces `_resolves_via_body`
+    for BOTH condition A (a BLOCKING comment's identifying line, searched
+    only in LATER comments) and condition B-2 (a checked checkbox's own
+    line text, searched in ALL comments) — the checkbox form used to
+    resolve on bare substring presence alone (`_resolves_via_body`), which
+    could not tell a comment quoting the line WHILE DISPUTING it apart from
+    one quoting it while resolving it: substring presence carries zero
+    information about which. A comment now resolves EITHER form only when
+    its own first line opens with the anchored `BLOCKING-CLEARED (head
+    <sha>)` marker, that head matches the PR's current one, and its body
+    still contains *identifying_text* verbatim (whitespace-normalized) —
+    quoting is the required FORM for resolution now, not merely evidence
+    of it."""
+    if not identifying_text:
+        return False
+    for candidate_body in candidate_bodies:
+        first_line = _undecorated_for_marker_match(_first_nonempty_line(candidate_body))
+        cleared_match = _MARKER_CLEARED.match(first_line)
+        if not cleared_match:
+            continue
+        cleared_sha = cleared_match.group(1)
+        if not (head and (head.startswith(cleared_sha) or cleared_sha.startswith(head))):
+            continue  # names a stale head, or no head at all -- does not clear
+        if _normalize(identifying_text) in _normalize(candidate_body):
+            return True
+    return False
 
 
 def evaluate(pr: dict) -> "tuple[int, list[str]]":
@@ -271,14 +356,18 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
             "(`- [ ] 🔴`)."
         )
 
-    # Condition B-2 (#5314): a checked checkbox needs a comment quoting its
-    # own text verbatim — ticking alone is not a record.
+    # Condition B-2 (#5314; #5919 stage 2 house rule 7 unification): a
+    # checked checkbox needs a BLOCKING-CLEARED-marked comment (naming the
+    # current head) quoting its own text verbatim — ticking alone, or a
+    # comment quoting the line without the marker, is not a record.
     for line_text in _checked_lines(body):
-        if not _resolves_via_body(line_text, comment_bodies):
+        if not _cleared_after(line_text, comment_bodies, head):
             findings.append(
                 "RED (body) — a checked blocking line (`- [x] 🔴`) has no "
-                f"comment quoting it verbatim: {line_text!r}. Post a comment "
-                "containing that exact line, whitespace differences aside."
+                f"BLOCKING-CLEARED comment quoting it verbatim: {line_text!r}. "
+                f"Post a comment starting 'BLOCKING-CLEARED (head "
+                f"{head[:9] or '<sha>'})' whose body contains that exact "
+                "line, whitespace differences aside."
             )
 
     # Condition A (#5314): a BLOCKING comment needs a LATER CLEARED comment
@@ -295,22 +384,12 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # an unresolved point with no deliberate action at all, worse than
     # the deletion bypass #5311 measured.
     for i, blocking_body in enumerate(comment_bodies):
-        blocking_match = _BLOCKING_MARKER.search(_undecorated(_first_nonempty_line(blocking_body)))
+        blocking_first_line = _undecorated_for_marker_match(_first_nonempty_line(blocking_body))
+        blocking_match = _MARKER_BLOCKING.match(blocking_first_line)
         if not blocking_match:
             continue
         identifying = _identifying_line(blocking_body)
-        resolved = False
-        for later_body in comment_bodies[i + 1:]:
-            cleared_match = _CLEARED_MARKER.search(_undecorated(_first_nonempty_line(later_body)))
-            if not cleared_match:
-                continue
-            cleared_sha = cleared_match.group(1)
-            if not (head and (head.startswith(cleared_sha) or cleared_sha.startswith(head))):
-                continue  # names a stale head, or no head at all — does not clear
-            if identifying and _normalize(identifying) in _normalize(later_body):
-                resolved = True
-                break
-        if not resolved:
+        if not _cleared_after(identifying, comment_bodies[i + 1:], head):
             findings.append(
                 "RED (comment) — a BLOCKING comment has no matching "
                 "BLOCKING-CLEARED comment naming the current head "
@@ -323,7 +402,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # Condition C (#5522) — near-miss detection. lead-coder's own real
     # incident: a BLOCKING comment's first line read
     # "**BLOCKING (head `9862413f0`)**" — the backtick around the SHA
-    # made `_BLOCKING_MARKER` NOT match, and the gate said nothing at
+    # made the marker regex NOT match, and the gate said nothing at
     # all for 12 minutes; the PR only stayed red because of an
     # UNRELATED BLOCKING from another reviewer. "Marker not found" and
     # "marker written wrong" were indistinguishable failure modes.
@@ -341,11 +420,10 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         if not first_line:
             continue
         undecorated_first_line = _undecorated(first_line)
-        if not _BARE_WORD.search(undecorated_first_line):
+        if not _NEAR_MISS_BARE_WORD.search(undecorated_first_line):
             continue  # no BLOCKING/BLOCKING-CLEARED word on this line at all
-        if _BLOCKING_MARKER.search(undecorated_first_line) or _CLEARED_MARKER.search(
-            undecorated_first_line,
-        ):
+        marker_line = _undecorated_for_marker_match(first_line)
+        if _MARKER_BLOCKING.match(marker_line) or _MARKER_CLEARED.match(marker_line):
             continue  # a real marker, already handled by condition A above
         findings.append(
             "RED (near-miss) — a comment's first line names BLOCKING/"
