@@ -504,21 +504,39 @@ class LiteLLMEmbeddingProvider:
         on ``2`` again (measured: still 9 requests). This is the SECOND ``x or
         DEFAULT`` trap in the same code path (the first is the one that made the
         omitted kwarg silently mean ``2`` in the first place) — passing our own
-        falsy value straight into it changes nothing. The fix has to defeat the
-        ``or`` itself: setting ``litellm.DEFAULT_MAX_RETRIES = 0`` makes the
-        right-hand side of that ``or`` resolve to ``0`` too, so ANY falsy
-        ``max_retries`` (ours, or a future omitted one) now correctly means "no
-        SDK-level retry" instead of silently reviving 2. Audited for blast
-        radius: reyn's chat-completion path (`llm.py`) always passes an
-        explicit non-``None`` ``num_retries`` into ``litellm.acompletion``,
-        which litellm maps to its own ``max_retries`` BEFORE this fallback would
-        ever run (`main.py`: ``if num_retries is not None: max_retries =
-        num_retries``) — so this global does not change chat's retry count, only
-        embedding's, which is exactly the intended scope. Set once, permanently
-        for the process (no per-call save/restore) — a temporal monkeypatch
-        would race concurrent litellm calls sharing this event loop; a
-        permanent process-wide 0 does not, because nothing in reyn ever relies
-        on the ``2`` fallback firing.
+        falsy value straight into it changes nothing. A custom ``client=``
+        object doesn't survive either (measured, architect, litellm 1.95.0):
+        ``OpenAIChatCompletion._set_dynamic_params_on_client`` overwrites
+        ``client.max_retries`` with whatever ``max_retries`` the call already
+        resolved to, so a client pre-built with ``max_retries=0`` gets
+        clobbered back to ``2`` the same way the kwarg does.
+
+        This is a **declared, necessary deviation**, not a preference: setting
+        ``litellm.DEFAULT_MAX_RETRIES = 0`` is the only seam that reaches this
+        ``or`` dynamically, at all, in the site this method calls. Scoped
+        claim, verified against litellm 1.100.0 (the version
+        ``ci-constraints.txt`` pins; also true at 1.95.0/1.96.0) —
+        ``llms/openai/openai.py``'s ``OpenAIChatCompletion.embedding`` reads
+        ``litellm.DEFAULT_MAX_RETRIES`` at CALL time, so the global mutation
+        above reaches it on every call, present or future. This is NOT a
+        general "defeat of the ``or`` pattern" claim — the SAME file has two
+        OTHER sites this global does not reach: (1) ``_get_openai_client``'s
+        own ``max_retries: int | None = DEFAULT_MAX_RETRIES`` parameter
+        default is bound at IMPORT time (``from litellm.constants import
+        DEFAULT_MAX_RETRIES``), before reyn ever runs, so mutating
+        ``litellm.DEFAULT_MAX_RETRIES`` later never changes that default; (2)
+        ``main.py``/``router.py`` read ``openai.DEFAULT_MAX_RETRIES`` — the
+        OpenAI SDK's OWN constant, a different symbol entirely, outside
+        reyn's reach. Audited for blast radius: reyn's chat-completion path
+        (`llm.py`) always passes an explicit non-``None`` ``num_retries`` into
+        ``litellm.acompletion``, which litellm maps to its own ``max_retries``
+        BEFORE this fallback would ever run (`main.py`: ``if num_retries is
+        not None: max_retries = num_retries``) — so this global does not
+        change chat's retry count, only embedding's, which is exactly the
+        intended scope. Set once, permanently for the process (no per-call
+        save/restore) — a temporal monkeypatch would race concurrent litellm
+        calls sharing this event loop; a permanent process-wide 0 does not,
+        because nothing in reyn ever relies on the ``2`` fallback firing.
 
         Passing ``max_retries=0`` explicitly as a kwarg too (redundant given the
         above, kept for self-documentation): reyn's own retry loop above is then
