@@ -573,7 +573,7 @@ class LostReason(StrEnum):
     ``CONTENT_REF_META_KEY`` present): no eviction pass selects an
     un-spilled file — the per-session pass by this store's own record,
     the project-wide pass by re-reading every session's manifest lines
-    at pass time (``MediaStore._unspilled_paths_project_wide``, architect
+    at pass time (``MediaStore._manifest_paths_project_wide``, architect
     co-vet 🔴 #2: a pass that used only the calling store's own view
     evicted a neighbour's un-spilled body, and this reason then LIED
     about it) — so a missing one was removed by something outside reyn's
@@ -581,9 +581,10 @@ class LostReason(StrEnum):
     store's body whose content landed while its manifest line was still
     queued (the next job in the same FIFO worker) is invisible to a
     project-wide pass run by a DIFFERENT store in that instant; a loss
-    in that window also reads as ``EXTERNAL``. Stage ② (spilled-first
-    ordering with un-spilled eviction, pending owner ruling) is where
-    this stops being derivable at all and needs its own record."""
+    in that window also reads as ``EXTERNAL``. Stage ③ (spilled-first
+    ordering with un-spilled eviction, owner-confirmation-pending — NOT
+    part of this change) is where this stops being derivable at all and
+    needs its own record."""
 
     GC = "gc"
     NEVER_PERSISTED = "never_persisted"
@@ -808,6 +809,64 @@ class ChatMessage:
         self.name = name
         self.spillability = _normalize_spillability(spillability)
         self.disclosure = _normalize_disclosure(disclosure, role=role, meta=self.meta)
+        # #5896 P0 (owner-hit, 2026-09-07): a plain instance attribute, NOT
+        # a dataclass field — deliberately NO class-level annotation, so
+        # `dataclasses.fields()`/`asdict()`/`__eq__`/`repr()` never see it.
+        # If it WERE a declared field, `resident_bytes()`'s own
+        # `asdict(self)` call below would include this cache slot in what
+        # it measures, drifting the computed size from what the pre-fix
+        # `json.dumps(asdict(m))` call (still used verbatim as the
+        # equivalence baseline in tests) would have produced.
+        self._resident_bytes_cache: "int | None" = None
+
+    def resident_bytes(self) -> int:
+        """This message's own serialized size in bytes — computed the
+        FIRST time this is called, cached for the rest of this object's
+        lifetime. Owner-hit incident (2026-09-07): ``Session.
+        _evict_oldest_resident_entries`` used to run
+        ``len(json.dumps(asdict(m), ensure_ascii=False).encode("utf-8"))``
+        for EVERY resident message on EVERY eviction pass (every append) —
+        a single 369 MB row on the owner's real history made that ONE
+        re-serialize cost another 369 MB copy, on the hot append path.
+
+        Caching here is safe (never goes stale) because nothing in this
+        codebase in-place-mutates ANY field ``asdict(self)`` can see
+        (``role`` / ``content`` / ``ts`` / ``seq`` / ``meta`` /
+        ``tool_calls`` / ``tool_call_id`` / ``name`` / ``spillability`` /
+        ``disclosure`` — all 9 dataclass fields, not just
+        ``content``/``meta``) AFTER a message becomes resident.
+        Confirmed by reading every in-place write to any of them across
+        the whole of ``src/`` (lead-coder review, PR #5945 BLOCKING —
+        widened from an earlier draft that only checked ``.content =``/
+        ``.meta[...] =``, missing the one below), not assumed. All THREE
+        that exist run strictly BEFORE the write that first makes a
+        message resident (``self.history.append(msg)``,
+        ``Session._append_history``):
+
+        - ``msg.seq = self._next_seq`` (``session.py:4267``)
+        - ``msg.meta["wal_seq"] = ...`` (``session.py:4278``, the
+          ``wal_seq`` stamp)
+        - ``msg.content = resolve_history_content(...)``
+          (``session.py:5039``, ``_parse_history_line``'s ref-resolve, on
+          a freshly-parsed message before its own later append)
+
+        A 4th candidate, ``router_loop.py:4496``'s
+        ``result.tool_calls = tcs[:cap]``, mutates a completion RESULT
+        object before ``ChatMessage.__init__`` ever runs on it — not a
+        resident ``ChatMessage`` field write at all. A message built via
+        ``dataclasses.replace()`` goes back through ``__init__`` (this
+        cache is reset to ``None`` there), so a copy never inherits a
+        stale value from the original. If a future change adds an
+        in-place write to any of the 9 fields AFTER a message is
+        resident, this cache goes silently stale — re-run this same
+        search (``.content =`` / ``.meta[...] =`` / ``.seq =`` / etc.,
+        across ``src/``, not just ``runtime/``) before trusting it
+        again."""
+        if self._resident_bytes_cache is None:
+            self._resident_bytes_cache = len(
+                json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
+            )
+        return self._resident_bytes_cache
 
     @property
     def text(self) -> str:

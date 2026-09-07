@@ -74,6 +74,8 @@ owner has resolved the open question above.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from typing import Callable, Protocol, runtime_checkable
 
@@ -249,6 +251,7 @@ class LocalEventBackend:
         user_input_include_text: bool = False,
         provider_body_include_text: bool = False,
         provider_body_max_chars: int = 4000,
+        tool_result_max_chars: int = 4000,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
@@ -298,6 +301,26 @@ class LocalEventBackend:
         # provider_response text (CLAUDE.md: never a baseless embedded
         # constant) — reyn cannot bound a provider's own error-body size.
         self._provider_body_max_chars = provider_body_max_chars
+        # #5891 (architect ruling, this issue): a tool's own return value
+        # is arbitrary — reyn does not bound its size (measured on
+        # reyn-self: two `exec` `tool_returned.data["result"]` values were
+        # ~2.79MB and ~5.94MB, written straight into one audit-event
+        # line). Its own dedicated cap, NOT `provider_body_max_chars`
+        # above — that field caps a provider's own error-body text under
+        # a lattice-meet content-visibility gate (#4975); this one is an
+        # unconditional SIZE bound on every `tool_returned.result`,
+        # applied regardless of any #4666 content opt-in (a tool result
+        # is not one of the 3 content classes those knobs gate — it is
+        # the tool's own structured output, already passed through
+        # `_redact_content_fields` upstream in `dispatch_tool` before it
+        # ever reaches this backend). See `_persist_tool_returned`'s own
+        # docstring for the full shape (CLAUDE.md: never a baseless
+        # embedded constant — this is an operator-adjustable knob,
+        # `AuditEventsConfig.tool_result_max_chars`, same 4000-char
+        # default as `provider_body_max_chars` for the same reason: a
+        # single-record excerpt long enough to be useful for triage
+        # without being the multi-MB body itself).
+        self._tool_result_max_chars = tool_result_max_chars
         # Test seam (mirrors this repo's existing ``clock: Callable[[],
         # float]`` idiom, e.g. TextualChatApp) — production always passes
         # the default ``time.monotonic``; a test can inject a fake to
@@ -332,6 +355,9 @@ class LocalEventBackend:
     def write(self, event: Event) -> None:
         if event.type == "llm_request_error":
             self._persist_llm_request_error(event)
+            return
+        if event.type == "tool_returned":
+            self._persist_tool_returned(event)
             return
         if event.type in self._COMPLETED_RESPONSE_TEXT_FIELDS:
             if self._completed_response_include_text:
@@ -499,6 +525,79 @@ class LocalEventBackend:
                     data[field] = text
             else:
                 data.pop(field, None)
+        self._store.write(event.model_copy(update={"data": data}))
+
+    def _persist_tool_returned(self, event: Event) -> None:
+        """#5891 — ``tool_returned.data["result"]`` is an arbitrary tool's
+        own return value, whose size reyn does not choose or bound:
+        measured on reyn-self, two `exec` results were ~2.79MB and
+        ~5.94MB, written straight into ONE audit-event line, breaking
+        anything that reads `.reyn/events` a line at a time (`dogfood_
+        trace`, `reyn events replay`, loop-side assembly).
+
+        Same skeleton as :meth:`_persist_llm_request_error` (#4975 —
+        "``<field>_length`` always, body capped, ``<field>_truncated``
+        only when it actually cut something"), applied to ONE field
+        (`result`) instead of a lattice-gated pair, and UNCONDITIONAL —
+        there is no #4666 opt-in to consult here: a tool's own structured
+        return value is not one of the 3 #4666 content classes (streamed
+        reply / completed response / user input); this is a plain SIZE
+        bound, always applied.
+
+        `result_bytes` (the true UTF-8 byte length of *value*'s
+        deterministic serialization — ``value`` unchanged if already a
+        ``str``, else ``json.dumps(value, default=str, sort_keys=True)``:
+        ``sort_keys`` makes the hash independent of dict insertion order,
+        ``default=str`` covers a non-JSON-native value rather than
+        raising) and `result_sha256` (the sha256 of that SAME
+        serialization) are set UNCONDITIONALLY, computed over the FULL,
+        untruncated body — this is what lets a later reader correlate an
+        excerpt here with the full body once a `content_ref` mechanism
+        (#5896, not this PR) can hand it back. `result` itself is
+        replaced with the first `tool_result_max_chars` characters of
+        that serialization, and `result_truncated` added, ONLY when the
+        serialization is longer than the cap — a genuinely short/small
+        result is written completely unchanged, with no `_truncated`
+        marker, so the two cases stay distinguishable.
+
+        Ordering (architect ruling, #5891, load-bearing): this method
+        only ever sees `event.data` as handed to `write()` — which is
+        ALREADY the output of `dispatch_tool`'s own
+        ``_redact_content_fields(name, result, ctx)`` call
+        (`core/dispatch/dispatcher.py`), run BEFORE `ctx.events.emit(
+        "tool_returned", ...)`. A per-tool content declaration
+        (`content_declarations.get_content_fields`, e.g. ``ask_user``'s
+        ``answer``) has therefore already dropped whatever it named
+        BEFORE this method serializes/hashes/excerpts `result` — this
+        method can only re-expose what redaction LEFT, never what
+        redaction removed. Computing the excerpt/hash from a PRE-redact
+        payload would defeat that upstream declaration; this method never
+        does its own redaction, it only bounds the size of what already
+        arrived redacted.
+
+        `content_ref_unavailable` is set unconditionally, on every event
+        this method touches, regardless of length — #5891 adds only the
+        size cap; the reference this excerpt could point back to for the
+        full body (`content_ref`) is a SEPARATE, not-yet-wired mechanism
+        (#5896, stage before its own stage ① ref-linking). Naming that
+        explicitly here keeps "no ref exists yet" distinguishable from a
+        reader silently concluding the full body never existed."""
+        data = dict(event.data)
+        if "result" in data:
+            value = data["result"]
+            serialized = value if isinstance(value, str) else json.dumps(
+                value, default=str, sort_keys=True,
+            )
+            data["result_bytes"] = len(serialized.encode("utf-8", errors="replace"))
+            data["result_sha256"] = hashlib.sha256(
+                serialized.encode("utf-8", errors="replace")
+            ).hexdigest()
+            if len(serialized) > self._tool_result_max_chars:
+                data["result"] = serialized[: self._tool_result_max_chars]
+                data["result_truncated"] = True
+        data["content_ref_unavailable"] = (
+            "not yet wired (#5891, stage before #5896 stage ① ref-linking)"
+        )
         self._store.write(event.model_copy(update={"data": data}))
 
     def declare_gaps(self) -> list[str]:

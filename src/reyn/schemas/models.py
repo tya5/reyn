@@ -29,7 +29,13 @@ class FileIROp(BaseModel):
     case_insensitive: bool = False
     context_before: int = 0          # lines of context before each match
     context_after: int = 0           # lines of context after each match
-    head_limit: int | None = None    # cap total number of matches returned
+    # #5944 P0 (owner-hit): default 50, not unlimited — precedent GrepFilesIROp.max_results
+    # below. head_limit alone is NOT enough for grep (unlike glob's max_results): a matched
+    # LINE has no per-item size bound, so op_runtime/file.py's own per-match BYTE cap is the
+    # other half of this fix (architect: "1件の大きさに上界がある op は件数の上限で足りる/
+    # 上界が無い op は byte の上限が要る" -- grep is the latter). None still opts a caller
+    # into "no count cap" explicitly; only the DEFAULT changed.
+    head_limit: int | None = 50      # cap total number of matches returned
     # edit-specific
     old_string: str | None = None    # exact text to replace (must be unique unless replace_all=True)
     new_string: str | None = None    # replacement text

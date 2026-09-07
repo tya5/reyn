@@ -45,13 +45,25 @@ class GrepResult:
       - ``"files_with_matches"`` → ``files`` (absolute Paths of matching files)
       - ``"count"``              → ``count`` (total match count)
       - ``"content"``            → ``matches`` (list of hit dicts, ``path`` as a
-        Path; the caller relativizes for presentation)
+        Path; the caller relativizes for presentation) + ``total_matches``
+
+    #5944 (P0, owner-hit): ``total_matches`` is the TRUE total match count for
+    ``"content"`` mode, always accurate regardless of ``head_limit`` — the
+    backend keeps scanning past ``head_limit`` (cheaply: a ``regex.search``
+    per remaining line, no entry/context dict built, so memory stays bounded
+    by ``head_limit`` even when ``total_matches`` is huge) instead of
+    stopping the walk the moment the cap is hit. ``len(matches) <
+    total_matches`` is the truncation signal the op_runtime caller surfaces
+    as ``truncated``/``total_count``/``returned_count`` (#2998's glob
+    precedent, same field names). Unset (``0``) for the other two
+    ``output_mode``s, which have no separate cap to report against.
     """
 
     output_mode: str
     files: list[Path] = field(default_factory=list)
     count: int = 0
     matches: list[dict] = field(default_factory=list)
+    total_matches: int = 0
 
 
 @runtime_checkable
@@ -131,5 +143,14 @@ class EnvironmentBackend(Protocol):
         (default ``**/*``) under it, optionally filtered to ``file_type``
         (extension), are scanned. This is the environment-internal scan
         primitive (see module docstring).
+
+        #5944: ``"content"`` mode keeps scanning past ``head_limit`` matches
+        to populate :attr:`GrepResult.total_matches` accurately — it does
+        NOT build the (potentially large) match/context dicts past the cap,
+        so this costs a cheap regex search per remaining line, not the
+        memory the cap exists to bound. Per-match BYTE bounding is NOT this
+        primitive's job — it returns matched lines verbatim; the caller
+        (``op_runtime/file.py``) applies the shared inline byte cap for
+        presentation, the same seam ``read``/``load_skill`` already share.
         """
         ...

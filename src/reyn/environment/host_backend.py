@@ -133,11 +133,14 @@ class HostBackend:
                 total += len(regex.findall(text))
             return GrepResult(output_mode="count", count=total)
 
+        # #5944: no early break on head_limit — keep scanning every candidate
+        # to populate `total_matches` accurately (see GrepResult's own
+        # docstring for why this is cheap: matches past the cap are counted,
+        # never dict-built, so memory stays bounded by head_limit while the
+        # total is still exact, not "there's more, exact count unknown").
         matches: list[dict] = []
-        done = False
+        total_matches = 0
         for f in candidates:
-            if done:
-                break
             text = _grep_decode(f)
             if text is None:
                 continue  # #1452: binary (or unreadable) — skip
@@ -145,6 +148,9 @@ class HostBackend:
             for i, line in enumerate(lines):
                 if not regex.search(line):
                     continue
+                total_matches += 1
+                if head_limit is not None and len(matches) >= head_limit:
+                    continue  # counted above; skip building the entry/context
                 entry: dict[str, Any] = {"path": f, "line_number": i + 1, "content": line}
                 if context_before or context_after:
                     start = max(0, i - context_before)
@@ -154,10 +160,7 @@ class HostBackend:
                         for j in range(start, end)
                     ]
                 matches.append(entry)
-                if head_limit is not None and len(matches) >= head_limit:
-                    done = True
-                    break
-        return GrepResult(output_mode="content", matches=matches)
+        return GrepResult(output_mode="content", matches=matches, total_matches=total_matches)
 
 
 __all__ = ["HostBackend"]

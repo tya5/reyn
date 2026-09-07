@@ -46,6 +46,7 @@ the tree I am measuring" is not something a test may assume.
 """
 from __future__ import annotations
 
+import copy
 import faulthandler
 import importlib.util
 import os
@@ -439,6 +440,115 @@ def _isolate_budget_limit_context():
     yield
     from reyn.llm.llm import _llm_call_limit_context_var
     _llm_call_limit_context_var.set(None)
+
+
+# #5918 (architect ruling, owner-escalated to a CLASS fix — "構造的対処・
+# リファクタする必要はない？絆創膏はやめてね"): every litellm module attribute
+# this fixture restores after a test, measured against litellm 1.100.0's own
+# `__init__.py` (the version `ci-constraints.txt` pins). `DEFAULT_MAX_RETRIES`
+# is reyn's OWN permanent write (`litellm_provider.py`'s `_aembedding_bounded`
+# — a declared, necessary deviation, see that module's own docstring; this
+# fixture does not question that write, only makes sure the NEXT test does
+# not inherit it). The rest are litellm's own defaults any test that drives
+# a real call could set (`litellm.success_callback.append(...)`,
+# `litellm.set_verbose`-style toggles, …).
+_LITELLM_ISOLATED_ATTRS = (
+    "DEFAULT_MAX_RETRIES",
+    "callbacks",
+    "input_callback",
+    "success_callback",
+    "failure_callback",
+    "_async_success_callback",
+    "_async_failure_callback",
+    "turn_off_message_logging",
+    "suppress_debug_info",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_litellm_process_globals() -> Iterator[None]:
+    """Isolate litellm's process-global mutable state around every test
+    (#5918 — CLASS fix, not an instance patch).
+
+    reyn's own tests were found to depend on litellm's process-wide mutable
+    state (the client cache, ``DEFAULT_MAX_RETRIES``, the callback lists,
+    logging toggles) with NO isolation anywhere — #5918 was the first place
+    this actually bit (CI-parallel-only failures in unrelated PRs, `main`
+    itself going red), but the hole is general: the next test added at the
+    LLM boundary falls into the same one. Same family as
+    ``_isolate_budget_limit_context``/``_isolate_rich_style_ansi_memo``
+    above and ``_clear_find_project_root_cache``/
+    ``_isolate_stall_trace_file_handler_registration`` below — this repo
+    already has ~10 fixtures of exactly this shape (a third-party or
+    process-global mutable a test can leak into the next one); this is the
+    LLM-boundary member the family was missing, not a new concept.
+
+    Mechanism this closes (architect, litellm 1.100.0 source, #5918): the
+    OpenAI-client cache's key (``litellm.in_memory_llm_clients_cache``,
+    ``LLMClientCache.update_cache_key_with_event_loop``,
+    ``caching/llm_caching_handler.py``) is suffixed with
+    ``str(id(asyncio.get_running_loop()))`` — a memory address. CPython can
+    and does reuse a freed address for a brand-new object; a later test's
+    NEW event loop landing on the SAME address an earlier (already-GC'd)
+    test's loop used collides with that earlier test's cached entry —
+    lookup HITS, client construction is silently skipped, and anything
+    asserting on/around construction (a chokepoint spy, a client's
+    ``max_retries`` attribute, a call count) sees a phantom result with no
+    connection to what the CURRENT test actually drove. Clearing the cache
+    before every test removes the collision's only precondition (a stale
+    entry to collide WITH) without touching litellm's own key design.
+
+    No-op — litellm untouched, not even imported — when ``"litellm" not in
+    sys.modules``: the #3671 discriminator this repo's own lazy-load
+    contract (``tests/llm/test_litellm_lazy_load.py`` et al.) already
+    relies on. The large majority of tests never reach litellm at all, and
+    this fixture must never itself be the reason it gets imported — the
+    check is a bare ``sys.modules`` membership test, which touches nothing.
+    """
+    if "litellm" not in sys.modules:
+        yield
+        return
+
+    import litellm
+
+    # BEFORE: an empty client cache (see the mechanism above) — the ONE
+    # side of this fixture that resets going IN, because "no test has
+    # cached anything yet" is what a clean run looks like, not a value to
+    # snapshot-and-restore.
+    cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+    if cache is not None:
+        cache.flush_cache()
+
+    # AFTER: every attribute in _LITELLM_ISOLATED_ATTRS restored to its
+    # value from BEFORE this test ran — these are toggles/lists a test
+    # could have legitimately needed to change VALUE for its own duration
+    # (unlike the cache, there is no single "clean" value to reset to
+    # unconditionally; whatever the process already had is the baseline).
+    #
+    # #5953 BLOCKING (lead-coder, measured): `copy.copy` here is load-
+    # bearing, not decoration. 6 of the 9 attributes are LISTS
+    # (callbacks/input_callback/success_callback/failure_callback/
+    # _async_success_callback/_async_failure_callback) — a bare
+    # `getattr(litellm, name)` saves a REFERENCE to litellm's own list
+    # object, not its contents. `list.append(...)` (the realistic shape a
+    # test uses, e.g. `litellm.success_callback.append(...)`) mutates that
+    # SAME object IN PLACE; the later `setattr(litellm, name, value)`
+    # restore then writes back the identical (already-mutated) object,
+    # a genuine no-op for every in-place-mutated attribute — only a
+    # REBIND (`litellm.success_callback = [...]`) would have been undone
+    # by the original bare-reference version. Measured directly: a test
+    # that does `litellm.success_callback.append("poison")` left "poison"
+    # visible to the NEXT test even with the (un-copied) restore in place.
+    saved = {
+        name: copy.copy(getattr(litellm, name))
+        for name in _LITELLM_ISOLATED_ATTRS
+        if hasattr(litellm, name)
+    }
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(litellm, name, value)
 
 
 @pytest.fixture(autouse=True)

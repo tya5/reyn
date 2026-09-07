@@ -92,6 +92,41 @@ def test_returncode_of_reads_a_finished_process_through_execnets_popen_shape() -
     assert wf.returncode_of(object()) is None
 
 
+def test_testnodedown_writes_only_on_a_real_error_not_ordinary_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5934 (lead-coder review) — xdist's own ``dsession.py``
+    calls ``pytest_testnodedown`` from BOTH ``worker_workerfinished``
+    (ordinary per-worker completion, ``error=None``) and
+    ``worker_errordown`` (a genuine crash, a real ``error`` object) —
+    confirmed by reading ``dsession.py`` itself, not inferred. An earlier
+    version of this hook wrote a ``.reyn-worker-down.log`` line on EVERY
+    call, so the file was non-empty on every CI run, always, regardless
+    of whether anything died — measured directly against 3 real CI job
+    logs, one of them fully green.
+
+    Strip witness: removing the hook's ``if error is None: return`` guard
+    makes this test's own ``assert not down_log.exists()`` line fail —
+    verified directly, restored after."""
+    monkeypatch.chdir(tmp_path)
+
+    class _Gateway:
+        id = "gw4"
+
+    class _Node:
+        gateway = _Gateway()
+
+    wf.pytest_testnodedown(_Node(), None)
+    down_log = tmp_path / wf.DOWN_LOG
+    assert not down_log.exists(), (
+        "ordinary completion (error=None) must not write a down-log line"
+    )
+
+    wf.pytest_testnodedown(_Node(), "Not properly terminated")
+    assert down_log.exists(), "a genuine error must write a down-log line"
+    assert "worker=gw4" in down_log.read_text(encoding="utf-8")
+
+
 def test_the_setup_hook_records_this_very_test_under_its_worker_id(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -150,6 +150,20 @@ class ForceCompactResult:
     middle_room_tokens: int = 0
     middle_used_tokens: int = 0
     covers_through_seq: int = 0
+    # #5888 3″ (architect ruling): rung① spill still runs even when
+    # ``candidate_count == 0`` — these two name what THAT pass did, kept
+    # separate from ``candidate_count`` because spilling a protected
+    # group folds nothing (no summary is persisted, ``covers_through_seq``
+    # does not advance) — a caller must never read a nonzero
+    # ``spilled_count`` as if it were a fold.
+    spilled_count: int = 0
+    spilled_bytes_freed: int = 0
+    # Threaded straight from the ``spill_capability_present`` argument
+    # (#5717's own fact) so a caller with only this result in hand can
+    # tell "spill ran and found nothing" apart from "spill was never a
+    # possibility on this path" — the same distinction #5717 drew for
+    # the reactive ladder's own MID_FLOOR message, now available here too.
+    spill_capability_present: bool = True
 
 
 @dataclass(frozen=True)
@@ -174,6 +188,50 @@ class _SelectionMeasurement:
     tail_turns: int
     middle_room_tokens: int
     middle_used_tokens: int
+
+
+def _spill_all_faces(
+    decompose_for_retry: "Callable[[], tuple[list[dict], list[dict], list[dict], dict | None, dict[int, int]]]",
+    spill_fn: "Callable[..., list[tuple[int, dict]]]",
+) -> "tuple[int, int]":
+    """#5888 3″: rung① spill over EVERY face of the resident wire — head,
+    raw_middle, tail (#5364 §1.3's own staged order, never mixed into
+    one call) — the exact decomposition ``decompose_for_retry`` (bound to
+    ``RouterHistoryBuffer.decompose_history_for_retry`` at the real call
+    site) already builds for the reactive ladder's own ``_attempt_
+    reactive_spill``, reused rather than a second copy.
+
+    Unlike ``_attempt_reactive_spill`` (stops at the FIRST face that
+    progresses — the reactive question is "has enough happened to retry
+    the call now"), this tries every face: an operator's explicit
+    ``/compact`` is asking to shrink as much as this rung can, matching
+    ``_measure_and_select``'s own shortfall/operator split (#5888 ruling
+    2 — "operator mode widens what may fold, never what is protected").
+
+    ``spill_fn`` is called once per face with that face's own wire dicts
+    and the SHARED ``seq_by_id`` decompose returned (id-keyed — see
+    ``decompose_history_for_retry``'s own docstring for why passing the
+    unmodified face lists straight through keeps the id() lookup valid).
+    Each call's own real, durable side effect (``spill_turn_content``,
+    inside ``_spill_batch_within_face``) is what future turns see; there
+    is no local pool here for this function to apply the returned edits
+    to — only the byte count they represent is read back.
+
+    Returns ``(results spilled, chars freed)`` — a CHARACTER count read
+    directly off the before/after content strings, never a token
+    estimate (this file's own #5592 standing rule: never report a
+    user-facing number built on an estimate when the exact one is
+    already in hand)."""
+    head, raw_middle, tail, _summary, seq_by_id = decompose_for_retry()
+    spilled_count = 0
+    spilled_chars_freed = 0
+    for face in (head, raw_middle, tail):
+        for idx, replacement in spill_fn(face, seq_by_id=seq_by_id):
+            old_content = face[idx].get("content") or ""
+            new_content = replacement.get("content") or ""
+            spilled_chars_freed += max(0, len(old_content) - len(new_content))
+            spilled_count += 1
+    return spilled_count, spilled_chars_freed
 
 
 def _measured_fields(m: "_SelectionMeasurement", covers_through_seq: int) -> dict:
@@ -483,8 +541,19 @@ class CompactionController:
             head_budget = tail_budget = fallback // 4
             main_M_room = fallback - head_budget - tail_budget
 
-        head_messages = trim_head(messages, head_budget, model, use_chars4=use_chars4)
-        tail_messages = trim_tail(messages, tail_budget, model, use_chars4=use_chars4)
+        # #5888 (architect ruling, observation ①): ``events=`` was never
+        # threaded through on this call path — ``trim_head``/``trim_tail``
+        # already emit ``tool_cycle_kept_whole_over_budget`` when a single
+        # tool-cycle group alone exceeds its budget (``engine.py``'s own
+        # ``_emit_over_budget_group``), but only when handed a real
+        # ``EventLog``; the reactive ladder's own callers already pass one,
+        # this one never did (measured: 0 emissions from this path).
+        head_messages = trim_head(
+            messages, head_budget, model, use_chars4=use_chars4, events=self._events,
+        )
+        tail_messages = trim_tail(
+            messages, tail_budget, model, use_chars4=use_chars4, events=self._events,
+        )
         head_id_set = {id(t) for t in head_messages}
         tail_id_set = {id(t) for t in tail_messages}
         unprotected = [
@@ -548,6 +617,22 @@ class CompactionController:
         spill_fn: "Callable[..., list[tuple[int, dict]]]",
         spill_capability_present: bool = True,
         selection: str = "shortfall",
+        # #5888 3″ (architect ruling, owner-hit: "ctx 75% ... ユーザは圧縮
+        # したいのにできない" -> a tail-protected 2.8 MB tool result never
+        # reached ANY shrink lever): zero-argument callable returning
+        # ``decompose_history_for_retry()``'s own ``(head, raw_middle,
+        # tail, summary, seq_by_id)`` — the SAME resident, wire-shaped
+        # decomposition the reactive ladder's own ``_attempt_reactive_
+        # spill`` already builds (``RouterLoopDriver``), never a second,
+        # independently-derived copy. ``None`` (the default, and every
+        # existing caller's behaviour — #5712/#5716's own reactive-ladder
+        # fallback call site never passes this) means "no spill-on-empty-
+        # candidates attempt" — byte-identical to before this parameter
+        # existed. See the ``if not candidates:`` branch below for why
+        # this is call-scoped rather than constructor-injected: it is
+        # only ever actually invoked (and its O(history bytes) cost only
+        # ever paid) on the ONE pass where fold selected nothing.
+        decompose_for_retry: "Callable[[], tuple[list[dict], list[dict], list[dict], dict | None, dict[int, int]]] | None" = None,
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
@@ -716,8 +801,29 @@ class CompactionController:
             middle_used_tokens=measured.middle_used_tokens,
         )
         if not candidates:
+            # #5888 3″: everything eligible was protected (head/tail) —
+            # before this, that was the end of the pass. Rung① spill
+            # still reaches this content: it replaces a tool result's
+            # BODY with a reference, never splits or removes a message,
+            # so it reaches a protected group WITHOUT loosening
+            # protection (#2289's own keep-whole invariant is untouched —
+            # spill runs orthogonal to it, not instead of it). Reactive
+            # (413) recovery keeps its own separate spill-first path
+            # (ADR-0044, `_attempt_reactive_spill`) unchanged; this is
+            # the forced (`/compact`) path's own rung①, offered only
+            # when fold found nothing (never runs alongside a real fold
+            # — see the ``self._compacting`` guard a few lines down,
+            # which this branch returns before ever reaching).
+            spilled_count = 0
+            spilled_bytes_freed = 0
+            if spill_capability_present and decompose_for_retry is not None:
+                spilled_count, spilled_bytes_freed = await asyncio.to_thread(
+                    _spill_all_faces, decompose_for_retry, spill_fn,
+                )
             return ForceCompactResult(
                 outcome=outcome, candidate_count=0, batch_truncated=batch_truncated,
+                spilled_count=spilled_count, spilled_bytes_freed=spilled_bytes_freed,
+                spill_capability_present=spill_capability_present,
                 **_measured_fields(measured, prev_cover),
             )
 
@@ -753,6 +859,7 @@ class CompactionController:
         return ForceCompactResult(
             outcome=outcome, candidate_count=len(candidates),
             batch_truncated=batch_truncated, failed=failed,
+            spill_capability_present=spill_capability_present,
             **_measured_fields(measured, prev_cover),
         )
 

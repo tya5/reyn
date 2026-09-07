@@ -62,14 +62,34 @@ WHY A DISK FILE, NOT sys.stderr
     real fd outside pytest's capture is unaffected by whatever pytest does
     to the process's own stdout/stderr streams.
 
-WHY NOT ARMED IN EVERY xdist WORKER
-    The observed hang is in the CONTROLLER's own event loop
-    (``_cancel_all_tasks`` → ``run_until_complete``, per the #4986 stack
-    dumps already on file) — ``config.workerinput`` is xdist's own
-    controller/worker discriminator (present only inside a worker
-    subprocess). Arming per-worker would multiply the timer for no
-    additional signal and, on the rare occasion it DOES fire, multiply the
-    dump output N-workers-over for nothing.
+WHY ALSO ARMED PER xdist WORKER (changed decision — #4986/#5909 tool ticket)
+    This module originally armed the CONTROLLER only, on the reasoning that
+    the observed hang was in the controller's own event loop
+    (``_cancel_all_tasks`` → ``run_until_complete``) and arming per-worker
+    would "multiply the timer for no additional signal." **That reason was
+    falsified by a real incident** (architect finding, same-day #5909
+    investigation): a controller stuck in ``queue.get()`` waiting on a
+    silent WORKER is, by construction, invisible to a dump that only ever
+    captures the controller's own threads — "the controller's dump is
+    enough" was the premise the original reasoning depended on, and a hang
+    genuinely INSIDE a worker's own session teardown is structurally
+    outside what that premise covers. Per CLAUDE.md's rule that a
+    describing comment is stale the moment the code it describes changes,
+    this section (not just the code) moves with that finding.
+
+    Each worker now arms its OWN watchdog too, into its OWN file
+    (``.reyn-ci-stall-trace.<workerid>.log``, ``config.workerinput``'s own
+    ``workerid`` — the same worker id ``reyn.dev.testing.worker_forensics``
+    already keys its trace files by) at a threshold ``WORKER_OFFSET_SECONDS``
+    BELOW the controller's own — e.g. controller 600s, worker 540s — so a
+    run where both fire can be read in CAUSAL order: the worker's dump
+    landing first says the hang started inside that worker, before the
+    controller could have noticed anything wrong. A shared path written by
+    several worker processes was deliberately avoided — faulthandler holds
+    the fd it was armed with for the life of the arm (#5879, measured
+    directly), so a shared path across processes is not "interleaved
+    output", it is silent loss for whichever process's fd is not the one
+    that ends up live.
 
 THE NUMBER
     Must be comfortably under ``.github/workflows/test.yml``'s own outer
@@ -78,7 +98,9 @@ THE NUMBER
     (~7-8 min measured on recent green runs) so a slow-but-healthy run
     never fires it. Set via ``REYN_STALL_TRACE_CI`` at the workflow level
     (not hardcoded here) so the margin can be re-tuned from one place if
-    ``test.yml``'s own outer timeout ever changes.
+    ``test.yml``'s own outer timeout ever changes. Each worker's own
+    threshold is this SAME value minus :data:`WORKER_OFFSET_SECONDS` — one
+    knob, not two, so re-tuning the workflow's env var re-tunes both.
 """
 from __future__ import annotations
 
@@ -95,6 +117,11 @@ _ENV_VAR = "REYN_STALL_TRACE_CI"
 #: could read it, and not ``.reyn/`` (a real project's own dir, which a
 #: bare `pytest` invocation from a fresh checkout may not even have yet).
 LOG_PATH = os.path.join(os.getcwd(), ".reyn-ci-stall-trace.log")
+
+#: See module docstring's "WHY ALSO ARMED PER xdist WORKER" — a worker's
+#: own threshold is the controller's minus this, so a run where both fire
+#: can be read in causal order (worker first = hang started in the worker).
+WORKER_OFFSET_SECONDS = 60.0
 
 #: Kept open for the whole session (faulthandler needs an already-open
 #: file object at ARM time, and may write to it from a background thread
@@ -119,14 +146,45 @@ def _is_xdist_worker(config: "pytest.Config") -> bool:
     return hasattr(config, "workerinput")
 
 
+def worker_log_path(workerid: str, root: "str | os.PathLike[str] | None" = None) -> str:
+    """One file PER WORKER — never a path several worker processes share.
+    See module docstring's "WHY ALSO ARMED PER xdist WORKER" for why a
+    shared path is silent data loss here, not merely interleaved output."""
+    return os.path.join(root if root is not None else os.getcwd(), f".reyn-ci-stall-trace.{workerid}.log")
+
+
+def _worker_id(config: "pytest.Config") -> "str | None":
+    workerinput = getattr(config, "workerinput", None)
+    if not isinstance(workerinput, dict):
+        return None
+    workerid = workerinput.get("workerid")
+    return str(workerid) if workerid else None
+
+
+def worker_seconds_from(controller_seconds: float) -> float:
+    """A worker's own threshold: the controller's own, minus
+    :data:`WORKER_OFFSET_SECONDS`, clamped to a 1s floor (``arm()``'s own
+    ``faulthandler.dump_traceback_later`` rejects a non-positive value).
+    Pulled out as a pure function so the causal-ordering property (a
+    worker's own dump fires BEFORE the controller's) is a fast, exact unit
+    check rather than a race against real subprocess timing."""
+    return max(controller_seconds - WORKER_OFFSET_SECONDS, 1.0)
+
+
 def pytest_configure(config: "pytest.Config") -> None:
-    if _is_xdist_worker(config):
-        return
     seconds = _seconds_from_env()
     if seconds is None:
         return
     global _dump_file
     from reyn.runtime.stall_trace import arm
+
+    if _is_xdist_worker(config):
+        workerid = _worker_id(config)
+        if workerid is None:
+            return
+        _dump_file = open(worker_log_path(workerid), "a", buffering=1)  # noqa: SIM115 — see module docstring
+        arm(worker_seconds_from(seconds), file=_dump_file)
+        return
 
     _dump_file = open(LOG_PATH, "a", buffering=1)  # noqa: SIM115 — see module docstring
     arm(seconds, file=_dump_file)

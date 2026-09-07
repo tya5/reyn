@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 
 logger = logging.getLogger(__name__)
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 from reyn.config import (  # noqa: F401
@@ -4367,11 +4367,23 @@ class Session:
         and tests that reassign ``s.history`` directly to simulate a bounded
         load), so an incrementally-maintained counter would silently drift
         from the true resident set the first time any of those paths ran
-        without also updating it. Recomputing is O(n) per append, but n is
-        bounded by construction (that is the entire point of this cap), so
-        the cost stays small — and the invariant "resident size <= cap after
-        every append" holds by construction, with no cached state that could
-        desync from reality.
+        without also updating it. Recomputing the SUM is O(n) per append,
+        but n is bounded by construction (that is the entire point of this
+        cap), so the cost stays small — and the invariant "resident size <=
+        cap after every append" holds by construction, with no cached SUM
+        that could desync from reality.
+
+        #5896 P0 (owner-hit, 2026-09-07): the PER-MESSAGE serialization
+        underneath that sum used to be redone from scratch too, every
+        call, for every still-resident message — ``m.resident_bytes()``
+        (``ChatMessage``'s own method) now caches each message's OWN size
+        the first time it's asked, so a message that survives N eviction
+        passes gets serialized once, not N times. This is a different
+        claim from the paragraph above: the per-row VALUE never goes
+        stale (content/meta are immutable after append — see
+        ``resident_bytes()``'s own docstring for the exact sites checked),
+        so caching IT is safe even though caching the resident-set SUM
+        would not be.
 
         ONLY called from the tail-growth path (:meth:`_append_history`, a
         normal turn appending the newest entry) — deliberately NOT called
@@ -4387,10 +4399,7 @@ class Session:
 
         Returns the count evicted (0 = already within budget)."""
         cap = self._history_resident_config.max_bytes
-        sizes = [
-            len(json.dumps(asdict(m), ensure_ascii=False).encode("utf-8"))
-            for m in self.history
-        ]
+        sizes = [m.resident_bytes() for m in self.history]
         total = sum(sizes)
         evict_count = 0
         # Never evict the newest (last) entry, even if it alone exceeds the
@@ -5554,6 +5563,7 @@ class Session:
             user_input_include_text=self._events_config.user_input_include_text,
             provider_body_include_text=self._events_config.provider_body_include_text,
             provider_body_max_chars=self._events_config.provider_body_max_chars,
+            tool_result_max_chars=self._events_config.tool_result_max_chars,
         )
 
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
@@ -11448,6 +11458,18 @@ class Session:
             _partial(_spill_impl, chain_id="manual-compact")
             if _spill_impl is not None else (lambda _candidates: [])
         )
+        # #5888 3″: the SAME optional-collaborator degrade as ``_spill_
+        # impl`` right above (a driver with no ``_spill_batch_for_retry``
+        # — e.g. ``PipelineExecutorDriver`` — has no ``_history_buffer``
+        # either; both live on ``RouterLoopDriver``). ``None`` here is
+        # exactly "force_compact_now must not attempt the empty-candidates
+        # spill" (its own default), so an absent driver degrades to the
+        # pre-3″ behaviour, never a crash.
+        _history_buffer = getattr(self._loop_driver, "_history_buffer", None)
+        _decompose_for_retry = (
+            _history_buffer.decompose_history_for_retry
+            if _history_buffer is not None else None
+        )
         compaction_outcome = await self._compaction_controller.force_compact_now(
             spill_fn=_spill_fn,
             # #5717 (lead-coder review): "no capability" and "tried, found
@@ -11457,6 +11479,7 @@ class Session:
             # `spill_was_offered` field never claims rung① ran when there
             # was no mechanism to run it with.
             spill_capability_present=_spill_impl is not None,
+            decompose_for_retry=_decompose_for_retry,
             # #5888: "/compact" asks to shrink; the reactive ladder asks
             # whether it still fits. See force_compact_now's own docstring.
             selection=selection,
@@ -11524,6 +11547,13 @@ class Session:
             # left with no way to reach this caller — the exception itself
             # stays swallowed (intentional, #5633), only the FACT survives.
             "compaction_failed": compaction_outcome.failed,
+            # #5888 3″: rung① spill's own report — populated only on the
+            # candidate_count==0 pass that actually attempted it (every
+            # other pass carries the dataclass defaults, 0/0/True); never
+            # re-derived here from anything else the caller measured.
+            "spilled_count": compaction_outcome.spilled_count,
+            "spilled_chars_freed": compaction_outcome.spilled_bytes_freed,
+            "spill_capability_present": compaction_outcome.spill_capability_present,
             # #5888 (owner real-machine incident, "ctx 75% なのに ... ユーザ
             # は圧縮したいのにできない"): the quantities the pass ACTUALLY
             # measured, so `/compact` names each as itself. Before this,

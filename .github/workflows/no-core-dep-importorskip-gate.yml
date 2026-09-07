@@ -1,0 +1,51 @@
+name: no-core-dep-importorskip gate
+
+# #5058: reject any pytest.importorskip(...)/importorskip(...) call whose
+# checked package names a pyproject.toml [project].dependencies (core)
+# entry -- a core dependency's absence is a broken install, not a normal
+# missing-extra path, so the correct behaviour is a loud collection
+# failure, not a silent skip (CLAUDE.md's six-questions Q4). 17
+# fastapi/starlette/uvicorn/websockets files (#5051) and 12 mcp files were
+# found and fixed by hand across this issue's own thread -- this gate
+# closes the CLASS so a future core-dep importorskip (a new file, or a
+# reintroduced one) is caught automatically, without a human census.
+#
+# Two independent triggers: tests/** (a new/changed importorskip call) and
+# pyproject.toml (a dependency moving from optional to core makes an
+# EXISTING, previously-correct importorskip newly wrong -- the exact shape
+# #5051/#5058's own history is). See
+# scripts/check_no_core_dep_importorskip.py's module docstring for the
+# full design (the classifier, the name-mismatch manifest, and why it is
+# AST-based rather than a text/regex scan).
+#
+# No diff/base-ref needed -- a whole-tree scan against a baseline of zero,
+# same shape as bare-tests-import-reference-gate.yml. A shallow checkout
+# is enough.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - "pyproject.toml"
+
+permissions:
+  contents: read
+
+jobs:
+  no-core-dep-importorskip:
+    name: no-core-dep-importorskip gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_no_core_dep_importorskip.py is stdlib-only (ast /
+      # tomllib / pathlib / sys). No pip install needed.
+      - name: Check no importorskip() names a core dependency
+        run: |
+          python scripts/check_no_core_dep_importorskip.py
