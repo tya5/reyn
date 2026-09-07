@@ -746,6 +746,10 @@ class CompactionController:
             failed = True
         finally:
             self._compacting = False
+            # #5885: emitted AFTER the flag reset — the one event a status
+            # projection can read "not compacting" at (see event_schema.py's
+            # own entry). ``failed`` says which way the episode ended.
+            self._events.emit("compaction_episode_ended", failed=failed, path="controller")
         return ForceCompactResult(
             outcome=outcome, candidate_count=len(candidates),
             batch_truncated=batch_truncated, failed=failed,

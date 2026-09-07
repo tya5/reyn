@@ -154,6 +154,32 @@ _STATUS_AUDIT_EVENT_KINDS = frozenset({
     "intervention_denied",
     "intervention_answer_submitted",
     "user_answered_intervention",
+    # #5885 (architect ruling 2): the shrink-flow progress state
+    # (``Session.compaction_progress_raw()`` — ``is_compacting`` and the
+    # #5592 figures) changes at these audit-events. A remote AG-UI client
+    # only learns of a status change through a STATE_DELTA, and the emitter
+    # projects one only after a display frame OR a status ping — ``/compact``
+    # and the in-turn shrink ladder produce no display frame of their own
+    # while they run, so without these kinds the remote spinner never
+    # starts, never moves, and never settles (owner-hit). The ping is
+    # coalesced per connection and a delta is emitted only when the
+    # projection actually changed, so an event that moved nothing costs one
+    # ``_project()``.
+    "compaction_started",
+    "compaction_completed",
+    "compaction_failed",
+    # The settle: ``completed``/``failed`` are emitted before the flag
+    # reset and dispatched (deferred) whenever the consumer task next runs
+    # — before or after it, a scheduling fact; this one is emitted after
+    # the reset on both paths, so its ping can only project "settled".
+    "compaction_episode_ended",
+    "compaction_shrink_recovered",
+    "recovery_summary_persisted",
+    "router_context_overflow_unrecovered",
+    # NOT ``llm_request``: it fires for every session's every LLM call and
+    # would push one session's status on another's traffic (test_5729's
+    # identity witness goes red); the ladder's per-call figure rides the
+    # next display frame instead.
 })
 
 

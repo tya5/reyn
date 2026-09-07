@@ -436,6 +436,20 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "compaction_batch_cap_below_head_tail_budget",
     "compaction_check",
     "compaction_completed",
+    # #5885: the instant ``Session.is_compacting`` returns to False — after
+    # ``CompactionController``'s flag reset (the ``/compact`` / threshold
+    # path) and after the shrink ladder's recovery-episode depth returns to
+    # 0. ``compaction_completed``/``compaction_failed`` are EMITTED inside
+    # the episode (before the flag reset); subscriber dispatch is deferred
+    # to the event log's consumer task, so whether a status ping they raise
+    # projects the settled state is a scheduling fact (measured: the
+    # operator path's ``completed`` dispatched after the reset; a further
+    # await before the ``finally`` would flip that). This event is emitted
+    # AFTER the reset and can therefore only ever be dispatched after it —
+    # the one settle a remote client's STATE_DELTA can rely on when no
+    # display frame follows (``/compact`` over AG-UI replies client-side, so
+    # the server has none to send).
+    "compaction_episode_ended",
     "compaction_failed",
     "compaction_floor_lowered",
     "compaction_schema_invalid",

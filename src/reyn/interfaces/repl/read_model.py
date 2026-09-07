@@ -477,7 +477,9 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     # snapshot's own "hooks_config_warnings" reads the real key) — True,
     # not False.
     hooks_config_warnings_reported=True,
-    compaction_progress_reported=False,
+    # #5885: wired onto the AG-UI wire (project_status carries
+    # ``compaction_progress_raw``) — True, not False.
+    compaction_progress_reported=True,
     tasks_reported=False,
     # #5771 stage②: session_cached_tokens is now genuinely wired — see
     # the field's own docstring for why this is a SPLIT from
@@ -1097,7 +1099,11 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # never has a genuine zero-trigger state, so "0%" here reads as
         # false reassurance, not as an honest empty state).
         "ctx_compaction_status_fn": None,
-        "compaction_progress_raw": None,
+        # #5885: on the wire for real now (agui/state.py's ``project_status``
+        # carries ``Session.compaction_progress_raw()``), so the remote
+        # entry / Ctx "folded" row read the real thing — ``compaction_
+        # progress_reported`` flipped to True with it.
+        "compaction_progress_raw": v.get("compaction_progress_raw"),
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
         # (the tracker's per-turn buckets are process-local, in-memory, and not
         # projected onto the AG-UI wire) → None for remote, and the right

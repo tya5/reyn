@@ -223,6 +223,14 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "process_footprint_metric": snap.get("process_footprint_metric"),
         "process_memory_cap_bytes": snap.get("process_memory_cap_bytes"),
         "process_memory_enforce": snap.get("process_memory_enforce"),
+        # #5885 (architect ruling 1): the shrink-flow progress state rides
+        # the wire — the SAME route as `halted_reason` / `process_footprint_*`
+        # above. A plain dict of ``Session.compaction_progress_raw()``
+        # (``is_compacting`` + the #5592 figures, ``persisted_covers_through_
+        # seq`` included), so a remote client builds the identical entry /
+        # Ctx "folded" row a local one does. ``None`` when no session is
+        # attached — never a fabricated ``{"is_compacting": False}``.
+        "compaction_progress_raw": snap.get("compaction_progress_raw"),
     }
     # #5825 item 8, corrected by #5892 co-vet 🔴-2: this key is projected
     # ONLY when the server actually sent it — never synthesized with

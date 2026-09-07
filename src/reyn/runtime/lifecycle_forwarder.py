@@ -321,6 +321,36 @@ class ChatLifecycleForwarder:
         reason = str(data.get("error") or "unknown error")
         self._enqueue(f"[✗ summary re-compress failed: {reason}]")
 
+    def on_recovery_summary_persisted(self, data: dict) -> None:
+        """#5885 (architect ruling 3): the LADDER path's completion marker.
+
+        The in-turn shrink ladder calls the engine's ``compact()`` directly,
+        so it emits ``compaction_started`` but never ``compaction_completed``
+        (that one's only producer is ``CompactionController``) — its
+        success is ``recovery_summary_persisted{outcome="persisted"}``,
+        which nothing in this forwarder consumed. So the ladder's episode
+        showed a start row and then nothing: locally the progress entry
+        settled (``is_compacting`` went False) but remotely — where #5885's
+        owner was watching — the ``[⟳ compacting …]`` line was the last
+        word ("compact できてたのか不明"). One marker per persisted fold;
+        the other outcomes (``no_covers_through_seq`` / ``already_covered``)
+        are no-ops on the flow and draw nothing. ``compaction_shrink_
+        recovered`` fires several times per episode and is deliberately
+        NOT a row (its figures ride ``compaction_progress_raw``).
+
+        ``compaction_episode_marker`` meta: the local TUI absorbs this row
+        into the single open episode entry (``app.py``'s ``_ingest_frame``);
+        a surface without that mechanism (AG-UI, the plain CUI) shows the
+        line as-is."""
+        if data.get("outcome") != "persisted":
+            return
+        seq = data.get("covers_through_seq")
+        meta = {"compaction_episode_marker": True}
+        if isinstance(seq, int) and seq > 0:
+            self._enqueue(f"[↑ shrink flow recovered · folded through seq {seq}]", meta=meta)
+        else:
+            self._enqueue("[↑ shrink flow recovered]", meta=meta)
+
     def on_compaction_completed(self, data: dict) -> None:
         """Surface a ``[↑ N messages compacted]`` marker in the conv pane.
 
