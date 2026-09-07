@@ -1150,6 +1150,18 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 #4081: this block used to also show `python -m pytest tests/test_replay_*.py -v` and `python -m pytest tests/test_os_invariants.py -v` — both the glob and the literal path resolve to nothing today (the `tests/test_replay_skill_router.py` family and `tests/test_os_invariants.py` were removed in the #2435/#2438 skill/phase-engine bulk deletions, no successor). Dropped rather than replaced with an unverified new example — scope your own run to the files/keywords your change actually touches (see "Before you push" below).
 
+### A marker's guarantee holds only under the invocation that enables it
+
+**Trigger**: the moment a test's correctness DEPENDS ON a marker's guarantee — not "if you suspect the marker might not be active." A marker that exists, imports cleanly, and is read by its plugin's collection hook is not the same claim as "its effect is active under THIS run."
+
+**General rule**: a marker supplied by a pytest plugin only does what its docs say when the invocation's own flags put that plugin into the matching mode. The marker's presence in source is not evidence of that; only the actual command line (or its own defaulting logic, read from the plugin's source) is.
+
+**Instance (#5926, #5909)**: `@pytest.mark.xdist_group` only groups tests onto the same worker under `pytest-xdist`'s `loadgroup` distribution mode (`--dist loadgroup`). This repo's CI (`.github/workflows/test.yml:160`) runs `python -m pytest -q -n auto --timeout=120 …` — no `--dist` flag at all. Reading `pytest-xdist 3.8.0`'s own source (`xdist.plugin.pytest_cmdline_main`): when `numprocesses` is set (as `-n auto` does) and `dist` is still `"no"` (its own default, unset by any flag here), xdist sets `dist = "load"` — never `"loadgroup"`. So under this CI, `xdist_group` groups nothing. A test whose correctness depends on "runs on the same worker as its pair" can land on separate workers under `-n auto` and go red on a diff it never touched.
+
+**How to verify, for any marker whose guarantee a test leans on**:
+1. Read the actual invocation line the CI job runs — not the marker's own docstring, not a memory of "how this is usually configured."
+2. Read the plugin's own source for what its option defaults to when the matching CLI flag is absent (`inspect.getsource(<plugin>.<module>.<hook>)` is enough — don't guess from the option's name).
+
 ---
 
 ## Before you push — the five CI gates

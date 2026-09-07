@@ -495,6 +495,18 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
 
 #4081: このブロックは以前 `python -m pytest tests/test_replay_*.py -v` と `python -m pytest tests/test_os_invariants.py -v` も示していましたが、glob もリテラルパスも今は何にも一致しません（`tests/test_replay_skill_router.py` 系と `tests/test_os_invariants.py` は #2435/#2438 の skill/phase engine 一括削除で消え、後継はありません）。未検証の新しい例に差し替えるのではなく削除しました——自分の変更が実際に触るファイル/キーワードにスコープを絞って実行してください（下の「プッシュ前」参照）。
 
+### marker の保証は、それを有効化する起動形の下でしか成立しない
+
+**契機**: テストの正しさが marker の**保証に依存する**その瞬間——「疑ったら」ではない。marker がソースに存在し、import が通り、plugin の collection hook に読まれること自体は、「この run で効果が active である」という主張と同じではない。
+
+**一般則**: pytest plugin が提供する marker は、**起動形自体のフラグがその plugin を対応する mode に置いて初めて**、ドキュメント通りに効く。marker がソースに存在することはその証拠にならない——実際の command line（あるいは plugin 自身のソースから読む既定挙動）だけが証拠になる。
+
+**実例（#5926、#5909）**: `@pytest.mark.xdist_group` が同じ worker に載せる保証を持つのは、`pytest-xdist` の `loadgroup` 分配 mode（`--dist loadgroup`）の時**だけ**。本 repo の CI（`.github/workflows/test.yml:160`）は `python -m pytest -q -n auto --timeout=120 …` を実行しており、`--dist` フラグは一切無い。`pytest-xdist 3.8.0` 自身のソース（`xdist.plugin.pytest_cmdline_main`）を読むと: `numprocesses` が設定され（`-n auto` がそうする）、`dist` がまだ `"no"`（フラグ無指定時の既定）のとき、xdist は `dist = "load"` にする——`"loadgroup"` には**ならない**。∴ この CI では `xdist_group` は何もグループ化しない。「対になった test が同じ worker に載る」ことに正しさが依存する test は、`-n auto` の下で別 worker に分かれ、**自分が触っていない diff と無関係な赤**になり得る。
+
+**確かめ方（依存している marker があれば毎回）**:
+1. CI job が実際に実行している起動行を読む——marker 自身の docstring ではなく、「普段こう設定されているはず」という記憶でもなく。
+2. 対応する CLI フラグが無指定のとき plugin 自身の option が何を既定にするかをソースで読む（`inspect.getsource(<plugin>.<module>.<hook>)` で十分——option 名から推測しない）。
+
 ---
 
 ## プッシュ前 — 3 つの CI ゲート
