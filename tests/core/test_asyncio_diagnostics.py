@@ -355,3 +355,53 @@ def test_never_resolved_shutdown_call_gives_up_quietly(
         "this test's own simulation did not actually reproduce the "
         "failure it claims to"
     )
+
+
+def test_install_warms_the_cache_so_a_first_ever_shutdown_only_exception_still_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2b: #5952 BLOCKING (lead-coder, measured) -- the exact residual
+    gap the earlier fix left open: ``_resolve_emit_cli_event`` was only
+    ever reachable from INSIDE the handler, so a process whose
+    FIRST-EVER unhandled exception is a genuinely shutdown-only one
+    (``Task was destroyed but it is pending!`` -- #5951's own reported
+    symptom, fired from asyncio's OWN teardown machinery, never from
+    ordinary running code) still lost it: nothing earlier had warmed the
+    cache, so that first (and only) call resolved for the first time
+    AFTER simulated shutdown and gave up quietly.
+
+    Drives the real, unmodified sequence a live entrypoint follows:
+    ``install_asyncio_exception_handler(loop)`` (now resolves
+    ``emit_cli_event`` at install time, per the fix) THEN -- with nothing
+    else having fired the handler in between, matching "first-ever
+    exception" exactly -- a call landing during simulated shutdown.
+
+    Strip: remove the ``_resolve_emit_cli_event()`` call this fix added to
+    ``install_asyncio_exception_handler`` -- this goes red (no event
+    recorded), reproducing #5952's own report exactly.
+    """
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    loop = asyncio.new_event_loop()
+    try:
+        install_asyncio_exception_handler(loop)  # warms the cache, per the fix
+    finally:
+        loop.close()
+
+    saved_modules, saved_meta_path = _simulate_shutdown_import_failure(
+        "reyn.core.events.events"
+    )
+    try:
+        _durably_capture({"message": "first-ever-exception-and-its-shutdown-only"})
+    finally:
+        _restore_after_simulated_shutdown(saved_modules, saved_meta_path)
+
+    events = _read_events_of_kind(reyn_dir / "events", "asyncio_unhandled_exception")
+    messages = [e["data"]["context_message"] for e in events]
+    assert "first-ever-exception-and-its-shutdown-only" in messages, (
+        "installing the handler must warm the emit_cli_event cache -- a "
+        "process whose only-ever unhandled exception is a shutdown-only "
+        "one must still get it durably recorded"
+    )

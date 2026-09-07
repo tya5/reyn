@@ -127,7 +127,30 @@ def install_asyncio_exception_handler(loop: asyncio.AbstractEventLoop) -> None:
     (e.g. obtained via ``asyncio.get_running_loop()`` from inside the
     entrypoint's top-level coroutine, or the loop just created by
     ``asyncio.new_event_loop()``).
+
+    #5952 BLOCKING (lead-coder, measured): resolves ``emit_cli_event`` HERE,
+    once, at install time -- not left to warm on the handler's own first
+    call. Measured: ``_resolve_emit_cli_event`` was reachable ONLY from
+    inside the handler itself, so a process whose FIRST-EVER unhandled
+    exception is a genuinely shutdown-only one (``Task was destroyed but
+    it is pending!`` -- #5951's own reported symptom, fired from asyncio's
+    OWN teardown machinery, never from ordinary running code) would still
+    lose it: nothing earlier ever warmed the cache, so the handler's first
+    (and only) call resolves for the first time AFTER `sys.meta_path` is
+    already `None`, hits the exact `ImportError` #5951 reports, and gives
+    up quietly -- #5951's own event, unrecorded, the fix's whole point
+    defeated for the single-failure process it was written for. Installing
+    the handler happens far ahead of any shutdown (this function's own
+    docstring: called once per real loop-owning entrypoint, right after
+    the loop is obtained, before the main work starts), so warming here
+    means the cache is already populated before ANY exception -- shutdown
+    or not -- can ever reach the handler. Grep-confirmed no import cycle
+    (`events.py` does not import `asyncio_diagnostics`; both import
+    cleanly together) -- the original deferred-import's real benefit is
+    only "an entrypoint that never installs this handler pays nothing",
+    which a call here (only reached BY an installer) still preserves.
     """
+    _resolve_emit_cli_event()
     loop.set_exception_handler(_make_handler())
 
 
