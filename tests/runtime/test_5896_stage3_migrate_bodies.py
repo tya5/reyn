@@ -95,6 +95,45 @@ def test_migrates_a_large_inline_row_to_a_fresh_ref(tmp_path: Path) -> None:
     assert written == big, "the written file must hold the EXACT original content"
 
 
+def test_migration_never_reads_the_whole_file_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: lead-coder BLOCKING, PR #5947 — a real ``history.jsonl``
+    from the owner-hit incident this module exists for runs to hundreds
+    of MB with a single row past 300 MB. Pulling the whole file into one
+    ``str`` (``Path.read_text()``/``readlines()``) — even once, let alone
+    twice for a two-pass design — defeats the entire point of a tool
+    meant to run on a host already near its RAM ceiling; an earlier
+    version of this function did exactly that (``read_text().
+    splitlines()`` plus a persisted ``parsed`` list holding every row's
+    own body a second time) and was caught by this exact review.
+
+    Strip witness: reverting either pass back to
+    ``path.read_text().splitlines()`` makes ``Path.read_text`` fire on
+    this test's own ``hist_path`` — verified directly, restored after."""
+    import pathlib
+
+    real_read_text = pathlib.Path.read_text
+    calls_on_target: "list[Path]" = []
+
+    def _wrapped(self: Path, *args: object, **kwargs: object) -> str:
+        if self == hist_path:
+            calls_on_target.append(self)
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    big = "s" * 2_000_000
+    hist_path = _write_history(tmp_path, [_tool_row(1, big)])
+    monkeypatch.setattr(pathlib.Path, "read_text", _wrapped)
+
+    migrate_inline_history_bodies(hist_path, save_fn=_real_save_fn(tmp_path))
+
+    assert calls_on_target == [], (
+        "migrate_inline_history_bodies must never call Path.read_text() "
+        "on the history.jsonl file itself (a whole-file read) — it must "
+        "stream line by line via Path.open() instead"
+    )
+
+
 def test_leaves_a_bak_and_the_original_content_is_recoverable(tmp_path: Path) -> None:
     """Tier 2: the pre-migration file survives as a real, readable
     ``.bak`` — not just implicitly via git or a snapshot."""

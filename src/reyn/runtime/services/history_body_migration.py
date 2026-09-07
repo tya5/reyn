@@ -143,28 +143,52 @@ def _content_hash(content: str) -> str:
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _spill_supersede_refs(entries: "list[dict]") -> "dict[str, str]":
-    """Scan already-parsed ``history.jsonl`` entries for ``spill_record``
-    rows (#5612's own durable supersede format) and return a
-    ``content_hash -> ref`` map — the SAME fact
-    ``RouterHistoryBuffer._spill_supersede_map`` derives from live
-    resident history, rebuilt here from the raw on-disk lines since this
-    module runs with no live session (the whole point of an operator
-    command run while the session is stopped)."""
+def _parse_line(raw: str) -> "dict | None":
+    line = raw.strip()
+    if not line:
+        return None
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def _spill_supersede_refs(path: Path) -> "dict[str, str]":
+    """PASS 1 (lead-coder BLOCKING, PR #5947): streams *path* ONE LINE AT
+    A TIME (``for raw in f``, never ``read_text()``/``readlines()``) and
+    keeps only the small ``(content_hash, ref)`` pair a ``spill_record``
+    row's ``meta`` carries — never the row's own ``content`` (a
+    ``spill_record``'s content is a small ref-preview by construction,
+    #5612, so even this transient hold is cheap) and never the file's
+    other rows at all. Real ``history.jsonl`` files can run to hundreds
+    of MB with a single row past 300 MB (the owner-hit incident this
+    module exists for) — an earlier version of this function took an
+    already-fully-parsed ``list[dict]``, which required the CALLER to
+    hold the whole file (and every row's own body) resident just to
+    build this map; that defeated the entire point of a tool meant to
+    run on a host already near its memory ceiling. See module docstring's
+    "the SAME fact ``RouterHistoryBuffer._spill_supersede_map`` derives
+    from live resident history" — rebuilt here from the raw on-disk
+    lines since this module runs with no live session (the whole point
+    of an operator command run while the session is stopped)."""
     refs: "dict[str, str]" = {}
-    for entry in entries:
-        if entry.get("role") != "spill_record":
-            continue
-        meta = entry.get("meta")
-        if not isinstance(meta, dict):
-            continue
-        target_hash = meta.get(SPILL_TARGET_CONTENT_HASH_META_KEY)
-        ref = meta.get(CONTENT_REF_META_KEY)
-        if isinstance(target_hash, str) and isinstance(ref, str):
-            # #5628's own precedent (first-write-wins on a re-scan): an
-            # EARLIER spill_record for the same hash names the file that
-            # has existed longest; never overwrite with a later one.
-            refs.setdefault(target_hash, ref)
+    with path.open("r", encoding="utf-8") as f:
+        for raw in f:
+            entry = _parse_line(raw)
+            if entry is None or entry.get("role") != "spill_record":
+                continue
+            meta = entry.get("meta")
+            if not isinstance(meta, dict):
+                continue
+            target_hash = meta.get(SPILL_TARGET_CONTENT_HASH_META_KEY)
+            ref = meta.get(CONTENT_REF_META_KEY)
+            if isinstance(target_hash, str) and isinstance(ref, str):
+                # #5628's own precedent (first-write-wins on a re-scan):
+                # an EARLIER spill_record for the same hash names the
+                # file that has existed longest; never overwrite with a
+                # later one.
+                refs.setdefault(target_hash, ref)
     return refs
 
 
@@ -209,28 +233,28 @@ def migrate_inline_history_bodies(
             f"it first if you have confirmed it is safe to discard."
         )
 
-    raw_lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    parsed: "list[dict | None]" = []
-    for raw in raw_lines:
-        line = raw.strip()
-        if not line:
-            parsed.append(None)
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            parsed.append(None)
-            continue
-        parsed.append(entry if isinstance(entry, dict) else None)
+    # PASS 1 (lead-coder BLOCKING, PR #5947): builds the small hash->ref
+    # map, streaming — see _spill_supersede_refs's own docstring.
+    existing_refs = _spill_supersede_refs(path)
 
-    existing_refs = _spill_supersede_refs([e for e in parsed if e is not None])
-
+    # PASS 2: transform + write, ALSO streaming — `for raw in src` reads
+    # one line at a time (mirrors rewrite_history_dropping's own real
+    # mechanics, not read_text().splitlines()'s whole-file-then-a-list-
+    # of-lines shape an earlier version of this function used). At most
+    # ONE row's own content is ever resident at a time (plus whatever
+    # `existing_refs` holds — hashes and short ref paths only, never a
+    # body) — a 369 MB single row is still a real, unavoidable transient
+    # peak for the ONE line it is being processed on, but the file as a
+    # whole (663 MB in the incident this module exists for) is never
+    # held twice over, which is what actually made the previous version
+    # unusable on the host it was built for.
     migrated = 0
     reused_ref = 0
     bytes_written = 0
     tmp_path = path.with_name(path.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as dst:
-        for raw, entry in zip(raw_lines, parsed):
+    with path.open("r", encoding="utf-8") as src, tmp_path.open("w", encoding="utf-8") as dst:
+        for raw in src:
+            entry = _parse_line(raw)
             if entry is None or not _is_migration_candidate(entry, min_bytes=min_bytes):
                 dst.write(raw)
                 continue
