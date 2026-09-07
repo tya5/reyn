@@ -1199,6 +1199,27 @@ missing one.
   they share its age. Here that was 5 claims re-run against
   `origin/main`, of which 4 held and only the reported one fell.
 
+- A PR sat `mergeStateStatus=BLOCKED` for hours with every visible signal
+  reading green: `gh pr checks` SUCCESS, the GitHub UI's own rollup SUCCESS,
+  no required review, no ruleset shown. The only place the real reason
+  surfaced was the literal rejection text of a direct `gh api -X PUT
+  .../merge` call: `"2 of 7 required status checks are expected."`
+  `expected` means "no report under that name exists yet" — not "pending,"
+  not "failed," and nothing in the rollup or `gh pr checks` distinguishes
+  it from either. The cause: the SAME workflow produced TWO check suites on
+  one head, and the newer one was skipped by a path filter before its
+  matrix ever expanded — so it reported a single job still literally named
+  `pytest (Python ${{ matrix.python-version }})`, never the two expanded
+  names (`pytest (Python 3.11)` / `(Python 3.12)`) branch protection
+  actually requires. Those two names existed and were green — under the
+  OLDER suite, the one that had actually run — but branch protection
+  consults the LATEST suite per workflow, where the names were never
+  written at all: a genuine absence at the exact (name, suite) pair branch
+  protection reads, invisible to every aggregate view that blends across
+  suites instead of asking "does THIS suite's report for THIS name exist"
+  (#5912). The rollup's SUCCESS was real; it just never named which suite,
+  of the two, it was a rollup of.
+
 **This is where B combines with §16**, not a coincidence: the sessions that
 trusted a stale environment did so *because* their result matched `main`'s
 — an equality read as confirmation, when both sides were victims of the
