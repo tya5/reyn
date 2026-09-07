@@ -46,6 +46,7 @@ the tree I am measuring" is not something a test may assume.
 """
 from __future__ import annotations
 
+import copy
 import faulthandler
 import importlib.util
 import os
@@ -523,8 +524,23 @@ def _isolate_litellm_process_globals() -> Iterator[None]:
     # could have legitimately needed to change VALUE for its own duration
     # (unlike the cache, there is no single "clean" value to reset to
     # unconditionally; whatever the process already had is the baseline).
+    #
+    # #5953 BLOCKING (lead-coder, measured): `copy.copy` here is load-
+    # bearing, not decoration. 6 of the 9 attributes are LISTS
+    # (callbacks/input_callback/success_callback/failure_callback/
+    # _async_success_callback/_async_failure_callback) — a bare
+    # `getattr(litellm, name)` saves a REFERENCE to litellm's own list
+    # object, not its contents. `list.append(...)` (the realistic shape a
+    # test uses, e.g. `litellm.success_callback.append(...)`) mutates that
+    # SAME object IN PLACE; the later `setattr(litellm, name, value)`
+    # restore then writes back the identical (already-mutated) object,
+    # a genuine no-op for every in-place-mutated attribute — only a
+    # REBIND (`litellm.success_callback = [...]`) would have been undone
+    # by the original bare-reference version. Measured directly: a test
+    # that does `litellm.success_callback.append("poison")` left "poison"
+    # visible to the NEXT test even with the (un-copied) restore in place.
     saved = {
-        name: getattr(litellm, name)
+        name: copy.copy(getattr(litellm, name))
         for name in _LITELLM_ISOLATED_ATTRS
         if hasattr(litellm, name)
     }

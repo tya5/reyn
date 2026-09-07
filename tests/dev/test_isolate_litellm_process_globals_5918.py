@@ -60,14 +60,24 @@ _INNER_TEST_POLLUTION = """
 import litellm
 
 _DEFAULT_MAX_RETRIES_BEFORE_POLLUTION = []
+_SUCCESS_CALLBACK_LEN_BEFORE_POLLUTION = []
 
-def test_a_pollutes_the_client_cache_and_default_max_retries():
+def test_a_pollutes_the_client_cache_default_max_retries_and_a_callback_list():
     _DEFAULT_MAX_RETRIES_BEFORE_POLLUTION.append(litellm.DEFAULT_MAX_RETRIES)
+    _SUCCESS_CALLBACK_LEN_BEFORE_POLLUTION.append(len(litellm.success_callback))
     litellm.in_memory_llm_clients_cache.set_cache("poison-key", "a-stale-client-stand-in")
     assert litellm.in_memory_llm_clients_cache.get_cache("poison-key") is not None  # sanity
     litellm.DEFAULT_MAX_RETRIES = 0  # the exact production write _aembedding_bounded makes
+    # #5953 BLOCKING (lead-coder, measured): an IN-PLACE mutation, not a
+    # rebind -- a bare `getattr`-snapshot-and-`setattr`-restore saves a
+    # REFERENCE to this SAME list object, so .append() here would survive
+    # the restore untouched (only a rebind, `litellm.success_callback =
+    # [...]`, would have been undone by that shape). This is the realistic
+    # call a test makes (`litellm.success_callback.append(...)`), not a
+    # synthetic rebind picked to make the old code look correct.
+    litellm.success_callback.append("poison")
 
-def test_b_starts_with_a_clean_cache_and_the_original_default():
+def test_b_starts_with_a_clean_cache_original_default_and_untouched_callback_list():
     assert _DEFAULT_MAX_RETRIES_BEFORE_POLLUTION, "setup: test_a must run first, in this same process"
     assert litellm.in_memory_llm_clients_cache.get_cache("poison-key") is None, (
         "the isolation fixture must clear the client cache BEFORE this test ran -- "
@@ -79,6 +89,15 @@ def test_b_starts_with_a_clean_cache_and_the_original_default():
         f"fixture must restore it to what it was BEFORE test_a ran "
         f"({_DEFAULT_MAX_RETRIES_BEFORE_POLLUTION[-1]!r}), not leave production's "
         f"own permanent write visible to an unrelated later test"
+    )
+    assert "poison" not in litellm.success_callback, (
+        "test_a's litellm.success_callback.append('poison') leaked into test_b -- "
+        "the isolation fixture must snapshot a COPY of a mutable attribute, not a "
+        "reference to litellm's own list object (#5953 BLOCKING)"
+    )
+    assert len(litellm.success_callback) == _SUCCESS_CALLBACK_LEN_BEFORE_POLLUTION[-1], (
+        "litellm.success_callback's length changed across tests -- restore did not "
+        "return it to test_a's own starting state"
     )
 """
 
