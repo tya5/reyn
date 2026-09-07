@@ -830,18 +830,38 @@ class ChatMessage:
         re-serialize cost another 369 MB copy, on the hot append path.
 
         Caching here is safe (never goes stale) because nothing in this
-        codebase mutates a ``ChatMessage``'s ``content``/``meta`` after it
-        becomes resident: the sole in-place ``.content =`` write outside
-        this class (``Session._parse_history_line``'s ref-resolve) runs on
-        a freshly-parsed message strictly BEFORE it is appended to
-        ``self.history``, and the sole in-place ``.meta[...] =`` write
-        (``Session._append_history``'s ``wal_seq`` stamp) runs before that
-        same append too — confirmed by reading every ``.content =`` /
-        ``.meta[...] =`` site in ``runtime/session.py`` and
-        ``runtime/services/*.py``, not assumed. A message built via
+        codebase in-place-mutates ANY field ``asdict(self)`` can see
+        (``role`` / ``content`` / ``ts`` / ``seq`` / ``meta`` /
+        ``tool_calls`` / ``tool_call_id`` / ``name`` / ``spillability`` /
+        ``disclosure`` — all 9 dataclass fields, not just
+        ``content``/``meta``) AFTER a message becomes resident.
+        Confirmed by reading every in-place write to any of them across
+        the whole of ``src/`` (lead-coder review, PR #5945 BLOCKING —
+        widened from an earlier draft that only checked ``.content =``/
+        ``.meta[...] =``, missing the one below), not assumed. All THREE
+        that exist run strictly BEFORE the write that first makes a
+        message resident (``self.history.append(msg)``,
+        ``Session._append_history``):
+
+        - ``msg.seq = self._next_seq`` (``session.py:4267``)
+        - ``msg.meta["wal_seq"] = ...`` (``session.py:4278``, the
+          ``wal_seq`` stamp)
+        - ``msg.content = resolve_history_content(...)``
+          (``session.py:5039``, ``_parse_history_line``'s ref-resolve, on
+          a freshly-parsed message before its own later append)
+
+        A 4th candidate, ``router_loop.py:4496``'s
+        ``result.tool_calls = tcs[:cap]``, mutates a completion RESULT
+        object before ``ChatMessage.__init__`` ever runs on it — not a
+        resident ``ChatMessage`` field write at all. A message built via
         ``dataclasses.replace()`` goes back through ``__init__`` (this
         cache is reset to ``None`` there), so a copy never inherits a
-        stale value from the original."""
+        stale value from the original. If a future change adds an
+        in-place write to any of the 9 fields AFTER a message is
+        resident, this cache goes silently stale — re-run this same
+        search (``.content =`` / ``.meta[...] =`` / ``.seq =`` / etc.,
+        across ``src/``, not just ``runtime/``) before trusting it
+        again."""
         if self._resident_bytes_cache is None:
             self._resident_bytes_cache = len(
                 json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
