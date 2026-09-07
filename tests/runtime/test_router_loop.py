@@ -207,14 +207,71 @@ async def test_async_tool_dispatch_exits_the_loop(monkeypatch):
     # structured spawn_ack (= parity with skill / plan spawn_ack),
     # not a generic "awaiting peer reply" status row. (proposal 0067 P4,
     # #3978, architect ruling 2026-08-10: kind=agent -> kind=prompt —
-    # `m["kind"]` below is the UNRELATED outbox-display-frame axis, byte-
-    # identical, not touched by this migration.)
+    # `m["kind"]` below is the UNRELATED outbox-display-frame axis.)
+    # #5887: that display axis is now ``"system"`` — the ack is reyn's
+    # own sentence about a dispatch, not the model's words, so it must
+    # not wear the model's marker. strip: reverting the emit site to
+    # ``kind="agent"`` turns this red.
     assert any(
-        m["kind"] == "agent"
+        m["kind"] == "system"
         and m.get("meta", {}).get("source") == "agent_spawn_ack"
         and "[task_spawned] kind=prompt" in m["text"]
         for m in host.outbox
-    ), f"Expected agent_spawn_ack; got: {host.outbox}"
+    ), f"Expected a system-kind agent_spawn_ack; got: {host.outbox}"
+    # #5887 (dogfood-v6 decision preserved, see RouterHostAdapter.
+    # put_outbox): the ack still lands in history as an assistant
+    # placeholder so the next turn's wire keeps user/assistant
+    # alternation — the DISPLAY kind changed, the LLM-context axis did not.
+    assert any(
+        h["role"] == "assistant" and "[task_spawned] kind=prompt" in h["content"]
+        for h in host.history
+    ), f"spawn ack must still persist as an assistant placeholder; got: {host.history}"
+
+
+def test_every_host_put_outbox_call_site_declares_persist_as() -> None:
+    """Tier 2: #5887 witness ④ — every call to the host's ``put_outbox(``
+    in ``src/`` states ``persist_as=`` explicitly. The argument has no
+    default on purpose (architect ruling): a new call site must say what
+    it leaves in history for the next turn, so the display ``kind`` can
+    never again be the thing that silently decides persistence. Removing
+    the inference only closes the hole if it is closed at EVERY site,
+    which is why this is a census, not a sample.
+
+    Matches the host method (``host.put_outbox(`` / ``self.host.put_outbox(``
+    — keyword ``kind=``/``text=`` form). ``_put_outbox(OutboxMessage(...))``
+    is a different method (the display channel, takes a built
+    ``OutboxMessage``, has no persistence axis) and is not in scope."""
+    import re
+
+    from tests._support.paths import REPO_ROOT
+
+    src = REPO_ROOT / "src"
+    pattern = re.compile(r"(?<![_\w])host\.put_outbox\(", re.MULTILINE)
+    offenders: list[str] = []
+    checked = 0
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for m in pattern.finditer(text):
+            # Walk to the matching close paren of THIS call.
+            depth, i = 0, m.end() - 1
+            while i < len(text):
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i += 1
+            call = text[m.start():i + 1]
+            checked += 1
+            if "persist_as=" not in call:
+                line = text.count("\n", 0, m.start()) + 1
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line}")
+    assert checked >= 8, f"expected the router_loop call sites to be found; saw {checked}"
+    assert offenders == [], (
+        "put_outbox( call sites without an explicit persist_as= "
+        f"(no default — say what the row leaves in history): {offenders}"
+    )
 
 
 @pytest.mark.asyncio

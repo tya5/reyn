@@ -248,13 +248,18 @@ class FakeRouterHost:
         return {"status": "delivered", "agent": agent, "session": session, "wake": wake}
 
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        self, *, kind: str, text: str, meta: dict,
+        persist_as: "str | None",
     ) -> None:
-        self.outbox.append({"kind": kind, "text": text, "meta": meta})
-        # #3633: mirror RouterHostAdapter.put_outbox's persist side effect.
-        if kind == "agent" and text and persist:
+        self.outbox.append({
+            "kind": kind, "text": text, "meta": meta, "persist_as": persist_as,
+        })
+        # #3633/#5887: mirror RouterHostAdapter.put_outbox's persist side
+        # effect — the caller's explicit ``persist_as`` role, never one
+        # inferred from ``kind`` (the exact inference #5887 removed).
+        if text and persist_as is not None:
             self.history.append({
-                "role": "assistant", "content": text, "meta": meta,
+                "role": persist_as, "content": text, "meta": meta,
                 "tool_calls": None,
             })
 

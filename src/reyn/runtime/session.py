@@ -9229,7 +9229,7 @@ class Session:
         ``agent_response_committed`` HERE, filtered on ``msg.kind ==
         "agent"``, covers all 5 without an emit at each — and,
         architect's ruling, also the tool_calls-round accompanying text
-        (``persist=False`` — not written to history, but still reaches
+        (``persist_as=None`` — not written to history, but still reaches
         the user, so still in scope; see ``router_loop.py``'s own
         tool_calls-round site) and rewind/replay, as long as those keep
         going through this same funnel — a call site added later needs

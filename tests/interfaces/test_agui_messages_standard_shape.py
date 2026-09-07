@@ -54,6 +54,37 @@ def test_standard_messages_are_conversation_turns_only() -> None:
     assert all(set(m) == {"role", "content"} for m in standard)
 
 
+def test_os_authored_system_rows_are_not_assistant_turns_in_the_snapshot() -> None:
+    """Tier 2: #5887 accept ② — an OS-authored notice (the empty-response
+    fallback, the async-dispatch ack) is emitted as ``kind="system"`` and so
+    is NOT an ``assistant`` turn in the reconnect ``MESSAGES_SNAPSHOT``: a
+    generic client rebuilding the conversation must not attribute reyn's
+    own sentence to the model, exactly as the live TUI no longer does.
+
+    The present-side sibling of ``_CONVERSATION_KINDS`` having no
+    ``system`` entry: this pins the OBSERVABLE consequence for a real
+    encoded snapshot, not the dict's contents. Before #5887 these rows
+    were ``kind="agent"`` and DID appear here as ``assistant`` — the
+    reconnect backlog had the same misattribution the owner saw live."""
+    backlog = [
+        DisplayFrame(OutboxMessage(kind="user", text="do something")),
+        DisplayFrame(OutboxMessage(
+            kind="system",
+            text="[⚠ model returned an empty response (finish_reason=stop) · retry: off (chat.empty_stop_retry) · call c1]",
+            meta={"source": "router_empty_response"},
+        )),
+        DisplayFrame(OutboxMessage(kind="agent", text="a real reply")),
+    ]
+    ev = encode_messages_snapshot(backlog)
+    standard = ev.data["messages"]
+
+    assert standard == [
+        {"role": "user", "content": "do something"},
+        {"role": "assistant", "content": "a real reply"},
+    ], f"the OS notice must not be an assistant turn; got: {standard!r}"
+    assert not any("empty response" in m["content"] for m in standard)
+
+
 @pytest.mark.asyncio
 async def test_reyn_client_rebuilds_full_backlog_from_reyn_block() -> None:
     """Tier 2: the reyn client replays the FULL backlog (chrome included) from the

@@ -30,7 +30,12 @@ import pytest
 
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-from reyn.runtime.router_loop import _EMPTY_RESPONSE_MSG, RouterLoop, _is_empty_router_response
+from reyn.runtime.router_loop import (
+    _EMPTY_RESPONSE_MSG,
+    RouterLoop,
+    _empty_response_text,
+    _is_empty_router_response,
+)
 
 # ---------------------------------------------------------------------------
 # Test doubles (copied from test_router_loop.py — shared infrastructure kept
@@ -141,9 +146,11 @@ class FakeRouterHost:
         pass
 
     async def put_outbox(
-        self, *, kind: str, text: str, meta: dict, persist: bool = True,
+        self, *, kind: str, text: str, meta: dict, persist_as: "str | None",
     ) -> None:
-        self.outbox.append({"kind": kind, "text": text, "meta": meta})
+        self.outbox.append({
+            "kind": kind, "text": text, "meta": meta, "persist_as": persist_as,
+        })
 
     async def file_read(self, path: str) -> str:
         if path not in self._files:
@@ -356,7 +363,19 @@ async def test_empty_response_event_has_expected_fields(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
-    """Tier 2: empty-stop response causes a user-visible failure message in outbox with kind=agent."""
+    """Tier 2: #5887 accept ① — the empty-stop notice reaches the outbox as
+    ``kind="system"``: reyn authored it, so it must not wear the model's
+    marker (owner report: "llm からのメッセージなのか、システムメッセージなのか
+    tui 表示の区別がついてない"). strip: reverting the emit site to
+    ``kind="agent"`` turns this red.
+
+    ``persist_as="assistant"`` is asserted alongside: the display axis moved
+    to "system", but the dogfood-v6 decision in ``RouterHostAdapter.
+    put_outbox`` (keep an assistant placeholder in history so the next
+    turn's wire does not carry two consecutive user messages) is carried
+    by that explicit argument now, not inferred from ``kind`` — see that
+    method's own comment. ``persist_as=None`` here would silently re-open
+    the v6 attractor."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
@@ -365,7 +384,13 @@ async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
     await loop.run("do something", [])
 
     (msg,) = host.outbox
-    assert msg["kind"] == "agent"
+    assert msg["kind"] == "system", (
+        f"an OS-authored notice must not render in the model's voice; got kind={msg['kind']!r}"
+    )
+    assert msg["persist_as"] == "assistant", (
+        "the notice must still ask for its assistant placeholder in history "
+        f"(dogfood-v6 alternation decision); got persist_as={msg['persist_as']!r}"
+    )
     assert len(msg["text"]) > 0, "Failure text must be non-empty"
     assert msg["meta"].get("source") == "router_empty_response"
 
@@ -447,9 +472,16 @@ async def test_empty_response_ja_i18n(monkeypatch):
 
     (msg,) = host.outbox
     failure_text = msg["text"]
-    assert failure_text == _EMPTY_RESPONSE_MSG["ja"], (
-        f"Expected Japanese message, got: {failure_text!r}"
+    # #5887: the text is now rendered from the ja TEMPLATE with this call's
+    # own facts filled in; compare against the same renderer fed the same
+    # facts the emit site put in meta, so the check is self-consistent
+    # rather than pinning a default for call_id it does not own.
+    expected = _empty_response_text(
+        "ja", finish_reason=msg["meta"]["finish_reason"], retry_on=False,
+        call_id=msg["meta"]["call_id"],
     )
+    assert failure_text == expected, f"Expected Japanese message, got: {failure_text!r}"
+    assert "モデルが空の応答を返しました" in failure_text
 
 
 @pytest.mark.asyncio
@@ -464,7 +496,11 @@ async def test_empty_response_en_i18n(monkeypatch):
 
     (msg,) = host.outbox
     failure_text = msg["text"]
-    assert failure_text == _EMPTY_RESPONSE_MSG["en"]
+    assert failure_text == _empty_response_text(
+        "en", finish_reason=msg["meta"]["finish_reason"], retry_on=False,
+        call_id=msg["meta"]["call_id"],
+    )
+    assert "model returned an empty response" in failure_text
 
 
 @pytest.mark.asyncio
@@ -479,7 +515,71 @@ async def test_empty_response_unknown_language_falls_back_to_en(monkeypatch):
 
     (msg,) = host.outbox
     failure_text = msg["text"]
-    assert failure_text == _EMPTY_RESPONSE_MSG["en"]
+    assert failure_text == _empty_response_text(
+        "en", finish_reason=msg["meta"]["finish_reason"], retry_on=False,
+        call_id=msg["meta"]["call_id"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# #5887 accept ④: the notice says what happened and what was in effect
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_response_notice_names_finish_reason_and_retry_off(monkeypatch):
+    """Tier 2: #5887 accept ④ — with the retry at its owner default (off),
+    the notice carries the model's ``finish_reason`` and says the retry was
+    ``off``, naming the switch (``chat.empty_stop_retry``) so the owner
+    knows WHICH setting governs what reyn just did. The pre-#5887 text
+    ("check your configuration") named nothing, which is what the owner
+    reported. strip: reverting the template drops every one of these
+    substrings."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+    scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+
+    await loop.run("do something", [])
+
+    (msg,) = host.outbox
+    text = msg["text"]
+    assert "finish_reason=stop" in text, f"finish_reason missing: {text!r}"
+    assert "retry: off" in text, f"retry state missing: {text!r}"
+    assert "chat.empty_stop_retry" in text, f"the governing switch is not named: {text!r}"
+    assert "check your configuration" not in text.lower(), (
+        f"the old advice-in-the-model's-voice wording must be gone: {text!r}"
+    )
+    for lang_key in ("ja", "en"):
+        assert "{finish_reason}" in _EMPTY_RESPONSE_MSG[lang_key], (
+            "both templates must carry the finish_reason placeholder"
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_response_notice_says_retry_on_when_the_retry_already_ran(monkeypatch):
+    """Tier 2: #5887 accept ④ (positive control for the retry field) — with
+    ``chat.empty_stop_retry`` in effect, the first empty stop is retried
+    silently and only a SECOND empty stop produces the notice, which must
+    then read ``retry: on`` — telling the owner the retry already happened
+    and still came back empty, not that it was never attempted."""
+    from reyn.prompt.loop_control import EMPTY_STOP_RETRY_DIRECTIVE
+
+    host = FakeRouterHost()
+    loop = RouterLoop(
+        host=host, chain_id="chain-test", max_iterations=5,
+        empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+        empty_stop_retry_auto=True,
+    )
+    scripted = _ScriptedLLM([empty_stop_result(), empty_stop_result()])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+
+    await loop.run("do something", [])
+
+    assert scripted.call_count == 2, "the one retry must have run before the notice"
+    (msg,) = host.outbox
+    assert msg["kind"] == "system"
+    assert "retry: on" in msg["text"], f"expected retry: on after the retry ran; got: {msg['text']!r}"
 
 
 # ---------------------------------------------------------------------------
