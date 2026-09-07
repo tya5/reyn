@@ -244,10 +244,12 @@ These labels exist in the repo now, carrying the meanings below:
   TTY). **It still sat.** The owner did not know it existed. A body-content
   audit of all 32 open issues (#5935) that extracted every "waiting on X"
   claim and asked "does a notification to X actually exist" — not a
-  label-presence check, not a condition-text check — found **15 of 32
-  failed**, two of them (including #5757) with an otherwise-correct hold:
-  right label, right condition, right observer, missing only the one act
-  that makes any of it reachable. **A label-anchored audit cannot find
+  label-presence check, not a condition-text check — found 46 findings
+  across the 28 issues carrying a waiting-phrase; **15 findings failed,
+  spread over 11 distinct issues**, two of them (including #5757) with an
+  otherwise-correct hold: right label, right condition, right observer,
+  missing only the one act that makes any of it reachable. **A
+  label-anchored audit cannot find
   this class** — the label is correctly present, the condition is
   correctly written, so a check that stops at "is this issue properly
   labeled and worded" reads it as a healthy hold. Only tracing the body's
