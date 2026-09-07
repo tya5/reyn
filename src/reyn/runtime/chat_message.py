@@ -22,7 +22,7 @@ content meant for the model — see that enum's own docstring).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -409,6 +409,36 @@ def parse_history_line(line: str) -> "ChatMessage | None":
         return None
 
 
+def history_record(msg: "ChatMessage") -> dict:
+    """The durable ``history.jsonl`` form of *msg* — the ONE place the
+    resident ``ChatMessage`` and its on-disk line are allowed to differ
+    (#5896, #5364 §1.1 "A": "history.jsonl は参照だけを持つ").
+
+    An un-spilled tool row that carries ``CONTENT_REF_META_KEY`` (its body
+    was written to ``history-content/`` by ``MediaStore.save_tool_result``
+    BEFORE this row is appended — write-ahead, see ``RouterLoop.
+    persist_feedback``) is persisted WITHOUT its body: the file is the
+    durable copy, the resident message keeps the body as the live cache,
+    and ``Session._parse_history_line`` hydrates it back through
+    ``history_content_resolve.resolve`` on the next process start. Every
+    other row — a spilled row (its content IS the small ref-preview the
+    model sees), a #5364 §1.5 write-refused row (no ref, body inline by
+    decision), a user/assistant/system/summary row — is ``asdict`` as
+    before, byte-identical.
+
+    Keyed on the TYPED meta fields, never on the content's own shape:
+    a body that happens to look like a preview is still a body."""
+    record = asdict(msg)
+    meta = msg.meta or {}
+    if (
+        msg.role == "tool"
+        and meta.get(CONTENT_REF_META_KEY)
+        and not meta.get(SPILLED_META_KEY)
+    ):
+        record["content"] = ""
+    return record
+
+
 def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosure | None":
     """#5678: the ONE normalization point for ``disclosure`` — every
     construction path funnels through here, including
@@ -484,16 +514,30 @@ TOOL_ERROR_MESSAGE_META_KEY = "error_message"
 # ABSENCE of ``SPILLED_META_KEY`` (pre-#5364 history) means "never
 # spilled" (today's only possible history — nothing offloaded a tool
 # result into this store before #5364 existed), never "unknown".
+# #5896 writes an explicit ``False`` on every un-spilled tool row; every
+# reader is a ``meta.get(SPILLED_META_KEY)`` truth read, so absence and
+# False are ONE observation. Never add a membership read (``KEY in
+# meta``) — it would split them into two facts, and that class fails open.
 SPILLED_META_KEY = "spilled"
-# The backing file's project-relative path — set for every SPILLED entry.
-# #5364 §1.1 "A": an offload attempt is ALWAYS file-backed when it lands —
-# a SPILLED entry's own persisted content is the ref rather than the
-# original inline body, so only a spilled entry needs this to resolve.
+# The backing file's project-relative path. #5364 §1.1 "A" (#5896: now
+# delivered at return time, not only on spill): EVERY tool result whose
+# write landed is file-backed — a SPILLED entry's persisted content is the
+# ref-preview the model sees, an UN-SPILLED entry's durable history.jsonl
+# line carries NO body at all (``history_record`` drops it; the file is
+# the one durable copy) while its resident ChatMessage keeps the body.
+# `reyn.core.offload.history_content_resolve.resolve` is the ONE table
+# that turns (spilled, ref, content) back into a body.
 # #5364 §1.5: "A" is not "always" without exception — a write that is
 # known, in advance, not to land (MediaStoreWriteUnavailable) never
 # reaches this store at all; that turn's content stays inline and this
 # key is never set (see LostReason.NEVER_PERSISTED below).
 CONTENT_REF_META_KEY = "content_ref"
+# #5896: stamped alongside CONTENT_REF_META_KEY on an un-spilled tool row
+# — the body's byte length and mime type, so `reyn storage`-class readers
+# can size a session's tool results from history.jsonl alone (the row no
+# longer carries the bytes they used to measure) without opening files.
+CONTENT_BYTES_META_KEY = "bytes"
+CONTENT_MIME_META_KEY = "mime"
 # Set once `resolve()` (reyn.core.offload.history_content_resolve) has
 # actually observed the backing file missing — never guessed ahead of
 # that check. ABSENCE means "not (yet) known to be lost", never "present".
@@ -522,10 +566,28 @@ class LostReason(StrEnum):
     OUTSIDE reyn (manual deletion, an external process) also reads as
     ``GC`` — this repo keeps no separate record that would tell the two
     apart, and #5438 explicitly rules out adding one (a ledger just
-    duplicates history.jsonl's own append-only truth)."""
+    duplicates history.jsonl's own append-only truth).
+
+    ``EXTERNAL`` (#5896 stage ①) is likewise NEVER written, derived the
+    same way for an UN-SPILLED entry (``SPILLED_META_KEY`` False, a
+    ``CONTENT_REF_META_KEY`` present): no eviction pass selects an
+    un-spilled file — the per-session pass by this store's own record,
+    the project-wide pass by re-reading every session's manifest lines
+    at pass time (``MediaStore._unspilled_paths_project_wide``, architect
+    co-vet 🔴 #2: a pass that used only the calling store's own view
+    evicted a neighbour's un-spilled body, and this reason then LIED
+    about it) — so a missing one was removed by something outside reyn's
+    own GC. Disclosed exception, not claimed closed: a neighbouring
+    store's body whose content landed while its manifest line was still
+    queued (the next job in the same FIFO worker) is invisible to a
+    project-wide pass run by a DIFFERENT store in that instant; a loss
+    in that window also reads as ``EXTERNAL``. Stage ② (spilled-first
+    ordering with un-spilled eviction, pending owner ruling) is where
+    this stops being derivable at all and needs its own record."""
 
     GC = "gc"
     NEVER_PERSISTED = "never_persisted"
+    EXTERNAL = "external"
 
 # #5612 (owner ruling — "永続化というのは llm に見える履歴が元に戻らない
 # ということ、history.jsonl に追記するということ"): the reactive

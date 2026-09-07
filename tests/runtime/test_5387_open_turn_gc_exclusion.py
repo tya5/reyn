@@ -50,7 +50,8 @@ def _bump_all_mtimes_forward(directory) -> None:
             os.utime(path, (st.st_atime, st.st_mtime - 1))
 
 
-def test_the_write_time_cap_path_reaches_save_tool_result_with_a_real_chain_id(
+@pytest.mark.asyncio
+async def test_the_write_time_cap_path_reaches_save_tool_result_with_a_real_chain_id(
     tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: #5387 wiring witness — drives the REAL production chain
@@ -88,6 +89,7 @@ def test_the_write_time_cap_path_reaches_save_tool_result_with_a_real_chain_id(
         assistant_content="",
     )
     loop.feedback(result)
+    await loop.persist_feedback()
 
     (tool_msg,) = [m for m in session.history if m.role == "tool"]
     ref = (tool_msg.meta or {}).get("content_ref")

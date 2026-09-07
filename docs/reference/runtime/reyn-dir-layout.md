@@ -65,8 +65,14 @@ Everything else is excluded, by one of four reasons:
 │   │                       an imperfect NAME fit (a ref→path table is neither
 │   │                       knowledge nor a decision) — the doc's own tier
 │   │                       decision rule (below) only points at one place.
-│   └── tool_result_spills.jsonl  persisted provenance of history-content SPILL
-│                           artifacts under `tool-results/` (#4381/#4432, moved
+│   └── tool_result_spills.jsonl  persisted provenance of every history-content
+│                           file `MediaStore.save_tool_result` wrote (#4381/
+│                           #4432 — SPILL artifacts; since #5896 every
+│                           return-time tool-result body too, each line
+│                           carrying `"spilled": false` for those — the flag
+│                           every eviction pass reads: an un-spilled body is
+│                           the model's inline content's only durable copy and
+│                           is never a GC candidate, stage ① of #5896; moved
 │                           from `cache/` by #4584 — same reasoning as
 │                           `artifact_refs.jsonl` above: not literally
 │                           rebuildable, an earlier comment on this file said
@@ -110,13 +116,23 @@ Everything else is excluded, by one of four reasons:
 │                           four read this store's entire footprint
 │                           (pinned by `tests/data/test_5364_history_
 │                           content_nesting.py`, one test per scanner).
-│                           ⏳ #5364's own history-resolution/GC follow-up
-│                           work (a pure `inline`/`ref`/`lost` resolver;
-│                           the permanent-write-failure fallback; the
-│                           directory size-cap GC) is designed but not yet
-│                           implemented as of this entry — see #5364 for
-│                           current status before assuming any of it
-│                           exists.
+│                           #5896 (#5364 §1.1 "A" at return time): EVERY
+│                           tool result's body lands here, not only a
+│                           spill's — the `history.jsonl` tool row carries
+│                           `meta.content_ref` (+ `spilled: false`,
+│                           `bytes`, `mime`) and an EMPTY `content`; the
+│                           body is read back once per process start by
+│                           `Session._parse_history_line` through the one
+│                           resolver (`core/offload/history_content_resolve`,
+│                           the pure `inline`/`ref`/`lost` table), written
+│                           BEFORE its row (write-ahead: `RouterLoop.
+│                           persist_feedback` flushes the store, then
+│                           appends). Only a permanently-failed write
+│                           (#5364 §1.5, `MediaStoreWriteUnavailable`)
+│                           leaves a body inline on the row. The per-
+│                           session size-cap GC (§1.6) and the project-
+│                           wide `storage.max_bytes` pass both skip
+│                           un-spilled bodies (see the manifest above).
 ├── approvals.jsonl         PERSIST — user-authored permission grants, append-only ledger
 │                           (#5153); survive rewind. approvals.yaml (legacy snapshot) is
 │                           migrated into this once, on first touch, then inert history.

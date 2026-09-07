@@ -64,9 +64,10 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
 
 - **`.reyn/media/`** — resolved image/media bytes fetched for the `present` op's
   `image` component (see [Present op reference](../runtime/present.md#v1-catalog-display-only-non-executable)).
-- **`.reyn/memory/history-content/`** — offloaded large tool results (the
-  chat-string offload path, `MediaStore.save_tool_result`), CURRENT writes
-  only, nested two levels — agent, then session (#5364; #5383's own
+- **`.reyn/memory/history-content/`** — every tool result's body (#5896,
+  #5364 §1.1 "A": written at return time through `MediaStore.save_tool_result`,
+  the same seam the spill path uses; `history.jsonl` keeps only the ref), CURRENT
+  writes only, nested two levels — agent, then session (#5364; #5383's own
   key-space fix: session id alone collided every agent's default `main`
   session into one shared directory). Per
   [`.reyn/` directory layout](../runtime/reyn-dir-layout.md) this location is
@@ -102,10 +103,17 @@ role) via a manifest at `.reyn/memory/tool_result_spills.jsonl` (#4584: moved
 from `.reyn/cache/` — that
 tier's "derived, rebuilt after restore" promise never held for this manifest; see
 [`.reyn/` directory layout](../runtime/reyn-dir-layout.md)), read in full on every
-`MediaStore` construction. An entry whose target file no longer exists on disk
-(deleted manually, or by the per-session history-content eviction — #5364 §1.6/#5388,
-live for offloaded tool results) is dropped from the manifest
-the next time it's loaded — this bounds the manifest's otherwise-unbounded growth.
+`MediaStore` construction. Since #5896 the manifest also covers every RETURN-time
+tool-result body (#5364 §1.1 "A": `history.jsonl` holds the ref, the body lives
+here), each such line carrying `"spilled": false` — the flag both eviction passes
+(the per-session cap and the project-wide `storage.max_bytes` pass) read to leave
+those files alone: the model still sees that body inline, so the file is its only
+durable copy (stage ① of #5896; spilled-first eviction with un-spilled bodies
+evictable is stage ②, pending an owner ruling). An entry whose target file no
+longer exists on disk (deleted manually, or by the per-session history-content
+eviction — #5364 §1.6/#5388, live for offloaded tool results) is dropped from the
+manifest the next time it's loaded — this bounds the manifest's otherwise-unbounded
+growth; the rewrite keeps each surviving line's `spilled` flag.
 This is a self-PRUNE of existing entries only, never a REBUILD: if the manifest file
 itself were deleted, nothing recreates it. The prune only rewrites the manifest
 itself; it never deletes any actual media/tool-result bytes, and a write failure

@@ -73,11 +73,14 @@ from reyn.runtime.budget.budget import (
 )
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
+    CONTENT_REF_META_KEY,
+    SPILLED_META_KEY,
     ChatMessage,
     Disclosure,
     Spillability,
     _now_iso,
     compaction_coverage_from_summary,
+    history_record,
     is_seq_still_active,
     parse_history_line,
 )
@@ -4274,8 +4277,13 @@ class Session:
         if self._state_log is not None and "wal_seq" not in msg.meta:
             msg.meta["wal_seq"] = self._state_log.current_seq
         self.history.append(msg)
+        # #5896 (#5364 §1.1 "A"): the durable line is ``history_record``'s
+        # form, not ``asdict`` — an un-spilled tool row's body stays on the
+        # resident ``msg`` above and is NOT written here (its file under
+        # history-content/ already is; see that function's docstring). The
+        # one ``json.dumps`` of a tool body on the loop is gone with it.
         with self.history_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
+            f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
         self._evict_oldest_resident_entries()
         self._update_untrusted_taint_on_append(msg)
 
@@ -4994,11 +5002,46 @@ class Session:
         ``None`` if malformed (skipped, never raised — byte-identical to
         the pre-#4387 behavior). Pure: does not touch ``self.history``.
 
-        #5759 stage 2: this body never touched ``self`` — delegates to
-        ``chat_message.parse_history_line`` (extracted there so the
+        #5759 stage 2: the parse itself never touched ``self`` — delegates
+        to ``chat_message.parse_history_line`` (extracted there so the
         history.jsonl GC, which runs from ``AgentRegistry`` with no live
-        ``Session``, has one parser to call instead of a second copy)."""
-        return parse_history_line(line)
+        ``Session``, has one parser to call instead of a second copy).
+
+        #5896 (#5364 §1.1 "A"): a tool row written since #5896 carries no
+        body on its line (``history_record``) — it is hydrated HERE, once,
+        from its ``history-content/`` file through the ONE resolver
+        (``resolve_history_content`` → ``history_content_resolve.resolve``),
+        so every reader of ``self.history`` — the live ``build_history``,
+        restore's ``project_restored_frames``, the read model, the
+        compaction candidate read (:meth:`_durable_active_history_after`,
+        which parses through this same method) — sees the same resident
+        shape a row appended in THIS process has: body on the message, ref
+        in meta. This is the same bytes the pre-#5896 parse read from the
+        history.jsonl line itself, now read from N files instead of one;
+        every one of this method's callers already reads from disk, so no
+        reader gains a disk read it did not have. A missing file hydrates
+        to the resolver's "lost" notice (reason ``EXTERNAL`` — stage ①
+        excludes un-spilled files from GC) and emits
+        ``offloaded_content_unavailable`` once per parse; a session with no
+        ``MediaStore`` (no multimodal config — every production factory
+        wires one) cannot validate the path boundary and leaves the row
+        as parsed, disclosed here rather than read around the store."""
+        msg = parse_history_line(line)
+        if msg is None or msg.role != "tool" or msg.content != "":
+            return msg
+        meta = msg.meta or {}
+        if not meta.get(CONTENT_REF_META_KEY) or meta.get(SPILLED_META_KEY):
+            return msg
+        if self._media_store is None:
+            return msg
+        from reyn.runtime.services.router_history_buffer import resolve_history_content
+
+        msg.content = resolve_history_content(
+            msg.content, meta, lambda: self._media_store.project_root,
+            self._audit_events, None,
+            read_text=lambda ref: self._media_store.read_tool_result(ref)[0],
+        )
+        return msg
 
     def _append_parsed_history_line(self, line: str) -> None:
         """Parse one ``history.jsonl`` line and append it to ``self.history``

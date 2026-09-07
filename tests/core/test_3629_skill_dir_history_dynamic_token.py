@@ -243,6 +243,7 @@ def test_router_loop_feedback_persists_literal_token_variant_with_meta(tmp_path)
         assistant_content="",
     ))
 
+    _run(loop.persist_feedback())  # #5896: rows land at the write-ahead barrier
     tool_wire = next(m for m in wire if m.get("role") == "tool")
     assert f"loc={skill_dir.resolve()}" in tool_wire["content"], (
         "the CURRENT turn's wire content is unaffected -- still fully resolved"

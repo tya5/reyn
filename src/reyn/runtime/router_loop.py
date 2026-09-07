@@ -12,7 +12,7 @@ import functools
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
@@ -1316,6 +1316,11 @@ class RouterLoop:
     ):
         self.host = host
         self.chain_id = chain_id
+        # #5896 (#5364 §1.4 write-ahead): history rows :meth:`feedback`
+        # builds, held back until :meth:`persist_feedback` has flushed the
+        # MediaStore worker — see that method's docstring. Kwargs for
+        # ``host.append_history_entry``, in append order.
+        self._pending_history_appends: list[dict] = []
         # Bumped per LLM round in ``run_loop``; initialised here so a delta
         # emitted from any other entry point carries 0 rather than raising —
         # narration must never break the turn it describes.
@@ -2549,6 +2554,7 @@ class RouterLoop:
                 cb_feedback = await self._run_codeblock_round(
                     interp, call_id=result.call_id,
                 )
+                await self.persist_feedback()
                 _cb_content = result.content or ""
                 messages.append({"role": "assistant", "content": _cb_content})
                 _cb_append = getattr(host, "append_history_entry", None)
@@ -2861,6 +2867,11 @@ class RouterLoop:
                     ops=self,
                 ):
                     messages.append(_fb_msg)
+                # #5896 (#5364 §1.4 write-ahead): the rows feedback() just
+                # built reach history.jsonl only now, AFTER their bodies'
+                # files are durable — and BEFORE the cap notice below, so
+                # the persisted order is the wire order.
+                await self.persist_feedback()
 
                 # #1666: after a capped round's results, append the single
                 # re-grounding notice (placed AFTER all tool results so the
@@ -3880,14 +3891,29 @@ class RouterLoop:
         """SchemeOps.feedback (#1608): build the **appendable message sequence** for
         an Execute round — the assistant tool-call turn + the per-result
         ``{role:tool, tool_call_id, content}`` messages (+ media follow-ups) — and
-        persist each to chat history. This is the OS loop's former inline zip,
+        QUEUE each for chat history (#5896: persisted by the caller's
+        following ``await persist_feedback()``, never here — see that
+        method). This is the OS loop's former inline zip,
         relocated **byte-identically**: the delegating schemes (universal /
         enumerate-all / retrieval) return this, and the OS loop only *appends*, so it
         no longer knows the JSON tool_call/result correlation shape (P7). Relies on
         ``result.tool_calls[i]`` aligning with ``result.tool_results[i]`` (un-reordered
         — the #1406/#187 excluded-in-place result keeps its index)."""
         host = self.host
-        _append_entry = getattr(host, "append_history_entry", None)
+        # #5896 (#5364 §1.4 write-ahead): nothing here reaches
+        # ``host.append_history_entry`` directly any more — every row is
+        # QUEUED and lands in :meth:`persist_feedback`, after the
+        # MediaStore worker has been flushed, so a row naming a
+        # content_ref never exists on disk before its file does. The
+        # assistant row is queued too (not because it has a file, but so
+        # the persisted order stays assistant → tool rows, byte-identical
+        # to before). A host with no ``append_history_entry`` (phase
+        # hosts, some test doubles) queues nothing, as before.
+        _append_entry: "Callable[..., None] | None" = (
+            self._pending_history_appends_queue()
+            if getattr(host, "append_history_entry", None) is not None
+            else None
+        )
         out: list[dict] = []
         assistant_content = result.assistant_content
         out.append({
@@ -3919,7 +3945,10 @@ class RouterLoop:
             unwrap_dispatch_envelope,
         )
         from reyn.core.offload.seam import build_offload_body, render_tool_result
+        from reyn.data.workspace.media_store import MediaStoreWriteUnavailable
         from reyn.runtime.chat_message import (
+            CONTENT_BYTES_META_KEY,
+            CONTENT_MIME_META_KEY,
             CONTENT_REF_META_KEY,
             LOST_REASON_META_KEY,
             SKILL_SOURCE_PATH_META_KEY,
@@ -3931,7 +3960,9 @@ class RouterLoop:
             TOOL_STATUS_META_KEY,
             LostReason,
         )
-        for tc, r in zip(result.tool_calls, result.tool_results):
+        for _result_seq, (tc, r) in enumerate(
+            zip(result.tool_calls, result.tool_results), start=1,
+        ):
             # B41-NF-W7-1: _post_text → appended outside the body.
             post_text: str | None = None
             if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
@@ -4199,12 +4230,45 @@ class RouterLoop:
                 _tool_meta[TOKEN_MAP_META_KEY] = _history_meta_extra["token_map"]
             if "skill_source_path" in _history_meta_extra:
                 _tool_meta[SKILL_SOURCE_PATH_META_KEY] = _history_meta_extra["skill_source_path"]
+            _persist_body = (
+                _persist_content_str if _persist_content_str is not None else content_str
+            )
             # #5364 §1.2 "D": persisted so a restart never re-guesses whether
             # this entry was spilled — the resolver reads this typed field,
             # never the content string's own shape.
             if _offloaded_ref is not None:
                 _tool_meta[SPILLED_META_KEY] = True
                 _tool_meta[CONTENT_REF_META_KEY] = _offloaded_ref
+            elif _media_store is not None and not _write_unavailable and _append_entry is not None:
+                # #5896 — #5364 §1.1 "A" at RETURN time ("常に file 化する —
+                # history.jsonl は参照だけを持つ"): the body the row would
+                # have carried inline goes through the ONE write seam
+                # instead (same ``save_tool_result``, same directory the
+                # spill path uses; ``spilled=False`` because the model still
+                # sees this body inline, so the file is its only durable
+                # copy and no eviction pass may take it). The resident row
+                # keeps the body (the live cache); ``chat_message.
+                # history_record`` drops it from the history.jsonl line.
+                # A size gate this is not: every result, whatever its
+                # length — ``_cap``/``OffloadConfig`` are untouched.
+                try:
+                    _block = _media_store.save_tool_result(
+                        _persist_body,
+                        chain_id=self.chain_id,
+                        tool=tc.get("function", {}).get("name") or "tool",
+                        seq=_result_seq,
+                        spilled=False,
+                    )
+                except MediaStoreWriteUnavailable:
+                    # #5364 §1.5, the SAME branch the spill path's refusal
+                    # takes (below): body stays inline, reason recorded,
+                    # no ref ever minted.
+                    _write_unavailable = True
+                else:
+                    _tool_meta[SPILLED_META_KEY] = False
+                    _tool_meta[CONTENT_REF_META_KEY] = _block["path"]
+                    _tool_meta[CONTENT_BYTES_META_KEY] = len(_persist_body.encode("utf-8"))
+                    _tool_meta[CONTENT_MIME_META_KEY] = _block["mime_type"]
             # #5364 §1.5: an offload was ATTEMPTED and refused — content
             # stayed inline (never a ref to a file that doesn't exist), but
             # the entry still records WHY (operator-actionable: check
@@ -4216,10 +4280,7 @@ class RouterLoop:
             if _append_entry is not None:
                 _append_entry(
                     role="tool",
-                    content=(
-                        _persist_content_str if _persist_content_str is not None
-                        else content_str
-                    ),
+                    content=_persist_body,
                     meta=_tool_meta,
                     tool_call_id=tc["id"],
                     name=tc.get("function", {}).get("name"),
@@ -4262,6 +4323,57 @@ class RouterLoop:
                 if followup is not None:
                     out.append(followup)
         return out
+
+    def _pending_history_appends_queue(self) -> "Callable[..., None]":
+        """The callable :meth:`feedback` hands its two append sites — same
+        keyword signature as ``host.append_history_entry``, but it only
+        records the kwargs on ``_pending_history_appends`` for
+        :meth:`persist_feedback` to replay in order."""
+        def _queue(**kwargs: Any) -> None:
+            self._pending_history_appends.append(kwargs)
+        return _queue
+
+    async def persist_feedback(self) -> None:
+        """#5896 (#5364 §1.4 write-ahead): land the history rows
+        :meth:`feedback` queued, AFTER their bodies' files are durable.
+
+        Invariant this buys (architect, #5896 ruling): "ref を持つ row の
+        file は append 時点で存在する" — a ``history.jsonl`` row naming a
+        ``content_ref`` is never on disk before the file it names, so a
+        kill between the two can only lose a row (the tool call is simply
+        re-done, as a kill mid-turn always meant), never strand a ref whose
+        body was still queued in the worker (which would read back as
+        ``lost`` on restart for a body the model had seen whole). ``lost``
+        for an un-spilled row is thereby reserved for a deletion by
+        something other than reyn's own hand.
+
+        Cost: one ``await media_store.flush()`` per Execute round, not per
+        write (the barrier ``run_loop`` already takes before every LLM
+        call stays where it is — this one is the write-ahead's, that one
+        is the model's). Nothing to flush when no host media store is
+        wired (the queue still drains — the rows were queued for a host
+        that has ``append_history_entry``, file or no file). A host whose
+        ``append_history_entry`` is absent queued nothing, so this is a
+        no-op for it, as ``feedback`` was before.
+
+        Every caller of a ``format_feedback`` that delegates to
+        :meth:`feedback` (``run_loop``'s tool-call arm and its CodeBlock
+        arm) awaits this immediately after — a caller that forgets leaves
+        the round's rows unpersisted, which
+        ``tests/runtime/test_5896_history_content_ref.py``'s real-session
+        witnesses catch (an un-persisted tool row is a missing row in
+        ``session.history``, not a subtle one)."""
+        pending, self._pending_history_appends = self._pending_history_appends, []
+        if not pending:
+            return
+        _media_store = getattr(self.host, "media_store", None)
+        if _media_store is not None:
+            await _media_store.flush()
+        _append = getattr(self.host, "append_history_entry", None)
+        if _append is None:
+            return
+        for kwargs in pending:
+            _append(**kwargs)
 
     def _enforce_tool_call_cap(self, result) -> "tuple[int, int] | None":
         """#1666: bound the per-turn ``tool_calls`` count (cost-bound, OS-level).
