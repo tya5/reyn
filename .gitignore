@@ -69,3 +69,5 @@ spike_results/
 scratch/
 .reyn-memory-ceiling.log
 .reyn-ci-stall-trace.log
+.reyn-worker-trace/
+.reyn-worker-down.log

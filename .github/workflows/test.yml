@@ -77,6 +77,17 @@ jobs:
         # nothing pyproject didn't already declare.
         run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]" -c ci-constraints.txt
 
+      # #5909: the host's capacity, on the SAME surface the crash shows up
+      # on. `-n auto` starts one worker per core, and `memory_ceiling.py`
+      # allows each worker 2 GB — whether the SUM fits this runner is the
+      # one arithmetic a silent `node down: Not properly terminated`
+      # (a SIGKILL leaves no Python-side record) needs, and it was not in
+      # any job log during the #5909 triage.
+      - name: Runner capacity (#5909 — cores and memory the workers share)
+        run: |
+          echo "cores: $(nproc)"
+          free -m
+
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a
         # single hung test (e.g. a stuck subprocess/asyncio test under Linux-3.12)
@@ -192,6 +203,35 @@ jobs:
           else
             echo "no memory-ceiling dump (no worker exceeded its RSS ceiling)"
           fi
+
+      # #5909: name the killer of a worker that died with no Python-side
+      # record. `tests/conftest.py` (`reyn.dev.testing.worker_forensics`)
+      # writes `.reyn-worker-down.log` from xdist's own `pytest_testnodedown`
+      # hook — the dead worker's EXIT CODE (`-9` = SIGKILL: the host's OOM
+      # killer or a reaper, never reyn; `1` = pytest-timeout's thread-method
+      # `os._exit`; `97` = reyn's memory ceiling) and the last tests it ran
+      # (from `.reyn-worker-trace/<gw>.log`, one nodeid per test start).
+      # Every worker's peak RSS lands in its trace at session end — the
+      # figure a host OOM kill judges, which the memory-ceiling log above
+      # never shows for a worker that stayed under reyn's own 2 GB. `dmesg`
+      # is the host's side of the same story (an OOM kill logs there and
+      # nowhere else); `|| true` because a runner that denies dmesg must
+      # not turn this informational step red. `if: always()`: forensics
+      # must print on exactly the runs that failed.
+      - name: Worker forensics (#5909 — only non-empty if a worker died)
+        if: always()
+        run: |
+          if [ -s .reyn-worker-down.log ]; then
+            echo "::warning::#5909 an xdist worker went down — its exit code and last tests:"
+            cat .reyn-worker-down.log
+          else
+            echo "no worker went down"
+          fi
+          echo "--- per-worker peak RSS (MB) ---"
+          grep -H "peak_rss_mb=" .reyn-worker-trace/*.log 2>/dev/null || echo "(no worker traces)"
+          echo "--- host OOM kills (dmesg) ---"
+          (sudo dmesg -T 2>/dev/null || dmesg -T 2>/dev/null) | grep -iE "out of memory|killed process|oom" || echo "no OOM kill in dmesg (or dmesg unavailable)"
+          true
 
       # #4331: what a green run above does NOT say — the skip census (count
       # + reason breakdown) and the collection-error count, on the SAME
