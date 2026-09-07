@@ -2858,7 +2858,20 @@ class RouterLoop:
                 # inlines the JSON tool_call/result zip (P7). tool_calls[i] aligns
                 # with tool_results[i] (the #1406/#187 excluded-in-place row keeps its
                 # index). CodeBlock/RePresent never reach here (separate arms).
-                for _fb_msg in self._scheme.format_feedback(
+                # #5898: OFF the loop. ``feedback()`` (what every delegating
+                # scheme's format_feedback calls) canonicalises, renders and
+                # CAPS each result — the cap check is ``estimate_tokens`` over
+                # the whole body (tiktoken, measured 14 MB/s), then the
+                # budget advisor re-estimates the new turn; a 20 MB exec
+                # result is ~3 s of CPU that, on the loop, is 3 s during
+                # which no HTTP request (reyn:web) or keystroke (TUI) is
+                # served (#5894/#5898). Everything it touches is either pure,
+                # already run off-loop elsewhere (``events.emit`` from
+                # ``build_history``'s own to_thread), or queued for the loop
+                # (history rows, since #5896's persist_feedback; MediaStore
+                # writes, via ``DurabilityWorker.submit_threadsafe``).
+                for _fb_msg in await asyncio.to_thread(
+                    self._scheme.format_feedback,
                     ExecutionResult(
                         tool_results=tool_results,
                         tool_calls=tool_calls,
@@ -4530,7 +4543,9 @@ class RouterLoop:
             },
         )
         exec_res = await self._scheme.execute(interp, exec_ctx, ops=self)
-        return self._scheme.format_feedback(exec_res, ops=self)
+        # #5898: same off-loop rule as run_loop's tool-call arm — see the
+        # comment at that call site.
+        return await asyncio.to_thread(self._scheme.format_feedback, exec_res, ops=self)
 
     def _maybe_salvage_action_direct_call(
         self, name: str, args: dict,

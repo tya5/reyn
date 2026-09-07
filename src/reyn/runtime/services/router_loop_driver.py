@@ -550,8 +550,11 @@ class RouterLoopDriver:
         did — used only to estimate wire bytes, which this method no
         longer does at all).
         """
-        head, raw_middle, tail, _summary, _ = (
-            self._history_buffer.decompose_history_for_retry()
+        # #5898: off the loop — decompose re-serialises every turn and
+        # estimates its tokens (O(history bytes)), same class as
+        # build_history's own to_thread at :meth:`_run_with_shrink`.
+        head, raw_middle, tail, _summary, _ = await asyncio.to_thread(
+            self._history_buffer.decompose_history_for_retry,
         )
         _granularity = self._compaction.spill_granularity
         # #5364 §1.3 (staged order, unchanged): head entirely before mid
@@ -560,7 +563,13 @@ class RouterLoopDriver:
         # と tail をまとめない" means at THIS granularity: a batch is
         # scoped to one face's one tier, never spanning two faces).
         for _face in (head, raw_middle, tail):
-            _edits = self._spill_batch_within_face(
+            # #5898: off the loop — a spill batch runs the cap estimate
+            # (tiktoken over each candidate's whole body) plus its hash
+            # and the file write; the history append it makes goes
+            # through the same seams build_history's own to_thread
+            # already exercises from a worker thread.
+            _edits = await asyncio.to_thread(
+                self._spill_batch_within_face,
                 _face, chain_id=chain_id, granularity=_granularity,
                 # Pre-#5592 head/tail/mid-via-this-path convention: the
                 # candidate's own position within its face (unchanged —
@@ -804,8 +813,8 @@ class RouterLoopDriver:
             # fold produces — that ChatSummary's own field is structurally 0 on
             # this path, because wire dicts carry no `seq` (#5498/#5578). See
             # `_persist_recovery_fold`, which consumes it.
-            _head, _raw_middle, _tail, _, _seq_by_id = (
-                self._history_buffer.decompose_history_for_retry()
+            _head, _raw_middle, _tail, _, _seq_by_id = await asyncio.to_thread(
+                self._history_buffer.decompose_history_for_retry,  # #5898: off-loop
             )
             # #5678/#5686: RetryPayload.new_msg (compaction/engine.py) is a
             # required dict — the retry ladder reserves real budget for it

@@ -1791,7 +1791,17 @@ class MediaStore:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(do_write())
+            # #5898: a caller OFF the loop thread — ``RouterLoop.feedback``
+            # now runs inside ``asyncio.to_thread`` from ``run_loop`` — but
+            # with the chat turn's loop alive and this worker already bound
+            # to it (``flush`` binds on the barrier every turn takes before
+            # its first LLM call): hand the job to that loop, so the write
+            # keeps the worker's FIFO order, retry policy and
+            # ``durability_failed`` latch exactly as an on-loop submit
+            # would. Only a caller with NO bound loop at all (a script, a
+            # sync test) still writes inline here, as before.
+            if not self._worker.submit_threadsafe(do_write):
+                asyncio.run(do_write())
         else:
             self._worker.submit_nowait(do_write)
 
@@ -1807,7 +1817,13 @@ class MediaStore:
         already seen the ref in), the write behind that ref is guaranteed
         durable. Mirrors ``DurabilityWorker.flush``'s own contract exactly
         (this store just owns a dedicated worker instance — see
-        :meth:`__init__`)."""
+        :meth:`__init__`).
+
+        #5898: also BINDS the worker to this loop (idempotent) — so a
+        later ``save_tool_result`` from a worker thread (``RouterLoop.
+        feedback`` under ``to_thread``) has a loop to submit to; see
+        :meth:`_submit_write_or_inline`."""
+        self._worker.bind_to_running_loop()
         await self._worker.flush()
 
     async def aclose(self) -> None:

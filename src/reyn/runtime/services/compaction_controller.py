@@ -25,6 +25,7 @@ delegates via :meth:`force_compact_now` (P3).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
@@ -637,7 +638,11 @@ class CompactionController:
         # ever reflects what THIS batch actually contained — surfaced on
         # the audit trail so a capped-batch pass is distinguishable from
         # "there was genuinely nothing more to compact."
-        history, batch_truncated = self._history_from_disk(prev_cover)
+        # #5898: off the loop — reads up to a batch of history.jsonl, parses
+        # every line and (since #5896) hydrates each tool body from its
+        # file: O(history bytes) disk + CPU work that used to run on the
+        # loop for every compaction pass.
+        history, batch_truncated = await asyncio.to_thread(self._history_from_disk, prev_cover)
         # #5699 (owner real-machine incident): a role="system"/Disclosure.MODEL
         # entry has been admitted into the live WINDOW since #5678/#5688
         # (router_history_buffer.py's own _elide_candidate_turns and
@@ -686,7 +691,9 @@ class CompactionController:
             outcome = "compaction_input_gap_invariant_violated"
             self._events.emit("compaction_check", outcome=outcome)
             return ForceCompactResult(outcome=outcome)
-        measured = self._measure_and_select(
+        # #5898: off the loop — token estimates over every unprotected turn.
+        measured = await asyncio.to_thread(
+            self._measure_and_select,
             eligible_messages, prev_cover, selection=selection,
         )
         candidates = measured.candidates
@@ -1061,7 +1068,12 @@ class CompactionController:
                     _last_saw_byte_limit = (
                         getattr(_overflow_exc.__cause__, "status_code", None) == 413
                     )
-                    attempt_len = shrink_pool_after_overflow(
+                    # #5898: off the loop — the spill batch inside
+                    # (``spill_fn`` → ``_spill_batch_for_retry``) runs the
+                    # cap estimate over each candidate's whole body
+                    # (tiktoken), hashes it and writes its file.
+                    attempt_len = await asyncio.to_thread(
+                        shrink_pool_after_overflow,
                         pool, offered, attempt_len,
                         spill_fn=_spill_fn_adapted, saw_byte_limit=_last_saw_byte_limit,
                         spill_capability_present=spill_capability_present,
