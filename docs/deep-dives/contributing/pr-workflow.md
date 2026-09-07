@@ -320,7 +320,13 @@ These rules then keep multi-session work coherent:
    author believed the point closed; three instances in one day, across
    two sessions, one of them a full SHA typed from a short one). Never
    type a SHA — expand `$(gh pr view <N> --json headRefOid --jq
-   .headRefOid)` into the comment body, and list what is live with
+   .headRefOid)` into the comment body. **That read can lag your own push
+   by seconds** (measured 2026-09-07 while writing this section: a
+   `gh pr view` run immediately after `git push` returned the PRE-push
+   head), so when you have just pushed, compare it against `git rev-parse
+   HEAD` on the branch you pushed and use the local value if they differ —
+   an expansion is only as current as the API answering it. List what is
+   live with
    `gh pr view <N> --json comments --jq '.comments[] | select(.body|test("^(BLOCKING|BLOCKING-CLEARED|TESTS-READ)")) | .body|split("\n")[0]'`. The author reports the fix and asks the
    reviewer to confirm — the author does not tick the reviewer's own box,
    **and does not post the `BLOCKING-CLEARED` comment form either — same
