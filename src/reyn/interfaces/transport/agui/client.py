@@ -48,6 +48,7 @@ from reyn.interfaces.transport.agui.protocol import (
 )
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.control_outcome import ControlOutcome
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     BacklogBatch,
@@ -113,7 +114,7 @@ class AgUiTransport(ClientTransport):
     def __init__(
         self,
         sse_lines: "AsyncIterator[str]",
-        send: "Callable[[dict], Awaitable[dict | None]]",
+        send: "Callable[[dict], Awaitable[ControlOutcome | dict | None]]",
         *,
         agent_name: str = "",
         status_view: "RemoteStatusView | None" = None,
@@ -121,7 +122,26 @@ class AgUiTransport(ClientTransport):
         connected: bool = True,
     ) -> None:
         self._sse_lines = sse_lines
-        self._send = send
+        # #5907 ②: every control POST goes through ``_send``; the wrapper
+        # records the TYPED outcome (``ControlOutcome``) of the latest one
+        # and hands the call sites the same ``dict | None`` they always got
+        # — so no site changes, and ``last_control_outcome()`` lets the
+        # shared failure renderer say "refused" or "not delivered" instead
+        # of one line for both. An untyped sender (a test stub returning a
+        # dict / None) records a delivered outcome or nothing.
+        self._last_control_outcome: "ControlOutcome | None" = None
+
+        async def _recording_send(payload: dict) -> "dict | None":
+            self._last_control_outcome = None
+            result = await send(payload)
+            if isinstance(result, ControlOutcome):
+                self._last_control_outcome = result
+                return result.payload if result else None
+            if isinstance(result, dict):
+                self._last_control_outcome = ControlOutcome.delivered(result)
+            return result
+
+        self._send = _recording_send
         # #5894 (architect ruling ①-3): at most one cancel_inflight POST in
         # flight per connection — the SAME coalesce shape endpoint.py's
         # ``_status_ping_pending`` uses. Once the TUI stops awaiting the
@@ -603,6 +623,9 @@ class AgUiTransport(ClientTransport):
 
     def has_session(self) -> bool:
         return self._connected
+
+    def last_control_outcome(self) -> "ControlOutcome | None":
+        return self._last_control_outcome
 
     def attach_failed(self) -> bool:
         # #5096 review finding (lead-coder): EXPLICITLY implemented, not
