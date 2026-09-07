@@ -63,6 +63,29 @@ See ``tests/scripts/test_detect_5265_missing_required_context.py`` for
 the fixture-driven 4/4 (captured from these same 4 real heads' `gh api`
 output, not synthesized).
 
+## False positive #1 (2026-09-07, production, lead-coder's own
+independent reproduction) -- draft PRs
+
+The FIRST live run of the deployed script (BOOTSTRAP.md §5, an actually-
+BLOCKED-unchanged PR) fired RED on `#5928`'s draft-time head
+(`89494b66f6c1...`). The classification was factually accurate for that
+head's shape (the pytest family's newest suite really was the
+unexpanded template) -- but the underlying CAUSE was different from
+#5265: `#5928` was a DRAFT PR, and draft PRs intentionally never run CI
+at all (`test.yml`'s own `draft == false` guard, #4239's own ruling: "a
+draft PR is 'not yet asking for CI'"). An absent required context on a
+draft is the EXPECTED, visible state, not #5265's silent permanent
+block.
+
+Fix: a `--pr` invocation now fetches `isDraft` and short-circuits to OK
+without running the classifier at all when true -- the underlying
+classification stays exactly as accurate as before (a draft head really
+does have the unexpanded-template shape; that fact does not change), the
+CAUSE is what determines whether it is #5265's failure mode. A
+`--head-sha` invocation cannot check draft status (no PR context) --
+a RED verdict from that path now carries an explicit caveat rather than
+asserting #5265 with full confidence.
+
 ⚠️ The OTHER #5265 mechanism (`startup_failure`/`jobs==0`, no workflow
 run at all) has NOT been re-verified against a real head by this PR --
 lead-coder does not have a saved head sha for it (that branch's own
@@ -163,19 +186,49 @@ def find_permanently_blocked_required_contexts(
     """The union #5265's 2026-09-07 comment asks for: every required
     context this head will never satisfy under its own name, by either
     mechanism (①: never reported at all; ②: matrix family reversed onto
-    an unexpanded newer run)."""
+    an unexpanded newer run). This is the CLASSIFICATION only -- whether
+    that classification means "#5265" depends on the PR's draft status,
+    which this function has no access to; see ``evaluate``."""
     return sorted(
         set(find_never_reported(required, status_contexts, check_runs))
         | set(find_matrix_family_blocked(required, check_runs)),
     )
 
 
-def format_notification(pr_number: "str | int", head_sha: str, blocked_names: "list[str]") -> str:
+def evaluate(
+    required: "list[str]", status_contexts: "list[dict]", check_runs: "list[dict]",
+    *, is_draft: "bool | None",
+) -> "list[str]":
+    """The verdict this script actually acts on: ``find_permanently_
+    blocked_required_contexts``'s own classification, EXCEPT a known
+    draft PR (``is_draft=True``) never blocks -- a draft PR intentionally
+    never runs CI (``test.yml``'s own ``draft == false`` guard, #4239's
+    own ruling) so an absent required context there is the EXPECTED,
+    visible state, not #5265's silent permanent block (2026-09-07
+    production false positive, `#5928` -- lead-coder's own independent
+    reproduction: the classification was factually accurate, the CAUSE
+    was different). ``is_draft=None`` (the ``--head-sha`` path, which has
+    no PR context to check) is evaluated the same as a real PR for THIS
+    function -- the caller is responsible for attaching an indeterminate
+    caveat to a RED verdict in that case (see ``format_notification``'s
+    own ``draft_caveat``)."""
+    if is_draft:
+        return []
+    return find_permanently_blocked_required_contexts(required, status_contexts, check_runs)
+
+
+def format_notification(
+    pr_number: "str | int", head_sha: str, blocked_names: "list[str]", *, draft_caveat: bool = False,
+) -> str:
     """Names the PR/head AND the specific required-context names stuck --
     a reader must not have to re-run the query themselves to know which
-    of the 7 required contexts are the problem."""
+    of the 7 required contexts are the problem. ``draft_caveat`` (the
+    ``--head-sha`` path, no PR context available) makes explicit that
+    draft status could not be ruled out -- #5928's own false positive
+    shape, reproduced with full confidence and no caveat, is what this
+    flag exists to never repeat."""
     names_text = ", ".join(blocked_names)
-    return (
+    text = (
         f"RED #5265 -- PR #{pr_number} (head {head_sha[:12]}) is silently "
         f"BLOCKED: required context(s) will never report under their own "
         f"name: {names_text}. Not visible as red anywhere on the PR (`gh "
@@ -184,6 +237,15 @@ def format_notification(pr_number: "str | int", head_sha: str, blocked_names: "l
         "WORKFLOW JOB rows, not the required CONTEXT). Detection is "
         "read-only; do not use `gh api -X PUT .../merge` to check this."
     )
+    if draft_caveat:
+        text += (
+            " ⚠️ Draft status could not be checked (no --pr given, so "
+            "no PR context) -- a draft PR intentionally skips CI "
+            "(test.yml's draft==false guard, #4239) and would show this "
+            "exact shape as a false positive (#5928, 2026-09-07). "
+            "Re-run with `--pr <N>` if this head belongs to a known PR."
+        )
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +305,13 @@ def _gh_json(args: "list[str]") -> "list[dict]":
     return _parse_paginated_json(result.stdout)
 
 
-def _fetch_head_sha_for_pr(pr_number: str) -> str:
-    pages = _gh_json(["pr", "view", pr_number, "--repo", _REPO, "--json", "headRefOid"])
-    return pages[0]["headRefOid"]
+def _fetch_pr_info(pr_number: str) -> "tuple[str, bool]":
+    """head sha AND draft status in one call -- #5928's own false
+    positive (2026-09-07) was exactly the gap this closes: a `--pr`
+    invocation used to resolve only the head sha and never checked
+    whether the PR was a draft at all."""
+    pages = _gh_json(["pr", "view", pr_number, "--repo", _REPO, "--json", "headRefOid,isDraft"])
+    return pages[0]["headRefOid"], bool(pages[0]["isDraft"])
 
 
 def _fetch_required_contexts() -> "list[str]":
@@ -281,10 +347,11 @@ def main(argv: "list[str] | None" = None) -> int:
     args = parser.parse_args(argv)
 
     pr_label: "str | int" = "?"
+    is_draft: "bool | None" = None
     try:
         if args.pr is not None:
             pr_label = args.pr
-            head_sha = _fetch_head_sha_for_pr(args.pr)
+            head_sha, is_draft = _fetch_pr_info(args.pr)
         else:
             head_sha = args.head_sha
         required = _fetch_required_contexts()
@@ -294,9 +361,17 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"gh call failed: {exc.stderr}", file=sys.stderr)
         return 2
 
-    blocked = find_permanently_blocked_required_contexts(required, status_contexts, check_runs)
+    if is_draft:
+        print(
+            f"OK -- PR #{pr_label} (head {head_sha[:12]}) is a draft; draft PRs "
+            "intentionally skip CI (test.yml's draft==false guard, #4239) -- "
+            "required-context absence here is the EXPECTED state, not #5265.",
+        )
+        return 0
+
+    blocked = evaluate(required, status_contexts, check_runs, is_draft=is_draft)
     if blocked:
-        print(format_notification(pr_label, head_sha, blocked))
+        print(format_notification(pr_label, head_sha, blocked, draft_caveat=(args.pr is None)))
         return 1
 
     print(f"OK -- head {head_sha[:12]} has a report (or a live path to one) for all {len(required)} required contexts.")

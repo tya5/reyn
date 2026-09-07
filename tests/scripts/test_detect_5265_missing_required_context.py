@@ -19,6 +19,15 @@ Two rules, each with its own accept/deny pair:
     ANY unexpanded run anywhere in its history would still pass every
     other test here.
 
+A third rule, added after this script's own first production run
+(2026-09-07, BOOTSTRAP.md §5's first live invocation on an actually-
+BLOCKED-unchanged PR): a draft PR intentionally never runs CI at all
+(``test.yml``'s own ``draft == false`` guard, #4239) -- the FIRST live
+run fired RED on `#5928`'s draft-time head, factually accurately (the
+classification tests below prove this), but a draft's absent required
+context is the EXPECTED state, not #5265's failure. ``evaluate`` layers
+that check on top of the classification without changing it.
+
 The 4 fixtures below (``PYTEST_POSITIVE``/``PYTEST_NEGATIVE_*``) are
 ``check_runs`` arrays captured verbatim via ``gh api
 repos/tya5/reyn/commits/<sha>/check-runs?per_page=100`` against the 4
@@ -39,6 +48,7 @@ detector reads suite recency, not mere presence.
 from __future__ import annotations
 
 from scripts.detect_5265_missing_required_context import (
+    evaluate,
     find_matrix_family_blocked,
     find_never_reported,
     find_permanently_blocked_required_contexts,
@@ -120,6 +130,26 @@ PYTEST_NEGATIVE_LATER_UNRELATED_WORKFLOWS = [
     {"name": "sandbox boundary is load-method independent (ld-linux + mmap-load,", "suite": 92353647708},
     {"name": "file-depth-reference gate", "suite": 92353647590},
     {"name": "TESTS-READ note names the tree it read", "suite": 92353647380},
+]
+
+# PR #5928, DRAFT-TIME shape (head 89494b66f6c1..., 2026-09-07) -- the
+# script's own FIRST production false positive (BOOTSTRAP.md §5's real
+# first live run, lead-coder's own independent reproduction). Captured
+# from `gh api .../check-runs` while the PR was still a draft: only the
+# unexpanded-template suite exists for the pytest family -- a REAL
+# matrix suite never ran at all (draft PRs skip CI entirely, test.yml's
+# draft==false guard, #4239). The CLASSIFICATION is correctly RED here
+# (there genuinely is no non-template pytest report on this head) --
+# what's wrong is treating that classification as #5265 without
+# checking draft status first; see the ``evaluate`` tests below.
+PYTEST_DRAFT_TIME_UNEXPANDED_ONLY = [
+    {"name": "mypy (ratchet)", "suite": 92380066549},
+    {"name": "docs build (strict)", "suite": 92380066549},
+    {"name": "pytest (Python ${{ matrix.python-version }})", "suite": 92380066549},
+    {"name": "test-tier audit", "suite": 92380066549},
+    {"name": "ruff", "suite": 92380066549},
+    {"name": "TESTS-READ note names the tree it read", "suite": 92380066621},
+    {"name": "BLOCKING PR carries a re-read note naming its tree", "suite": 92380066540},
 ]
 
 
@@ -254,3 +284,70 @@ def test_notification_names_the_pr_the_head_and_the_specific_blocked_names():
     assert "0ee007268fe1" in text
     assert "pytest (Python 3.11)" in text
     assert "read-only" in text.lower()
+
+
+def test_notification_carries_no_draft_caveat_by_default():
+    """Tier 1: the ``--pr`` path (draft status IS known, and already
+    handled before this function is even reached) must not print the
+    indeterminate caveat -- it would be actively misleading noise on a
+    verdict that already accounted for draft status."""
+    text = format_notification(5912, "0ee007268fe1bfb366f40b3d598cd74525d5d937", ["pytest (Python 3.11)"])
+    assert "draft" not in text.lower()
+
+
+def test_notification_carries_a_draft_caveat_when_requested():
+    """Tier 1: the ``--head-sha`` path (no PR context, draft status
+    UNKNOWN) must attach the caveat -- #5928's own false positive was
+    reported with full, unqualified confidence; this is what stops that
+    from repeating on the head-only path, which has no way to check."""
+    text = format_notification(
+        "?", "89494b66f6c1bd0decf1bd2d2d00648eb8848dfb", ["pytest (Python 3.11)"], draft_caveat=True,
+    )
+    assert "draft" in text.lower()
+    assert "--pr" in text
+
+
+# ── evaluate -- the draft-aware verdict (#5928, 2026-09-07 production
+# false positive) ──
+
+
+def test_the_draft_time_5928_head_classification_is_correctly_red():
+    """Tier 1: the CLASSIFICATION itself (no draft awareness) is
+    factually accurate for #5928's real draft-time shape -- there
+    genuinely was no non-template pytest report on that head yet. This
+    is lead-coder's own finding, verbatim: "判定は事実に忠実ですが、偽陽性です"
+    -- the bug is not in this function, it is in treating this
+    classification as #5265 without checking draft status (the next
+    test)."""
+    blocked = find_permanently_blocked_required_contexts(REQUIRED, STATUS_CONTEXTS, PYTEST_DRAFT_TIME_UNEXPANDED_ONLY)
+    assert blocked == ["pytest (Python 3.11)", "pytest (Python 3.12)"]
+
+
+def test_evaluate_suppresses_a_known_draft_even_though_the_shape_is_red():
+    """Tier 1: THE fix for #5928's production false positive --
+    ``evaluate(..., is_draft=True)`` must return empty even though the
+    underlying classification (proven by the test above) is RED. Without
+    this test, a regression that dropped the draft check entirely would
+    still pass every other test in this file (none of them exercise
+    ``evaluate`` with a draft head)."""
+    blocked = evaluate(REQUIRED, STATUS_CONTEXTS, PYTEST_DRAFT_TIME_UNEXPANDED_ONLY, is_draft=True)
+    assert blocked == []
+
+
+def test_evaluate_still_flags_a_known_non_draft_with_the_same_shape():
+    """Tier 1: deny sibling -- ``is_draft=False`` (a real, ready PR
+    proven to have this exact blocked shape) must NOT be suppressed.
+    Without this test, ``evaluate`` reduced to "always return []" would
+    still pass the suppression test above."""
+    blocked = evaluate(REQUIRED, STATUS_CONTEXTS, PYTEST_DRAFT_TIME_UNEXPANDED_ONLY, is_draft=False)
+    assert blocked == ["pytest (Python 3.11)", "pytest (Python 3.12)"]
+
+
+def test_evaluate_with_unknown_draft_status_still_flags_the_real_positive():
+    """Tier 1: ``is_draft=None`` (the ``--head-sha`` path, no PR context)
+    must behave exactly like ``is_draft=False`` for the VERDICT itself
+    (still flags a genuinely blocked head) -- the caller attaches the
+    indeterminate caveat separately (``format_notification``'s own
+    ``draft_caveat``), never by silently suppressing here."""
+    blocked = evaluate(REQUIRED, STATUS_CONTEXTS, PYTEST_POSITIVE, is_draft=None)
+    assert blocked == ["pytest (Python 3.11)", "pytest (Python 3.12)"]
