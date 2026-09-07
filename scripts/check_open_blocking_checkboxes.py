@@ -65,7 +65,7 @@ names `BLOCKING`/`BLOCKING-CLEARED` but does not parse as either marker
 regex is RED — a THIRD failure mode neither A nor B could see. Real
 incident (lead-coder, 2026-08-29): a BLOCKING comment's first line read
 ``**BLOCKING (head `9862413f0`)**`` — the backtick around the SHA broke
-`_MARKER_BLOCKING`'s match, and the gate said nothing at all for 12
+`_markers.MARKER_BLOCKING`'s match, and the gate said nothing at all for 12
 minutes; the PR only stayed red by the accident of an unrelated
 BLOCKING from a different reviewer. Before #5522, "no marker on this
 comment" and "a marker written wrong" were the same silence — condition
@@ -75,7 +75,7 @@ mid-body mention, including this docstring's OWN repeated use of the
 word, must never trip it).
 
 Same PR (#5522) also strips backtick/`*` decoration from a line before
-either marker regex runs (`_undecorated`, and — #5919 stage 2 — its
+either marker regex runs (`_markers.undecorated`, and — #5919 stage 2 — its
 role-prefix-preserving sibling `_undecorated_for_marker_match`) — the
 root cause of the specific incident above, not just its silence. Aligns
 this gate with `check_tests_read_names_its_tree.py`'s own
@@ -85,13 +85,14 @@ is cheaper than asking every writer never to).
 
 ## #5919 stage 2 — anchoring the two DECIDING markers, never the WATCHER
 
-The marker regexes above (`_MARKER_BLOCKING`/`_MARKER_CLEARED`) used to
+The marker regexes above (`_markers.MARKER_BLOCKING`/`_markers.MARKER_CLEARED`) used to
 be unanchored `\b...` searches over an undecorated first line — #5919's
 census found this let 4 ordinary-prose shapes (a negating sentence, a
 backtick span, a `>` quote, mid-sentence mention) satisfy them exactly
 as `check_tests_read_names_its_tree.py`'s pre-#5919-stage-1 regex could.
 Both are now built with `scripts/_markers.role_prefixed_marker(...)`,
-column-0-anchored exactly like that gate's own `_NOTE_MARKER`.
+column-0-anchored exactly like `_markers.NOTE_MARKER` (#5919 stage 3:
+both now live there, not one per gate).
 
 `_NEAR_MISS_BARE_WORD` (condition C) is deliberately NOT anchored and
 NOT routed through `_markers.py` — see its own docstring for why
@@ -182,25 +183,26 @@ _CHECKED_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[xX]\][ \t]*(?:\*\*[ \t]*)*�
 #: own IGNORECASE default) for the SAME reason the pre-#5919 regex already
 #: gave: prose is far more likely to write "blocking" lowercase than a
 #: deliberate marker is.
-_MARKER_BLOCKING = _markers.role_prefixed_marker(
-    r"BLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
-)
-_MARKER_CLEARED = _markers.role_prefixed_marker(
-    r"BLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
-)
+#: #5919 stage 3: moved to `_markers.py` (`MARKER_BLOCKING`/
+#: `MARKER_CLEARED`) — this gate's own logic below reads THOSE names
+#: directly (`_markers.MARKER_BLOCKING`), no local alias, so
+#: `check_blocking_has_reread_note.py` (or any future consumer) has
+#: nothing private here left to reach into; see `_markers.py`'s own
+#: docstring for why sharing the compiled instance, not reconstructing
+#: it per consumer, is what keeps every consumer from drifting apart.
 
 #: #5522 — a bare word check for NEAR-MISS DETECTION (condition C).
 #:
 #: 🔴 #5919 stage 2 (architect ruling, explicit): deliberately NOT routed
 #: through `_markers.role_prefixed_marker` and deliberately NOT anchored
 #: to column 0 or to the marker's own "(head <sha>)" shape, unlike
-#: `_MARKER_BLOCKING`/`_MARKER_CLEARED` directly above. Those two DECIDE
+#: `_markers.MARKER_BLOCKING`/`_markers.MARKER_CLEARED` directly above. Those two DECIDE
 #: ("does a real marker exist here?" — YES must be earned, so they are
 #: anchored against ordinary prose producing a false YES). This one
 #: WATCHES FOR WHAT THE DECIDERS MISSED ("did a marker attempt land here
 #: at all, even a malformed one?" — a NO-side safety net, so anchoring it
 #: would remove the exact cases it exists to catch: a decorated/malformed
-#: marker that `_MARKER_BLOCKING`/`_MARKER_CLEARED` correctly reject).
+#: marker that `_markers.MARKER_BLOCKING`/`_markers.MARKER_CLEARED` correctly reject).
 #: Anchoring this one would make it redundant with — and therefore
 #: silently subsumed by — the deciders it is supposed to be watching,
 #: which is exactly the "one incident, no signal for 12 minutes" failure
@@ -211,7 +213,7 @@ _MARKER_CLEARED = _markers.role_prefixed_marker(
 #: Matches inside "BLOCKING-CLEARED" too (the `-` after "BLOCKING" is a
 #: non-word char, satisfying `\b` on both sides of the bare word) —
 #: deliberate, not an oversight: a decorated BLOCKING-CLEARED that fails
-#: `_MARKER_CLEARED` must ALSO be caught, and this one check does both
+#: `_markers.MARKER_CLEARED` must ALSO be caught, and this one check does both
 #: without a second pattern. Case-sensitive, matching the deciding
 #: markers' own IGNORECASE-dropped posture.
 _NEAR_MISS_BARE_WORD = re.compile(r"\bBLOCKING\b")
@@ -220,7 +222,7 @@ _NEAR_MISS_BARE_WORD = re.compile(r"\bBLOCKING\b")
 #: backtick code-spans and `**`/`*` emphasis — is stripped from a line
 #: before the near-miss check (`_NEAR_MISS_BARE_WORD`) runs against it, and
 #: from whatever follows a detected role prefix before either DECIDING
-#: marker (`_MARKER_BLOCKING`/`_MARKER_CLEARED`) runs (see
+#: marker (`_markers.MARKER_BLOCKING`/`_markers.MARKER_CLEARED`) runs (see
 #: `_undecorated_for_marker_match` below — the role prefix's OWN `**...**`
 #: syntax must survive, or #5919's new anchoring could never match a
 #: decorated marker that follows a real role prefix). "Align to the
@@ -230,16 +232,14 @@ _NEAR_MISS_BARE_WORD = re.compile(r"\bBLOCKING\b")
 #: Neither a SHA nor the BLOCKING/BLOCKING-CLEARED keywords themselves
 #: ever contain a backtick or asterisk, so stripping cannot turn a
 #: non-marker line into a false-positive match.
-_DECORATION = re.compile(r"[`*]")
-
-
-def _undecorated(line: str) -> str:
-    return _DECORATION.sub("", line)
+#:
+#: #5919 stage 3: moved to `_markers.py` (`DECORATION`/`undecorated`) —
+#: this gate's own logic reads those names directly, no local alias.
 
 
 def _undecorated_for_marker_match(line: str) -> str:
-    """*line*, with :data:`_DECORATION` stripped EVERYWHERE EXCEPT a
-    leading CLAUDE.md role prefix, if one opens the line.
+    """*line*, with :data:`_markers.DECORATION` stripped EVERYWHERE
+    EXCEPT a leading CLAUDE.md role prefix, if one opens the line.
 
     #5919 stage 2: delegates to `_markers.undecorated_after_role_prefix`
     (promoted there, not left as a private helper here, once lead-coder's
@@ -251,7 +251,7 @@ def _undecorated_for_marker_match(line: str) -> str:
     own `**[...]** — ` syntax right along with any decoration AROUND the
     marker, so `_markers.role_prefixed_marker`'s anchor would never match
     a decorated, role-prefixed comment post-strip."""
-    return _markers.undecorated_after_role_prefix(line, _DECORATION)
+    return _markers.undecorated_after_role_prefix(line, _markers.DECORATION)
 
 
 def _normalize(text: str) -> str:
@@ -259,23 +259,6 @@ def _normalize(text: str) -> str:
     folding only" rule condition B (and now A) both use; never case-folded
     or punctuation-stripped, so a quote must still be a real quote."""
     return re.sub(r"\s+", " ", text).strip()
-
-
-def _first_nonempty_line(text: str) -> str:
-    """The comment's first non-empty line — the SAME scope both the
-    marker regexes and #5522's near-miss check read (architect ruling:
-    "marker規則が既に読んでいる面と同じ面に限る" — near-miss detection
-    must never widen the surface a formal marker match already uses,
-    or it would fire on prose anywhere the marker regex is not also
-    looking). A literal ``text.split("\\n", 1)[0]`` (this function's
-    pre-#5522 shape) would silently miss a comment that opens with a
-    blank line before its marker — a real gap this rename also closes,
-    not just the near-miss feature's own scoping."""
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped:
-            return stripped
-    return ""
 
 
 def _identifying_line(comment_body: str) -> str:
@@ -313,8 +296,8 @@ def _cleared_after(identifying_text: str, candidate_bodies: "list[str]", head: s
     if not identifying_text:
         return False
     for candidate_body in candidate_bodies:
-        first_line = _undecorated_for_marker_match(_first_nonempty_line(candidate_body))
-        cleared_match = _MARKER_CLEARED.match(first_line)
+        first_line = _undecorated_for_marker_match(_markers.first_nonempty_line(candidate_body))
+        cleared_match = _markers.MARKER_CLEARED.match(first_line)
         if not cleared_match:
             continue
         cleared_sha = cleared_match.group(1)
@@ -377,8 +360,8 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # an unresolved point with no deliberate action at all, worse than
     # the deletion bypass #5311 measured.
     for i, blocking_body in enumerate(comment_bodies):
-        blocking_first_line = _undecorated_for_marker_match(_first_nonempty_line(blocking_body))
-        blocking_match = _MARKER_BLOCKING.match(blocking_first_line)
+        blocking_first_line = _undecorated_for_marker_match(_markers.first_nonempty_line(blocking_body))
+        blocking_match = _markers.MARKER_BLOCKING.match(blocking_first_line)
         if not blocking_match:
             continue
         identifying = _identifying_line(blocking_body)
@@ -409,14 +392,14 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # marker). A near-miss is real only when the word appears on the
     # SAME line a marker would have to be on to be read at all.
     for comment_body in comment_bodies:
-        first_line = _first_nonempty_line(comment_body)
+        first_line = _markers.first_nonempty_line(comment_body)
         if not first_line:
             continue
-        undecorated_first_line = _undecorated(first_line)
+        undecorated_first_line = _markers.undecorated(first_line)
         if not _NEAR_MISS_BARE_WORD.search(undecorated_first_line):
             continue  # no BLOCKING/BLOCKING-CLEARED word on this line at all
         marker_line = _undecorated_for_marker_match(first_line)
-        if _MARKER_BLOCKING.match(marker_line) or _MARKER_CLEARED.match(marker_line):
+        if _markers.MARKER_BLOCKING.match(marker_line) or _markers.MARKER_CLEARED.match(marker_line):
             continue  # a real marker, already handled by condition A above
         findings.append(
             "RED (near-miss) — a comment's first line names BLOCKING/"

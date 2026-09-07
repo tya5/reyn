@@ -52,16 +52,23 @@ marker, so a `tests/`-touching PR still clears both gates with ONE
 `TESTS-READ` comment, while a `src`-only PR can post the accurate
 `RE-READ` one instead of a claim it cannot back up.
 
-`check_tests_read_names_its_tree.py` and `check_open_blocking_checkboxes.py`
-are loaded via ``importlib.util.spec_from_file_location`` (mirroring
-`tests/scripts/test_check_tests_read_names_its_tree_5039.py`'s own
-established technique for reaching a `scripts/`-local module — this
-directory has no `__init__.py`, so a package import is not available)
-and their existing functions/regexes are called directly — the marker
-shape, the SHA-membership filter (`find_note_shas`'s own false-friend
-guard), and the "names the CURRENT head, not any past one" existential
-all come from there unchanged, so a future fix to either stays in sync
-with both gates automatically instead of drifting.
+`check_tests_read_names_its_tree.py` (for its own DECISION functions,
+`find_note_shas`'s false-friend guard and `note_names_head`'s "names the
+CURRENT head, not any past one" existential) and `_markers.py` (for
+every RECOGNITION primitive both gates need — the BLOCKING/CLEARED and
+TESTS-READ marker shapes, decoration-stripping, first-non-empty-line
+isolation) are loaded via ``importlib.util.spec_from_file_location``
+(mirroring `tests/scripts/test_check_tests_read_names_its_tree_5039.py`'s
+own established technique for reaching a `scripts/`-local module — this
+directory has no `__init__.py`, so a package import is not available).
+#5919 stage 3 (architect's boundary ruling): a name read across module
+boundaries is either recognition (`_markers.py`, this gate reads it
+DIRECTLY, never through the module that also happens to use it) or
+decision (the owning module's own PUBLIC name — never private, which is
+the exact shape that broke silently between #5919 stages 2 and 3, see
+`_has_blocking_comment`'s own docstring). `check_open_blocking_
+checkboxes.py` is no longer loaded here at all: everything this gate
+needed from it was recognition, and has moved to `_markers.py`.
 
 ## Report-only (lead-coder's own scoping, #5453)
 
@@ -104,11 +111,10 @@ def _load(module_name: str, filename: str):
 
 
 _tests_read = _load("_check_blocking_reread_tests_read", "check_tests_read_names_its_tree.py")
-_blocking = _load("_check_blocking_reread_blocking", "check_open_blocking_checkboxes.py")
 _markers = _load("_check_blocking_reread_markers", "_markers.py")
 
 #: architect's non-blocking recommendation on #5453 (quoted verbatim below,
-#: `evaluate`'s docstring) — reusing ONLY `_tests_read._NOTE_MARKER`
+#: `evaluate`'s docstring) — reusing ONLY `_markers.NOTE_MARKER`
 #: (`TESTS-READ`/`TESTS-READY`) would make a `src`-only PR's re-read
 #: comment claim "read a test that isn't in this diff at all". `RE-READ
 #: (head <sha>)` is the honest form for that case; either marker satisfies
@@ -116,10 +122,14 @@ _markers = _load("_check_blocking_reread_markers", "_markers.py")
 #: `TESTS-READ` for house rule 8) still clears both gates with ONE
 #: comment, while a `src`-only PR can post the accurate one.
 #:
-#: #5919: like `_tests_read._NOTE_MARKER`, now anchored to the CLAUDE.md
+#: #5919: like `_markers.NOTE_MARKER`, now anchored to the CLAUDE.md
 #: rule-2 role prefix via `_markers.role_prefixed_marker` — a bare
 #: `.search()` used to let a line DENYING a re-read ("No RE-READ (head
 #: start) needed here, this is a docs-only typo fix.") read as one.
+#: Unlike TESTS-READ/BLOCKING/CLEARED, RE-READ is genuinely OWNED by this
+#: gate alone — no other consumer means it — so it stays a private,
+#: locally-built instance rather than moving to `_markers.py` (see that
+#: module's own docstring for the recognition-vs-vocabulary boundary).
 _RE_READ_MARKER = _markers.role_prefixed_marker(r"RE-READ\s*\(\s*head\s")
 
 
@@ -129,41 +139,50 @@ def _is_reread_note(first_line: str) -> bool:
     `tests/`-touching PR's existing note keeps satisfying this gate too),
     or this gate's own `RE-READ (head <sha>)` (architect's #5453
     recommendation, for a PR where "TESTS-READ" would misstate what was
-    actually read)."""
+    actually read).
+
+    #5919 stage 3: reads `_markers.NOTE_MARKER` directly — NOT
+    `_tests_read._NOTE_MARKER` (the private-borrow shape this whole
+    issue exists to close) and not even `_tests_read.NOTE_MARKER` (that
+    module no longer defines its own copy at all; it too now reads
+    `_markers.NOTE_MARKER`, so there is nothing left to indirect
+    through)."""
     return bool(
-        _tests_read._NOTE_MARKER.search(first_line) or _RE_READ_MARKER.search(first_line)
+        _markers.NOTE_MARKER.search(first_line) or _RE_READ_MARKER.search(first_line)
     )
 
 
 def _has_blocking_comment(comment_bodies: "list[str]") -> bool:
     """True iff ANY comment's first non-empty line matches the `BLOCKING
-    (head <sha>)` shape (reused from `check_open_blocking_checkboxes.py`
-    — the same anchored, role-prefix-aware marker #5919 stage 2 built,
-    the same form check that excludes prose merely discussing the word,
-    #5318's own false-positive fix).
+    (head <sha>)` shape (reused from `_markers.py` — the same anchored,
+    role-prefix-aware marker #5919 stage 2 built and stage 3 promoted to
+    a shared public instance, the same form check that excludes prose
+    merely discussing the word, #5318's own false-positive fix).
 
-    #5522/#5919: reads `_blocking._first_nonempty_line`/`_blocking.
-    _MARKER_BLOCKING`/`_blocking._DECORATION`, and strips decoration via
-    `_markers.undecorated_after_role_prefix` (not `_blocking._undecorated`
-    — a blanket, role-prefix-blind strip) — this gate shares the EXACT
-    same real incidents fixed one level up, TWICE now: #5522's original
-    (a BLOCKING comment whose SHA was backtick-wrapped would make the
-    marker not match here EITHER, so THIS gate would silently conclude
-    "no BLOCKING comment on this PR" and skip its own TESTS-READ/RE-READ
-    requirement entirely), and #5919 stage 2's own (once
-    `_MARKER_BLOCKING` became role-prefix-anchored, a blanket strip would
+    #5522/#5919: reads `_markers.first_nonempty_line`/`_markers.
+    MARKER_BLOCKING`/`_markers.DECORATION` directly — NOT
+    `_blocking._first_nonempty_line`/`_blocking._MARKER_BLOCKING`/
+    `_blocking._DECORATION` (the private-borrow shape that broke silently
+    between #5919 stages 2 and 3, when `check_open_blocking_checkboxes.
+    py` renamed `_BLOCKING_MARKER` to `_MARKER_BLOCKING` and this gate's
+    own borrow of the old name went stale, unnoticed by a scoped test run
+    because the break sat outside stage 2's own diff). This gate shares
+    the EXACT same real incidents fixed one level up, TWICE now: #5522's
+    original (a BLOCKING comment whose SHA was backtick-wrapped would
+    make the marker not match here EITHER, so THIS gate would silently
+    conclude "no BLOCKING comment on this PR" and skip its own
+    TESTS-READ/RE-READ requirement entirely), and #5919 stage 2's own
+    (once the marker became role-prefix-anchored, a blanket strip would
     erase a REAL role prefix's own `**[...]** — ` literal right along
     with any decoration around the marker, breaking every role-prefixed
     BLOCKING comment — which is every real one in this repo, CLAUDE.md
-    rule 2). Reusing `check_open_blocking_checkboxes.py`'s own marker
-    regex and decoration pattern (rather than a second copy) means a
-    future change to either stays in sync with both gates automatically,
-    the same non-drift property this module's docstring already claims
-    for `_tests_read`."""
+    rule 2). Reusing the SAME shared instance (rather than a second copy)
+    means a future change to it stays in sync with every consumer
+    automatically."""
     return any(
-        _blocking._MARKER_BLOCKING.search(
+        _markers.MARKER_BLOCKING.search(
             _markers.undecorated_after_role_prefix(
-                _blocking._first_nonempty_line(body), _blocking._DECORATION,
+                _markers.first_nonempty_line(body), _markers.DECORATION,
             ),
         )
         for body in comment_bodies
@@ -186,9 +205,9 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         return 0, ["OK — this PR carries no BLOCKING comment; #5453 does not apply."]
 
     notes = [
-        _tests_read._first_line(body)
+        _markers.first_nonempty_line(body)
         for body in comment_bodies
-        if _is_reread_note(_tests_read._first_line(body))
+        if _is_reread_note(_markers.first_nonempty_line(body))
     ]
     if not notes:
         return 1, [
@@ -226,7 +245,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         if not shas:
             continue
         resolved_count += 1
-        if _tests_read._note_names_head(note, head, oids):
+        if _tests_read.note_names_head(note, head, oids):
             return 0, [f"OK — a re-read note names the current head {head}."]
         stale.append((note, shas))
 

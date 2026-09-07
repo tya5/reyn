@@ -242,3 +242,124 @@ def test_a_quoted_re_read_marker_is_not_a_claim():
     ))
     assert code == 1
     assert "no TESTS-READ- or RE-READ-shaped" in "\n".join(lines)
+
+
+# ── #5919 stage 3: borrow consolidation acceptance ──────────────────────────
+
+
+def test_no_private_attribute_is_read_off_tests_read_or_the_old_blocking_module():
+    """Tier 1: LOAD-BEARING acceptance (architect + lead-coder, #5919 stage
+    3) — the exact shape that broke silently between stages 2 and 3 (this
+    gate's own borrow of `_blocking._BLOCKING_MARKER` going stale the
+    moment that name was renamed to `_MARKER_BLOCKING`, unnoticed by a
+    scoped test run because the break sat outside the renaming PR's own
+    diff). AST-walks the REAL source on disk (not the loaded module's
+    ``__dict__``, which cannot tell "borrowed a private name" from "never
+    imported it at all") for any ``Attribute`` access whose base is
+    ``_tests_read`` and whose attribute name starts with ``_`` — the
+    module no longer imports ``check_open_blocking_checkboxes.py`` as
+    ``_blocking`` at all, so THAT borrow class is structurally
+    unreachable (a NameError, not merely absent today)."""
+    import ast
+
+    tree = ast.parse(
+        (REPO_ROOT / "scripts" / "check_blocking_has_reread_note.py").read_text(encoding="utf-8"),
+    )
+    offenders = [
+        f"_tests_read.{node.attr}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "_tests_read"
+        and node.attr.startswith("_")
+    ]
+    assert offenders == [], (
+        f"private attribute(s) read off _tests_read: {offenders} -- every "
+        "cross-module read must be either a PUBLIC name on the owning "
+        "module (a decision) or a name imported from _markers (a "
+        "recognition primitive), never a private one"
+    )
+    assert "_blocking" not in {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    }, (
+        "check_open_blocking_checkboxes.py must no longer be loaded as "
+        "_blocking at all -- everything this gate needed from it was "
+        "recognition, and has moved to _markers.py"
+    )
+
+
+def test_strip_moving_marker_blocking_back_to_private_breaks_this_gate():
+    """Tier 1: strip witness for the acceptance above — reproduces the
+    EXACT failure shape #5919 stage 2->3 hit for real (11 failed CI
+    checks, lead-coder's own report): removing a name from `_markers.py`'s
+    public surface (simulating "moved back to private" / "renamed without
+    updating the borrower") must make this gate's own
+    `_has_blocking_comment` raise, not silently degrade to "no BLOCKING
+    comment found" (that direction would be the SAME fail-open class
+    #5919 exists to close, just moved one level)."""
+    original = _MOD._markers.MARKER_BLOCKING
+    del _MOD._markers.MARKER_BLOCKING
+    try:
+        import pytest
+
+        with pytest.raises(AttributeError):
+            _MOD._has_blocking_comment(["**[x]** — BLOCKING (head abc1234)"])
+    finally:
+        _MOD._markers.MARKER_BLOCKING = original
+
+
+def test_strip_moving_note_marker_back_to_private_breaks_this_gate():
+    """Tier 1: the same strip witness for `_markers.NOTE_MARKER` — the
+    OTHER name this gate reuses across the module boundary."""
+    original = _MOD._markers.NOTE_MARKER
+    del _MOD._markers.NOTE_MARKER
+    try:
+        import pytest
+
+        with pytest.raises(AttributeError):
+            _MOD._is_reread_note("**[x]** — TESTS-READ (head abc1234)")
+    finally:
+        _MOD._markers.NOTE_MARKER = original
+
+
+def test_a_blocking_comment_opening_with_a_blank_line_is_still_recognised():
+    """Tier 1: LOAD-BEARING — #5919 stage 3's own real finding (architect
+    requested direct verification, not inference from the two pre-stage-3
+    implementations' textual difference). A BLOCKING comment prefixed
+    with one blank line before its marker line must still be RAISED —
+    the exact shape `_markers.first_nonempty_line` (not the pre-stage-3
+    bare split) exists to fix. Driven through the public `evaluate()`,
+    not the private `_has_blocking_comment` directly: a PR with no
+    re-read note at all reports RED "carries a BLOCKING comment" only if
+    the blank-line-prefixed comment above was actually recognised as one
+    — if it were missed, this PR would instead report OK ("carries no
+    BLOCKING comment"), the opposite, silently-wrong verdict."""
+    code, lines = _MOD.evaluate(_pr(
+        comments=[{"body": "\n**[lead-coder]** — BLOCKING (head bbbbbbb)\n\nsome point."}],
+        commits=[_commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 1
+    assert "carries a BLOCKING comment but no" in "\n".join(lines)
+
+
+def test_a_reread_note_opening_with_a_blank_line_is_still_recognised_as_a_claim():
+    """Tier 1: LOAD-BEARING — the house-rule-8/#5453 side of the same
+    fail-open. A previously-uncounted 5th silent-miss instance in #5919's
+    own original census (architect's own self-correction on the issue
+    thread): a TESTS-READ/RE-READ note opening with a blank line used to
+    be silently treated as "no note", which this gate would then read as
+    "carries a BLOCKING comment but no note at all" -- RED for the wrong
+    reason, or worse, GREEN if some other unrelated note happened to
+    satisfy it. Verified end to end through evaluate(), not just the
+    isolated marker/line-selection primitives."""
+    code, lines = _MOD.evaluate(_pr(
+        comments=[
+            _blocking("bbbbbbb"),
+            {"body": "\n**[e2e-coder]** — TESTS-READ (head bbbbbbb)\n\ngrounds go here"},
+        ],
+        commits=[_commit("bbbbbbb")],
+        head="bbbbbbb",
+    ))
+    assert code == 0
+    assert "names the current head" in "\n".join(lines)

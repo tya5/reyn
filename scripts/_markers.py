@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Shared marker-detection primitives for declaration/exemption/closing-note
-gates (#5919 stage 1, extended by stage 2).
+gates (#5919 stage 1, extended by stage 2 and stage 3).
 
 ## The class this closes
 
@@ -71,6 +71,43 @@ match. Used by `check_open_blocking_checkboxes.py` and (reusing THAT
 gate's own marker regex + decoration pattern, not a second copy)
 `check_blocking_has_reread_note.py`.
 
+## `MARKER_BLOCKING`/`MARKER_CLEARED`/`NOTE_MARKER`/`DECORATION`/`undecorated`
+
+A name read across a module boundary is either RECOGNITION (belongs
+HERE — a syntax question every consumer answers identically) or
+DECISION (belongs on its OWNING gate, as a PUBLIC name — never a
+private one, regardless of who else needs it). `check_open_blocking_
+checkboxes.py`'s BLOCKING/CLEARED marker shapes and decoration
+handling, and `check_tests_read_names_its_tree.py`'s TESTS-READ marker
+shape, are all recognition — every gate that checks for a BLOCKING/
+CLEARED comment or a TESTS-READ note means the EXACT SAME syntax by it,
+so those five live here, as the ONE place each is defined. By contrast,
+`check_tests_read_names_its_tree.py`'s `note_names_head` (does a note
+name a specific head) is a decision, not a syntax question — it stays
+on that module, as a public name, never here.
+
+A gate that needs a name defined on a DIFFERENT gate for its own
+recognition step — rather than here, or as that gate's own public
+decision name — is reaching across a boundary this module and its
+sibling gates exist to keep from opening: nothing in this repo should
+ever read a leading-underscore name off a sibling module.
+
+`MARKER_BLOCKING`/`MARKER_CLEARED`/`NOTE_MARKER` are compiled,
+ready-to-use `re.Pattern` objects (not builders like
+`role_prefixed_marker` above) — every consumer of the BLOCKING/CLEARED
+or TESTS-READ shape means the exact same thing by it (RE-READ is the
+one keyword that stays genuinely gate-owned: only `check_blocking_has_
+reread_note.py` ever means it), so reusing the identical compiled
+pattern (not reconstructing a second copy from the same regex text) is
+what keeps every consumer from drifting apart the moment one of them
+changes — the same reasoning `check_blocking_has_reread_note.py` already
+relied on when it first borrowed these as private instances.
+
+`DECORATION`/`undecorated` are the UNCONDITIONAL sibling of
+`undecorated_after_role_prefix` — for text that is not itself a
+role-prefix candidate (near-miss detection's own bare-word check, which
+never anchors to a role prefix at all).
+
 ## What this module deliberately does NOT do
 
 It does not decide what counts as a declaration for any one gate — each
@@ -137,13 +174,89 @@ def undecorated_after_role_prefix(line: str, decoration: "re.Pattern[str]") -> s
     return line[:prefix_match.end()] + decoration.sub("", line[prefix_match.end():])
 
 
-def first_line(text: str) -> str:
-    """*text*'s first line, newline-delimited, no trailing newline — the
-    single line every marker in this module is matched against. A
-    document's line 2 onward (grounds, discussion, prior history) is
-    never handed to a marker pattern; the exclusion is syntactic, not a
-    matter of where a keyword happens to be more or less likely."""
-    return text.split("\n", 1)[0]
+def first_nonempty_line(text: str) -> str:
+    """*text*'s first NON-EMPTY line, stripped — the single line every
+    marker in this module is matched against. A document's line 2
+    onward (grounds, discussion, prior history) is never handed to a
+    marker pattern; the exclusion is syntactic, not a matter of where a
+    keyword happens to be more or less likely.
+
+    #5919 stage 3: replaces a bare ``text.split("\\n", 1)[0]`` (this
+    function's pre-stage-3 shape, and — independently —
+    ``check_tests_read_names_its_tree.py``'s own pre-stage-3 ``_first_
+    line``) — that shape returns an EMPTY string for a comment/body that
+    opens with a blank line before its real content, which then fails
+    every marker regex trivially, not because no marker was posted but
+    because the marker's own line was never even looked at. Verified
+    directly (not merely inferred from the two implementations'
+    difference — architect's own explicit request): a real
+    ``TESTS-READ (head <sha>)`` comment prefixed with one blank line
+    matches under this rule and was silently missed under the old
+    bare-split one — a genuine, previously-uncounted 5th fail-open
+    instance in #5919's own census (architect: the 2026-09-07 census
+    counted 4 silent-miss gates; this is the 5th, house rule 8/#5453,
+    found only once this function actually ran against a real
+    constructed input). See ``tests/scripts/test_markers_5919.py``'s own
+    witness for that exact input. House rule 7's own "識別行 = marker
+    直後の最初の非空行" definition already reads a marker's OWN position
+    by this same rule, so this is not a NEW convention — it is the
+    recognition side finally matching the decision side's own
+    definition."""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+#: Markdown decoration this repo's own marker conventions tolerate around
+#: a keyword or SHA — backtick code-spans and `**`/`*` emphasis. Neither a
+#: SHA nor a marker keyword itself ever contains a backtick or asterisk,
+#: so stripping this cannot turn a non-marker line into a false-positive
+#: match (architect ruling, #5522: "許容側が自然" — people decorate SHAs
+#: and keywords by hand; stripping once is cheaper than asking every
+#: writer never to).
+DECORATION = re.compile(r"[`*]")
+
+
+def undecorated(line: str) -> str:
+    """*line* with every :data:`DECORATION` character stripped,
+    unconditionally.
+
+    For text that is NOT itself a role-prefix candidate — a near-miss
+    watcher's own bare-word check (which must never anchor to a role
+    prefix at all, see this module's own "What this module deliberately
+    does NOT do" section on why a watcher stays unanchored). A line that
+    DOES open with a real role prefix needs :func:`undecorated_after_
+    role_prefix` instead — a blanket strip here would erase the role
+    prefix's own literal ``**[...]**`` syntax right along with any
+    decoration around it."""
+    return DECORATION.sub("", line)
+
+
+#: The BLOCKING / BLOCKING-CLEARED marker recognition shapes (#5919 stage
+#: 3, moved from ``check_open_blocking_checkboxes.py`` — see this
+#: module's own docstring section for why these are SHARED compiled
+#: instances, not a builder each consumer calls independently). Requires
+#: the marker keyword co-located with ``(head <sha>)`` on the same
+#: anchored line — not the bare word found anywhere on it. `IGNORECASE`
+#: is dropped (``flags=0``) for the same reason the pre-#5919 regex
+#: already gave: prose is far more likely to write "blocking" lowercase
+#: than a deliberate marker is.
+MARKER_BLOCKING = role_prefixed_marker(
+    r"BLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
+)
+MARKER_CLEARED = role_prefixed_marker(
+    r"BLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)", flags=0,
+)
+
+#: House rule 8's TESTS-READ/TESTS-READY marker (#5919 stage 3, moved from
+#: ``check_tests_read_names_its_tree.py``, which now reads THIS name —
+#: never a locally-redefined copy — so a future widening of the keyword
+#: (e.g. tolerating a further typo) cannot land in one gate and silently
+#: not the other). Tolerates the ``TESTS-READY`` typo several sessions
+#: produce, because the gate must not turn a typo into "no note landed."
+NOTE_MARKER = role_prefixed_marker(r"TESTS-READ(?:Y)?\b")
 
 
 def html_comment_marker(tag: str, payload_pattern: str, *, flags: int = re.IGNORECASE) -> "re.Pattern[str]":

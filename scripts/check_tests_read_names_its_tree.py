@@ -34,7 +34,7 @@ the note any good" — nothing here reads the note's content. It is only:
    actually read at the time).
 
 The note's CLAIM line lives in a PR **comment**, and only its FIRST LINE is
-ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1 must
+ever read (see ``_markers.NOTE_MARKER`` / ``evaluate``). That comment's line 1 must
 carry the marker AND the head SHA together, e.g.
 ``**[e2e-coder]** — TESTS-READ (B: independent) (head 9cc100605)``. The
 GROUNDS behind the claim (six-questions answers, scope, limits) live from
@@ -58,7 +58,7 @@ first line — a one-line comment that merely DENIES a note ("This PR is not
 ready for a TESTS-READ note yet — still investigating 9cc1006.") is still
 entirely "first line" and, under a bare ``.search()`` for the keyword,
 matched exactly like a real claim, with the trailing SHA-shaped token then
-read as the tree it names. ``_NOTE_MARKER`` (:mod:`_markers`) now requires
+read as the tree it names. ``_markers.NOTE_MARKER`` now requires
 the marker to OPEN the line, immediately after the CLAUDE.md rule-2 role
 prefix every comment already carries — ordinary prose discussing the
 marker does not open a comment with a role prefix followed directly by the
@@ -121,17 +121,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _markers  # noqa: E402 -- sibling module, see _markers.py's own docstring
 
 #: A TESTS-READ note's claim line is recognised by this marker ONLY when it
-#: OPENS a comment's FIRST LINE, immediately after the CLAUDE.md rule-2 role
-#: prefix (see ``_markers.role_prefixed_marker``) — never a bare `.search()`
-#: over free text (#5919: "This PR is not ready for a TESTS-READ note yet"
-#: used to match, because the keyword appeared anywhere on the line; a
-#: sentence DENYING the note is not distinguishable from one STATING it by
-#: keyword search alone). Matched case-insensitively and tolerating the
-#: ``TESTS-READY`` typo that several sessions produce, because the gate must
-#: not turn a typo into "no note landed" (that would fail the PR for the
-#: wrong reason). Required syntax: a comment's first line reading
-#: ``**[role]** — TESTS-READ (...) (head <sha>)``.
-_NOTE_MARKER = _markers.role_prefixed_marker(r"TESTS-READ(?:Y)?\b")
+#: OPENS a comment's FIRST NON-EMPTY LINE, immediately after the CLAUDE.md
+#: rule-2 role prefix (see ``_markers.role_prefixed_marker``) — never a bare
+#: `.search()` over free text (#5919: "This PR is not ready for a TESTS-READ
+#: note yet" used to match, because the keyword appeared anywhere on the
+#: line; a sentence DENYING the note is not distinguishable from one
+#: STATING it by keyword search alone). Matched case-insensitively and
+#: tolerating the ``TESTS-READY`` typo that several sessions produce,
+#: because the gate must not turn a typo into "no note landed" (that would
+#: fail the PR for the wrong reason). Required syntax: a comment's first
+#: non-empty line reading ``**[role]** — TESTS-READ (...) (head <sha>)``.
+#:
+#: #5919 stage 3: moved to ``_markers.py`` (``NOTE_MARKER``) —
+#: ``check_blocking_has_reread_note.py`` means the exact same shape when
+#: it reuses this for its own house-rule-8 acceptance, so this module now
+#: reads ``_markers.NOTE_MARKER`` directly rather than owning a private
+#: copy a second consumer would have to reach into (the shape #5919 was
+#: filed to close in the first place).
 
 #: A 7-40 char hex run, the shape `git rev-parse` prints. Bounded on both sides
 #: by a non-hex boundary so a longer word containing hex letters is not read as
@@ -144,18 +150,6 @@ _SHA = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{7,40})(?![0-9a-fA-F])")
 _SHA_FALSE_FRIENDS = frozenset({
     "decade", "defaced", "faceted", "acceded", "effaced", "deface", "efface",
 })
-
-
-def _first_line(text: str) -> str:
-    """*text*'s first line, ``\\n``-delimited, with no trailing newline.
-
-    The gate's entire "read only the claim, not the grounds" boundary is
-    this one split: a comment's line 2 onward (the six-questions write-up,
-    scope, limits) is never passed to ``_NOTE_MARKER`` or ``find_note_shas``
-    at all — not filtered out after being read, but never handed to either
-    of them, which is what makes the exclusion syntactic rather than a
-    matter of degree."""
-    return text.split("\n", 1)[0]
 
 
 def find_note_shas(note_line: str, known_oids: "list[str]") -> "list[str]":
@@ -198,12 +192,22 @@ def tests_commits_after(sha: str, commits: "list[dict]") -> "list[dict]":
     return [c for c in tail if c.get("_tests_paths")]
 
 
-def _note_names_head(note: str, head: str, oids: "list[str]") -> bool:
+def note_names_head(note: str, head: str, oids: "list[str]") -> bool:
     """Does *note* (a comment's first line) name *head* specifically —
     ``head`` prefix-matched against every SHA-shaped token *note* names
     that is also a real commit of this PR (:func:`find_note_shas`'s own
     membership filter). The comparison TARGET, not merely "any commit" —
-    see :func:`evaluate`'s own docstring, #5204."""
+    see :func:`evaluate`'s own docstring, #5204.
+
+    #5919 stage 3 (architect ruling): public, not private — this is a
+    DECISION (does a note name a specific head), not a marker-recognition
+    question, so it does NOT move to ``_markers.py`` (that module holds
+    recognition only). But ``check_blocking_has_reread_note.py`` already
+    needed it, and reading it as ``_tests_read._note_names_head`` was the
+    same private-cross-module-borrow shape #5919 exists to close — the
+    fix for a decision function is to make its OWNING module's name
+    public, never to relocate the decision itself. ``find_note_shas``
+    (just above) already sets this precedent in the same module."""
     return any(
         head.startswith(sha) or sha.startswith(head)
         for sha in find_note_shas(note, oids)
@@ -218,8 +222,9 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     '_tests_paths':}``) and ``headRefOid``. Pure — the live and fixture paths
     both build this shape first, so the decision is testable without GitHub.
 
-    A claim is a comment whose FIRST LINE (``_first_line``) matches
-    ``_NOTE_MARKER``; the SHA search (``find_note_shas``) also runs only over
+    A claim is a comment whose FIRST NON-EMPTY LINE
+    (``_markers.first_nonempty_line``) matches ``_markers.NOTE_MARKER``; the
+    SHA search (``find_note_shas``) also runs only over
     that first line, never the rest of the comment. A comment that mentions
     TESTS-READ only from its second line onward is not a claim at all — it
     falls into the same "no note" bucket as a comment that never mentions it,
@@ -273,9 +278,9 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
 
     notes = [
-        _first_line(c.get("body", ""))
+        _markers.first_nonempty_line(c.get("body", ""))
         for c in pr.get("comments", [])
-        if _NOTE_MARKER.search(_first_line(c.get("body", "")))
+        if _markers.NOTE_MARKER.search(_markers.first_nonempty_line(c.get("body", "")))
     ]
     if not notes:
         return 1, [
@@ -313,7 +318,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         if not shas:
             continue
         resolved_count += 1
-        if _note_names_head(note, head, oids):
+        if note_names_head(note, head, oids):
             return 0, [f"OK — a TESTS-READ note names the current head {head}."]
         sha = shas[0]
         other.append((note, sha, tests_commits_after(sha, commits)))

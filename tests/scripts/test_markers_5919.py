@@ -162,17 +162,111 @@ def test_undecorated_after_role_prefix_a_blanket_strip_would_break_the_role_pref
     ) is not None
 
 
-# ── first_line ────────────────────────────────────────────────────────────
+# ── first_nonempty_line ───────────────────────────────────────────────────
 
 
-def test_first_line_isolates_only_the_first_line():
+def test_first_nonempty_line_isolates_only_the_first_line():
     """Tier 1: the exclusion every marker in this module depends on — a
     document's line 2 onward must never even be handed to a pattern."""
-    assert _MOD.first_line("TESTS-READ (head abc)\n\ngrounds go here") == "TESTS-READ (head abc)"
+    assert (
+        _MOD.first_nonempty_line("TESTS-READ (head abc)\n\ngrounds go here")
+        == "TESTS-READ (head abc)"
+    )
 
 
-def test_first_line_of_a_single_line_string_is_itself():
+def test_first_nonempty_line_of_a_single_line_string_is_itself():
     """Tier 1: the no-newline case — a string with nothing to split on
     returns unchanged, so callers need no special-case for a one-line
     comment/body."""
-    assert _MOD.first_line("only one line") == "only one line"
+    assert _MOD.first_nonempty_line("only one line") == "only one line"
+
+
+def test_first_nonempty_line_skips_a_leading_blank_line():
+    """Tier 1: LOAD-BEARING — #5919 stage 3's own real finding (architect
+    requested this be verified directly, not merely inferred from the
+    two pre-stage-3 implementations' textual difference): a comment
+    opening with a blank line before its real marker must still be
+    read. Strip witness: reverting to the pre-stage-3 bare
+    ``text.split("\\n", 1)[0]`` returns an EMPTY string for this exact
+    input, which then fails every marker regex trivially — a real,
+    previously-shipping fail-open in house rule 8's own gate (a 5th
+    silent-miss instance #5919's original census undercounted),
+    confirmed empirically by constructing this input and running it
+    through the real gate before this fix landed."""
+    text = "\n**[e2e-coder]** — TESTS-READ (head abc1234)\n\ngrounds go here"
+    assert _MOD.first_nonempty_line(text) == "**[e2e-coder]** — TESTS-READ (head abc1234)"
+
+
+def test_first_nonempty_line_of_an_all_blank_string_is_empty():
+    """Tier 1: a comment with no real content at all (never a real input,
+    but a caller must not crash on it) reports no line, not a crash or a
+    stray blank string."""
+    assert _MOD.first_nonempty_line("\n\n   \n") == ""
+
+
+# ── DECORATION / undecorated ─────────────────────────────────────────────
+
+
+def test_undecorated_strips_backtick_and_asterisk_unconditionally():
+    """Tier 1: the unconditional sibling of undecorated_after_role_prefix
+    — for text that is never itself a role-prefix candidate (a near-miss
+    watcher's own bare-word check)."""
+    assert _MOD.undecorated("**BLOCKING (head `abc1234`)**") == "BLOCKING (head abc1234)"
+
+
+def test_undecorated_strips_a_role_prefixes_own_asterisks_too():
+    """Tier 1: deny-side witness for WHY undecorated_after_role_prefix
+    exists as a SEPARATE function — the unconditional undecorated() does
+    NOT preserve a role prefix's own literal syntax, unlike its
+    role-prefix-aware sibling (see that function's own tests)."""
+    line = "**[lead-coder]** — BLOCKING (head abc1234)"
+    assert _MOD.undecorated(line) == "[lead-coder] — BLOCKING (head abc1234)"
+
+
+# ── MARKER_BLOCKING / MARKER_CLEARED (#5919 stage 3) ─────────────────────
+
+
+def test_marker_blocking_matches_the_real_shape():
+    """Tier 1: accept — the exact `BLOCKING (head <sha>)` co-located shape,
+    role-prefixed, as posted in this repo today."""
+    assert _MOD.MARKER_BLOCKING.match("**[lead-coder]** — BLOCKING (head abc1234)")
+
+
+def test_marker_blocking_does_not_match_blocking_cleared():
+    """Tier 1: deny — MARKER_BLOCKING must never accept a CLEARED comment
+    (the negative lookahead this shares with the pre-stage-3 regex)."""
+    assert not _MOD.MARKER_BLOCKING.match("BLOCKING-CLEARED (head abc1234)")
+
+
+def test_marker_cleared_matches_the_real_shape():
+    """Tier 1: accept — the CLEARED counterpart."""
+    assert _MOD.MARKER_CLEARED.match("**[lead-coder]** — BLOCKING-CLEARED (head abc1234)")
+
+
+def test_marker_blocking_denies_a_negating_sentence():
+    """Tier 1: deny — #5919's own census input, applied to the moved
+    instance."""
+    assert not _MOD.MARKER_BLOCKING.match("**[x]** — my blocking is closed, thanks")
+
+
+# ── NOTE_MARKER (#5919 stage 3, moved from check_tests_read_names_its_tree.py) ──
+
+
+def test_note_marker_matches_the_real_tests_read_shape():
+    """Tier 1: accept — the exact shape house rule 8 requires, now the
+    SAME instance both check_tests_read_names_its_tree.py and
+    check_blocking_has_reread_note.py read."""
+    assert _MOD.NOTE_MARKER.match("**[e2e-coder]** — TESTS-READ (head abc1234)")
+
+
+def test_note_marker_tolerates_the_testsready_typo():
+    """Tier 1: accept — TESTS-READY, the typo several sessions produce."""
+    assert _MOD.NOTE_MARKER.match("TESTS-READY (head abc1234)")
+
+
+def test_note_marker_denies_a_denying_sentence():
+    """Tier 1: deny — the exact #5919 census input this marker exists to
+    reject."""
+    assert not _MOD.NOTE_MARKER.match(
+        "This PR is not ready for a TESTS-READ note yet — still investigating 9cc1006.",
+    )
