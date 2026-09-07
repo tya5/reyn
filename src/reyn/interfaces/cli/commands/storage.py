@@ -3,6 +3,13 @@
 moved the write location), and every ``history.jsonl`` under
 ``.reyn/agents/`` (#4476 Phase 1).
 
+`reyn storage migrate-manifest` — #5896 stage ② item ①: the one-time,
+idempotent backfill that gives every already-written history-content file
+a real spill-manifest line (see
+``reyn.data.workspace.media_store.migrate_history_content_manifest``'s own
+docstring for the mechanism). Unlike ``stats`` this one WRITES (a manifest
+line, never a history-content body) — the only mutation this module makes.
+
 Named ``storage``, not ``media`` (renamed from the original #4485 name once
 #4476 landed on the same command — lead-coder review on #4488): once
 ``history.jsonl`` reports through here too, "media" no longer describes
@@ -53,6 +60,21 @@ def register(sub) -> None:
     )
     stats_p.set_defaults(func=run_stats)
 
+    migrate_p = storage_sub.add_parser(
+        "migrate-manifest",
+        help=(
+            "#5896 stage ② item ①: give every history-content file with no "
+            "spill-manifest line a real one (one-time, idempotent — a "
+            "second run migrates nothing)."
+        ),
+    )
+    migrate_p.add_argument(
+        "--project-root",
+        default=".",
+        help="Project root containing .reyn/ (default: current directory).",
+    )
+    migrate_p.set_defaults(func=run_migrate_manifest)
+
 
 def run_stats(args: argparse.Namespace) -> None:
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
@@ -83,4 +105,22 @@ def run_stats(args: argparse.Namespace) -> None:
     print(
         f"{'history.jsonl':<16}"
         f"{hist.file_count:>10}{hist.total_bytes:>16,}{hist.total_lines:>12,}",
+    )
+
+
+def run_migrate_manifest(args: argparse.Namespace) -> None:
+    """#5896 stage ② item ①: the one-time, idempotent operator command —
+    see ``migrate_history_content_manifest``'s own docstring for the
+    mechanism (unknown-truth files default un-spilled, "不明なら守る")."""
+    from reyn.data.workspace.media_store import migrate_history_content_manifest
+    from reyn.runtime.services.router_history_buffer import iter_history_content_refs
+
+    project_root = Path(args.project_root).resolve()
+    result = migrate_history_content_manifest(
+        project_root, iter_content_refs=iter_history_content_refs,
+    )
+    print(
+        f"migrated {result['migrated']} file(s) into the spill manifest "
+        f"({result['protected_unknown']} defaulted un-spilled — no "
+        "history.jsonl row named them, so 'unknown ⇒ protect' applies).",
     )

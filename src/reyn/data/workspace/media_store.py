@@ -105,7 +105,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Collection
+from typing import TYPE_CHECKING, Callable, Collection
 
 from reyn.services.offload.store import offload_value, read_offloaded
 
@@ -123,7 +123,19 @@ logger = logging.getLogger(__name__)
 #: every eviction pass reads to leave an un-spilled body alone (#5896
 #: stage ①, architect condition: "GC は un-spilled の file を候補にしない"
 #: — the model still sees that body inline, the file is its ONLY durable
-#: copy, so evicting it would turn a byte-identical restart into ``lost``).
+#: copy, so evicting it would turn a byte-identical restart into
+#: ``lost``). Stage ③ (owner-confirmation-pending, NOT part of this
+#: change) would relax this outright exclusion to "spilled 先行"
+#: ORDERING instead — see :func:`cross_session_eviction_candidates`'s own
+#: docstring for why that stays unimplemented here.
+#:
+#: A path this manifest has NO LINE for at all is a SEPARATE case (#5896
+#: stage ② item ②, "unknown ⇒ protect"): never a candidate, at any point
+#: — see :func:`cross_session_eviction_candidates`'s ``known`` parameter
+#: and :func:`migrate_history_content_manifest`, the one-time backfill
+#: that gives every already-written file a real line so "no line" can
+#: mean "unknown" cleanly (not "predates the manifest, was actually
+#: spilled").
 #:
 #: Lives under ``.reyn/memory/`` — PERSIST tier (#4584 fix; previously
 #: ``.reyn/cache/``, moved there from ``tool_results_dir`` by #4432 round
@@ -524,6 +536,127 @@ def parse_resource_uri(uri: str) -> tuple[str, str] | None:
     return agent, artifact
 
 
+def spill_manifest_path_for(project_root: Path) -> Path:
+    """#4584/#5896: the ONE path the spill-provenance manifest lives at
+    (``.reyn/memory/tool_result_spills.jsonl``, PERSIST tier — see
+    :data:`_SPILL_MANIFEST_FILENAME`'s own module docstring) — exposed so
+    a caller with no live :class:`MediaStore` (stage ② item ①'s one-time
+    :func:`migrate_history_content_manifest`, an operator script, a test)
+    computes the SAME path :meth:`MediaStore._spill_manifest_path`
+    resolves, never a second hand-derived copy. Does not depend on
+    *config* — the manifest's own location was never made configurable
+    (same "one operator number, not two" reasoning as every other #4478/
+    #5366 shared-tree path in this module)."""
+    return project_root / ".reyn" / "memory" / _SPILL_MANIFEST_FILENAME
+
+
+def format_spill_manifest_line(path: Path, *, spilled: bool) -> str:
+    """The ONE encoding of a manifest line — every writer (the append in
+    :meth:`MediaStore.save_tool_result`, the prune-rewrite in
+    :meth:`MediaStore._persist_spill_manifest`, and stage ②'s one-time
+    :func:`migrate_history_content_manifest`) must agree, or a prune
+    would silently drop the ``spilled`` flag and re-admit every un-spilled
+    file to GC on the next process start."""
+    entry: dict = {"path": str(path)}
+    if not spilled:
+        entry["spilled"] = False
+    return json.dumps(entry) + "\n"
+
+
+def migrate_history_content_manifest(
+    project_root: Path,
+    *,
+    config: "MediaStoreConfig | None" = None,
+    iter_content_refs: "Callable[[Path], list[tuple[str, bool]]] | None" = None,
+) -> "dict[str, int]":
+    """#5896 stage ② item ① (architect, closing #5901's own disclosed
+    window — "既存 file に一度だけ行を書く移行"): give every
+    history-content file that predates this manifest tracking it, OR
+    whose own manifest-append never landed (a process crash between the
+    content write and its deferred append job actually running — #5364
+    §1.4's own disclosed race), a REAL manifest line — so stage ②'s
+    default flip ("unknown ⇒ protect", item ②) can trust "no line" to
+    mean "genuinely unknown", not "predates the manifest and was actually
+    spilled, safely evictable".
+
+    **One-time, idempotent, never runs on the hot write path** (contrast
+    :meth:`MediaStore.save_tool_result`'s own per-write append): a second
+    call finds every file already tracked and migrates zero — see this
+    module's own test for the witness. Wired as an explicit operator
+    command (``reyn storage migrate-manifest``), not auto-run at
+    :class:`MediaStore` construction, because a full-tree ``rglob`` plus a
+    full ``history.jsonl`` scan on every process start would cost real I/O
+    for a condition normal operation never produces (the crash race is
+    rare; the "predates the manifest" case is a one-off per install).
+
+    For every already-tracked path (read fresh from the manifest, the
+    tree's own record — same "derive from the tree, not caller state"
+    discipline as :meth:`MediaStore._manifest_paths_project_wide`),
+    nothing changes. For every OTHER file physically present under
+    :func:`history_content_root_for`, the TRUTH of whether it was spilled
+    or un-spilled is read from ``history.jsonl`` itself — the row that
+    named this file as its ``content_ref`` is the one place that fact was
+    ever recorded (the manifest is a CACHE of that fact, kept in
+    :class:`MediaStore`'s own reach because GC runs there with no history
+    access — see #5901's own documented deviation) — via
+    *iter_content_refs*, an injected ``(project-relative ref, spilled)``
+    reader (production: ``reyn.runtime.services.router_history_buffer.
+    iter_history_content_refs``) so THIS module never imports
+    ``reyn.runtime``'s meta-key vocabulary (a data-layer module reading a
+    runtime-layer wire format directly would put the layering the wrong
+    way round — the same injection shape
+    :func:`reyn.core.offload.history_content_resolve.resolve` already
+    uses for ``file_exists``/``read_text``). A file no ``history.jsonl``
+    row references at all (truth unknown — e.g. the referencing row was
+    later dropped by rewind/retention) defaults to un-spilled — #5896
+    stage ② item ②'s own "不明なら守る": the safe-if-wrong default is
+    "never evicted", never "silently deleted".
+
+    Returns ``{"migrated": <files given a new line>, "protected_unknown":
+    <of those, how many defaulted un-spilled because no row named them>}``.
+    A missing ``history-content/`` tree returns both as ``0`` — nothing to
+    migrate, not an error."""
+    cfg = config or MediaStoreConfig()
+    manifest_path = spill_manifest_path_for(project_root)
+    known: "set[Path]" = set()
+    try:
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                known.add(Path(entry["path"]))
+            except (json.JSONDecodeError, KeyError, TypeError):
+                continue
+    except OSError:
+        pass  # no manifest yet — every on-disk file is unmigrated
+    root = history_content_root_for(project_root, cfg)
+    if not root.is_dir():
+        return {"migrated": 0, "protected_unknown": 0}
+    truth: "dict[Path, bool]" = {}
+    if iter_content_refs is not None:
+        for ref, spilled in iter_content_refs(project_root):
+            truth[(project_root / ref).resolve()] = spilled
+    to_add: "list[tuple[Path, bool]]" = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in known:
+            continue
+        to_add.append((resolved, truth.get(resolved, False)))
+    if to_add:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with manifest_path.open("a", encoding="utf-8") as f:
+            for resolved, spilled in to_add:
+                f.write(format_spill_manifest_line(resolved, spilled=spilled))
+    return {
+        "migrated": len(to_add),
+        "protected_unknown": sum(1 for _, spilled in to_add if not spilled),
+    }
+
+
 def history_content_root_for(
     project_root: Path, config: "MediaStoreConfig | None" = None,
 ) -> Path:
@@ -541,6 +674,7 @@ def history_content_root_for(
 def cross_session_eviction_candidates(
     root: Path, *, pin: "list[str] | None" = None,
     unspilled: "Collection[Path]" = (),
+    known: "Collection[Path] | None" = None,
 ) -> list[Path]:
     """#5366 §3 (architect design, revised — issuecomment-5451564768):
     the project-wide GC's own candidate set. Every file
@@ -552,10 +686,28 @@ def cross_session_eviction_candidates(
     model still sees inline, whose file is its only durable copy (see
     :data:`_SPILL_MANIFEST_FILENAME`; the manifest is project-wide, so
     the store passes every session's un-spilled files here, not just its
-    own). Resolved paths on both sides (``_eviction_order`` yields what
-    ``rglob`` finds under *root*; the store records ``resolve()``d
-    absolute paths — compared after resolving here so a symlinked
-    ``.reyn`` cannot make the two disagree).
+    own), minus (#5896 stage ②, "unknown ⇒ protect") any file NOT in
+    *known* when *known* is given. Resolved paths on both sides
+    (``_eviction_order`` yields what ``rglob`` finds under *root*; the
+    store records ``resolve()``d absolute paths — compared after
+    resolving here so a symlinked ``.reyn`` cannot make the two
+    disagree).
+
+    *known* (#5896 stage ②): the set of paths this project's manifest has
+    an actual line for (see :data:`_SPILL_MANIFEST_FILENAME`) — a file the
+    manifest has never recorded (a write whose manifest append never
+    landed, or a file predating the manifest's own migration, #5896 stage
+    ② item ①) is EXCLUDED from candidacy entirely: "manifest 行が無い" now
+    means "unknown, protect", the flip of the pre-stage-② default
+    ("unknown, evictable") that could silently delete a body nothing else
+    recorded as un-spilled. This is a SEPARATE exclusion from *unspilled*
+    (a tracked, known-un-spilled file) — an unknown file is protected for
+    a different reason and is never merely de-prioritised the way stage
+    ③'s (owner-confirmation-pending, NOT part of this change) spilled-
+    first ordering would treat a known un-spilled one. ``None`` (the
+    default) skips this filter — every caller in THIS module now passes
+    an explicit set; ``None`` exists only so an out-of-tree caller that
+    has no manifest view is not silently broken by a required arg.
 
     Deliberately NO liveness filter (architect's own reversal after
     e2e-coder's #5366 measurement found ``process_registry``'s own
@@ -583,6 +735,9 @@ def cross_session_eviction_candidates(
     a cross-session sweep immediately followed by another session's own
     in-flight ref reading back ``lost``."""
     ordered = _eviction_order(root)
+    if known is not None:
+        known_set = {p.resolve() for p in known}
+        ordered = [p for p in ordered if p.resolve() in known_set]
     if unspilled:
         excluded = {p.resolve() for p in unspilled}
         ordered = [p for p in ordered if p.resolve() not in excluded]
@@ -917,7 +1072,7 @@ class MediaStore:
     def _spill_manifest_path(self) -> Path:
         # #4584: PERSIST tier — `.reyn/memory/`, not `.reyn/cache/` (see
         # :data:`_SPILL_MANIFEST_FILENAME`'s own module docstring).
-        return self._project_root / ".reyn" / "memory" / _SPILL_MANIFEST_FILENAME
+        return spill_manifest_path_for(self._project_root)
 
     def _load_spill_manifest(self) -> "tuple[set[Path], set[Path]]":
         """Returns ``(every path this store wrote, the un-spilled subset)``
@@ -961,26 +1116,34 @@ class MediaStore:
             self._persist_spill_manifest(paths, unspilled)
         return paths, unspilled
 
-    def _unspilled_paths_project_wide(self) -> "set[Path]":
-        """#5896 (architect co-vet 🔴 #2 — "木を歩く pass の除外は木から導く"):
-        the un-spilled set a PROJECT-wide pass must exclude — every session's,
-        not just this store's. ``_unspilled_paths`` is this store's own view,
-        read from the (project-wide) manifest ONCE at construction plus its
-        own later writes; a neighbouring store's writes after that never
-        reach it, so a pass over the whole tree that used it would evict a
+    def _manifest_paths_project_wide(self) -> "tuple[set[Path], set[Path]]":
+        """#5896 (architect co-vet 🔴 #2 — "木を歩く pass の除外は木から導く",
+        stage ② widened to cover ``known`` the same way): ``(known,
+        unspilled)`` a PROJECT-wide pass must use — every session's, not
+        just this store's. ``_history_content_spill_paths``/
+        ``_unspilled_paths`` are this store's own view, read from the
+        (project-wide) manifest ONCE at construction plus its own later
+        writes; a neighbouring store's writes after that never reach them,
+        so a pass over the whole tree that used them would evict a
         neighbour's un-spilled body (measured, architect: alice's pass
-        listed bob's file). So this re-reads the manifest fresh from disk —
-        the tree's own record, no caller state — and unions this store's
-        own in-memory set (its own lines may still be queued in its worker).
+        listed bob's file) or list an UNKNOWN neighbour file as a
+        candidate (the same defect, stage ②'s own subject: a file only
+        bob's manifest line names is invisible to alice's in-memory view).
+        So this re-reads the manifest fresh from disk — the tree's own
+        record, no caller state — and unions this store's own in-memory
+        sets (its own lines may still be queued in its worker).
 
         Disclosed window, not closed: a neighbour's body whose content
         write has landed but whose manifest line is still queued (same
         worker, FIFO, the next job) is not yet in the file this reads. Only
         a project-wide pass from a DIFFERENT store in that instant could
-        select it; the neighbour's own per-session pass never does. See
+        select it as unknown (stage ②: excluded, not evicted — "unknown ⇒
+        protect" makes this window SAFE, where pre-stage-② it silently
+        evicted); the neighbour's own per-session pass never does. See
         ``LostReason.EXTERNAL``'s docstring for what that means for the
         reason a reader derives."""
-        fresh: "set[Path]" = set()
+        known: "set[Path]" = set()
+        unspilled: "set[Path]" = set()
         manifest = self._spill_manifest_path()
         try:
             for line in manifest.read_text(encoding="utf-8").splitlines():
@@ -989,25 +1152,15 @@ class MediaStore:
                     continue
                 try:
                     entry = json.loads(line)
+                    p = Path(entry["path"])
+                    known.add(p)
                     if entry.get("spilled", True) is False:
-                        fresh.add(Path(entry["path"]))
+                        unspilled.add(p)
                 except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                     continue
         except OSError:
             pass  # no manifest yet / unreadable → only this store's own view below
-        return fresh | self._unspilled_paths
-
-    @staticmethod
-    def _manifest_line(path: Path, *, spilled: bool) -> str:
-        """The ONE encoding of a manifest line (the append in
-        :meth:`save_tool_result` and the prune-rewrite in
-        :meth:`_persist_spill_manifest` must agree, or a prune would
-        silently drop the ``spilled`` flag and re-admit every un-spilled
-        file to GC on the next process start)."""
-        entry: dict = {"path": str(path)}
-        if not spilled:
-            entry["spilled"] = False
-        return json.dumps(entry) + "\n"
+        return known | self._history_content_spill_paths, unspilled | self._unspilled_paths
 
     def _persist_spill_manifest(self, paths: "set[Path]", unspilled: "set[Path]") -> None:
         """#4478: rewrite the MANIFEST ONLY — the ledger of which paths
@@ -1038,7 +1191,7 @@ class MediaStore:
         try:
             manifest.write_text(
                 "".join(
-                    self._manifest_line(p, spilled=p not in unspilled)
+                    format_spill_manifest_line(p, spilled=p not in unspilled)
                     for p in sorted(paths)
                 ),
                 encoding="utf-8",
@@ -1289,8 +1442,8 @@ class MediaStore:
         and the ``history.jsonl`` row carries none). Recorded per file in
         the manifest and read by every eviction pass: an un-spilled file
         is never a GC candidate (stage ① — see the manifest's own
-        docstring; stage ② will relax this to spilled-FIRST ordering once
-        the owner has ruled on un-spilled eviction).
+        docstring; stage ③, owner-confirmation-pending and NOT part of
+        this change, would relax this to spilled-FIRST ordering instead).
         """
         if self.durability_failed:
             raise MediaStoreWriteUnavailable(
@@ -1390,7 +1543,7 @@ class MediaStore:
             try:
                 manifest_path = self._spill_manifest_path()
                 manifest_path.parent.mkdir(parents=True, exist_ok=True)
-                line = self._manifest_line(_resolved_path, spilled=spilled)
+                line = format_spill_manifest_line(_resolved_path, spilled=spilled)
 
                 def _append() -> None:
                     with manifest_path.open("a", encoding="utf-8") as f:
@@ -1428,6 +1581,11 @@ class MediaStore:
         manifest, so it holds across a restart, and project-wide, so a
         cross-session pass sees every session's un-spilled files.
 
+        Stage ③ (owner-confirmation-pending, NOT part of this change)
+        would relax this outright exclusion to spilled-first ORDERING —
+        see :func:`cross_session_eviction_candidates`'s own docstring for
+        why that is deliberately not implemented here.
+
         Resolves *path* the same way :meth:`is_history_content_spill`
         does (relative → against ``project_root``), for the same reason."""
         p = Path(path)
@@ -1436,6 +1594,30 @@ class MediaStore:
         else:
             p = p.resolve()
         return p in self._unspilled_paths
+
+    def is_known_file(self, path: "str | Path") -> bool:
+        """#5896 stage ② item ②: True if *path* has an actual line in this
+        project's spill manifest — a write this store (or, once loaded, a
+        prior process) actually recorded, regardless of ``spilled``
+        value. False for a file physically present under
+        ``history_content_root`` that the manifest has NO record of at
+        all: a write whose deferred manifest-append never landed (#5364
+        §1.4's own disclosed race), or a file predating the manifest's
+        own one-time backfill (:func:`migrate_history_content_manifest`,
+        stage ② item ①). "unknown ⇒ protect" (item ②, the flip of the
+        pre-stage-② default): :meth:`_evict_history_content_over_cap`
+        treats a ``False`` here as excluded from eviction, exactly like a
+        KNOWN un-spilled file — see :meth:`is_unspilled_file`'s sibling
+        exclusion.
+
+        Resolves *path* the same way :meth:`is_history_content_spill`
+        does (relative → against ``project_root``), for the same reason."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = (self._project_root / p).resolve()
+        else:
+            p = p.resolve()
+        return p in self._history_content_spill_paths
 
     def is_open_turn_file(self, path: Path, *, current_chain_id: str) -> bool:
         """#5387: True if ``path`` was written by the SAME chain that is
@@ -1465,14 +1647,21 @@ class MediaStore:
         any file :meth:`is_open_turn_file` says belongs to the turn that
         triggered THIS pass (default: protected; see
         ``MediaStoreConfig.protect_open_turn_from_gc`` for the opt-in to
-        disable this and evict open-turn content too). Scoped to THIS
-        session's own subdirectory, not the whole ``history_content_root``
-        — the cap's own subject is one session's content (see the field's
-        docstring: cross-session growth is #5366's separate subject, not
-        this one's). Best-effort: an ``OSError`` mid-delete is logged and
-        skipped, same policy as :meth:`_purge_session_dir`'s own sibling
-        deletes — a failed eviction must never fail the write it
-        followed.
+        disable this and evict open-turn content too), any file
+        :meth:`is_unspilled_file` says the model still sees inline
+        (#5896 stage ① — an outright exclusion; stage ③'s relaxation to
+        "spilled-first, un-spilled evictable too" is PENDING OWNER
+        CONFIRMATION and is deliberately NOT part of this change — see
+        this method's own #5896 comment below), and any file this store's
+        manifest has NO line for at all (#5896 stage ② item ②, "unknown ⇒
+        protect" — see :func:`cross_session_eviction_candidates`'s
+        ``known`` parameter). Scoped to THIS session's own subdirectory,
+        not the whole ``history_content_root`` — the cap's own subject is
+        one session's content (see the field's docstring: cross-session
+        growth is #5366's separate subject, not this one's). Best-effort:
+        an ``OSError`` mid-delete is logged and skipped, same policy as
+        :meth:`_purge_session_dir`'s own sibling deletes — a failed
+        eviction must never fail the write it followed.
 
         #5387 scope (architect design B, stated explicitly — NOT a
         decision to leave a gap, a reach limit): this only protects the
@@ -1483,11 +1672,12 @@ class MediaStore:
         is where that would first need to be handled, not here.
 
         Disclosed (architect review, non-blocking): if EVERY remaining
-        candidate is protected (all share the triggering chain), this
-        returns having deleted nothing, and the directory stays OVER
-        cap — deliberately: protecting an open turn's content is worth
-        more than strictly enforcing the byte cap on any given pass.
-        Not silent — the caller (:meth:`save_tool_result`) already logs
+        candidate is protected (all share the triggering chain, are
+        un-spilled, or are unknown per stage② item ②), this returns
+        having deleted nothing, and the directory stays OVER cap —
+        deliberately: protecting an open turn's content is worth more
+        than strictly enforcing the byte cap on any given pass. Not
+        silent — the caller (:meth:`save_tool_result`) already logs
         nothing extra here because this is the expected, harmless
         common case (see ``history_content_max_bytes``'s own docstring:
         2 GB default, eviction is not expected to fire under real usage
@@ -1510,6 +1700,13 @@ class MediaStore:
                 continue
             if self.is_unspilled_file(path):
                 continue
+            # #5896 stage ② item ②: "unknown ⇒ protect" — a file this
+            # store's manifest has NO line for at all (a write whose
+            # manifest append never landed, or a file predating the
+            # manifest's own one-time backfill) is never a candidate
+            # either, same as a KNOWN un-spilled file above.
+            if not self.is_known_file(path):
+                continue
             try:
                 size = path.stat().st_size
                 path.unlink()
@@ -1523,47 +1720,58 @@ class MediaStore:
             total -= size
         # #5896 (architect co-vet 🔴): before this PR every file here was a
         # spill, so a pass could always get back under cap; now every
-        # un-spilled body is excluded, and a pass can end over cap having
-        # deleted nothing — say so ONCE, with the reason, never silently.
+        # un-spilled OR unknown body is excluded, and a pass can end over
+        # cap having deleted nothing — say so ONCE, with the reason, never
+        # silently.
         self._note_cap_state("session", total=total, cap=cap, directory=directory)
 
     def _note_cap_state(
         self, scope: str, *, total: int, cap: int, directory: Path,
         unspilled: "set[Path] | None" = None,
+        known: "set[Path] | None" = None,
     ) -> None:
         """#5896 stage ① (architect co-vet 🔴 — "上限が満たせなくなったのに何
-        も言わない"): record whether an eviction pass for *scope* ended
+        も言わない"), stage ② adds a SECOND reason (item ②'s "unknown ⇒
+        protect"): record whether an eviction pass for *scope* ended
         still over *cap*, and WARN exactly once per False→True transition
-        — naming what made the cap unsatisfiable (how many un-spilled
-        bodies, how many bytes, and that stage ② is what will make them
-        evictable again) so an operator who set the number sees WHY the
-        tree keeps growing past it. Not per write: one line per tool
-        result is the class #5873 closed. Cleared when a pass ends under
-        cap, so the NEXT overflow warns again (a latch, not a one-shot).
+        — naming what made the cap unsatisfiable (un-spilled bodies,
+        unknown/unmigrated files, or both — the two are separate
+        exclusions, see :meth:`_evict_history_content_over_cap`) so an
+        operator who set the number sees WHY the tree keeps growing past
+        it. Not per write: one line per tool result is the class #5873
+        closed. Cleared when a pass ends under cap, so the NEXT overflow
+        warns again (a latch, not a one-shot).
 
         CLAUDE.md's three questions: Q1 (who stops it if it repeats) — the
         operator, now that they can see it; Q2 (visible with the shipped
         config) — a WARNING on reyn's own log, no setting needed; Q3 (does
         the repair destroy evidence) — nothing is deleted here.
 
-        ``unspilled`` (#5896 🔴 #2): the exclusion set the pass actually
-        used — the project-wide pass passes its tree-derived set so the
-        figures count EVERY session's un-spilled bodies (a caller-only
-        count could say "0 file(s) un-spilled" for a cap another session
-        filled — a self-contradicting line). ``None`` = this store's own
-        set (the per-session pass, whose tree IS this store's)."""
+        ``unspilled``/``known`` (#5896 🔴 #2's own shape, widened by stage
+        ②): the exclusion sets the pass actually used — the project-wide
+        pass passes its tree-derived sets so the figures count EVERY
+        session's un-spilled/unknown files (a caller-only count could say
+        "0 file(s)" for a cap another session filled — a self-
+        contradicting line). ``None`` = this store's own set (the
+        per-session pass, whose tree IS this store's)."""
         over = total > cap
         was = self._cap_unsatisfiable.get(scope, False)
         if over and not was:
             n_unspilled, unspilled_bytes = self._unspilled_stats_under(
                 directory, unspilled=unspilled,
             )
+            n_unknown, unknown_bytes = self._unknown_stats_under(
+                directory, known=known,
+            )
             logger.warning(
                 "#5896: the %s history-content cap (%d bytes) cannot be met — "
                 "%d bytes on disk after eviction; %d file(s) / %d bytes are "
-                "un-spilled tool bodies the model still sees inline, excluded "
-                "from eviction until a spill supersedes them (stage ②)",
-                scope, cap, total, n_unspilled, unspilled_bytes,
+                "un-spilled tool bodies the model still sees inline (excluded "
+                "from eviction — owner-confirmation-pending stage ③ would "
+                "relax this); %d file(s) / %d bytes have no manifest line "
+                "(stage ② 'unknown ⇒ protect', run `reyn storage "
+                "migrate-manifest` to backfill)",
+                scope, cap, total, n_unspilled, unspilled_bytes, n_unknown, unknown_bytes,
             )
         self._cap_unsatisfiable[scope] = over
 
@@ -1582,6 +1790,28 @@ class MediaStore:
                 path.relative_to(root)
                 total += path.stat().st_size
             except (ValueError, OSError):
+                continue
+            count += 1
+        return count, total
+
+    def _unknown_stats_under(
+        self, directory: Path, *, known: "set[Path] | None" = None,
+    ) -> "tuple[int, int]":
+        """(count, bytes) of the files under *directory* that exist on
+        disk but carry NO manifest line at all — the WARNING's own
+        figures, computed only when it fires (#5896 stage ② item ②).
+        ``known`` defaults to this store's own tracked set; a project-wide
+        caller passes the tree-derived set (see ``_note_cap_state``)."""
+        tracked = self._history_content_spill_paths if known is None else known
+        tracked_resolved = {p.resolve() for p in tracked}
+        count = 0
+        total = 0
+        for path in directory.rglob("*"):
+            try:
+                if not path.is_file() or path.resolve() in tracked_resolved:
+                    continue
+                total += path.stat().st_size
+            except OSError:
                 continue
             count += 1
         return count, total
@@ -1668,10 +1898,15 @@ class MediaStore:
             return
         # #5896 🔴 #2: the exclusion for a pass over the WHOLE tree comes
         # from the tree (every session's manifest lines), never from this
-        # store's own view alone — see _unspilled_paths_project_wide.
-        unspilled = self._unspilled_paths_project_wide()
+        # store's own view alone — see _manifest_paths_project_wide. Stage
+        # ② widens this to a SECOND exclusion (``known``, "unknown ⇒
+        # protect") alongside the stage ① un-spilled one — both are
+        # OUTRIGHT exclusions here (no spilled-first ordering: that is
+        # stage ③, owner-confirmation-pending, NOT part of this change).
+        known, unspilled = self._manifest_paths_project_wide()
         history_content_candidates = cross_session_eviction_candidates(
-            history_content_root, pin=self._storage.pin, unspilled=unspilled,
+            history_content_root, pin=self._storage.pin,
+            unspilled=unspilled, known=known,
         )
         # #4478: a NEW (post-#4478) nested media write's own pin match
         # works exactly like history-content's; a pre-#4478 flat file's
@@ -1697,11 +1932,11 @@ class MediaStore:
             total -= size
         # #5896 (architect co-vet 🔴): same shape as the per-session pass —
         # the refusal below already stops the write, but WHY the cap is
-        # unsatisfiable (un-spilled bodies, not a full tree of spills) is
-        # only said here, once per transition.
+        # unsatisfiable (un-spilled bodies, unknown/unmigrated files, or
+        # both) is only said here, once per transition.
         self._note_cap_state(
             "project", total=total, cap=max_bytes, directory=history_content_root,
-            unspilled=unspilled,
+            unspilled=unspilled, known=known,
         )
         if total > max_bytes:
             raise MediaStoreWriteUnavailable(
@@ -1737,9 +1972,14 @@ class MediaStore:
         total = history_content_total + media_total
         if total <= max_bytes:
             return []
+        # #5896 stage ②: same two-exclusion (un-spilled + unknown)
+        # composition as :meth:`_evict_cross_session_over_cap` — both
+        # outright exclusions, no spilled-first ordering (stage ③,
+        # owner-confirmation-pending, not part of this change).
+        known, unspilled = self._manifest_paths_project_wide()
         history_content_candidates = cross_session_eviction_candidates(
             history_content_root, pin=self._storage.pin,
-            unspilled=self._unspilled_paths_project_wide(),
+            unspilled=unspilled, known=known,
         )
         media_candidates = cross_session_eviction_candidates(
             self._media_dir, pin=self._storage.pin,
