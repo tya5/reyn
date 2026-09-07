@@ -30,4 +30,8 @@ async def cancel_cmd(ctx: "SlashContext", args: str) -> None:
     a generic string only for the one fire-and-forget wire path this
     command never actually routes through — see `agui/client.py`)."""
     summary = await ctx.transport.cancel_inflight()
+    # #5894: the ABC reserves "" for "not delivered" (control timeout / send
+    # failure) — say so instead of printing an empty summary.
+    if not summary:
+        summary = "cancel not delivered — the server did not respond"
     await reply(ctx, f"⏹ {summary}")

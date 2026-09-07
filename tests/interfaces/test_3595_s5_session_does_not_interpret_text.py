@@ -338,8 +338,26 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
     The TUI half of the same claim, driven through ``TextualChatApp._submit``
     (the Composer's production entry) over a real ``ClientTransport``. Paired
     with the same negative: bare text still goes to ``submit_user_text``.
+
+    #5894 ①-2: the slash layer runs synchronously on the handler (its answer
+    is on screen when ``_submit`` returns — asserted right after the call),
+    while a bare line's ``submit_user_text`` round-trip runs on a Textual
+    worker — so the app must be running, and the inbox is waited on as a
+    CONDITION (unbounded; CI's ``--timeout`` is the kill switch), never
+    asserted at the instant ``_submit`` returns.
     """
+    import asyncio
+
     from reyn.interfaces.inline.textual_chat.app import TextualChatApp
+
+    class _RecordingTransportWithStream(RecordingTransport):
+        """The send-side recorder plus a frame stream that HOLDS — a
+        running app pumps ``frames()``, and ``RecordingTransport``'s own
+        raises by design (it records the send side only)."""
+
+        async def frames(self):
+            await asyncio.Event().wait()
+            yield None  # pragma: no cover - never reached
 
     monkeypatch.chdir(tmp_path)
     session = make_session(
@@ -347,25 +365,28 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
     )
-    transport = RecordingTransport(session)
+    transport = _RecordingTransportWithStream(session)
     app = TextualChatApp(transport=transport)
 
-    await app._submit("/help", local_id="local:test-help")
-    assert "Slash commands:" in transport.system_text(), (
-        "the TUI did not run /help as a command; _submit is not going through "
-        f"the shared client-side slash layer. shown={transport.texts()!r}"
-    )
-    assert session.queued_user_messages() == [], (
-        "the TUI submitted /help as a turn as well as running it"
-    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app._submit("/help", local_id="local:test-help")
+        assert "Slash commands:" in transport.system_text(), (
+            "the TUI did not run /help as a command; _submit is not going through "
+            f"the shared client-side slash layer. shown={transport.texts()!r}"
+        )
+        assert session.queued_user_messages() == [], (
+            "the TUI submitted /help as a turn as well as running it"
+        )
 
-    await app._submit("an ordinary line", local_id="local:test-ordinary")
-    assert [i["text"] for i in session.queued_user_messages()] == [
-        "an ordinary line",
-    ], (
-        "ordinary text stopped reaching the inbox — the assertion above was "
-        "passing because nothing was being submitted at all"
-    )
+        await app._submit("an ordinary line", local_id="local:test-ordinary")
+        while not session.queued_user_messages():
+            await pilot.pause()
+        assert [i["text"] for i in session.queued_user_messages()] == [
+            "an ordinary line",
+        ], (
+            "ordinary text stopped reaching the inbox — the assertion above was "
+            "passing because nothing was being submitted at all"
+        )
 
 
 @pytest.mark.asyncio

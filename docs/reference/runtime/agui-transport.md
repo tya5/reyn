@@ -449,6 +449,26 @@ interval MUST stay below the server timeout, which in turn stays below
 timeout+grace, so the half-open backstop and the grace window together always
 cover detection.
 
+The same thin client runs two request kinds through one `httpx` client with
+two timeout policies (#5894). The SSE stream keeps an unbounded read
+(`read=None`) — a live stream legitimately reads forever. Every
+client→server **control POST** (a turn submit, an intervention answer, a
+cancel, the heartbeat) is a bounded round-trip and gets its own read timeout,
+10s by default (`REYN_AGUI_CONTROL_TIMEOUT_S` overrides it; one constant, one
+place — `remote_client.post_control`). A control POST the server does not
+answer within it is a **non-delivery**, not a wait: `cancel_inflight` returns
+the empty summary the `ClientTransport` contract reserves for "not
+delivered", and the Textual TUI draws it as `interrupt: the server did not
+acknowledge the cancel (not responding)` under the `cancel requested…` row it
+drew the instant the key was pressed. The TUI's message pump never awaits
+the wire for any of these — the handler draws what it requested and returns,
+and the round-trip runs on a Textual worker — so a server that has stopped
+answering cannot hold the keyboard (the owner-hit shape: Ctrl-C's cancel POST
+waiting forever, and Ctrl-Q, which touches no wire at all, never delivered
+behind it). While one `cancel_inflight` POST is pending, a second is
+coalesced (`cancel already requested`), so a held Ctrl-C does not open one
+POST per key repeat.
+
 The refusal is scoped **per intervention**: an intervention still answerable
 by another live surface (for example one an external agent peer is answering)
 is left pending even when the operator terminals are all gone.

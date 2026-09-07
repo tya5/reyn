@@ -38,7 +38,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -3928,7 +3928,15 @@ class TextualChatApp(App):
         tab_id = None if event.tab_id == "__close__" else event.tab_id
         self._open_drawer(tab_id)
         if tab_id == "artifacts":
-            await self._maybe_refresh_remote_artifact_fallback()
+            # #5894 ①-2: ``request_artifact_list`` is a wire round-trip on
+            # a remote transport — off the pump (a menu selection is a
+            # message handler). The method already tolerates running late:
+            # it is a fallback that fills the pane only when the live list
+            # was empty.
+            self.run_worker(
+                self._maybe_refresh_remote_artifact_fallback(),
+                name="artifact-fallback", exclusive=False,
+            )
 
     async def on_option_list_option_selected(
         self, event: "OptionList.OptionSelected"
@@ -4147,17 +4155,53 @@ class TextualChatApp(App):
 
         Failures are contained and surfaced as a status row rather than
         escaping: an interrupt that raises would leave the user with a turn
-        they believe they stopped."""
+        they believe they stopped.
+
+        #5894 (owner-hit, architect ruling ①-2): this handler no longer
+        AWAITS the wire. Textual delivers messages to an App serially, so a
+        handler that awaits a round-trip holds the pump — and while a remote
+        server sat in CPU-bound request assembly and answered nothing, the
+        cancel POST never returned, no later key (Ctrl-Q included, which
+        touches no wire at all) was ever delivered, and the operator saw a
+        live spinner and a dead keyboard. Now: draw "requested" at once,
+        return, and let :meth:`_cancel_turn_over_wire` (a worker) await the
+        round-trip and draw what actually came back."""
+        from reyn.runtime.outbox import OutboxMessage
+
+        self._ingest_frame(OutboxMessage(kind="status", text="cancel requested…"))
+        self.run_worker(self._cancel_turn_over_wire(), name="cancel-turn", exclusive=False)
+
+    async def _cancel_turn_over_wire(self) -> None:
+        """The round-trip half of :meth:`action_cancel_turn` — a worker,
+        never the pump. Three outcomes, each drawn only when it is a fact:
+        an acknowledged cancel draws nothing more (the "requested" row and
+        the turn's own end events already tell the story, unchanged from
+        before); a NON-delivery — the transport returned a falsy summary,
+        which ``AgUiTransport`` does after a control timeout (#5894 ①-1) or
+        a send failure — is named, because "requested" without an
+        acknowledgement is the exact silence this issue was reported as; a
+        raise keeps its existing ``interrupt failed`` row."""
+        from reyn.runtime.outbox import OutboxMessage
+
         try:
-            await self._transport.cancel_inflight()
+            summary = await self._transport.cancel_inflight()
         except Exception as exc:
             logger.exception("textual chat: cancel_inflight failed")
-            from reyn.runtime.outbox import OutboxMessage
-
             self._ingest_frame(
                 OutboxMessage(
                     kind="error",
                     text=f"interrupt failed: {type(exc).__name__}: {exc}",
+                )
+            )
+            return
+        if not summary:
+            self._ingest_frame(
+                OutboxMessage(
+                    kind="error",
+                    text=(
+                        "interrupt: the server did not acknowledge the cancel "
+                        "(not responding) — the turn may still be running"
+                    ),
                 )
             )
 
@@ -4864,10 +4908,19 @@ class TextualChatApp(App):
         reachability witness, restored through the panel instead of a chip
         click."""
         _entry, iv_id = self._pending_ivs.get(event.key, (None, None))
-        await self._transport.answer_intervention_choice(
-            event.choice_id, intervention_id=iv_id
+        # #5894 ①-2: the delivery is a round-trip on a remote transport —
+        # off the pump. The panel resolves when the answer is DELIVERED
+        # (inside the worker), exactly as before; only the pump stops
+        # waiting for it.
+        self.run_worker(
+            self._answer_intervention_over_wire(
+                self._transport.answer_intervention_choice(
+                    event.choice_id, intervention_id=iv_id
+                ),
+                key=event.key, label=event.label,
+            ),
+            name="answer-intervention", exclusive=False,
         )
-        self._resolve_intervention(event.key, event.label)
 
     async def on_intervention_panel_text_submitted(
         self, event: "InterventionPanel.TextSubmitted"
@@ -4877,8 +4930,37 @@ class TextualChatApp(App):
         targeted at THAT tab's intervention id (#3299 P2, R1; #3308 by
         ``event.key``, same as the choice path)."""
         _entry, iv_id = self._pending_ivs.get(event.key, (None, None))
-        await self._transport.answer_intervention_text(event.text, intervention_id=iv_id)
-        self._resolve_intervention(event.key, event.text)
+        # #5894 ①-2: same shape as the choice path above.
+        self.run_worker(
+            self._answer_intervention_over_wire(
+                self._transport.answer_intervention_text(event.text, intervention_id=iv_id),
+                key=event.key, label=event.text,
+            ),
+            name="answer-intervention", exclusive=False,
+        )
+
+    async def _answer_intervention_over_wire(
+        self, delivery: "Awaitable[bool]", *, key: str, label: str,
+    ) -> None:
+        """The round-trip half of the two intervention-answer handlers above
+        (#5894 ①-2) — a worker, never the pump. Resolves the panel tab once
+        the answer is delivered, as the handlers themselves used to do
+        inline; a delivery that raises is drawn as an error row instead of
+        leaving a tab that looks answered but was never sent."""
+        from reyn.runtime.outbox import OutboxMessage
+
+        try:
+            await delivery
+        except Exception as exc:
+            logger.exception("textual chat: intervention answer delivery failed")
+            self._ingest_frame(
+                OutboxMessage(
+                    kind="error",
+                    text=f"answer not delivered: {type(exc).__name__}: {exc}",
+                )
+            )
+            return
+        self._resolve_intervention(key, label)
 
     def on_intervention_panel_dismissed(
         self, event: "InterventionPanel.Dismissed"
@@ -4954,6 +5036,16 @@ class TextualChatApp(App):
                 kind="status", text=f"could not open {resolved.name} — no OS opener available",
             ))
 
+    async def _clear_pending_command_ui_over_wire(self) -> None:
+        """The round-trip half of the two ``clear_pending_command_ui`` calls
+        in :meth:`_handle_rewind_request` (#5894 ①-2) — a worker. The clear
+        is a courtesy to the server's read model (the picker is already
+        showing); a failure is logged exactly as the inline call logged it."""
+        try:
+            await self._transport.clear_pending_command_ui()
+        except Exception:
+            logger.exception("textual chat: command-UI clear failed")
+
     async def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
         """Consume a ``__rewind_list__`` sentinel: show the picker, or the text
         fallback (#3362).
@@ -5017,10 +5109,12 @@ class TextualChatApp(App):
         points = (request or {}).get("points") if request else None
         if request and request.get("kind") == "rewind" and points:
             if self._iv_panel.display:
-                try:
-                    await self._transport.clear_pending_command_ui()
-                except Exception:
-                    logger.exception("textual chat: command-UI clear failed")
+                # #5894 ①-2: a wire round-trip on a remote transport, off
+                # the pump (this handler runs INSIDE `_pump_frames`).
+                self.run_worker(
+                    self._clear_pending_command_ui_over_wire(),
+                    name="command-ui-clear", exclusive=False,
+                )
                 self._ingest_frame(OutboxMessage(
                     kind="status",
                     text=(
@@ -5050,10 +5144,11 @@ class TextualChatApp(App):
                 list((request or {}).get("branches") or []), list(points),
                 default_scope=default_scope,
             )
-            try:
-                await self._transport.clear_pending_command_ui()
-            except Exception:
-                logger.exception("textual chat: command-UI clear failed")
+            # #5894 ①-2: same as the on-hold branch above — off the pump.
+            self.run_worker(
+                self._clear_pending_command_ui_over_wire(),
+                name="command-ui-clear", exclusive=False,
+            )
             return
         # persistent kind (not transient "status") so the list stays
         # readable — the same choice the plain client's fallback leg
@@ -6904,6 +6999,19 @@ class TextualChatApp(App):
         )
         if text is not None:
             self._pending_own_cancels[msg_id] = text
+        # #5894 ①-2: the cancel-by-id POST is a round-trip — off the pump.
+        # Every post-return step (the restore bookkeeping) moves into the
+        # worker with it; nothing about the outcome is inferred here.
+        self.run_worker(
+            self._cancel_queued_over_wire(msg_id), name="cancel-queued", exclusive=False,
+        )
+
+    async def _cancel_queued_over_wire(self, msg_id: str) -> None:
+        """The round-trip half of :meth:`on_sent_queue_cancelled` (#5894
+        ①-2) — a worker. Same bookkeeping as the inline call had: a raise or
+        a no-op removal forgets the restore entry, so a later, unrelated
+        ``inbox_cancel`` delta cannot restore text this client never
+        cancelled."""
         try:
             removed = await self._transport.cancel_queued(msg_id)
         except Exception:
@@ -7541,8 +7649,13 @@ class TextualChatApp(App):
             return
         if text in {"/quit", "/exit"}:
             self.query_one(Composer).clear_and_reset()
-            await self._transport.shutdown()
-            self.exit()
+            # #5894 ①-2: the detach runs on a worker and exits when it is
+            # done — the pump is free meanwhile (Ctrl-Q, Textual's own
+            # ``quit`` binding, still exits at once regardless). Semantics
+            # kept: exit follows shutdown, as before. Remote: a one-line
+            # local flag. Local: ``AgentRegistry.shutdown``, bounded by its
+            # own grace-then-hard-cancel — never a wire.
+            self.run_worker(self._shutdown_then_exit(), name="quit", exclusive=False)
             return
         # #3671 P3 (decision 4B): block ORDINARY submission until attach()
         # completes. Deliberately does NOT clear the composer — the typed
@@ -7568,6 +7681,14 @@ class TextualChatApp(App):
         self._sent_queue.show_item(local_id, text, sending=True)
         self.query_one(Composer).clear_and_reset()
         await self._submit(text, local_id=local_id)
+
+    async def _shutdown_then_exit(self) -> None:
+        """``/quit``'s detach-then-exit, off the pump (#5894 ①-2)."""
+        try:
+            await self._transport.shutdown()
+        except Exception:
+            logger.exception("textual chat: transport shutdown failed on /quit")
+        self.exit()
 
     def _notify_blocked_on_attach(self) -> None:
         """#3671 P3: tell the operator WHY their Enter did nothing, matching
@@ -7658,7 +7779,64 @@ class TextualChatApp(App):
             sent_queue.remove_item(msg_id)
 
     async def _submit(self, text: str, *, local_id: str) -> None:
-        """Route one submitted line through the transport send seam.
+        """Route one submitted line: the client-side slash layer FIRST,
+        synchronously on this handler; only a real turn's wire round-trip
+        goes to a worker (#5894 ①-2, lead-coder's BLOCKING on PR #5902).
+
+        ``maybe_dispatch_slash`` is local work — ``/help``, a typo's "unknown
+        command", the picker commands — and the operator expects its answer
+        the instant Enter lands, exactly as the CUI gives it (the shared
+        layer is the point of #3595 S5: one implementation, one answer).
+        Running it on the worker deferred that answer past the handler's
+        return, which is what CI caught (``shown=[]``). The ruling's line is
+        "the pump never awaits the WIRE": a dispatched command that itself
+        touches the wire (``/cancel`` → ``cancel_inflight``) does so through
+        the transport's own bounded control timeout (#5894 ①-1), not the
+        unbounded read that held the pump — a residual named in the PR, not
+        a hole this method hides.
+
+        A non-command line returns as soon as the worker is scheduled: every
+        caller's own local work (the placeholder row, clearing the composer)
+        already happened synchronously before it, and the placeholder
+        resolves off the ``user_submitted`` echo, never off this call's
+        return. An Enter against a server that has stopped answering
+        therefore no longer holds the pump — the same class as Ctrl-C's
+        (see :meth:`action_cancel_turn`): "server が塞がれば Enter でも同じ症状".
+        """
+        try:
+            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
+
+            if await maybe_dispatch_slash(self._transport, text):
+                # A dispatched command is never queued (#3595 S5) — drop the
+                # placeholder row the composer handler already showed.
+                self._maybe_sent_queue_remove(local_id)
+                return
+        except Exception as exc:
+            self._submit_failed(local_id, exc)
+            return
+        self.run_worker(
+            self._submit_over_wire(text, local_id=local_id), name="submit", exclusive=False,
+        )
+
+    def _submit_failed(self, local_id: str, exc: BaseException) -> None:
+        """Shared failure path of :meth:`_submit` (slash) and
+        :meth:`_submit_over_wire` (wire): drop the placeholder, log, and
+        surface an error frame — a silent input drop is the worst failure
+        for a chat box."""
+        self._maybe_sent_queue_remove(local_id)
+        logger.exception("textual chat: submit failed")
+        from reyn.runtime.outbox import OutboxMessage
+
+        detail = f"{type(exc).__name__}: {exc}"
+        try:
+            self._ingest_frame(
+                OutboxMessage(kind="error", text=f"input could not be submitted: {detail}")
+            )
+        except Exception:
+            pass
+
+    async def _submit_over_wire(self, text: str, *, local_id: str) -> None:
+        """The body :meth:`_submit` used to run inline.
 
         ``local_id`` (#4409): the sent-queue row ``on_composer_submitted``
         already showed, synchronously with clearing the composer, keyed by
@@ -7715,31 +7893,9 @@ class TextualChatApp(App):
         no-op — fixed since, #5107, but this call site's OWN reason to
         bypass it stands independent of that fix)."""
         try:
-            from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
-            if await maybe_dispatch_slash(self._transport, text):
-                self._maybe_sent_queue_remove(local_id)
-                return
-            # #5833: no longer reconciled against this call's own return
-            # value (see ``ClientTransport.submit_user_text``'s docstring)
-            # — the echo (:meth:`_handle_user_submitted_event`) carries
-            # ``meta.client_ref`` == ``local_id`` and promotes this
-            # placeholder itself, the moment it arrives, whether that is
-            # before or after this call returns. The returned id has no
-            # remaining local use.
             await self._transport.submit_user_text(text, client_ref=local_id)
         except Exception as exc:
-            self._maybe_sent_queue_remove(local_id)
-            logger.exception("textual chat: submit failed")
-            from reyn.runtime.outbox import OutboxMessage
-            detail = f"{type(exc).__name__}: {exc}"
-            try:
-                self._ingest_frame(
-                    OutboxMessage(
-                        kind="error", text=f"input could not be submitted: {detail}"
-                    )
-                )
-            except Exception:
-                pass
+            self._submit_failed(local_id, exc)
 
 
 async def run_textual_chat(
