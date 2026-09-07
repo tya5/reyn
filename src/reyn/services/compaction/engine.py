@@ -2284,7 +2284,11 @@ class CompactionEngine:
         # on an unverified estimate; a real character count needs no
         # tokenizer and is exact by construction, unlike litellm.
         # token_counter's own approximation).
-        input_chars = len(json.dumps(input_chunk.messages, ensure_ascii=False))
+        # #5898: off the loop — O(candidate bytes) serialisation for a
+        # size field only.
+        input_chars = await asyncio.to_thread(
+            lambda: len(json.dumps(input_chunk.messages, ensure_ascii=False)),
+        )
         self._events.emit(
             "compaction_started",
             new_message_count=new_message_count,
@@ -4089,7 +4093,11 @@ class RecoveryLadder:
             )
             _offered_for_shrink = self.raw_middle[:_current_attempt]
             try:
-                self._compact_attempt_len = shrink_pool_after_overflow(
+                # #5898: off the loop — same reason as the controller's own
+                # call site: the spill batch inside estimates, hashes and
+                # writes each candidate's whole body.
+                self._compact_attempt_len = await asyncio.to_thread(
+                    shrink_pool_after_overflow,
                     self.raw_middle, _offered_for_shrink, _current_attempt,
                     spill_fn=self._spill_fn or (lambda _offered: []),
                     saw_byte_limit=self._last_recover_is_byte_limit,

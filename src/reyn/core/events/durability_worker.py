@@ -114,6 +114,34 @@ class DurabilityWorker:
         queue.put_nowait((do_durable_write, None))
         self._kick()
 
+    def bind_to_running_loop(self) -> None:
+        """#5898: bind this worker's queue to the CURRENTLY running loop
+        without enqueuing anything — so a later :meth:`submit_threadsafe`
+        from a worker thread has a loop to hand the job to. Called from
+        ``MediaStore.flush`` (the barrier every chat turn takes on the loop
+        before its first LLM call, i.e. before any off-loop tool-result
+        processing could try to submit). Idempotent; same rebind rule as
+        :meth:`_ensure_queue` (a fresh loop gets a fresh queue)."""
+        self._ensure_queue()
+
+    def submit_threadsafe(self, do_durable_write: DurableWrite) -> bool:
+        """#5898: :meth:`submit_nowait` for a caller OFF the loop thread (a
+        ``to_thread`` worker) — hands the enqueue to the bound loop via
+        ``call_soon_threadsafe`` so the queue's own single-loop contract
+        (``put_nowait`` on the loop thread, FIFO = durability order) is
+        untouched. Returns ``False`` when no loop is bound (or it stopped)
+        — the caller then falls back to its own no-loop path; never raises
+        for that case. Ordering: jobs from one worker thread reach the
+        queue in the order this is called (``call_soon_threadsafe`` is
+        FIFO per loop), so a content write and its manifest line (the pair
+        ``MediaStore.save_tool_result`` submits back-to-back) keep their
+        order exactly as on-loop."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return False
+        loop.call_soon_threadsafe(self.submit_nowait, do_durable_write)
+        return True
+
     @property
     def durability_failed(self) -> bool:
         """True once a fire-and-forget durable write failed PERSISTENTLY (§4-exhausted). The

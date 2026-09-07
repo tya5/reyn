@@ -121,13 +121,27 @@ class SurfaceManager:
         if s is not None:
             s.last_seen = now
 
-    def sweep_dead(self, now: float) -> list[str]:
+    def sweep_dead(self, now: float, *, stall_credit_s: float = 0.0) -> list[str]:
         """Detach every surface whose last heartbeat is older than the liveness
-        timeout (half-open detection). Returns the swept connection ids."""
+        timeout (half-open detection). Returns the swept connection ids.
+
+        ``stall_credit_s`` (#5898, architect's named second-order effect —
+        "server 自身の stall が liveness_timeout を超えると自分の client を
+        heartbeat-timeout で detach し得る"): a heartbeat's ``last_seen`` is
+        the SERVER's receive time, so a client that kept sending while the
+        server's own loop was blocked looks, when the loop resumes, exactly
+        like a client that went silent. The sweeper passes how late its
+        own tick ran beyond its period — the interval the server is KNOWN
+        not to have been listening — and that much silence is not the
+        client's. ``0.0`` (a healthy loop) is byte-identical to before;
+        the credit only ever delays a genuine detach by the stall's own
+        length, never suppresses it (the next on-time tick judges the
+        full interval again)."""
+        credit = max(0.0, stall_credit_s)
         dead = [
             cid
             for cid, s in self._surfaces.items()
-            if now - s.last_seen > self._liveness_timeout
+            if now - s.last_seen - credit > self._liveness_timeout
         ]
         for cid in dead:
             self.detach(cid, now)

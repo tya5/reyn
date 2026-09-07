@@ -130,8 +130,15 @@ def test_llm_request_error_carries_input_chars_too_same_field_both_paths() -> No
     the same ``input_chars`` field/definition as a succeeded one (owner's
     own explicit requirement: "成功・失敗の両方に付くこと"), so a failed
     call's input size is comparable to a succeeded call's — never
-    observable only on the happy path."""
-    from reyn.llm.llm import _emit_llm_request_error
+    observable only on the happy path.
+
+    #5898: the figure is computed ONCE, off the loop, at request time by
+    ``recorded_acompletion`` (``_message_chars``) and handed to the error
+    emitter — the emitter no longer re-serialises ``messages`` on the
+    loop. So this test hands it the same figure the request path would
+    (computed with the same function) and witnesses that the failure
+    event carries it under the same field."""
+    from reyn.llm.llm import _emit_llm_request_error, _message_chars
 
     collected: "list" = []
     events = EventLog(subscribers=[lambda e: collected.append(e)])
@@ -140,6 +147,7 @@ def test_llm_request_error_carries_input_chars_too_same_field_both_paths() -> No
         messages = [{"role": "user", "content": "x" * 500}]
         _emit_llm_request_error(
             _MODEL, "compaction", RuntimeError("boom"), {}, messages,
+            input_chars=_message_chars(messages),
         )
     finally:
         set_llm_request_event_log(None)

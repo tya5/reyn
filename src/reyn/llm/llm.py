@@ -1971,9 +1971,18 @@ def _parse_litellm_retry_count(error_message: str) -> "int | None":
     return int(m.group(1)) if m else None
 
 
+def _message_chars(messages: list) -> int:
+    """#5898: the ``input_chars`` figure (#5592) — the exact length of the
+    JSON-serialised ``messages`` payload. O(history bytes): call it via
+    ``asyncio.to_thread`` from the loop, never inline (this is the ONE
+    place the request path serialises the whole payload for its own
+    bookkeeping; the wire encoding is httpx's, inside litellm)."""
+    return len(json.dumps(messages, ensure_ascii=False))
+
+
 def _emit_llm_request_error(
     model: str, purpose: str, exc: BaseException, base_kwargs: dict, messages: list,
-    *, elapsed_s: "float | None" = None,
+    *, elapsed_s: "float | None" = None, input_chars: "int | None" = None,
 ) -> None:
     """#1676: emit a P6 ``llm_request_error`` with the FULL provider error detail
     (status_code + whole message/body, NOT truncated — the owner's 405 root-cause
@@ -2027,8 +2036,13 @@ def _emit_llm_request_error(
             params=_redact_llm_request_params(base_kwargs, None),
             # #5592: same field/definition as llm_request's own
             # input_chars — a failed call's input size, comparable to a
-            # succeeded call's, not an estimate.
-            input_chars=len(json.dumps(messages, ensure_ascii=False)),
+            # succeeded call's, not an estimate. #5898: the figure
+            # ``recorded_acompletion`` already computed OFF-loop for its
+            # own ``llm_request`` event — never re-serialised here on the
+            # loop (O(history bytes), the #5894 stall class). None when
+            # no event log was present at request time: the field says
+            # so instead of paying the serialisation on the failure path.
+            input_chars=input_chars,
             # #5592: the window ceiling THIS call was measured against —
             # same field/definition as llm_request's own (see that site).
             max_input_tokens_applied=_get_max_input_tokens(model),
@@ -2651,10 +2665,19 @@ async def recorded_acompletion(
     # ``recorder=None`` graceful path. ``messages`` is excluded by construction
     # (a separate positional arg, never in base_kwargs); ``tools`` → count;
     # secret-like fields redacted. Never let an audit emit break the LLM call.
+    # #5898: the ONE serialisation of ``messages`` this call makes for its
+    # own bookkeeping — O(history bytes), so off the loop, and computed
+    # ONCE for both the request event and (in the outer except below) the
+    # error event, which used to re-serialise the same payload on the loop
+    # a second time. Bound BEFORE the emit's own try so the error path can
+    # read it whatever that try did; None when no event log is present.
+    _input_chars: "int | None" = None
     try:
         from reyn.core.events.events import get_llm_request_event_log
         from reyn.llm.model_budget import get_max_input_tokens
         _llm_event_log = get_llm_request_event_log()
+        if _llm_event_log is not None:
+            _input_chars = await asyncio.to_thread(_message_chars, messages)
         if _llm_event_log is not None:
             _llm_event_log.emit(
                 "llm_request",
@@ -2671,7 +2694,7 @@ async def recorded_acompletion(
                 # only. Same field name/definition as the matching field
                 # on `llm_request_error` below, so a failed call's input
                 # size is comparable to a succeeded one's.
-                input_chars=len(json.dumps(messages, ensure_ascii=False)),
+                input_chars=_input_chars,
                 # #5592: the window ceiling THIS call was measured
                 # against. ``get_max_input_tokens`` is a cheap catalog
                 # lookup (litellm's own model table, falling back to a
@@ -3018,7 +3041,15 @@ async def recorded_acompletion(
                 "— litellm.token_counter will fill the counts (recorded as ESTIMATED)",
                 len(chunks), model,
             )
-        reconstructed = litellm.stream_chunk_builder(chunks, messages=msgs)
+        # #5898: off the loop — when the provider reported no usage,
+        # ``stream_chunk_builder`` fills ``prompt_tokens`` with
+        # ``litellm.token_counter`` over the WHOLE ``msgs`` (tiktoken,
+        # O(history bytes); litellm main.py's own fallback), which on the
+        # loop is the #5894 stall shape after the reply has already
+        # arrived. Chunk joining is O(reply bytes) and rides along.
+        reconstructed = await asyncio.to_thread(
+            litellm.stream_chunk_builder, chunks, messages=msgs,
+        )
         if reconstructed is None:
             # No chunks at all (degenerate empty stream) — degrade to the
             # whole-collect call rather than surface None to a caller that
@@ -3122,6 +3153,7 @@ async def recorded_acompletion(
         _emit_llm_request_error(
             effective_model, purpose, exc, base_kwargs, messages,
             elapsed_s=time.monotonic() - _call_start,
+            input_chars=_input_chars,
         )
         # #1678, delegated to litellm at #3288-follow-up: this call shape
         # (reasoning_effort + tools, resolved to the openai/azure provider —

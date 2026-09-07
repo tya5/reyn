@@ -81,6 +81,33 @@ See [reyn.yaml § gateway.auth](../config/reyn-yaml.md) for the token / TLS /
 transport-tier configuration and [AG-UI transport](../runtime/agui-transport.md)
 for the chat surface's per-handler details.
 
+## Event-loop tripwire (always on)
+
+The server runs the same loop watcher the inline CUI has had since #3539
+(`reyn.runtime.loop_tripwire`, lifted out of the CUI by #5898): a 50 ms tick
+that measures how late the event loop wakes up. A tick more than 250 ms late
+is a stall — one `WARNING` line on reyn's own log per stall episode
+(`reyn:web: the interface was unresponsive for N.Ns …`) and one more when it
+recovers. When a log file handler is installed, a per-tick `faulthandler`
+dead-man's switch also dumps the main thread's Python stack **into that log,
+mid-stall** — so "what was the server doing" is answered by the process
+itself, not reconstructed afterwards with `sample`. No setting is needed;
+`REYN_PROF_DUMP=<path>` additionally records a detail trace (see the module
+docstring). Nothing here changes the loop's behaviour: it is observation only.
+
+Why it exists (#5894 ②): the loop was blocked for 7 minutes by CPU work
+proportional to the size of the conversation history (token counting, JSON
+serialisation, hashing), during which no HTTP request returned and no
+server-side record was written. #5898 moved those stages off the loop
+(`asyncio.to_thread`) — a request during one of them now returns — and armed
+this watcher so any remaining stall is visible with the shipped config.
+
+A related second-order effect is also closed: a client's heartbeat is
+timestamped at the server's receive time, so a server stall longer than the
+liveness timeout used to read as every client going silent. The sweeper now
+credits its own lateness (`SurfaceManager.sweep_dead(stall_credit_s=…)`) —
+a client that kept sending while the server was blocked stays attached.
+
 ## Exit codes
 
 | Code | Meaning |

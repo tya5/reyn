@@ -172,6 +172,42 @@ async def _lifespan(app: FastAPI):
     )
     install_asyncio_exception_handler(asyncio.get_running_loop())
 
+    # ── Event-loop tripwire (#5898, #5894 ②) ───────────────────────────────
+    # Always on, shipped config: `reyn:web`'s loop blocked for 7 minutes on
+    # O(history bytes) CPU work and NOTHING in this process recorded it —
+    # `stall_trace.py` is a REYN_STALL_TRACE opt-in and the tripwire lived
+    # in textual_chat — so the stall was visible only as its clients'
+    # symptoms. Same watcher the CUI runs (reyn.runtime.loop_tripwire):
+    # one WARNING per stall episode + one at recovery on reyn's own log,
+    # and — when a log FileHandler is installed — the main thread's stack
+    # dumped INTO that log mid-stall by the per-tick faulthandler
+    # dead-man's switch, so "what was it doing" is answered by the
+    # process itself, not reconstructed from `sample` afterwards.
+    from reyn.runtime.loop_tripwire import (  # noqa: PLC0415
+        _TRIPWIRE_MS,
+        LoopTripwire,
+        StallDumpArm,
+        stall_log_line,
+        stall_recovered_log_line,
+        watch_event_loop,
+    )
+    from reyn.runtime.stall_trace import find_file_handler_path  # noqa: PLC0415
+
+    _tripwire = LoopTripwire()
+    app.state.loop_tripwire = _tripwire
+    app.state.loop_tripwire_task = asyncio.create_task(
+        watch_event_loop(
+            _tripwire,
+            on_stall=lambda ms: logger.warning("reyn:web: %s", stall_log_line(ms)),
+            on_recovered=lambda: logger.warning("reyn:web: %s", stall_recovered_log_line()),
+            stack_dump=StallDumpArm.open(
+                seconds=_TRIPWIRE_MS / 1000, log_path=find_file_handler_path(),
+                logger=logger, label="reyn:web",
+            ),
+        ),
+        name="loop-tripwire",
+    )
+
     # ── Server-side authentication context (ADR-0039 P0) ──────────────────────
     # Built once per process; read on every AG-UI SSE connection to gate the
     # answer / permission-grant paths. The effective token is handed in from the
@@ -295,6 +331,19 @@ async def _lifespan(app: FastAPI):
     yield  # ── App runs ──
 
     # ── Shutdown ──
+    # #5898: stop the loop tripwire first — its `finally` releases the one
+    # process-wide faulthandler timer and its own fd (see StallDumpArm).
+    tripwire_task = getattr(app.state, "loop_tripwire_task", None)
+    if tripwire_task is not None:
+        tripwire_task.cancel()
+        try:
+            await tripwire_task
+        except asyncio.CancelledError:
+            _current = asyncio.current_task()
+            if _current is not None and _current.cancelling() > 0:
+                raise
+        except Exception:  # noqa: BLE001 — defensive shutdown
+            pass
     # #1953 slice 5a-2: cancel the disposition sweep loop (no leak — await it so
     # the cancellation propagates before the process exits).
     sweep_task = getattr(app.state, "disposition_sweep_task", None)

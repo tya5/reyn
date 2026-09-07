@@ -286,7 +286,7 @@ def test_the_durable_record_keeps_landing_while_the_banner_stays_quiet(
     monkeypatch.setenv("REYN_PROF_DUMP", str(target))
 
     clock = [1000.0]
-    monkeypatch.setattr(loop_probe.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])  # the ONE time module the tripwire reads
 
     tripwire = LoopTripwire(threshold_ms=250.0)
 
@@ -335,7 +335,7 @@ def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path)
     monkeypatch.setenv("REYN_PROF_DUMP", str(target))
 
     clock = [2000.0]
-    monkeypatch.setattr(loop_probe.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])  # the ONE time module the tripwire reads
 
     tripwire = LoopTripwire(threshold_ms=250.0)
 

@@ -11494,13 +11494,22 @@ class Session:
         bridge_text = summary.text if summary is not None else ""
         if not isinstance(bridge_text, str):
             bridge_text = _json.dumps(bridge_text, ensure_ascii=False)
+        # #5898: the estimate over every folded turn (tiktoken over each
+        # body, O(bytes)) runs off the loop — this op serves an operator's
+        # /compact while the server's other clients are waiting on the
+        # same loop.
+        compressed_tokens = await asyncio.to_thread(
+            lambda: sum(_est(m.text) for m in middle),
+        )
         return {
             "freed_tokens": max(0, before - after),
             "free_window_after": max(0, effective_trigger - after),
             "free_window_before": max(0, effective_trigger - before),
             # #191 chat-axis compression metric (the meaningful chat signal):
             "summarized_turns": len(middle),
-            "compressed_tokens": sum(_est(m.text) for m in middle),
+            # #5898: the estimate over every folded turn (tiktoken,
+            # O(bytes)) is computed off the loop above, never inline here.
+            "compressed_tokens": compressed_tokens,
             "bridge_tokens": _est(bridge_text) if summary is not None else 0,
             # #5708: threaded through from `force_compact_now`'s own
             # `ForceCompactResult` — see that class's docstring. Lets a

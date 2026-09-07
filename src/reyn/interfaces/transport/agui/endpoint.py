@@ -390,13 +390,29 @@ def _ensure_fail_close_driver(agent_name: str, manager: SurfaceManager, registry
     )
 
 
+def sweeper_stall_credit(*, now: float, last_tick: float, poll: float) -> float:
+    """#5898: how much of the interval since the sweeper's last tick the
+    server was NOT listening — the tick's lateness beyond its own period.
+    Pure (the clock is an input) so the credit rule is testable without a
+    real stall: a tick that ran ``poll`` after the previous one credits
+    0.0; one that ran ``poll + 120`` later credits 120."""
+    return max(0.0, (now - last_tick) - poll)
+
+
 async def _drive_fail_close(agent_name: str, manager: SurfaceManager, registry) -> None:
     poll = max(0.5, min(manager.grace_seconds, manager.liveness_timeout) / 4.0)
+    last_tick = monotonic()
     try:
         while True:
             await asyncio.sleep(poll)
             now = monotonic()
-            manager.sweep_dead(now)
+            # #5898: a server stall longer than the liveness timeout must not
+            # read as every client going silent — see SurfaceManager.
+            # sweep_dead's own ``stall_credit_s`` docstring.
+            manager.sweep_dead(
+                now, stall_credit_s=sweeper_stall_credit(now=now, last_tick=last_tick, poll=poll),
+            )
+            last_tick = now
             if not manager.should_fail_close(now):
                 continue
             try:
