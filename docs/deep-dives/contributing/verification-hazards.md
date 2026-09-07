@@ -1222,11 +1222,26 @@ missing one.
   at the exact (name, suite) pair it checks, invisible to every aggregate
   view that blends across suites instead of asking "does THIS suite's
   report for THIS name exist" (#5912). The discriminant a reader can pull
-  directly: `gh api repos/<org>/<repo>/commits/<sha>/check-runs --jq
-  '.check_runs[]|"\(.name)|\(.check_suite.id)"'` and check whether the
-  suite id carrying the required names is the MAXIMUM id present — if a
-  newer, empty-of-those-names suite exists, that is the blocked shape,
-  not merely having two suites. The rollup's SUCCESS was real; it just
+  directly must scope the "which is newer" comparison to suites of the
+  SAME workflow, not every suite on the head — a head carries one suite
+  per workflow, so the head-wide maximum id is almost always a different
+  workflow's, and comparing against it false-positives on every healthy
+  PR (measured directly against this instance's own head: false-positive
+  confirmed, then fixed and re-measured 4/4 against known-good and the
+  one known-BLOCKED head):
+
+  ```sh
+  gh api "repos/<org>/<repo>/commits/<sha>/check-runs?per_page=100" --jq '
+    [.check_runs[] | select(.name | test("^pytest \\(Python"))]
+    | (map(.check_suite.id) | max) as $newest
+    | map(select(.check_suite.id == $newest) | .name)
+    | if any(.[]; test("matrix")) then "BLOCKED shape" else "OK" end'
+  ```
+
+  — find the newest suite among only the ones reporting a name in the
+  required family, and check whether THAT suite's names are still
+  unexpanded (`matrix.python-version` literal) rather than the real
+  values. The rollup's SUCCESS was real; it just
   never named which suite, of the two, it was a rollup of.
 
 **This is where B combines with §16**, not a coincidence: the sessions that
