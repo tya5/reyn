@@ -78,7 +78,9 @@ before trusting a fixture that produces the expected result, check whether
 an OLDER, already-existing rule (sort order, priority, eviction policy)
 would produce the identical result with the new code deleted — a
 construction is only a witness once the new rule is the SOLE explanation
-left standing (#5399).
+left standing (#5399). The same shape recurs whenever a second,
+un-stripped path can independently produce the observable under test
+(#5895).
 
 **The same question binds the PRESCRIBER, not only the writer.** The face
 above reads as advice to whoever writes the assert — but "the observation
@@ -151,6 +153,19 @@ at all (#5399).
 Two of these five were prescribed by the same reviewer who later named the
 face — "the observation point has a name" was mistaken for "the observation
 point measures the claim," on both sides of the exchange.
+
+A sixth instance (2026-09-07), about two independently-sufficient producers
+rather than a mismeasured quantity: a sent-queue seed strip-falsify asserted
+"the operator's own submitted row appears" with the seed-from-frame path
+stripped (reading the live read model instead) — and STAYED GREEN, because
+the row also renders whenever the live, WAL-backed queue is non-empty, a
+second, un-stripped path to the identical observable that the test session
+happened to satisfy. The strip measured "does the row appear," not "did THIS
+path produce it" — the same gap as the first instance above, one layer up:
+an observable with two producers is not falsified by disabling only one.
+Fixed by removing the second path from the test session (an empty WAL
+queue, so only the seed-from-frame path can draw the row) and re-stripping
+(#5895).
 
 #### Instances: Record is a lie
 
