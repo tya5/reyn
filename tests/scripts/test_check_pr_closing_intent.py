@@ -1050,3 +1050,30 @@ def test_check4_stays_silent_when_the_body_canonically_covers_the_commit_leak():
         commit_messages=[_PR5484_COMMIT_WITH_LEAK],
     )
     assert findings == []
+
+
+# ── #5919: the census's own live false-positive input ───────────────────────
+
+
+def test_check1_fires_on_the_5919_census_prose_shape_without_a_marker():
+    """Tier 1: deny side — #5919's own census input, PR #2989's real body
+    prose "Order-dependency is resolved: #2975" (quoted verbatim in this
+    module's docstring as the motivating example for the `discussing`
+    marker's existence). Without the marker, `resolve[sd]` + `#N` is a
+    real GitHub closing keyword match, so check 1 correctly fires
+    (fail-CLOSED — noisy, never silent) when the parser did not resolve
+    #2975: this is the documented, intended behaviour the marker exists to
+    let an author opt out of, not a defect in itself."""
+    body = "Order-dependency is resolved: #2975"
+    findings = m.check_contradictions(body, closing_refs=[])
+    assert _checks(findings) == [(1, 2975)]
+
+
+def test_check1_is_silenced_by_the_discussing_marker_for_the_same_shape():
+    """Tier 1: accept side, same prose — adding the `discussing` marker
+    (the documented escape hatch, #5919's shared-helper refactor of
+    `_DISCUSSING_MARKER_RE` must not change this) silences check 1 for the
+    same #2975 that fired above."""
+    body = "Order-dependency is resolved: #2975\n\n<!-- closing-check: discussing #2975 -->"
+    findings = m.check_contradictions(body, closing_refs=[])
+    assert findings == []

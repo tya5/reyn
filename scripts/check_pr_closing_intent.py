@@ -315,6 +315,10 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _markers  # noqa: E402 -- sibling module, see _markers.py's own docstring
 
 # ---------------------------------------------------------------------------
 # Declaring-phrase vocabulary (OUR vocabulary — deliberately small and NOT a
@@ -452,9 +456,12 @@ def _window_has_negation(window: str) -> bool:
 # PR both declares `Closes #3007` and discusses #2620/#2972/#2827 as
 # examples — a body-wide marker would silently drop check-1 protection from
 # the real declaration, turning the escape hatch into a bypass).
-_DISCUSSING_MARKER_RE = re.compile(
-    r"<!--\s*closing-check:\s*discussing\s+((?:#\d+[\s,]*)+?)\s*-->",
-    re.IGNORECASE,
+#: #5919 stage 1: built via the shared `_markers.html_comment_marker`
+#: primitive (same regex as before this refactor — behaviour unchanged,
+#: only the construction moved into the one place a future gate reaches
+#: for this shape instead of hand-rolling its own).
+_DISCUSSING_MARKER_RE = _markers.html_comment_marker(
+    "closing-check", r"discussing\s+((?:#\d+[\s,]*)+?)",
 )
 _ISSUE_NUM_RE = re.compile(r"#(\d+)")
 

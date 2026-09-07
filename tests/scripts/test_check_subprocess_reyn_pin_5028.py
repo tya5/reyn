@@ -29,6 +29,18 @@ from scripts.check_subprocess_reyn_pin import (
     new_files,
 )
 
+# EXEMPT: this-file-tests-the-scanner-and-spawns-no-subprocess-of-its-own
+#
+# #5919 stage 1 migration — the module docstring above mentions
+# `sys.executable`/`out_of_process_reyn` BY NAME (prose describing what the
+# gate under test does), which is exactly the population-imprecision
+# over-count `check_subprocess_reyn_pin.py`'s own docstring already
+# discloses: this file's own real subprocess calls are `git init`/`git add`
+# (`_init_repo`), never `sys.executable` itself, so requesting the fixture
+# would gain it nothing. Before #5919 that prose mention alone satisfied
+# `_DECLARED_RE.search(text)`; now a declaration must be a real NAME token
+# (this file uses none) or this explicit, fixed-syntax marker.
+
 # `tests/scripts/test_check_subprocess_reyn_pin_5028.py`'s own source
 # mentions `sys.executable` and the two fixture names in prose above — split
 # so this file's own text never contains a run the scanner under test would
@@ -193,6 +205,77 @@ def test_the_real_baseline_has_no_new_files_against_the_current_tree() -> None:
     baseline = load_baseline()
     measured = gap_files(_ROOT)
     assert new_files(measured, baseline) == set()
+
+
+# ── #5919: declaration must be real syntax, not a text mention ─────────────
+
+
+def test_a_comment_denying_the_declaration_does_not_declare_it(tmp_path) -> None:
+    """Tier 1: deny side — #5919's own census input, the false positive
+    that motivated this fix. Before the fix, `_DECLARED_RE.search(text)`
+    matched `out_of_process_reyn` appearing ANYWHERE in the file's text,
+    so a comment EXPLAINING that the fixture is not needed satisfied the
+    same regex as actually requesting it — this file's real violation
+    (spawning `sys.executable` with nothing declared) was silently, and
+    permanently, removed from the gap."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text(
+        f"proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n"
+        f"# this subprocess call never touches {_DECLARED} -- plain smoke check\n",
+        encoding="utf-8",
+    )
+    _init_repo(tmp_path)
+    assert gap_files(tmp_path) == {_T + "test_a.py"}
+
+
+def test_an_exempt_marker_declares_the_file(tmp_path) -> None:
+    """Tier 1: accept side — the fixed `# EXEMPT: <reason>` marker
+    (anchored to a comment's own start) is a genuine declaration, for the
+    one case a real fixture request cannot cover: a spawn that truly
+    never touches `reyn`."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text(
+        "# EXEMPT: plain-smoke-check-no-reyn-involved\n"
+        f"proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n",
+        encoding="utf-8",
+    )
+    _init_repo(tmp_path)
+    assert gap_files(tmp_path) == set()
+
+
+def test_an_exempt_marker_not_at_the_comments_own_start_does_not_declare(tmp_path) -> None:
+    """Tier 1: deny side — the marker word appearing mid-comment (not
+    opening the comment's own line) must not declare, the same anchoring
+    discipline as the PR-comment marker gates."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text(
+        f"proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n"
+        "# see EXEMPT: below for the real one on the next line\n",
+        encoding="utf-8",
+    )
+    _init_repo(tmp_path)
+    assert gap_files(tmp_path) == {_T + "test_a.py"}
+
+
+def test_a_real_fixture_parameter_with_no_spawn_stays_out_of_the_gap(tmp_path) -> None:
+    """Tier 1: accept side, through the public `gap_files` surface — a
+    genuine fixture request (a NAME token, not merely mentioned in a
+    comment) keeps declaring the file even when a nearby comment ALSO
+    mentions the same name in prose; the code-usage path and the
+    EXEMPT-marker path are independent, and either alone is enough."""
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_a.py").write_text(
+        f"# requests {_DECLARED} below, for real\n"
+        f"def test_x({_DECLARED}):\n"
+        f"    proc = subprocess.run([{_SPAWN}, '-c', 'import reyn'])\n",
+        encoding="utf-8",
+    )
+    _init_repo(tmp_path)
+    assert gap_files(tmp_path) == set()
 
 
 def test_baseline_is_a_flat_list_of_existing_tracked_files() -> None:

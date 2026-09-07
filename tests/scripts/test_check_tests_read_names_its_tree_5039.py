@@ -482,3 +482,67 @@ def test_tests_commits_after_takes_no_head_argument():
         ],
     )
     assert [c["oid"] for c in later] == ["bbbbbbbb"]
+
+
+# ── #5919: fixed-marker syntax, census + architect deny fixtures ────────────
+
+
+def test_a_sentence_denying_a_note_is_not_read_as_one():
+    """Tier 1: deny side — #5919's own census input. Before the fix,
+    `_NOTE_MARKER.search` matched "TESTS-READ" anywhere on the first line,
+    so a comment DENYING that a note is ready read as a claim, with the
+    trailing SHA-shaped token ("9cc1006") then read as the tree it names.
+    Must fall into the same "no note" bucket as a comment that never
+    mentions TESTS-READ at all."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{
+            "body": "This PR is not ready for a TESTS-READ note yet — "
+                    "still investigating 9cc1006.",
+        }],
+        commits=[_commit("9cc1006aa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="9cc1006aa",
+    ))
+    assert code == 1
+    assert "no TESTS-READ note" in "\n".join(lines)
+
+
+def test_a_backtick_fenced_marker_is_not_a_claim():
+    """Tier 1: architect (#5919) — column-0 alone is not enough; a
+    backtick-fenced marker can also open a line (`` `TESTS-READ ...` ``)
+    while still being a MENTION, not a declaration. The marker regex
+    requires the literal keyword or role prefix, so a leading backtick
+    character excludes it structurally."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "`TESTS-READ (head 9cc1006aa)` is the syntax this gate wants."}],
+        commits=[_commit("9cc1006aa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="9cc1006aa",
+    ))
+    assert code == 1
+    assert "no TESTS-READ note" in "\n".join(lines)
+
+
+def test_a_quoted_marker_is_not_a_claim():
+    """Tier 1: architect (#5919) — a markdown-quoted line (`> TESTS-READ
+    ...`) opens with the quote marker, not the keyword or role prefix."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "> TESTS-READ (head 9cc1006aa)"}],
+        commits=[_commit("9cc1006aa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="9cc1006aa",
+    ))
+    assert code == 1
+    assert "no TESTS-READ note" in "\n".join(lines)
+
+
+def test_a_mid_sentence_mention_is_not_a_claim():
+    """Tier 1: the marker discussed mid-sentence, not opening the line."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "The reviewer marks it as TESTS-READ (head 9cc1006aa) once done."}],
+        commits=[_commit("9cc1006aa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="9cc1006aa",
+    ))
+    assert code == 1
+    assert "no TESTS-READ note" in "\n".join(lines)

@@ -84,7 +84,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -106,6 +105,7 @@ def _load(module_name: str, filename: str):
 
 _tests_read = _load("_check_blocking_reread_tests_read", "check_tests_read_names_its_tree.py")
 _blocking = _load("_check_blocking_reread_blocking", "check_open_blocking_checkboxes.py")
+_markers = _load("_check_blocking_reread_markers", "_markers.py")
 
 #: architect's non-blocking recommendation on #5453 (quoted verbatim below,
 #: `evaluate`'s docstring) — reusing ONLY `_tests_read._NOTE_MARKER`
@@ -115,7 +115,12 @@ _blocking = _load("_check_blocking_reread_blocking", "check_open_blocking_checkb
 #: THIS gate, so a PR that also touches `tests/` (and so already needs
 #: `TESTS-READ` for house rule 8) still clears both gates with ONE
 #: comment, while a `src`-only PR can post the accurate one.
-_RE_READ_MARKER = re.compile(r"RE-READ\s*\(\s*head\s", re.IGNORECASE)
+#:
+#: #5919: like `_tests_read._NOTE_MARKER`, now anchored to the CLAUDE.md
+#: rule-2 role prefix via `_markers.role_prefixed_marker` — a bare
+#: `.search()` used to let a line DENYING a re-read ("No RE-READ (head
+#: start) needed here, this is a docs-only typo fix.") read as one.
+_RE_READ_MARKER = _markers.role_prefixed_marker(r"RE-READ\s*\(\s*head\s")
 
 
 def _is_reread_note(first_line: str) -> bool:

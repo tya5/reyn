@@ -58,6 +58,19 @@ demanding that judgment be resolved BEFORE adoption would defer the gate
 indefinitely — same reasoning as that script's own ratchet, and
 `mypy_ratchet.py`'s.
 
+For the over-count case — a spawn that genuinely never touches `reyn` —
+write ``# EXEMPT: <short reason>`` as its own comment line, starting at
+that line's own first character (``_markers.fixed_comment_marker``).
+Before #5919 the declaration check was a plain substring search over the
+WHOLE file, so a comment merely *mentioning* a fixture name anywhere —
+including one explaining that the file does NOT need it, e.g. ``# this
+subprocess call never touches out_of_process_reyn — plain smoke check``
+— satisfied it, silently and permanently. The genuine declaration (a real
+fixture request) is now read from actual Python syntax (a NAME token, via
+`tokenize` — never from a comment or a string), and the exemption path is
+this separate, explicit marker: the two are no longer the same regex, so
+a comment merely discussing either vocabulary cannot satisfy either.
+
 ## A ratchet, not a zero baseline
 
 At the time this gate landed, the gap held enough pre-existing files that
@@ -80,17 +93,68 @@ file must never itself flip the gate red.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import subprocess
 import sys
+import tokenize
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _markers  # noqa: E402 -- sibling module, see _markers.py's own docstring
 
 _ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_PATH = _ROOT / "scripts" / "check_subprocess_reyn_pin_baseline.json"
 
 _SPAWN_RE = re.compile(r"\bsys\.executable\b")
-_DECLARED_RE = re.compile(r"\bout_of_process_reyn\b|\breyn_console_scripts\b")
+
+#: The two fixture names that count as a genuine declaration — see
+#: `_declares_fixture` below. Matched as Python NAME tokens, never as a
+#: text substring (#5919).
+_FIXTURE_NAMES = frozenset({"out_of_process_reyn", "reyn_console_scripts"})
+
+#: #5919: a `# EXEMPT: <name>` line, anchored to a comment's own start
+#: (`_markers.fixed_comment_marker`), for a file whose `sys.executable`
+#: spawn genuinely never touches `reyn` (the module docstring's own
+#: "Population imprecision" example) — the ONE case a text scan cannot
+#: settle from the fixture names alone, so it needs its own explicit,
+#: hand-written declaration rather than piggybacking on `_FIXTURE_NAMES`.
+_EXEMPT_RE = _markers.fixed_comment_marker("EXEMPT")
+
+
+def _declares_fixture(text: str) -> bool:
+    """True iff *text* (one `tests/**/*.py` file's own source) either (a)
+    uses `out_of_process_reyn` / `reyn_console_scripts` as a real Python
+    NAME token — a fixture request, a parameter, an attribute access —
+    or (b) carries a `# EXEMPT: <name>` marker at a comment's own start.
+
+    Deliberately NOT a text-substring search over the whole file (#5919's
+    own incident): a COMMENT merely *mentioning* one of the fixture names
+    — including one explaining that the file does NOT need it, e.g.
+    ``# this subprocess call never touches out_of_process_reyn — plain
+    smoke check`` — used to satisfy the old `_DECLARED_RE.search(text)`,
+    silently and permanently removing that file from the gap (the class
+    of failure this gate exists to catch, applied to itself: "no
+    declaration" read as "declared"). `tokenize` distinguishes a NAME
+    token used as code from the SAME text appearing inside a COMMENT or
+    STRING token, which a bare regex over raw text cannot do at all.
+
+    A file that tokenizes with a genuine syntax error is treated as NOT
+    declaring — refusing to guess is safer than either direction here,
+    and a `tests/**/*.py` file that does not parse has a problem this
+    gate is not the one to report."""
+    for line in text.splitlines():
+        if _EXEMPT_RE.match(line):
+            return True
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(text).readline)
+        for tok in tokens:
+            if tok.type == tokenize.NAME and tok.string in _FIXTURE_NAMES:
+                return True
+    except (tokenize.TokenizeError, SyntaxError, IndentationError, ValueError):
+        return False
+    return False
 
 
 def _iter_tests_py(root: Path = _ROOT) -> "list[Path]":
@@ -137,7 +201,7 @@ def gap_files(root: Path = _ROOT) -> "set[str]":
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if _SPAWN_RE.search(text) and not _DECLARED_RE.search(text):
+        if _SPAWN_RE.search(text) and not _declares_fixture(text):
             offenders.add(str(path.relative_to(root)))
     return offenders
 
@@ -203,11 +267,15 @@ def main(argv: "list[str] | None" = None) -> int:
         "`PYTHONPATH` (see tests/conftest.py's fixture docstring, and "
         "tests/interfaces/test_textual_chat_phase1_3273.py for a worked "
         "example). If it runs a `[project.scripts]` console script by "
-        "name: request `reyn_console_scripts` instead. If the spawn "
-        "genuinely never touches `reyn` (e.g. `sys.executable -c "
-        "\"print('ok')\"`), that's fine too — but say so and regenerate "
-        "the baseline (--write-baseline) rather than leaving it "
-        "unexplained.",
+        "name: request `reyn_console_scripts` instead. A declaration must "
+        "be REAL Python syntax (the fixture name used as a NAME token, "
+        "e.g. a test parameter) — a comment merely mentioning the name "
+        "does not count (#5919). If the spawn genuinely never touches "
+        "`reyn` (e.g. `sys.executable -c \"print('ok')\"`), that's fine "
+        "too — but say so with a fixed marker: add a comment line reading "
+        "exactly `# EXEMPT: <short reason>`, starting at that line's own "
+        "first character, then regenerate the baseline (--write-baseline) "
+        "rather than leaving it unexplained.",
         file=sys.stderr,
     )
     return 1
