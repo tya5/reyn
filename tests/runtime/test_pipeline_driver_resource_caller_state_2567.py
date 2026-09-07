@@ -220,7 +220,7 @@ async def test_driver_dispatch_reaches_real_host_mcp_roster(tmp_path: Path) -> N
     driver = PipelineExecutorDriver(work_order, registry=reg, state_log=state_log)
     driver.bind_session(caller, caller_host)
 
-    dispatch = await driver._make_dispatch()
+    dispatch = await driver._make_dispatch("chain-2567")  # #5889: now required
     result = await dispatch("list_mcp_servers", {})
 
     assert result["servers"] == [
@@ -295,7 +295,7 @@ async def test_driver_dispatch_still_structurally_denies_pipeline_launch(
     driver = PipelineExecutorDriver(work_order, registry=reg, state_log=state_log)
     driver.bind_session(caller, caller._router_host)
 
-    dispatch = await driver._make_dispatch()
+    dispatch = await driver._make_dispatch("chain-2567b")  # #5889: now required
     with pytest.raises(PipelineExecutionError) as exc:
         await dispatch("run_pipeline", {})
     assert "structurally denied" in str(exc.value)

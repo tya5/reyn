@@ -568,15 +568,20 @@ def _build_run_tool_context(
         ``write_file``, …) calls real methods on it (``read_file_bytes`` etc.),
         so a synthetic ``base_dir``-only stand-in (fine for ``pipeline_install``,
         which never dispatches an arbitrary tool) is not enough here.
-      - ``caller_kind="router"``: an audit taxonomy label forwarded verbatim
-        into ``tool_called``/``tool_returned`` events
-        (``core/dispatch/dispatcher.py``), not a claim that a live router
-        loop is driving this call. Every existing caller (including the
+      - ``caller_kind="pipeline"`` (#5889 — was ``"router"``): an audit
+        taxonomy label forwarded verbatim into ``tool_called``/
+        ``tool_returned`` events (``core/dispatch/dispatcher.py``), not a
+        claim that a live router loop is driving this call. Every existing
+        caller feeding a pipeline ``tool:`` step (including the
         non-interactive pipeline driver-session,
-        ``services/pipeline_executor_driver.py``) already sets this same
-        literal. (#5654 added a second value, ``"operator"``, for a slash
-        command driving an op with no LLM tool_calls round behind it —
-        this call site is unaffected, still ``"router"``.)
+        ``services/pipeline_executor_driver.py``) sets this same literal —
+        pre-#5889 it said ``"router"`` here while the SAME call's
+        ``DispatchContext`` (built one frame down, in
+        ``pipeline_verbs._make_tool_dispatch``) already said ``"pipeline"``
+        (#5865): one call, two answers, and a handler reading
+        ``ctx.caller_kind`` directly saw the wrong one. (#5654 added a
+        THIRD value, ``"operator"``, for a slash command driving an op with
+        no LLM tool_calls round behind it — unrelated to this call site.)
       - ``router_state``: the caller-supplied ``RouterCallerState`` (built via
         ``reyn.tools.types.build_resource_caller_state`` from a real Session's
         ``RouterHostAdapter`` — see ``run_run``) so ``mcp``/``agents``/
@@ -635,7 +640,7 @@ def _build_run_tool_context(
         events=events,
         permission_resolver=perm_resolver,
         workspace=workspace,
-        caller_kind="router",
+        caller_kind="pipeline",  # #5889 — was "router", see this function's own docstring
         router_state=router_state,
         resolver=None,
         hot_reloader=None,

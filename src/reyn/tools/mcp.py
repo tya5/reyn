@@ -13,8 +13,11 @@ call_mcp_tool / list_mcp_servers / list_mcp_tools / describe_mcp_tool.
 
 All four handlers dispatch through the router path only. The phase-side
 dispatch branches were removed alongside the control-IR / phase-dispatch
-executor (#2542): ``ToolContext.caller_kind`` is always "router" at
-runtime, so the handlers run their router logic unconditionally.
+executor (#2542), so the handlers run their router logic unconditionally —
+none of them reads ``ToolContext.caller_kind`` at all, and that field's own
+value varies by caller regardless ("router" for a live chat turn,
+"operator" for a slash-driven op, "pipeline" for a pipeline ``tool:`` step
+— #5654/#5889).
 
 #2597 slice ②a adds three MORE capabilities, parallel to the tools surface
 above (list_mcp_tools -> list_mcp_resources; call_mcp_tool's gated-content

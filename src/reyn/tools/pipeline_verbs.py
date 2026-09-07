@@ -351,13 +351,25 @@ def _make_tool_dispatch(
     has exactly ONE call site for every caller, this one included, and a
     pipeline step gains the SAME ``tool_called``/``tool_returned``/
     ``tool_failed`` audit trail every other ``dispatch_tool`` caller already
-    had (``caller_kind="pipeline"``, ``chain_id=None`` — there is no litellm
-    tool_calls round behind a pipeline step to key one on). ``None`` (the
-    default, and what the ``reyn pipe`` CLI passes — an operator-direct run
-    with no session envelope) still leaves the dispatch byte-identical:
-    ``dispatch_tool``'s own 2b check no-ops on a ``None`` contextual exactly
-    as the direct predicate call used to (``tool_contextually_denied``'s own
-    docstring: "``contextual is None`` → not denied").
+    had (``caller_kind="pipeline"``). ``None`` (the default, and what the
+    ``reyn pipe`` CLI passes — an operator-direct run with no session
+    envelope) still leaves the dispatch byte-identical: ``dispatch_tool``'s
+    own 2b check no-ops on a ``None`` contextual exactly as the direct
+    predicate call used to (``tool_contextually_denied``'s own docstring:
+    "``contextual is None`` → not denied").
+
+    #5889: ``chain_id`` is forwarded from ``ctx.chain_id`` — the pipeline
+    RUN's own chain (threaded from ``PipelineExecutorDriver._make_dispatch``,
+    which gets it from ``run_turn``'s own per-nudge ``chain_id``), not a
+    hardcoded ``None`` — so a pipeline step's audit events join the SAME
+    chain the rest of that run already uses. Genuinely ``None`` only for the
+    one caller that has no chain to give: the session-less ``reyn pipe run``
+    CLI (``_build_run_tool_context`` never sets ``ToolContext.chain_id``, so
+    it stays at the dataclass default). ``caller_id`` similarly falls back
+    to the fixed per-CALLER-ROLE literal ``"pipeline_run_cli"`` — the SAME
+    string that call site already uses for ``Workspace(actor=...)`` — rather
+    than an empty string, which would carry "no identity" as if it WERE one
+    (decided on the issue before this landed, #5889).
 
     See :data:`_DISPATCH_TOOL_RAISING_KINDS` for how a ``dispatch_tool``
     error result maps back onto this closure's pre-#5865 raise/return
@@ -416,8 +428,16 @@ def _make_tool_dispatch(
 
         dispatch_ctx = DispatchContext(
             caller_kind="pipeline",
-            caller_id=cast("str", ctx.agent_name or ""),
-            chain_id=None,
+            # #5889: "pipeline_run_cli" — never empty string, which would
+            # carry "this caller cannot name itself" as if it WERE a real
+            # (blank) identity. The only reachable caller with no real
+            # agent_name today (reyn pipe run's session-less ToolContext,
+            # _build_run_tool_context) — the literal is the SAME
+            # per-CALLER-ROLE string that call site already uses for
+            # Workspace(actor=...) (see op_runtime/context.py's own
+            # agent_name-vs-actor distinction for the precedent).
+            caller_id=cast("str", ctx.agent_name or "pipeline_run_cli"),
+            chain_id=ctx.chain_id,
             # A single-entry catalog: `name` was already resolved against the
             # real registry above, so dispatch_tool's own catalog-membership
             # check (2. Name validation) can never fire "unknown_tool" for it
