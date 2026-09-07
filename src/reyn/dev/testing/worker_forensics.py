@@ -48,16 +48,47 @@ WHAT THIS RECORDS (all under the repo cwd, like ``memory_ceiling``'s log)
     ``peak_rss_mb=<n>`` line at session end (``resource.ru_maxrss``, the same
     reader the memory ceiling uses).
 
-    ``.reyn-worker-down.log`` — one line per dead worker, written by the
-    CONTROLLER from xdist's ``pytest_testnodedown`` hook: worker id, xdist's
-    own error text, the worker process's exit code (best-effort: execnet's
-    private ``Popen`` handle, ``None`` if the shape ever changes), and the
-    last few nodeids from that worker's trace.
+    ``.reyn-worker-down.log`` — one line per worker that xdist reports
+    DIED, written from ``pytest_testnodedown`` when (and only when) its
+    ``error`` argument is not ``None``: worker id, xdist's own error text,
+    the worker process's exit code (best-effort: execnet's private
+    ``Popen`` handle, ``None`` if the shape ever changes), and the last few
+    nodeids from that worker's trace. **Bug found and fixed by #5934**
+    (lead-coder review): an earlier version of this hook wrote a line on
+    EVERY call, not only crash calls — xdist's own ``dsession.py`` calls
+    this same hook, with ``error=None``, from ``worker_workerfinished``,
+    the ORDINARY per-worker completion path — so every worker in an
+    ``-n auto``/``-n N`` run wrote a line here at the end of EVERY run,
+    whether or not anything went wrong, and the CI step's own
+    ``[ -s .reyn-worker-down.log ]`` "did anything die" check fired its
+    ``::warning::`` on every single run as a result (confirmed directly:
+    3 real CI job logs, one of them fully green, all showing 4 lines,
+    ``error=None`` every time). ``error is None`` is exactly xdist's own
+    discriminator between the two call sites (``worker_workerfinished``
+    vs. ``worker_errordown`` — confirmed by reading ``dsession.py``
+    itself, not inferred), so the hook now skips the write on that path —
+    this file is now genuinely non-empty only when a worker actually died.
 
     ``.github/workflows/test.yml`` prints both after every run (with the
     host's ``dmesg`` OOM lines and ``free -m``/``nproc`` before), so the next
     crash names its killer in the job log instead of costing another
-    investigation round-trip.
+    investigation round-trip. The per-worker trace files are written
+    incrementally as each test STARTS, independent of the controller, so
+    they are the only test-order evidence that survives a run where the
+    WHOLE JOB dies before the controller can even reach its own
+    ``pytest_testnodedown`` hook. The workflow prints each worker's FULL
+    trace (part of #5909), not only ``peak_rss_mb=``, and also uploads
+    ``.reyn-worker-trace/`` and ``.reyn-worker-down.log`` as a build
+    artifact — a run's job log is truncated past GitHub's own size
+    ceiling, and the artifact survives that and stays fetchable long after
+    the run without re-triggering CI. (An earlier version of this
+    docstring claimed three same-day #5909 recurrences — #5926, #5916,
+    #5931 — left ``.reyn-worker-down.log`` EMPTY, offered as this feature's
+    own motivating measurement. That claim was checked against the wrong
+    evidence and was false: all three jobs' logs show 4 lines, all
+    ``error=None returncode=None`` — the ordinary-completion shape above,
+    not evidence of a crash at all. See #5934's PR discussion for the
+    corrected reading of those three incidents.)
 
 COST
     One small append per test start (open/append/close — no held fd, so
@@ -178,7 +209,24 @@ def pytest_sessionfinish(session: object, exitstatus: int) -> None:
 
 
 def pytest_testnodedown(node: object, error: object) -> None:
-    """Controller: a worker went down — write the one line that names how."""
+    """Controller: xdist calls this hook on BOTH a worker's ordinary
+    completion AND a genuine crash (``dsession.py``'s own
+    ``worker_workerfinished`` — the ordinary path — calls it with
+    ``error=None``; only ``worker_errordown`` — the crash path — calls it
+    with a real error object). Bug found and fixed by this same PR
+    (#5934, lead-coder review): an earlier version of this hook wrote a
+    line for EVERY call, so ``.reyn-worker-down.log`` had one line per
+    worker on every run, ALWAYS non-empty regardless of whether anything
+    went wrong — verified directly against 3 real CI runs (one fully
+    green) all showing 4 lines, ``error=None`` every time, and the CI
+    step's own ``[ -s .reyn-worker-down.log ]`` check firing its
+    ``::warning::`` on every single run as a result. ``error is None`` is
+    exactly xdist's own discriminator for "this was ordinary completion,
+    not a crash" — skip the write there; a normal worker's own recent
+    tests are already visible in its own trace file if anyone wants them,
+    with no need to duplicate them into the crash log."""
+    if error is None:
+        return
     wid = str(getattr(getattr(node, "gateway", None), "id", "?"))
     _append(
         Path(os.getcwd()) / DOWN_LOG,
