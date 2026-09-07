@@ -35,14 +35,17 @@ compact op uses), so the freed-token report is the **same contract** as the op:
    reactive ladder's shortfall (#5719's rule, which exists to stop the
    ladder's own over-fold and was never a reason to refuse an operator).
 
-Still open, deliberately not implemented here: #5888's 3″ — on the
-forced path, offer rung ① SPILL even when zero fold candidates were
-selected. Spill swaps a tool result's body for a reference without
-splitting the message, so it reaches content head/tail is protecting
-without loosening that protection; a 3 MB tool result sitting in the
-tail is exactly what it is for. Until that lands (stage 2), a history
-whose head+tail genuinely hold everything still stops here — it just now
-says exactly that instead of claiming nothing was eligible.
+3. **(stage 2, #5888 3″) Zero fold candidates was not the floor either.**
+   Rung ① SPILL now runs on that SAME pass (``CompactionController.
+   force_compact_now``'s own ``if not candidates:`` branch) — it swaps a
+   tool result's body for a reference without splitting the message, so
+   it reaches content head/tail is protecting WITHOUT loosening that
+   protection (#2289's keep-whole invariant is untouched; spill runs
+   orthogonal to it). A 3 MB tool result sitting in the tail — the
+   owner's own real-machine case — is exactly what this reaches. When
+   spilling made progress, the reply says so instead of "all protected";
+   when the driver has no spill capability at all (#5717), it says that
+   too, rather than folding both into one silent "nothing to compact".
 """
 from __future__ import annotations
 
@@ -243,19 +246,40 @@ async def compact_cmd(ctx: "SlashContext", args: str) -> None:
     # measured against the compaction trigger, which is exactly how a
     # 75%-full window got reported as full (#5888).
     eligible = result.get("eligible_count")
+    # #5888 3″ (stage 2): on the SAME zero-candidate pass, rung① spill
+    # ran too (`CompactionController.force_compact_now`'s own `if not
+    # candidates:` branch) — read its report BEFORE deciding which
+    # "nothing was folded" sentence applies, so a pass that genuinely
+    # freed something never gets described as having done nothing.
+    spilled_count = result.get("spilled_count") or 0
+    if eligible is not None and eligible > 0 and spilled_count > 0:
+        chars_freed = result.get("spilled_chars_freed") or 0
+        result_word = "result" if spilled_count == 1 else "results"
+        await reply(
+            ctx,
+            f"✓ Nothing was folded, but spilled {spilled_count} tool "
+            f"{result_word} (~{chars_freed} chars) out of the protected "
+            "head/tail groups — their bodies are now references, freeing "
+            "that much from the wire without loosening protection." +
+            measured + free_tail,
+        )
+        return
     if eligible is not None and eligible > 0:
         # Eligible entries existed; head/tail protection held every one of
-        # them back. Reaching that content is stage 2's job (#5888 3″:
-        # spill on the forced path, which does not loosen protection) —
-        # until then this reply's job is to say plainly which boundary
-        # stopped it, so the operator is not left guessing at an
-        # empty-sounding "nothing to fold".
+        # them back, and rung① spill (#5888 3″, above) either found
+        # nothing eligible to spill or has no capability on this driver
+        # at all (#5717) — named explicitly so an operator with no spill
+        # mechanism is told THAT, not left to guess why nothing changed.
         word = "entry" if eligible == 1 else "entries"
+        spill_note = (
+            " (spill is not available on this path)"
+            if not result.get("spill_capability_present", True) else ""
+        )
         await reply(
             ctx,
             f"Nothing was folded: all {eligible} eligible {word} are "
             "protected by the head/tail keep-window, so there was no "
-            "unprotected middle left to compact." + measured + free_tail,
+            f"unprotected middle left to compact{spill_note}." + measured + free_tail,
         )
         return
     await reply(
