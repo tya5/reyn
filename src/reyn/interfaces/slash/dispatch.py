@@ -67,7 +67,7 @@ from reyn.interfaces.transport.client_transport import ClientTransport
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from reyn.interfaces.transport.frames import Frame
+    from reyn.interfaces.transport.frames import BacklogBatch, Frame
     from reyn.runtime.outbox import OutboxMessage
 
 logger = logging.getLogger(__name__)
@@ -250,7 +250,7 @@ class _ErrorWatchingTransport(ClientTransport):
     def close(self) -> None:
         self._inner.close()
 
-    def frames(self) -> "AsyncIterator[Frame]":
+    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
         return self._inner.frames()
 
     def has_session(self) -> bool:

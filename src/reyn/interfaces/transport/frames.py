@@ -55,7 +55,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
 
@@ -238,8 +238,17 @@ class EventFrame:
     agent: "str | None" = None
 
 
-# A client consumes a stream of these; ``frame.tag`` selects the renderer entry.
-Frame = "DisplayFrame | EventFrame"
+# A client consumes a stream of these. ``frame.tag`` selects the renderer
+# entry for the two renderable members; ``StatusApplied`` (#5830 remote,
+# #5895 local too — the seed frame behind every ``session_attached``
+# barrier) is a declared member precisely so that a consumer reading
+# ``.tag`` without an ``isinstance`` check is a mypy error, not a runtime
+# ``AttributeError`` found by whichever configuration happens to run it
+# (architect ruling, #5895: the type enumerates the consumers, not a grep).
+# It carries no ``.tag`` on purpose — a third tag value would turn that
+# loud error into a silent mis-branch in every ``if tag is EVENT: ...
+# else: <display>`` consumer.
+Frame: TypeAlias = "DisplayFrame | EventFrame | StatusApplied"
 
 
 @dataclass(frozen=True)

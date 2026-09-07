@@ -59,7 +59,7 @@ from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN, Sent
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.client_transport import ClientTransportStub
-from reyn.interfaces.transport.frames import EventFrame
+from reyn.interfaces.transport.frames import EventFrame, QueueSnapshot, StatusApplied
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
@@ -78,6 +78,12 @@ class QueueTransport(ClientTransportStub):
 
     async def push_event(self, event: Event) -> None:
         await self._queue.put(EventFrame(event))
+
+    async def push(self, item: object) -> None:
+        """Any stream item — used for the ``StatusApplied(kind="snapshot")``
+        seed frame (#5895: the sent-queue gate seeds from the values THAT
+        frame carries, never from the read model)."""
+        await self._queue.put(item)
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -112,6 +118,25 @@ class QueueTransport(ClientTransportStub):
 
     async def shutdown(self) -> None:  # pragma: no cover - trivial
         pass
+
+
+_PEER_ITEM = {
+    "msg_id": "m1", "chain_id": "c1", "text": "peer's queued line",
+    "meta": {"actor": "alice", "auth_user_id": "alice"},
+}
+
+
+def _snapshot_frame(items: "list[dict]", *, queue_seq: int) -> StatusApplied:
+    """The seed frame (#5895): ``StatusApplied(kind="snapshot")`` carrying
+    the server-authoritative queue as of the snapshot — what the connect
+    STATE_SNAPSHOT (remote) / the frame behind the ``session_attached``
+    barrier (local) put on the stream."""
+    return StatusApplied(
+        kind="snapshot",
+        snapshot=QueueSnapshot(
+            queue=tuple(dict(i) for i in items), turn_active=False, queue_seq=queue_seq,
+        ),
+    )
 
 
 def _user_submitted(*, msg_id: str, chain_id: str, text: str, seq: int) -> Event:
@@ -474,12 +499,12 @@ async def test_snapshot_seeded_item_keeps_attribution_after_promotion() -> None:
     app = TextualChatApp(transport=transport, read_model=read_model)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        # The queue view is seeded on the FIRST frame the pump processes
-        # (:meth:`TextualChatApp._seed_queue_view`) — a harmless, unhandled
-        # event type triggers that seed without mutating any state, so the
-        # snapshot-seeded item's pre-promotion visibility can be observed
-        # before the (separate) turn_started frame promotes it.
-        await transport.push_event(Event(type="__noop__", data={}))
+        # #5895: the queue view is seeded when the pump processes a
+        # ``StatusApplied(kind="snapshot")`` frame, from the values that
+        # frame CARRIES (the connect STATE_SNAPSHOT, remotely; the frame
+        # behind the ``session_attached`` barrier, locally) — never from
+        # the read model. Push that frame with the peer's queued item.
+        await transport.push(_snapshot_frame([_PEER_ITEM], queue_seq=1))
         await pilot.pause()
         sent_queue = app.query_one(SentQueue)
         assert "peer's queued line" in sent_queue.rendered_texts()[0]
@@ -505,12 +530,12 @@ async def test_strip_snapshot_meta_carry_loses_attribution(monkeypatch) -> None:
     attribution is lost, proving the positive test above is not vacuous."""
     from reyn.interfaces.inline.textual_chat import app as app_module
 
-    def _seed_without_meta_carry(self) -> None:
-        snap = self._snapshot() or {}
+    def _seed_without_meta_carry(self, frame) -> None:
+        snap = frame.snapshot
         self._queue_view.apply_snapshot(
-            queue=snap.get("queue", []),
-            turn_active=snap.get("turn_active", False),
-            queue_seq=snap.get("queue_seq", 0),
+            queue=[dict(item) for item in snap.queue],
+            turn_active=snap.turn_active,
+            queue_seq=snap.queue_seq,
         )
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
@@ -531,6 +556,8 @@ async def test_strip_snapshot_meta_carry_loses_attribution(monkeypatch) -> None:
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, read_model=read_model)
     async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push(_snapshot_frame([_PEER_ITEM], queue_seq=1))
         await pilot.pause()
         await transport.push_event(_turn_started(chain_id="c1", seq=2))
         await pilot.pause()
@@ -585,12 +612,11 @@ async def test_seed_queue_view_does_not_reshow_a_row_the_delta_path_already_crea
     one frame — neither of which an item that has not actually changed
     should ever cause.
 
-    Driven by calling :meth:`TextualChatApp._seed_queue_view` directly a
-    SECOND time (the same method this test file already names for
-    monkeypatch strip-witnesses above) — production fires it from two
-    call sites (first frame, and session-switch re-seed), and this test
-    needs the intermediate state neither site exposes alone: a row
-    already present for an item the snapshot ALSO reports."""
+    Driven by pushing a SECOND ``StatusApplied(kind="snapshot")`` frame
+    (#5895: the ONE seed point, regardless of transport — a reconnect or
+    switch snapshot in production) whose queue ALSO reports the items this
+    client's own delta path already drew rows for — the intermediate state
+    the issue names."""
     read_model = _MutableQueueReadModel()
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, read_model=read_model)
@@ -602,15 +628,16 @@ async def test_seed_queue_view_does_not_reshow_a_row_the_delta_path_already_crea
         sent_queue = app.query_one(SentQueue)
         assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["alpha", "beta"]
 
-        # The server's own current truth (what a reconnect snapshot would
-        # report) now ALSO includes both items — the exact input
-        # _seed_queue_view sees when it runs again.
-        read_model.queue_items = [
-            {"msg_id": "m1", "text": "alpha", "meta": {}},
-            {"msg_id": "m2", "text": "beta", "meta": {}},
-        ]
-        read_model.queue_seq = 2
-        app._seed_queue_view()
+        # The server's own current truth (what a reconnect snapshot
+        # reports) now ALSO includes both items — the exact frame the seed
+        # sees when it runs again.
+        await transport.push(_snapshot_frame(
+            [
+                {"msg_id": "m1", "text": "alpha", "meta": {}},
+                {"msg_id": "m2", "text": "beta", "meta": {}},
+            ],
+            queue_seq=2,
+        ))
         await pilot.pause()
 
         assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["alpha", "beta"], (
@@ -638,12 +665,12 @@ async def test_strip_seed_has_row_guard_reorders_the_already_shown_row(monkeypat
     at all)."""
     from reyn.interfaces.inline.textual_chat import app as app_module
 
-    def _seed_without_has_row_guard(self) -> None:
-        snap = self._snapshot() or {}
+    def _seed_without_has_row_guard(self, frame) -> None:
+        snap = frame.snapshot
         self._queue_view.apply_snapshot(
-            queue=snap.get("queue", []),
-            turn_active=snap.get("turn_active", False),
-            queue_seq=snap.get("queue_seq", 0),
+            queue=[dict(item) for item in snap.queue],
+            turn_active=snap.turn_active,
+            queue_seq=snap.queue_seq,
         )
         for item in self._queue_view.queue():
             msg_id = item.get("msg_id")
@@ -663,12 +690,13 @@ async def test_strip_seed_has_row_guard_reorders_the_already_shown_row(monkeypat
         await pilot.pause()
         sent_queue = app.query_one(SentQueue)
 
-        read_model.queue_items = [
-            {"msg_id": "m2", "text": "beta", "meta": {}},
-            {"msg_id": "m1", "text": "alpha", "meta": {}},
-        ]
-        read_model.queue_seq = 2
-        app._seed_queue_view()
+        await transport.push(_snapshot_frame(
+            [
+                {"msg_id": "m2", "text": "beta", "meta": {}},
+                {"msg_id": "m1", "text": "alpha", "meta": {}},
+            ],
+            queue_seq=2,
+        ))
         await pilot.pause()
 
         assert [t[ROW_TEXT_COLUMN:] for t in sent_queue.rendered_texts()] == ["beta", "alpha"], (

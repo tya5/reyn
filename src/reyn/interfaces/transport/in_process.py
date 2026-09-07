@@ -40,7 +40,6 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
-    FrameTag,
     QueueSnapshot,
     StatusApplied,
     forwarded_frame_kinds,
@@ -76,7 +75,7 @@ class InProcessTransport(ClientTransport):
         self._forward_events = (
             forward_events if forward_events is not None else forwarded_frame_kinds()
         )
-        self._frames: "asyncio.Queue[Frame | StatusApplied]" = asyncio.Queue()
+        self._frames: "asyncio.Queue[Frame]" = asyncio.Queue()
         self._pump_task: "asyncio.Task | None" = None
 
     # -- lifecycle ----------------------------------------------------------
@@ -189,7 +188,7 @@ class InProcessTransport(ClientTransport):
             if item.kind == "__end__":
                 return
 
-    async def frames(self) -> "AsyncIterator[Frame | StatusApplied]":
+    async def frames(self) -> "AsyncIterator[Frame]":
         while True:
             frame = await self._frames.get()
             # #3570: an UNCONDITIONAL yield point, once per frame. ``Queue.get()``
@@ -218,9 +217,7 @@ class InProcessTransport(ClientTransport):
             # which has no ``.tag`` — exactly the hazard frames.py's own
             # module contract names for any new non-``Frame`` item. Check
             # the type BEFORE touching ``.tag``, as every consumer must.
-            if isinstance(frame, StatusApplied):
-                continue
-            if frame.tag is FrameTag.DISPLAY and frame.message.kind == "__end__":
+            if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
                 return
 
     # -- send side ----------------------------------------------------------

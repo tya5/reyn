@@ -71,7 +71,7 @@ from reyn.interfaces.transport.frames import (
     HYDRATE_PAGE_FRAMES,
     BacklogBatch,
     DisplayFrame,
-    FrameTag,
+    EventFrame,
     StatusApplied,
 )
 
@@ -7168,7 +7168,7 @@ class TextualChatApp(App):
                     # is the announcement OF the seed, not a frame that
                     # arrived before one.
                     _is_barrier = (
-                        frame.tag is FrameTag.EVENT
+                        isinstance(frame, EventFrame)
                         and getattr(frame.event, "type", None) == "session_attached"
                     )
                     if not self._queue_seeded and not _is_barrier:
@@ -7188,7 +7188,7 @@ class TextualChatApp(App):
                             "the sent-queue gate is still unseeded",
                             getattr(getattr(frame, "event", None), "type", frame),
                         )
-                    if frame.tag is FrameTag.EVENT:
+                    if isinstance(frame, EventFrame):
                         etype = getattr(frame.event, "type", None)
                         if etype == "session_attached":
                             try:
