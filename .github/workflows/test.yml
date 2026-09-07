@@ -155,9 +155,62 @@ jobs:
         # cancel their own watchdog the instant the last item's protocol
         # returns (`_pytest/faulthandler.py`'s own source, confirmed, not
         # guessed). See `reyn/dev/testing/stall_dump.py`'s own docstring.
+        #
+        # #4986 "tool②" (architect design,
+        # https://github.com/tya5/reyn/issues/4986#issuecomment-5565370636
+        # — a real occurrence's own first-hand data, PR #5912): the stall-trace
+        # dump above answers WHEN the controller stopped making progress,
+        # but it only ever sees the CONTROLLER's own OS threads —
+        # `faulthandler` dumps threads, not asyncio tasks or OTHER
+        # processes, and every xdist worker is its OWN process. On that
+        # occurrence the controller was found still inside
+        # `pytest_runtestloop`, blocked on `queue.get()` — i.e. waiting on
+        # a worker's own report, never sent. The ONE fact that decides
+        # between architect's two live hypotheses (a worker genuinely
+        # alive but stuck inside its own teardown, vs. a dead worker whose
+        # execnet pipe stayed open because some grandchild process
+        # inherited its write end) is: **is the worker process still
+        # alive at the moment of the hang.** Backgrounded here (started
+        # BEFORE the pytest pipeline, reaped right after it returns) so a
+        # HEALTHY run — which reaps the watcher well under 620s — writes
+        # nothing; only a run still going at 620s (comfortably inside the
+        # stall-trace's own 600s-to-720s margin, so this snapshot lands
+        # just after stall-trace has already fired and well before
+        # `timeout 12m`'s hard kill) gets a real snapshot: `ps -ef` (is
+        # any `python`/xdist worker process still there at all), `pgrep
+        # -a python` (which ones, with their args), and — Linux-only,
+        # which this runner is — `/proc/<pid>/fd` for each one (who is
+        # holding the execnet pipe open). `2>&1` into the SAME file as the
+        # snapshot commands themselves, so a `ps`/`pgrep` failure (e.g. a
+        # sandboxed runner denying `/proc` reads) shows up as evidence
+        # too, not a silently-empty file that reads as "nothing was
+        # alive".
         run: |
+          (
+            sleep 620
+            echo "=== #4986 tool② — process snapshot at t=620s (ps -ef) ==="
+            ps -ef
+            echo "--- python processes (pgrep -a python) ---"
+            pgrep -a python || echo "(pgrep found none)"
+            echo "--- open fds of each (who holds the execnet pipe open) ---"
+            for pid in $(pgrep python); do
+              echo "pid=$pid:"
+              ls -l "/proc/$pid/fd" || echo "  (could not read /proc/$pid/fd)"
+            done
+          ) > /tmp/hang-ps.log 2>&1 &
+          HANG_PS_WATCHER=$!
+
           set -o pipefail
           REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          PYTEST_RC=$?
+
+          # Reap the watcher the instant pytest itself returns (pass or
+          # fail) — on a healthy run this happens long before 620s, so
+          # /tmp/hang-ps.log never gets written at all (the same
+          # "silent unless it fires" contract the dump step below reads).
+          kill "$HANG_PS_WATCHER" 2>/dev/null || true
+          wait "$HANG_PS_WATCHER" 2>/dev/null || true
+          exit "$PYTEST_RC"
 
       # #4986: surface the stall dump above if (and only if) it fired. The
       # log file is opened (empty) the moment the watchdog is armed —
@@ -176,6 +229,23 @@ jobs:
             cat .reyn-ci-stall-trace.log
           else
             echo "no stall-trace dump (pytest session finished normally)"
+          fi
+
+      # #4986 "tool②" (architect design, see the "Run tests" step's own
+      # comment above for the full rationale): unlike the stall-trace
+      # file above, THIS one is never pre-created — the background
+      # watcher only ever opens/writes it if it survives to fire, so a
+      # healthy run (watcher reaped well under 620s) leaves no file at
+      # all; `-s` (exists AND non-empty) is still the right test either
+      # way.
+      - name: Hang process snapshot (#4986 tool② — only non-empty if the run was still going at 620s)
+        if: always()
+        run: |
+          if [ -s /tmp/hang-ps.log ]; then
+            echo "::warning::#4986 tool② fired — pytest was still running 620s in; process snapshot follows"
+            cat /tmp/hang-ps.log
+          else
+            echo "no hang-process snapshot (pytest finished before the 620s watcher fired)"
           fi
 
       # #5878 (architect follow-up, #5877 co-vet): the same visibility gap
