@@ -14,6 +14,7 @@ own witness.
 from __future__ import annotations
 
 import importlib.util
+import re
 
 from tests._support.paths import REPO_ROOT
 
@@ -115,6 +116,50 @@ def test_fixed_comment_marker_does_not_match_mid_comment():
     the same comment line."""
     pattern = _MOD.fixed_comment_marker("EXEMPT")
     assert pattern.match("# see EXEMPT: below for the real one") is None
+
+
+# ── undecorated_after_role_prefix (#5919 stage 2) ───────────────────────────
+
+_DECORATION = re.compile(r"[`*]")
+
+
+def test_undecorated_after_role_prefix_strips_decoration_around_the_marker():
+    """Tier 1: LOAD-BEARING — the exact real shape that broke
+    `check_open_blocking_checkboxes.py`'s own anchored marker before this
+    function existed: a role-prefixed, ADDITIONALLY bold-wrapped marker.
+    The role prefix's own literal `**[...]** — ` must survive untouched
+    (or `role_prefixed_marker`'s anchor could never match afterward), while
+    the decoration AROUND the marker itself is still stripped."""
+    line = "**[lead-coder]** — **BLOCKING (head `abc1234`)**"
+    result = _MOD.undecorated_after_role_prefix(line, _DECORATION)
+    assert result == "**[lead-coder]** — BLOCKING (head abc1234)"
+
+
+def test_undecorated_after_role_prefix_with_no_role_prefix_strips_the_whole_line():
+    """Tier 1: a bare marker (no role prefix at all) falls back to
+    stripping the whole line — the SAME behaviour as an unconditional
+    strip, since there is no role-prefix literal to protect."""
+    line = "**BLOCKING (head `abc1234`)**"
+    result = _MOD.undecorated_after_role_prefix(line, _DECORATION)
+    assert result == "BLOCKING (head abc1234)"
+
+
+def test_undecorated_after_role_prefix_a_blanket_strip_would_break_the_role_prefix():
+    """Tier 1: the deny-side witness for WHY this function exists — an
+    unconditional whole-line strip (the naive fix) erases the role
+    prefix's own required `**[...]**` syntax, which
+    `_markers.ROLE_PREFIX` needs literally intact to match at all."""
+    line = "**[lead-coder]** — **BLOCKING (head `abc1234`)**"
+    naive_whole_line_strip = _DECORATION.sub("", line)
+    assert naive_whole_line_strip == "[lead-coder] — BLOCKING (head abc1234)"
+    assert re.match(_MOD.ROLE_PREFIX, naive_whole_line_strip) is None, (
+        "a blanket strip must destroy the role prefix's own literal "
+        "syntax -- this is the defect undecorated_after_role_prefix fixes"
+    )
+    assert re.match(
+        _MOD.ROLE_PREFIX,
+        _MOD.undecorated_after_role_prefix(line, _DECORATION),
+    ) is not None
 
 
 # ── first_line ────────────────────────────────────────────────────────────

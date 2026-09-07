@@ -138,21 +138,33 @@ def _is_reread_note(first_line: str) -> bool:
 def _has_blocking_comment(comment_bodies: "list[str]") -> bool:
     """True iff ANY comment's first non-empty line matches the `BLOCKING
     (head <sha>)` shape (reused from `check_open_blocking_checkboxes.py`
-    — the same form check that excludes prose merely discussing the
-    word, #5318's own false-positive fix).
+    — the same anchored, role-prefix-aware marker #5919 stage 2 built,
+    the same form check that excludes prose merely discussing the word,
+    #5318's own false-positive fix).
 
-    #5522: reads `_blocking._first_nonempty_line`/`_undecorated`, not
-    the old `_first_line` (renamed) with no decoration-stripping — this
-    gate shares the EXACT same real incident #5522 fixed one level up:
-    a BLOCKING comment whose SHA was backtick-wrapped would make
-    `_BLOCKING_MARKER` not match here EITHER, so THIS gate would
-    silently conclude "no BLOCKING comment on this PR" and skip its own
-    TESTS-READ/RE-READ requirement entirely — the #5453 protection
-    quietly opting itself out on the exact same decoration that broke
-    the gate it is layered on top of."""
+    #5522/#5919: reads `_blocking._first_nonempty_line`/`_blocking.
+    _MARKER_BLOCKING`/`_blocking._DECORATION`, and strips decoration via
+    `_markers.undecorated_after_role_prefix` (not `_blocking._undecorated`
+    — a blanket, role-prefix-blind strip) — this gate shares the EXACT
+    same real incidents fixed one level up, TWICE now: #5522's original
+    (a BLOCKING comment whose SHA was backtick-wrapped would make the
+    marker not match here EITHER, so THIS gate would silently conclude
+    "no BLOCKING comment on this PR" and skip its own TESTS-READ/RE-READ
+    requirement entirely), and #5919 stage 2's own (once
+    `_MARKER_BLOCKING` became role-prefix-anchored, a blanket strip would
+    erase a REAL role prefix's own `**[...]** — ` literal right along
+    with any decoration around the marker, breaking every role-prefixed
+    BLOCKING comment — which is every real one in this repo, CLAUDE.md
+    rule 2). Reusing `check_open_blocking_checkboxes.py`'s own marker
+    regex and decoration pattern (rather than a second copy) means a
+    future change to either stays in sync with both gates automatically,
+    the same non-drift property this module's docstring already claims
+    for `_tests_read`."""
     return any(
-        _blocking._BLOCKING_MARKER.search(
-            _blocking._undecorated(_blocking._first_nonempty_line(body)),
+        _blocking._MARKER_BLOCKING.search(
+            _markers.undecorated_after_role_prefix(
+                _blocking._first_nonempty_line(body), _blocking._DECORATION,
+            ),
         )
         for body in comment_bodies
     )

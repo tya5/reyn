@@ -238,27 +238,20 @@ def _undecorated(line: str) -> str:
 
 
 def _undecorated_for_marker_match(line: str) -> str:
-    """*line*, with markdown decoration stripped EVERYWHERE EXCEPT a
-    leading CLAUDE.md role prefix (`_markers.ROLE_PREFIX`), if one opens
-    the line.
+    """*line*, with :data:`_DECORATION` stripped EVERYWHERE EXCEPT a
+    leading CLAUDE.md role prefix, if one opens the line.
 
-    #5919 stage 2: a role prefix is itself written with literal `**...**`
-    (`**[role]** — `) — the SAME character class :data:`_DECORATION`
-    strips. A blanket `_undecorated(line)` (the pre-anchoring shape,
-    still used for near-miss detection below, which never has to
-    recognise a role prefix) would strip the role prefix's own asterisks
-    right along with any decoration AROUND the marker that follows it,
-    so a real, decorated comment like ``**[lead-coder]** — **BLOCKING
-    (head `abc1234`)**`` would never match `_markers.role_prefixed_marker`
-    at all post-strip (its own `ROLE_PREFIX` pattern requires the literal
-    `**[...]** — ` it would have just erased). Stripping only AFTER the
-    detected role prefix keeps that pattern intact while still tolerating
-    decoration around the marker itself — the same real-incident shape
-    #5522 fixed, now compatible with #5919's anchoring."""
-    prefix_match = re.match(_markers.ROLE_PREFIX, line)
-    if prefix_match is None:
-        return _undecorated(line)
-    return line[:prefix_match.end()] + _undecorated(line[prefix_match.end():])
+    #5919 stage 2: delegates to `_markers.undecorated_after_role_prefix`
+    (promoted there, not left as a private helper here, once lead-coder's
+    review found `check_blocking_has_reread_note.py` needed the SAME
+    shape for the SAME reason — this gate's marker anchoring is not the
+    only consumer of "strip decoration but keep a real role prefix
+    literal"). See that function's own docstring for the full incident:
+    a blanket strip over the WHOLE line would erase a real role prefix's
+    own `**[...]** — ` syntax right along with any decoration AROUND the
+    marker, so `_markers.role_prefixed_marker`'s anchor would never match
+    a decorated, role-prefixed comment post-strip."""
+    return _markers.undecorated_after_role_prefix(line, _DECORATION)
 
 
 def _normalize(text: str) -> str:
