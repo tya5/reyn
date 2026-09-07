@@ -94,3 +94,95 @@ def test_storage_stats_is_registered_on_the_reyn_parser():
 
     args = parser.parse_args(["storage", "stats", "--project-root", "/tmp"])
     assert args.func is run_stats
+
+
+# ── #5896 stage ③: `reyn storage migrate-bodies` ────────────────────────
+
+
+def test_migrate_bodies_is_registered_on_the_reyn_parser():
+    """Tier 2: (reachability) 'reyn storage migrate-bodies' is wired into
+    the real top-level parser — same shape as the sibling reachability
+    test above."""
+    import argparse
+
+    from reyn.interfaces.cli.commands.storage import run_migrate_bodies
+
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command")
+    sub.required = True
+    register(sub)
+
+    args = parser.parse_args(["storage", "migrate-bodies", "--project-root", "/tmp"])
+    assert args.func is run_migrate_bodies
+    assert args.agent is None
+    assert args.min_bytes is None
+
+
+def test_migrate_bodies_migrates_a_large_row_and_reports_it(
+    tmp_path: Path, capsys,
+):
+    """Tier 2: driving the real CLI entry point (not the lower-level
+    ``migrate_inline_history_bodies`` directly, which the sibling
+    ``test_5896_stage3_migrate_bodies.py`` already covers in depth) —
+    proves the CLI wiring itself (MediaStore construction per agent,
+    ``--min-bytes`` threading, the printed report) actually works
+    end-to-end against a real on-disk history.jsonl."""
+    import json
+
+    from reyn.interfaces.cli.commands.storage import run_migrate_bodies
+    from reyn.runtime.chat_message import CONTENT_REF_META_KEY
+
+    hist_dir = tmp_path / ".reyn" / "agents" / "alice"
+    hist_dir.mkdir(parents=True)
+    hist_path = hist_dir / "history.jsonl"
+    big = "b" * 2000
+    row = {
+        "role": "tool", "content": big, "ts": "", "seq": 1, "meta": {},
+        "tool_calls": None, "tool_call_id": "c1", "name": "t",
+        "spillability": "last_resort", "disclosure": None,
+    }
+    hist_path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    run_migrate_bodies(Namespace(project_root=str(tmp_path), agent=None, min_bytes=1000))
+    out = capsys.readouterr().out
+
+    assert "alice: migrated 1 row" in out
+    assert "total: 1 row(s) migrated" in out
+    migrated = json.loads(hist_path.read_text(encoding="utf-8").splitlines()[0])
+    assert migrated["content"] == ""
+    ref = migrated["meta"][CONTENT_REF_META_KEY]
+    assert (tmp_path / ref).read_text(encoding="utf-8") == big
+
+
+def test_migrate_bodies_honors_the_agent_filter(tmp_path: Path):
+    """Tier 2: --agent scopes the migration to one agent's history.jsonl,
+    leaving every other agent's file untouched — an operator migrating
+    one known-huge agent must not be forced to also touch every other
+    agent's history."""
+    import json
+
+    from reyn.interfaces.cli.commands.storage import run_migrate_bodies
+
+    big = "c" * 2000
+    for agent in ("alice", "bob"):
+        d = tmp_path / ".reyn" / "agents" / agent
+        d.mkdir(parents=True)
+        row = {
+            "role": "tool", "content": big, "ts": "", "seq": 1, "meta": {},
+            "tool_calls": None, "tool_call_id": "c1", "name": "t",
+            "spillability": "last_resort", "disclosure": None,
+        }
+        (d / "history.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    run_migrate_bodies(
+        Namespace(project_root=str(tmp_path), agent="alice", min_bytes=1000),
+    )
+
+    alice_line = json.loads(
+        (tmp_path / ".reyn" / "agents" / "alice" / "history.jsonl").read_text().splitlines()[0],
+    )
+    bob_line = json.loads(
+        (tmp_path / ".reyn" / "agents" / "bob" / "history.jsonl").read_text().splitlines()[0],
+    )
+    assert alice_line["content"] == "", "the targeted agent must be migrated"
+    assert bob_line["content"] == big, "an un-targeted agent must be left untouched"
