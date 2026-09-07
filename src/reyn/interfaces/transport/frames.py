@@ -55,7 +55,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
 
@@ -238,8 +238,17 @@ class EventFrame:
     agent: "str | None" = None
 
 
-# A client consumes a stream of these; ``frame.tag`` selects the renderer entry.
-Frame = "DisplayFrame | EventFrame"
+# A client consumes a stream of these. ``frame.tag`` selects the renderer
+# entry for the two renderable members; ``StatusApplied`` (#5830 remote,
+# #5895 local too — the seed frame behind every ``session_attached``
+# barrier) is a declared member precisely so that a consumer reading
+# ``.tag`` without an ``isinstance`` check is a mypy error, not a runtime
+# ``AttributeError`` found by whichever configuration happens to run it
+# (architect ruling, #5895: the type enumerates the consumers, not a grep).
+# It carries no ``.tag`` on purpose — a third tag value would turn that
+# loud error into a silent mis-branch in every ``if tag is EVENT: ...
+# else: <display>`` consumer.
+Frame: TypeAlias = "DisplayFrame | EventFrame | StatusApplied"
 
 
 @dataclass(frozen=True)
@@ -338,17 +347,94 @@ class StatusApplied:
     to iterate for a snapshot/delta-only SSE block, so the redraw waited
     for whatever frame happened to arrive next.
 
-    Carries no data of its own — the values are already on
+    Carries no VALUES of its own — they are already on
     :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView` by the
     time this item is even constructed (:meth:`_consume_block` applies the
     ``StateUpdate`` first, in the SAME branch, before appending this). Its
     only job is to exist as a stream item so ``_pump_frames``'s trailing
     ``_refresh_live_chrome()`` call fires in wire-arrival order — unlike
-    :class:`BacklogBatch`, the pump does NOT ``continue`` past it."""
+    :class:`BacklogBatch`, the pump does NOT ``continue`` past it.
+
+    ``kind`` (#5886, architect ruling ①) is the ONE thing it does carry, and
+    it exists because this class used to erase it. ``_consume_block``
+    knows perfectly well which it decoded (``decoded.snapshot is not None``
+    / ``decoded.delta is not None``) and handed the app the same opaque item
+    for both — the information-losing point. The two are NOT
+    interchangeable to a consumer:
+
+    - ``"snapshot"`` is a HYDRATION point. It is the paired, server-side
+      consistent view (#5179's ``_session_backlog_page_and_status``) of the
+      queue at one instant, so it — and only it — may seed the sent-queue
+      seq-gate's baseline.
+    - ``"delta"`` is a display update. It moves the live status a viewer
+      reads; it must never move the gate's baseline, because a delta can
+      reach the client's read model long before the pump has processed the
+      frames that baseline is supposed to be measured against (#5886's own
+      measurement: ``AgUiTransport._pump_sse`` decodes without yielding
+      between frames while ``frames()`` suspends between each, so the read
+      model runs arbitrarily far ahead of the pump's position).
+
+    A required field, not a defaulted one: a default would let a future
+    producer silently pick the lenient answer — the shape #5818 spent a
+    night removing elsewhere.
+
+    ``snapshot`` (#5895, architect ruling on #5886's fix — the class was
+    only narrowed, not closed, until this): a ``"snapshot"`` CARRIES the
+    three values the sent-queue gate seeds from, captured at the instant
+    the snapshot was taken. The seed reads THIS frame and nothing else —
+    never the live read model. Reading the read model at seed time, even
+    "at the snapshot frame's own position", is the #5886 defect with a
+    narrower window: on the remote side ``_pump_sse`` can apply a later
+    delta onto ``RemoteStatusView`` between enqueuing this frame and the
+    pump reaching it; on the local side a submit can advance ``queue_seq``
+    in the same gap. Both leave a baseline ahead of the frames it must
+    admit. A value captured with the snapshot cannot move.
+
+    Typed, not documented: a ``"snapshot"`` MUST carry one and a
+    ``"delta"`` MUST NOT (``__post_init__``) — the read model stays the
+    display's source, the frame is the seed's, and the two cannot be
+    mixed by accident because the seed's parameter type is this class."""
+
+    kind: Literal["snapshot", "delta"]
+    snapshot: "QueueSnapshot | None" = None
+
+    def __post_init__(self) -> None:
+        if (self.kind == "snapshot") != (self.snapshot is not None):
+            raise ValueError(
+                f"StatusApplied(kind={self.kind!r}) must carry a QueueSnapshot "
+                f"iff kind is 'snapshot' (got snapshot={self.snapshot!r})"
+            )
+
+
+@dataclass(frozen=True)
+class QueueSnapshot:
+    """The sent-queue gate's hydration values, as of one snapshot instant
+    (#5895): the undispatched queue, whether a turn is active, and the
+    monotonic ``queue_seq`` that becomes the gate's baseline. Produced by
+    the same status builder the read model uses (``interfaces/repl/status.
+    py``'s ``_snapshot_for_session``, via the remote ``project_status`` or
+    the local ``_snapshot``), captured once, immutable."""
+
+    queue: "tuple[dict, ...]"
+    turn_active: bool
+    queue_seq: int
+
+    @classmethod
+    def from_status(cls, values: "dict | None") -> "QueueSnapshot":
+        """Build from a status dict in the ``_snapshot`` shape — the SAME
+        three keys, read once, defensively typed (a wire dict may carry
+        ``None`` where a fresh session has nothing)."""
+        v = values or {}
+        return cls(
+            queue=tuple(dict(item) for item in (v.get("queue") or ())),
+            turn_active=bool(v.get("turn_active", False)),
+            queue_seq=int(v.get("queue_seq", 0) or 0),
+        )
 
 
 __all__ = [
     "BacklogBatch",
+    "QueueSnapshot",
     "DisplayFrame",
     "EventFrame",
     "StatusApplied",

@@ -67,6 +67,7 @@ from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.repl.read_model import RegistryReadModel
 from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -822,24 +823,24 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
     Beta has its OWN item ALREADY queued (behind a held-busy turn, manually
     pumped — the auto-driver is stopped so this test has sole, deterministic
     control over dispatch, exactly like the #3300 P2a late-joiner test) BEFORE
-    this client ever switches to it. If the switch-barrier handler did not
-    eagerly reseed :attr:`_queue_view` from the NEW session's OWN snapshot,
-    beta's already-queued item would never render (there is no OTHER trigger
-    that would show it — nothing else happens on beta in this scenario) —
-    this is the #3305-shaped reconnect-reseed, witnessed here for the SWITCH
-    path specifically.
+    this client ever switches to it. Beta's already-queued item must render
+    once this client switches — there is no OTHER trigger that would show it
+    (nothing else happens on beta in this scenario) — the #3305-shaped
+    reconnect-reseed, witnessed here for the SWITCH path specifically.
 
-    ★Non-vacuity guard (found while strip-falsifying the WHOLE
-    ``session_attached`` handler for #3323 co-vet re-review): the very
-    generic "seed on the first frame the pump EVER processes" check
-    (:meth:`TextualChatApp._pump_frames`) would ALSO explain a green result
-    here if the ``session_attached`` frame below happened to be the first
-    frame this app's pump ever sees — masking the eager-reseed-on-switch
-    behavior this test means to isolate. A harmless benign frame is pushed
-    and settled FIRST so that generic check has already fired (on alpha,
-    where it is a no-op) before the switch — the ONLY remaining path that
-    can populate the queue view for beta is the eager reseed inside
-    :meth:`_handle_session_attached_event` itself."""
+    #5895 (architect ruling on #5886's fix; this test was the CI-red
+    witness that the fix had left the local switch path with NO seed point):
+    the app no longer reseeds inside :meth:`_handle_session_attached_event`
+    (it read the read model live — #5886's own defect in a narrower window).
+    The ONE seed point, for every transport, is the pump processing a
+    ``StatusApplied(kind="snapshot")`` frame that CARRIES the new session's
+    queue values. For the local transport that frame is produced by
+    ``InProcessTransport._pump_outbox`` right behind the ``session_attached``
+    barrier, so this test now drives the REAL local transport off the REAL
+    ``repl_outbox`` — the barrier is put where ``AgentRegistry.
+    _announce_session_attached`` puts it — instead of a scripted queue. Strip
+    (verified): removing that local producer leaves beta's item unrendered
+    and this test red; so does making the seed read the read model again."""
     monkeypatch.chdir(tmp_path)
     reg = _registry_with_wal(tmp_path)
     try:
@@ -860,50 +861,63 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
         )
         await reg.attach("alpha")
 
-        transport = QueueTransport()
+        # #5895: the REAL local transport, so the seed frame comes from its
+        # own producer (``_pump_outbox``) and nothing the test scripts.
+        transport = InProcessTransport(reg, intervention_channel="tui")
+        # The runner (``repl.py``), not the app, starts the transport's
+        # outbox pump in production — same here, or ``repl_outbox`` is
+        # never drained and nothing below reaches the app.
+        transport.start()
         app = TextualChatApp(
             transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
         )
-        async with app.run_test(size=(100, 30)) as pilot:
-            await _settle(pilot)
+        try:
+            async with app.run_test(size=(100, 30)) as pilot:
+                await _settle(pilot)
 
-            # Non-vacuity guard (see docstring): a harmless frame on alpha,
-            # settled BEFORE the switch, so the generic "seed on first frame
-            # the pump ever processes" check has already fired here (on
-            # alpha) rather than on the session_attached frame below — the
-            # ONLY remaining seed path for beta is the eager reseed inside
-            # the switch handler itself.
-            transport.push_display(OutboxMessage(kind="user", text="alpha noop"))
-            await _settle(pilot)
+                # A harmless frame on alpha first, so the switch below is not
+                # the very first thing this pump ever sees (the shape the
+                # earlier version of this test guarded for a since-deleted
+                # "seed on first frame" path; kept — it costs nothing and keeps
+                # the switch a genuine mid-stream switch).
+                reg.repl_outbox.put_nowait(OutboxMessage(kind="user", text="alpha noop"))
+                await _settle(pilot)
 
-            # NOTE: flips the registry's connection pointer directly (#3793
-            # stage 1: ``AttachedConnection.switch``) rather than calling
-            # ``reg.attach("beta")`` again — the auto-driver was deliberately
-            # stopped above (so THIS test controls dispatch); a real
-            # ``attach()`` call re-boots a fresh ``session.run()`` background
-            # task (its own ``_tasks[key].done()`` check sees the cancelled
-            # task and reboots), which would race the manually-held-busy
-            # turn for the SAME inbox and silently dispatch the "queued"
-            # fixture item out from under this test. Flipping the pointer
-            # directly is the read-side-only equivalent this test needs —
-            # the app's ``_snapshot()`` only ever reads
-            # ``registry.attached_session()``, never re-derives from a live
-            # ``attach()`` call itself.
-            reg._connection.switch(("beta", _DEFAULT_SID))
-            transport.push_event(
-                "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID}
-            )
-            await _settle(pilot)
+                # NOTE: flips the registry's connection pointer directly (#3793
+                # stage 1: ``AttachedConnection.switch``) rather than calling
+                # ``reg.attach("beta")`` again — the auto-driver was deliberately
+                # stopped above (so THIS test controls dispatch); a real
+                # ``attach()`` call re-boots a fresh ``session.run()`` background
+                # task (its own ``_tasks[key].done()`` check sees the cancelled
+                # task and reboots), which would race the manually-held-busy
+                # turn for the SAME inbox and silently dispatch the "queued"
+                # fixture item out from under this test. Flipping the pointer
+                # directly is the read-side-only equivalent this test needs —
+                # the app's ``_snapshot()`` only ever reads
+                # ``registry.attached_session()``, never re-derives from a live
+                # ``attach()`` call itself.
+                reg._connection.switch(("beta", _DEFAULT_SID))
+                # The barrier, put exactly where the registry's own
+                # ``_announce_session_attached`` puts it (an ``EventFrame`` on
+                # ``repl_outbox``); the transport's producer follows it with
+                # the snapshot frame the seed reads.
+                reg.repl_outbox.put_nowait(EventFrame(Event(
+                    type="session_attached", data={"agent": "beta", "session_id": _DEFAULT_SID},
+                )))
+                await _settle(pilot, n=4)
 
-            sent_queue = app.query_one(SentQueue)
-            assert sent_queue.has_items() is True, (
-                "beta's OWN already-queued item must render once this client "
-                "switches to beta — the switch-barrier reseed must fire"
-            )
-            assert any(
-                "beta queued item" in t for t in sent_queue.rendered_texts()
-            ), sent_queue.rendered_texts()
+                sent_queue = app.query_one(SentQueue)
+                assert sent_queue.has_items() is True, (
+                    "beta's OWN already-queued item must render once this client "
+                    "switches to beta — the local transport's snapshot frame behind "
+                    "the barrier is the one seed path (#5895)"
+                )
+                assert any(
+                    "beta queued item" in t for t in sent_queue.rendered_texts()
+                ), sent_queue.rendered_texts()
 
+        finally:
+            transport.close()
         _llm_stub.release.set()
         await turn_task
 

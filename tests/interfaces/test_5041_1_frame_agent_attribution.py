@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, StatusApplied
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -144,6 +144,11 @@ async def test_attribution_follows_a_real_switch_via_the_barrier(tmp_path) -> No
                 frame = await transport.frames().__anext__()
                 if isinstance(frame, EventFrame):
                     seen_agents.append(frame.agent)
+                    continue
+                if isinstance(frame, StatusApplied):
+                    # #5895: the seed frame behind the switch barrier —
+                    # carries no ``.agent``/``.message``; not this test's
+                    # subject.
                     continue
                 display_frame = frame
 

@@ -50,7 +50,7 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from reyn.interfaces.transport.frames import Frame
+    from reyn.interfaces.transport.frames import BacklogBatch, Frame
     from reyn.runtime.outbox import OutboxMessage
 
 
@@ -66,8 +66,13 @@ class ClientTransport(ABC):
         """Stop producing frames and release the underlying subscriptions."""
 
     @abstractmethod
-    def frames(self) -> "AsyncIterator[Frame]":
-        """Yield the unified, ordered, tagged frame stream (display + event)."""
+    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+        """Yield the unified, ordered frame stream: ``DisplayFrame`` /
+        ``EventFrame`` (tagged, renderable), ``StatusApplied`` (the
+        sent-queue seed / status delta — #5830 remote, #5895 local, no
+        ``.tag``) and, from ``AgUiTransport`` only, ``BacklogBatch``
+        (#5139). Every consumer type-checks before reading ``.tag`` —
+        the union is declared here so mypy names the ones that do not."""
 
     @abstractmethod
     async def submit_user_text(
@@ -679,7 +684,7 @@ class DelegatingClientTransport(ClientTransport):
     def close(self) -> None:
         self._inner.close()
 
-    def frames(self) -> "AsyncIterator[Frame]":
+    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
         return self._inner.frames()
 
     async def submit_user_text(

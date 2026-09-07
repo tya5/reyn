@@ -733,7 +733,7 @@ class _SessionFrameSource:
     def __init__(self, session, *, registry=None, agent_name: str = "") -> None:
         self._registry = registry
         self._agent_name = agent_name
-        self._q: "asyncio.Queue[Frame]" = asyncio.Queue()
+        self._q: "asyncio.Queue[Frame | StatusPingFrame]" = asyncio.Queue()
         self._forward = forwarded_frame_kinds()
         self._drain_task: "asyncio.Task | None" = None
         self._sub = None

@@ -86,7 +86,7 @@ from reyn.interfaces.transport.drain import suspend_between_frames
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+    from reyn.interfaces.transport.frames import BacklogBatch, Frame
     from reyn.runtime.outbox import OutboxMessage
 
 
@@ -201,7 +201,7 @@ class ThreadedTransportProxy(ClientTransport):
         self._thread: "threading.Thread | None" = None
         self._worker_thread_ident: "int | None" = None
         self._caller_loop: "asyncio.AbstractEventLoop | None" = None
-        self._caller_queue: "asyncio.Queue[DisplayFrame | EventFrame] | None" = None
+        self._caller_queue: "asyncio.Queue[Frame | BacklogBatch] | None" = None
         # Single overwriting slot (#4995's own settled design, see module
         # docstring) — a plain attribute, not a queue: only the LATEST
         # snapshot is ever meaningful, so an older one is safe to discard
@@ -279,7 +279,7 @@ class ThreadedTransportProxy(ClientTransport):
         if self._inner is not None:
             self._inner.close()
 
-    async def frames(self) -> "AsyncIterator[DisplayFrame | EventFrame]":
+    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
         assert self._caller_queue is not None
         while True:
             frame = await self._caller_queue.get()

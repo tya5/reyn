@@ -54,6 +54,7 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
+    QueueSnapshot,
     StatusApplied,
 )
 
@@ -69,7 +70,18 @@ if TYPE_CHECKING:
 # module-level ``object()`` rather than ``None``: a locally-authored
 # ``put_display`` call could in principle wrap a falsy/None-ish payload,
 # and this must never be confused with one.
-_SSE_DONE = object()
+class _SSEDone:
+    """The pump's end-of-stream sentinel — a class of its own (not a bare
+    ``object()``) so ``frames()`` narrows it by ``isinstance`` and mypy can
+    see the item that is yielded past it IS a stream item (#5895: the type
+    enumerates the consumers, so the queue's element type must be honest).
+    """
+
+    __slots__ = ()
+
+
+_SSE_DONE = _SSEDone()
+
 
 
 class _SSEPumpError:
@@ -166,7 +178,9 @@ class AgUiTransport(ClientTransport):
         # SAME queue :meth:`frames` drains, so a locally-authored message
         # renders through the identical renderer path a server-sent one
         # does, without waiting on the next SSE event to unblock it.
-        self._display_queue: "asyncio.Queue[Frame | BacklogBatch | object]" = asyncio.Queue()
+        self._display_queue: "asyncio.Queue[Frame | BacklogBatch | _SSEPumpError | _SSEDone]" = (
+            asyncio.Queue()
+        )
         self._sse_pump_task: "asyncio.Task[None] | None" = None
         # #5694: set once :meth:`frames` re-raises a genuine ``_SSEPumpError``
         # (the pump died — a real read failure, never a clean end or an
@@ -268,9 +282,17 @@ class AgUiTransport(ClientTransport):
     # -- frame production ---------------------------------------------------
 
     def _reguard_frame(self, frame: Frame) -> Frame:
+        # Only a DisplayFrame carries render-nodes; the other members pass
+        # through untouched (#5895: split so a ``list[DisplayFrame]`` — a
+        # backlog page — stays typed as one after re-guarding).
+        if isinstance(frame, DisplayFrame):
+            return self._reguard_display(frame)
+        return frame
+
+    def _reguard_display(self, frame: DisplayFrame) -> DisplayFrame:
         # Per-connection edge re-guard for presentation render-nodes (A5): inert
         # at construction already, re-neutralized here for a heterogeneous client.
-        if isinstance(frame, DisplayFrame) and frame.message.kind == "presentation":
+        if frame.message.kind == "presentation":
             nodes = frame.message.meta.get("nodes")
             if isinstance(nodes, list):
                 meta = dict(frame.message.meta)
@@ -329,7 +351,28 @@ class AgUiTransport(ClientTransport):
                 # happens to arrive next (the owner-hit: the status bar
                 # stayed on the old agent until the next turn's own
                 # frame). See `StatusApplied`'s own docstring.
-                out.append(StatusApplied())
+                #
+                # #5886 (architect ruling ①): carry WHICH of the two this
+                # was. This branch has always known — the two `if`s right
+                # above are that knowledge — and handed the app one opaque
+                # item for both, which is what left the sent-queue seq-gate
+                # with no way to tell a hydration point from a display
+                # update. A snapshot wins when a block somehow carries
+                # both: hydration is the stronger claim, and seeding from
+                # it is never wrong.
+                #
+                # #5895: a snapshot frame CARRIES its own queue values,
+                # captured right here from the decoded snapshot — the seed
+                # reads the frame, never the live `_status` view, which a
+                # later delta in this same pump task can have moved before
+                # the app reaches this frame. A delta carries nothing.
+                if decoded.snapshot is not None:
+                    out.append(StatusApplied(
+                        kind="snapshot",
+                        snapshot=QueueSnapshot.from_status(decoded.snapshot),
+                    ))
+                else:
+                    out.append(StatusApplied(kind="delta"))
             elif isinstance(decoded, MessagesSnapshot):
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
                 # ONE BacklogBatch item, appended to `out` like any other
@@ -348,7 +391,7 @@ class AgUiTransport(ClientTransport):
                     BacklogBatch(
                         agent=self._backlog_agent,
                         sid=self._backlog_sid,
-                        frames=[self._reguard_frame(f) for f in decoded.frames],
+                        frames=[self._reguard_display(f) for f in decoded.frames],
                         has_more=decoded.has_more,
                         next_cursor=decoded.next_cursor,
                     )
@@ -500,7 +543,7 @@ class AgUiTransport(ClientTransport):
         finally:
             self._display_queue.put_nowait(_SSE_DONE)
 
-    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch | StatusApplied]":
+    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
         # #5139: widened from ``AsyncIterator[Frame]`` — this transport is
         # the only ``ClientTransport`` implementation that ever yields a
         # ``BacklogBatch`` (see that class's own docstring); every other
@@ -540,7 +583,7 @@ class AgUiTransport(ClientTransport):
                 self._connected = False
                 self._pump_died = True
                 raise frame.exc
-            if frame is _SSE_DONE:
+            if isinstance(frame, _SSEDone):
                 return
             # #3570 gate (test_stream_drain_yield_3570.py's own class gate):
             # ``queue.get()`` suspends only while the queue is EMPTY — a
@@ -718,7 +761,7 @@ class AgUiTransport(ClientTransport):
             BacklogBatch(
                 agent=self._backlog_agent,
                 sid=self._backlog_sid,
-                frames=[self._reguard_frame(f) for f in decoded.frames],
+                frames=[self._reguard_display(f) for f in decoded.frames],
                 has_more=decoded.has_more,
                 next_cursor=decoded.next_cursor,
                 is_older_page=True,
