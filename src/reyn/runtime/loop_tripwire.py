@@ -77,6 +77,22 @@ _RECORD_INTERVAL_S = 2.0
 
 _DUMP_ENV = "REYN_PROF_DUMP"
 
+#: #5977 ①: a per-episode cap of 1 (see :meth:`LoopTripwire.should_arm_stack_
+#: dump`) stops the SELF-AMPLIFICATION within one stall — each dump's own
+#: synchronous write cost adding to the very lateness that risked triggering
+#: the next one — but says nothing about a run of many SEPARATE, genuinely
+#: distinct short stalls, each legitimately producing its own single dump.
+#: This is the ceiling on that SUM, the backstop the band's "who stops this
+#: if it repeats" question needs an answer to (owner-hit, #5977). Chosen, not
+#: measured — no comparable session-length dump-count data exists yet
+#: (architect flagged the number as their own to propose; this is a
+#: reasoned default, a single constant to change if a different one lands):
+#: at ~14.6 KB per dump (#5977 architect finding, real machine), 10 dumps is
+#: ~150 KB of evidence — ample to diagnose a session's worth of stalls —
+#: while keeping the cumulative self-inflicted dump cost this issue exists
+#: to bound from growing without limit.
+_SESSION_DUMP_CAP = 10
+
 
 def dump_path() -> "str | None":
     """The detail-probe output path, or ``None`` when detail is off.
@@ -184,10 +200,18 @@ class LoopTripwire:
     anything, which is the failure this whole module is a response to.
     """
 
-    def __init__(self, *, threshold_ms: float = _TRIPWIRE_MS) -> None:
+    def __init__(
+        self, *, threshold_ms: float = _TRIPWIRE_MS, session_dump_cap: int = _SESSION_DUMP_CAP,
+    ) -> None:
         self._threshold_ms = threshold_ms
         self._max_lateness_ms = 0.0
         self._fired = False
+        #: #5977 ①: has the CURRENT (still-ongoing) episode already produced
+        #: a stack dump — reset alongside ``_fired`` at recovery, below,
+        #: since both answer "has THIS episode already told its one story."
+        self._dumped_this_episode = False
+        self._session_dump_cap = session_dump_cap
+        self._session_dump_count = 0
         #: Wall-clock time of the last durable ``write_record`` call, or
         #: ``None`` before the first one — independent of ``_fired`` (#4761
         #: ①: one flag was gating two different questions).
@@ -242,6 +266,56 @@ class LoopTripwire:
         reported (#4855: reset at each recovery, not "ever, this
         session" — see :meth:`observe`'s recovery branch for why)."""
         return self._fired
+
+    @property
+    def session_dump_cap(self) -> int:
+        """The session-total dump ceiling this instance was constructed
+        with (#5977 ①) — exposed alongside :attr:`session_dump_count` so a
+        caller's cap-reached notice needs no second, easily-drifting copy
+        of the number."""
+        return self._session_dump_cap
+
+    @property
+    def session_dump_count(self) -> int:
+        """How many stack dumps this session has produced so far (#5977 ①)
+        — exposed so a caller's own cap-reached notice, and a test, can read
+        the count directly rather than re-deriving it from ticks."""
+        return self._session_dump_count
+
+    def should_arm_stack_dump(self) -> bool:
+        """Whether the caller's dead-man's switch (:class:`StallDumpArm`)
+        should be RE-ARMED this tick (#5977 ①).
+
+        ``False`` in two cases: the CURRENT episode already produced a dump
+        (:meth:`record_stack_dump` set that — recovery below clears it for
+        the NEXT episode), or the session-total cap is already reached.
+        Consulted BEFORE ``StallDumpArm.rearm()`` — there is no separate
+        ``faulthandler`` state to cancel; skipping the re-arm IS the
+        suppression, since each arm is one-shot and replaces the previous
+        pending timer (see :class:`StallDumpArm`'s own docstring)."""
+        if self._dumped_this_episode:
+            return False
+        return self._session_dump_count < self._session_dump_cap
+
+    def record_stack_dump(self) -> bool:
+        """Report that an armed dump actually fired this tick (the caller's
+        own ``stack_dumped`` proxy turned ``True``) — closes this episode's
+        one-shot allowance and advances the session total.
+
+        Returns whether the session cap was JUST reached — ``==``, not
+        ``>=``: :meth:`should_arm_stack_dump` refuses to let this method be
+        called at all once the cap is already met, so the count can only
+        ever CROSS the cap on the one tick this returns ``True`` — no
+        separate once-only flag needed the way :meth:`observe`'s own
+        ``_fired`` is (there, a caller CAN keep calling ``observe`` past
+        the first stall tick; here, the caller structurally cannot keep
+        calling this past the cap). The caller logs the always-visible ③
+        notice exactly on that tick, never silently and never repeated —
+        "抑制しても『抑制した』ことが分からなければ、次の人は『stall が
+        無かった』と読みます" (#5977, lead-coder)."""
+        self._dumped_this_episode = True
+        self._session_dump_count += 1
+        return self._session_dump_count == self._session_dump_cap
 
     def consume_recovered(self) -> bool:
         """Whether the loop just recovered from a stall — ``True`` at most
@@ -348,6 +422,10 @@ class LoopTripwire:
                 # between stalls moved from "session start" to "the
                 # previous stall's own recovery."
                 self._fired = False
+                # #5977 ①: the NEXT episode gets its own fresh one-shot dump
+                # allowance — the cap is a SESSION total (untouched here),
+                # not a per-episode one, so only this flag resets.
+                self._dumped_this_episode = False
                 write_record(
                     "tripwire_recovered", lateness_ms=round(lateness_ms, 1), **extra,
                 )
@@ -498,6 +576,24 @@ def stall_recovered_log_line(*, pump_ticks: "int | None" = None) -> str:
     return f"the interface recovered from the stall reported above{ticks_note}"
 
 
+def stall_dump_cap_reached_log_line(session_dump_count: int, session_dump_cap: int) -> str:
+    """The always-visible (#5977 ③) notice that the session-total stack-dump
+    cap was just reached — logged exactly once, at ``logger.warning``, the
+    SAME unconditional surface :func:`stall_recovered_log_line` already
+    uses, never gated behind ``REYN_PROF_DUMP``. Without this line, a
+    session that hit the cap and a session that never stalled again look
+    identical to the next reader: the stall/recovery notices keep firing
+    (:meth:`LoopTripwire.observe` is untouched by the cap), so silence on
+    the DUMP side alone would read as "no more stalls," not "stopped
+    recording them" — the same silence-hides-two-states shape #4761
+    exists to close, one level up."""
+    return (
+        f"stall dump cap reached ({session_dump_count}/{session_dump_cap} this "
+        "session) — stalls will still be reported above, but no further "
+        "stack dumps will be written"
+    )
+
+
 class StallDumpArm:
     """The per-tick ``faulthandler`` dead-man's switch and the fd it dumps
     into — the ONE implementation of the #5877/#5873 rules (#5898: lifted
@@ -632,6 +728,7 @@ async def watch_event_loop(
     stack_dump: "StallDumpArm | None" = None,
     turn_active: "Callable[[], bool | None] | None" = None,
     on_tick: "Callable[[float, float], None] | None" = None,
+    on_dump_cap_reached: "Callable[[int, int], None] | None" = None,
     tick_seconds: float = _TICK_SECONDS,
     clock: "Callable[[], float]" = time.perf_counter,
     sleep: "Callable[[float], Any]" = asyncio.sleep,
@@ -650,14 +747,34 @@ async def watch_event_loop(
     a ``time.sleep`` on the loop it is measuring (CLAUDE.md: a duration is
     an input you supply, not a wait).
 
+    ``on_dump_cap_reached(session_dump_count, session_dump_cap)`` (#5977
+    ①③): fires once, the tick the session-total dump cap is reached — see
+    :meth:`LoopTripwire.record_stack_dump`'s own once-only return. Passed
+    through rather than logged here directly so each caller (this module
+    has no logger of its own) reports it on its own already-established
+    surface, matching ``on_stall``/``on_recovered``'s own shape.
+
+    **#5977 ① ordering (lead-coder BLOCKING, PR #5980)**: whether THIS
+    tick's re-arm should happen is decided BEFORE the tick's own lateness
+    is known to mean "the PREVIOUS arm just fired" — checking the two in
+    the reverse order (re-arm, THEN read ``stack_dumped``, THEN record)
+    always re-arms once more than intended, because the very tick that
+    detects a fire has, by that point, already scheduled the NEXT pending
+    timer — a real ``faulthandler`` commitment nothing then cancels. So
+    ``armed_last_tick`` carries "is there a pending arm to read back"
+    ACROSS ticks: each tick first asks whether the arm made LAST tick
+    fired (if any), records it, and only THEN decides whether to make a
+    NEW one — never both in the same breath.
+
     Runs until cancelled (the caller's shutdown); the ``finally`` releases
     the process-wide timer and this watcher's fd.
     """
     last = clock()
-    if stack_dump is not None:
+    armed_last_tick = False
+    if stack_dump is not None and tripwire.should_arm_stack_dump():
         # Arm for the FIRST wait too — a stall on the very first tick would
         # otherwise go undumped (#5870 stage 1).
-        stack_dump.rearm()
+        armed_last_tick = stack_dump.rearm()
     try:
         while True:
             await sleep(tick_seconds)
@@ -665,15 +782,33 @@ async def watch_event_loop(
             lateness_ms = (now - last - tick_seconds) * 1000
             last = now
             stack_dumped: "bool | None" = None
-            if stack_dump is not None and stack_dump.rearm():
+            if armed_last_tick:
                 # Best-effort proxy for "did the pending dump just fire" —
                 # the SAME comparison observe() makes internally, never a
                 # readback of faulthandler's (nonexistent) fired state.
                 stack_dumped = lateness_ms > tripwire.threshold_ms
+                if stack_dumped and tripwire.record_stack_dump() and on_dump_cap_reached is not None:
+                    on_dump_cap_reached(tripwire.session_dump_count, tripwire.session_dump_cap)
             if on_tick is not None:
                 on_tick(now, lateness_ms)
             active = turn_active() if turn_active is not None else None
             fired = tripwire.observe(lateness_ms, turn_active=active, stack_dumped=stack_dumped)
+            # #5977 ① (lead-coder BLOCKING follow-up, PR #5980): the re-arm
+            # decision must run AFTER `observe()`, not before — `observe()`
+            # is what resets the per-episode dump allowance at a recovery
+            # transition (mirrors `_fired`'s own reset). Deciding earlier
+            # reads a STALE "already dumped" flag on the exact tick a
+            # recovery happens, leaving nothing armed to catch the very
+            # next episode's onset (measured: a scripted second episode
+            # went undumped entirely under the earlier ordering). Skipping
+            # the re-arm IS the suppression — no separate faulthandler
+            # state to cancel, since each arm is one-shot and replaces the
+            # previous pending timer; a fire detected THIS tick has
+            # already closed via `record_stack_dump()` above, so it never
+            # re-arms a further timer for the SAME still-ongoing episode.
+            armed_last_tick = bool(
+                stack_dump is not None and tripwire.should_arm_stack_dump() and stack_dump.rearm()
+            )
             if fired is not None:
                 on_stall(fired)
             elif tripwire.consume_recovered() and on_recovered is not None:

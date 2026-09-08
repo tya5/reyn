@@ -2467,6 +2467,23 @@ class TextualChatApp(App):
         and on a mismatch: disarm, close the stale fd, and open a fresh
         one against the same path before re-arming. A ``stat`` call
         every :data:`~.loop_probe._TICK_SECONDS` (50 ms) is negligible.
+
+        **#5977 ①③ (owner-hit: "ひたすら繰り返されてるよこのログ")**: the
+        dead-man's switch above re-armed EVERY tick regardless of whether
+        the CURRENT stall episode had already produced a dump — a long
+        perceived-as-one stall is actually many tick-level arm→(maybe
+        fire)→rearm cycles, each of which could independently dump the
+        full thread stack, and each dump's own synchronous write cost adds
+        to the very lateness that risks triggering the next one
+        (self-amplification). Re-arming is now gated on
+        ``LoopTripwire.should_arm_stack_dump()`` — at most one dump per
+        episode, plus a session-total backstop — and ``LoopTripwire.
+        record_stack_dump()`` reports back when a dump actually fired, so
+        the episode-level allowance closes and the session count advances.
+        Reaching the session cap logs an always-visible (never
+        ``REYN_PROF_DUMP``-gated) notice exactly once — see
+        ``stall_dump_cap_reached_log_line``'s own docstring for why
+        silence there would be misread as "no more stalls."
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
@@ -2481,6 +2498,7 @@ class TextualChatApp(App):
             _TRIPWIRE_MS,
             StallDumpArm,
             stall_banner,
+            stall_dump_cap_reached_log_line,
             stall_log_line,
             stall_recovered_log_line,
         )
@@ -2534,8 +2552,21 @@ class TextualChatApp(App):
         # ever re-arms it) would go undumped, the one case a `while True:
         # re-arm at the top` shape would silently miss. A no-op when
         # `_dump_fd` is `None` (#5877 — see above).
-        if _stack_dump is not None:
-            _stack_dump.rearm()
+        # #5977 ① ordering (lead-coder BLOCKING, PR #5980): `_armed_last_tick`
+        # carries "is there a pending arm to read back" ACROSS ticks — each
+        # tick first asks whether LAST tick's own arm fired (if any) and
+        # records it, and only THEN decides whether to make a NEW one.
+        # Checking "should I re-arm" and "did the arm I JUST made fire"
+        # together in one breath (the pre-fix shape) always re-arms once
+        # too many: the very tick that detects a fire has, by that point,
+        # already scheduled the next pending timer — a real faulthandler
+        # commitment nothing then cancels — see loop_tripwire.watch_event_
+        # loop's own updated docstring for the full account (same bug, one
+        # implementation each, since this loop does not call that shared
+        # one — see the module docstring's own duplication note).
+        _armed_last_tick = False
+        if _stack_dump is not None and self._loop_tripwire.should_arm_stack_dump():
+            _armed_last_tick = _stack_dump.rearm()
         try:
             while True:
                 await asyncio.sleep(_TICK_SECONDS)
@@ -2543,16 +2574,24 @@ class TextualChatApp(App):
                 lateness_ms = (now - last - _TICK_SECONDS) * 1000
                 last = now
                 stack_dumped: "bool | None" = None
-                # Re-arm for the NEXT wait immediately (the rotation check
-                # and reopen live inside StallDumpArm.rearm — #5873): a tick
-                # that lands on time always beats the deadline, so a healthy
-                # loop never triggers a dump; one that doesn't leaves the
-                # PENDING timer to fire on its own, mid-stall, on
-                # faulthandler's own OS thread. `stack_dumped` is the
-                # best-effort proxy LoopTripwire.observe's docstring names —
-                # the same comparison it makes internally.
-                if _stack_dump is not None and _stack_dump.rearm():
+                if _armed_last_tick:
+                    # Best-effort proxy for "did the pending dump just
+                    # fire" — the SAME comparison LoopTripwire.observe
+                    # makes internally, never a readback of faulthandler's
+                    # (nonexistent) fired state.
                     stack_dumped = lateness_ms > _TRIPWIRE_MS
+                    if stack_dumped and self._loop_tripwire.record_stack_dump():
+                        # #5977 ③: always-visible, never gated behind
+                        # REYN_PROF_DUMP — same reasoning as the recovery
+                        # notice below (silence here would read as "no more
+                        # stalls," not "stopped recording them").
+                        logger.warning(
+                            "textual chat: %s",
+                            stall_dump_cap_reached_log_line(
+                                self._loop_tripwire.session_dump_count,
+                                self._loop_tripwire.session_dump_cap,
+                            ),
+                        )
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()
@@ -2572,6 +2611,23 @@ class TextualChatApp(App):
                 fired = self._loop_tripwire.observe(
                     lateness_ms, pump_ticks=self._pump_ticks, turn_active=turn_active,
                     stack_dumped=stack_dumped,
+                )
+                # #5977 ① (lead-coder BLOCKING follow-up, PR #5980): the
+                # re-arm decision must run AFTER ``observe()``, not before
+                # — ``observe()`` is what resets the per-episode dump
+                # allowance at a recovery transition. Deciding earlier
+                # reads a STALE "already dumped" flag on the exact tick a
+                # recovery happens, leaving nothing armed to catch the
+                # very next episode's onset. Skipping the re-arm IS the
+                # suppression (no separate faulthandler state to cancel;
+                # each arm is one-shot and replaces the previous pending
+                # timer) — a fire detected THIS tick already closed via
+                # ``record_stack_dump()`` above, so it never re-arms a
+                # further timer for the SAME still-ongoing episode.
+                _armed_last_tick = bool(
+                    _stack_dump is not None
+                    and self._loop_tripwire.should_arm_stack_dump()
+                    and _stack_dump.rearm()
                 )
                 if fired is not None:
                     pump_delta = (
