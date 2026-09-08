@@ -254,6 +254,16 @@ def test_environment_assignment_as_a_later_argument_is_accepted() -> None:
     ]
 
 
+@pytest.mark.parametrize("text", ["ls | FOO=bar rm", "ls && FOO=bar rm"])
+def test_leading_assignment_is_rejected_in_every_segment_not_just_the_first(text: str) -> None:
+    """Tier 1: architect's own explicit re-check (issuecomment-5578436446)
+    — the leading-assignment guard must re-apply at the START OF EVERY
+    segment, not just the plan's first one; a chain operator resets
+    "leading position" for the segment that follows it."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
 @pytest.mark.parametrize("text", [
     "echo hi > $HOME/out.txt",
     "echo hi > ~/out.txt",
@@ -277,6 +287,33 @@ def test_variable_glob_or_home_expansion_is_rejected(text: str) -> None:
     directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
+
+
+@pytest.mark.parametrize("text", [
+    "cp file{1,2} /tmp/",
+    "echo {a,b}.txt",
+])
+def test_brace_expansion_is_rejected(text: str) -> None:
+    """Tier 1: architect's own follow-up real-machine measurement
+    (issuecomment-5578436446) — macOS ``/bin/sh`` expands ``{a,b}``
+    even in POSIX mode, so ``cp file{1,2} /tmp/`` parses to ONE argv
+    token (``"file{1,2}"``) while the real shell operates on TWO files
+    — the same "cannot predict what this resolves to" class as ``$``/
+    glob/``~``, closed the same way.
+
+    Strip witness: dropping ``{`` from ``_EXPANSION_CHARS`` makes both
+    of these parse successfully with the literal brace syntax instead
+    of raising — verified directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_a_stray_closing_brace_alone_is_accepted() -> None:
+    """Tier 1: architect's own explicit carve-out — only the OPENING
+    brace signals a brace-expansion pattern; a stray ``}`` alone is not
+    one and stays accepted (no divergence risk, over-rejecting it would
+    be an unjustified narrowing)."""
+    assert parse_exec_plan("echo a}b") == [ExecSegment(argv=("echo", "a}b"))]
 
 
 def test_quoted_operator_shaped_token_is_rejected_not_silently_split() -> None:

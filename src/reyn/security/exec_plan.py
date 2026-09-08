@@ -68,13 +68,16 @@ parser saw — the parse/execute gap class above:
   segment-level policy (段3) was never designed to scan.
 - Background execution: a bare ``&`` (not part of ``&&``) — changes
   process lifecycle in a way #5838's plan never modeled.
-- Variable/glob/home-directory expansion: any token containing ``$``,
-  a glob metacharacter (``* ? [``), or starting with ``~`` — resolves
-  to something DIFFERENT at real execution time than the literal text
-  this parser saw (measured bypasses: a redirect target check would
-  see the literal string ``"$HOME/out.txt"``, never the real expanded
-  path; a threat scan over ``rm *.txt`` would see the literal glob,
-  never the files it actually matches).
+- Variable/glob/brace/home-directory expansion: any token containing
+  ``$``, a glob metacharacter (``* ? [``), an opening brace ``{``
+  (macOS ``/bin/sh`` expands ``{a,b}`` even in POSIX mode), or starting
+  with ``~`` — resolves to something DIFFERENT at real execution time
+  than the literal text this parser saw (measured bypasses: a redirect
+  target check would see the literal string ``"$HOME/out.txt"``, never
+  the real expanded path; a threat scan over ``rm *.txt`` would see the
+  literal glob rather than whatever files actually match; ``cp
+  file{1,2} /tmp/`` would see ONE argv token while the real shell
+  operates on TWO files).
 - A leading ``NAME=value`` environment-assignment prefix — would become
   the segment's ``argv[0]``, hiding the REAL command from tool-axis
   policy entirely (``FOO=bar rm -rf /tmp/x`` → this parser's ``argv[0]``
@@ -133,23 +136,28 @@ _REDIRECT_OPS_SINGLE = frozenset({">", "<"})
 _CHAIN_OPS_DOUBLE = frozenset({"&&", "||"})
 _REDIRECT_OPS_DOUBLE = frozenset({">>"})
 
-# #5838 BLOCKING (architect co-vet, issuecomment-5578395294, real-machine
-# measurement against this module): a token containing ``$`` (variable
-# expansion), a glob metacharacter (``* ? [``), or starting with ``~``
-# (home-directory expansion) resolves to something DIFFERENT at real
-# `sh -c` execution time than the literal text this parser sees --
-# exactly the same "parser saw one thing, shell runs another" class this
-# module's own docstring names for `$(...)`/backtick, just via expansion
-# instead of substitution. Measured real bypasses: `echo hi >
-# $HOME/out.txt` let a redirect-target permission check (段3's future
-# `require_file_write`) see the literal string `"$HOME/out.txt"` instead
-# of the real path; `rm *.txt` let a threat scan see `"*.txt"` instead of
-# whatever files actually match at execution time. The SAME
-# "no way to know what this really is" gap a quoted operator-shaped
-# token (_iter_tokens's own docstring) is rejected for -- this closes
-# the inconsistency architect's own co-vet named: that gap was closed
-# for quoting and left open for expansion.
-_EXPANSION_CHARS = frozenset("$*?[")
+# #5838 BLOCKING (architect co-vet, issuecomment-5578395294 /
+# issuecomment-5578436446, real-machine measurement against this
+# module): a token containing ``$`` (variable expansion), a glob
+# metacharacter (``* ? [``), ``{`` (brace expansion -- macOS `/bin/sh`
+# expands `{a,b}` even in POSIX mode, measured: `cp file{1,2} /tmp/`
+# parses to ONE argv token `"file{1,2}"` while the real shell operates
+# on TWO files), or starting with ``~`` (home-directory expansion)
+# resolves to something DIFFERENT at real `sh -c` execution time than
+# the literal text this parser sees -- exactly the same "parser saw one
+# thing, shell runs another" class this module's own docstring names
+# for `$(...)`/backtick, just via expansion instead of substitution.
+# Measured real bypasses: `echo hi > $HOME/out.txt` let a redirect-
+# target permission check (段3's future `require_file_write`) see the
+# literal string `"$HOME/out.txt"` instead of the real path; `rm
+# *.txt` let a threat scan see `"*.txt"` instead of whatever files
+# actually match at execution time. The SAME "no way to know what this
+# really is" gap a quoted operator-shaped token (_iter_tokens's own
+# docstring) is rejected for -- one consistent judgement, not "safe
+# side for operators, open for expansion." Only the OPENING brace is
+# checked (architect's own ruling): a stray `}` alone (`echo a}b`) is
+# not a brace-expansion pattern and stays accepted, no divergence risk.
+_EXPANSION_CHARS = frozenset("$*?[{")
 
 # #5838 BLOCKING (same co-vet): `FOO=bar rm -rf /tmp/x` -- a leading
 # `NAME=value` environment-assignment prefix -- is not stripped by this
