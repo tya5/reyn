@@ -2048,6 +2048,51 @@ it.
 
 ## See also
 
+## 28. A population you maintain by hand goes stale silently; a derived one goes silent loudly
+
+**The act that fires this: you are about to write down a list of the things
+to cover, check, or exempt.** A curated list answers "did I cover what I
+listed", never "did I list everything" — and when the world grows a
+thirteenth member, the list does not fail. It keeps passing, one member
+short, and nothing in the output says so.
+
+Three independent designs reached the same shape on one night (2026-09-07/08),
+each after a different miscount:
+
+| where | what was being enumerated | derived from |
+|---|---|---|
+| #5959 | "the big memory consumers" | `gc.get_objects()` (discovery) + every `Axis.BOUNDING` config field via `walk_config_schema()` (completeness) |
+| #5967 | "the gate scripts that must not borrow private names" | `glob("check_*.py")` + each file's own `ast.parse()` |
+| #5891 | "the caller kinds that carry a tool-call id" | nothing — the parameter is required, so absence is *declared*; "declared where it should not be" is then a census over real events |
+
+The miscounts they replaced were all one shape: **counting what is there,
+never what should be there but is not.** A `git grep <flag>` counts the call
+sites that pass the flag, not the ones that forgot it. A census scoped to
+`src/` misses `tests/`. `| head -12` turns a display limit into a population.
+
+**The trade this buys, and its price.** Deriving the population removes the
+stale-list failure and replaces it with a quieter one: *the scan itself can
+break*. An empty derivation is indistinguishable from a clean world — both
+print nothing and exit 0. So a derived population **needs a fail-closed
+guard, and it needs two of them**:
+
+1. **The scan found nothing to scan** — `assert scanned_files`, `assert
+   registry_entries`. A ratchet whose corpus silently emptied is §6's
+   vacuity guard applied to the corpus rather than to the assertion.
+2. **The scan ran but had no candidates in it** — the population was built,
+   and every member was trivially exempt. This one is a level deeper and is
+   easy to skip: the first guard is green, the run is green, and the check
+   never bit on anything. Name the count in the output so a reader can see
+   `0 of 0` and `0 of 217` differently.
+
+**Two zeros again** (§3): "nothing to check" and "everything checked, all
+clean" are the same exit code and, unless the tool says so, the same output.
+
+**When a derivation genuinely is not available**, that is a legitimate
+answer — but write down *why*, next to the list, so the next person does not
+re-derive the question. A list with a stated reason is a decision; a list
+without one is an accident that outlives its author.
+
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
 - [CLAUDE.md](../../../CLAUDE.md) — the doc-sync hard rule (a doc
   describing a mechanism goes stale the moment the mechanism changes) is the
