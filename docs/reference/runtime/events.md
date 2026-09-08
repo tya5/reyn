@@ -625,7 +625,7 @@ reviewer strip.
 | Kind | When | Key payload |
 |------|------|-------------|
 | `tool_called` | Before invocation, after argument validation. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `call_id`, `args`, `args_hash` |
-| `tool_returned` | The invocation returned a value that does NOT declare an error (see `tool_failed`). | `caller_kind`, `caller_id`, `tool`, `chain_id`, `call_id`, `args_hash`, `result` |
+| `tool_returned` | The invocation returned a value that does NOT declare an error (see `tool_failed`). | `caller_kind`, `caller_id`, `tool`, `chain_id`, `call_id`, `tool_call_id`, `args_hash`, `result`, `result_bytes`, `result_sha256`, `result_truncated` (only when actually cut), `content_ref_unavailable`, `tool_call_id_absent_reason` (only when `tool_call_id` is `None`) |
 | `tool_failed` | The invocation was refused, raised, **or returned normally with a self-declared error** (#3450 — a handler's own `{"error": ...}` / `{"error_message": ...}` / `{"error_kind": ...}` return, plain or one level under its own `{"status": "error", "data": {...}}` self-envelope, promoted to this event instead of silently wrapped as a success). | same, plus `error_kind` (`tool_excluded` \| `permission_denied` \| `exception` \| a validation reason \| a handler-supplied kind \| `handler_error`) and `message` — `tool_excluded` (#1406/#187/#5841/#5854): the call-time TOOL-axis contextual restrict denied the (`invoke_action`-unwrapped) effective name, checked BEFORE catalog membership so an excluded-but-uncataloged name still reads truthfully rather than as `unknown_tool` |
 
 `call_id` (#4691 Phase B ①, remainder — `DispatchContext.call_id`) is the
@@ -647,6 +647,22 @@ independent invariants, and a single broken one goes unnoticed silently).
 
 `args_hash` is a stable SHA-256 prefix over the canonical-JSON arguments — the
 correlation id that pairs a `tool_called` with its outcome across the log.
+
+`tool_call_id` (#5891 (c), `DispatchContext.tool_call_id`) is the ONE tool
+call's own `tc["id"]` — distinct from `call_id` above, which identifies the
+whole litellm ROUND and is shared by every `tool_calls` entry in it, so it
+cannot by itself join a `tool_returned` event to the ONE history row a
+reader wants (the same tool called twice in one round shares a `call_id`
+but not a `tool_call_id`). This is the SAME id `RouterLoop.feedback`
+already writes onto the corresponding `{role: tool, tool_call_id: ...}`
+history row (`ChatMessage.tool_call_id`) — a reader joins `tool_returned.
+tool_call_id` to that row, then to its `meta.content_ref`, with no new
+storage. Always present as a key; `None` for a dispatch with no real
+litellm `tool_calls` entry behind it at all (a CodeAct snippet's `tool()`
+call, an `/exec`/`/tasks` slash command, a pipeline `tool:` step) — never a
+minted placeholder. `tool_call_id_absent_reason` (naming `caller_kind`) is
+added ONLY in that `None` case, the same "don't let absence and omission
+read as the same silence" discipline `content_ref_unavailable` above uses.
 
 **Remote fan-out.** `turn_started` / `llm_called` / `tool_returned` / `tool_failed`
 are the kinds the A2A and MCP progress surfaces forward to a remote peer

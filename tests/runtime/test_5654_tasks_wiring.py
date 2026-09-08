@@ -102,6 +102,10 @@ async def _dispatch(name: str, args: dict, session) -> dict:
         # own local reproduction of slash/tasks.py's _dispatch needs it
         # too. No narrowing in play for these tests → None (⊤).
         contextual=None,
+        # #5891 (c): DispatchContext.tool_call_id is now REQUIRED (no
+        # default) -- None is /tasks' own declared absence, mirroring
+        # slash/tasks.py's own production DispatchContext construction.
+        tool_call_id=None,
     )
 
     async def _invoker(call_args: dict) -> "object":

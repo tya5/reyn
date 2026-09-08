@@ -43,6 +43,7 @@ class _OrderedDispatchLoop(RouterLoop):
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        tool_call_id: "str | None" = None,
     ) -> dict:
         if name == "write":
             await asyncio.sleep(0)  # yield: under gather the reader runs here, before the write lands
@@ -63,6 +64,16 @@ def _loop() -> _OrderedDispatchLoop:
     return _OrderedDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
 
 
+def _action(name: str) -> dict:
+    """One `dispatch()`-shaped action dict, including the `"tc"` entry
+    `_run_action_batch` now reads `["id"]` off unconditionally (#5891 (c):
+    `DispatchContext.tool_call_id` is a required field, no default -- a
+    caller that hand-builds an action dict without `"tc"` used to degrade
+    silently to `None`; that degrade is gone, so this fixture supplies a
+    real (synthetic) id instead of relying on it)."""
+    return {"name": name, "args": {}, "tc": {"id": f"tc_{name}"}}
+
+
 @pytest.mark.asyncio
 async def test_order_dependent_calls_execute_serially(tmp_path):
     """Tier 2: write-then-read in one round runs serially → the read OBSERVES the write.
@@ -70,7 +81,7 @@ async def test_order_dependent_calls_execute_serially(tmp_path):
     RED under the old ``asyncio.gather`` (the reader interleaves at the writer's yield and sees
     ``written=False``); GREEN with the serial for-loop (the writer completes first)."""
     loop = _loop()
-    results = await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
+    results = await loop.dispatch([_action("write"), _action("read")])
     assert results[1]["saw_write"] is True, "serial: the read must observe the preceding write"
     assert loop.trace == ["write", "read"], "completion order is strict declaration order"
 
@@ -80,7 +91,7 @@ async def test_results_returned_in_declaration_order(tmp_path):
     """Tier 2: N calls → results[i] aligns with actions[i] (tool_calls[i] ↔ tool_results[i]);
     the ordering contract is unchanged from gather's index-preservation."""
     loop = _loop()
-    actions = [{"name": f"t{i}", "args": {}} for i in range(6)]
+    actions = [_action(f"t{i}") for i in range(6)]
     results = await loop.dispatch(actions)
     assert [r["name"] for r in results] == [a["name"] for a in actions]
     assert loop.trace == [a["name"] for a in actions]
@@ -91,9 +102,7 @@ async def test_error_call_does_not_short_circuit(tmp_path):
     """Tier 2: an error result mid-round does NOT stop the rest — every call still runs
     (dispatch_tool normalizes errors, never raises), same as before."""
     loop = _loop()
-    results = await loop.dispatch(
-        [{"name": "write", "args": {}}, {"name": "boom", "args": {}}, {"name": "read", "args": {}}]
-    )
+    results = await loop.dispatch([_action("write"), _action("boom"), _action("read")])
     assert [r["status"] for r in results] == ["ok", "error", "ok"]
     assert results[2]["saw_write"] is True, "the call after the error still ran (no short-circuit)"
     assert loop.trace == ["write", "boom", "read"]
@@ -121,6 +130,7 @@ class _RealEventDispatchLoop(RouterLoop):
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        tool_call_id: "str | None" = None,
     ) -> dict:
         async def _invoker(a: dict):
             if name == "write":
@@ -133,6 +143,7 @@ class _RealEventDispatchLoop(RouterLoop):
             caller_kind="router", caller_id=self.host.agent_name,
             chain_id=self.chain_id, tool_catalog={name: {}}, events=self.event_log,
             contextual=None,  # #5841: no narrowing in play for these tests
+            call_id=call_id, tool_call_id=tool_call_id,
         )
         return await dispatch_tool(name=name, args=args, ctx=dctx, invoker=_invoker)
 
@@ -157,7 +168,7 @@ async def test_audit_event_order_is_declaration_order_contiguous(tmp_path):
     deterministic and tool-call-boundary-clean. RED under gather (interleaved), GREEN under serial.
     Drives the real dispatch_tool → real EventLog emission (no stub)."""
     loop = _RealEventDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
-    await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
+    await loop.dispatch([_action("write"), _action("read")])
     await settle(loop.event_log)
 
     assert _tool_event_seq(loop.event_log_collected) == [
@@ -177,7 +188,7 @@ async def test_replay_reproduces_declaration_order(tmp_path):
     test drives the real audit-log replay, not a WAL rewind. Serial's contiguity means the pre-cut
     prefix replays exactly the COMPLETED first call (no half-executed call straddling the cut)."""
     loop = _RealEventDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
-    await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
+    await loop.dispatch([_action("write"), _action("read")])
     await settle(loop.event_log)
 
     # replay = iterate the real EventLog in append order (P6 replay semantics for the audit log).

@@ -447,6 +447,12 @@ def _make_tool_dispatch(
             tool_catalog={name: target.render_for_router()},
             events=ctx.events,
             contextual=cast("Any", contextual_permission),
+            # #5891 (c): DispatchContext.tool_call_id is now REQUIRED (no
+            # default) -- None is the DECLARED absence, not an omission:
+            # a pipeline `tool:` step has no litellm tool_calls round
+            # behind it (chain_id above is likewise always None for the
+            # same reason).
+            tool_call_id=None,
         )
         envelope = await dispatch_tool(
             name=name, args=target_args, ctx=dispatch_ctx, invoker=_invoker,

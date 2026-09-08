@@ -309,6 +309,10 @@ async def _run_exec(ctx: "SlashContext", args: str) -> "tuple[list[str], dict] |
         # still denied under the SAME session-level narrowing a hidden
         # LLM exec call is denied under.
         contextual=op_ctx.contextual_permission,
+        # #5891 (c): DispatchContext.tool_call_id is now REQUIRED (no
+        # default) -- None is the DECLARED absence, not an omission: a
+        # slash-driven /exec has no litellm tool_calls round behind it.
+        tool_call_id=None,
     )
 
     async def _invoker(call_args: dict) -> Any:

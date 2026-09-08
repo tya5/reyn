@@ -104,7 +104,13 @@ def _advertised_names(*, contextual) -> "list[str]":
 
 def _call(loop: RouterLoop, name: str, args: dict) -> dict:
     return asyncio.run(
-        loop._execute_tool({"function": {"name": name, "arguments": json.dumps(args)}})
+        loop._execute_tool({
+            # #5891 (c) architect ruling: _execute_tool now subscripts
+            # tc["id"] directly (no .get() degrade) -- production always
+            # populates it, so this fixture must too.
+            "id": f"tc_{name}",
+            "function": {"name": name, "arguments": json.dumps(args)},
+        })
     )
 
 

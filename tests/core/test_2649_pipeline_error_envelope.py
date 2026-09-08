@@ -147,6 +147,7 @@ async def _dispatch_run_pipeline(args: dict, ctx: ToolContext, events: EventLog)
         tool_catalog={"run_pipeline": {"function": {"name": "run_pipeline", "parameters": {}}}},
         events=events,
         contextual=None,  # #5841: no narrowing in play for this test
+        tool_call_id=None,  # #5891 (c): required field, this test doesn't need one
     )
     r = await dispatch_tool(name="run_pipeline", args=args, ctx=dctx, invoker=invoker)
     if isinstance(r, dict):

@@ -111,6 +111,10 @@ async def _dispatch(name: str, args: dict, ctx: "SlashContext") -> dict:
         # OpContext. Without this, /tasks would be the one dispatch_tool
         # caller silently exempt from the new call-time restrict check.
         contextual=await _router_contextual_permission(tool_ctx),
+        # #5891 (c): DispatchContext.tool_call_id is now REQUIRED (no
+        # default) -- None is the DECLARED absence, not an omission: a
+        # slash-driven op has no litellm tool_calls round behind it at all.
+        tool_call_id=None,
     )
 
     async def _invoker(call_args: dict) -> Any:

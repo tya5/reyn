@@ -87,6 +87,7 @@ def _make_ctx(
         tool_catalog=_CATALOG,
         events=events,
         contextual=None,  # #5841: no narrowing in play for these tests
+        tool_call_id=None,  # #5891 (c): required field, none of these tests need one
         completed_response_include_text=completed_response_include_text,
         user_input_include_text=user_input_include_text,
     )
