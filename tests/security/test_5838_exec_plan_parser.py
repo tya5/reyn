@@ -279,11 +279,16 @@ def test_variable_glob_or_home_expansion_is_rejected(text: str) -> None:
     literal text this parser sees (measured: a redirect-target
     permission check would see the literal string ``"$HOME/out.txt"``,
     never the real expanded path; a threat scan over ``rm *.txt`` would
-    see the literal glob, never the files it actually matches).
+    see the literal glob, never the files it actually matches). Closed
+    by the allowlist reversal below (issuecomment-5578494687) — none of
+    ``$ * ? [ ~`` are admitted characters, so every one of these is
+    caught by :func:`_reject_disallowed_raw_characters` alone, before
+    any of the (now-removed) per-character checks this test's docstring
+    originally described.
 
-    Strip witness: emptying ``_EXPANSION_CHARS`` turns the ``$``/glob
-    cases here red (5 of 6 — the ``~`` case is a separate
-    ``token.startswith("~")`` check, unaffected by that one); verified
+    Strip witness: adding these characters to ``_ALLOWED_RAW_CHARS``
+    makes each case parse successfully with the literal expansion
+    syntax as a plain argv/path token instead of raising — verified
     directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
@@ -299,21 +304,80 @@ def test_brace_expansion_is_rejected(text: str) -> None:
     even in POSIX mode, so ``cp file{1,2} /tmp/`` parses to ONE argv
     token (``"file{1,2}"``) while the real shell operates on TWO files
     — the same "cannot predict what this resolves to" class as ``$``/
-    glob/``~``, closed the same way.
+    glob/``~``, closed the same way (neither ``{`` nor ``}`` is in
+    ``_ALLOWED_RAW_CHARS``).
 
-    Strip witness: dropping ``{`` from ``_EXPANSION_CHARS`` makes both
-    of these parse successfully with the literal brace syntax instead
-    of raising — verified directly, restored after."""
+    Strip witness: adding ``{``/``}`` to ``_ALLOWED_RAW_CHARS`` makes
+    both of these parse successfully with the literal brace syntax
+    instead of raising — verified directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
 
 
-def test_a_stray_closing_brace_alone_is_accepted() -> None:
-    """Tier 1: architect's own explicit carve-out — only the OPENING
-    brace signals a brace-expansion pattern; a stray ``}`` alone is not
-    one and stays accepted (no divergence risk, over-rejecting it would
-    be an unjustified narrowing)."""
-    assert parse_exec_plan("echo a}b") == [ExecSegment(argv=("echo", "a}b"))]
+# ── the allowlist itself (architect's structural reversal, replacing ────
+#    the per-character denylist above — issuecomment-5578494687) ────────
+
+
+@pytest.mark.parametrize("text", ["! ls", "ls; ! rm -rf /tmp/x", "ls && ! rm -rf /tmp/x"])
+def test_negation_operator_is_rejected(text: str) -> None:
+    """Tier 1: architect's own real-machine measurement while writing
+    the allowlist ruling — a real shell reads a leading ``!`` as the
+    NEGATION operator (``! false; echo $?`` -> ``0``), never a command
+    name, but this parser (pre-allowlist) read ``argv[0]='!'`` and let
+    the real command after it (``rm -rf /tmp/x``) ride along unseen by
+    any future policy. ``!`` is simply not in ``_ALLOWED_RAW_CHARS`` —
+    no per-construct check was ever added for it, the allowlist alone
+    closes it.
+
+    Strip witness: adding ``!`` to ``_ALLOWED_RAW_CHARS`` makes each of
+    these parse successfully with ``'!'`` as a literal argv token
+    instead of raising — verified directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_a_disallowed_character_inside_quotes_is_still_rejected() -> None:
+    """Tier 1: the allowlist check runs against the RAW string, quote-
+    position-blind, on purpose (module docstring, "What this parser
+    accepts" — quoting is not an escape hatch around it) — a disallowed
+    character does not become safe by being quoted, since this parser
+    cannot verify a real shell would treat it as literal either (the
+    same judgement already applied to a quoted operator-shaped token)."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("echo '$HOME'")
+
+
+def test_every_allowed_literal_character_is_individually_accepted() -> None:
+    """Tier 1: a direct, positive test of ``_ALLOWED_RAW_CHARS`` itself
+    — every literal character the module docstring's own justification
+    table lists must actually parse as a plain argv token, not merely
+    "not explicitly denied." Catches an allowlist that accidentally
+    narrows (a typo dropping a character) as surely as one that
+    accidentally widens.
+
+    ``#`` is tested separately (``test_shell_style_comment_stays_
+    accepted``) — it is a real ``shlex`` comment character, so embedding
+    it inside this test's own concatenated word would truncate
+    everything after it, which is correct behavior, not something this
+    test is about."""
+    from reyn.security.exec_plan import _LITERAL_CHARS
+
+    literal_word = "".join(sorted(_LITERAL_CHARS - {"#"}))
+    plan = parse_exec_plan(f"echo {literal_word}")
+    assert plan == [ExecSegment(argv=("echo", literal_word))]
+
+
+def test_a_stray_closing_brace_alone_is_now_rejected_under_the_allowlist() -> None:
+    """Tier 1: superseded by the allowlist reversal (issuecomment-
+    5578494687) — under the earlier denylist, a stray ``}`` alone was
+    deliberately accepted (no brace-expansion pattern, no divergence
+    risk). The allowlist has no per-construct carve-out mechanism: ``}``
+    is simply not one of the admitted characters, so this now rejects
+    too. architect's own explicit acceptance of this exact regression:
+    "allowlist を採る場合は `}` も落ちますが、それは安全側の偽陽性とし
+    て受け入れます" (a safe-side false positive, accepted)."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("echo a}b")
 
 
 def test_quoted_operator_shaped_token_is_rejected_not_silently_split() -> None:
