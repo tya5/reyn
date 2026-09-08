@@ -1,0 +1,219 @@
+"""Tier 1: #5838 段2 — ``ExecPlan`` parser (owner decision: parse a shell
+command line into policy-checkable segments, execute the ORIGINAL string
+via ``sh -c`` in a later stage). Covers:
+
+- Accept: plain argv, quoted words, every supported chain operator
+  (``| && || ;``), every supported redirect (``> >> <``), and
+  architect's own worked example (multi-segment pipe + redirect).
+- Reject: empty input, unterminated quotes, command substitution
+  (``$(...)``/backtick), subshell grouping (``(...)``), heredoc
+  (``<<``), a bare ``&``, an empty segment (leading/trailing/doubled
+  operator), a redirect with no target, an argv token after a
+  redirect's target.
+- The plan's own shape matches architect's example exactly (real data,
+  not a paraphrase of the docstring).
+
+No mocking — ``parse_exec_plan`` is a pure function over a string;
+every test drives it directly.
+"""
+from __future__ import annotations
+
+import pytest
+
+from reyn.security.exec_plan import (
+    ExecChainOp,
+    ExecPlanRejected,
+    ExecRedirect,
+    ExecSegment,
+    parse_exec_plan,
+)
+
+# ── accept ────────────────────────────────────────────────────────────
+
+
+def test_plain_argv_is_one_segment() -> None:
+    """Tier 1: no operators at all -> a single ExecSegment, argv order
+    preserved exactly."""
+    assert parse_exec_plan("ls -la /tmp") == [ExecSegment(argv=("ls", "-la", "/tmp"))]
+
+
+def test_quoted_word_with_space_stays_one_argv_token() -> None:
+    """Tier 1: shlex quoting behaves identically to #5837's own
+    (now-superseded) tokenize_exec_cmdline for this case."""
+    assert parse_exec_plan("ls 'my dir'") == [ExecSegment(argv=("ls", "my dir"))]
+
+
+@pytest.mark.parametrize("op", ["|", "&&", "||", ";"])
+def test_each_chain_operator_splits_into_two_segments(op: str) -> None:
+    """Tier 1: every one of #5838's 4 supported chain operators produces
+    exactly [segment, ExecChainOp(op), segment] — the SAME shape for
+    all 4, not special-cased per operator."""
+    plan = parse_exec_plan(f"a {op} b")
+    assert plan == [
+        ExecSegment(argv=("a",)),
+        ExecChainOp(op=op),
+        ExecSegment(argv=("b",)),
+    ]
+
+
+@pytest.mark.parametrize("op", ["|", "&&", "||", ";"])
+def test_each_chain_operator_works_unspaced(op: str) -> None:
+    """Tier 1: real shells don't require whitespace around an operator
+    (``a|b`` pipes exactly like ``a | b``) — this parser must match
+    that, not just the spaced form."""
+    plan = parse_exec_plan(f"a{op}b")
+    assert plan == [
+        ExecSegment(argv=("a",)),
+        ExecChainOp(op=op),
+        ExecSegment(argv=("b",)),
+    ]
+
+
+@pytest.mark.parametrize("op", [">", ">>", "<"])
+def test_each_redirect_attaches_after_its_segment(op: str) -> None:
+    """Tier 1: every one of #5838's 3 supported redirects produces
+    [segment, ExecRedirect(op, path)] — the redirect is its own plan
+    item, not folded into the segment's own argv."""
+    plan = parse_exec_plan(f"cat {op} out.txt")
+    assert plan == [
+        ExecSegment(argv=("cat",)),
+        ExecRedirect(op=op, path="out.txt"),
+    ]
+
+
+def test_architects_own_worked_example_matches_exactly() -> None:
+    """Tier 1: the literal example from #5838's own implementation plan
+    (architect, issuecomment-5557091059) — pinned as the acceptance
+    shape, not re-derived from this parser's own internals."""
+    plan = parse_exec_plan("ls -la | grep foo > out.txt")
+    assert plan == [
+        ExecSegment(argv=("ls", "-la")),
+        ExecChainOp(op="|"),
+        ExecSegment(argv=("grep", "foo")),
+        ExecRedirect(op=">", path="out.txt"),
+    ]
+
+
+def test_multiple_chained_segments() -> None:
+    """Tier 1: three segments joined by ``;`` — not just the 2-segment
+    minimal case."""
+    plan = parse_exec_plan("a ; b ; c")
+    assert plan == [
+        ExecSegment(argv=("a",)),
+        ExecChainOp(op=";"),
+        ExecSegment(argv=("b",)),
+        ExecChainOp(op=";"),
+        ExecSegment(argv=("c",)),
+    ]
+
+
+# ── reject: empty / malformed input ──────────────────────────────────
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\t\n"])
+def test_empty_or_whitespace_only_is_rejected(text: str) -> None:
+    """Tier 1: no command at all — never a silent no-op plan."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_unterminated_quote_is_rejected() -> None:
+    """Tier 1: shlex's own ValueError is folded into ExecPlanRejected,
+    not left to propagate as a different exception type callers would
+    need a second catch clause for."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("ls 'unterminated")
+
+
+# ── reject: constructs that could hide a segment from policy ─────────
+
+
+@pytest.mark.parametrize("text", [
+    "echo $(date)",
+    "echo `date`",
+    "echo $(rm -rf /)",
+])
+def test_command_substitution_is_rejected(text: str) -> None:
+    """Tier 1: #5838's own core rejection reason — a nested command this
+    parser would never see is exactly the parse/execute-gap class
+    architect's own competitive research (Codex #28732 basename bypass)
+    names.
+
+    Strip witness: removing ``(``/``)``/backtick from
+    ``_PUNCTUATION_CHARS`` makes ``$(...)``'s contents parse as an
+    ordinary argv word instead of raising — verified directly during
+    authoring, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+@pytest.mark.parametrize("text", ["(ls)", "( ls; pwd )"])
+def test_subshell_grouping_is_rejected(text: str) -> None:
+    """Tier 1: a parenthesized group can hide a whole second pipeline
+    this parser would never see — same class as command substitution."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_heredoc_is_rejected_with_a_specific_reason() -> None:
+    """Tier 1: heredoc gets its OWN rejection message (distinguishable
+    from the generic "unsupported construct" reason) — its body is
+    arbitrary multi-line content, a different hazard shape from a
+    single-token construct like ``$(...)``."""
+    with pytest.raises(ExecPlanRejected, match="heredoc"):
+        parse_exec_plan("cat << EOF")
+
+
+def test_bare_background_ampersand_is_rejected() -> None:
+    """Tier 1: only ``&&`` is a supported operator — a lone ``&``
+    (background execution) is not in #5838's plan."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("ls &")
+
+
+# ── reject: malformed operator/redirect placement ─────────────────────
+
+
+@pytest.mark.parametrize("text", ["| ls", "ls |", "a || | b", "a | | b"])
+def test_an_empty_segment_around_a_chain_operator_is_rejected(text: str) -> None:
+    """Tier 1: a leading, trailing, or doubled chain operator leaves an
+    empty command on one side — never silently dropped/treated as a
+    no-op segment. Includes ``"a | | b"`` (spaced double pipe, a real
+    POSIX shell syntax error) alongside ``"a || | b"``."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_redirect_with_no_target_is_rejected() -> None:
+    """Tier 1: a redirect operator with nothing after it — never a
+    silent no-op redirect."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("ls >")
+
+
+def test_redirect_with_no_preceding_command_is_rejected() -> None:
+    """Tier 1: a redirect with no command before it — there is nothing
+    for the redirect to attach to."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("> out.txt")
+
+
+def test_argument_after_a_redirect_target_is_rejected() -> None:
+    """Tier 1: a deliberate v1 narrowing (module docstring) — redirects
+    must be the last thing in a segment here, even though real shells
+    allow ``cmd arg1 > file arg2`` (equivalent to ``cmd arg1 arg2 >
+    file``). Rejecting rather than silently mis-attributing ``arg2``."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("ls > out.txt -la")
+
+
+def test_chained_redirects_on_the_same_segment_are_accepted() -> None:
+    """Tier 1: ``cmd > out.txt < in.txt`` — two redirects, no argv
+    between them, on the same command — must not be confused with the
+    "argument after a redirect" rejection above."""
+    plan = parse_exec_plan("cat > out.txt < in.txt")
+    assert plan == [
+        ExecSegment(argv=("cat",)),
+        ExecRedirect(op=">", path="out.txt"),
+        ExecRedirect(op="<", path="in.txt"),
+    ]
