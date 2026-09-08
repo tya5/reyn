@@ -169,25 +169,37 @@ async def test_a_bare_name_resolves_via_the_given_env_path_and_is_denied(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"cwd": None}, id="env_path_omitted_alone"),
+        pytest.param({"env_path": _REAL_PATH}, id="cwd_omitted_alone"),
+        pytest.param({}, id="both_omitted"),
+    ],
+)
 async def test_omitting_env_path_or_cwd_is_a_typeerror_not_a_silent_default(
-    tmp_path: Path,
+    tmp_path: Path, kwargs: dict,
 ) -> None:
     """Tier 2: #5991 BLOCKING ③ witness -- the actual fix is that there is
-    no internal fallback left to exercise: omitting either required
-    keyword-only argument fails LOUD, at the call site, as a ``TypeError``
-    (a caller cannot forget and silently get ambient ``os.environ``
-    instead — the exact class #5984 found 4 instances of, one layer
-    down). Calling ``check_exec_plan_policy`` directly here (bypassing
-    this file's own ``_check`` wrapper, which always supplies both) is
-    deliberate — it is the one call in this file that must NOT compile a
-    working call."""
+    no internal fallback left to exercise for EITHER parameter
+    independently, not just for the pair together. lead-coder's own strip
+    (issuecomment-5579302738): giving ``env_path`` alone a default of
+    ``None`` still left the OLD (both-omitted) form of this test green —
+    the assertion could not tell which of the two arguments was actually
+    load-bearing, so half of "omission is a TypeError" went unverified.
+    Parametrized 3 ways so ① and ② go red SEPARATELY (the requirement
+    lead-coder named explicitly): omitting ``env_path`` alone, omitting
+    ``cwd`` alone, and omitting both. Calling ``check_exec_plan_policy``
+    directly here (bypassing this file's own ``_check`` wrapper, which
+    always supplies both) is deliberate — these are the only calls in
+    this file that must NOT compile a working call."""
     from reyn.security.exec_plan_policy import check_exec_plan_policy as _raw
 
     ctx, _collected = _ctx(tmp_path)
     plan = [ExecSegment(argv=("/usr/bin/true",))]
 
     with pytest.raises(TypeError):
-        await _raw(plan, ctx)  # type: ignore[call-arg]
+        await _raw(plan, ctx, **kwargs)  # type: ignore[call-arg]
 
 
 @pytest.mark.asyncio
