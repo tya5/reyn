@@ -71,6 +71,45 @@ primitive, it applies two that already exist elsewhere in production)
   representable (a heredoc, `$(...)`, an env-assignment prefix) was
   decided by ``parse_exec_plan`` (段2) already, before this module ever
   sees a plan — nothing here second-guesses that.
+
+## #5991 BLOCKING (architect co-vet, issuecomment-5578916234) — 3 findings,
+same shape: the surface this module checked did not match the surface
+that will actually matter once 段4 lands.
+
+1. **No-resolver redirect skip was fail-OPEN, not fail-closed.** The
+   earlier version mirrored ``file.py``'s own ``if ctx.permission_resolver
+   is not None:`` guard as a "parity" argument — but that parity does not
+   hold: ``file.py``'s guard has real production callers today (a
+   resolver-less ``OpContext`` IS a supported, exercised construction
+   there); THIS gate has ZERO callers yet (段4 is unbuilt), so there is no
+   existing population this fail-open behaviour protects, and fixing it
+   now costs nothing. A missing resolver now RAISES (fail-closed) — see
+   :func:`_check_redirect`.
+2. **"Zero threat matches" and "the scan never ran" were indistinguishable
+   in ``.reyn/events``.** ``ctx.threat_scan`` defaults to ``None``, and the
+   only events this module emitted (``exec_threat_match``/
+   ``exec_threat_blocked``) fire ONLY on a match — a plan that was never
+   scanned at all leaves the SAME empty trace as one that was scanned and
+   found clean. This module now emits exactly ONE event per segment
+   recording what happened either way (``exec_threat_scanned`` when the
+   scan ran, ``exec_threat_scan_skipped`` when it did not) — see
+   :func:`_check_segment`.
+3. **``argv[0]`` resolution read ambient ``os.environ["PATH"]``, not the
+   env a sandboxed run will actually see.** ``sandbox/seatbelt.py:425``
+   only falls back to ``os.environ`` when the caller passes no explicit
+   PATH — 段4's own sandbox env can differ, and resolving against the
+   wrong one reproduces the EXACT class #5984 found 4 instances of, one
+   layer down: the binary this module approves and the binary that
+   actually runs could be two different files. :func:`check_exec_plan_
+   policy` now takes BOTH ``env_path`` AND ``cwd`` (a version-manager's
+   per-directory config is read from ``cwd`` too — the same resolution
+   input, same risk) as REQUIRED keyword-only arguments (no internal
+   fallback to ``os.environ``, no internal derivation from
+   ``ctx.workspace``) — every caller, present and future, must decide and
+   pass the real values; there is no default to silently get wrong,
+   omitting either is a ``TypeError`` at the call site, not a runtime
+   surprise later (lead-coder co-vet, issuecomment-5579159401: "cwd も
+   同じ").
 """
 from __future__ import annotations
 
@@ -90,7 +129,9 @@ if TYPE_CHECKING:
     from reyn.security.exec_plan import ExecPlan
 
 
-async def check_exec_plan_policy(plan: "ExecPlan", ctx: "OpContext") -> None:
+async def check_exec_plan_policy(
+    plan: "ExecPlan", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
+) -> None:
     """Apply 段3 policy to every item of *plan* — see this module's own
     docstring for exactly what each item type is checked against. Raises
     :class:`PermissionError` on the FIRST denial encountered, in plan
@@ -100,11 +141,18 @@ async def check_exec_plan_policy(plan: "ExecPlan", ctx: "OpContext") -> None:
     write/read checks, ``sandboxed_exec.py``'s own single threat-scan
     raise). Returns ``None`` when every item passes.
 
+    *env_path*/*cwd* are the ``PATH``/working-directory the eventual
+    sandboxed run will actually see — BOTH REQUIRED, keyword-only, no
+    internal fallback (#5991 BLOCKING ③, this module's own docstring):
+    every caller must decide the real values (``sandboxed_exec.py``'s own
+    ``env_path = os.environ.get("PATH")`` / ``cwd = str(ctx.workspace.
+    base_dir)``, once 段4 wires this module in, is the pair to reuse)
+    rather than let this function silently resolve against values that
+    may not match what actually executes.
+
     Never executes anything, never re-parses *plan* — a pure policy
     check over an already-parsed :data:`~reyn.security.exec_plan.
     ExecPlan`."""
-    env_path = os.environ.get("PATH")
-    cwd = str(ctx.workspace.base_dir) if ctx.workspace is not None else None
     for item in plan:
         if isinstance(item, ExecSegment):
             await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
@@ -142,37 +190,69 @@ async def _check_segment(
         )
 
     threat_scan = getattr(ctx, "threat_scan", None)
-    if threat_scan is not None and getattr(threat_scan, "enabled", True):
-        from reyn.security.content_guard import first_blocking_match, scan_for_threats
+    scan_will_run = threat_scan is not None and getattr(threat_scan, "enabled", True)
+    if not scan_will_run:
+        # #5991 BLOCKING ②: a plan that was never scanned must leave a
+        # DIFFERENT trace than one that was scanned and found clean —
+        # ``ctx.threat_scan`` being unset/disabled is a real, legitimate
+        # state (a caller that hasn't wired one, or an operator who turned
+        # scanning off), but ``.reyn/events`` must be able to tell the two
+        # apart rather than showing the SAME empty trace for both.
+        ctx.events.emit(
+            "exec_threat_scan_skipped",
+            argv=list(segment.argv),
+            reason="disabled" if threat_scan is not None else "not_configured",
+        )
+        return
 
-        matches = scan_for_threats(" ".join(segment.argv), threat_scan, scope="exec")
-        for match in matches:
-            ctx.events.emit(
-                "exec_threat_match",
-                pattern_id=match.pattern_id, severity=match.severity, scope=match.scope,
-            )
-        block = first_blocking_match(matches, getattr(threat_scan, "block_severity", "block"))
-        if block is not None:
-            ctx.events.emit(
-                "exec_threat_blocked", pattern_id=block.pattern_id, severity=block.severity,
-            )
-            raise PermissionError(
-                f"command blocked: matched threat pattern '{block.pattern_id}' "
-                f"(exec/{block.severity}). Revise the command (avoid pipe-to-shell / "
-                f"reverse-shell / homograph URL / terminal-escape) and retry."
-            )
+    from reyn.security.content_guard import first_blocking_match, scan_for_threats
+
+    matches = scan_for_threats(" ".join(segment.argv), threat_scan, scope="exec")
+    for match in matches:
+        ctx.events.emit(
+            "exec_threat_match",
+            pattern_id=match.pattern_id, severity=match.severity, scope=match.scope,
+        )
+    block = first_blocking_match(matches, getattr(threat_scan, "block_severity", "block"))
+    # #5991 BLOCKING ②: emitted whether or not a threat was found -- the
+    # positive "scan ran, N matches (possibly 0), blocked=<bool>" record
+    # that lets a later read of ``.reyn/events`` distinguish "clean" from
+    # "never scanned" (the skip branch above covers the latter).
+    ctx.events.emit(
+        "exec_threat_scanned",
+        argv=list(segment.argv), match_count=len(matches), blocked=block is not None,
+    )
+    if block is not None:
+        ctx.events.emit(
+            "exec_threat_blocked", pattern_id=block.pattern_id, severity=block.severity,
+        )
+        raise PermissionError(
+            f"command blocked: matched threat pattern '{block.pattern_id}' "
+            f"(exec/{block.severity}). Revise the command (avoid pipe-to-shell / "
+            f"reverse-shell / homograph URL / terminal-escape) and retry."
+        )
 
 
 async def _check_redirect(redirect: "ExecRedirect", ctx: "OpContext") -> None:
     """File-axis check for one redirect target — see this module's own
-    docstring, "What gets checked", the ``ExecRedirect`` bullet. Mirrors
-    ``op_runtime/file.py``'s own ``if ctx.permission_resolver is not
-    None:`` guard exactly — no resolver wired means no check, the SAME
-    fail-open every other ``require_file_*`` call site in this codebase
-    already accepts (a resolver-less ``OpContext`` is a real, supported
-    construction — tests and some non-interactive callers)."""
+    docstring, "What gets checked", the ``ExecRedirect`` bullet.
+
+    #5991 BLOCKING ①: an earlier version mirrored ``op_runtime/file.py``'s
+    own ``if ctx.permission_resolver is not None:`` fail-OPEN guard as a
+    "parity" argument — that parity does not hold here. ``file.py``'s
+    fail-open protects a real, exercised population of resolver-less
+    callers TODAY; this gate has ZERO callers yet (段4, the only thing
+    that will ever construct a real exec ``OpContext`` and call this
+    function, is not built) — there is no existing behaviour to stay
+    compatible with, so fail-open buys nothing and only weakens a
+    security gate for free. A missing resolver now DENIES."""
     if ctx.permission_resolver is None:
-        return
+        raise PermissionError(
+            f"redirect {redirect.op!r} {redirect.path!r} cannot be checked "
+            "— no permission_resolver is available on this context, and a "
+            "file-axis check that cannot be consulted must not default to "
+            "a grant."
+        )
 
     from reyn.core.op_runtime.context import resolve_path_for_gate, sandbox_policy_from_ctx
 
