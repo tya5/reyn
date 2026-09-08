@@ -216,6 +216,25 @@ _CHECKED_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[xX]\][ \t]*(?:\*\*[ \t]*)*�
 #: `_markers.MARKER_CLEARED` must ALSO be caught, and this one check does both
 #: without a second pattern. Case-sensitive, matching the deciding
 #: markers' own IGNORECASE-dropped posture.
+#:
+#: ⚠️ The COST of staying unanchored (lead-coder, #5919, observed the
+#: night this landed — not a rule change, a record of what the rule
+#: above already costs): this fires on ordinary PROSE THAT DISCUSSES THE
+#: MARKER, not only on a genuinely malformed one, because a reviewer
+#: discussing a marker naturally opens their comment's first line with
+#: it too (immediately after the role prefix is the most natural spot to
+#: put it). One overnight measurement (2026-09-07/08): 5 near-miss fires,
+#: 5 of them prose about markers, 0 genuine malformed ones — 3 from
+#: lead-coder, 1 from architect, 1 from tui-coder. **This is the design
+#: working, not a false positive to fix**: narrowing the window to stop
+#: catching prose would silently narrow it for real malformed markers
+#: too (the SAME window), reopening the #5522 incident this check exists
+#: to close (a real malformed marker going unseen for 12 minutes). The
+#: measured cost is bounded and cheap — every one of the 5 fires took
+#: under a minute to read and rewrite the offending line — while the
+#: alternative (a real marker silently missed) is the unbounded one.
+#: Do not narrow this regex because it fires "too often" on prose; that
+#: frequency is the price already paid for catching the other case.
 _NEAR_MISS_BARE_WORD = re.compile(r"\bBLOCKING\b")
 
 #: #5522 (architect ruling on the issue thread): markdown decoration —
