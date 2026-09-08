@@ -333,3 +333,44 @@ def test_quoted_operator_shaped_token_is_rejected_not_silently_split() -> None:
     instead of raising — verified directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan("grep '|' file")
+
+
+# ── reject: a literal newline (worst of the class, architect co-vet) ────
+
+
+@pytest.mark.parametrize("text", ["ls\nrm -rf /tmp/x", "echo a\necho b", "ls\r\nrm -rf /"])
+def test_a_literal_newline_is_rejected(text: str) -> None:
+    """Tier 1: architect's own real-machine measurement
+    (issuecomment-5578466297) — the worst bypass this module closes.
+    ``shlex`` folds a newline into ordinary whitespace, so
+    ``"ls\\nrm -rf /tmp/x"`` parsed as ONE segment whose ``argv[0]`` is
+    the ordinary, almost-certainly-allowed ``"ls"`` — while a real
+    shell runs the newline as a command SEPARATOR, executing ``rm -rf
+    /tmp/x`` as a SECOND command policy never saw at all. Unlike every
+    other bypass this module closes, ``argv[0]`` here is completely
+    unremarkable, so a future tool-axis policy (段3) would PASS this
+    plan outright.
+
+    Strip witness: removing the newline pre-check at the top of
+    ``parse_exec_plan`` makes this parse successfully into ONE segment
+    (``('ls', 'rm', '-rf', '/tmp/x')``) instead of raising — verified
+    directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_redirect_fd_duplication_stays_rejected() -> None:
+    """Tier 1: architect's own confirmed-safe case — ``2>&1`` (fd
+    duplication, not in this parser's supported redirect set) was
+    already rejected before the newline fix and must stay that way."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("2>&1")
+
+
+def test_shell_style_comment_stays_accepted() -> None:
+    """Tier 1: architect's own confirmed-safe case — ``shlex``'s
+    default comment handling (``#`` to end of line) already matches
+    real shell behavior, so ``ls # rm -rf /`` correctly parses to just
+    ``('ls',)`` — the comment is not silently smuggling a second
+    command past this parser, it genuinely is inert on both sides."""
+    assert parse_exec_plan("ls # rm -rf /") == [ExecSegment(argv=("ls",))]

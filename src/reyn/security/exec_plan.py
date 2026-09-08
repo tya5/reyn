@@ -90,6 +90,13 @@ parser saw — the parse/execute gap class above:
   parser cannot verify which the shell would really do; see
   :func:`_iter_tokens`'s own docstring for how this is detected and why
   it is refused rather than guessed either way.
+- A LITERAL NEWLINE anywhere in the input, checked BEFORE tokenizing —
+  the worst of this class measured: ``shlex`` folds a newline into
+  ordinary whitespace, so ``"ls\nrm -rf /tmp/x"`` parses as ONE segment
+  whose ``argv[0]`` is the ordinary, likely-allowed ``"ls"``, while a
+  real shell runs the newline as a command SEPARATOR — two commands,
+  the second never seen by policy at all. See :func:`parse_exec_plan`'s
+  own docstring for why this check runs first, unconditionally.
 - Any other unsupported punctuation sequence (``;;``, ``<>``, an
   isolated stray operator character, etc.).
 - An empty command line, an empty segment (a leading/trailing/doubled
@@ -333,7 +340,32 @@ def parse_exec_plan(text: str) -> "ExecPlan":
     (execution) runs the ORIGINAL *text* through ``sh -c``, never a
     reconstruction from this function's return value (architect's own
     ruling: "実行は... 元の文字列を渡す" — see this module's docstring
-    for why)."""
+    for why).
+
+    #5838 BLOCKING (architect co-vet, issuecomment-5578466297, real-
+    machine measurement — the worst of the class found so far): a
+    LITERAL NEWLINE in *text* is checked BEFORE tokenizing at all,
+    unconditionally, and rejected if present. ``shlex`` folds a newline
+    into ordinary whitespace, so ``"ls\\nrm -rf /tmp/x"`` parsed as ONE
+    segment (``argv=('ls','rm','-rf','/tmp/x')``) while a real
+    ``sh -c`` runs a newline as a COMMAND SEPARATOR — TWO commands,
+    ``ls`` then ``rm -rf /tmp/x``. Worse than every other bypass this
+    module closes: ``argv[0]`` here is ``"ls"`` — a real, ordinary,
+    almost-certainly-allowed tool — so a future tool-axis policy (段3)
+    would PASS this plan, and the shell would then run a command policy
+    never saw at all. A newline inside a quote is a legitimate single
+    argument (multi-line quoted text) that this blanket check also
+    rejects — the SAME "cannot distinguish quoted from unquoted ∴
+    reject either way" judgement :func:`_iter_tokens` already applies
+    to a quoted operator-shaped token, not a new exception to it."""
+    if "\n" in text or "\r" in text:
+        raise ExecPlanRejected(
+            "a newline is not supported here — shlex folds it into "
+            "ordinary whitespace, but a real shell treats it as a "
+            "command separator; this parser cannot tell a newline "
+            "inside quotes from one that would start a second, "
+            "unreviewed command, and refuses to guess"
+        )
     tokens = _iter_tokens(text)
     if not tokens:
         raise ExecPlanRejected("no command given")
