@@ -3569,9 +3569,18 @@ class RouterLoop:
         # restrict is the single live gate, and its own routing_decided
         # emit (this method's tail) already covers the excluded outcome
         # the same way it covers every other one.
+        #
+        # #5891 (c) architect ruling: ``tc["id"]``, not ``tc.get("id")`` —
+        # the OTHER two production arms of ``_dispatch_resolved``
+        # (``dispatch()``'s ``a["tc"]["id"]``, ``_os_gate``'s explicit
+        # ``None``) both subscript or declare; only this seam degraded.
+        # This method has no production call site (see its own docstring)
+        # -- a ``.get()`` here would let a TEST exercise a contract
+        # production can never actually hit, since a real litellm
+        # tool_calls entry always carries an ``"id"``.
         return await self._dispatch_resolved(
             name, args, raw_name=raw_name, call_id=call_id,
-            tool_call_id=tc.get("id"),
+            tool_call_id=tc["id"],
         )
 
     def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict, str]":

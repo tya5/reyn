@@ -37,10 +37,19 @@ precedent this mirrors). Omitting it is a real Python `TypeError`, not a
 silent default, so `tool_call_id: None` in an emitted event is now
 ALWAYS the caller's own DECLARATION of absence — self-describing, no
 reason field needed. These tests pin the dispatcher-level half only (the
-key is never omitted either way, present or absent); the "which
-caller_kinds normally carry one" claim is answered by a CENSUS of real
-data, not a curated table — see `tests/runtime/test_5891_tool_call_id_
-history_join.py`'s own census test."""
+key is never omitted either way, present or absent).
+
+⚠️ There is deliberately no gate proving "every caller_kind='router'
+event has a real id" — architect's own first attempt at one (a census:
+"caller_kind='router' + tool_call_id: null events are 0") was proposed
+and then FALSIFIED by this codebase's own existing code: CodeAct's
+`_os_gate` (`router_loop.py`) is `caller_kind="router"` AND declares
+`None` by design, so that census would have flagged a correct, intended
+line as though it were a bug. The real safeguard is structural, not
+data-derived: `_dispatch_resolved` is the ONE place a `caller_kind=
+"router"` `DispatchContext` is ever built, so its 3 real callers are
+enumerable by reading `router_loop.py` directly — see `DispatchContext.
+tool_call_id`'s own docstring in `dispatcher.py` for the full table."""
 from __future__ import annotations
 
 import asyncio

@@ -99,17 +99,26 @@ class DispatchContext:
             omission a `TypeError`, so `None` is now ALWAYS the caller's
             own declaration, self-describing with no reason field needed).
 
-            "Which caller_kinds normally carry an id" is deliberately
-            NEVER written down as a table (#5959/#5967's own "derive the
-            population, don't curate a list" ruling, closed here a third
-            way): `caller_kind` provably cannot answer that question (the
-            CodeAct counterexample above), so there is no population to
-            enumerate in the first place. The claim "router callers have
-            an id" is instead read off REAL DATA, not a declaration: a
-            census of emitted events for `tool_returned` rows with
-            `caller_kind="router"` and `tool_call_id: null` — see
-            `tests/runtime/test_5891_tool_call_id_history_join.py`'s own
-            census test.
+            ⚠️ No gate exists for "a new caller declares `None` when it
+            actually had a real id" (architect, same review pass that
+            rejected the reason field): a declared absence cannot be
+            told apart from a wrong one by data alone, and #5960/#5959/
+            #5967's own "derive, don't curate a list" pattern does NOT
+            apply here — a first attempt at one ("`caller_kind="router"`
+            + `tool_call_id: null` events are 0" — read as data, not a
+            table) was tried and FALSIFIED by this file's own existing
+            code: CodeAct's `_os_gate` (below) is caller_kind="router"
+            AND declares `None`, by design — the exact case that census
+            would have flagged as though it were a bug. The real
+            safeguard is narrower and structural: `_dispatch_resolved`
+            is the ONE place a `DispatchContext` naming `caller_kind=
+            "router"` is ever built, so its 3 real callers are
+            enumerable by reading `router_loop.py` directly (`dispatch()`
+            — `a["tc"]["id"]`; `_os_gate` — declared `None`;
+            `_execute_tool` — `tc["id"]`, the test-only seam). A reviewer
+            adding a 4th caller must ask where ITS `tool_call_id` comes
+            from — there is no automated check standing in for that
+            question.
         completed_response_include_text: #4666 item ③b — mirrors
             ``audit_events.completed_response_include_text`` (②). Governs
             any declared tool field whose content class is "assistant"
