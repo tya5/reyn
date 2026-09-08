@@ -32,7 +32,10 @@ from pathlib import Path
 
 from reyn.config.chat import HistoryResidentConfig
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import (
+    ChatMessage,
+    ResidentBytes,  # #5973 (c)4
+)
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
@@ -44,7 +47,7 @@ def _session(tmp_path: Path, *, max_bytes: int) -> Session:
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",
         safety=narrowing_on(),
-        history_resident_config=HistoryResidentConfig(max_bytes=max_bytes),
+        history_resident_config=HistoryResidentConfig(max_bytes=ResidentBytes(max_bytes)),
     )
 
 

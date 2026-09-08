@@ -35,7 +35,10 @@ from reyn.config.chat import HistoryResidentConfig
 from reyn.core.events.snapshot_generations import GLOBAL_SCOPE, REWIND_KIND, checkout
 from reyn.core.events.state_log import StateLog
 from reyn.mcp.server import _history_baseline_seq, _new_agent_history_entries
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import (
+    ChatMessage,
+    ResidentBytes,  # #5973 (c)4
+)
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -46,7 +49,7 @@ def _session(
     return make_session(
         agent_name="hist-evict-test", state_log=state_log,
         snapshot_path=tmp_path / "snap.json",
-        history_resident_config=HistoryResidentConfig(max_bytes=max_bytes),
+        history_resident_config=HistoryResidentConfig(max_bytes=ResidentBytes(max_bytes)),
     )
 
 
