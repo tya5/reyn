@@ -40,46 +40,104 @@ Codex incidents architect's research names (a `./sed` basename bypass,
 a zsh-fork sandbox-wrapper bypass). This parser's rejection list below
 exists specifically to keep that gap as narrow as competitors' own.
 
-## Denylist -> allowlist (architect's structural ruling, PR #5984
-BLOCKING, after 4 independent bypasses surfaced in ~40 minutes of
-review: ``$``/glob/``~``, brace ``{a,b}``, a literal newline, ``!``)
+## Denylist -> two-tier allowlist (architect's TWO rulings, PR #5984
+BLOCKING — the second a self-correction of the first)
 
 This module's FIRST version enumerated dangerous characters/constructs
 and rejected each one it found (a denylist). That denylist did not
 converge — a THIRD PARTY's shell (`/bin/sh`, whichever binary that
 resolves to on whatever machine this runs) decides what is special, and
 that population is not something this module's own source code can
-read and enumerate exhaustively; each review pass found one more
-character this parser had never considered. A denylist ALSO fails in
-the dangerous direction on anything it has not yet enumerated (unknown
--> accepted), the opposite of what a front-end whose only job is
-"policy's reading matches the shell's reading" needs (unknown -> must
-be refused).
+read and enumerate exhaustively; 4 independent bypasses surfaced in
+~40 minutes of review (`$`/glob/`~`, brace `{a,b}`, a literal newline,
+`!` negation), each via a different probing approach.
 
-This module now does the reverse: :data:`_ALLOWED_RAW_CHARS` is an
-ALLOWLIST checked against the RAW input string, before any tokenizing
-— not the per-token denylist checks the first version used (a
-per-token check misses a literal newline entirely: ``shlex`` folds it
-into ordinary whitespace before this module ever sees a token). Any
-character not in the allowed set — known dangerous or not yet
-discovered — is refused. See :func:`_reject_disallowed_raw_characters`
-for the set itself and the per-character justification (never "looks
-harmless" — "unquoted, ``shlex``'s posix tokenizer and ``sh`` agree on
-what this character means").
+The SECOND ruling (issuecomment-5578535394) corrected the first: a
+raw-string-wide allowlist checked EVERY character the same way and
+over-rejected real, benign commands (`python -c "print(1)"`,
+`curl "http://x/a?b=1"`). Real-machine measurement found the actual
+boundary was never "which characters are dangerous" — it was "which
+characters does ``shlex``'s own ``punctuation_chars`` distinguish by
+quoting":
+
+- ``python -c "print(1)"`` -> ``['python','-c','print(1)']`` — QUOTED,
+  ``shlex`` keeps the parens inside the WORD token, exactly like ``sh``
+  would treat them (literal).
+- ``python -c print(1)`` -> ``['python','-c','print','(','1',')']`` —
+  UNQUOTED, ``shlex`` splits them into their OWN punctuation tokens.
+- ``curl "...?b=1"`` and ``curl ...?b=1`` tokenize IDENTICALLY either
+  way — ``?`` is not in ``shlex``'s ``punctuation_chars``, so quoting
+  changes nothing observable, and this parser genuinely cannot recover
+  which the caller meant.
+
+So this module now runs TWO different checks, for two different
+reasons, not one blanket allowlist:
+
+1. :data:`_PUNCTUATION_CHARS` (`( ) | & ; < >` and backtick) — ``shlex``
+   DOES distinguish quoted from unquoted for these, so they are checked
+   per TOKEN, quote-aware: an unquoted occurrence becomes its own
+   operator token (checked for a SUPPORTED shape below); a quoted one
+   stays inside a word, accepted as literal text.
+2. :data:`_ALWAYS_FORBIDDEN_CHARS` (`$ * ? [ ] { } ~ !`) — ``shlex``
+   tokenizes these THE SAME WAY whether quoted or not, so there is no
+   recoverable signal; every occurrence is rejected, quoted or not (see
+   :func:`_reject_always_forbidden_characters`).
+
+Only ONE check still runs against the RAW string before any tokenizing
+(:func:`_reject_raw_newline`) — a literal newline, which never reaches
+a per-token check at all: ``shlex`` folds it into ordinary whitespace
+before producing a token.
+
+## This is an approximation, not the industry's own unit (owner
+directive "調べて" — architect's follow-up research, #5987)
+
+A CHARACTER allowlist is not what competitors do. Claude Code / Codex
+parse a real grammar (a tree-sitter AST) and allowlist NODE TYPES;
+OpenClaw allowlists a resolved path + argument pattern over its own
+execution plan. Both escalate what they cannot resolve (heredoc,
+expansion) TO THE OPERATOR rather than refusing outright — architect's
+own competitive research already recorded "人に回す" (hand it to a
+human) for exactly this case, and this module does not do that (段3's
+job, not this one — see :class:`ExecPlanRejected`'s own docstring). All
+4 bypasses this module closes (a newline, `!`, `$`/glob/`~`, brace)
+would show up structurally in a real AST — a separator node, a
+negation node, an expansion node — not as a character to notice by
+counting.
+
+This module makes NO claim of completeness. Those 4 were each found by
+real-machine MEASUREMENT (a live `sh -c` run compared against this
+parser's own output), one probing pass at a time — there is no evidence
+the enumeration in :data:`_ALWAYS_FORBIDDEN_CHARS`/
+:data:`_PUNCTUATION_CHARS` is a copy of the true population of
+characters/constructs a real shell treats specially, only that these 4
+are covered. A 5th is not ruled out by anything this module's own
+source can verify (see the module docstring's own denylist/allowlist
+history above for why that is a structural limit of counting
+characters, not a bug in THIS enumeration specifically).
+
+``shlex`` has no grammar to allowlist nodes OF, so counting characters
+was the only mechanism available here, not a considered design choice
+matching the field's own unit. #5987 tracks re-evaluating the parser
+itself (measured against real ``bash`` on one corpus, not "because it's
+the standard" — the two obvious alternatives each have their own
+measured failure modes: ``bashlex`` breaks on heredoc/arrays/arithmetic,
+``tree-sitter-bash`` has carried real bugs in Codex's own use of it).
+This module's own character-level approach stays as-is until that
+lands.
 
 ## What this parser accepts
 
-- The allowed literal characters (:data:`_ALLOWED_RAW_CHARS`) —
-  letters, digits, and a short list of punctuation ``shlex`` and ``sh``
-  read identically when unquoted (see that constant's own table).
+- Ordinary word characters — letters, digits, and punctuation neither
+  :data:`_PUNCTUATION_CHARS` nor :data:`_ALWAYS_FORBIDDEN_CHARS` claims
+  (e.g. ``- _ . / , : = + @ % #``) — literal to both ``shlex`` and
+  ``sh`` in every position, quoted or not.
 - ``shlex``-quoted words — single/double quotes, backslash escapes;
   the SAME primitive #5837's own (now-superseded) ``tokenize_exec_
-  cmdline`` used for the no-shell argv form. Quoting lets a word
-  contain a SPACE (already allowed raw) but does NOT let it contain a
-  character outside the allowlist — quoting is not an escape hatch
-  around the allowlist here (see :func:`_reject_disallowed_raw_
-  characters`'s own docstring for why the check runs on raw text,
-  quote-position-blind).
+  cmdline`` used for the no-shell argv form. Quoting DOES let a word
+  contain one of :data:`_PUNCTUATION_CHARS`'s own characters as literal
+  text (``"print(1)"``) — it does NOT rescue a character from
+  :data:`_ALWAYS_FORBIDDEN_CHARS` (see the section above for why those
+  two groups are treated differently).
 - Chain operators: ``|`` (pipe), ``&&`` (AND), ``||`` (OR), ``;``
   (sequence).
 - Redirects: ``>`` (truncate), ``>>`` (append), ``<`` (input) — each
@@ -90,30 +148,34 @@ what this character means").
 
 ## What this parser rejects
 
-Any character outside the allowlist above (this is now the primary
-defense, not an enumerated list — see the denylist/allowlist section),
-PLUS two things a character allowlist cannot express because they are
-about POSITION and CONTEXT, not individual characters:
-
+- A literal newline anywhere in the input (:func:`_reject_raw_newline`).
+- Any of :data:`_ALWAYS_FORBIDDEN_CHARS`, quoted or not
+  (:func:`_reject_always_forbidden_characters`).
+- An UNQUOTED occurrence of one of :data:`_PUNCTUATION_CHARS` that is
+  not a supported operator/redirect shape — command substitution
+  (backtick), subshell grouping (``(...)``), process substitution
+  (``<(...)``/``>(...)``), heredoc (``<<``), a bare ``&`` (background,
+  not part of ``&&``), or an unrecognised punctuation run (``;;``,
+  ``<>``).
 - A leading ``NAME=value`` environment-assignment prefix — every
-  character in ``FOO=bar`` is individually allowed (letters, ``=``),
-  but in the LEADING position of a segment it would become that
-  segment's ``argv[0]``, hiding the REAL command from tool-axis policy
-  entirely (``FOO=bar rm -rf /tmp/x`` → this parser's ``argv[0]`` would
-  be ``"FOO=bar"``, never ``"rm"`` — the same basename-bypass class
-  Codex #28732 named, reached through assignment instead of a relative
-  path). A LATER argument shaped like ``NAME=value`` (``docker run -e
-  FOO=bar image``) is unaffected.
-- A QUOTED token whose dequoted value happens to consist entirely of
-  operator characters (e.g. ``grep '|' file``) — string-identical to a
-  real unquoted operator once ``shlex`` strips the quotes, so this
-  parser cannot verify which the shell would really do; see
-  :func:`_iter_tokens`'s own docstring for how this is detected and why
-  it is refused rather than guessed either way.
-- Malformed operator/redirect placement (an empty segment, a redirect
-  with no target, an argument after a redirect's target, an
-  unrecognised punctuation run) or an unterminated quote (``shlex``
-  itself raises for the last one).
+  character in ``FOO=bar`` is individually allowed, but in the LEADING
+  position of a segment it would become that segment's ``argv[0]``,
+  hiding the REAL command from tool-axis policy entirely (``FOO=bar
+  rm -rf /tmp/x`` → this parser's ``argv[0]`` would be ``"FOO=bar"``,
+  never ``"rm"`` — the same basename-bypass class Codex #28732 named,
+  reached through assignment instead of a relative path). A LATER
+  argument shaped like ``NAME=value`` (``docker run -e FOO=bar image``)
+  is unaffected.
+- A QUOTED token whose dequoted value happens to consist ENTIRELY of
+  :data:`_PUNCTUATION_CHARS` characters (e.g. ``grep '|' file``) —
+  string-identical to a real unquoted operator once ``shlex`` strips
+  the quotes, so this parser cannot verify which the shell would really
+  do; see :func:`_iter_tokens`'s own docstring for how this is detected
+  and why it is refused rather than guessed either way.
+- An empty command line, an empty segment (a leading/trailing/doubled
+  chain operator), a redirect with no following path, an argument after
+  a redirect's target, or an unterminated quote (``shlex`` itself
+  raises for the last one).
 
 Rejection is LOUD (a raised exception with a human-readable reason),
 never a silent pass-through — matching Claude Code's "解析不能なら
@@ -124,16 +186,19 @@ competitive summary): every competitor's shape is "refuse, don't guess."
 ## If your command gets rejected
 
 This parser accepts a narrower set of commands than a real shell does
-— a real, benign command using a character outside the allowlist (a
-literal ``$``, a glob, brace expansion, home-directory ``~``, or a
-character this module has not yet allowlisted) is refused rather than
-guessed at. Two ways forward, once #5838's later stages land: (1) the
-no-shell argv form (#5837 — quote nothing, no operators, exactly the
-literal words to run) stays available wherever this parser's caller
-also offers it; (2) if you genuinely need one of these characters in a
-shell command, that character can be added to :data:`_ALLOWED_RAW_CHARS`
-with the SAME justification every existing entry carries ("unquoted,
-shlex and sh agree") — file it rather than working around this parser.
+— a real, benign command using one of :data:`_ALWAYS_FORBIDDEN_CHARS`
+(a literal ``$``, a glob, brace expansion, home-directory ``~``, a
+literal ``!``) is refused rather than guessed at, quoted or not — for
+example ``curl "http://x/a?b=1"`` cannot be accepted here: ``?`` is not
+distinguishable by quoting, the same reason a genuinely benign use is
+indistinguishable from a glob. Two ways forward, once #5838's later
+stages land: (1) the no-shell argv form (#5837 — quote nothing, no
+operators, exactly the literal words to run) stays available wherever
+this parser's caller also offers it; (2) if a specific character
+genuinely needs support, it can be added to :data:`_PUNCTUATION_CHARS`
+(if quote-aware handling is possible for it) with the same measured
+justification every existing entry carries — file it rather than
+working around this parser.
 """
 from __future__ import annotations
 
@@ -143,15 +208,28 @@ import shlex
 from dataclasses import dataclass
 from typing import cast
 
-# The operator characters this parser recognises — the ONE source of
-# truth for both the raw-string allowlist (_ALLOWED_RAW_CHARS, below)
-# and shlex's own tokenizing (_iter_tokens passes this as
-# punctuation_chars). A token whose dequoted VALUE is entirely made of
-# these characters is either a real operator (unquoted) or, if it was
-# quoted, rejected outright (_iter_tokens's own docstring — this parser
-# cannot tell the two apart by value alone, and refuses to guess).
-_OPERATOR_CHARS = "|&;><"
-_PUNCTUATION_CHARS = _OPERATOR_CHARS
+# #5838 BLOCKING (architect's SECOND ruling, issuecomment-5578535394 --
+# a self-correction of the first allowlist, issuecomment-5578494687):
+# the raw-string-wide allowlist over-rejected. Real-machine measurement
+# against 16 real commands found 2 false rejections and a boundary that
+# was never "which characters are dangerous" -- it was "which
+# characters shlex's own `punctuation_chars` distinguishes by quoting":
+#
+#   'python -c "print(1)"' -> ['python','-c','print(1)']       (quoted: shlex keeps the parens in the WORD)
+#   'python -c print(1)'   -> ['python','-c','print','(','1',')']  (unquoted: shlex splits them into their OWN tokens)
+#
+# For `( ) | & ; < >` (and backtick, added to punctuation_chars the
+# same way), `shlex` genuinely tells quoted from unquoted apart --
+# quoted, they land inside a WORD token exactly like sh would treat
+# them (literal); unquoted, they become their OWN punctuation token,
+# checked below for a SUPPORTED shape (a pipe, a chain op, a redirect)
+# and rejected otherwise (an unsupported one, e.g. a bare `(` subshell
+# open, still raises). `curl "...?b=1"` and `curl ...?b=1` tokenize
+# IDENTICALLY either way (`?` is not in punctuation_chars) -- for THAT
+# class of character, quoting changes nothing shlex can see, so this
+# parser genuinely cannot recover intent and rejects unconditionally,
+# quoted or not (see `_ALWAYS_FORBIDDEN_CHARS` below).
+_PUNCTUATION_CHARS = "();<>|&`"
 
 # Single-character operator tokens this parser accepts standalone.
 _CHAIN_OPS_SINGLE = frozenset({"|", ";"})
@@ -167,91 +245,53 @@ _REDIRECT_OPS_SINGLE = frozenset({">", "<"})
 _CHAIN_OPS_DOUBLE = frozenset({"&&", "||"})
 _REDIRECT_OPS_DOUBLE = frozenset({">>"})
 
-# #5838 BLOCKING (architect's structural ruling, issuecomment-5578494687,
-# after 4 independent bypasses in ~40 minutes of denylist review: $/
-# glob/~, brace {a,b}, a literal newline, ! negation) -- see this
-# module's own docstring, "Denylist -> allowlist," for why this replaced
-# a per-character denylist. Every character below is admitted for the
-# SAME reason (architect's own required criterion, never "looks
-# harmless"): unquoted, shlex's posix tokenizer and sh's own
-# interpretation agree on what this character means.
-#
-# | chars              | why unquoted shlex and sh agree                |
-# |--------------------|-------------------------------------------------|
-# | A-Z a-z 0-9         | ordinary word characters to both; no operator/  |
-# |                     | expansion meaning either side                    |
-# | ``-``               | option-flag marker to both; not a shell          |
-# |                     | metacharacter to either                          |
-# | ``_``               | ordinary identifier/word character to both       |
-# | ``.``               | literal in both -- NOT a glob metacharacter by   |
-# |                     | itself (only ``* ? [`` are)                      |
-# | ``/``               | path separator, literal to both                  |
-# | ``,``               | literal to both UNLESS paired with ``{``/``}``   |
-# |                     | (brace expansion) -- those two are NOT in this   |
-# |                     | set, so a lone ``,`` has no special sh meaning   |
-# | ``:``               | literal to both -- PATH-list-separator is a      |
-# |                     | convention programs read, not shell syntax       |
-# | ``=``               | ordinary word character to both -- its only      |
-# |                     | special meaning is POSITIONAL (a leading         |
-# |                     | ``NAME=`` prefix), a separate check below, not a |
-# |                     | per-character concern                            |
-# | ``+``               | literal to both                                  |
-# | ``@``               | literal to both for non-interactive ``sh -c``    |
-# | ``%``               | literal to both for non-interactive ``sh -c``    |
-# |                     | (job-control ``%`` is an interactive-shell-only  |
-# |                     | feature, not reachable through this front-end)   |
-# | ``#``               | agree even though it IS special to both: shlex's |
-# |                     | own default `commenters` is `#` (rest-of-line    |
-# |                     | ignored), matching `sh`'s own comment syntax     |
-# |                     | exactly -- `ls # rm -rf /` reads identically on  |
-# |                     | both sides (architect's own confirmed-safe case) |
-#
-# Quote characters (`'`/`"`) let a WORD contain a space (already
-# allowed raw) but do not admit any character outside this set --
-# quoting is not an escape hatch around the allowlist (module docstring,
-# "What this parser accepts"). Whitespace (space/tab) separates words;
-# a NEWLINE is deliberately excluded (module docstring's own newline
-# section) -- `shlex` folds it into ordinary whitespace, but a real
-# shell reads it as a command separator. Recognised operators
-# (_OPERATOR_CHARS) are admitted as themselves, checked for a supported
-# shape by the main parse loop below (an unrecognised punctuation run,
-# e.g. `;;`, still raises there).
-_LITERAL_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-    "-_./,:=+@%#"
-)
-_QUOTE_CHARS = frozenset("'\"")
-_RAW_WHITESPACE_CHARS = frozenset(" \t")
-_ALLOWED_RAW_CHARS = (
-    _LITERAL_CHARS | _QUOTE_CHARS | frozenset(_OPERATOR_CHARS) | _RAW_WHITESPACE_CHARS
-)
+# #5838 BLOCKING (architect's second ruling, same comment as above): a
+# character shlex does NOT distinguish by quoting -- `$` (variable
+# expansion), `*`/`?`/`[`/`]` (glob), `{`/`}` (brace expansion, macOS
+# `/bin/sh` expands `{a,b}` even in POSIX mode), `~` (home-directory
+# expansion), `!` (negation operator -- `! ls` reads as negation to a
+# real shell, never a command name). None of these are in
+# `_PUNCTUATION_CHARS`, so `shlex` tokenizes a quoted and an unquoted
+# occurrence THE SAME WAY (unlike `( ) | & ; < >`, above) -- there is no
+# recoverable signal to tell "the caller quoted this deliberately" from
+# "this is about to expand," so every occurrence is rejected, quoted or
+# not (`curl "...?b=1"` cannot be saved this way -- architect's own
+# explicit acceptance of that loss, see the module docstring's own
+# "If your command gets rejected" section for the escape hatch).
+_ALWAYS_FORBIDDEN_CHARS = frozenset("$*?[]{}~!")
 
 
-def _reject_disallowed_raw_characters(text: str) -> None:
-    """The primary defense (architect's structural ruling, replacing a
-    per-character denylist — see this module's own docstring): raises
-    :class:`ExecPlanRejected` if *text* contains ANY character outside
-    :data:`_ALLOWED_RAW_CHARS`, checked against the RAW string, before
-    any tokenizing.
-
-    Raw, not per-token, on purpose: a per-token check cannot see a
-    NEWLINE at all — ``shlex`` folds it into ordinary whitespace before
-    ever producing a token, which is exactly how the newline bypass
-    (module docstring) reached this module's own denylist-era version.
-    Quote-position-blind, also on purpose: this does not attempt to
-    special-case a disallowed character that happens to sit inside a
-    quoted region — the SAME "cannot verify, so refuse" judgement
-    :func:`_iter_tokens` already applies to a quoted operator-shaped
-    token, applied here to every other character too, not a second,
-    narrower rule."""
-    disallowed = sorted(set(text) - _ALLOWED_RAW_CHARS)
-    if disallowed:
+def _reject_always_forbidden_characters(token: str) -> None:
+    """Raises :class:`ExecPlanRejected` if *token* contains any
+    character from :data:`_ALWAYS_FORBIDDEN_CHARS` — see that constant's
+    own module-level comment for why these, specifically, are rejected
+    regardless of quoting (unlike the operator characters in
+    :data:`_PUNCTUATION_CHARS`, which ARE quote-aware)."""
+    hit = _ALWAYS_FORBIDDEN_CHARS.intersection(token)
+    if hit:
         raise ExecPlanRejected(
-            f"character(s) not supported here: {disallowed!r} — this "
-            "parser only accepts a fixed allowlist of characters whose "
-            "meaning is guaranteed to match between shlex and a real "
-            "shell (see the module's own docstring, \"If your command "
-            "gets rejected,\" for what to do next)"
+            f"character(s) not supported here (token: {token!r}, "
+            f"character(s): {sorted(hit)!r}) — this parser cannot predict "
+            "what these resolve to at execution time, quoted or not (see "
+            "the module's own docstring, \"If your command gets "
+            "rejected,\" for what to do next)"
+        )
+
+
+def _reject_raw_newline(text: str) -> None:
+    """Raises :class:`ExecPlanRejected` if *text* contains a literal
+    newline — the ONE check this parser still runs against the RAW
+    string, before any tokenizing (module docstring's own newline
+    section): ``shlex`` folds a newline into ordinary whitespace, so it
+    never reaches a per-token check like
+    :func:`_reject_always_forbidden_characters` at all."""
+    if "\n" in text or "\r" in text:
+        raise ExecPlanRejected(
+            "a newline is not supported here — shlex folds it into "
+            "ordinary whitespace, but a real shell treats it as a "
+            "command separator; this parser cannot tell a newline "
+            "inside quotes from one that would start a second, "
+            "unreviewed command, and refuses to guess"
         )
 
 
@@ -282,10 +322,12 @@ def _looks_like_leading_assignment(token: str) -> bool:
 
 class ExecPlanRejected(Exception):
     """Raised by :func:`parse_exec_plan` when *text* contains a
-    character outside :data:`_ALLOWED_RAW_CHARS`, or a shell construct
-    this parser cannot safely decompose into policy-checkable segments
-    (#5838 段2) — see this module's own docstring, "What this parser
-    rejects" and "Denylist -> allowlist," for the reasoning.
+    character it cannot resolve safely (:data:`_ALWAYS_FORBIDDEN_CHARS`,
+    a raw newline, or an unquoted :data:`_PUNCTUATION_CHARS` occurrence
+    in an unsupported shape), or a shell construct this parser cannot
+    safely decompose into policy-checkable segments (#5838 段2) — see
+    this module's own docstring, "What this parser rejects" and
+    "Denylist -> two-tier allowlist," for the reasoning.
 
     This is a v1 narrowing, disclosed, not a claim of covering every
     legitimate shell command: a real, benign command using a character
@@ -374,9 +416,12 @@ def _iter_tokens(text: str) -> "list[tuple[str, bool]]":
     parser cannot verify which the real shell would do (treat it as
     literal text, per the quoting, or — if some future construct this
     parser does not yet know about defeats the quote — as the operator
-    it resembles) and refuses to guess, the SAME judgement
-    :func:`_reject_disallowed_raw_characters` applies to every other
-    character outside the allowlist.
+    it resembles) and refuses to guess. NOT the same situation
+    :func:`_reject_always_forbidden_characters` handles — those
+    characters are rejected because ``shlex`` gives NO quoting signal at
+    all; this one exists because ``shlex`` gives a signal
+    (:data:`_PUNCTUATION_CHARS`) that this specific case cannot fully
+    trust either.
 
     Raises :class:`ExecPlanRejected` for an unterminated quote (``shlex``
     itself raises ``ValueError``) or for a quoted operator-shaped token
@@ -430,19 +475,19 @@ def parse_exec_plan(text: str) -> "ExecPlan":
     ruling: "実行は... 元の文字列を渡す" — see this module's docstring
     for why).
 
-    The FIRST check (architect's structural ruling — see the module
-    docstring's own "Denylist -> allowlist" section) is
-    :func:`_reject_disallowed_raw_characters`, run against *text* BEFORE
-    any tokenizing: this is what catches a literal newline (``shlex``
-    folds it into ordinary whitespace, so a per-token check would never
-    see it — ``"ls\\nrm -rf /tmp/x"`` would otherwise parse as ONE
-    segment whose ``argv[0]`` is the ordinary, almost-certainly-allowed
-    ``"ls"``, while a real shell runs the newline as a command
-    SEPARATOR, running ``rm -rf /tmp/x`` as a second command policy
-    never saw at all) and every other character this parser does not
-    yet accept, in ONE place, by construction, rather than by
-    enumerating each dangerous case as it is found."""
-    _reject_disallowed_raw_characters(text)
+    The FIRST check (module docstring's own "Denylist -> two-tier
+    allowlist" section) is :func:`_reject_raw_newline`, run against
+    *text* BEFORE any tokenizing: ``shlex`` folds a newline into
+    ordinary whitespace, so a per-token check would never see it —
+    ``"ls\\nrm -rf /tmp/x"`` would otherwise parse as ONE segment whose
+    ``argv[0]`` is the ordinary, almost-certainly-allowed ``"ls"``,
+    while a real shell runs the newline as a command SEPARATOR, running
+    ``rm -rf /tmp/x`` as a second command policy never saw at all.
+    Every other rejection (:func:`_reject_always_forbidden_characters`,
+    the leading-assignment check, an unsupported operator shape) runs
+    per TOKEN, once tokenizing has happened — see the module docstring
+    for why these two checks are not merged into one."""
+    _reject_raw_newline(text)
     tokens = _iter_tokens(text)
     if not tokens:
         raise ExecPlanRejected("no command given")
@@ -471,6 +516,7 @@ def parse_exec_plan(text: str) -> "ExecPlan":
                     f"parser (token: {token!r}) — put every argument before "
                     "the redirect"
                 )
+            _reject_always_forbidden_characters(token)
             if not current_argv and _looks_like_leading_assignment(token):
                 raise ExecPlanRejected(
                     f"a leading NAME=value environment assignment is not "
@@ -496,6 +542,7 @@ def parse_exec_plan(text: str) -> "ExecPlan":
             nxt = tokens[i + 1] if i + 1 < len(tokens) else None
             if nxt is None or nxt[1]:
                 raise ExecPlanRejected(f"redirect {token!r} has no target path")
+            _reject_always_forbidden_characters(nxt[0])
             plan.append(ExecRedirect(op=token, path=nxt[0]))
             redirect_closed_segment = True
             i += 2
@@ -509,13 +556,14 @@ def parse_exec_plan(text: str) -> "ExecPlan":
                 "segment-level check was designed to scan."
             )
 
-        # A punctuation token that survived _iter_tokens but is not one
-        # of #5838's supported operators/redirects -- a lone "&", or an
-        # unrecognised run like "<>"/";;" (built entirely from allowed
-        # operator characters, just not a recognised COMBINATION of
-        # them -- "(", ")", "`" and everything else this branch used to
-        # need to name are now unreachable, blocked earlier by
-        # _reject_disallowed_raw_characters).
+        # An unquoted _PUNCTUATION_CHARS token that survived _iter_tokens
+        # but is not one of #5838's supported operators/redirects --
+        # "(" / ")" / "`" (subshell / command substitution -- see the
+        # module docstring for why these hide a second command), a lone
+        # "&" (background, not part of "&&"), or an unrecognised run
+        # like "<>"/";;". A QUOTED occurrence of any of these never
+        # reaches here at all -- it stays inside a WORD token
+        # (_iter_tokens's own classification), accepted as literal text.
         raise ExecPlanRejected(
             f"unsupported shell construct (token: {token!r}) — this parser "
             "only supports pipes/chains (| && || ;) and redirects (> >> <), "
