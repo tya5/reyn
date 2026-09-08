@@ -2046,8 +2046,6 @@ it.
   check. The trap is in how a HUMAN OR AGENT reads that re-evaluation's
   result as a verdict on a past event, not in the gate's design.
 
-## See also
-
 ## 28. A population you maintain by hand goes stale silently; a derived one goes silent loudly
 
 **The act that fires this: you are about to write down a list of the things
@@ -2092,6 +2090,8 @@ clean" are the same exit code and, unless the tool says so, the same output.
 answer — but write down *why*, next to the list, so the next person does not
 re-derive the question. A list with a stated reason is a decision; a list
 without one is an accident that outlives its author.
+
+## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
 - [CLAUDE.md](../../../CLAUDE.md) — the doc-sync hard rule (a doc
