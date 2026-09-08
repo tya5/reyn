@@ -430,9 +430,20 @@ class SeatbeltBackend:
         real actor: nothing in this codebase unlinks a cached ``.sb`` file
         at process exit; the file survives the process and was only ever
         removed, if at all, by whatever unrelated schedule the OS sweeps its
-        own temp directory on). ``env`` is the SAME allowlisted build
-        ``run()`` uses (#3822) — a caller launching the wrapped argv with
-        this env gets the identical env-scoping ``run()``'s callers get."""
+        own temp directory on). ⚠️ **Scope of that bounding subject (#5981
+        co-vet)**: a weakref callback only ever fires from a LIVE
+        interpreter — a crash or SIGKILL never runs it, so a `.sb` file
+        whose owning process died ungracefully outlives that process
+        indefinitely. A directory-wide sweep on the next process's startup
+        was considered and rejected: this cache directory is shared across
+        every concurrently-running reyn process on the machine (e.g. a
+        `reyn:web` and a `reyn:chat` session at once), so sweeping it would
+        delete a SIBLING process's still-live profile out from under its own
+        `sandbox-exec`. Disclosed, not closed — the crash/SIGKILL remainder
+        is real but is not this fix's scope. ``env`` is the SAME allowlisted
+        build ``run()`` uses (#3822) — a caller launching the wrapped argv
+        with this env gets the identical env-scoping ``run()``'s callers
+        get."""
         profile_text = _build_sbpl_profile(policy)
         profile_path, is_cached = _cached_profile_path(policy, profile_text)
 
@@ -441,12 +452,20 @@ class SeatbeltBackend:
             # closure) is deliberate, not dead code — it keeps *policy*
             # alive via this closure's own captured cell for as long as the
             # CALLER holds `wrapped.cleanup` (which every caller must, to
-            # call it eventually). Without this, a caller that does not
-            # separately retain *policy* itself (e.g. `wrap_command(argv,
-            # SandboxPolicy(...))` with no local binding) could see the
-            # cached `.sb` file evicted the instant `wrap_command` returns —
-            # `policy` collected, `_derivation_cache`'s on_evict firing —
-            # while `wrapped.argv` still names that now-deleted path.
+            # call it eventually). Real production call site this protects:
+            # `mcp/client.py`'s MCP stdio launch — `wrap_command(argv,
+            # self._build_mcp_sandbox_policy())` — passes an INLINE policy
+            # expression with no local binding of its own. Without this
+            # capture, the moment `wrap_command` returns there, CPython could
+            # collect that policy immediately (nothing else references it),
+            # firing `_derivation_cache`'s `on_evict` and unlinking the `.sb`
+            # profile while `wrapped.argv` still names it — the NEXT
+            # `sandbox-exec -f <path>` for that MCP stdio server would then
+            # fail with a missing profile. (lead-coder's own strip-falsify
+            # confirmed this line is gated by
+            # test_seatbelt_cached_profile_survives_while_the_wrapped_command_is_held_even_with_no_separate_policy_variable
+            # — removing it goes RED — so the stronger default-argument form
+            # first proposed here was not required after all.)
             _ = policy
             if is_cached:
                 return
