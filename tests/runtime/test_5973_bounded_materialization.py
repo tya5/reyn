@@ -19,10 +19,15 @@ it in without limit:
      candidates under the SAME budget — never unconditionally (the bug),
      never zero (regressing #5949 stage ①-b's own accuracy need).
 
-Real ``Session``/``RouterLoop``/``MediaStore`` throughout — every
-content_ref row here is produced via the SAME production write seam
-(``RouterLoop.feedback`` -> ``persist_feedback``) #5896's/#5949's own
-acceptance tests use, never a hand-built row.
+Real ``Session``/``RouterLoop``/``MediaStore`` throughout — most rows
+here are produced via the SAME production write seam (``RouterLoop.
+feedback`` -> ``persist_feedback``) #5896's/#5949's own acceptance tests
+use; the MIGRATED-row tests below deliberately build a row missing
+``CONTENT_BYTES_META_KEY`` by hand (lead-coder's BLOCKING review,
+issuecomment-5578035547) — the production seam can never produce that
+shape (it always stamps the field), so the migrated population (owner's
+own real 597 MB history) needs its own construction to be observable
+at all.
 """
 from __future__ import annotations
 
@@ -239,4 +244,154 @@ async def test_durable_active_history_after_hydrates_only_as_many_candidates_as_
         "at least one candidate must NOT be hydrated (its body left "
         "empty) — the budget must not hydrate every candidate "
         "unconditionally"
+    )
+
+
+# ── BLOCKING fix ①: a MIGRATED row (no meta["bytes"]) is still measured ──
+
+
+async def _migrated_content_ref_row(tmp_path: Path, agent_name: str, body: str):
+    """Builds a content_ref ``ChatMessage`` in the MIGRATED shape
+    (``reyn storage migrate-bodies``, #5947:
+    ``history_body_migration.py``'s own write stamps
+    ``CONTENT_REF_META_KEY`` but NEVER ``CONTENT_BYTES_META_KEY``) — the
+    production write seam (``RouterLoop.feedback`` -> ``persist_
+    feedback``) can never produce this shape itself, so owner's own real
+    population (an entirely-migrated 597 MB history) needs its own
+    construction to be observable in a test at all.
+
+    ``await store.flush()`` after the write — ``save_tool_result``'s own
+    durable write goes through a background ``DurabilityWorker``
+    (#5364 §1.4, "UIを止めさせたくない"); without the flush a read
+    immediately after can race the write and see the file as not-yet-
+    existing."""
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.runtime.chat_message import SPILLED_META_KEY, ChatMessage
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name=agent_name, session_id="s1",
+    )
+    ref_block = store.save_tool_result(body, tool="t", seq=1)
+    await store.flush()
+    return store, ChatMessage(
+        role="tool", content="",
+        meta={CONTENT_REF_META_KEY: ref_block["path"], SPILLED_META_KEY: False},
+    )
+
+
+@pytest.mark.asyncio
+async def test_eviction_derives_body_bytes_via_stat_for_a_migrated_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5973 BLOCKING fix ① (lead-coder review,
+    issuecomment-5578035547) — a MIGRATED content_ref row (no stamped
+    ``CONTENT_BYTES_META_KEY``) must still be evicted once its REAL
+    (stat-derived) body size exceeds the cap. Owner's own 597 MB history
+    is entirely this population, not the freshly-written one every other
+    test in this file drives — without this, ① passes every test here
+    while doing nothing for the incident it was written for.
+
+    Strip witness: reverting ``resolve_body_bytes`` to read ONLY
+    ``CONTENT_BYTES_META_KEY`` (no stat fallback) keeps this row
+    resident forever regardless of its real body size — verified
+    directly, restored after."""
+    from reyn.runtime.chat_message import ChatMessage
+
+    monkeypatch.chdir(tmp_path)
+    session = _session("migrated-evict-agent", tmp_path, max_bytes=4000)
+    store, migrated_row = await _migrated_content_ref_row(tmp_path, "migrated-evict-agent", _BODY)
+    session._media_store = store
+    session._append_history(migrated_row)  # noqa: SLF001 - real durable-write seam
+
+    assert migrated_row.meta.get("bytes") is None, (
+        "sanity: this row must genuinely lack CONTENT_BYTES_META_KEY, or "
+        "this test doesn't distinguish the migrated population from the "
+        "freshly-written one"
+    )
+
+    session._append_history(ChatMessage(role="user", content="one more turn"))
+
+    assert migrated_row not in session.history, (
+        "a migrated content_ref row's real (stat-derived) body size must "
+        "still evict it, even without a stamped CONTENT_BYTES_META_KEY"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_history_derives_body_bytes_via_stat_for_a_migrated_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the ② sibling of the test above — ``build_history`` must
+    still send a bounded preview (not the full body) for an over-budget
+    MIGRATED row, even though its size is only knowable via a stat, never
+    the meta field every other test's write seam stamps. A functional
+    check, not an independent strip witness for the stat fallback itself
+    (a row whose size is genuinely unknown is ALSO excluded from the
+    materializable set here — same observable outcome either way; the
+    eviction sibling test above is what actually distinguishes "correctly
+    stat-derived" from "excluded because unknown")."""
+    monkeypatch.chdir(tmp_path)
+    session = _session("migrated-wire-agent", tmp_path, max_bytes=2000)
+    store, migrated_row = await _migrated_content_ref_row(tmp_path, "migrated-wire-agent", _BODY)
+    session._media_store = store
+    session._append_history(migrated_row)  # noqa: SLF001 - real durable-write seam
+
+    wire = session._loop_driver._history_buffer.build_history()
+    (wire_tool,) = [m for m in wire if m.get("role") == "tool"]
+
+    assert _BODY not in wire_tool["content"], (
+        "a migrated row's full body must not reach the wire once its "
+        "stat-derived size alone exceeds the budget"
+    )
+
+
+# ── BLOCKING fix ②: the wire budget protects the NEWEST turn ────────────
+
+
+@pytest.mark.asyncio
+async def test_build_history_budget_protects_the_newest_turn_not_the_oldest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5973 BLOCKING fix ② (lead-coder review,
+    issuecomment-5578035547) — when the wire materialization budget can
+    fit only ONE of several oversized content_ref rows, it must
+    materialize the NEWEST one, not the oldest. ``turns`` serialises
+    chronologically; a budget spent in that same order exhausts itself
+    on old turns and leaves the newest — almost always the turn actually
+    driving THIS send — with nothing left. #5973's own owner incident is
+    a single ``hello`` send whose most recent tool result is exactly the
+    huge one.
+
+    Strip witness: reverting ``_select_materializable_refs`` to iterate
+    ``turns`` chronologically (oldest-first) instead of ``reversed(turns)``
+    makes the OLDEST row materialize instead of the newest — verified
+    directly, restored after."""
+    monkeypatch.chdir(tmp_path)
+    agent_name = "newest-first-agent"
+    await _write_one_content_ref_row(tmp_path, agent_name, "OLD" + _BODY)
+    session = _session(agent_name, tmp_path)  # generous cap while writing
+    from reyn.runtime.chat_message import ChatMessage
+    session.load_history()
+    session._append_history(ChatMessage(role="user", content="a plain turn in between"))  # noqa: SLF001
+
+    loop = RouterLoop(host=session.router_host, chain_id="c2", router_model=_MODEL)
+    loop.feedback(_round("NEW" + _BODY))
+    await loop.persist_feedback()
+
+    # Cap fits roughly ONE of the two ~20,000-byte bodies, not both.
+    session2 = _session(agent_name, tmp_path, max_bytes=22_000)
+    session2.load_history()
+
+    wire = session2._loop_driver._history_buffer.build_history()
+    wire_tools = [m for m in wire if m.get("role") == "tool"]
+    assert len(wire_tools) >= 2, "sanity: both tool rows must reach the projection"
+
+    assert "NEW" + _BODY in wire_tools[-1]["content"], (
+        "the NEWEST tool result must be the one materialized in full "
+        "when the budget cannot fit both"
+    )
+    assert "OLD" + _BODY not in wire_tools[0]["content"], (
+        "the OLDEST tool result must be the one left as a bounded "
+        "preview when the budget cannot fit both"
     )

@@ -73,7 +73,6 @@ from reyn.runtime.budget.budget import (
 )
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
-    CONTENT_BYTES_META_KEY,
     CONTENT_PREVIEW_META_KEY,
     CONTENT_REF_META_KEY,
     SPILLED_META_KEY,
@@ -4426,11 +4425,13 @@ class Session:
         cap = self._history_resident_config.max_bytes
 
         def _pull_weight(m: ChatMessage) -> int:
+            from reyn.runtime.services.router_history_buffer import resolve_body_bytes
+
             weight = int(m.resident_bytes())
             meta = m.meta or {}
             if meta.get(CONTENT_REF_META_KEY) and not meta.get(SPILLED_META_KEY):
-                body = meta.get(CONTENT_BYTES_META_KEY)
-                if isinstance(body, int):
+                body = resolve_body_bytes(self._media_store, meta)
+                if body is not None:
                     weight += body
             return weight
 
@@ -4714,6 +4715,7 @@ class Session:
             return
         from reyn.runtime.services.router_history_buffer import (
             WireMaterializationBudget,
+            resolve_body_bytes,
             resolve_history_content,
         )
 
@@ -4725,8 +4727,8 @@ class Session:
             ref = meta.get(CONTENT_REF_META_KEY)
             if not ref or meta.get(SPILLED_META_KEY):
                 continue
-            body_bytes = meta.get(CONTENT_BYTES_META_KEY)
-            if not isinstance(body_bytes, int) or not budget.reserve(body_bytes):
+            body_bytes = resolve_body_bytes(self._media_store, meta)
+            if body_bytes is None or not budget.reserve(body_bytes):
                 continue
             m.content = resolve_history_content(
                 m.content, meta, lambda: self._media_store.project_root,
