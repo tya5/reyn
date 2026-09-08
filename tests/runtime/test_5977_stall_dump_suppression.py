@@ -293,6 +293,64 @@ def test_diagnostic_snapshot_reset_truncates_for_the_next_write(tmp_path: Path) 
         snap.close()
 
 
+def test_diagnostic_snapshot_points_at_current_file_detects_an_external_delete(tmp_path: Path) -> None:
+    """Tier 2: #5977 ②, lead-coder BLOCKING follow-up (PR #5988 review) —
+    dropping the rotation MECHANISM (② moved the dump off ``reyn.log``,
+    the only thing ever rotating it) does not remove the CLASS: an
+    external tool (a cleanup script, an operator ``rm``) can still delete
+    or replace ``stall_dump.log`` out from under an already-open fd. A
+    write against that orphaned fd still SUCCEEDS — silently, into a file
+    nobody can find via the known path — so :meth:`~DiagnosticSnapshot.
+    points_at_current_file` must catch this the same way a rotation check
+    would, generalized to any cause. Strip-falsify: comparing ``self.
+    _fd`` against ``self._path`` by name instead of inode would stay
+    ``True`` here (the PATH is unchanged — a new file was simply created
+    there), which is exactly the bug this method exists to avoid."""
+    path = tmp_path / "stall_dump.log"
+    snap = diagnostic_snapshot(str(path))
+    assert snap is not None
+    try:
+        assert snap.points_at_current_file() is True
+
+        path.unlink()
+        path.write_text("", encoding="utf-8")  # a NEW file, same path, different inode
+        assert snap.points_at_current_file() is False, (
+            "an external delete+recreate at the SAME path must be detected"
+        )
+
+        snap.reset()
+        assert snap.points_at_current_file() is True, "reset must reopen against the CURRENT file"
+    finally:
+        snap.close()
+
+
+@pytest.mark.asyncio
+async def test_stall_dump_arm_rearms_after_an_external_delete(tmp_path: Path) -> None:
+    """Tier 2: the same property as the ``DiagnosticSnapshot`` test above,
+    through :class:`StallDumpArm.rearm`'s own real call — the actual
+    production path this reasoning has to hold on. Deleting the dump file
+    between two ``rearm()`` calls must not leave the arm silently writing
+    into an orphaned fd: the second ``rearm()`` reopens first."""
+    path = tmp_path / "stall_dump.log"
+    arm = StallDumpArm.open(seconds=60.0, path=str(path), logger=logging.getLogger("t5"), label="t5")
+    assert arm is not None
+    try:
+        assert arm.rearm() is True
+        pre_ino = path.stat().st_ino
+
+        path.unlink()
+        path.write_text("", encoding="utf-8")
+        assert path.stat().st_ino != pre_ino, "test setup sanity: the replacement must be a NEW inode"
+
+        assert arm.rearm() is True
+        assert arm.points_at_current_file() is True, (
+            "rearm must reopen against the file CURRENTLY at path, not keep "
+            "writing into the orphaned pre-delete fd"
+        )
+    finally:
+        arm.close()
+
+
 def test_diagnostic_snapshot_open_returns_none_on_an_unwritable_path() -> None:
     """Tier 2: a path under a directory that cannot be created (a FILE
     sitting where a directory needs to go) fails closed — ``None``, no

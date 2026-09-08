@@ -2449,24 +2449,26 @@ class TextualChatApp(App):
         anywhere else, so skipping it there costs nothing a real
         incident depended on.
 
-        **#5873 follow-up (architect co-vet finding)**: log rotation
-        (``RotatingFileHandler``) renames the path this fd was opened
-        against out from under it on every rollover — unlike a plain
-        churn-and-reuse of the fd NUMBER (the #5877 hazard above, which
-        this worker's self-opened fd is already immune to), a rollover
-        moves the underlying FILE the fd's own inode points at: ``.1``,
-        then ``.2``, and so on, until it is unlinked past
-        ``backup_count`` — permanently, not "one rollover behind" as an
-        earlier version of this docstring claimed (true only before this
-        module could ever rotate). Left unhandled, every dump after the
-        first rollover would write to an ever-more-stale, eventually
-        DELETED generation nobody reads. Each tick therefore compares
-        ``os.stat(path).st_ino`` (the CURRENT file at that path) against
-        ``os.fstat(_dump_fd).st_ino`` (what this fd still points at) —
-        deterministic, cut on the file identity changing, not a clock —
-        and on a mismatch: disarm, close the stale fd, and open a fresh
-        one against the same path before re-arming. A ``stat`` call
-        every :data:`~.loop_probe._TICK_SECONDS` (50 ms) is negligible.
+        **#5873 follow-up (architect co-vet finding), superseded by #5977
+        ② (lead-coder BLOCKING, PR #5988 review)**: this originally
+        guarded against ``RotatingFileHandler`` renaming ``reyn.log`` out
+        from under this fd on every rollover. #5977 ② moved the dump off
+        ``reyn.log`` entirely — the file it now targets
+        (:func:`~reyn.runtime.loop_tripwire.stall_dump_path`) is never
+        rotated by anything reyn drives itself, so THAT specific cause is
+        gone. The CLASS of problem is not: an external cleanup tool or an
+        operator ``rm``-ing ``stall_dump.log`` would still leave this fd
+        armed against an orphaned file — a write against it still
+        SUCCEEDS, silently, so an operator checking the known path reads
+        "no stall happened," not "the dump went somewhere unreachable."
+        Each re-arm therefore still compares ``os.stat(path).st_ino``
+        against the held fd's own inode (now
+        :meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
+        points_at_current_file`, generalized to any external change, not
+        specifically rotation) and reopens on a mismatch before arming —
+        see ``StallDumpArm.rearm``'s own docstring for the current
+        reasoning. A ``stat`` call every :data:`~.loop_probe._TICK_SECONDS`
+        (50 ms) is negligible.
 
         **#5977 ①③ (owner-hit: "ひたすら繰り返されてるよこのログ")**: the
         dead-man's switch above re-armed EVERY tick regardless of whether

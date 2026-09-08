@@ -614,6 +614,23 @@ class StallDumpArm:
     replaces the PENDING one-shot timer, so it only ever actually FIRES
     when a tick fails to arrive in time to re-arm it — i.e. while the very
     thing it watches is blocked (see ``stall_trace.arm``'s own docstring).
+
+    **Why every re-arm re-verifies the fd (lead-coder BLOCKING, PR #5988
+    review)**: losing the rotation MECHANISM (② moved the dump off
+    ``reyn.log``, which was the only thing ever rotating it) does not
+    remove the CLASS of problem — an armed fd can still end up pointing
+    at a file nothing else reads: an external cleanup tool touching
+    ``stall_dump.log``, an operator ``rm``-ing it, anything that changes
+    what's AT that path without this arm knowing. A write against such an
+    orphaned fd still SUCCEEDS — silently — so the operator sees an empty
+    or missing file at the path they know to check and reads it as "no
+    stall happened," not "the dump went somewhere I can't see." Each
+    :meth:`rearm` therefore asks :meth:`~reyn.runtime.diagnostic_snapshot.
+    DiagnosticSnapshot.points_at_current_file` — inode identity, cut on
+    the file identity changing, not a clock, exactly the question a
+    rotation-survival check would ask, generalized to any cause — and
+    reopens (:meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
+    reset`) on a mismatch before arming.
     """
 
     def __init__(
@@ -646,14 +663,37 @@ class StallDumpArm:
         failed reopen — the switch stays disarmed until :meth:`close`)."""
         return self._snapshot.fd is not None
 
+    def points_at_current_file(self) -> bool:
+        """Whether this arm's fd points at the file CURRENTLY at its own
+        destination path — a thin public passthrough to
+        :meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
+        points_at_current_file`, exposed so a test can witness
+        :meth:`rearm`'s own reopen-on-external-change behaviour through
+        the public surface rather than reaching into this arm's private
+        snapshot."""
+        return self._snapshot.points_at_current_file()
+
     def rearm(self) -> bool:
         """Re-point the one process-wide timer :data:`_seconds` into the
-        future against this arm's own fd. Returns whether a timer is now
-        pending."""
+        future against this arm's own fd (reopening first if something
+        external — a cleanup tool, an operator ``rm`` — deleted or moved
+        the file out from under it since it was last opened; see
+        :meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
+        points_at_current_file`'s own docstring for why this matters: a
+        write against an orphaned fd still succeeds, silently, into a
+        file nobody can find). Returns whether a timer is now pending."""
         from reyn.runtime.stall_trace import arm as _arm
 
         if self._snapshot.fd is None:
             return False
+        if not self._snapshot.points_at_current_file():
+            self._snapshot.reset()
+            if self._snapshot.fd is None:
+                self._logger.error(
+                    "%s: could not reopen the tripwire's own stall-dump snapshot after "
+                    "it was removed or moved out from under it", self._label,
+                )
+                return False
         _arm(self._seconds, file=self._snapshot.fd, repeat=False)
         return True
 

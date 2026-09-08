@@ -74,6 +74,29 @@ class DiagnosticSnapshot:
     def path(self) -> str:
         return self._path
 
+    def points_at_current_file(self) -> bool:
+        """Whether :attr:`fd` still points at the file CURRENTLY at
+        :attr:`path` (inode identity) — ``False`` if something external
+        deleted or moved it out from under this instance (a cleanup tool
+        touching the file, an operator ``rm``ing it, …) since this fd was
+        last opened. ``False`` on ``fd is None`` too, matching every
+        other "nothing usable" case here.
+
+        Not a rotation check — this module drives no rotation of its own
+        (see the module docstring) — but the SAME question a rotation
+        check would ask, generalized to "is my fd still findable via the
+        path anyone else would read," regardless of WHY it stopped being
+        true. Left unanswered, a caller that keeps re-arming against a
+        now-orphaned fd writes dumps nobody can ever read again — never
+        with an error, since the write itself still succeeds — the exact
+        silent-loss shape lead-coder flagged reviewing #5988."""
+        if self._fd is None:
+            return False
+        try:
+            return os.stat(self._path).st_ino == os.fstat(self._fd).st_ino
+        except OSError:
+            return False
+
     def reset(self) -> None:
         """Truncate and reopen for the NEXT write — see the class
         docstring's truncate-timing trap for why this must be called only
