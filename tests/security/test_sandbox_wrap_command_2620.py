@@ -60,10 +60,13 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
     original command unchanged.
 
     #4434 (stage 1): a bare ``SandboxPolicy()`` (empty write_paths) is safe
-    to session-cache, so its profile is SHARED — cleanup() on it is a no-op
-    by design (a second caller reusing this policy still needs the file);
-    see test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe
-    in test_sandbox_seatbelt.py for the DOES-unlink case."""
+    to session-cache, so its profile is SHARED — cleanup() releases this
+    call's own checkout of that shared derivation (#5981 co-vet: a real
+    refcounted release, not an unconditional no-op); see
+    test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy
+    in test_sandbox_seatbelt.py for the survives-while-a-SECOND-checkout-is-
+    outstanding case, and test_seatbelt_wrap_command_does_not_cache_when_
+    write_scope_is_unsafe for the never-cached (always unlinks) case."""
     backend = SeatbeltBackend()
     wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy())
     assert wrapped.argv[0] == "sandbox-exec"
@@ -77,23 +80,46 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
     assert wrapped.cleanup is not None
     assert profile_path.exists()
     wrapped.cleanup()
-    assert profile_path.exists()  # cached (session-lifetime): cleanup() is a no-op
-
-    import os
-
-    os.unlink(profile_path)  # tidy up the shared cache file this test wrote
+    # This is the ONLY checkout of this policy in this test, so releasing it
+    # IS the last outstanding one — cleanup() unlinks.
+    assert not profile_path.exists()
 
 
 def test_seatbelt_wrap_command_cleanup_idempotent():
     """Tier 2: calling cleanup twice must not raise, on both the cached
-    (no-op) path and the uncached (best-effort unlink) path."""
+    (refcounted release, #5981) and the uncached (best-effort unlink) path.
+
+    #5981 co-vet, lead-coder's own witness demand: "not raise" alone is not
+    a witness for the cached branch's REAL contract — a `release_derivation`
+    call for an already-gone key is already a silent no-op, so "no raise"
+    would hold even with the `_released` idempotency guard removed entirely
+    (confirmed: lead-coder's own strip of that guard left every existing
+    test green, including the ORIGINAL two-line version of this test). The
+    actual invariant is that a double `cleanup()` on ONE checkout must not
+    consume a SECOND, still-outstanding checkout's release — witnessed here
+    by giving the cached case a second live checkout of the SAME policy and
+    asserting its path survives the first checkout's double-cleanup."""
     from reyn.security.sandbox.backends.seatbelt import _seatbelt_cache_dir
 
     backend = SeatbeltBackend()
+    policy = SandboxPolicy()
 
-    cached = backend.wrap_command(["cmd"], SandboxPolicy())
+    cached = backend.wrap_command(["cmd"], policy)
+    # A second, still-live checkout of the SAME policy — the thing an
+    # under-counting double-release would wrongly consume.
+    cached_second = backend.wrap_command(["cmd"], policy)
+    second_path = cached_second.argv[cached_second.argv.index("-f") + 1]
+
     cached.cleanup()
-    cached.cleanup()  # no-op both times — must not raise
+    cached.cleanup()  # must not raise, AND must not release a SECOND time
+    assert __import__("os").path.exists(second_path), (
+        "cached's own double cleanup() released cached_second's still-"
+        "outstanding checkout too — the `_released` idempotency guard is "
+        "the ONLY thing standing between a double-call and this"
+    )
+
+    cached_second.cleanup()  # the real last release — now it unlinks
+    assert not __import__("os").path.exists(second_path)
 
     uncached = backend.wrap_command(
         ["cmd"], SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())]),

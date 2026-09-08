@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from reyn.security.sandbox._derivation_cache import cached_derivation
+from reyn.security.sandbox._derivation_cache import cached_derivation, release_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import (
     AxisEnforcement,
@@ -291,8 +291,24 @@ def _cached_profile_path(policy: SandboxPolicy, profile_text: str) -> tuple[str,
             fh.write(profile_text)
         return path
 
-    path = cached_derivation("seatbelt", policy, _write_cached)
+    # #5981: the cached path's own disk artifact has no exit without this —
+    # `_derivation_cache`'s weakref eviction already fires when *policy* is
+    # collected; `on_evict` ties THIS file's removal to that same event
+    # instead of leaving it in `_seatbelt_cache_dir()` forever (a bare
+    # `_evict` callback only ever cleared the in-memory cache entry).
+    path = cached_derivation(
+        "seatbelt", policy, _write_cached, on_evict=_unlink_ignoring_missing,
+    )
     return path, True
+
+
+def _unlink_ignoring_missing(path: str) -> None:
+    """`on_evict` for a cached `.sb` path (#5981) — same guard shape
+    `_cleanup()` below already uses for the uncached, per-call temp file."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 class SeatbeltBackend:
@@ -404,17 +420,69 @@ class SeatbeltBackend:
         gets its own unlink-on-cleanup; a CACHED path is shared across every
         caller using this policy in the process, so ``cleanup()`` here must
         NOT unlink it — a second caller reusing the same policy would then
-        launch ``sandbox-exec -f <a path that no longer exists>``. Cached
-        files are cleaned up at process exit (OS temp-dir housekeeping),
-        matching the profile's new session-scoped lifetime rather than the
-        old per-call one. ``env`` is the SAME allowlisted build ``run()``
-        uses (#3822) — a caller launching the wrapped argv with this env
-        gets the identical env-scoping ``run()``'s callers get."""
+        launch ``sandbox-exec -f <a path that no longer exists>``. **A cached
+        file's actual bounding subject (#5981) is the SAME weakref eviction
+        that already drops its ``_derivation_cache`` entry** — when *policy*
+        itself is garbage-collected, ``cached_derivation``'s ``on_evict``
+        hook unlinks this file (``_unlink_ignoring_missing``, wired at
+        :func:`_cached_profile_path`'s call site) — NOT "process exit /
+        OS temp-dir housekeeping" (the previous claim here, which named no
+        real actor: nothing in this codebase unlinks a cached ``.sb`` file
+        at process exit; the file survives the process and was only ever
+        removed, if at all, by whatever unrelated schedule the OS sweeps its
+        own temp directory on). ⚠️ **Scope of that bounding subject (#5981
+        co-vet)**: a weakref callback only ever fires from a LIVE
+        interpreter — a crash or SIGKILL never runs it, so a `.sb` file
+        whose owning process died ungracefully outlives that process
+        indefinitely. A directory-wide sweep on the next process's startup
+        was considered and rejected: this cache directory is shared across
+        every concurrently-running reyn process on the machine (e.g. a
+        `reyn:web` and a `reyn:chat` session at once), so sweeping it would
+        delete a SIBLING process's still-live profile out from under its own
+        `sandbox-exec`. Disclosed, not closed — the crash/SIGKILL remainder
+        is real but is not this fix's scope. ``env`` is the SAME allowlisted
+        build ``run()`` uses (#3822) — a caller launching the wrapped argv
+        with this env gets the identical env-scoping ``run()``'s callers
+        get."""
         profile_text = _build_sbpl_profile(policy)
         profile_path, is_cached = _cached_profile_path(policy, profile_text)
 
+        _released = False
+
         def _cleanup() -> None:
+            # #5981 co-vet (architect): eviction is now an EXPLICIT,
+            # refcounted release (`_derivation_cache.release_derivation`),
+            # not implicit GC timing — "the consumer is exec(), the owner
+            # was GC, and GC's timing is not a contract" was the exact
+            # objection. `_cleanup` reading `policy` was ALSO still needed
+            # (confirmed by strip-falsify) to keep *policy* itself alive
+            # for as long as the caller holds `wrapped.cleanup` — the real
+            # production call site this protects is `mcp/client.py`'s MCP
+            # stdio launch, `wrap_command(argv,
+            # self._build_mcp_sandbox_policy())`, an INLINE policy
+            # expression with no local binding of its own — but that alone
+            # was NOT sufficient: `_derivation_cache`'s identity-keyed cache
+            # can have several LIVE checkouts sharing one policy (two
+            # `wrap_command()` calls for the same policy), and nothing
+            # counted how many were still outstanding before this. Each
+            # `wrap_command()` call is its own checkout;
+            # `release_derivation` releases exactly the ONE this closure
+            # owns, only unlinking when it is the LAST outstanding checkout
+            # — a second caller sharing this policy keeps its own checkout
+            # alive independently.
+            #
+            # `_released` guards `cleanup()` being called more than once on
+            # the SAME `WrappedCommand` (`test_seatbelt_wrap_command_
+            # cleanup_idempotent` calls it twice) — without this guard a
+            # double-call would release TWICE for what was only ONE
+            # checkout, under-counting and evicting while a genuinely
+            # separate checkout might still be live.
+            nonlocal _released
             if is_cached:
+                if _released:
+                    return
+                _released = True
+                release_derivation("seatbelt", policy)
                 return
             try:
                 os.unlink(profile_path)

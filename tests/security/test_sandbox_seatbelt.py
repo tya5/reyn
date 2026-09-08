@@ -490,14 +490,82 @@ def test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy(
     with open(path1, encoding="utf-8") as fh:
         assert fh.read() == _build_sbpl_profile(policy)
 
-    # cleanup() on a cached path must be a no-op (a second caller sharing
-    # this policy still needs the file); confirmed by asserting it survives.
+    # #5981 co-vet: cleanup() on a cached path is a REFCOUNTED release, not
+    # an unconditional no-op — wrapped1 and wrapped2 are two independent
+    # checkouts of the SAME cached derivation, so releasing wrapped1's alone
+    # must not unlink a file wrapped2's own (still outstanding) checkout may
+    # still need. Confirmed by asserting it survives past the FIRST cleanup.
     wrapped1.cleanup()
     assert __import__("os").path.exists(path1)
 
+    # The LAST outstanding checkout's cleanup() DOES release it.
+    wrapped2.cleanup()
+    assert not __import__("os").path.exists(path1)
+
+
+def test_seatbelt_cached_profile_is_unlinked_when_the_policy_is_collected():
+    """Tier 2: #5981 — the cached `.sb` file's actual bounding subject.
+    Before this, `cleanup()`'s deliberate no-op on a cached path (asserted
+    just above) meant NOTHING ever unlinked it — this proves the file now
+    has a real exit: the same weakref eviction that already clears the
+    in-memory `_derivation_cache` entry when *policy* is collected."""
+    import gc
     import os
 
-    os.unlink(path1)
+    backend = SeatbeltBackend()
+
+    def _wrap_and_get_path() -> str:
+        # Confined to its own frame — same reasoning as
+        # test_derivation_cache_5981.py's identically-shaped helper: the
+        # local `policy` binding must be gone the instant this returns for
+        # `gc.collect()` below to actually collect it.
+        policy = SandboxPolicy(write_paths=[])
+        wrapped = backend.wrap_command(["/bin/echo", "hi"], policy)
+        return wrapped.argv[wrapped.argv.index("-f") + 1]
+
+    path = _wrap_and_get_path()
+    # CPython frees the confined frame's `policy` (a refcount-only, non-
+    # cyclic object) the instant `_wrap_and_get_path` returns, so the file
+    # may already be gone by this point — `gc.collect()` below is the
+    # portable way to demand eviction, not a wait for something pending.
+    gc.collect()
+
+    assert not os.path.exists(path)
+
+
+def test_seatbelt_cached_profile_survives_while_the_wrapped_command_is_held_even_with_no_separate_policy_variable():
+    """Tier 2: #5981 strip-falsify caught this — an EARLIER version of the
+    #5981 fix evicted the file the instant `wrap_command` returned when the
+    caller passed a bare ``SandboxPolicy(...)`` inline (no local variable of
+    its own, exactly what several already-existing tests in this repo do —
+    e.g. ``test_seatbelt_wrap_command_prepends_sandbox_exec``), because
+    NOTHING kept *policy* alive once the call returned. The fix: `_cleanup`'s
+    closure captures *policy* too, so holding `wrapped` (which every caller
+    must, to call `.cleanup()` eventually) keeps the file alive regardless
+    of whether the caller ALSO kept its own reference to the policy."""
+    import os
+
+    backend = SeatbeltBackend()
+    # Deliberately no local binding for the policy — the exact inline shape
+    # that exposed the gap.
+    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]))
+    path = wrapped.argv[wrapped.argv.index("-f") + 1]
+
+    import gc
+
+    gc.collect()  # the inline SandboxPolicy(...) has no OTHER referent now
+
+    assert os.path.exists(path), (
+        "the cached profile vanished while `wrapped` (and therefore its "
+        "cleanup()) was still held — #5981's fix must keep `policy` alive "
+        "via the `_cleanup` closure for exactly this reason"
+    )
+
+    # #5981 co-vet: cleanup() is now a refcounted release, not an
+    # unconditional no-op — this is the ONLY checkout of this policy in this
+    # test, so releasing it IS the last outstanding checkout and DOES unlink.
+    wrapped.cleanup()
+    assert not os.path.exists(path)
 
 
 def test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe():

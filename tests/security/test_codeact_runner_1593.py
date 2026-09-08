@@ -258,14 +258,14 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     profile_path = argv[2]
     assert os.path.exists(profile_path)
     cleanup()
-    # #4434: this policy has no write_paths, so it's safe to session-cache —
-    # cleanup() on a cached profile is a no-op (a second caller reusing the
-    # same policy object would still need the file); it does NOT unlink.
-    assert os.path.exists(profile_path)
-    os.unlink(profile_path)
-    direct.cleanup()  # no-op too (direct is also cacheable) — tidy up by hand
-    if os.path.exists(direct.argv[2]):
-        os.unlink(direct.argv[2])
+    # #4434: this policy has no write_paths, so it's safe to session-cache;
+    # #5981 co-vet: cleanup() releases THIS call's own checkout of that
+    # cached derivation, refcounted — each of `cleanup`/`direct.cleanup` is
+    # the ONLY checkout of its own (distinct) policy object here, so each
+    # release IS the last outstanding one and DOES unlink.
+    assert not os.path.exists(profile_path)
+    direct.cleanup()
+    assert not os.path.exists(direct.argv[2])
 
 
 def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
