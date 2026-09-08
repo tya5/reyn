@@ -292,8 +292,8 @@ async def test_eviction_derives_body_bytes_via_stat_for_a_migrated_row(
     test in this file drives — without this, ① passes every test here
     while doing nothing for the incident it was written for.
 
-    Strip witness: reverting ``resolve_body_bytes`` to read ONLY
-    ``CONTENT_BYTES_META_KEY`` (no stat fallback) keeps this row
+    Strip witness: reverting ``ChatMessage._derive_body_bytes`` to read
+    ONLY ``CONTENT_BYTES_META_KEY`` (no stat fallback) keeps this row
     resident forever regardless of its real body size — verified
     directly, restored after."""
     from reyn.runtime.chat_message import ChatMessage
@@ -385,7 +385,7 @@ async def test_build_history_budget_protects_the_newest_turn_not_the_oldest(
 
     wire = session2._loop_driver._history_buffer.build_history()
     wire_tools = [m for m in wire if m.get("role") == "tool"]
-    assert len(wire_tools) >= 2, "sanity: both tool rows must reach the projection"
+    assert wire_tools[1:], "sanity: both tool rows must reach the projection"
 
     assert "NEW" + _BODY in wire_tools[-1]["content"], (
         "the NEWEST tool result must be the one materialized in full "
@@ -394,4 +394,66 @@ async def test_build_history_budget_protects_the_newest_turn_not_the_oldest(
     assert "OLD" + _BODY not in wire_tools[0]["content"], (
         "the OLDEST tool result must be the one left as a bounded "
         "preview when the budget cannot fit both"
+    )
+
+
+# ── BLOCKING follow-up: the stat derivation is memoized ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_body_bytes_derives_the_migrated_stat_at_most_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: #5973 BLOCKING follow-up (lead-coder review,
+    issuecomment-5578156411) — ``ChatMessage.body_bytes()`` must derive a
+    MIGRATED row's size via stat AT MOST ONCE per message, never once
+    per call. ``Session._evict_oldest_resident_entries`` runs on EVERY
+    append, scanning every resident row — an un-memoized stat here
+    ``open()``s a migrated row's backing file once per resident migrated
+    row PER APPEND (lead-coder's own measurement: the class this PR's
+    own BLOCKING-1 fix introduced by deriving via stat without caching
+    it).
+
+    Strip witness: reverting ``body_bytes()`` to call
+    ``_derive_body_bytes()`` unconditionally (dropping the cache) makes
+    ``preview_calls`` grow with each call instead of staying at 1 —
+    verified directly, restored after."""
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.runtime.chat_message import SPILLED_META_KEY, ChatMessage
+
+    monkeypatch.chdir(tmp_path)
+
+    class _CountingMediaStore(MediaStore):
+        """A REAL ``MediaStore``, instrumented only to COUNT calls to
+        ``read_tool_result_preview`` — the seam ``body_bytes()``'s cache
+        exists to bound. Delegates fully to the real implementation;
+        never fakes read behaviour."""
+
+        def __init__(self, *a: object, **kw: object) -> None:
+            super().__init__(*a, **kw)  # type: ignore[arg-type]
+            self.preview_calls = 0
+
+        def read_tool_result_preview(self, *a: object, **kw: object):  # type: ignore[override]
+            self.preview_calls += 1
+            return super().read_tool_result_preview(*a, **kw)  # type: ignore[arg-type]
+
+    store = _CountingMediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="memoize-agent", session_id="s1",
+    )
+    ref_block = store.save_tool_result(_BODY, tool="t", seq=1)
+    await store.flush()
+    migrated_row = ChatMessage(
+        role="tool", content="",
+        meta={CONTENT_REF_META_KEY: ref_block["path"], SPILLED_META_KEY: False},
+    )
+
+    first = migrated_row.body_bytes(store)
+    second = migrated_row.body_bytes(store)
+    third = migrated_row.body_bytes(store)
+
+    assert first == second == third == len(_BODY.encode("utf-8"))
+    assert store.preview_calls == 1, (
+        f"body_bytes() must derive the stat AT MOST ONCE per message, "
+        f"got {store.preview_calls} calls across 3 reads"
     )

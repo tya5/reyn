@@ -865,6 +865,16 @@ class ChatMessage:
         # `json.dumps(asdict(m))` call (still used verbatim as the
         # equivalence baseline in tests) would have produced.
         self._resident_bytes_cache: "ResidentBytes | None" = None
+        # #5973 BLOCKING (lead-coder review, issuecomment-5578156411):
+        # same "plain instance attribute, no class-level annotation" shape
+        # as `_resident_bytes_cache` above, and the same reason (kept out
+        # of `asdict(self)`/`__eq__`/`repr()`). A SEPARATE bool from the
+        # cache value itself — `None` is a legitimate DERIVED result for
+        # `body_bytes()` (ref missing / no store / file gone), unlike
+        # `_resident_bytes_cache` where `None` unambiguously means
+        # "not yet computed" — so this cache cannot reuse that sentinel.
+        self._body_bytes_cache: "BodyBytes | None" = None
+        self._body_bytes_cached: bool = False
 
     def resident_bytes(self) -> ResidentBytes:
         """This message's own serialized size in bytes — computed the
@@ -914,6 +924,59 @@ class ChatMessage:
                 json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
             ))
         return self._resident_bytes_cache
+
+    def body_bytes(self, media_store: Any) -> "BodyBytes | None":
+        """#5973 BLOCKING (lead-coder review, issuecomment-5578156411,
+        follow-up to issuecomment-5578035547): this content_ref row's
+        real body size — from ``CONTENT_BYTES_META_KEY`` when present
+        (every row a PRODUCTION write mints since #5896 carries one), or
+        DERIVED via a stat (``media_store.read_tool_result_preview``'s
+        own ``os.path.getsize``, ``max_bytes=0``) when it is not — a
+        ``reyn storage migrate-bodies`` (#5947) migrated row stamps
+        ``CONTENT_REF_META_KEY`` but never ``CONTENT_BYTES_META_KEY``,
+        and owner's own real history is entirely this population.
+
+        Computed the FIRST time this is called, cached for the rest of
+        this object's lifetime — the SAME shape :meth:`resident_bytes`
+        uses, for the same reason and then some: ``Session.
+        _evict_oldest_resident_entries`` runs on EVERY append (not just
+        once), scanning every resident row, so an un-memoized stat here
+        would ``open()`` a migrated row's backing file once per resident
+        migrated row PER APPEND — O(resident ref count) file opens,
+        repeated on every single turn (lead-coder's own measurement:
+        the exact class this PR's own fix for BLOCKING-1 introduced by
+        deriving via stat without caching it).
+
+        Caching here is safe (never goes stale) for the SAME reason
+        :meth:`resident_bytes` documents (nothing in this codebase
+        in-place-mutates ``meta`` after a message becomes resident) PLUS
+        one more: a ``content_ref``'s target file is content-addressed
+        and write-once (``MediaStore.save_tool_result`` never overwrites
+        an existing ref's file) — so the SIZE a ref names is an immutable
+        fact from the moment this row is parsed, not merely
+        un-mutated-so-far. ``media_store=None`` on the first call caches
+        ``None`` permanently — safe in production (a session's
+        ``_media_store`` is set once at construction and never swapped
+        mid-lifetime); a test double that first calls this with no store
+        and later wants a real derivation must construct a fresh message
+        instead of expecting a second call to see a different store."""
+        if not self._body_bytes_cached:
+            self._body_bytes_cache = self._derive_body_bytes(media_store)
+            self._body_bytes_cached = True
+        return self._body_bytes_cache
+
+    def _derive_body_bytes(self, media_store: Any) -> "BodyBytes | None":
+        meta = self.meta or {}
+        ref = meta.get(CONTENT_REF_META_KEY)
+        if not ref:
+            return None
+        stamped = meta.get(CONTENT_BYTES_META_KEY)
+        if isinstance(stamped, int):
+            return BodyBytes(stamped)
+        if media_store is None:
+            return None
+        _head, found, total_bytes = media_store.read_tool_result_preview(ref, max_bytes=0)
+        return BodyBytes(total_bytes) if found else None
 
     @property
     def text(self) -> str:

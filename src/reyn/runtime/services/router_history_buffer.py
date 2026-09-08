@@ -31,7 +31,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import (
-    CONTENT_BYTES_META_KEY,
     CONTENT_REF_META_KEY,
     SPILL_TARGET_CONTENT_HASH_META_KEY,
     SPILL_TARGET_SEQ_META_KEY,
@@ -93,49 +92,6 @@ def bounded_content_preview(media_store: Any, ref: str, *, max_bytes: int) -> st
         return head
     remaining_mb = (total_bytes - head_bytes) / (1024 * 1024)
     return f"{head}…(+{remaining_mb:.1f} MB)"
-
-
-def resolve_body_bytes(media_store: Any, meta: Any) -> "int | None":
-    """#5973 BLOCKING fix ① (lead-coder review, issuecomment-5578035547):
-    a content_ref row's real body size — from ``CONTENT_BYTES_META_KEY``
-    when present (the fast path, no syscall: every row a PRODUCTION
-    write mints since #5896 carries one), or DERIVED via a stat
-    (:meth:`MediaStore.read_tool_result_preview`'s own
-    ``os.path.getsize``, called with ``max_bytes=0`` — one syscall, no
-    body bytes read) when it is not.
-
-    That fallback is not defensive padding — it is the load-bearing
-    path for the exact population #5973 traces: a ``reyn storage
-    migrate-bodies`` (#5947) migrated row stamps
-    ``CONTENT_REF_META_KEY`` but NEVER ``CONTENT_BYTES_META_KEY``
-    (``history_body_migration.py``'s own migration write never sets it
-    — a pre-#5896 row predates the field, and migration does not
-    retrofit one). Without this fallback, every one of ①②③'s own
-    ``isinstance(body, int)`` checks silently fails for a migrated row,
-    and each of the three degrades differently for the SAME missing
-    fact: ① undercounts (only the ~400-byte shell), ② fails OPEN (no
-    budget check fires at all — the exact unbounded read #5973 exists to
-    close), ③ fails CLOSED (never hydrates, silently under-measuring
-    every migrated candidate's true size). A single owner history is
-    entirely migrated rows — #5973's own real incident is this
-    population, not the freshly-written one every existing test's own
-    write seam (``RouterLoop.feedback`` -> ``persist_feedback``)
-    happens to produce.
-
-    Returns ``None`` only when the ref is absent, ``media_store`` is
-    unset, or the backing file is genuinely missing (``found=False``) —
-    every caller here treats that as "unknown," never "zero": a body of
-    unknown size must never look artificially cheap to a budget."""
-    ref = meta.get(CONTENT_REF_META_KEY) if isinstance(meta, dict) else None
-    if not ref:
-        return None
-    stamped = meta.get(CONTENT_BYTES_META_KEY)
-    if isinstance(stamped, int):
-        return stamped
-    if media_store is None:
-        return None
-    _head, found, total_bytes = media_store.read_tool_result_preview(ref, max_bytes=0)
-    return total_bytes if found else None
 
 
 @dataclass
@@ -1294,11 +1250,11 @@ class RouterHistoryBuffer:
         chronologically; only which refs it is ALLOWED to resolve was
         decided here, first.
 
-        Meta-only: every size comes from :func:`resolve_body_bytes`
-        (the stamped meta field, or a single ``stat`` syscall — never a
-        real read of the body), so this pass costs O(candidates), not
-        O(bytes) — #5960's own question 5 (does the repair make bound-
-        measuring itself unbounded)."""
+        Meta-only: every size comes from :meth:`ChatMessage.body_bytes`
+        (the stamped meta field, or a stat — cached on the message
+        itself, never a real read of the body), so this pass costs
+        O(candidates), not O(bytes) — #5960's own question 5 (does the
+        repair make bound-measuring itself unbounded)."""
         budget = WireMaterializationBudget(cap=cap)
         allowed: "set[str]" = set()
         for m in reversed(turns):
@@ -1312,7 +1268,7 @@ class RouterHistoryBuffer:
                 and ref and not meta.get(SPILLED_META_KEY)
             ):
                 continue
-            body_bytes = resolve_body_bytes(self._media_store, meta)
+            body_bytes = m.body_bytes(self._media_store)
             if body_bytes is not None and budget.reserve(body_bytes):
                 allowed.add(ref)
         return allowed

@@ -4425,12 +4425,10 @@ class Session:
         cap = self._history_resident_config.max_bytes
 
         def _pull_weight(m: ChatMessage) -> int:
-            from reyn.runtime.services.router_history_buffer import resolve_body_bytes
-
             weight = int(m.resident_bytes())
             meta = m.meta or {}
             if meta.get(CONTENT_REF_META_KEY) and not meta.get(SPILLED_META_KEY):
-                body = resolve_body_bytes(self._media_store, meta)
+                body = m.body_bytes(self._media_store)
                 if body is not None:
                     weight += body
             return weight
@@ -4715,7 +4713,6 @@ class Session:
             return
         from reyn.runtime.services.router_history_buffer import (
             WireMaterializationBudget,
-            resolve_body_bytes,
             resolve_history_content,
         )
 
@@ -4727,7 +4724,7 @@ class Session:
             ref = meta.get(CONTENT_REF_META_KEY)
             if not ref or meta.get(SPILLED_META_KEY):
                 continue
-            body_bytes = resolve_body_bytes(self._media_store, meta)
+            body_bytes = m.body_bytes(self._media_store)
             if body_bytes is None or not budget.reserve(body_bytes):
                 continue
             m.content = resolve_history_content(
