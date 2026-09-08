@@ -32,27 +32,33 @@ from typing import Any, Literal, NewType
 #: migration (inline body -> content_ref) let drift apart while both
 #: stayed a bare `int` -- nothing distinguished "how many bytes THIS ROW
 #: occupies while resident" from "how many bytes the BODY that row's ref
-#: points at is". `history_resident.max_bytes` (config/chat.py) counts
-#: the former (`ChatMessage.resident_bytes()`, this file); the file a
-#: `content_ref` names is the latter (`CONTENT_BYTES_META_KEY` below).
-#: Before #5896 a resident row WAS its body, so the two counts were the
-#: SAME number and nothing separated them; after #5896 a resident ref
-#: row can be ~400 bytes while the body it points at is hundreds of MB
-#: -- #5973's own root cause is exactly this: a bound written when the
-#: two currencies coincided kept counting the wrong one once they split.
+#: points at is". `ChatMessage.resident_bytes()` (this file) is the
+#: former; the file a `content_ref` names is the latter
+#: (`CONTENT_BYTES_META_KEY` below). Before #5896 a resident row WAS its
+#: body, so the two counts were the SAME number and nothing separated
+#: them; after #5896 a resident ref row can be ~400 bytes while the body
+#: it points at is hundreds of MB -- #5973's own root cause is exactly
+#: this: a bound written when the two currencies coincided kept counting
+#: the wrong one once they split.
 #:
 #: `NewType` is a STATIC-ONLY distinction (zero runtime cost, zero
 #: runtime enforcement -- both are still plain `int` at execution) that
 #: makes the TWO KINDS OF INT mypy-incompatible with each other: passing
 #: a `BodyBytes` value where a `ResidentBytes` is expected (or the
 #: reverse) is a real `[arg-type]` mypy finding, not merely a naming
-#: convention a reader has to remember to honor. This PR does that
-#: separation ONLY — no bound moves, no counting site changes what it
-#: measures, no behavior changes at all (see
+#: convention a reader has to remember to honor. #5975 did that
+#: separation alone — no bound moved yet, see
 #: `tests/runtime/test_5973_resident_body_bytes_types.py` for the live
-#: mypy witness proving the distinction is enforced, and its own strip:
-#: reverting either `NewType` to a plain alias makes that witness's
-#: deliberately-wrong call type-check clean).
+#: mypy witness proving the distinction is enforced. #5973 ①/②/③ (this
+#: PR) is what actually moves `history_resident.max_bytes`: it now sums
+#: BOTH currencies for a content_ref row (`Session._evict_oldest_
+#: resident_entries`'s own `_pull_weight`, ①) — a bound that only ever
+#: counted `ResidentBytes` bounded nothing once the two currencies split
+#: — and the SAME field doubles as the wire-materialization budget
+#: (`RouterHistoryBuffer._wire_materialization_budget`, ②) and the
+#: recovery-candidate hydration budget (`Session._hydrate_candidates_
+#: under_budget`, ③): one resource, one field, three places that pull a
+#: body in, never three independently-tuned numbers.
 ResidentBytes = NewType("ResidentBytes", int)
 BodyBytes = NewType("BodyBytes", int)
 

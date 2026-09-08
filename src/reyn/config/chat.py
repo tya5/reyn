@@ -556,12 +556,20 @@ class HistoryResidentConfig:
     costs nothing but memory an operator can already afford, while a too-small
     one would make ordinary scrollback/rewind pay for reloads more often than
     necessary.
-    #5973 裁定4: ``ResidentBytes``, not a bare ``int`` — this cap and
-    ``ChatMessage.resident_bytes()`` (the value it is compared against,
-    ``session.py``'s own eviction loop) must stay the SAME currency by
-    construction; see that NewType's own module docstring in
-    ``runtime/chat_message.py`` for why the two counts drifted apart in
-    the first place.
+    #5973 裁定4: ``ResidentBytes``, not a bare ``int`` — the cap's own
+    currency, statically distinct from ``BodyBytes`` (a content_ref row's
+    real body size). #5973 ①/②/③ is what actually widened what this cap
+    bounds: ``Session._evict_oldest_resident_entries`` no longer compares
+    it against ``ChatMessage.resident_bytes()`` ALONE — a content_ref
+    row's own reachable ``BodyBytes`` is added in first (still summed as
+    plain ``int`` at that point; ``ResidentBytes``'s own job is only the
+    cap's declared TYPE, not every intermediate value compared against
+    it). The SAME field also bounds ``RouterHistoryBuffer``'s wire
+    materialization (裁定②) and compaction's own recovery-candidate
+    hydration (裁定③) — one resource, one field. See
+    ``runtime/chat_message.py``'s own module docstring for why the two
+    currencies (resident shell / real body) drifted apart in the first
+    place.
     """
     max_bytes: ResidentBytes = field(
         default=ResidentBytes(256 * 1024 * 1024), metadata={"axis": Axis.BOUNDING},
