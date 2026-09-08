@@ -2449,24 +2449,26 @@ class TextualChatApp(App):
         anywhere else, so skipping it there costs nothing a real
         incident depended on.
 
-        **#5873 follow-up (architect co-vet finding)**: log rotation
-        (``RotatingFileHandler``) renames the path this fd was opened
-        against out from under it on every rollover — unlike a plain
-        churn-and-reuse of the fd NUMBER (the #5877 hazard above, which
-        this worker's self-opened fd is already immune to), a rollover
-        moves the underlying FILE the fd's own inode points at: ``.1``,
-        then ``.2``, and so on, until it is unlinked past
-        ``backup_count`` — permanently, not "one rollover behind" as an
-        earlier version of this docstring claimed (true only before this
-        module could ever rotate). Left unhandled, every dump after the
-        first rollover would write to an ever-more-stale, eventually
-        DELETED generation nobody reads. Each tick therefore compares
-        ``os.stat(path).st_ino`` (the CURRENT file at that path) against
-        ``os.fstat(_dump_fd).st_ino`` (what this fd still points at) —
-        deterministic, cut on the file identity changing, not a clock —
-        and on a mismatch: disarm, close the stale fd, and open a fresh
-        one against the same path before re-arming. A ``stat`` call
-        every :data:`~.loop_probe._TICK_SECONDS` (50 ms) is negligible.
+        **#5873 follow-up (architect co-vet finding), superseded by #5977
+        ② (lead-coder BLOCKING, PR #5988 review)**: this originally
+        guarded against ``RotatingFileHandler`` renaming ``reyn.log`` out
+        from under this fd on every rollover. #5977 ② moved the dump off
+        ``reyn.log`` entirely — the file it now targets
+        (:func:`~reyn.runtime.loop_tripwire.stall_dump_path`) is never
+        rotated by anything reyn drives itself, so THAT specific cause is
+        gone. The CLASS of problem is not: an external cleanup tool or an
+        operator ``rm``-ing ``stall_dump.log`` would still leave this fd
+        armed against an orphaned file — a write against it still
+        SUCCEEDS, silently, so an operator checking the known path reads
+        "no stall happened," not "the dump went somewhere unreachable."
+        Each re-arm therefore still compares ``os.stat(path).st_ino``
+        against the held fd's own inode (now
+        :meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
+        points_at_current_file`, generalized to any external change, not
+        specifically rotation) and reopens on a mismatch before arming —
+        see ``StallDumpArm.rearm``'s own docstring for the current
+        reasoning. A ``stat`` call every :data:`~.loop_probe._TICK_SECONDS`
+        (50 ms) is negligible.
 
         **#5977 ①③ (owner-hit: "ひたすら繰り返されてるよこのログ")**: the
         dead-man's switch above re-armed EVERY tick regardless of whether
@@ -2477,13 +2479,18 @@ class TextualChatApp(App):
         to the very lateness that risks triggering the next one
         (self-amplification). Re-arming is now gated on
         ``LoopTripwire.should_arm_stack_dump()`` — at most one dump per
-        episode, plus a session-total backstop — and ``LoopTripwire.
-        record_stack_dump()`` reports back when a dump actually fired, so
-        the episode-level allowance closes and the session count advances.
-        Reaching the session cap logs an always-visible (never
-        ``REYN_PROF_DUMP``-gated) notice exactly once — see
-        ``stall_dump_cap_reached_log_line``'s own docstring for why
-        silence there would be misread as "no more stalls."
+        episode — and ``LoopTripwire.record_stack_dump()`` reports back
+        when a dump actually fired, closing the episode-level allowance.
+
+        **#5977 ② (same issue, follow-up)**: the dump ALSO no longer
+        lands in ``reyn.log`` at all — real-machine measurement found 49%
+        of the owner's own log was dump lines, pushing older operational
+        lines (potentially a real crash record) out of the retained
+        rotation window. It now goes to its own single, always-overwritten
+        file beside ``reyn.log`` (:func:`~reyn.runtime.loop_tripwire.
+        stall_dump_path`) — see ``StallDumpArm``'s own docstring for the
+        full design and the truncate-timing trap ``mark_fired()`` exists
+        to avoid.
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
@@ -2498,7 +2505,7 @@ class TextualChatApp(App):
             _TRIPWIRE_MS,
             StallDumpArm,
             stall_banner,
-            stall_dump_cap_reached_log_line,
+            stall_dump_path,
             stall_log_line,
             stall_recovered_log_line,
         )
@@ -2509,14 +2516,15 @@ class TextualChatApp(App):
         # "did the loop stall" and "should a stack have been dumped for it"
         # can never disagree about WHERE the line is.
         _STACK_DUMP_SECONDS = _TRIPWIRE_MS / 1000
-        # #5877/#5873, ONE implementation since #5898: this worker's OWN fd,
-        # opened once and held for its whole lifetime, inode-checked and
-        # reopened across a log rotation on every re-arm — see StallDumpArm's
-        # own docstring (the CI-incident paragraph above is the history).
-        # `None` (no FileHandler installed) means this dead-man's switch
-        # never arms at all for this worker's lifetime.
+        # #5877/#5873/#5977 ②, ONE implementation since #5898: this
+        # worker's OWN fd, opened once against its own single dedicated
+        # dump file (never reyn.log — see stall_dump_path's own
+        # docstring) and held for its whole lifetime. `None` (no
+        # FileHandler installed, so no directory to derive a path from)
+        # means this dead-man's switch never arms at all for this
+        # worker's lifetime.
         _stack_dump = StallDumpArm.open(
-            seconds=_STACK_DUMP_SECONDS, log_path=_find_file_handler_path(),
+            seconds=_STACK_DUMP_SECONDS, path=stall_dump_path(_find_file_handler_path()),
             logger=logger, label="textual chat",
         )
 
@@ -2580,18 +2588,15 @@ class TextualChatApp(App):
                     # makes internally, never a readback of faulthandler's
                     # (nonexistent) fired state.
                     stack_dumped = lateness_ms > _TRIPWIRE_MS
-                    if stack_dumped and self._loop_tripwire.record_stack_dump():
-                        # #5977 ③: always-visible, never gated behind
-                        # REYN_PROF_DUMP — same reasoning as the recovery
-                        # notice below (silence here would read as "no more
-                        # stalls," not "stopped recording them").
-                        logger.warning(
-                            "textual chat: %s",
-                            stall_dump_cap_reached_log_line(
-                                self._loop_tripwire.session_dump_count,
-                                self._loop_tripwire.session_dump_cap,
-                            ),
-                        )
+                    if stack_dumped:
+                        self._loop_tripwire.record_stack_dump()
+                        if _stack_dump is not None:
+                            # #5977 ②: truncate + reopen for the NEXT
+                            # episode NOW, right after observing this fire
+                            # — never on an ordinary re-arm (StallDumpArm.
+                            # mark_fired's own docstring: the
+                            # truncate-timing trap).
+                            _stack_dump.mark_fired()
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()

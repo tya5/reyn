@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -94,32 +93,26 @@ async def test_watch_event_loop_does_not_repeat_a_still_ongoing_stall() -> None:
     assert recovered == [True]
 
 
-def test_stall_dump_arm_needs_a_log_path_and_survives_a_rotation(tmp_path: Path) -> None:
-    """Tier 2: no ``FileHandler`` path → no arm at all (#5877: a dump with
-    no stable destination is never attempted). With one: ``rearm`` arms
-    against the arm's OWN fd; after a log rotation (the file renamed
-    away, a new one at the same path — what ``RotatingFileHandler``
-    does) the arm no longer points at the current file, and the next
-    ``rearm`` reopens so it does again (#5873). Strip-falsify: drop the
-    inode check in ``rearm`` → ``points_at`` stays False after the
-    rotation → red."""
-    log = logging.getLogger("test_5898_stall_dump_arm")
-    assert StallDumpArm.open(seconds=0.25, log_path=None, logger=log, label="t") is None
+def test_stall_dump_arm_needs_a_path_and_arms_against_its_own_fd(tmp_path: Path) -> None:
+    """Tier 2: no path → no arm at all (#5877: a dump with no stable
+    destination is never attempted). With one: ``rearm`` arms against the
+    arm's own fd, and stays armed across repeated calls.
 
-    path = tmp_path / "reyn.log"
-    path.write_text("", encoding="utf-8")
-    arm = StallDumpArm.open(seconds=60.0, log_path=str(path), logger=log, label="t")
+    #5977 ②: the dump's OWN dedicated file is never externally rotated
+    (unlike the pre-②  design, which dumped into ``reyn.log`` and had to
+    survive ``RotatingFileHandler``'s own rollover — see
+    ``tests/runtime/test_5977_stall_dump_suppression.py`` for the
+    truncate-for-the-next-episode behaviour that replaced that rotation
+    handling)."""
+    log = logging.getLogger("test_5898_stall_dump_arm")
+    assert StallDumpArm.open(seconds=0.25, path=None, logger=log, label="t") is None
+
+    path = tmp_path / "stall_dump.log"
+    arm = StallDumpArm.open(seconds=60.0, path=str(path), logger=log, label="t")
     assert arm is not None
     try:
         assert arm.rearm() is True
-        assert arm.points_at(str(path))
-
-        os.rename(path, tmp_path / "reyn.log.1")
-        path.write_text("", encoding="utf-8")
-        assert not arm.points_at(str(path)), "test setup sanity: the rotation moved the file"
-
-        assert arm.rearm() is True
-        assert arm.points_at(str(path)), "rearm must reopen against the CURRENT file"
+        assert arm.rearm() is True, "repeated re-arms against the same fd must keep succeeding"
     finally:
         arm.close()
     assert arm.armed is False
