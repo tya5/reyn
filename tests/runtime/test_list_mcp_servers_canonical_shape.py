@@ -82,6 +82,7 @@ def test_end_to_end_list_mcp_servers_matches_conversation_and_llm_text(tmp_path)
         # EventLog (production wiring) — out of scope, same reason as above.
         tool_catalog=catalog, events=session._audit_events,
         contextual=None,  # #5841: no narrowing in play for this test
+        tool_call_id=None,  # #5891 (c): required field, this test doesn't need one
     )
 
     async def _dispatch():

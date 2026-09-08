@@ -65,23 +65,51 @@ class DispatchContext:
             reader reconstructs identically, is one of four faces, and one
             skipped face goes unnoticed — not an invariant to key UI structure
             on).
-        tool_call_id: #5891 (c), architect ruling — the SAME `tc["id"]` the
-            router's own `{role: tool, tool_call_id: ...}` feedback message
-            and history row already carry (RouterLoop.feedback,
-            chat_message.py's ChatMessage.tool_call_id). `call_id` above
-            identifies the litellm ROUND (shared by every tool_calls
-            entry in it); this identifies ONE call within that round —
-            architect's own correction of the original #5891 ruling
-            ("audit event と history row は既に同じ ref を持つ" was
-            false: `call_id` alone is 1-to-many when a round calls the
-            SAME tool twice, so it cannot join `tool_returned` to the ONE
-            history row a reader wants). None for any caller with no
-            litellm tool_calls entry behind this dispatch at all — CodeAct
-            snippet `tool()` calls, `/exec`/`/tasks` slash commands
-            (`caller_kind="operator"`), and pipeline `tool:` steps
-            (`caller_kind="pipeline"`) — never a minted placeholder, the
-            same "byte-identical until threaded through" contract
-            `call_id` already established.
+        tool_call_id: #5891 (c), architect ruling (corrected twice — see
+            below) — the SAME `tc["id"]` the router's own `{role: tool,
+            tool_call_id: ...}` feedback message and history row already
+            carry (RouterLoop.feedback, chat_message.py's ChatMessage.
+            tool_call_id). `call_id` above identifies the litellm ROUND
+            (shared by every tool_calls entry in it); this identifies ONE
+            call within that round — architect's own correction of the
+            ORIGINAL #5891 ruling ("audit event と history row は既に同
+            じ ref を持つ" was false: `call_id` alone is 1-to-many when a
+            round calls the SAME tool twice, so it cannot join
+            `tool_returned` to the ONE history row a reader wants).
+
+            REQUIRED, no default (lead-coder BLOCKING + architect's
+            SECOND correction, same PR): every caller must pass this
+            EXPLICITLY — a real id, or `None` for a caller with no real
+            litellm tool_calls entry behind this dispatch at all (CodeAct
+            `tool()`, `/exec`/`/tasks` slash, a pipeline `tool:` step).
+            The first fix gave this a `None` default plus a
+            `tool_call_id_absent_reason` field naming `caller_kind` to
+            explain a `None` — rejected: `caller_kind` cannot actually
+            distinguish "no id to give" from "one was dropped in transit",
+            since a CodeAct in-snippet `tool()` call has the SAME
+            `caller_kind="router"` an Execute-round tool_calls dispatch
+            does (same `_dispatch_resolved` construction site — the field
+            names the LOOP, not whether a litellm round backs THIS call).
+            `absent_reason: "router"` therefore repeated information the
+            event already carried (`caller_kind` itself) while claiming to
+            explain something it could not — a reason field that adds no
+            fact should not exist (#5960's own "hydrate" flip is the same
+            shape: a silently-defaultable value let a forgotten thread-
+            through pass as a declared choice; removing the default makes
+            omission a `TypeError`, so `None` is now ALWAYS the caller's
+            own declaration, self-describing with no reason field needed).
+
+            "Which caller_kinds normally carry an id" is deliberately
+            NEVER written down as a table (#5959/#5967's own "derive the
+            population, don't curate a list" ruling, closed here a third
+            way): `caller_kind` provably cannot answer that question (the
+            CodeAct counterexample above), so there is no population to
+            enumerate in the first place. The claim "router callers have
+            an id" is instead read off REAL DATA, not a declaration: a
+            census of emitted events for `tool_returned` rows with
+            `caller_kind="router"` and `tool_call_id: null` — see
+            `tests/runtime/test_5891_tool_call_id_history_join.py`'s own
+            census test.
         completed_response_include_text: #4666 item ③b — mirrors
             ``audit_events.completed_response_include_text`` (②). Governs
             any declared tool field whose content class is "assistant"
@@ -116,8 +144,8 @@ class DispatchContext:
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
     contextual: "ContextualPermission | None"
+    tool_call_id: str | None  # REQUIRED, no default -- see the docstring above
     call_id: str | None = None
-    tool_call_id: str | None = None
     completed_response_include_text: bool = False
     user_input_include_text: bool = False
 
@@ -173,8 +201,8 @@ async def dispatch_tool(
     Events emitted (via ctx.events.emit):
         - tool_called (caller_kind, caller_id, tool, chain_id, call_id, args, args_hash)
         - tool_returned (caller_kind, caller_id, tool, chain_id, call_id, result,
-          args_hash, tool_call_id, tool_call_id_absent_reason -- #5891 (c), see
-          below)
+          args_hash, tool_call_id -- #5891 (c), see ctx.tool_call_id's own
+          docstring above)
             on success.
         - tool_failed (caller_kind, caller_id, tool, chain_id, call_id, error_kind, message)
             on error.
@@ -360,27 +388,22 @@ async def dispatch_tool(
     # dispatch_tool hands back to the caller/LLM) is NEVER redacted —
     # only the copy that reaches the audit-event.
     #
-    # #5891 (c), architect ruling: `tool_call_id` (not `call_id`, which
+    # #5891 (c), architect ruling (corrected twice, see DispatchContext.
+    # tool_call_id's own docstring): `tool_call_id` (not `call_id`, which
     # only identifies the litellm ROUND, 1-to-many when a round calls the
     # SAME tool twice) is the key a reader joins this event to the ONE
     # history row `RouterLoop.feedback` wrote for THIS call (same
     # `tc["id"]`, ChatMessage.tool_call_id) -> that row's own
-    # `content_ref`, with no new write. `tool_call_id` itself is NEVER
-    # omitted (a missing key and "the caller forgot to thread the id
-    # through" would be the SAME observation) — `None` for a caller with
-    # no litellm tool_calls entry behind this dispatch at all (CodeAct
-    # `tool()`, `/exec`/`/tasks` slash, a pipeline `tool:` step).
-    # `tool_call_id_absent_reason` is added ONLY in that `None` case,
-    # naming `caller_kind` — "the caller doesn't have one" and "it was
-    # forgotten" must never read as the same silence, the same discipline
-    # `_persist_tool_returned`'s own `content_ref_unavailable` uses one
-    # layer down (#5891, #5936), applied here as an only-when-needed
-    # sibling field rather than an always-set one since (unlike that
-    # field) whether an id exists varies per call, not per PR stage.
-    _extra = (
-        {} if ctx.tool_call_id is not None
-        else {"tool_call_id_absent_reason": ctx.caller_kind}
-    )
+    # `content_ref`, with no new write. `tool_call_id` is NEVER omitted
+    # (a missing key and "the caller forgot to thread the id through"
+    # would be the SAME observation) — `ctx.tool_call_id` is a REQUIRED
+    # field with no default, so `None` here is always the caller's own
+    # DECLARED absence (CodeAct `tool()`, `/exec`/`/tasks` slash, a
+    # pipeline `tool:` step), never an accidentally-omitted one; no
+    # sibling "reason" field exists because there is nothing left for one
+    # to explain (the first fix's `tool_call_id_absent_reason: caller_
+    # kind` repeated information the event already carries and was
+    # rejected for it).
     ctx.events.emit(
         "tool_returned",
         caller_kind=ctx.caller_kind,
@@ -391,7 +414,6 @@ async def dispatch_tool(
         args_hash=args_hash,
         result=_redact_content_fields(name, result, ctx),
         tool_call_id=ctx.tool_call_id,
-        **_extra,
     )
     return {"status": "ok", "data": result}
 

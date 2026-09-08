@@ -1,9 +1,9 @@
 """Tier 2: `tool_returned`'s `tool_call_id` field (#5891 (c), architect
-ruling) — the ONE tool call's own `tc["id"]`, distinct from `call_id`
-(which only identifies the litellm ROUND, shared by every `tool_calls`
-entry in it).
+ruling, corrected twice) — the ONE tool call's own `tc["id"]`, distinct
+from `call_id` (which only identifies the litellm ROUND, shared by every
+`tool_calls` entry in it).
 
-## Why this exists (architect's own correction)
+## Why this exists (architect's first correction)
 
 The original #5891 design ("audit event carries an excerpt/hash, the
 history row already has a `content_ref`, a reader can JOIN the two on
@@ -18,17 +18,35 @@ key that actually disambiguates them, with no new storage — see
 `tests/runtime/test_5891_tool_call_id_history_join.py` for the join
 witness through both real halves.
 
-These tests pin the dispatcher-level half only: the field is present and
-distinct across two calls, and a caller with no litellm tool_calls entry
-at all (the DispatchContext default) gets `tool_call_id: None` plus a
-NAMED absence reason — never a silently omitted key, which would make
-"the caller doesn't have one" indistinguishable from "it was forgotten"
-(the same discipline `_persist_tool_returned`'s own
-`content_ref_unavailable` already uses one layer down, #5936)."""
+## Why there is no `tool_call_id_absent_reason` field (architect's SECOND
+## correction, lead-coder BLOCKING on PR #5970)
+
+The first fix gave `tool_call_id` a `None` default and added a sibling
+`tool_call_id_absent_reason` naming `caller_kind` to explain a `None`.
+Rejected: `caller_kind` cannot actually distinguish "no id to give" from
+"one was dropped in transit", because a CodeAct in-snippet `tool()` call
+has the SAME `caller_kind="router"` an Execute-round tool_calls dispatch
+does — the reason field repeated information the event already carried
+(`caller_kind` itself) while claiming to explain something it could not.
+
+The fix instead: `tool_call_id` is a REQUIRED keyword-only field, no
+default (the SAME shape #5960's `hydrate` flip and `DispatchContext.
+contextual` already use — `test_dispatcher.py`'s own `test_dispatch_
+context_construction_without_contextual_raises_type_error` is the
+precedent this mirrors). Omitting it is a real Python `TypeError`, not a
+silent default, so `tool_call_id: None` in an emitted event is now
+ALWAYS the caller's own DECLARATION of absence — self-describing, no
+reason field needed. These tests pin the dispatcher-level half only (the
+key is never omitted either way, present or absent); the "which
+caller_kinds normally carry one" claim is answered by a CENSUS of real
+data, not a curated table — see `tests/runtime/test_5891_tool_call_id_
+history_join.py`'s own census test."""
 from __future__ import annotations
 
 import asyncio
 from typing import Any
+
+import pytest
 
 from reyn.core.dispatch import DispatchContext, dispatch_tool
 
@@ -43,7 +61,7 @@ class _FakeEventEmitter:
         self.events.append((event_type, data))
 
 
-def _make_ctx(*, tool_call_id: "str | None" = None) -> "tuple[DispatchContext, _FakeEventEmitter]":
+def _make_ctx(*, tool_call_id: "str | None") -> "tuple[DispatchContext, _FakeEventEmitter]":
     ev = _FakeEventEmitter()
     return (
         DispatchContext(
@@ -77,8 +95,8 @@ def test_tool_call_id_reaches_the_tool_returned_event():
         (returned,) = _tool_returned_events(ev)
         assert returned["tool_call_id"] == "call_abc123"
         assert "tool_call_id_absent_reason" not in returned, (
-            "the reason field must be ABSENT (not even present as None) "
-            "when a real id was supplied -- only the None case adds it"
+            "no reason field exists any more -- tool_call_id being a "
+            "required field is what makes one unnecessary"
         )
     asyncio.run(main())
 
@@ -124,36 +142,42 @@ def test_two_calls_in_one_round_get_distinct_tool_call_ids():
     asyncio.run(main())
 
 
-def test_absent_tool_call_id_is_null_with_a_named_reason_not_omitted():
-    """Tier 2: LOAD-BEARING — a caller with no litellm tool_calls entry at
-    all (CodeAct `tool()`, `/exec`/`/tasks` slash, a pipeline `tool:`
-    step — modeled here by simply not threading one, the
-    `DispatchContext` default) gets `tool_call_id: None` PLUS
-    `tool_call_id_absent_reason` naming `caller_kind` — the key is never
-    silently dropped, which would make "no id to give" indistinguishable
-    from "a real id was forgotten"."""
-    async def main():
-        ctx, ev = _make_ctx(tool_call_id=None)
-        await dispatch_tool(name="echo", args={}, ctx=ctx, invoker=_echo_invoker)
-        (returned,) = _tool_returned_events(ev)
-        assert "tool_call_id" in returned, "the key must never be omitted"
-        assert returned["tool_call_id"] is None
-        assert returned["tool_call_id_absent_reason"] == "router"
-    asyncio.run(main())
-
-
-def test_operator_caller_kind_absence_reason_names_operator():
-    """Tier 2: accept-side variety for the absence reason — a slash-driven
-    operator call (no litellm round behind it at all, `caller_kind=
-    "operator"`) names ITS OWN caller_kind, not a hardcoded "router"."""
+def test_a_caller_that_has_no_id_declares_none_explicitly():
+    """Tier 2: a caller with no litellm tool_calls entry at all (CodeAct
+    `tool()`, `/exec`/`/tasks` slash, a pipeline `tool:` step — modeled
+    here by an operator-kind caller, one of the real such shapes)
+    DECLARES `tool_call_id=None` explicitly. The event still carries the
+    key (never omitted -- `None` is a real, meaningful value, distinct
+    from "no key at all"), and there is no sibling reason field: the
+    None itself, on a required field, already IS the declaration."""
     async def main():
         ev = _FakeEventEmitter()
         ctx = DispatchContext(
             caller_kind="operator", caller_id="cli", chain_id=None,
             tool_catalog=_CATALOG, events=ev, contextual=None,
+            tool_call_id=None,
         )
         await dispatch_tool(name="echo", args={}, ctx=ctx, invoker=_echo_invoker)
         (returned,) = _tool_returned_events(ev)
+        assert "tool_call_id" in returned, "the key must never be omitted"
         assert returned["tool_call_id"] is None
-        assert returned["tool_call_id_absent_reason"] == "operator"
+        assert "tool_call_id_absent_reason" not in returned
     asyncio.run(main())
+
+
+def test_omitting_tool_call_id_raises_type_error_not_a_silent_default():
+    """Tier 2: LOAD-BEARING — the structural guarantee itself. Omitting
+    `tool_call_id` at DispatchContext construction is a real TypeError
+    (no default exists to silently fall back to), so a caller can no
+    longer "forget" to declare absence -- every `tool_call_id: None` an
+    event ever carries was a deliberate choice, never an accident.
+    strip: give `tool_call_id` a `None` default back in dispatcher.py --
+    this construction stops raising (see test_dispatcher.py's own
+    dedicated field-introspection test for the fuller version of this
+    witness, mirroring `contextual`'s identical precedent)."""
+    with pytest.raises(TypeError):
+        DispatchContext(
+            caller_kind="router", caller_id="test_agent", chain_id="c1",
+            tool_catalog=_CATALOG, events=_FakeEventEmitter(), contextual=None,
+            # tool_call_id= deliberately omitted
+        )

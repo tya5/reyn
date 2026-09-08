@@ -185,7 +185,10 @@ async def test_a_caller_with_no_tool_call_id_still_produces_a_valid_history_row(
         caller_kind="operator", caller_id=session.agent_name, chain_id=None,
         tool_catalog={"mcp": {"function": {"name": "mcp"}}},
         events=session.router_host.events, contextual=None,
-        # tool_call_id deliberately omitted -- an /exec-shaped caller.
+        # tool_call_id is a REQUIRED field (#5891 (c), no default) --
+        # None here is this /exec-shaped caller's own DECLARED absence,
+        # never an accidental omission.
+        tool_call_id=None,
     )
     result = await dispatch_tool(name="mcp", args={}, ctx=ctx, invoker=_invoker)
     result.setdefault("_canonical_source", "mcp")
@@ -193,7 +196,10 @@ async def test_a_caller_with_no_tool_call_id_still_produces_a_valid_history_row(
     await settle(session)
     (returned,) = [e for e in collected if e.type == "tool_returned"]
     assert returned.data["tool_call_id"] is None
-    assert returned.data["tool_call_id_absent_reason"] == "operator"
+    assert "tool_call_id_absent_reason" not in returned.data, (
+        "no reason field exists any more -- the required-field contract "
+        "makes one unnecessary (architect's second correction)"
+    )
 
     from reyn.tools.scheme import ExecutionResult
 

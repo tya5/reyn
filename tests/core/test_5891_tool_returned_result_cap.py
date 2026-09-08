@@ -256,6 +256,7 @@ def test_excerpt_reflects_the_post_redaction_payload_dispatch_tool_hands_backend
                 tool_catalog=catalog,
                 events=events,
                 contextual=None,
+                tool_call_id=None,  # #5891 (c): required field, this test doesn't need one
                 user_input_include_text=False,
             )
 

@@ -24,6 +24,7 @@ def make_ctx(
     caller_id: str = "test_agent",
     chain_id: str | None = "c1",
     call_id: str | None = None,
+    tool_call_id: str | None = None,
     catalog: dict | None = None,
     events: FakeEventEmitter | None = None,
     contextual: "object | None" = None,
@@ -40,6 +41,12 @@ def make_ctx(
             # real ContextualPermission to exercise the restrict check.
             contextual=contextual,
             call_id=call_id,
+            # #5891 (c): DispatchContext.tool_call_id is a required field
+            # (no default) -- this helper's own default of None keeps
+            # every existing call site here byte-identical (none of them
+            # care about tool_call_id), while still declaring it
+            # explicitly at the one place that matters.
+            tool_call_id=tool_call_id,
         ),
         e,
     )
@@ -734,10 +741,41 @@ def test_dispatch_context_construction_without_contextual_raises_type_error():
             chain_id="c1",
             tool_catalog={},
             events=FakeEventEmitter(),
+            tool_call_id=None,
             # contextual= deliberately omitted
         )
     # Control: the field really is declared, with no default -- so the
     # TypeError above is this field's absence, not an unrelated one.
     field = next(f for f in dataclasses.fields(DispatchContext) if f.name == "contextual")
+    assert field.default is dataclasses.MISSING
+    assert field.default_factory is dataclasses.MISSING
+
+
+def test_dispatch_context_construction_without_tool_call_id_raises_type_error():
+    """Tier 2: LOAD-BEARING (#5891 (c), architect's SECOND correction) --
+    `tool_call_id` is a REQUIRED field, no default, the same shape
+    `contextual` already has (test above) and the SAME discipline #5960's
+    `hydrate` flip established: a caller that forgets to pass it fails
+    LOUDLY at construction (a real TypeError), never silently defaults to
+    `None` and gets treated as a declared absence it never actually
+    declared. strip: give `tool_call_id` a `None` default back -- this
+    construction stops raising."""
+    import dataclasses
+
+    import pytest as _pytest
+
+    with _pytest.raises(TypeError):
+        DispatchContext(
+            caller_kind="router",
+            caller_id="test_agent",
+            chain_id="c1",
+            tool_catalog={},
+            events=FakeEventEmitter(),
+            contextual=None,
+            # tool_call_id= deliberately omitted
+        )
+    # Control: the field really is declared, with no default -- so the
+    # TypeError above is this field's absence, not an unrelated one.
+    field = next(f for f in dataclasses.fields(DispatchContext) if f.name == "tool_call_id")
     assert field.default is dataclasses.MISSING
     assert field.default_factory is dataclasses.MISSING

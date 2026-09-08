@@ -3613,7 +3613,7 @@ class RouterLoop:
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
-        tool_call_id: "str | None" = None,
+        tool_call_id: "str | None",
     ) -> dict:
         """#1593: dispatch a resolved tool call via the OS substrate
         (DispatchContext / ``dispatch_tool`` — P5). #5854: "resolved" no
@@ -3972,16 +3972,20 @@ class RouterLoop:
         ``tool_call_id`` (#5891 (c)): read from each action's own ``"tc"``
         entry (the raw tool_calls dict, set by this method's own caller —
         see the ``actions.append({"tc": tc, ...})`` builder above), the
-        SAME ``.get()``-defaulting posture ``raw_name`` already uses —
-        a caller that hand-builds an action dict without a ``"tc"`` key
-        (a test double, most measured instance:
-        ``test_serial_tool_dispatch_2344.py``) degrades to ``None``
-        (absent), never a ``KeyError``."""
+        REQUIRES a real ``"tc"`` entry on every action (`DispatchContext.
+        tool_call_id` is itself a required field, no default — #5891 (c):
+        a caller that silently degraded here would just move the same
+        "forgot to thread it through" defect one call frame up). Every
+        production caller of ``dispatch()`` builds ``actions`` via the
+        ``actions.append({"tc": tc, ...})`` line above, so this is never
+        missing in real use; ``test_serial_tool_dispatch_2344.py`` (this
+        method's only hand-built-action caller) now seeds a synthetic
+        ``"tc"`` on every fixture action for exactly this reason."""
         results: list[dict] = []
         for a in actions:
             results.append(await self._dispatch_resolved(
                 a["name"], a["args"], raw_name=a.get("raw_name"), call_id=call_id,
-                tool_call_id=(a.get("tc") or {}).get("id"),
+                tool_call_id=a["tc"]["id"],
             ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
@@ -4601,7 +4605,13 @@ class RouterLoop:
             # ``tool_excluded`` result from dispatch_tool's 2b — so this
             # closure no longer needs its own pre-check + emit for that
             # outcome, symmetric with the Execute arm above.
-            return await self._dispatch_resolved(name, args, call_id=call_id)
+            # #5891 (c): tool_call_id is a REQUIRED DispatchContext field
+            # (no default) -- explicit None here is CodeAct's own declared
+            # absence (an in-snippet tool() call has no litellm tool_calls
+            # entry at all), never an accidentally-omitted one.
+            return await self._dispatch_resolved(
+                name, args, call_id=call_id, tool_call_id=None,
+            )
 
         # CodeAct-safe default policy (operator-overridable in S4 via the host's
         # configured sandbox policy); the backend auto-selects per platform and the
