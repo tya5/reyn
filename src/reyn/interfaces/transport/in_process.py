@@ -40,8 +40,7 @@ from reyn.interfaces.transport.frames import (
     DisplayFrame,
     EventFrame,
     Frame,
-    QueueSnapshot,
-    StatusApplied,
+    FrameTag,
     forwarded_frame_kinds,
 )
 
@@ -156,33 +155,11 @@ class InProcessTransport(ClientTransport):
         while True:
             item = await outbox.get()
             if isinstance(item, EventFrame):
-                is_barrier = item.event.type == "session_attached"
-                if is_barrier:
+                if item.event.type == "session_attached":
                     current_agent = item.event.data.get("agent", current_agent)
                 if item.agent is None:
                     item = replace(item, agent=current_agent)
                 self._frames.put_nowait(item)
-                if is_barrier:
-                    # #5895 (architect ruling): the LOCAL hydration point.
-                    # Right behind every ``session_attached`` barrier —
-                    # the first attach and every switch alike — one
-                    # ``StatusApplied(kind="snapshot")`` carrying the newly
-                    # attached session's queue values, read from the SAME
-                    # builder the local read model uses (``status.
-                    # _snapshot``), at this instant. The app's sent-queue
-                    # gate seeds from this frame and from nothing else, so
-                    # the seed point is ONE regardless of transport: "the
-                    # pump processed a snapshot frame". This replaced the
-                    # app's own mount-time seed and its switch-time reseed
-                    # (both read the read model live — the #5886 defect
-                    # in a narrower window). A remote connection gets the
-                    # equivalent frame from ``agui/client.py`` at decode.
-                    from reyn.interfaces.repl.status import _snapshot
-
-                    self._frames.put_nowait(StatusApplied(
-                        kind="snapshot",
-                        snapshot=QueueSnapshot.from_status(_snapshot(self._registry)),
-                    ))
                 continue
             self._frames.put_nowait(DisplayFrame(item, agent=current_agent))
             if item.kind == "__end__":
@@ -212,12 +189,7 @@ class InProcessTransport(ClientTransport):
             # can ever straddle ``__end__``.
             await suspend_between_frames()
             yield frame
-            # #5895: this stream now also carries ``StatusApplied`` (the
-            # snapshot frame behind every ``session_attached`` barrier),
-            # which has no ``.tag`` — exactly the hazard frames.py's own
-            # module contract names for any new non-``Frame`` item. Check
-            # the type BEFORE touching ``.tag``, as every consumer must.
-            if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
+            if frame.tag is FrameTag.DISPLAY and frame.message.kind == "__end__":
                 return
 
     # -- send side ----------------------------------------------------------

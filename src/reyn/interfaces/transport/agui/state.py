@@ -391,20 +391,6 @@ class RemoteQueueView:
         """The current queue view, insertion order."""
         return list(self.items.values())
 
-    def baseline_seq(self) -> int:
-        """The seq-gate's current baseline — the highest ``seq`` this view
-        has applied, i.e. the value every incoming delta is compared
-        against (#5886).
-
-        Public because the invariant that matters is about this number and
-        nothing else: **only a snapshot may move it.** A delta advancing
-        the baseline is exactly the defect #5886 reports (the client's read
-        model runs ahead of the pump, so a delta-derived baseline measures
-        frames the pump has not processed yet), and an invariant nobody can
-        read is an invariant nobody can test — its absence here was itself
-        the finding the architect's own acceptance list named."""
-        return self._last_seq
-
 
 def reguard_nodes(nodes: "list[dict]", *, surface: str = "terminal") -> list[dict]:
     """Re-run the surface neutralizer over every leaf string in render nodes (A5).

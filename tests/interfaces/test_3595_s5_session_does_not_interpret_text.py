@@ -339,11 +339,12 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
     (the Composer's production entry) over a real ``ClientTransport``. Paired
     with the same negative: bare text still goes to ``submit_user_text``.
 
-    #5907 ①: both a command's run unit and a bare line's ``submit_user_
-    text`` round-trip go through the app's single-in-flight wire FIFO (a
-    Textual worker) — so the app must be running, and each effect is waited
-    on as a CONDITION (unbounded; CI's ``--timeout`` is the kill switch),
-    never asserted at the instant ``_submit`` returns.
+    #5894 ①-2: the slash layer runs synchronously on the handler (its answer
+    is on screen when ``_submit`` returns — asserted right after the call),
+    while a bare line's ``submit_user_text`` round-trip runs on a Textual
+    worker — so the app must be running, and the inbox is waited on as a
+    CONDITION (unbounded; CI's ``--timeout`` is the kill switch), never
+    asserted at the instant ``_submit`` returns.
     """
     import asyncio
 
@@ -369,10 +370,6 @@ async def test_the_tui_runs_a_command_without_submitting_it_as_a_turn(
 
     async with app.run_test(size=(100, 30)) as pilot:
         await app._submit("/help", local_id="local:test-help")
-        # #5907 ①: the run unit goes through the app's wire FIFO worker —
-        # its output is waited for as a condition (CI's --timeout is the red).
-        while "Slash commands:" not in transport.system_text():
-            await pilot.pause()
         assert "Slash commands:" in transport.system_text(), (
             "the TUI did not run /help as a command; _submit is not going through "
             f"the shared client-side slash layer. shown={transport.texts()!r}"

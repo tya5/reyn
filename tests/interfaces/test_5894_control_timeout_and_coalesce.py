@@ -77,8 +77,8 @@ def _url(server) -> str:
 @pytest.mark.asyncio
 async def test_a_control_post_against_a_silent_server_is_a_non_delivery_after_t():
     """Tier 2: the accept side of ①-1. With T supplied, a POST the server
-    never answers returns a falsy ``not_delivered`` outcome (#5907 ②)
-    instead of waiting forever — and the client it went through still carries the stream's
+    never answers returns ``None`` (non-delivery) instead of waiting
+    forever — and the client it went through still carries the stream's
     ``read=None``, so the stream's policy was not the one that ended it."""
     hold = asyncio.Event()
     server = await _silent_server(hold)
@@ -88,10 +88,7 @@ async def test_a_control_post_against_a_silent_server_is_a_non_delivery_after_t(
                 client, _url(server), params={}, payload={"type": "cancel_inflight"},
                 timeout_s=_T,
             )
-            # #5907 ②: typed — a non-delivery, falsy, naming its cause and T.
-            assert not result and result.kind == "not_delivered", (
-                f"a silent server was read as an accept: {result!r}"
-            )
+            assert result is None, f"a silent server was read as an accept: {result!r}"
             assert client.timeout.read is None, (
                 "the control timeout leaked into the client's default — the SSE "
                 f"stream would now time out too: {client.timeout!r}"
@@ -105,9 +102,9 @@ async def test_a_control_post_against_a_silent_server_is_a_non_delivery_after_t(
 @pytest.mark.asyncio
 async def test_a_control_post_the_server_answers_is_an_accept():
     """Tier 2: the discriminating control — the same call against a server
-    that answers returns a delivered outcome carrying the parsed body, so
-    the non-delivery above is the timeout's doing and not ``post_control``
-    failing everything."""
+    that answers returns the parsed body, so the ``None`` above is the
+    timeout's doing and not ``post_control`` returning ``None`` for
+    everything."""
     server = await _answering_server(b'{"msg_id": "m1"}')
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as client:
@@ -115,7 +112,7 @@ async def test_a_control_post_the_server_answers_is_an_accept():
                 client, _url(server), params={}, payload={"type": "cancel_inflight"},
                 timeout_s=_T,
             )
-            assert result and result.kind == "delivered" and result.payload == {"msg_id": "m1"}
+            assert result == {"msg_id": "m1"}
     finally:
         server.close()
         await server.wait_closed()

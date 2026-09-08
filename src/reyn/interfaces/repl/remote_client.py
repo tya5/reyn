@@ -24,8 +24,6 @@ import time
 import uuid
 from typing import AsyncIterator
 
-from reyn.interfaces.transport.control_outcome import ControlOutcome
-
 logger = logging.getLogger(__name__)
 
 
@@ -65,20 +63,19 @@ _CONTROL_TIMEOUT_S = _env_float("REYN_AGUI_CONTROL_TIMEOUT_S", 10.0)
 async def post_control(
     client, url: str, *, params: dict, payload: dict,
     timeout_s: "float | None" = None,
-) -> "ControlOutcome":
+) -> "dict | None":
     """POST one client→server control message with the CONTROL timeout
-    policy (#5894 ①-1) and return the TYPED outcome (#5907 ②):
-    :class:`ControlOutcome` — ``delivered(payload)`` on a 2xx, ``refused``
-    on ≥300 (the server's own reason), ``not_delivered`` when the request
-    raised (the control read timeout, a connect error …).
+    policy (#5894 ①-1) and return the parsed JSON body on a 2xx accept,
+    ``None`` on a non-delivery.
 
     This is the whole policy in one place: ``timeout_s`` (default
     :data:`_CONTROL_TIMEOUT_S`) bounds the read; the ``client`` passed in
     keeps its OWN default (``read=None``, the SSE stream's) untouched — one
-    client, two request kinds, two policies. A 2xx whose body is empty /
-    not JSON is still delivered, with a truthy ``{"status": "ok"}`` payload,
-    so every ``if accepted:`` caller keeps the old bool contract — the
-    outcome itself is truthy iff delivered.
+    client, two request kinds, two policies. A non-delivery is any of: the
+    request raised (timeout, connect error, ...), or the server answered
+    ≥300. A 2xx whose body is empty / not JSON is still an accept and reads
+    as a truthy ``{"status": "ok"}``, so every ``if accepted:`` caller keeps
+    the old bool contract.
 
     ``timeout_s`` is a parameter so a test can supply T — it is the subject
     there, never a wait the test sits out.
@@ -91,21 +88,15 @@ async def post_control(
             url, params=params, json=payload,
             timeout=httpx.Timeout(read_timeout, connect=10.0),
         )
-    except Exception as exc:  # noqa: BLE001 — a transport error is a non-delivery
-        logger.warning("remote send failed for %r: %s", payload.get("type"), type(exc).__name__)
-        return ControlOutcome.not_delivered(type(exc).__name__, read_timeout)
+    except Exception:  # noqa: BLE001 — a transport error is a non-delivery
+        logger.warning("remote send failed for %r", payload.get("type"))
+        return None
     if resp.status_code >= 300:
-        reason: "str | None"
-        try:
-            body = resp.json()
-            reason = str(body.get("detail") or body.get("error") or body) if isinstance(body, dict) else str(body)
-        except Exception:  # noqa: BLE001 — a non-JSON refusal still has a status
-            reason = (resp.text or "").strip() or None
-        return ControlOutcome.refused(resp.status_code, reason)
+        return None
     try:
-        return ControlOutcome.delivered(resp.json())
+        return resp.json()
     except Exception:  # noqa: BLE001 — an empty/non-JSON 2xx body is still an accept
-        return ControlOutcome.delivered({"status": "ok"})
+        return {"status": "ok"}
 
 
 def _heartbeat_due(last_send: float, now: float, interval: float = _HEARTBEAT_INTERVAL) -> bool:
@@ -188,7 +179,7 @@ async def run_remote_repl(
         # refreshes it for every accepted POST, not just ``type: heartbeat``).
         last_send = [0.0]
 
-        async def send(payload: dict) -> "ControlOutcome":
+        async def send(payload: dict) -> "dict | None":
             """POST one client→server message; the parsed JSON response body on
             a 2xx accept (always a truthy dict, even if the body itself parsed
             empty — see below), ``None`` if the server rejected it (403/409/…)

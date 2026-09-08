@@ -83,8 +83,7 @@ async def test_state_snapshot_alone_yields_a_status_applied_item() -> None:
     reconnect protocol (empty backlog + one STATE_SNAPSHOT, zero display
     frames) yields a StatusApplied item -- not silently absorbed as a side
     channel. Falsifiable: reverting client.py's own `out.append(
-    StatusApplied(kind=...))` (#5886 gave it a required `kind`) makes this
-    collect zero StatusApplied items."""
+    StatusApplied())` makes this collect zero StatusApplied items."""
     state = {"attached_name": "researcher", "model": "opus"}
     transport = await _build_snapshot_only_transport(state)
 

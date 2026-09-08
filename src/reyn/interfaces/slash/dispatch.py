@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine
+from typing import TYPE_CHECKING, AsyncIterator
 
 from reyn.interfaces.slash import REGISTRY, SlashContext, suggest_for_unknown
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -67,7 +67,7 @@ from reyn.interfaces.transport.client_transport import ClientTransport
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from reyn.interfaces.transport.frames import BacklogBatch, Frame
+    from reyn.interfaces.transport.frames import Frame
     from reyn.runtime.outbox import OutboxMessage
 
 logger = logging.getLogger(__name__)
@@ -75,28 +75,11 @@ logger = logging.getLogger(__name__)
 
 def _display(transport: "ClientTransport", kind: str, text: str, **meta) -> None:
     from reyn.runtime.outbox import OutboxMessage
-    if kind == "error":
-        text = with_control_failure(transport, text)
     transport.put_display(OutboxMessage(kind=kind, text=text, meta=dict(meta)))
-
-
-def with_control_failure(transport: "ClientTransport", text: str) -> str:
-    """#5907 ②: the ONE place a failure line learns why. Appends the typed
-    outcome's own wording (``describe_control_failure``) when the
-    transport's latest control POST was refused or not delivered — so the
-    27 handlers that write ``if not ok: reply_error(...)`` say the right
-    thing without being edited, and a timeout and a refusal can never read
-    the same. Nothing is appended for a delivered / untyped / wire-less
-    transport."""
-    from reyn.interfaces.transport.control_outcome import describe_control_failure
-
-    detail = describe_control_failure(transport.last_control_outcome())
-    return f"{text} — {detail}" if detail else text
 
 
 async def maybe_dispatch_slash(
     transport: "ClientTransport", text: str, *, echo: bool = True,
-    runner: "Callable[[Coroutine[Any, Any, None]], None] | None" = None,
 ) -> bool:
     """Interpret ``text`` as a slash command; ``True`` iff it was consumed.
 
@@ -213,29 +196,16 @@ async def maybe_dispatch_slash(
     # answer "attach a different agent") instead of ever reaching
     # AgUiTransport's own correctly-implemented request_attach.
     locus = cmd.locus(args) if callable(cmd.locus) else cmd.locus
-
-    async def _run() -> None:
-        # #5907 ①: the run UNIT — the one place a command touches the wire
-        # (a session-locus command is one control POST; a connection-locus
-        # / client-locus handler awaits its own transport call inside).
-        # Handed to ``runner`` when the caller has one, so a UI's message
-        # pump never awaits it; awaited inline otherwise (the plain CUI's
-        # input loop is not a pump).
-        if locus == "session":
-            ran = await transport.run_slash_command(name, args)
-        else:
-            ctx = SlashContext(transport=transport, session=None)
-            ran = await execute_slash_command(ctx, name, args)
-        if not ran:
-            _display(
-                transport, "error",
-                f"/{name} could not run: this client has no session to run it on.",
-            )
-
-    if runner is not None:
-        runner(_run())
-        return True
-    await _run()
+    if locus == "session":
+        ran = await transport.run_slash_command(name, args)
+    else:
+        ctx = SlashContext(transport=transport, session=None)
+        ran = await execute_slash_command(ctx, name, args)
+    if not ran:
+        _display(
+            transport, "error",
+            f"/{name} could not run: this client has no session to run it on.",
+        )
     return True
 
 
@@ -280,7 +250,7 @@ class _ErrorWatchingTransport(ClientTransport):
     def close(self) -> None:
         self._inner.close()
 
-    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+    def frames(self) -> "AsyncIterator[Frame]":
         return self._inner.frames()
 
     def has_session(self) -> bool:
@@ -288,9 +258,6 @@ class _ErrorWatchingTransport(ClientTransport):
 
     def attach_failed(self) -> bool:
         return self._inner.attach_failed()
-
-    def last_control_outcome(self):
-        return self._inner.last_control_outcome()
 
     def pending_intervention_head(self) -> "object | None":
         return self._inner.pending_intervention_head()

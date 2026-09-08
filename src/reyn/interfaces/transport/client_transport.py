@@ -50,8 +50,7 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from reyn.interfaces.transport.control_outcome import ControlOutcome
-    from reyn.interfaces.transport.frames import BacklogBatch, Frame
+    from reyn.interfaces.transport.frames import Frame
     from reyn.runtime.outbox import OutboxMessage
 
 
@@ -67,13 +66,8 @@ class ClientTransport(ABC):
         """Stop producing frames and release the underlying subscriptions."""
 
     @abstractmethod
-    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
-        """Yield the unified, ordered frame stream: ``DisplayFrame`` /
-        ``EventFrame`` (tagged, renderable), ``StatusApplied`` (the
-        sent-queue seed / status delta — #5830 remote, #5895 local, no
-        ``.tag``) and, from ``AgUiTransport`` only, ``BacklogBatch``
-        (#5139). Every consumer type-checks before reading ``.tag`` —
-        the union is declared here so mypy names the ones that do not."""
+    def frames(self) -> "AsyncIterator[Frame]":
+        """Yield the unified, ordered, tagged frame stream (display + event)."""
 
     @abstractmethod
     async def submit_user_text(
@@ -148,15 +142,6 @@ class ClientTransport(ABC):
     @abstractmethod
     def has_session(self) -> bool:
         """Whether a session is currently attached (client input guard)."""
-
-    def last_control_outcome(self) -> "ControlOutcome | None":
-        """#5907 ②: the typed outcome of the most recent control POST this
-        transport made (``ControlOutcome``), or ``None`` when there is no
-        wire (the local transports) or no typed record. Read by the shared
-        failure renderers (``slash.reply_error`` / ``dispatch._display``)
-        so a refusal and a non-delivery never share a line. Not abstract:
-        a transport without a wire has nothing to report."""
-        return None
 
     @abstractmethod
     def attach_failed(self) -> bool:
@@ -694,7 +679,7 @@ class DelegatingClientTransport(ClientTransport):
     def close(self) -> None:
         self._inner.close()
 
-    def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+    def frames(self) -> "AsyncIterator[Frame]":
         return self._inner.frames()
 
     async def submit_user_text(
@@ -718,9 +703,6 @@ class DelegatingClientTransport(ClientTransport):
 
     def has_session(self) -> bool:
         return self._inner.has_session()
-
-    def last_control_outcome(self) -> "ControlOutcome | None":
-        return self._inner.last_control_outcome()
 
     def attach_failed(self) -> bool:
         return self._inner.attach_failed()

@@ -48,14 +48,12 @@ from reyn.interfaces.transport.agui.protocol import (
 )
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
-from reyn.interfaces.transport.control_outcome import ControlOutcome
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     BacklogBatch,
     DisplayFrame,
     EventFrame,
     Frame,
-    QueueSnapshot,
     StatusApplied,
 )
 
@@ -71,18 +69,7 @@ if TYPE_CHECKING:
 # module-level ``object()`` rather than ``None``: a locally-authored
 # ``put_display`` call could in principle wrap a falsy/None-ish payload,
 # and this must never be confused with one.
-class _SSEDone:
-    """The pump's end-of-stream sentinel — a class of its own (not a bare
-    ``object()``) so ``frames()`` narrows it by ``isinstance`` and mypy can
-    see the item that is yielded past it IS a stream item (#5895: the type
-    enumerates the consumers, so the queue's element type must be honest).
-    """
-
-    __slots__ = ()
-
-
-_SSE_DONE = _SSEDone()
-
+_SSE_DONE = object()
 
 
 class _SSEPumpError:
@@ -114,7 +101,7 @@ class AgUiTransport(ClientTransport):
     def __init__(
         self,
         sse_lines: "AsyncIterator[str]",
-        send: "Callable[[dict], Awaitable[ControlOutcome | dict | None]]",
+        send: "Callable[[dict], Awaitable[dict | None]]",
         *,
         agent_name: str = "",
         status_view: "RemoteStatusView | None" = None,
@@ -122,26 +109,7 @@ class AgUiTransport(ClientTransport):
         connected: bool = True,
     ) -> None:
         self._sse_lines = sse_lines
-        # #5907 ②: every control POST goes through ``_send``; the wrapper
-        # records the TYPED outcome (``ControlOutcome``) of the latest one
-        # and hands the call sites the same ``dict | None`` they always got
-        # — so no site changes, and ``last_control_outcome()`` lets the
-        # shared failure renderer say "refused" or "not delivered" instead
-        # of one line for both. An untyped sender (a test stub returning a
-        # dict / None) records a delivered outcome or nothing.
-        self._last_control_outcome: "ControlOutcome | None" = None
-
-        async def _recording_send(payload: dict) -> "dict | None":
-            self._last_control_outcome = None
-            result = await send(payload)
-            if isinstance(result, ControlOutcome):
-                self._last_control_outcome = result
-                return result.payload if result else None
-            if isinstance(result, dict):
-                self._last_control_outcome = ControlOutcome.delivered(result)
-            return result
-
-        self._send = _recording_send
+        self._send = send
         # #5894 (architect ruling ①-3): at most one cancel_inflight POST in
         # flight per connection — the SAME coalesce shape endpoint.py's
         # ``_status_ping_pending`` uses. Once the TUI stops awaiting the
@@ -198,9 +166,7 @@ class AgUiTransport(ClientTransport):
         # SAME queue :meth:`frames` drains, so a locally-authored message
         # renders through the identical renderer path a server-sent one
         # does, without waiting on the next SSE event to unblock it.
-        self._display_queue: "asyncio.Queue[Frame | BacklogBatch | _SSEPumpError | _SSEDone]" = (
-            asyncio.Queue()
-        )
+        self._display_queue: "asyncio.Queue[Frame | BacklogBatch | object]" = asyncio.Queue()
         self._sse_pump_task: "asyncio.Task[None] | None" = None
         # #5694: set once :meth:`frames` re-raises a genuine ``_SSEPumpError``
         # (the pump died — a real read failure, never a clean end or an
@@ -302,17 +268,9 @@ class AgUiTransport(ClientTransport):
     # -- frame production ---------------------------------------------------
 
     def _reguard_frame(self, frame: Frame) -> Frame:
-        # Only a DisplayFrame carries render-nodes; the other members pass
-        # through untouched (#5895: split so a ``list[DisplayFrame]`` — a
-        # backlog page — stays typed as one after re-guarding).
-        if isinstance(frame, DisplayFrame):
-            return self._reguard_display(frame)
-        return frame
-
-    def _reguard_display(self, frame: DisplayFrame) -> DisplayFrame:
         # Per-connection edge re-guard for presentation render-nodes (A5): inert
         # at construction already, re-neutralized here for a heterogeneous client.
-        if frame.message.kind == "presentation":
+        if isinstance(frame, DisplayFrame) and frame.message.kind == "presentation":
             nodes = frame.message.meta.get("nodes")
             if isinstance(nodes, list):
                 meta = dict(frame.message.meta)
@@ -371,28 +329,7 @@ class AgUiTransport(ClientTransport):
                 # happens to arrive next (the owner-hit: the status bar
                 # stayed on the old agent until the next turn's own
                 # frame). See `StatusApplied`'s own docstring.
-                #
-                # #5886 (architect ruling ①): carry WHICH of the two this
-                # was. This branch has always known — the two `if`s right
-                # above are that knowledge — and handed the app one opaque
-                # item for both, which is what left the sent-queue seq-gate
-                # with no way to tell a hydration point from a display
-                # update. A snapshot wins when a block somehow carries
-                # both: hydration is the stronger claim, and seeding from
-                # it is never wrong.
-                #
-                # #5895: a snapshot frame CARRIES its own queue values,
-                # captured right here from the decoded snapshot — the seed
-                # reads the frame, never the live `_status` view, which a
-                # later delta in this same pump task can have moved before
-                # the app reaches this frame. A delta carries nothing.
-                if decoded.snapshot is not None:
-                    out.append(StatusApplied(
-                        kind="snapshot",
-                        snapshot=QueueSnapshot.from_status(decoded.snapshot),
-                    ))
-                else:
-                    out.append(StatusApplied(kind="delta"))
+                out.append(StatusApplied())
             elif isinstance(decoded, MessagesSnapshot):
                 # #5139 (architect FINAL ruling, issuecomment-5383272756):
                 # ONE BacklogBatch item, appended to `out` like any other
@@ -411,7 +348,7 @@ class AgUiTransport(ClientTransport):
                     BacklogBatch(
                         agent=self._backlog_agent,
                         sid=self._backlog_sid,
-                        frames=[self._reguard_display(f) for f in decoded.frames],
+                        frames=[self._reguard_frame(f) for f in decoded.frames],
                         has_more=decoded.has_more,
                         next_cursor=decoded.next_cursor,
                     )
@@ -563,7 +500,7 @@ class AgUiTransport(ClientTransport):
         finally:
             self._display_queue.put_nowait(_SSE_DONE)
 
-    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch | StatusApplied]":
         # #5139: widened from ``AsyncIterator[Frame]`` — this transport is
         # the only ``ClientTransport`` implementation that ever yields a
         # ``BacklogBatch`` (see that class's own docstring); every other
@@ -603,7 +540,7 @@ class AgUiTransport(ClientTransport):
                 self._connected = False
                 self._pump_died = True
                 raise frame.exc
-            if isinstance(frame, _SSEDone):
+            if frame is _SSE_DONE:
                 return
             # #3570 gate (test_stream_drain_yield_3570.py's own class gate):
             # ``queue.get()`` suspends only while the queue is EMPTY — a
@@ -623,9 +560,6 @@ class AgUiTransport(ClientTransport):
 
     def has_session(self) -> bool:
         return self._connected
-
-    def last_control_outcome(self) -> "ControlOutcome | None":
-        return self._last_control_outcome
 
     def attach_failed(self) -> bool:
         # #5096 review finding (lead-coder): EXPLICITLY implemented, not
@@ -784,7 +718,7 @@ class AgUiTransport(ClientTransport):
             BacklogBatch(
                 agent=self._backlog_agent,
                 sid=self._backlog_sid,
-                frames=[self._reguard_display(f) for f in decoded.frames],
+                frames=[self._reguard_frame(f) for f in decoded.frames],
                 has_more=decoded.has_more,
                 next_cursor=decoded.next_cursor,
                 is_older_page=True,

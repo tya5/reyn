@@ -209,11 +209,11 @@ class AgUiEmitter:
             # them over the transport stream (real clipboard copy / rewind
             # picker), so they are forwarded as profiled CUSTOM events —
             # filtering them would make remote /copy / /rewind silent no-ops.
-            # (#5895: written as one ``isinstance`` guard, not an
-            # intermediate bool — mypy narrows the frame's type through
-            # the former only, and the type is what enumerates ``Frame``'s
-            # consumers now that ``StatusApplied`` is a declared member.)
-            if isinstance(frame, DisplayFrame) and frame.message.kind in CONTROL_FILTER_KINDS:
+            is_control = (
+                isinstance(frame, DisplayFrame)
+                and frame.message.kind in CONTROL_FILTER_KINDS
+            )
+            if is_control:
                 if frame.message.kind == "__end__":
                     return
                 continue

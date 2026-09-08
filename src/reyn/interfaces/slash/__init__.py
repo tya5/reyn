@@ -332,16 +332,8 @@ async def reply(ctx: SlashContext, text: str, *, kind: str = "system") -> None:
 
 
 async def reply_error(ctx: SlashContext, text: str) -> None:
-    """Emit an error message (red ✗ in the TUI).
-
-    #5907 ②: the shared failure renderer — when the transport's latest
-    control POST was refused or not delivered, the typed outcome's own
-    wording is appended here (``dispatch.with_control_failure``), so every
-    handler's ``if not ok: reply_error(...)`` says which it was without
-    being edited."""
-    from reyn.interfaces.slash.dispatch import with_control_failure
-
-    await reply(ctx, with_control_failure(ctx.transport, text), kind="error")
+    """Emit an error message (red ✗ in the TUI)."""
+    await reply(ctx, text, kind="error")
 
 
 # ── trigger registration of built-in commands ─────────────────────────────

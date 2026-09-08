@@ -25,9 +25,8 @@ What each proves, and what its red looks like:
   says so here because a hang wears no colour of its own.
 - The "cancel requested…" row is on the pane BEFORE the wire answers.
 - A cancel the transport could not deliver (the EMPTY summary the ABC
-  reserves for it, #5894) is named on the pane — the silence this issue
-  was reported as gets a row (its exact wording comes from the typed
-  outcome when the transport records one, #5907 ②).
+  reserves for it, #5894) is named on the pane as "not responding" — the
+  silence this issue was reported as gets a row.
 - Ctrl-Q needs no wire at all: not this file's subject (Textual's binding,
   a one-line ``shutdown``), stated so nobody looks for it here.
 """
@@ -166,8 +165,7 @@ async def test_cancel_requested_is_drawn_before_the_wire_answers() -> None:
 @pytest.mark.asyncio
 async def test_an_undelivered_cancel_is_named_not_responding() -> None:
     """Tier 2b: the transport's EMPTY summary (a control timeout / send
-    failure) reaches the operator as a row — and the app stays up. This
-    stub records no typed outcome, so the row is the fallback wording."""
+    failure) reaches the operator as a row — and the app stays up."""
     transport = _UnacknowledgedCancelTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -176,10 +174,7 @@ async def test_an_undelivered_cancel_is_named_not_responding() -> None:
         await pilot.pause()
         await pilot.pause()
         texts = _pane_texts(app)
-        # #5907 ②: this stub records no typed outcome, so the row carries the
-        # honest fallback ("did not acknowledge") — the refused / not-delivered
-        # wording is the typed transport's (test_5907_typed_control_outcome.py).
-        assert any("did not acknowledge the cancel" in t for t in texts), (
+        assert any("not responding" in t for t in texts), (
             f"an undelivered cancel left only 'requested' on the pane: {texts!r}"
         )
         assert app.is_running, "a non-delivery tore the app down"

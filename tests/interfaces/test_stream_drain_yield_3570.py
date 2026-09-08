@@ -41,7 +41,7 @@ from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.transport.agui.client import AgUiTransport
 from reyn.interfaces.transport.agui.endpoint import _SessionFrameSource
 from reyn.interfaces.transport.agui.protocol import encode_frame, to_sse
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, StatusApplied
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, FrameTag
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.registry import AgentRegistry
@@ -224,20 +224,14 @@ async def test_the_stream_still_terminates_at_the_end_frame(tmp_path) -> None:
         async for frame in transport.frames():
             seen.append(frame)
 
-        # #5895: the local stream also carries ``StatusApplied`` (the seed
-        # frame behind the ``session_attached`` barrier) — it has no
-        # ``.tag``; classify by type, as every consumer must.
         kinds = [
-            f.message.kind if isinstance(f, DisplayFrame)
-            else "<status>" if isinstance(f, StatusApplied)
-            else "<event>"
-            for f in seen
+            f.message.kind if f.tag is FrameTag.DISPLAY else "<event>" for f in seen
         ]
         assert "__end__" in kinds, f"the terminal frame was never delivered: {kinds}"
         assert kinds[-1] == "__end__", (
             f"frames were delivered after the terminal frame: {kinds}"
         )
-        assert isinstance(seen[0], (DisplayFrame, EventFrame, StatusApplied))
+        assert isinstance(seen[0], (DisplayFrame, EventFrame))
     finally:
         await registry.shutdown()
 

@@ -32,7 +32,7 @@ from reyn.interfaces.transport.client_transport import ClientTransport, pending_
 from reyn.interfaces.transport.frames import (
     BacklogBatch,
     DisplayFrame,
-    EventFrame,
+    FrameTag,
     StatusApplied,
 )
 from reyn.runtime.outbox import OutboxMessage
@@ -397,7 +397,7 @@ async def run_output_loop(
         # stream is dispatched by tag at the CONSUMING end so the renderer keeps
         # its two entry points; an outbox-only stream would silently drop these
         # (the A2 WaitingOn bug, designed out by the completeness gate).
-        if isinstance(frame, EventFrame):
+        if frame.tag is FrameTag.EVENT:
             event = frame.event
             if getattr(event, "type", None) == "user_submitted":
                 data = getattr(event, "data", None) or {}

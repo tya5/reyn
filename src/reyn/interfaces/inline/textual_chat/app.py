@@ -38,7 +38,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -71,7 +71,7 @@ from reyn.interfaces.transport.frames import (
     HYDRATE_PAGE_FRAMES,
     BacklogBatch,
     DisplayFrame,
-    EventFrame,
+    FrameTag,
     StatusApplied,
 )
 
@@ -1547,13 +1547,6 @@ class TextualChatApp(App):
         #: unreachable dead code for the actual failure mode it would
         #: exist to fix.
         self._loop_tripwire = LoopTripwire()
-        #: #5907 ①: the single-in-flight FIFO every wire-touching unit
-        #: (a slash command's run unit, a submit round-trip) goes through,
-        #: and its one worker — see :meth:`_enqueue_wire`.
-        import asyncio as _asyncio
-
-        self._wire_fifo: "_asyncio.Queue[Coroutine[Any, Any, None]]" = _asyncio.Queue()
-        self._wire_fifo_worker: "object | None" = None
         #: #4761 ②: the App's own message-pump heartbeat — incremented by
         #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
         #: ticks, which (no ``callback=`` given to ``set_interval``) post an
@@ -2785,12 +2778,6 @@ class TextualChatApp(App):
                     self._hydrate_from_history()
                 except Exception:
                     logger.exception("textual chat: on_mount hydrate-from-history failed")
-        # #5895: no mount-time seed here. The sent-queue gate is seeded from
-        # a ``StatusApplied(kind="snapshot")`` frame and from nothing else —
-        # the local transport puts one behind every ``session_attached``
-        # barrier (``in_process.py``), the first attach included, and the
-        # remote transport decodes one from every STATE_SNAPSHOT. A live
-        # read here was the #5886 defect in a narrower window.
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
@@ -4264,16 +4251,13 @@ class TextualChatApp(App):
             )
             return
         if not summary:
-            # #5907 ②: the typed outcome says whether the server refused
-            # or never answered — one describer, shared with the slash layer.
-            from reyn.interfaces.transport.control_outcome import describe_control_failure
-
-            detail = describe_control_failure(self._transport.last_control_outcome())
-            why = detail or "the server did not acknowledge the cancel"
             self._ingest_frame(
                 OutboxMessage(
                     kind="error",
-                    text=f"interrupt: {why} — the turn may still be running",
+                    text=(
+                        "interrupt: the server did not acknowledge the cancel "
+                        "(not responding) — the turn may still be running"
+                    ),
                 )
             )
 
@@ -6104,65 +6088,31 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: could not start image resolution")
 
-    def _seed_queue_view(self, frame: "StatusApplied") -> None:
-        """Seed :attr:`_queue_view` — the sent-queue seq-gate's baseline —
-        from the values a ``StatusApplied(kind="snapshot")`` frame CARRIES
-        (#3300 P2b; #5895 for why the frame and never the read model).
+    def _seed_queue_view(self) -> None:
+        """Seed :attr:`_queue_view` from a fresh read-model snapshot — called
+        once, on the FIRST frame the pump processes (#3300 P2b).
 
-        The parameter type IS the rule (architect ruling, #5895 ③): this
-        method takes the frame and reads ``frame.snapshot`` only. It does
-        not call :meth:`_snapshot`, and must not — the read model is the
-        DISPLAY's source, live and free to move; the gate's baseline is a
-        hydration value that must be exactly what the snapshot said at the
-        instant it was taken. #5886's first fix seeded "at the snapshot
-        frame's position" but still read the read model live, which only
-        narrowed the window: a delta the decoder applied (remote), or a
-        submit that advanced ``queue_seq`` (local), between enqueuing the
-        frame and the pump reaching it, still left the baseline ahead of
-        the frames it must admit.
-
-        **WHEN this runs is the whole design (#5886).** It is called from
-        exactly two places, and both are hydration points:
-
-        - remote: the moment a ``StatusApplied(kind="snapshot")`` is
-          processed IN THE STREAM (:meth:`_pump_frames`). A snapshot is the
-          server's own paired, consistent view (#5179's
-          ``_session_backlog_page_and_status``), and reading it at its own
-          position in the stream is what makes the baseline independent of
-          how far ahead the decoder happens to be.
-        - local (in-process): once at mount. No wire exists, so a single
-          live read IS the hydration value.
-
-        It is deliberately NOT called on "the first non-status frame" any
-        more (#5886, architect ruling ④ — deleted, not kept as a fallback,
-        because a fallback is a second source). That older trigger read a
-        LIVE read model at a data-dependent moment, and ``AgUiTransport``'s
-        own ``_pump_sse`` decodes without yielding between frames while
-        ``frames()`` suspends between each — so the read model runs
-        arbitrarily far ahead of the pump's position, and the baseline
-        could be seeded from state the pump had not reached. Measured, not
-        theorised: the operator's own first message after attaching was
-        rejected by its own gate (``seq 1 <= baseline``), leaving no user
-        row and a stranded sent-queue placeholder.
-
-        Both producers build the frame's values from the SAME status
-        builder the read model uses (``interfaces/repl/status.py``), so one
-        seed body serves either transport. Any item the snapshot already
-        carries (a submission from BEFORE this client attached) is rendered
-        into the sent-queue region immediately."""
-        if frame.snapshot is None:  # a delta — never a seed point (ruling ③)
-            raise ValueError("_seed_queue_view needs a kind='snapshot' frame")
-        snap = frame.snapshot
+        The read-model projects ``queue``/``turn_active``/``queue_seq``
+        uniformly for local and remote (``read_model.py``'s
+        ``project_remote_snapshot`` mirrors ``interfaces/repl/status.py``'s
+        ``_snapshot()``), so ONE call seeds the seq-gate baseline correctly
+        for either transport: local is always live (no wire delay), and for
+        remote the connect-time ``STATE_SNAPSHOT`` has already reached the
+        transport by the time frame #1 is yielded (emitter.py's "Reconnect
+        snapshots first (A4)"), so this is late-joiner-correct. Any item the
+        snapshot already carries (a submission from BEFORE this client
+        attached) is rendered into the sent-queue region immediately."""
+        snap = self._snapshot() or {}
         self._queue_view.apply_snapshot(
-            queue=[dict(item) for item in snap.queue],
-            turn_active=snap.turn_active,
-            queue_seq=snap.queue_seq,
+            queue=snap.get("queue", []),
+            turn_active=snap.get("turn_active", False),
+            queue_seq=snap.get("queue_seq", 0),
         )
         # #3693: a client that attached mid-turn knows ``turn_active`` and
         # nothing else — no start instant, no tool, no stream. It says so and
         # shows no clock (``started=False``), rather than timing from the
         # moment it happened to connect.
-        if snap.turn_active:
+        if snap.get("turn_active"):
             self._activity.begin("WORKING", started=False)
             # A mid-turn attach did not see the entries that already landed,
             # so it counts from zero and says so by counting from HERE. It
@@ -6253,19 +6203,22 @@ class TextualChatApp(App):
           the panel is tabbed, #3308) actually closes rather than lingering
           empty.
         - :attr:`_queue_view` / :attr:`_queue_seeded` — a FRESH
-          ``RemoteQueueView()``, seeded by the NEW session's own
-          ``StatusApplied(kind="snapshot")`` frame when the pump reaches
-          it (#5895) — which both transports guarantee follows this
-          barrier: the local one enqueues it right behind the barrier
-          (``in_process.py``), the remote emitter's reconnect protocol
-          sends a STATE_SNAPSHOT after it. No eager reseed here any more:
-          the one this handler used to do read the read model LIVE at the
-          moment the barrier was processed, and the remote emitter yields
-          the barrier BEFORE the new session's snapshot, so across a chunk
-          boundary it seeded from the OLD session — #5886's class in its
-          switch form. (An earlier version of this bullet argued the
-          generic first-frame seed needed a frame AFTER the barrier to
-          fire; the snapshot frame IS that frame, by construction.)
+          ``RemoteQueueView()``, immediately re-seeded from the NEW session's
+          OWN snapshot right here (:meth:`_seed_queue_view`) rather than
+          deferred to "whenever the next frame happens to arrive" — the
+          identical PROJECTION the #3305 reconnect-reseed/mount-time seed
+          use, just called eagerly instead of gated on
+          :attr:`_queue_seeded`. ★Found during gate-writing (not in the
+          architect's table): deferring to the generic first-frame gate
+          (leaving ``_queue_seeded = False`` and letting the ordinary
+          "seed on first frame" check in :meth:`_pump_frames` catch it) is
+          NOT equivalent here — that check runs BEFORE a frame is
+          dispatched, so it would need a frame AFTER this barrier to ever
+          fire; a session with an already-queued item but no OTHER pending
+          activity would show an empty sent-queue region until something
+          else happened to arrive. Seeding eagerly here closes that gap;
+          :attr:`_queue_seeded` is still set True (never left False) so the
+          generic check is correctly a no-op for this same barrier frame.
         - :attr:`_queue_item_meta` — cleared (keyed by msg_id, which is
           per-submission; an old session's entries are meaningless once its
           queue view is gone too).
@@ -6404,21 +6357,15 @@ class TextualChatApp(App):
                 agent=agent or self._destination.agent,
                 session_id=session_id or self._destination.session_id,
             )
-        # #5886 (architect ruling ④): the eager reseed that used to run
-        # HERE is DELETED, not kept as a fallback. It read the live read
-        # model at the moment this ``session_attached`` frame was
-        # processed — but the emitter yields this barrier frame FIRST and
-        # the new session's own backlog + STATE_SNAPSHOT strictly AFTER it
-        # (``emitter.py``'s ``if etype == "session_attached"`` branch runs
-        # after the frame is encoded). Landing in the same HTTP chunk made
-        # it accidentally correct (``_consume_block`` applies the snapshot
-        # to the read model before the app sees either); across a chunk
-        # boundary it seeded from the OLD session's values — the same class
-        # #5886 fixes on the connect path. The fresh view built above is
-        # now seeded by that new session's own STATE_SNAPSHOT when the pump
-        # reaches it, which is the one moment the value is known to be
-        # this session's.
-        self._queue_seeded = False
+        # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
+        # above): seed the fresh view from the NEW session's snapshot right
+        # now, rather than deferring to the generic "first frame" check —
+        # which would need ANOTHER frame after this barrier to ever fire.
+        try:
+            self._seed_queue_view()
+        except Exception:
+            logger.exception("textual chat: switch queue-view reseed failed")
+        self._queue_seeded = True
         # #5050 ③: SAME reasoning — a switch to an agent that already has
         # a pending intervention gets no live announce (restore.py: an
         # unanswered intervention leaves no history trace, and
@@ -6515,27 +6462,10 @@ class TextualChatApp(App):
             # stale delta is legitimate and stays silent to the operator; it
             # stops being invisible to the LOG, which is the surface an
             # investigation reads.
-            # #5886 (architect ruling ⑥): a rejection whose ``client_ref``
-            # is THIS client's own pending row is the bug's fingerprint,
-            # not routine staleness. This client minted that id moments ago
-            # for a submission it has not seen echoed yet, so "already
-            # reflected" cannot be true of it — the only way the gate says
-            # so is a baseline that is wrong. Loud, with the id, so an
-            # operator's log shows the cause instead of just the silence.
-            # Every OTHER rejection (another client's genuinely stale
-            # delta) stays debug: those are the gate doing its job.
-            _ref = (dict(data.get("meta") or {})).get("client_ref")
-            _is_own_pending = isinstance(_ref, str) and self._sent_queue.has_row(_ref)
-            (logger.warning if _is_own_pending else logger.debug)(
+            logger.debug(
                 "textual chat: sent-queue gate rejected user_submitted "
-                "msg_id=%s seq=%s client_ref=%s (already reflected by a "
-                "prior snapshot/delta)%s",
-                msg_id, seq, _ref,
-                (
-                    " — this is THIS client's own pending submission, so the "
-                    "gate's baseline is wrong (#5886), not the delta stale"
-                    if _is_own_pending else ""
-                ),
+                "msg_id=%s seq=%s (already reflected by a prior snapshot/delta)",
+                msg_id, seq,
             )
 
     def _handle_turn_started_event(self, event) -> None:
@@ -7260,52 +7190,14 @@ class TextualChatApp(App):
                     # delta only" case — StatusApplied's own docstring
                     # already states it carries nothing else to apply.
                     frame_is_status_only = True
-                    # #5886 (architect ruling ②): a SNAPSHOT is the seq
-                    # gate's hydration point, and seeding HERE — at the
-                    # snapshot's own position in the stream — is what makes
-                    # the baseline independent of how far ahead the decoder
-                    # ran. Every route that produces one converges here:
-                    # first connect, reconnect, and a mid-stream session
-                    # switch (emitter.py's `_reconnect_snapshot_chunks`
-                    # emits a STATE_SNAPSHOT for all three). A DELTA is
-                    # deliberately NOT a seed point (ruling ③): it is a
-                    # display update, and letting it move the baseline is
-                    # the defect itself.
-                    if frame.kind == "snapshot":
+                else:
+                    if not self._queue_seeded:
                         try:
-                            self._seed_queue_view(frame)
+                            self._seed_queue_view()
                         except Exception:
                             logger.exception("textual chat: queue-view seed failed")
                         self._queue_seeded = True
-                else:
-                    # #5895: the ``session_attached`` barrier is EXEMPT from
-                    # the pre-seed warning below — by construction it
-                    # precedes its own session's snapshot frame (both
-                    # transports put the snapshot right behind it), so it
-                    # is the announcement OF the seed, not a frame that
-                    # arrived before one.
-                    _is_barrier = (
-                        isinstance(frame, EventFrame)
-                        and getattr(frame.event, "type", None) == "session_attached"
-                    )
-                    if not self._queue_seeded and not _is_barrier:
-                        # #5886 (architect ruling ⑤): an event frame BEFORE
-                        # any snapshot is a protocol violation — the server
-                        # contract is snapshot-first (emitter.py's
-                        # "Reconnect snapshots first (A4)"). Say so, then
-                        # APPLY it anyway: dropping it is the invisible
-                        # failure this whole issue is about, while a
-                        # duplicate row is a visible one an operator can
-                        # report. The gate's baseline stays 0 here, which
-                        # admits the frame — the safe direction.
-                        logger.warning(
-                            "textual chat: %s frame arrived before any "
-                            "STATE_SNAPSHOT (protocol expects snapshot "
-                            "first) — applying it rather than dropping it; "
-                            "the sent-queue gate is still unseeded",
-                            getattr(getattr(frame, "event", None), "type", frame),
-                        )
-                    if isinstance(frame, EventFrame):
+                    if frame.tag is FrameTag.EVENT:
                         etype = getattr(frame.event, "type", None)
                         if etype == "session_attached":
                             try:
@@ -7943,29 +7835,34 @@ class TextualChatApp(App):
             sent_queue.remove_item(msg_id)
 
     async def _submit(self, text: str, *, local_id: str) -> None:
-        """Route one submitted line onto this app's single-in-flight wire
-        FIFO (#5907 ①, architect ruling): the slash dispatcher hands its run
-        unit to :meth:`_enqueue_wire` and returns at once; a non-command
-        line's ``submit_user_text`` round-trip is enqueued the same way.
-        This handler therefore never awaits the wire — the pump stays
-        alive whatever the server does — while the FIFO keeps the EFFECT
-        order the pump's serial delivery used to guarantee (``/model X``
-        then a message; ``/session switch`` then ``/compact``): one unit
-        in flight at a time, the next waits for it. A stuck unit delays
-        the next, visibly (the UI is alive, the operator can see and
-        judge); the control read timeout (#5894 ①-1) is its backstop.
+        """Route one submitted line: the client-side slash layer FIRST,
+        synchronously on this handler; only a real turn's wire round-trip
+        goes to a worker (#5894 ①-2, lead-coder's BLOCKING on PR #5902).
 
-        Everything local that must be on screen the instant Enter lands
-        already is: the echo and the "unknown command" line are drawn by
-        the dispatcher BEFORE it hands the unit over, the sent-queue
-        placeholder by the composer handler before this method, and the
-        placeholder resolves off the ``user_submitted`` echo, never off
-        this call's return.
+        ``maybe_dispatch_slash`` is local work — ``/help``, a typo's "unknown
+        command", the picker commands — and the operator expects its answer
+        the instant Enter lands, exactly as the CUI gives it (the shared
+        layer is the point of #3595 S5: one implementation, one answer).
+        Running it on the worker deferred that answer past the handler's
+        return, which is what CI caught (``shown=[]``). The ruling's line is
+        "the pump never awaits the WIRE": a dispatched command that itself
+        touches the wire (``/cancel`` → ``cancel_inflight``) does so through
+        the transport's own bounded control timeout (#5894 ①-1), not the
+        unbounded read that held the pump — a residual named in the PR, not
+        a hole this method hides.
+
+        A non-command line returns as soon as the worker is scheduled: every
+        caller's own local work (the placeholder row, clearing the composer)
+        already happened synchronously before it, and the placeholder
+        resolves off the ``user_submitted`` echo, never off this call's
+        return. An Enter against a server that has stopped answering
+        therefore no longer holds the pump — the same class as Ctrl-C's
+        (see :meth:`action_cancel_turn`): "server が塞がれば Enter でも同じ症状".
         """
         try:
             from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 
-            if await maybe_dispatch_slash(self._transport, text, runner=self._enqueue_wire):
+            if await maybe_dispatch_slash(self._transport, text):
                 # A dispatched command is never queued (#3595 S5) — drop the
                 # placeholder row the composer handler already showed.
                 self._maybe_sent_queue_remove(local_id)
@@ -7973,31 +7870,9 @@ class TextualChatApp(App):
         except Exception as exc:
             self._submit_failed(local_id, exc)
             return
-        self._enqueue_wire(self._submit_over_wire(text, local_id=local_id))
-
-    def _enqueue_wire(self, unit: "Coroutine[Any, Any, None]") -> None:
-        """Append one wire-touching unit to the single-in-flight FIFO
-        (#5907 ①) and make sure its one worker is running. The worker is
-        a Textual worker (never the pump); ``exclusive=False`` because an
-        exclusive worker would cancel the frames pump."""
-        self._wire_fifo.put_nowait(unit)
-        worker = self._wire_fifo_worker
-        if worker is None or worker.is_finished:
-            self._wire_fifo_worker = self.run_worker(
-                self._drain_wire_fifo(), name="wire-fifo", exclusive=False,
-            )
-
-    async def _drain_wire_fifo(self) -> None:
-        """The FIFO's one consumer: units run strictly one after another, in
-        arrival order. A unit's own failure is its own to report (the
-        dispatcher and :meth:`_submit_over_wire` both catch and draw);
-        this loop only guards against one escaping and stopping the rest."""
-        while True:
-            unit = await self._wire_fifo.get()
-            try:
-                await unit
-            except Exception:
-                logger.exception("textual chat: wire FIFO unit failed")
+        self.run_worker(
+            self._submit_over_wire(text, local_id=local_id), name="submit", exclusive=False,
+        )
 
     def _submit_failed(self, local_id: str, exc: BaseException) -> None:
         """Shared failure path of :meth:`_submit` (slash) and

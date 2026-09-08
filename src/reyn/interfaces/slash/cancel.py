@@ -13,7 +13,7 @@ posture Esc/Ctrl+C already take without asking.
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+from reyn.interfaces.slash import SlashContext, reply, slash
 
 
 @slash(
@@ -33,7 +33,5 @@ async def cancel_cmd(ctx: "SlashContext", args: str) -> None:
     # #5894: the ABC reserves "" for "not delivered" (control timeout / send
     # failure) — say so instead of printing an empty summary.
     if not summary:
-        # #5907 ②: refused vs not delivered — the shared renderer words it.
-        await reply_error(ctx, "⏹ cancel not confirmed")
-        return
+        summary = "cancel not delivered — the server did not respond"
     await reply(ctx, f"⏹ {summary}")

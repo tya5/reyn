@@ -458,30 +458,14 @@ cancel, the heartbeat) is a bounded round-trip and gets its own read timeout,
 place — `remote_client.post_control`). A control POST the server does not
 answer within it is a **non-delivery**, not a wait: `cancel_inflight` returns
 the empty summary the `ClientTransport` contract reserves for "not
-confirmed", and the Textual TUI draws a row under the `cancel requested…` row
-it drew the instant the key was pressed. Which failure it was is TYPED
-(#5907 ②): `post_control` returns a `ControlOutcome` — `delivered` /
-`refused` (the server's own reason) / `not_delivered` (no answer within T;
-the request may not have reached the server) — the transport records the
-latest one (`ClientTransport.last_control_outcome`), and ONE describer
-(`describe_control_failure`) words it for every surface: the slash layer's
-`reply_error` and the dispatcher's error lines append it, so a refusal and a
-timeout never read the same on any of the 27 wire-touching commands, without
-any handler being edited. The TUI's message pump never awaits
+delivered", and the Textual TUI draws it as `interrupt: the server did not
+acknowledge the cancel (not responding)` under the `cancel requested…` row it
+drew the instant the key was pressed. The TUI's message pump never awaits
 the wire for any of these — the handler draws what it requested and returns,
 and the round-trip runs on a Textual worker — so a server that has stopped
 answering cannot hold the keyboard (the owner-hit shape: Ctrl-C's cancel POST
 waiting forever, and Ctrl-Q, which touches no wire at all, never delivered
-behind it). The slash layer's own wire calls go the same way (#5907 ①): the
-dispatcher (`maybe_dispatch_slash`) hands its run unit — one `run_slash_
-command` POST for a session-locus command, the handler's own transport call
-for a connection-locus one — to a `runner` the TUI supplies, and returns at
-once; the TUI's runner is a **single-in-flight FIFO** (one Textual worker),
-which every submit round-trip joins too, so `/model X` → message and
-`/session switch` → `/compact` keep the effect order the serial pump used to
-give. A stuck unit delays the next one visibly; the control timeout is its
-backstop. The plain CUI passes no runner and awaits inline (its input loop
-is not a pump). While one `cancel_inflight` POST is pending, a second is
+behind it). While one `cancel_inflight` POST is pending, a second is
 coalesced (`cancel already requested`), so a held Ctrl-C does not open one
 POST per key repeat.
 
