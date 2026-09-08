@@ -959,7 +959,19 @@ class ChatMessage:
         ``_media_store`` is set once at construction and never swapped
         mid-lifetime); a test double that first calls this with no store
         and later wants a real derivation must construct a fresh message
-        instead of expecting a second call to see a different store."""
+        instead of expecting a second call to see a different store.
+
+        Returns ``None`` (never raises) for every "unknown" case: the ref
+        is absent, ``media_store`` is unset, the backing file is missing
+        (``found=False``), OR the ref names a path OUTSIDE
+        ``media_store``'s own boundary (``read_tool_result_preview``
+        raises ``PermissionError`` there, caught here — the same fold
+        this file's own :func:`_materialise_path_ref_content` already
+        applies to this exact exception). This runs on the hot append
+        path (:meth:`Session._evict_oldest_resident_entries`, called
+        from every :meth:`Session._append_history`) — an uncaught raise
+        for one out-of-boundary row would make every future append fail,
+        turning a degrade into a hard stop."""
         if not self._body_bytes_cached:
             self._body_bytes_cache = self._derive_body_bytes(media_store)
             self._body_bytes_cached = True
@@ -975,7 +987,24 @@ class ChatMessage:
             return BodyBytes(stamped)
         if media_store is None:
             return None
-        _head, found, total_bytes = media_store.read_tool_result_preview(ref, max_bytes=0)
+        # #5973 BLOCKING (lead-coder review, issuecomment-5578223027): a
+        # ref outside media_store's own boundary makes read_tool_result_
+        # preview raise PermissionError, not return found=False — and
+        # this is now on the hot append path (body_bytes() is called from
+        # _pull_weight, Session._evict_oldest_resident_entries, which
+        # Session._append_history runs on EVERY append). Uncaught, ONE
+        # out-of-boundary ref would make every future append raise,
+        # turning a degrade (this PR's own "unknown -> treated safely by
+        # ①②③") into a hard stop. Folded to the SAME "unknown" None every
+        # other branch here returns — the same fold this file's own
+        # _materialise_path_ref_content already applies to this exact
+        # exception, not a new convention.
+        try:
+            _head, found, total_bytes = media_store.read_tool_result_preview(
+                ref, max_bytes=0,
+            )
+        except PermissionError:
+            return None
         return BodyBytes(total_bytes) if found else None
 
     @property

@@ -457,3 +457,78 @@ async def test_body_bytes_derives_the_migrated_stat_at_most_once(
         f"body_bytes() must derive the stat AT MOST ONCE per message, "
         f"got {store.preview_calls} calls across 3 reads"
     )
+
+
+# ── BLOCKING follow-up 2: an out-of-boundary ref degrades, never raises ──
+
+
+@pytest.mark.asyncio
+async def test_body_bytes_returns_none_for_an_out_of_boundary_ref_never_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5973 BLOCKING follow-up (lead-coder review,
+    issuecomment-5578223027) — a content_ref row whose ref names a path
+    OUTSIDE ``media_store``'s own boundary must fold to ``None`` (the
+    same "unknown" every other branch returns), never raise. ``body_
+    bytes()`` runs on the hot append path (``Session._evict_oldest_
+    resident_entries``, called from EVERY ``Session._append_history``)
+    — an uncaught ``PermissionError`` for one such row would make every
+    future append fail, turning a degrade into a hard stop.
+
+    Strip witness: removing the ``try/except PermissionError`` around
+    the stat call makes this test itself raise instead of asserting —
+    verified directly, restored after."""
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    from reyn.runtime.chat_message import SPILLED_META_KEY, ChatMessage
+
+    monkeypatch.chdir(tmp_path)
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="boundary-agent", session_id="s1",
+    )
+    outside_row = ChatMessage(
+        role="tool", content="",
+        meta={
+            CONTENT_REF_META_KEY: "../outside-the-project.txt",
+            SPILLED_META_KEY: False,
+        },
+    )
+
+    result = outside_row.body_bytes(store)
+
+    assert result is None, (
+        "an out-of-boundary ref must derive to None (unknown), not raise "
+        "and not report a fabricated size"
+    )
+
+
+@pytest.mark.asyncio
+async def test_append_survives_an_out_of_boundary_content_ref_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the ① sibling of the test above, driven through the REAL
+    hot path — an out-of-boundary content_ref row resident in
+    ``self.history`` must not make ``Session._append_history`` (which
+    runs ``_evict_oldest_resident_entries`` on every call) raise."""
+    from reyn.runtime.chat_message import ChatMessage
+
+    monkeypatch.chdir(tmp_path)
+    session = _session("boundary-append-agent", tmp_path, max_bytes=4000)
+    from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
+    session._media_store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="boundary-append-agent", session_id="s1",
+    )
+    outside_row = ChatMessage(
+        role="tool", content="",
+        meta={
+            CONTENT_REF_META_KEY: "../outside-the-project.txt",
+            "spilled": False,
+        },
+    )
+    session._append_history(outside_row)  # noqa: SLF001 - real durable-write seam
+
+    # The real assertion is that this does not raise; a second append
+    # (re-running the eviction scan the boundary-violating row survives
+    # in) is the strongest witness that it keeps not raising.
+    session._append_history(ChatMessage(role="user", content="one more turn"))  # noqa: SLF001
