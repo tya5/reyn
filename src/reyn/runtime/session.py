@@ -4398,9 +4398,42 @@ class Session:
         an explicit, bounded (by ``min_lines``) request the caller made, not
         the unbounded tail-growth this cap exists to bound.
 
+        #5973 裁定① (owner-hit P0, architect's structural ruling): the
+        per-message size this method sums is no longer ``m.
+        resident_bytes()`` alone. #5896 turned an un-spilled tool row's
+        ``history.jsonl`` line from its body into a small reference —
+        ``resident_bytes()`` (the row's own serialised shell) correctly
+        stayed a tiny ``ResidentBytes`` value for such a row (~400 bytes),
+        but that shell is not what this cap needs to bound: the row still
+        REACHES a real body (``CONTENT_BYTES_META_KEY`` in its meta,
+        stamped at write time — #5896), and every wire-serialise this
+        session's own history goes through
+        (``RouterHistoryBuffer._serialise_turn`` -> ``resolve_history_
+        content``) pulls that body back in, unconditionally, every call
+        (see that method's own docstring). A resident set built entirely
+        of content_ref rows measured ~400 bytes/row here — 256 MiB of
+        "headroom" that bounded nothing, while the SAME set could pull
+        hundreds of MB back in on the very next turn. ``_pull_weight``
+        below adds each content_ref row's own ``BodyBytes`` (its real,
+        reachable body size) to its ``resident_bytes()`` shell — the row's
+        own currency (``ResidentBytes``) stays what this cap is typed and
+        compared in; only the VALUE summed under it changes to reflect
+        what the row can actually cost, not what it happens to occupy
+        right now while unresolved.
+
         Returns the count evicted (0 = already within budget)."""
         cap = self._history_resident_config.max_bytes
-        sizes = [m.resident_bytes() for m in self.history]
+
+        def _pull_weight(m: ChatMessage) -> int:
+            weight = int(m.resident_bytes())
+            meta = m.meta or {}
+            if meta.get(CONTENT_REF_META_KEY) and not meta.get(SPILLED_META_KEY):
+                body = m.body_bytes(self._media_store)
+                if body is not None:
+                    weight += body
+            return weight
+
+        sizes = [_pull_weight(m) for m in self.history]
         total = sum(sizes)
         evict_count = 0
         # Never evict the newest (last) entry, even if it alone exceeds the
@@ -4614,16 +4647,22 @@ class Session:
         from reyn.runtime.history_tail_reader import read_history_after
 
         lines, truncated = read_history_after(self.history_path, after_seq=after_seq)
-        # #5949 stage ①-b: hydrate=True — _measure_and_select (compaction_
-        # controller.py) computes real token estimates directly over these
-        # candidates' .content, before any wire is built; see
-        # _parse_history_line's own docstring for why this is the ONE
-        # caller of this method that genuinely needs the real body here
-        # rather than at wire-serialise time.
         parsed = [
             m for line in lines
-            if (m := self._parse_history_line(line, hydrate=True)) is not None
+            if (m := self._parse_history_line(line)) is not None
         ]
+        # #5973 裁定③ (redefines #5949 stage ①-b's own hydrate=True here):
+        # _measure_and_select (compaction_controller.py) computes real
+        # token estimates over these candidates' .content BEFORE any wire
+        # is built, so an empty/preview body would under-count a
+        # content_ref candidate's true size — the reason stage ①-b
+        # hydrated here at all. Unconditional hydration was the actual
+        # #5973 bug (a 597 MB backlog materialized whole on ONE recovery
+        # pass, real audit-event trace: issuecomment-5577574709) —
+        # :meth:`_hydrate_candidates_under_budget` hydrates only as many
+        # candidates as fit under the SAME budget ②'s wire path shares,
+        # never unconditionally and never zero.
+        self._hydrate_candidates_under_budget(parsed)
         if self._state_log is None:
             return parsed, truncated
         from reyn.core.events.snapshot_generations import build_active_predicate
@@ -4639,6 +4678,60 @@ class Session:
             return seq is None or is_active(seq)
 
         return self._filter_visible_on_active_branch(parsed, _active), truncated
+
+    def _hydrate_candidates_under_budget(self, parsed: "list[ChatMessage]") -> None:
+        """#5973 裁定③ (owner-hit P0, architect's structural ruling): the
+        ONE place left that still needs a content_ref candidate's REAL
+        body before any wire is built —
+        ``CompactionController._measure_and_select`` computes real token
+        estimates directly over ``.content`` — hydrates candidates in
+        order, oldest first (*parsed*'s own order — the durable read is
+        already chronological), until the SAME materialization budget
+        :class:`~reyn.runtime.services.router_history_buffer.
+        WireMaterializationBudget` bounds elsewhere (裁定②'s wire path)
+        is spent, never unconditionally.
+
+        A fresh budget every call (never shared with, or a running total
+        across, ②'s own wire-build budget — recovery and normal-turn
+        wire construction are different passes, at different times, and
+        must not silently borrow against each other's allowance) — but
+        the SAME field (``self._history_resident_config.max_bytes``) as
+        the currency, per architect's own ruling: this is the SAME
+        question ("how many body bytes should exist in memory at once")
+        asked at a third moment, not a third independently-tuned cap.
+
+        A candidate this budget refuses stays exactly as
+        :meth:`_parse_history_line` left it — content empty — so
+        ``_measure_and_select`` under-counts its true size. Disclosed,
+        not silent: this is a real accuracy trade-off (architect's own
+        ①: "測定は本体を読まない" — this method is the bounded exception
+        that reads only what fits), not a claim every candidate's size is
+        exactly known. A caller that needs every candidate genuinely
+        materialized regardless of size has no such caller today — see
+        this issue's own acceptance for what bounds this instead."""
+        if self._media_store is None:
+            return
+        from reyn.runtime.services.router_history_buffer import (
+            WireMaterializationBudget,
+            resolve_history_content,
+        )
+
+        budget = WireMaterializationBudget(cap=int(self._history_resident_config.max_bytes))
+        for m in parsed:
+            if m.role != "tool" or m.content != "":
+                continue
+            meta = m.meta or {}
+            ref = meta.get(CONTENT_REF_META_KEY)
+            if not ref or meta.get(SPILLED_META_KEY):
+                continue
+            body_bytes = m.body_bytes(self._media_store)
+            if body_bytes is None or not budget.reserve(body_bytes):
+                continue
+            m.content = resolve_history_content(
+                m.content, meta, lambda: self._media_store.project_root,
+                self._audit_events, None,
+                read_text=lambda ref: self._media_store.read_tool_result(ref)[0],
+            )
 
     def last_sender(self) -> str | None:
         """Return the most-recently-attributed sender label or None if no
@@ -5016,9 +5109,7 @@ class Session:
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
         )
 
-    def _parse_history_line(
-        self, line: str, *, hydrate: bool,
-    ) -> "ChatMessage | None":
+    def _parse_history_line(self, line: str) -> "ChatMessage | None":
         """Parse one ``history.jsonl`` line into a ``ChatMessage``, or
         ``None`` if malformed (skipped, never raised — byte-identical to
         the pre-#4387 behavior). Pure: does not touch ``self.history``.
@@ -5028,78 +5119,33 @@ class Session:
         history.jsonl GC, which runs from ``AgentRegistry`` with no live
         ``Session``, has one parser to call instead of a second copy).
 
-        #5949 stage ①-b (P0, owner-hit — architect's structural ruling,
-        issuecomment-5576144700): ``hydrate`` has **no default** and is
-        **required** at every call site, and its polarity is the INVERSE
-        of the pre-①-b ``preview_only`` flag it replaces —
-        ``hydrate=False`` (cheap, the caller wants the row for DISPLAY or
-        candidate-selection scanning, not for materializing a body) is
-        what an un-decided call now falls back to only by being FORCED to
-        decide, never silently: a caller that forgets to reason about this
-        gets a ``TypeError`` at import/call time, not a defect that ships.
-        Before this: ``preview_only: bool = False`` meant "materialize by
-        default," so a NEW caller landed on the expensive path unless it
-        remembered to opt out — the exact shape that let stage ① fix only
-        ONE of 4 real ``_parse_history_line`` call sites while owner's
-        real backward-page-heavy path (``extend_history_backward_async``)
-        kept eager-hydrating, unchanged, silently.
+        #5973 (owner-hit P0, architect's structural ruling): NEVER
+        hydrates a content_ref row's body — the ``hydrate`` flag #5949
+        stage ①-b introduced here is GONE, not merely defaulted. Its own
+        ``hydrate=True`` had exactly one caller
+        (``_durable_active_history_after``, compaction's candidate read),
+        and unconditional hydration there was itself #5973's own bug: a
+        single ``hello`` send, once a reactive-overflow recovery pass ran
+        this path, re-materialized a 597 MB backlog whole (real audit-
+        event trace, issuecomment-5577574709). That one caller now
+        hydrates SEPARATELY and under a real budget — see
+        :meth:`_hydrate_candidates_under_budget` — never inline here.
+        With the flag deleted, eager materialization at parse time is not
+        merely discouraged, it is impossible to write.
 
-        ``hydrate=False``: ``content`` stays EMPTY here (never eager-
-        hydrated) — for a content_ref row, a bounded preview is filled in
-        SEPARATELY by :meth:`_fill_content_previews`, into
+        ``content`` therefore always stays EMPTY here for a content_ref
+        row — a bounded preview is filled in SEPARATELY by
+        :meth:`_fill_content_previews`, into
         ``meta[CONTENT_PREVIEW_META_KEY]``, never into ``.content`` itself.
         This is safe because the LLM wire path
         (``RouterHistoryBuffer._serialise_turn``) calls
-        ``resolve_history_content`` UNCONDITIONALLY on every message it
-        serialises (not gated on "was this row hydrated at parse time") —
-        an entry that already holds its body passes through untouched (no
-        disk read); one that doesn't gets hydrated THERE, lazily, at the
-        one place the real bytes are actually needed. So ``hydrate=False``
-        never starves the wire — it only stops a body from being
-        materialized somewhere upstream of it that never reads ``.content``
-        directly.
-
-        ``hydrate=True``: the caller reads ``.content`` itself, directly,
-        for something OTHER than wire serialisation — currently exactly
-        one such caller, :meth:`_durable_active_history_after` (compaction
-        candidate read): its own ``_measure_and_select`` computes real
-        token estimates over every candidate's ``.content`` BEFORE any
-        wire is built, so an empty/preview body there would silently
-        under-count every content_ref turn's true size and mis-select what
-        to fold. Hydrates from the ``history-content/`` file through the
-        ONE resolver (``resolve_history_content`` →
-        ``history_content_resolve.resolve``) exactly as before #5949. A
-        missing file hydrates to the resolver's "lost" notice (reason
-        ``EXTERNAL`` — stage ① excludes un-spilled files from GC) and
-        emits ``offloaded_content_unavailable`` once per parse; a session
-        with no ``MediaStore`` (no multimodal config — every production
-        factory wires one) cannot validate the path boundary and leaves
-        the row as parsed, disclosed here rather than read around the
-        store.
-
-        ``scripts/check_parse_history_line_hydrate_gate.py`` (structural
-        backstop, architect's ③) enumerates every call site of this
-        method across ``src/`` and ``tests/`` and fails if any of them
-        omits ``hydrate=`` — the enumeration this docstring names must
-        stay the actual population, not a snapshot of it."""
-        msg = parse_history_line(line)
-        if msg is None or msg.role != "tool" or msg.content != "":
-            return msg
-        meta = msg.meta or {}
-        if not meta.get(CONTENT_REF_META_KEY) or meta.get(SPILLED_META_KEY):
-            return msg
-        if not hydrate:
-            return msg
-        if self._media_store is None:
-            return msg
-        from reyn.runtime.services.router_history_buffer import resolve_history_content
-
-        msg.content = resolve_history_content(
-            msg.content, meta, lambda: self._media_store.project_root,
-            self._audit_events, None,
-            read_text=lambda ref: self._media_store.read_tool_result(ref)[0],
-        )
-        return msg
+        ``resolve_history_content`` on every message it serialises whose
+        materialization budget has room (see that method's own docstring,
+        #5973 裁定②) — an entry that already holds its body passes
+        through untouched (no disk read); one that doesn't gets hydrated
+        THERE, bounded, at the one place the real bytes are actually
+        needed for the wire."""
+        return parse_history_line(line)
 
     def _append_parsed_history_line(self, line: str) -> None:
         """Parse one ``history.jsonl`` line and append it to ``self.history``
@@ -5108,17 +5154,18 @@ class Session:
         append path a normal running turn uses to keep ``self.history`` in
         sync with what it just wrote durably.
 
-        #5949 stage ①-b: ``hydrate=False`` — a resident content_ref row
-        stays preview-only here too. Safe for the SAME reason
-        :meth:`_parse_history_line`'s own docstring gives:
-        ``RouterHistoryBuffer._serialise_turn`` hydrates any still-empty
-        body unconditionally at wire-build time, regardless of how the
-        resident row got there. A desirable side effect for a migration
+        #5973: a resident content_ref row stays preview-only here too —
+        :meth:`_parse_history_line` never hydrates (the flag it once had
+        is gone entirely, #5973). Safe for the SAME reason that method's
+        own docstring gives: ``RouterHistoryBuffer._serialise_turn``
+        hydrates any still-empty body, bounded by its own materialization
+        budget, at wire-build time, regardless of how the resident row
+        got there. A desirable side effect for a migration
         that hasn't reached a given row yet (#5896 stage ③, owner-
         confirmation-pending): even an un-migrated, still-inline row that
         this method parses stays exactly as cheap to hold resident as a
         migrated one — nothing here depends on migration having run."""
-        msg = self._parse_history_line(line, hydrate=False)
+        msg = self._parse_history_line(line)
         if msg is not None:
             self.history.append(msg)
 
@@ -5138,32 +5185,32 @@ class Session:
         read_tool_result_preview`, which never loads more than
         :data:`_CONTENT_PREVIEW_MAX_BYTES` of the backing file (unlike
         :func:`~reyn.services.offload.store.read_offloaded`'s own
-        ``offset``/``limit``, which reads the WHOLE file first — see that
-        method's own docstring). Format matches architect's own ruling:
-        head bytes, then ``…(+N MB)`` when the file held more than the
-        preview bound; the file's REAL size (a cheap ``os.path.getsize``,
-        never a full read) drives the figure, not any meta field a
-        caller might already carry (a #5896-stage-③-migrated file
-        predates ``CONTENT_BYTES_META_KEY`` and has none)."""
+        ``offset``/``limit``, which reads the WHOLE file first).
+
+        #5973: delegates to
+        :func:`~reyn.runtime.services.router_history_buffer.
+        bounded_content_preview` — the SAME head+``…(+N MB)`` shape this
+        method used to build inline, now also used by
+        ``RouterHistoryBuffer._serialise_turn`` for a wire-side preview
+        (裁定②) — one implementation, never two that could drift apart.
+        ``media_store is None`` degrades to ``""`` here (this method's own
+        long-standing contract), distinct from the shared function's own
+        "media store not configured" text — a caller of THIS method
+        never had a store-configured message to lose."""
         if self._media_store is None:
             return ""
-        head, found, total_bytes = self._media_store.read_tool_result_preview(
-            ref, max_bytes=self._CONTENT_PREVIEW_MAX_BYTES,
+        from reyn.runtime.services.router_history_buffer import bounded_content_preview
+
+        return bounded_content_preview(
+            self._media_store, ref, max_bytes=self._CONTENT_PREVIEW_MAX_BYTES,
         )
-        if not found:
-            return "(content unavailable — the backing file is missing)"
-        head_bytes = len(head.encode("utf-8"))
-        if head_bytes >= total_bytes:
-            return head
-        remaining_mb = (total_bytes - head_bytes) / (1024 * 1024)
-        return f"{head}…(+{remaining_mb:.1f} MB)"
 
     def _fill_content_previews(self, parsed: "list[ChatMessage]") -> None:
         """#5949 (owner-hit P0, architect ruling): fills
         ``meta[CONTENT_PREVIEW_META_KEY]`` for every content_ref
         ``role="tool"`` row in *parsed* whose ``content`` is empty (i.e.
-        every row :meth:`_parse_history_line` returned with
-        ``hydrate=False``) — called ONCE per
+        every content_ref row :meth:`_parse_history_line` returned —
+        #5973: it never hydrates, unconditionally) — called ONCE per
         :meth:`_read_and_parse_older_entries` invocation (shared by both
         :meth:`_load_older_entries` and :meth:`extend_history_backward_async`
         — #5949 stage ①-b), over the WHOLE batch it just parsed, not per
@@ -5207,8 +5254,8 @@ class Session:
         it only fixed :meth:`_load_older_entries`, the SYNC backward-page
         primitive; the path attach actually drives,
         :meth:`extend_history_backward_async`, had its OWN, separate parse
-        loop — no ``hydrate`` flag at all, no preview fill — that stage ①
-        never touched). This method is the ONE place the disk-read + parse +
+        loop — no hydration awareness at all, no preview fill — that
+        stage ① never touched). This method is the ONE place the disk-read + parse +
         preview-fill sequence exists: both callers below now call THIS,
         not each other, closing the "same parse duplicated in two places"
         shape that let ① land selectively.
@@ -5234,7 +5281,7 @@ class Session:
             return []
         parsed = [
             m for line in lines
-            if (m := self._parse_history_line(line, hydrate=False)) is not None
+            if (m := self._parse_history_line(line)) is not None
         ]
         self._fill_content_previews(parsed)
         return parsed
@@ -5263,10 +5310,10 @@ class Session:
         both this method and :meth:`extend_history_backward_async` (see
         that helper's docstring for why stage ① alone did not reach the
         async path). ``.content`` itself stays untouched (empty) either
-        way — the LLM wire path's own lazy resolve
+        way — the LLM wire path's own lazy, bounded resolve
         (``RouterHistoryBuffer._serialise_turn``) is unaffected by this
-        change; see :meth:`_parse_history_line`'s own ``hydrate``
-        docstring for why that is what makes this safe.
+        change; see :meth:`_parse_history_line`'s own docstring for why
+        that is what makes this safe.
         """
         parsed = self._read_and_parse_older_entries(before_seq=before_seq, min_lines=min_lines)
         if not parsed:
@@ -6696,6 +6743,10 @@ class Session:
             # own durable supersede record goes through this, never a
             # second append path.
             history_appender=self._append_history,
+            # #5973 裁定②: the SAME config 裁定① bounds the resident set
+            # with — see RouterHistoryBuffer._wire_materialization_budget's
+            # own docstring for why this is one shared bound, not two.
+            history_resident=self._history_resident_config,
         )
         # #5367: `current_turn_owner_fn`/`expected_owner` (#4995/#5267)
         # used to be threaded here — a concurrency guard for

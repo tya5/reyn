@@ -151,23 +151,22 @@ async def test_build_history_wire_is_the_same_live_and_after_a_restart(
     append and this test's own restart), and the body resolves — it is
     not ``lost``.
 
-    #5949 stage ①-b (P0, owner-hit — architect's structural ruling): the
-    RESIDENT row (``restarted.history``'s own ``ChatMessage``) is no
-    longer required to hold the body itself — ``Session.load_history()``
-    now parses with ``hydrate=False`` (same as backward-paging since
-    stage ①), so ``restored_row.text`` is legitimately empty; only the
-    WIRE (``build_history()``'s own output) is the load-bearing claim
-    this test makes, and it stays byte-identical regardless of whether
-    the resident row that fed it was hydrated at parse time or resolved
-    lazily at serialise time — that equivalence is the whole point of
-    this restructuring, not something it weakens.
+    #5973: ``Session._parse_history_line`` never hydrates a content_ref
+    row's body — the RESIDENT row (``restarted.history``'s own
+    ``ChatMessage``) is no longer required to hold the body itself, so
+    ``restored_row.text`` is legitimately empty; only the WIRE
+    (``build_history()``'s own output) is the load-bearing claim this
+    test makes, and it stays byte-identical regardless of whether the
+    resident row that fed it holds its body or a bare reference — that
+    equivalence is the whole point of this restructuring, not something
+    it weakens. The test body here (``_BODY``, ~210 KB) stays well under
+    #5973 裁定②'s own wire materialization budget, so build_history's
+    output carries the real body, not a budget-exceeded preview.
 
-    Strip-falsify: reverting :meth:`Session._append_parsed_history_line`
-    to ``hydrate=True`` still keeps this GREEN (a stronger resident row is
-    still a valid resident row) — the test that actually goes RED on a
-    real regression here is :meth:`RouterHistoryBuffer._serialise_turn`'s
-    own ``resolve_history_content`` call being removed or skipped, which
-    is exactly what the assert below still catches."""
+    Strip-falsify: the test that goes RED on a real regression here is
+    :meth:`RouterHistoryBuffer._serialise_turn`'s own
+    ``resolve_history_content`` call being removed or skipped, which is
+    exactly what the assert below still catches."""
     monkeypatch.chdir(tmp_path)
     live = _session("restart-agent", tmp_path)
     loop = RouterLoop(host=live.router_host, chain_id="c1", router_model=_MODEL)

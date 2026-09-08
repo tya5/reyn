@@ -32,27 +32,33 @@ from typing import Any, Literal, NewType
 #: migration (inline body -> content_ref) let drift apart while both
 #: stayed a bare `int` -- nothing distinguished "how many bytes THIS ROW
 #: occupies while resident" from "how many bytes the BODY that row's ref
-#: points at is". `history_resident.max_bytes` (config/chat.py) counts
-#: the former (`ChatMessage.resident_bytes()`, this file); the file a
-#: `content_ref` names is the latter (`CONTENT_BYTES_META_KEY` below).
-#: Before #5896 a resident row WAS its body, so the two counts were the
-#: SAME number and nothing separated them; after #5896 a resident ref
-#: row can be ~400 bytes while the body it points at is hundreds of MB
-#: -- #5973's own root cause is exactly this: a bound written when the
-#: two currencies coincided kept counting the wrong one once they split.
+#: points at is". `ChatMessage.resident_bytes()` (this file) is the
+#: former; the file a `content_ref` names is the latter
+#: (`CONTENT_BYTES_META_KEY` below). Before #5896 a resident row WAS its
+#: body, so the two counts were the SAME number and nothing separated
+#: them; after #5896 a resident ref row can be ~400 bytes while the body
+#: it points at is hundreds of MB -- #5973's own root cause is exactly
+#: this: a bound written when the two currencies coincided kept counting
+#: the wrong one once they split.
 #:
 #: `NewType` is a STATIC-ONLY distinction (zero runtime cost, zero
 #: runtime enforcement -- both are still plain `int` at execution) that
 #: makes the TWO KINDS OF INT mypy-incompatible with each other: passing
 #: a `BodyBytes` value where a `ResidentBytes` is expected (or the
 #: reverse) is a real `[arg-type]` mypy finding, not merely a naming
-#: convention a reader has to remember to honor. This PR does that
-#: separation ONLY — no bound moves, no counting site changes what it
-#: measures, no behavior changes at all (see
+#: convention a reader has to remember to honor. #5975 did that
+#: separation alone — no bound moved yet, see
 #: `tests/runtime/test_5973_resident_body_bytes_types.py` for the live
-#: mypy witness proving the distinction is enforced, and its own strip:
-#: reverting either `NewType` to a plain alias makes that witness's
-#: deliberately-wrong call type-check clean).
+#: mypy witness proving the distinction is enforced. #5973 ①/②/③ (this
+#: PR) is what actually moves `history_resident.max_bytes`: it now sums
+#: BOTH currencies for a content_ref row (`Session._evict_oldest_
+#: resident_entries`'s own `_pull_weight`, ①) — a bound that only ever
+#: counted `ResidentBytes` bounded nothing once the two currencies split
+#: — and the SAME field doubles as the wire-materialization budget
+#: (`RouterHistoryBuffer._wire_materialization_budget`, ②) and the
+#: recovery-candidate hydration budget (`Session._hydrate_candidates_
+#: under_budget`, ③): one resource, one field, three places that pull a
+#: body in, never three independently-tuned numbers.
 ResidentBytes = NewType("ResidentBytes", int)
 BodyBytes = NewType("BodyBytes", int)
 
@@ -859,6 +865,16 @@ class ChatMessage:
         # `json.dumps(asdict(m))` call (still used verbatim as the
         # equivalence baseline in tests) would have produced.
         self._resident_bytes_cache: "ResidentBytes | None" = None
+        # #5973 BLOCKING (lead-coder review, issuecomment-5578156411):
+        # same "plain instance attribute, no class-level annotation" shape
+        # as `_resident_bytes_cache` above, and the same reason (kept out
+        # of `asdict(self)`/`__eq__`/`repr()`). A SEPARATE bool from the
+        # cache value itself — `None` is a legitimate DERIVED result for
+        # `body_bytes()` (ref missing / no store / file gone), unlike
+        # `_resident_bytes_cache` where `None` unambiguously means
+        # "not yet computed" — so this cache cannot reuse that sentinel.
+        self._body_bytes_cache: "BodyBytes | None" = None
+        self._body_bytes_cached: bool = False
 
     def resident_bytes(self) -> ResidentBytes:
         """This message's own serialized size in bytes — computed the
@@ -908,6 +924,88 @@ class ChatMessage:
                 json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
             ))
         return self._resident_bytes_cache
+
+    def body_bytes(self, media_store: Any) -> "BodyBytes | None":
+        """#5973 BLOCKING (lead-coder review, issuecomment-5578156411,
+        follow-up to issuecomment-5578035547): this content_ref row's
+        real body size — from ``CONTENT_BYTES_META_KEY`` when present
+        (every row a PRODUCTION write mints since #5896 carries one), or
+        DERIVED via a stat (``media_store.read_tool_result_preview``'s
+        own ``os.path.getsize``, ``max_bytes=0``) when it is not — a
+        ``reyn storage migrate-bodies`` (#5947) migrated row stamps
+        ``CONTENT_REF_META_KEY`` but never ``CONTENT_BYTES_META_KEY``,
+        and owner's own real history is entirely this population.
+
+        Computed the FIRST time this is called, cached for the rest of
+        this object's lifetime — the SAME shape :meth:`resident_bytes`
+        uses, for the same reason and then some: ``Session.
+        _evict_oldest_resident_entries`` runs on EVERY append (not just
+        once), scanning every resident row, so an un-memoized stat here
+        would ``open()`` a migrated row's backing file once per resident
+        migrated row PER APPEND — O(resident ref count) file opens,
+        repeated on every single turn (lead-coder's own measurement:
+        the exact class this PR's own fix for BLOCKING-1 introduced by
+        deriving via stat without caching it).
+
+        Caching here is safe (never goes stale) for the SAME reason
+        :meth:`resident_bytes` documents (nothing in this codebase
+        in-place-mutates ``meta`` after a message becomes resident) PLUS
+        one more: a ``content_ref``'s target file is content-addressed
+        and write-once (``MediaStore.save_tool_result`` never overwrites
+        an existing ref's file) — so the SIZE a ref names is an immutable
+        fact from the moment this row is parsed, not merely
+        un-mutated-so-far. ``media_store=None`` on the first call caches
+        ``None`` permanently — safe in production (a session's
+        ``_media_store`` is set once at construction and never swapped
+        mid-lifetime); a test double that first calls this with no store
+        and later wants a real derivation must construct a fresh message
+        instead of expecting a second call to see a different store.
+
+        Returns ``None`` (never raises) for every "unknown" case: the ref
+        is absent, ``media_store`` is unset, the backing file is missing
+        (``found=False``), OR the ref names a path OUTSIDE
+        ``media_store``'s own boundary (``read_tool_result_preview``
+        raises ``PermissionError`` there, caught here — the same fold
+        this file's own :func:`_materialise_path_ref_content` already
+        applies to this exact exception). This runs on the hot append
+        path (:meth:`Session._evict_oldest_resident_entries`, called
+        from every :meth:`Session._append_history`) — an uncaught raise
+        for one out-of-boundary row would make every future append fail,
+        turning a degrade into a hard stop."""
+        if not self._body_bytes_cached:
+            self._body_bytes_cache = self._derive_body_bytes(media_store)
+            self._body_bytes_cached = True
+        return self._body_bytes_cache
+
+    def _derive_body_bytes(self, media_store: Any) -> "BodyBytes | None":
+        meta = self.meta or {}
+        ref = meta.get(CONTENT_REF_META_KEY)
+        if not ref:
+            return None
+        stamped = meta.get(CONTENT_BYTES_META_KEY)
+        if isinstance(stamped, int):
+            return BodyBytes(stamped)
+        if media_store is None:
+            return None
+        # #5973 BLOCKING (lead-coder review, issuecomment-5578223027): a
+        # ref outside media_store's own boundary makes read_tool_result_
+        # preview raise PermissionError, not return found=False — and
+        # this is now on the hot append path (body_bytes() is called from
+        # _pull_weight, Session._evict_oldest_resident_entries, which
+        # Session._append_history runs on EVERY append). Uncaught, ONE
+        # out-of-boundary ref would make every future append raise,
+        # turning a degrade (this PR's own "unknown -> treated safely by
+        # ①②③") into a hard stop. Folded to the SAME "unknown" None every
+        # other branch here returns — the same fold this file's own
+        # _materialise_path_ref_content already applies to this exact
+        # exception, not a new convention.
+        try:
+            _head, found, total_bytes = media_store.read_tool_result_preview(
+                ref, max_bytes=0,
+            )
+        except PermissionError:
+            return None
+        return BodyBytes(total_bytes) if found else None
 
     @property
     def text(self) -> str:

@@ -411,14 +411,9 @@ def _make_history_session(tmp_path):
         ),
     )
     lines = _write_history_lines(session.history_path, range(1, 11))
-    # #5949 stage ①-b: hydrate=False -- every row here is role="user" with
-    # no content_ref, so this is inert either way (only a "tool"
-    # content_ref row's parse consults `hydrate` at all), but every
-    # `_parse_history_line` call must now name its choice explicitly (the
-    # structural gate enumerates callers, not just effects).
     session.history = [
         m for line in lines[5:]
-        if (m := session._parse_history_line(line, hydrate=False)) is not None
+        if (m := session._parse_history_line(line)) is not None
     ]
     return session
 
@@ -575,7 +570,6 @@ async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved
         # flight").
         intruder = session._parse_history_line(
             json.dumps({"role": "user", "content": "intruder", "seq": 99}),
-            hydrate=False,  # #5949 stage ①-b: inert here (no content_ref row)
         )
         session.history.insert(0, intruder)
 

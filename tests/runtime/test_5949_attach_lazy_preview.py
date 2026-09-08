@@ -109,9 +109,11 @@ async def test_backward_paged_content_ref_row_keeps_content_empty(
     materialized into ``.content``/`.text`` — this is the whole point:
     materializing it is exactly what blew up 566 MB -> 8 GB.
 
-    Strip witness: passing ``hydrate=True`` (the pre-①-b default polarity)
-    from ``_load_older_entries`` makes ``.text`` equal the full 20000-char
-    body instead of empty — verified directly, restored after."""
+    Strip witness: reverting ``_parse_history_line`` to eagerly resolve a
+    content_ref row's body at parse time (the pre-#5973 shape — #5949
+    stage ①-b's own ``hydrate=True`` default polarity) makes ``.text``
+    equal the full 20000-char body instead of empty — verified directly,
+    restored after."""
     monkeypatch.chdir(tmp_path)
     await _write_one_content_ref_row(tmp_path, "attach-agent", _BODY)
 
@@ -218,12 +220,14 @@ async def test_attach_endpoint_backlog_page_never_eager_hydrates_via_the_async_p
 def test_preview_only_parse_leaves_content_empty_directly(tmp_path: Path) -> None:
     """Tier 1: the same claim as above, isolated to ``_parse_history_line``
     itself (no Session-level paging machinery involved) — a durable line
-    with a content_ref, parsed with ``hydrate=False``, returns a message
-    whose ``.content`` is still ``""``.
+    with a content_ref returns a message whose ``.content`` is still
+    ``""`` (#5973: this method never hydrates — the ``hydrate`` flag
+    #5949 stage ①-b introduced is gone entirely, not merely defaulted).
 
-    Strip witness: removing the ``if not hydrate: return msg`` guard
-    (falling through to the eager resolve) makes ``.content`` equal the
-    full body — verified directly, restored after."""
+    Strip witness: making ``_parse_history_line`` fall through to an
+    eager ``resolve_history_content`` call (the pre-#5973 ``hydrate=True``
+    shape) makes ``.content`` equal the full body — verified directly,
+    restored after."""
     from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 
     session = _session("preview-only-agent", tmp_path)
@@ -240,10 +244,10 @@ def test_preview_only_parse_leaves_content_empty_directly(tmp_path: Path) -> Non
         "spillability": "last_resort", "disclosure": None,
     })
 
-    msg = session._parse_history_line(line, hydrate=False)
+    msg = session._parse_history_line(line)
 
     assert msg is not None
-    assert msg.content == "", f"hydrate=False must leave content empty, got {len(msg.content)} chars"
+    assert msg.content == "", f"_parse_history_line must leave content empty, got {len(msg.content)} chars"
 
 
 # ── 2. a bounded preview is filled, with the "+N MB" notice ─────────────

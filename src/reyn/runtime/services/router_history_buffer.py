@@ -27,6 +27,7 @@ assumes append-only or monotonic growth across calls).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.runtime.chat_message import (
@@ -51,6 +52,90 @@ if TYPE_CHECKING:
 # that constructs/reads this role — mirrors SUMMARY_MESSAGE_ROLE's own
 # home in engine.py (the one place THAT role's own machinery lives).
 SPILL_RECORD_MESSAGE_ROLE = "spill_record"
+
+# #5973 裁定②: a bounded, cheap-to-show text for a content_ref row whose
+# real body a materialization budget refused to pull in this wire-build
+# pass — SAME bound Session._build_content_preview already uses for its
+# own (unrelated: backward-paging DISPLAY) preview, reused rather than a
+# second, separately-tuned number for "how big is a bounded preview"
+# (there is one answer to that question, not two that could drift).
+_WIRE_SPILL_PREVIEW_MAX_BYTES = 4000
+
+
+def bounded_content_preview(media_store: Any, ref: str, *, max_bytes: int) -> str:
+    """#5973 裁定②: a bounded, cheap-to-show text for *ref*'s body — reads
+    via ``MediaStore.read_tool_result_preview``, which never loads more
+    than *max_bytes* of the backing file (unlike
+    :func:`~reyn.services.offload.store.read_offloaded`'s own
+    ``offset``/``limit``, which reads the WHOLE file first). Format:
+    head bytes, then ``…(+N MB)`` when the file held more than the bound
+    — the file's REAL size (a cheap stat, never a full read) drives the
+    figure.
+
+    Extracted here (not private to either caller) because it is used by
+    TWO independent call sites for two different reasons —
+    :meth:`Session._build_content_preview` (a bounded DISPLAY preview
+    for a backward-paged row a human is about to scroll to) and
+    :meth:`RouterHistoryBuffer._serialise_turn` (a bounded WIRE
+    replacement for a row a materialization budget refused this pass) —
+    and both need the identical head+notice shape; one implementation,
+    never two that could drift apart."""
+    if media_store is None:
+        return "(content unavailable — media store not configured)"
+    head, found, total_bytes = media_store.read_tool_result_preview(
+        ref, max_bytes=max_bytes,
+    )
+    if not found:
+        return "(content unavailable — the backing file is missing)"
+    head_bytes = len(head.encode("utf-8"))
+    if head_bytes >= total_bytes:
+        return head
+    remaining_mb = (total_bytes - head_bytes) / (1024 * 1024)
+    return f"{head}…(+{remaining_mb:.1f} MB)"
+
+
+@dataclass
+class WireMaterializationBudget:
+    """#5973 裁定② (owner-hit P0, architect's structural ruling): tracks
+    how many body bytes ONE :meth:`RouterHistoryBuffer.build_history` /
+    :meth:`decompose_history_for_retry` call has actually pulled off disk
+    via ``resolve_history_content``, across every turn it serialises.
+
+    This is the quantity #5973 traces (a 597 MB migrated history -> a
+    12-16 GB resident peak on a single ``hello`` send) — not the resident
+    set (bounded separately, 裁定①), and not compaction's own candidate
+    read (bounded under the SAME budget, 裁定③). #5896 turned a resident
+    tool row from holding its body to holding a small reference; every
+    wire-serialise still calls ``resolve_history_content``
+    UNCONDITIONALLY on every row (see that function's own docstring) —
+    what used to be the exceptional cell that reads became the normal
+    path for every row, and nothing capped what that normal path could
+    pull in per call.
+
+    ``cap`` reuses ``HistoryResidentConfig.max_bytes`` — 裁定①'s own
+    bound — rather than a second, independently-tuned number: both
+    represent the SAME question ("how many body bytes should exist in
+    memory for this session at once"), asked at two different moments
+    (what stays resident across turns / what one wire-build pulls in for
+    a single turn). Two separately-tuned caps for one resource is
+    exactly the class #5973 exists to close (architect: "定義が2つ生ま
+    れ、それは #5973 が閉じる当のクラス").
+
+    ``reserve`` never partially admits a turn — either the whole body
+    fits under what remains, or none of it does (a partial body on the
+    wire is not a smaller version of the turn, it is a different,
+    unrequested one)."""
+
+    cap: int
+    used: int = 0
+
+    def reserve(self, n: int) -> bool:
+        """Commit *n* bytes and return True if that fits under ``cap``;
+        otherwise leave ``used`` unchanged and return False."""
+        if self.used + n > self.cap:
+            return False
+        self.used += n
+        return True
 
 
 # #2287 follow-up: the tool_call ↔ tool_result pairing repair moved OUT of this per-segment builder
@@ -610,6 +695,7 @@ class RouterHistoryBuffer:
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
         read_cap: Any = None,             # #4381 PR-5: ReadCapConfig — the resource bound to check budgets against
         history_appender: "Callable[[Any], None] | None" = None,  # #5612: Session._append_history — durable spill records
+        history_resident: Any = None,     # #5973 裁定②: HistoryResidentConfig — .max_bytes doubles as the wire materialization cap (裁定① reuses the same field)
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -620,6 +706,12 @@ class RouterHistoryBuffer:
         self._router_host = router_host
         self._universal_wrappers_enabled = universal_wrappers_enabled
         self._non_interactive = non_interactive
+        # #5973 裁定②: ``None`` (a legacy/test double with no resident
+        # config) degrades to "no wire materialization budget" — see
+        # :meth:`_wire_materialization_cap`, the ONE place that reads
+        # this field, for why that is unbounded rather than a made-up
+        # default cap.
+        self._history_resident = history_resident
         # #4381 PR-5: threaded into resolve_effective_trigger_and_budgets's
         # resource/budget invariant check (_check_resource_within_budget).
         self._read_cap = read_cap
@@ -827,6 +919,7 @@ class RouterHistoryBuffer:
     def _serialise_turn(
         self, m: Any, spill_map: "dict[str, str] | None" = None,
         seen_lost_refs: "set[str] | None" = None,
+        materializable_refs: "set[str] | None" = None,
     ) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
 
@@ -857,6 +950,28 @@ class RouterHistoryBuffer:
         unavailable`` event fires at most once per distinct ref for
         THIS read, never once per process lifetime (see that function's
         own docstring).
+
+        ``materializable_refs`` (#5973 裁定②, redefined by lead-coder's
+        BLOCKING review issuecomment-5578035547): the set of content_ref
+        rows THIS wire-build pass has already decided, in a separate
+        newest-first meta-only pass
+        (:meth:`_select_materializable_refs`), it may pull the real body
+        for — never decided turn-by-turn, chronologically, at serialise
+        time itself. A budget spent chronologically (oldest-first, the
+        same order ``turns`` is serialised in) would exhaust itself on
+        old turns and leave the NEWEST — almost always the turn actually
+        driving this send, #5973's own owner incident is a single
+        ``hello`` whose most recent tool result is the huge one — with no
+        allowance left; deciding the allowed SET first, newest-first,
+        fixes that without changing serialise order at all. A row whose
+        ref is not in this set gets :func:`bounded_content_preview`
+        instead of a real ``resolve_history_content`` call — sent on the
+        wire in place of the full body, never silently dropped
+        (architect: "超えたらその turn を送らないのではなく spill 済の
+        形で送る"). ``materializable_refs=None`` (every call site that
+        predates this — none left in this file, kept for a test double
+        with no config) is unconditionally unbounded, matching pre-#5973
+        behaviour exactly.
         """
         # #5531: a summary-role ChatMessage's ``.content`` is a STRUCTURED
         # dict (topic_arc/decisions/...), never plain text — it cannot go
@@ -898,19 +1013,38 @@ class RouterHistoryBuffer:
         # file may have been GC'd or never persisted since the last time
         # this turn was serialised (see resolve_history_content's own
         # docstring for why this is not a one-time check at write time).
-        content = resolve_history_content(
-            content, getattr(m, "meta", None), self._project_dir_fn,
-            self._events, seen_lost_refs,
-            # #5896: only the "un-spilled, no body" cell reads — a resident
-            # row already holds its body (see the resolver's table), so
-            # this is reached only for a row some path parsed without a
-            # store to hydrate through. Same None-store degrade as
-            # _materialise_path_ref_content above.
-            read_text=(
-                (lambda ref: self._media_store.read_tool_result(ref)[0])
-                if self._media_store is not None else None
-            ),
-        )
+        #
+        # #5973 裁定②: this is now the NORMAL path for every un-spilled
+        # content_ref row (#5896 turned a resident row's own body into a
+        # reference — the comment this replaced, "only the exceptional
+        # cell that reads," described the PRE-#5896 world and had gone
+        # stale). *materializable_refs* was already decided, for the
+        # whole pass, by :meth:`_select_materializable_refs` — a row
+        # whose ref is not in it never reaches this resolver at all.
+        _meta = getattr(m, "meta", None) or {}
+        _ref = _meta.get(CONTENT_REF_META_KEY)
+        if (
+            materializable_refs is not None
+            and isinstance(content, str) and content == ""
+            and _ref and not _meta.get(SPILLED_META_KEY)
+            and _ref not in materializable_refs
+        ):
+            content = bounded_content_preview(
+                self._media_store, _ref, max_bytes=_WIRE_SPILL_PREVIEW_MAX_BYTES,
+            )
+        else:
+            content = resolve_history_content(
+                content, getattr(m, "meta", None), self._project_dir_fn,
+                self._events, seen_lost_refs,
+                # #5896: this is the NORMAL path now for every un-spilled
+                # content_ref row — a resident row holds only a reference
+                # (see the resolver's table). Same None-store degrade as
+                # _materialise_path_ref_content above.
+                read_text=(
+                    (lambda ref: self._media_store.read_tool_result(ref)[0])
+                    if self._media_store is not None else None
+                ),
+            )
         # #5612 (was #5296 PR-2's in-memory overlay — now durable): apply
         # the reactive-spill supersede map, same stage as the watermark
         # filter above — a hit replaces this turn's content with its
@@ -1082,6 +1216,63 @@ class RouterHistoryBuffer:
             )
         ]
 
+    def _wire_materialization_cap(self) -> "int | None":
+        """#5973 裁定②: the cap for ONE ``build_history``/
+        ``decompose_history_for_retry`` call's own
+        :meth:`_select_materializable_refs` pass — never shared or
+        reused across calls (each wire-build pass gets its own full
+        allowance; this is not a session-lifetime running total).
+        ``None`` when ``self._history_resident`` is unset (a legacy/test
+        double with no resident config) — unbounded, matching pre-#5973
+        behaviour, not a made-up default cap this class would otherwise
+        have to invent."""
+        if self._history_resident is None:
+            return None
+        return int(self._history_resident.max_bytes)
+
+    def _select_materializable_refs(
+        self, turns: "list[Any]", cap: int,
+    ) -> "set[str]":
+        """#5973 裁定② (redefined by lead-coder's BLOCKING review,
+        issuecomment-5578035547): decide, in ONE meta-only pass over
+        *turns* in REVERSE (newest-first) order, which un-spilled
+        content_ref rows' real bodies THIS wire-build pass may
+        materialize.
+
+        Never decided chronologically (oldest-first, the same order
+        ``_serialise_turn`` itself runs in) — a budget spent in that
+        order exhausts itself on OLD turns and leaves the NEWEST, almost
+        always the turn actually driving this send, with nothing left:
+        #5973's own owner incident is a single ``hello`` send whose most
+        recent tool result is exactly the huge one. Deciding the allowed
+        SET first, newest-first, protects the turn that matters without
+        changing serialise order at all — ``_serialise_turn`` still runs
+        chronologically; only which refs it is ALLOWED to resolve was
+        decided here, first.
+
+        Meta-only: every size comes from :meth:`ChatMessage.body_bytes`
+        (the stamped meta field, or a stat — cached on the message
+        itself, never a real read of the body), so this pass costs
+        O(candidates), not O(bytes) — #5960's own question 5 (does the
+        repair make bound-measuring itself unbounded)."""
+        budget = WireMaterializationBudget(cap=cap)
+        allowed: "set[str]" = set()
+        for m in reversed(turns):
+            if getattr(m, "role", None) != "tool":
+                continue
+            meta = getattr(m, "meta", None) or {}
+            content = getattr(m, "content", None)
+            ref = meta.get(CONTENT_REF_META_KEY)
+            if not (
+                isinstance(content, str) and content == ""
+                and ref and not meta.get(SPILLED_META_KEY)
+            ):
+                continue
+            body_bytes = m.body_bytes(self._media_store)
+            if body_bytes is not None and budget.reserve(body_bytes):
+                allowed.add(ref)
+        return allowed
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def build_history(self) -> list[dict]:
@@ -1172,7 +1363,17 @@ class RouterHistoryBuffer:
         # #5438: fresh per call — see resolve_history_content's own
         # docstring for why this is not a process-global dedup set.
         seen_lost_refs: set[str] = set()
-        selected = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]
+        # #5973 裁定②: fresh per call — see _select_materializable_refs's
+        # own docstring for why this is never a running, cross-call total,
+        # and never decided chronologically (protects the NEWEST turn).
+        cap = self._wire_materialization_cap()
+        materializable_refs = (
+            self._select_materializable_refs(turns, cap) if cap is not None else None
+        )
+        selected = [
+            self._serialise_turn(m, spill_map, seen_lost_refs, materializable_refs)
+            for m in turns
+        ]
 
         # #4954(2): the summary bridge is now attached HERE, unconditionally
         # once `watermark > 0` — not only on the elide branch above. Before
@@ -1303,7 +1504,17 @@ class RouterHistoryBuffer:
         # #5438: fresh per call — see resolve_history_content's own
         # docstring for why this is not a process-global dedup set.
         seen_lost_refs: set[str] = set()
-        wire_turns = [self._serialise_turn(m, spill_map, seen_lost_refs) for m in turns]
+        # #5973 裁定②: fresh per call — see _select_materializable_refs's
+        # own docstring for why this is never a running, cross-call total,
+        # and never decided chronologically (protects the NEWEST turn).
+        cap = self._wire_materialization_cap()
+        materializable_refs = (
+            self._select_materializable_refs(turns, cap) if cap is not None else None
+        )
+        wire_turns = [
+            self._serialise_turn(m, spill_map, seen_lost_refs, materializable_refs)
+            for m in turns
+        ]
         # #5514 §7-3: THIS is the one place `spillability` gets annotated
         # onto a wire-shaped dict — never inside ``_serialise_turn``
         # itself (that method's own wire dict must stay canonical/
