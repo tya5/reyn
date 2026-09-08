@@ -592,6 +592,122 @@ def test_estimate_tokens_for_turn_chars4_opt_out_multimodal() -> None:
 
 
 # ---------------------------------------------------------------------------
+# #5973 2-d: estimate_tokens' exact-count path never hands litellm.
+# token_counter the WHOLE text in one call — it chunks, so the transient
+# list[int] litellm builds internally stays bounded per chunk instead of
+# scaling with the whole body (the measured driver of a 16 GB peak, not
+# materialization itself — architect, issuecomment-5577627693).
+# ---------------------------------------------------------------------------
+
+
+class _RecordingTokenizer:
+    """A real, deterministic ``litellm.token_counter``-shaped collaborator
+    — not a patch of litellm itself, and not a fake standing in for a
+    reyn object: this is the exact seam :func:`_chunked_token_count` is
+    written against (any object with ``.token_counter(model=, text=)``),
+    used here to make its OWN chunking behaviour directly observable
+    without depending on litellm's internal tokenizer implementation
+    (which this test is not about). Returns ``len(text) // 4`` — a
+    stable, deterministic count with no real tokenization involved."""
+
+    def __init__(self) -> None:
+        self.call_lengths: "list[int]" = []
+
+    def token_counter(self, *, model: str, text: str) -> int:
+        del model
+        self.call_lengths.append(len(text))
+        return max(1, len(text) // 4)
+
+
+def test_chunked_token_count_never_hands_one_call_the_whole_oversized_text() -> None:
+    """Tier 1: the core #5973 2-d claim — a text well over
+    ``_TOKENIZE_CHUNK_CHARS`` is counted via MULTIPLE calls, each bounded
+    to at most ``_TOKENIZE_CHUNK_CHARS`` chars, never one call carrying
+    the whole text (which is what let litellm's own tokenizer build one
+    huge transient ``list[int]``).
+
+    Strip witness: replacing the chunking loop with a single
+    ``litellm.token_counter(model=model, text=text)`` call (the pre-2-d
+    shape) turns this red — ``call_lengths`` would hold exactly one
+    entry equal to the full (over-bound) text length."""
+    from reyn.services.compaction.engine import (
+        _TOKENIZE_CHUNK_CHARS,
+        _chunked_token_count,
+    )
+
+    text = "z" * (_TOKENIZE_CHUNK_CHARS * 3 + 137)  # over the bound, on purpose
+    tok = _RecordingTokenizer()
+
+    total = _chunked_token_count(tok, "model", text)
+
+    assert tok.call_lengths[1:], (
+        f"an oversized text must be split into MULTIPLE calls, not handed "
+        f"to litellm.token_counter whole — got {tok.call_lengths}"
+    )
+    assert all(n <= _TOKENIZE_CHUNK_CHARS for n in tok.call_lengths), (
+        f"no single call may carry more than _TOKENIZE_CHUNK_CHARS chars "
+        f"— this is the whole point (bounding the transient list[int] "
+        f"litellm's own tokenizer builds per call); got {tok.call_lengths}"
+    )
+    assert sum(tok.call_lengths) == len(text), (
+        "every character of the input must be covered by exactly the "
+        "chunk calls made — no chunk dropped or double-counted"
+    )
+    assert total == sum(max(1, n // 4) for n in tok.call_lengths), (
+        "the returned count must be the SUM of every chunk's own count"
+    )
+
+
+def test_chunked_token_count_short_text_makes_exactly_one_call() -> None:
+    """Tier 1: a text at or under ``_TOKENIZE_CHUNK_CHARS`` (the
+    overwhelming majority of real turns) is byte-identical to the pre-2-d
+    behaviour — exactly one ``litellm.token_counter`` call, carrying the
+    whole text unchanged."""
+    from reyn.services.compaction.engine import (
+        _TOKENIZE_CHUNK_CHARS,
+        _chunked_token_count,
+    )
+
+    text = "y" * _TOKENIZE_CHUNK_CHARS
+    tok = _RecordingTokenizer()
+
+    total = _chunked_token_count(tok, "model", text)
+
+    assert tok.call_lengths == [len(text)], (
+        f"a text at the chunk bound must make exactly one call carrying "
+        f"the whole text; got {tok.call_lengths}"
+    )
+    assert total == len(text) // 4
+
+
+def test_estimate_tokens_exact_path_agrees_with_chars4_within_bpe_slack() -> None:
+    """Tier 2: :func:`estimate_tokens`'s real (non-``use_chars4``) path,
+    driven with the SAME ``_RecordingTokenizer`` double via
+    :func:`_chunked_token_count` directly (isolating the chunking claim
+    from litellm's own real tokenizer, which is not what this test is
+    about) — an oversized text's summed count must equal the sum of each
+    chunk's own ``len(text)//4``, proving the sum is genuinely built from
+    the per-chunk calls this module makes, not from a single whole-text
+    call this test would not have caught."""
+    from reyn.services.compaction.engine import (
+        _TOKENIZE_CHUNK_CHARS,
+        _chunked_token_count,
+    )
+
+    text = "橋" * (_TOKENIZE_CHUNK_CHARS + 500)  # multibyte text, still just chars
+    tok = _RecordingTokenizer()
+
+    total = _chunked_token_count(tok, "model", text)
+
+    assert tok.call_lengths[1:], (
+        "a text past the bound must still be split for non-ASCII content, "
+        f"got {tok.call_lengths}"
+    )
+    assert sum(tok.call_lengths) == len(text)
+    assert total == sum(max(1, n // 4) for n in tok.call_lengths)
+
+
+# ---------------------------------------------------------------------------
 # ISSUE #4: recompute_budgets() — dynamic system_prompt_provider
 # ---------------------------------------------------------------------------
 

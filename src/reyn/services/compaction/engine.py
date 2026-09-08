@@ -107,6 +107,23 @@ _token_counter_fallback_warned: bool = False
 _TOKEN_COUNTER_COOLDOWN_SECONDS = 60.0
 _token_counter_cooldown_until: float = 0.0
 
+# #5973 2-d (owner-hit P0, architect's measured finding, issuecomment-
+# 5577627693): litellm.token_counter tokenizes via tiktoken internally and
+# returns len() of the list[int] it built — that transient list, not the
+# int estimate_tokens() actually returns, was the real driver of a 16 GB
+# peak this issue traces (measured ~32-35 bytes/int; a 597 MB / ~150M-token
+# body built a ~5 GB list in ONE call). Materialization itself measured
+# ~1x (Japanese BMP text even smaller, ~0.92x — no per-language multiplier
+# concern this constant needs to account for). Chunking the call bounds
+# that transient list to one chunk's own size, discarded (GC'd, nothing
+# holds a reference past the chunk's own `litellm.token_counter` call)
+# before the next chunk starts — see `_chunked_token_count`'s own
+# docstring for the accuracy trade-off this introduces. ~50k tokens/chunk
+# at a ~4 chars/token rule of thumb -> a ~1.6-1.75 MB transient list per
+# chunk, not a user-facing knob (an internal bound on litellm's own
+# tokenizer call shape, not a budget or a cap a caller ever chooses).
+_TOKENIZE_CHUNK_CHARS = 200_000
+
 # Process-lifetime cache: (model, text_hash) -> int. Keyed by a hash, not the
 # raw text, so an entry stays tiny regardless of the source message's length
 # (a long tool-output turn costs the same few bytes as a short one).
@@ -182,12 +199,63 @@ def _text_hash(text: str) -> str:
     return hashlib.md5(text.encode("utf-8", errors="replace"), usedforsecurity=False).hexdigest()
 
 
+def _chunked_token_count(litellm: Any, model: str, text: str) -> int:
+    """#5973 2-d: sum ``litellm.token_counter`` over fixed-size chunks of
+    *text* instead of one call on the whole thing.
+
+    ``litellm.token_counter`` tokenizes via tiktoken internally and returns
+    ``len()`` of the ``list[int]`` it built — that transient list is what
+    this function exists to bound, not what any caller here wants (they
+    all want the integer). Un-chunked, a 597 MB / ~150M-token tool-result
+    body built a ~5 GB transient list in ONE call (measured: ~32-35
+    bytes/token; architect, issuecomment-5577627693) — the actual driver
+    of a 16 GB resident peak this issue traces, not materializing the body
+    itself (measured ~1x, Japanese BMP text included at ~0.92x). Chunking
+    bounds the transient to one chunk's own list (~1.6-1.75 MB at
+    ``_TOKENIZE_CHUNK_CHARS``), which is discarded — nothing holds a
+    reference to it past this function's own ``litellm.token_counter``
+    call — before the next chunk starts.
+
+    Approximate, not exact, for a text this function actually chunks: a
+    BPE tokenizer can tokenize a span differently depending on what comes
+    right before/after it, so a token that would have straddled a chunk
+    boundary in one un-chunked call counts as two (or merges differently)
+    once the boundary falls inside it — a small, bounded over/under-count
+    at each of ``len(text) // _TOKENIZE_CHUNK_CHARS`` boundaries, not a
+    per-character or per-language drift. Every caller of
+    :func:`estimate_tokens` already treats its non-``use_chars4`` return as
+    a BUDGET estimate (head/tail/shortfall math throughout
+    ``compaction_controller.py``/``router_history_buffer.py``), never a
+    wire-exact count reproduced bit-for-bit against the provider's own
+    tokenizer — this trade-off changes no caller's contract.
+
+    A short *text* (the overwhelming majority of calls — most turns are
+    far under ``_TOKENIZE_CHUNK_CHARS``) makes exactly one
+    ``litellm.token_counter`` call, byte-identical to before this
+    function existed."""
+    if len(text) <= _TOKENIZE_CHUNK_CHARS:
+        return litellm.token_counter(model=model, text=text)
+    total = 0
+    for start in range(0, len(text), _TOKENIZE_CHUNK_CHARS):
+        chunk = text[start : start + _TOKENIZE_CHUNK_CHARS]
+        total += litellm.token_counter(model=model, text=chunk)
+    return total
+
+
 def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     """Estimate tokens for a text string.
 
     Axis 10: uses litellm.token_counter by default; falls back to chars//4
     when litellm.token_counter itself raises (a genuine failure), and emits
     ``token_counter_fallback`` the first time that happens in this process.
+
+    #5973 2-d: the non-``use_chars4`` path never hands the WHOLE *text* to
+    litellm.token_counter in one call — :func:`_chunked_token_count` sums
+    it over fixed-size chunks, bounding the transient ``list[int]``
+    litellm's own tokenizer builds internally (see that function's own
+    docstring for the measured cause and the accuracy trade-off this
+    introduces for a text large enough to actually chunk). ``use_chars4=
+    True`` already never built that list at all — unaffected.
 
     ``count == 0`` (e.g. estimating an empty string) is a valid litellm
     result, not a failure, and does NOT trigger the fallback path (#2961).
@@ -232,7 +300,7 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
             # part of PR-1's diff).
             litellm = ensure_litellm_ready_or_defer()
             m = model or "gpt-3.5-turbo"
-            count = litellm.token_counter(model=m, text=text or "")
+            count = _chunked_token_count(litellm, m, text or "")
             # #2961: litellm.token_counter returns 0 (not an exception) for
             # an empty string — that is the correct answer, not a failure.
             # Only a raised exception (the `except` below) is a genuine
