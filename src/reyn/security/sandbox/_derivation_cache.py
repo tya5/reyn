@@ -25,6 +25,14 @@ a policy just to compute a cache key). Identity keys age out via a
 the policy object is garbage-collected, its cache entry is removed in the
 SAME step, so a future object that happens to be allocated at the same
 ``id()`` can never collide with a stale entry.
+
+#5981: eviction was in-memory only — a *compute* that writes a disk artifact
+(Seatbelt's cached ``.sb`` profile) had no exit at all, because the callback
+above dropped the dict entries and nothing else. ``on_evict`` (optional,
+below) ties a caller's own disk cleanup to the SAME weakref firing that
+already exists for the in-memory entry, rather than inventing a second,
+separate lifetime for the on-disk copy — the two were always meant to expire
+together; only one half of that was wired.
 """
 from __future__ import annotations
 
@@ -44,11 +52,19 @@ _CACHE: dict[tuple[str, int], Any] = {}
 # object itself is kept somewhere. This dict is that "somewhere" — its own
 # entry is removed by the SAME evictor callback that clears ``_CACHE``.
 _REFS: dict[tuple[str, int], "weakref.ref[SandboxPolicy]"] = {}
+# #5981: the caller-supplied cleanup for a cached VALUE, fired by the same
+# evictor that clears `_CACHE`/`_REFS` for this key — absent for callers with
+# nothing to release beyond the dict entry itself (the pre-#5981 shape).
+_ON_EVICT: dict[tuple[str, int], "Callable[[Any], None]"] = {}
 _LOCK = threading.Lock()
 
 
 def cached_derivation(
-    backend_name: str, policy: SandboxPolicy, compute: "Callable[[], T]",
+    backend_name: str,
+    policy: SandboxPolicy,
+    compute: "Callable[[], T]",
+    *,
+    on_evict: "Callable[[T], None] | None" = None,
 ) -> T:
     """Return the cached derivation for ``(backend_name, policy)``, computing
     it via *compute* exactly once per (backend, policy object) per process.
@@ -58,6 +74,15 @@ def cached_derivation(
     the lock across it trades a small amount of contention for never racing
     two callers into computing (and, for Seatbelt, WRITING) the same
     derivation twice.
+
+    ``on_evict`` (#5981), when given, is called with the cached VALUE at the
+    exact moment *policy* is garbage-collected and its entry is dropped —
+    the hook a caller whose *compute* result is a disk artifact (a path, a
+    file handle) needs to release that artifact on the SAME lifecycle event
+    that already ends the in-memory entry, instead of the artifact outliving
+    it with no eviction event of its own. Keyword-only and optional: a
+    caller with nothing to release (the pre-#5981 shape) passes nothing and
+    gets byte-identical behavior.
     """
     key = (backend_name, id(policy))
     with _LOCK:
@@ -65,6 +90,8 @@ def cached_derivation(
             return _CACHE[key]
         value = compute()
         _CACHE[key] = value
+        if on_evict is not None:
+            _ON_EVICT[key] = on_evict
         _REFS[key] = weakref.ref(policy, _evictor(key))
         return value
 
@@ -72,17 +99,29 @@ def cached_derivation(
 def _evictor(key: tuple[str, int]) -> "Callable[[Any], None]":
     def _evict(_ref: "Any") -> None:
         with _LOCK:
-            _CACHE.pop(key, None)
+            value = _CACHE.pop(key, None)
             _REFS.pop(key, None)
+            on_evict = _ON_EVICT.pop(key, None)
+        # #5981: run the caller's cleanup OUTSIDE `_LOCK` — an on_evict that
+        # re-enters `cached_derivation` (a different key; the same key can't
+        # recur, this entry is already gone) would otherwise deadlock on the
+        # same non-reentrant lock this callback was invoked from.
+        if on_evict is not None:
+            on_evict(value)
 
     return _evict
 
 
 def _reset_cache_for_tests() -> None:
-    """Test hook: drop the process-global derivation cache."""
+    """Test hook: drop the process-global derivation cache.
+
+    Does NOT fire any `on_evict` callback — this is a bookkeeping reset, not
+    a real eviction; a test that needs the disk-cleanup side effect exercised
+    should let the policy it created go out of scope and be collected."""
     with _LOCK:
         _CACHE.clear()
         _REFS.clear()
+        _ON_EVICT.clear()
 
 
 def _cache_size_for_tests() -> int:

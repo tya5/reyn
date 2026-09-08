@@ -291,8 +291,24 @@ def _cached_profile_path(policy: SandboxPolicy, profile_text: str) -> tuple[str,
             fh.write(profile_text)
         return path
 
-    path = cached_derivation("seatbelt", policy, _write_cached)
+    # #5981: the cached path's own disk artifact has no exit without this —
+    # `_derivation_cache`'s weakref eviction already fires when *policy* is
+    # collected; `on_evict` ties THIS file's removal to that same event
+    # instead of leaving it in `_seatbelt_cache_dir()` forever (a bare
+    # `_evict` callback only ever cleared the in-memory cache entry).
+    path = cached_derivation(
+        "seatbelt", policy, _write_cached, on_evict=_unlink_ignoring_missing,
+    )
     return path, True
+
+
+def _unlink_ignoring_missing(path: str) -> None:
+    """`on_evict` for a cached `.sb` path (#5981) — same guard shape
+    `_cleanup()` below already uses for the uncached, per-call temp file."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 class SeatbeltBackend:
@@ -404,16 +420,34 @@ class SeatbeltBackend:
         gets its own unlink-on-cleanup; a CACHED path is shared across every
         caller using this policy in the process, so ``cleanup()`` here must
         NOT unlink it — a second caller reusing the same policy would then
-        launch ``sandbox-exec -f <a path that no longer exists>``. Cached
-        files are cleaned up at process exit (OS temp-dir housekeeping),
-        matching the profile's new session-scoped lifetime rather than the
-        old per-call one. ``env`` is the SAME allowlisted build ``run()``
-        uses (#3822) — a caller launching the wrapped argv with this env
-        gets the identical env-scoping ``run()``'s callers get."""
+        launch ``sandbox-exec -f <a path that no longer exists>``. **A cached
+        file's actual bounding subject (#5981) is the SAME weakref eviction
+        that already drops its ``_derivation_cache`` entry** — when *policy*
+        itself is garbage-collected, ``cached_derivation``'s ``on_evict``
+        hook unlinks this file (``_unlink_ignoring_missing``, wired at
+        :func:`_cached_profile_path`'s call site) — NOT "process exit /
+        OS temp-dir housekeeping" (the previous claim here, which named no
+        real actor: nothing in this codebase unlinks a cached ``.sb`` file
+        at process exit; the file survives the process and was only ever
+        removed, if at all, by whatever unrelated schedule the OS sweeps its
+        own temp directory on). ``env`` is the SAME allowlisted build
+        ``run()`` uses (#3822) — a caller launching the wrapped argv with
+        this env gets the identical env-scoping ``run()``'s callers get."""
         profile_text = _build_sbpl_profile(policy)
         profile_path, is_cached = _cached_profile_path(policy, profile_text)
 
         def _cleanup() -> None:
+            # #5981: reading `policy` here (never otherwise used in this
+            # closure) is deliberate, not dead code — it keeps *policy*
+            # alive via this closure's own captured cell for as long as the
+            # CALLER holds `wrapped.cleanup` (which every caller must, to
+            # call it eventually). Without this, a caller that does not
+            # separately retain *policy* itself (e.g. `wrap_command(argv,
+            # SandboxPolicy(...))` with no local binding) could see the
+            # cached `.sb` file evicted the instant `wrap_command` returns —
+            # `policy` collected, `_derivation_cache`'s on_evict firing —
+            # while `wrapped.argv` still names that now-deleted path.
+            _ = policy
             if is_cached:
                 return
             try:
