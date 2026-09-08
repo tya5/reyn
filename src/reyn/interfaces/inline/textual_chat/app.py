@@ -2467,6 +2467,23 @@ class TextualChatApp(App):
         and on a mismatch: disarm, close the stale fd, and open a fresh
         one against the same path before re-arming. A ``stat`` call
         every :data:`~.loop_probe._TICK_SECONDS` (50 ms) is negligible.
+
+        **#5977 ①③ (owner-hit: "ひたすら繰り返されてるよこのログ")**: the
+        dead-man's switch above re-armed EVERY tick regardless of whether
+        the CURRENT stall episode had already produced a dump — a long
+        perceived-as-one stall is actually many tick-level arm→(maybe
+        fire)→rearm cycles, each of which could independently dump the
+        full thread stack, and each dump's own synchronous write cost adds
+        to the very lateness that risks triggering the next one
+        (self-amplification). Re-arming is now gated on
+        ``LoopTripwire.should_arm_stack_dump()`` — at most one dump per
+        episode, plus a session-total backstop — and ``LoopTripwire.
+        record_stack_dump()`` reports back when a dump actually fired, so
+        the episode-level allowance closes and the session count advances.
+        Reaching the session cap logs an always-visible (never
+        ``REYN_PROF_DUMP``-gated) notice exactly once — see
+        ``stall_dump_cap_reached_log_line``'s own docstring for why
+        silence there would be misread as "no more stalls."
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
@@ -2481,6 +2498,7 @@ class TextualChatApp(App):
             _TRIPWIRE_MS,
             StallDumpArm,
             stall_banner,
+            stall_dump_cap_reached_log_line,
             stall_log_line,
             stall_recovered_log_line,
         )
@@ -2534,7 +2552,7 @@ class TextualChatApp(App):
         # ever re-arms it) would go undumped, the one case a `while True:
         # re-arm at the top` shape would silently miss. A no-op when
         # `_dump_fd` is `None` (#5877 — see above).
-        if _stack_dump is not None:
+        if _stack_dump is not None and self._loop_tripwire.should_arm_stack_dump():
             _stack_dump.rearm()
         try:
             while True:
@@ -2551,8 +2569,29 @@ class TextualChatApp(App):
                 # faulthandler's own OS thread. `stack_dumped` is the
                 # best-effort proxy LoopTripwire.observe's docstring names —
                 # the same comparison it makes internally.
-                if _stack_dump is not None and _stack_dump.rearm():
+                # #5977 ①: only re-arm while THIS episode hasn't dumped yet
+                # and the session-total cap isn't reached — skipping the
+                # re-arm IS the suppression (each arm is one-shot and
+                # replaces the previous pending timer; there is no separate
+                # faulthandler state to cancel).
+                if (
+                    _stack_dump is not None
+                    and self._loop_tripwire.should_arm_stack_dump()
+                    and _stack_dump.rearm()
+                ):
                     stack_dumped = lateness_ms > _TRIPWIRE_MS
+                    if stack_dumped and self._loop_tripwire.record_stack_dump():
+                        # #5977 ③: always-visible, never gated behind
+                        # REYN_PROF_DUMP — same reasoning as the recovery
+                        # notice below (silence here would read as "no more
+                        # stalls," not "stopped recording them").
+                        logger.warning(
+                            "textual chat: %s",
+                            stall_dump_cap_reached_log_line(
+                                self._loop_tripwire.session_dump_count,
+                                self._loop_tripwire.session_dump_cap,
+                            ),
+                        )
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()
