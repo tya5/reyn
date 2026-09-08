@@ -344,13 +344,44 @@ class RemoteQueueView:
         self.turn_active = turn_active
         self._last_seq = queue_seq
 
-    def apply_user_submitted(self, *, msg_id: str, chain_id: "str | None", text: str, seq: int) -> bool:
+    def apply_user_submitted(
+        self, *, msg_id: str, chain_id: "str | None", text: str, seq: int,
+        is_own_pending: bool = False,
+    ) -> bool:
         """Apply an enqueue delta; returns False (no-op) if the seq gate
-        rejects it as already reflected by a prior snapshot/delta."""
-        if seq <= self._last_seq:
+        rejects it as already reflected by a prior snapshot/delta.
+
+        ``is_own_pending`` (#5989 ruling ②): the question this gate exists
+        to answer is IDENTITY — "is this echo the one my own pending row is
+        waiting for" — not order. #5989's own owner-hit measured what
+        answering it with ``seq`` alone costs: two submissions racing (a
+        client whose own wire round-trips can overlap — #5894, absent
+        #5907's serialization on the path that actually reproduced it)
+        can have their echoes arrive OUT of submission order; the earlier
+        one's echo then reads as ``seq <= self._last_seq`` and is rejected
+        as "stale" — except it is not stale, it is this client's OWN still-
+        pending submission, permanently orphaning its sent-queue row.
+
+        The caller (:meth:`~reyn.interfaces.inline.textual_chat.app.
+        TextualChatApp._handle_user_submitted_event`) confirms identity
+        BEFORE calling this — ``meta.client_ref`` matching one of ITS OWN
+        still-open local placeholder rows — and passes that fact through.
+        A replay is BY DEFINITION an echo for something NOT in the
+        caller's own pending set, so honoring ``is_own_pending=True`` can
+        never admit a genuine replay: replay rejection for every OTHER
+        echo (``is_own_pending=False``, the default) is unchanged.
+
+        The seq-gate's own baseline (:attr:`_last_seq`) still only ever
+        moves FORWARD here — an identity-confirmed but seq-superseded
+        echo is applied to :attr:`items` without regressing
+        :attr:`_last_seq` backward, so the ordering guarantee everything
+        ELSE (a genuine stale/replayed delta for a DIFFERENT item) relies
+        on is untouched."""
+        if seq <= self._last_seq and not is_own_pending:
             return False
         self.items[msg_id] = {"msg_id": msg_id, "chain_id": chain_id, "text": text}
-        self._last_seq = seq
+        if seq > self._last_seq:
+            self._last_seq = seq
         return True
 
     def apply_turn_started(self, *, chain_id: "str | None", seq: int) -> bool:

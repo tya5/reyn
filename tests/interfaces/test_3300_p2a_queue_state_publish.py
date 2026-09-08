@@ -333,6 +333,55 @@ def test_remote_queue_view_seq_gate_prevents_resurrection_after_dispatch():
     assert fresh.queue() == []
 
 
+def test_remote_queue_view_is_own_pending_promotes_despite_a_losing_seq_race():
+    """Tier 1: #5989 ruling ② — the seq-gate's own answer to "is this echo
+    mine" is IDENTITY, not order. Two submissions race (#5894, absent
+    #5907-style serialization on the path #5989 actually reproduced): B's
+    echo (seq=2) arrives FIRST and applies normally, advancing the gate's
+    baseline to 2. A's echo (seq=1) then arrives SECOND — a lower seq than
+    the baseline — but the CALLER has independently confirmed (by
+    ``client_ref`` matching A's own still-open pending row) that this is
+    NOT a replay, so it passes ``is_own_pending=True``. The gate must
+    still APPLY it (the owner-hit: without this, A's sent-queue row is
+    orphaned forever), while the baseline must NOT regress (verified via
+    a SUBSEQUENT stale, non-identity delta for a THIRD item at seq=1 —
+    genuinely stale, still correctly rejected — see the sibling replay
+    test below for the fuller replay-still-rejected coverage this
+    assertion complements).
+
+    Strip-falsify (verified by hand, both directions): dropping
+    ``is_own_pending`` from the gate's own condition (``if seq <= self.
+    _last_seq:`` unconditionally) makes A's apply return ``False`` and
+    ``view.queue()`` never contain "first" — this test's own first block
+    goes red. Making the gate move ``self._last_seq`` DOWN to A's seq (1)
+    on the identity-confirmed apply makes the THIRD item's later stale
+    check at seq=1 wrongly pass — this test's own second block goes red.
+    """
+    view = RemoteQueueView()
+
+    # B's echo (seq=2) arrives first — a completely ordinary apply.
+    assert view.apply_user_submitted(msg_id="mB", chain_id="cB", text="second", seq=2) is True
+    assert view.baseline_seq() == 2
+
+    # A's echo (seq=1) arrives second — a losing seq race against B's,
+    # but IDENTITY-confirmed as this client's own still-pending row.
+    applied = view.apply_user_submitted(
+        msg_id="mA", chain_id="cA", text="first", seq=1, is_own_pending=True,
+    )
+    assert applied is True, "an identity-confirmed echo must apply despite losing the seq race"
+    assert {"msg_id": "mA", "chain_id": "cA", "text": "first"} in view.queue(), (
+        "A's item must be present — this is the sent-queue row the owner-hit "
+        "reports as permanently stuck without this fix"
+    )
+
+    # The baseline must not have regressed to A's lower seq — a genuinely
+    # stale (non-identity) delta at the SAME seq=1 is still correctly
+    # rejected, proving replay protection for everyone else is unweakened.
+    assert view.baseline_seq() == 2, "an identity-confirmed apply must never regress the baseline"
+    stale = view.apply_user_submitted(msg_id="mC", chain_id="cC", text="unrelated", seq=1)
+    assert stale is False, "a genuinely stale, non-identity delta at the same seq must still be rejected"
+
+
 def test_remote_queue_view_snapshot_mid_stream_stays_consistent_with_redelivery():
     """Tier 1: a connection's SSE stream preserves per-connection delivery
     order (a single ordered queue, #3300 P2a emitter), so the realistic race

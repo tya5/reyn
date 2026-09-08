@@ -6480,20 +6480,34 @@ class TextualChatApp(App):
         local placeholder id THIS client minted at submit time, echoed back
         opaque and unread by the server — replacing the old ``has_row(msg_id)``
         GUESS (a row existing under the id this delta is ABOUT to use tells
-        you nothing about whose submission it was)."""
+        you nothing about whose submission it was).
+
+        #5989 ruling ②: ``client_ref`` matching one of THIS client's own
+        still-open pending rows is checked BEFORE calling the seq-gate, and
+        passed through as ``is_own_pending`` — a replay is BY DEFINITION an
+        echo for something NOT in this client's own pending set, so an
+        identity match can never admit a genuine replay; the gate answers
+        "is this echo mine" by IDENTITY now, not by seq order, which is what
+        #5894 (unserialized wire round-trips racing) could invert. See
+        ``RemoteQueueView.apply_user_submitted``'s own docstring for the
+        full mechanism this closes (owner-hit #5989: "pending queue に残っ
+        たまま" — the earlier of two racing submissions' echo losing the
+        seq-order race, permanently orphaning its own row)."""
         data = event.data or {}
         msg_id = data.get("msg_id")
         chain_id = data.get("chain_id")
         text = str(data.get("text", ""))
         seq = data.get("seq", 0)
+        meta = dict(data.get("meta") or {})
+        client_ref = meta.get("client_ref")
+        is_own_pending = isinstance(client_ref, str) and self._sent_queue.has_row(client_ref)
         applied = self._queue_view.apply_user_submitted(
             msg_id=msg_id, chain_id=chain_id, text=text, seq=seq,
+            is_own_pending=is_own_pending,
         )
         if applied and msg_id:
-            meta = dict(data.get("meta") or {})
             self._queue_item_meta[msg_id] = meta
-            client_ref = meta.get("client_ref")
-            if isinstance(client_ref, str) and self._sent_queue.has_row(client_ref):
+            if is_own_pending:
                 # This client's own local placeholder, identified by FACT
                 # (this echo carries the exact id THIS client minted for
                 # THIS submission) — promote in place. Never a second row,
@@ -6507,35 +6521,25 @@ class TextualChatApp(App):
                 self._sent_queue.show_item(msg_id, text)
             self._apply_compact_layout()
         elif not applied:
-            # #3688: the rejecting branch used to be pure absence — no row, no
-            # log, no trace of any kind. "The server dropped it", "the gate
-            # superseded it" and "it has not arrived yet" then look identical
-            # to the operator AND to anyone investigating, which is what made
-            # the owner's report expensive to attribute. The gate rejecting a
-            # stale delta is legitimate and stays silent to the operator; it
-            # stops being invisible to the LOG, which is the surface an
-            # investigation reads.
-            # #5886 (architect ruling ⑥): a rejection whose ``client_ref``
-            # is THIS client's own pending row is the bug's fingerprint,
-            # not routine staleness. This client minted that id moments ago
-            # for a submission it has not seen echoed yet, so "already
-            # reflected" cannot be true of it — the only way the gate says
-            # so is a baseline that is wrong. Loud, with the id, so an
-            # operator's log shows the cause instead of just the silence.
-            # Every OTHER rejection (another client's genuinely stale
-            # delta) stays debug: those are the gate doing its job.
-            _ref = (dict(data.get("meta") or {})).get("client_ref")
-            _is_own_pending = isinstance(_ref, str) and self._sent_queue.has_row(_ref)
-            (logger.warning if _is_own_pending else logger.debug)(
+            # #3688 / #5989 ③: the rejecting branch used to be pure
+            # absence — no row, no log, no trace of any kind. "The server
+            # dropped it", "the gate superseded it" and "it has not
+            # arrived yet" then look identical to the operator AND to
+            # anyone investigating — the #5989 bisection itself took 61
+            # commits partly because this WAS ``logger.debug``, invisible
+            # on the shipped default. A rejection reaching here can no
+            # longer be THIS client's own pending row (ruling ② admits
+            # every one of those above) — every rejection left is a
+            # GENUINE stale/replayed delta, the gate doing its job — but
+            # "doing its job" is still an event worth a visible trace,
+            # not silence an investigation has to reconstruct from
+            # nothing.
+            logger.warning(
                 "textual chat: sent-queue gate rejected user_submitted "
-                "msg_id=%s seq=%s client_ref=%s (already reflected by a "
-                "prior snapshot/delta)%s",
-                msg_id, seq, _ref,
-                (
-                    " — this is THIS client's own pending submission, so the "
-                    "gate's baseline is wrong (#5886), not the delta stale"
-                    if _is_own_pending else ""
-                ),
+                "msg_id=%s seq=%s client_ref=%s (stale — already reflected "
+                "by a prior snapshot/delta; not this client's own pending "
+                "row, so the rejection is correct)",
+                msg_id, seq, client_ref,
             )
 
     def _handle_turn_started_event(self, event) -> None:
