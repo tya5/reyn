@@ -60,10 +60,13 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
     original command unchanged.
 
     #4434 (stage 1): a bare ``SandboxPolicy()`` (empty write_paths) is safe
-    to session-cache, so its profile is SHARED — cleanup() on it is a no-op
-    by design (a second caller reusing this policy still needs the file);
-    see test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe
-    in test_sandbox_seatbelt.py for the DOES-unlink case."""
+    to session-cache, so its profile is SHARED — cleanup() releases this
+    call's own checkout of that shared derivation (#5981 co-vet: a real
+    refcounted release, not an unconditional no-op); see
+    test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy
+    in test_sandbox_seatbelt.py for the survives-while-a-SECOND-checkout-is-
+    outstanding case, and test_seatbelt_wrap_command_does_not_cache_when_
+    write_scope_is_unsafe for the never-cached (always unlinks) case."""
     backend = SeatbeltBackend()
     wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy())
     assert wrapped.argv[0] == "sandbox-exec"
@@ -77,11 +80,9 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
     assert wrapped.cleanup is not None
     assert profile_path.exists()
     wrapped.cleanup()
-    assert profile_path.exists()  # cached (session-lifetime): cleanup() is a no-op
-
-    import os
-
-    os.unlink(profile_path)  # tidy up the shared cache file this test wrote
+    # This is the ONLY checkout of this policy in this test, so releasing it
+    # IS the last outstanding one — cleanup() unlinks.
+    assert not profile_path.exists()
 
 
 def test_seatbelt_wrap_command_cleanup_idempotent():

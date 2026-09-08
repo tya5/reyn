@@ -490,14 +490,17 @@ def test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy(
     with open(path1, encoding="utf-8") as fh:
         assert fh.read() == _build_sbpl_profile(policy)
 
-    # cleanup() on a cached path must be a no-op (a second caller sharing
-    # this policy still needs the file); confirmed by asserting it survives.
+    # #5981 co-vet: cleanup() on a cached path is a REFCOUNTED release, not
+    # an unconditional no-op — wrapped1 and wrapped2 are two independent
+    # checkouts of the SAME cached derivation, so releasing wrapped1's alone
+    # must not unlink a file wrapped2's own (still outstanding) checkout may
+    # still need. Confirmed by asserting it survives past the FIRST cleanup.
     wrapped1.cleanup()
     assert __import__("os").path.exists(path1)
 
-    import os
-
-    os.unlink(path1)
+    # The LAST outstanding checkout's cleanup() DOES release it.
+    wrapped2.cleanup()
+    assert not __import__("os").path.exists(path1)
 
 
 def test_seatbelt_cached_profile_is_unlinked_when_the_policy_is_collected():
@@ -558,10 +561,11 @@ def test_seatbelt_cached_profile_survives_while_the_wrapped_command_is_held_even
         "via the `_cleanup` closure for exactly this reason"
     )
 
-    wrapped.cleanup()  # no-op (cached) — the file must still be there after
-    assert os.path.exists(path)
-
-    os.unlink(path)  # tidy up the shared cache file this test wrote
+    # #5981 co-vet: cleanup() is now a refcounted release, not an
+    # unconditional no-op — this is the ONLY checkout of this policy in this
+    # test, so releasing it IS the last outstanding checkout and DOES unlink.
+    wrapped.cleanup()
+    assert not os.path.exists(path)
 
 
 def test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe():

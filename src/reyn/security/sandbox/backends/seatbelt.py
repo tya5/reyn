@@ -30,7 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from reyn.security.sandbox._derivation_cache import cached_derivation
+from reyn.security.sandbox._derivation_cache import cached_derivation, release_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import (
     AxisEnforcement,
@@ -447,27 +447,42 @@ class SeatbeltBackend:
         profile_text = _build_sbpl_profile(policy)
         profile_path, is_cached = _cached_profile_path(policy, profile_text)
 
+        _released = False
+
         def _cleanup() -> None:
-            # #5981: reading `policy` here (never otherwise used in this
-            # closure) is deliberate, not dead code — it keeps *policy*
-            # alive via this closure's own captured cell for as long as the
-            # CALLER holds `wrapped.cleanup` (which every caller must, to
-            # call it eventually). Real production call site this protects:
-            # `mcp/client.py`'s MCP stdio launch — `wrap_command(argv,
-            # self._build_mcp_sandbox_policy())` — passes an INLINE policy
-            # expression with no local binding of its own. Without this
-            # capture, the moment `wrap_command` returns there, CPython could
-            # collect that policy immediately (nothing else references it),
-            # firing `_derivation_cache`'s `on_evict` and unlinking the `.sb`
-            # profile while `wrapped.argv` still names it — the NEXT
-            # `sandbox-exec -f <path>` for that MCP stdio server would then
-            # fail with a missing profile. (lead-coder's own strip-falsify
-            # confirmed this line is gated by
-            # test_seatbelt_cached_profile_survives_while_the_wrapped_command_is_held_even_with_no_separate_policy_variable
-            # — removing it goes RED — so the stronger default-argument form
-            # first proposed here was not required after all.)
-            _ = policy
+            # #5981 co-vet (architect): eviction is now an EXPLICIT,
+            # refcounted release (`_derivation_cache.release_derivation`),
+            # not implicit GC timing — "the consumer is exec(), the owner
+            # was GC, and GC's timing is not a contract" was the exact
+            # objection. `_cleanup` reading `policy` was ALSO still needed
+            # (confirmed by strip-falsify) to keep *policy* itself alive
+            # for as long as the caller holds `wrapped.cleanup` — the real
+            # production call site this protects is `mcp/client.py`'s MCP
+            # stdio launch, `wrap_command(argv,
+            # self._build_mcp_sandbox_policy())`, an INLINE policy
+            # expression with no local binding of its own — but that alone
+            # was NOT sufficient: `_derivation_cache`'s identity-keyed cache
+            # can have several LIVE checkouts sharing one policy (two
+            # `wrap_command()` calls for the same policy), and nothing
+            # counted how many were still outstanding before this. Each
+            # `wrap_command()` call is its own checkout;
+            # `release_derivation` releases exactly the ONE this closure
+            # owns, only unlinking when it is the LAST outstanding checkout
+            # — a second caller sharing this policy keeps its own checkout
+            # alive independently.
+            #
+            # `_released` guards `cleanup()` being called more than once on
+            # the SAME `WrappedCommand` (`test_seatbelt_wrap_command_
+            # cleanup_idempotent` calls it twice) — without this guard a
+            # double-call would release TWICE for what was only ONE
+            # checkout, under-counting and evicting while a genuinely
+            # separate checkout might still be live.
+            nonlocal _released
             if is_cached:
+                if _released:
+                    return
+                _released = True
+                release_derivation("seatbelt", policy)
                 return
             try:
                 os.unlink(profile_path)

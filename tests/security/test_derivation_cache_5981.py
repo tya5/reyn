@@ -15,7 +15,7 @@ import gc
 import pytest
 
 from reyn.security.sandbox import _derivation_cache
-from reyn.security.sandbox._derivation_cache import cached_derivation
+from reyn.security.sandbox._derivation_cache import cached_derivation, release_derivation
 from reyn.security.sandbox.policy import SandboxPolicy
 
 
@@ -100,3 +100,54 @@ def test_cached_derivation_without_on_evict_is_unaffected_by_eviction():
     # module's own state was not corrupted by an eviction with no on_evict.
     later_policy = SandboxPolicy(write_paths=[])
     assert cached_derivation("test-backend", later_policy, lambda: "w") == "w"
+
+
+# ─── explicit release_derivation (#5981 co-vet: explicit refcount, not GC timing) ──
+
+
+def test_release_derivation_does_not_evict_while_another_checkout_is_outstanding():
+    """Tier 2: architect's own acceptance shape — two checkouts of the SAME
+    (backend, policy), release ONE, the value must still be retrievable (the
+    OTHER checkout's claim is still live) and `on_evict` must NOT have run
+    yet."""
+    evicted: list[str] = []
+    policy = SandboxPolicy(write_paths=[])
+
+    first = cached_derivation("test-backend", policy, lambda: "v", on_evict=evicted.append)
+    second = cached_derivation("test-backend", policy, lambda: "v", on_evict=evicted.append)
+    assert first == second == "v"
+
+    release_derivation("test-backend", policy)  # releases ONE of the two checkouts
+
+    assert evicted == []
+    # The entry is still live for the SECOND (unreleased) checkout — a third
+    # `cached_derivation` call for the same policy still hits the cache
+    # rather than recomputing.
+    third = cached_derivation("test-backend", policy, lambda: "SHOULD NOT RUN")
+    assert third == "v"
+
+
+def test_release_derivation_evicts_on_the_last_outstanding_checkout():
+    """Tier 2: strip-falsify's counterpart to the test above — releasing
+    BOTH checkouts (not just one) DOES fire `on_evict`, exactly once, with
+    the cached value. Distinguishes real reference counting from a
+    permissive "never evict via release" implementation that would also
+    pass the test above by simply doing nothing, ever."""
+    evicted: list[str] = []
+    policy = SandboxPolicy(write_paths=[])
+
+    cached_derivation("test-backend", policy, lambda: "v", on_evict=evicted.append)
+    cached_derivation("test-backend", policy, lambda: "v", on_evict=evicted.append)
+
+    release_derivation("test-backend", policy)
+    assert evicted == []  # one checkout still outstanding
+    release_derivation("test-backend", policy)
+    assert evicted == ["v"]  # the LAST release evicts
+
+
+def test_release_derivation_on_an_unreleased_key_is_a_noop():
+    """Tier 2: releasing a (backend, policy) pair that was never checked out
+    (or whose checkouts are already all released) must not raise and must
+    not fire `on_evict` — a caller cannot double-release into a crash."""
+    policy = SandboxPolicy(write_paths=[])
+    release_derivation("never-checked-out", policy)  # must not raise
