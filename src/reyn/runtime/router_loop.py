@@ -3571,6 +3571,7 @@ class RouterLoop:
         # the same way it covers every other one.
         return await self._dispatch_resolved(
             name, args, raw_name=raw_name, call_id=call_id,
+            tool_call_id=tc.get("id"),
         )
 
     def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict, str]":
@@ -3612,6 +3613,7 @@ class RouterLoop:
     async def _dispatch_resolved(
         self, name: str, args: dict, *,
         raw_name: "str | None" = None, call_id: "str | None" = None,
+        tool_call_id: "str | None" = None,
     ) -> dict:
         """#1593: dispatch a resolved tool call via the OS substrate
         (DispatchContext / ``dispatch_tool`` — P5). #5854: "resolved" no
@@ -3652,7 +3654,16 @@ class RouterLoop:
         ``ExecContext.extra["call_id"]`` -> the 3 delegating schemes'
         ``ops.dispatch(..., call_id=...)``; ``_run_codeblock_round``'s
         ``_os_gate`` closure captures it directly) makes a stale value
-        structurally impossible — there is no field left to go stale."""
+        structurally impossible — there is no field left to go stale.
+
+        ``tool_call_id`` (#5891 (c), architect ruling): the ONE tool call's
+        own ``tc["id"]``, distinct from ``call_id`` above (which identifies
+        the whole ROUND, shared by every tool_calls entry in it, so it
+        cannot join an audit event to the ONE history row a reader wants
+        when the same tool is called twice in one round). ``None`` for any
+        caller with no real litellm tool_calls entry to key on — the
+        CodeAct ``_os_gate`` closure below never passes one, the same
+        degrade ``call_id`` already models for that caller."""
         catalog = (
             self._dispatch_catalog
             if self._dispatch_catalog is not None
@@ -3685,6 +3696,7 @@ class RouterLoop:
             # equivalent of it.
             contextual=self._contextual_permission,
             call_id=call_id,
+            tool_call_id=tool_call_id,
             completed_response_include_text=(
                 bool(_completed_getter()) if _completed_getter else False
             ),
@@ -3955,11 +3967,21 @@ class RouterLoop:
         ``call_id`` (#4691 Phase B ①, remainder): the litellm call this batch
         of actions belongs to — forwarded verbatim to every ``_dispatch_
         resolved`` call in this batch. An explicit parameter, not a stored
-        field (see ``_dispatch_resolved``'s own docstring for why)."""
+        field (see ``_dispatch_resolved``'s own docstring for why).
+
+        ``tool_call_id`` (#5891 (c)): read from each action's own ``"tc"``
+        entry (the raw tool_calls dict, set by this method's own caller —
+        see the ``actions.append({"tc": tc, ...})`` builder above), the
+        SAME ``.get()``-defaulting posture ``raw_name`` already uses —
+        a caller that hand-builds an action dict without a ``"tc"`` key
+        (a test double, most measured instance:
+        ``test_serial_tool_dispatch_2344.py``) degrades to ``None``
+        (absent), never a ``KeyError``."""
         results: list[dict] = []
         for a in actions:
             results.append(await self._dispatch_resolved(
                 a["name"], a["args"], raw_name=a.get("raw_name"), call_id=call_id,
+                tool_call_id=(a.get("tc") or {}).get("id"),
             ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
