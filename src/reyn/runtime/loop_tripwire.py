@@ -49,7 +49,10 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable
+
+from reyn.runtime.diagnostic_snapshot import DiagnosticSnapshot, diagnostic_snapshot
 
 #: A loop tick later than this is worth telling someone about. Set well above
 #: the measured healthy ceiling (a 10 ms-period task never exceeded 12 ms over
@@ -77,21 +80,28 @@ _RECORD_INTERVAL_S = 2.0
 
 _DUMP_ENV = "REYN_PROF_DUMP"
 
-#: #5977 ①: a per-episode cap of 1 (see :meth:`LoopTripwire.should_arm_stack_
-#: dump`) stops the SELF-AMPLIFICATION within one stall — each dump's own
-#: synchronous write cost adding to the very lateness that risked triggering
-#: the next one — but says nothing about a run of many SEPARATE, genuinely
-#: distinct short stalls, each legitimately producing its own single dump.
-#: This is the ceiling on that SUM, the backstop the band's "who stops this
-#: if it repeats" question needs an answer to (owner-hit, #5977). Chosen, not
-#: measured — no comparable session-length dump-count data exists yet
-#: (architect flagged the number as their own to propose; this is a
-#: reasoned default, a single constant to change if a different one lands):
-#: at ~14.6 KB per dump (#5977 architect finding, real machine), 10 dumps is
-#: ~150 KB of evidence — ample to diagnose a session's worth of stalls —
-#: while keeping the cumulative self-inflicted dump cost this issue exists
-#: to bound from growing without limit.
-_SESSION_DUMP_CAP = 10
+
+def stall_dump_path(reyn_log_path: "str | None") -> "str | None":
+    """The fixed, single-file destination for a stall's stack dump (#5977
+    ruling ②, #5978 ①'s ``diagnostic_snapshot`` shape) — the SAME
+    directory ``reyn.log`` lives in, so an operator who already knows to
+    look there finds it, under a FIXED filename: no config surface at
+    all ("a limit that can be set is a limit someone can raise" —
+    architect, #5977).
+
+    Overwritten in place rather than rotated: a dump answers "what was
+    stuck at the moment of the LAST stall," and a LATER stall's dump is
+    never a worse sample than an earlier one it replaces — there is no
+    reason to keep generations (architect's own self-correction, #5977:
+    an earlier ruling proposed rotation here, which #5977 itself exists
+    to call out — "a bound written for a mechanism this doesn't have").
+
+    ``None`` when there is no ``reyn.log`` path to sit beside — matches
+    :meth:`StallDumpArm.open`'s own "no ``FileHandler`` installed → never
+    arms" behaviour."""
+    if reyn_log_path is None:
+        return None
+    return str(Path(reyn_log_path).with_name("stall_dump.log"))
 
 
 def dump_path() -> "str | None":
@@ -200,18 +210,28 @@ class LoopTripwire:
     anything, which is the failure this whole module is a response to.
     """
 
-    def __init__(
-        self, *, threshold_ms: float = _TRIPWIRE_MS, session_dump_cap: int = _SESSION_DUMP_CAP,
-    ) -> None:
+    def __init__(self, *, threshold_ms: float = _TRIPWIRE_MS) -> None:
         self._threshold_ms = threshold_ms
         self._max_lateness_ms = 0.0
         self._fired = False
         #: #5977 ①: has the CURRENT (still-ongoing) episode already produced
         #: a stack dump — reset alongside ``_fired`` at recovery, below,
         #: since both answer "has THIS episode already told its one story."
+        #: No SESSION-total cap alongside this one (dropped, #5977 ②):
+        #: once the dump moved to its own always-overwritten file
+        #: (:func:`stall_dump_path`), the reason a session cap existed —
+        #: an unbounded run of dumps pushing OLDER OPERATIONAL ``reyn.log``
+        #: lines out of the retained window — no longer applies (nothing
+        #: is pushed out of anything; a NEW dump simply replaces the OLD
+        #: one). A cap would instead have frozen the file at whichever
+        #: stall happened to be the Nth, silently hiding every LATER one —
+        #: the exact "bound outlives the reason it was written for" shape
+        #: #5973 named. The per-episode gate above is what still answers
+        #: the band's "who stops this if it repeats" question: it bounds
+        #: the SELF-AMPLIFICATION within one stall (each dump's own
+        #: synchronous write cost adding to the very lateness that risked
+        #: triggering the next one), which is unrelated to file growth.
         self._dumped_this_episode = False
-        self._session_dump_cap = session_dump_cap
-        self._session_dump_count = 0
         #: Wall-clock time of the last durable ``write_record`` call, or
         #: ``None`` before the first one — independent of ``_fired`` (#4761
         #: ①: one flag was gating two different questions).
@@ -267,55 +287,28 @@ class LoopTripwire:
         session" — see :meth:`observe`'s recovery branch for why)."""
         return self._fired
 
-    @property
-    def session_dump_cap(self) -> int:
-        """The session-total dump ceiling this instance was constructed
-        with (#5977 ①) — exposed alongside :attr:`session_dump_count` so a
-        caller's cap-reached notice needs no second, easily-drifting copy
-        of the number."""
-        return self._session_dump_cap
-
-    @property
-    def session_dump_count(self) -> int:
-        """How many stack dumps this session has produced so far (#5977 ①)
-        — exposed so a caller's own cap-reached notice, and a test, can read
-        the count directly rather than re-deriving it from ticks."""
-        return self._session_dump_count
-
     def should_arm_stack_dump(self) -> bool:
         """Whether the caller's dead-man's switch (:class:`StallDumpArm`)
         should be RE-ARMED this tick (#5977 ①).
 
-        ``False`` in two cases: the CURRENT episode already produced a dump
+        ``False`` once the CURRENT episode already produced a dump
         (:meth:`record_stack_dump` set that — recovery below clears it for
-        the NEXT episode), or the session-total cap is already reached.
-        Consulted BEFORE ``StallDumpArm.rearm()`` — there is no separate
-        ``faulthandler`` state to cancel; skipping the re-arm IS the
-        suppression, since each arm is one-shot and replaces the previous
-        pending timer (see :class:`StallDumpArm`'s own docstring)."""
-        if self._dumped_this_episode:
-            return False
-        return self._session_dump_count < self._session_dump_cap
+        the NEXT episode). Consulted BEFORE ``StallDumpArm.rearm()`` —
+        there is no separate ``faulthandler`` state to cancel; skipping
+        the re-arm IS the suppression, since each arm is one-shot and
+        replaces the previous pending timer (see :class:`StallDumpArm`'s
+        own docstring)."""
+        return not self._dumped_this_episode
 
-    def record_stack_dump(self) -> bool:
+    def record_stack_dump(self) -> None:
         """Report that an armed dump actually fired this tick (the caller's
         own ``stack_dumped`` proxy turned ``True``) — closes this episode's
-        one-shot allowance and advances the session total.
-
-        Returns whether the session cap was JUST reached — ``==``, not
-        ``>=``: :meth:`should_arm_stack_dump` refuses to let this method be
-        called at all once the cap is already met, so the count can only
-        ever CROSS the cap on the one tick this returns ``True`` — no
-        separate once-only flag needed the way :meth:`observe`'s own
-        ``_fired`` is (there, a caller CAN keep calling ``observe`` past
-        the first stall tick; here, the caller structurally cannot keep
-        calling this past the cap). The caller logs the always-visible ③
-        notice exactly on that tick, never silently and never repeated —
-        "抑制しても『抑制した』ことが分からなければ、次の人は『stall が
-        無かった』と読みます" (#5977, lead-coder)."""
+        one-shot allowance; the caller (:func:`watch_event_loop`) also
+        truncates the dump file's fd for the NEXT episode right after
+        calling this, via ``StallDumpArm.mark_fired()`` — see that
+        method's own docstring for why that must happen AFTER, not on
+        every re-arm."""
         self._dumped_this_episode = True
-        self._session_dump_count += 1
-        return self._session_dump_count == self._session_dump_cap
 
     def consume_recovered(self) -> bool:
         """Whether the loop just recovered from a stall — ``True`` at most
@@ -576,55 +569,46 @@ def stall_recovered_log_line(*, pump_ticks: "int | None" = None) -> str:
     return f"the interface recovered from the stall reported above{ticks_note}"
 
 
-def stall_dump_cap_reached_log_line(session_dump_count: int, session_dump_cap: int) -> str:
-    """The always-visible (#5977 ③) notice that the session-total stack-dump
-    cap was just reached — logged exactly once, at ``logger.warning``, the
-    SAME unconditional surface :func:`stall_recovered_log_line` already
-    uses, never gated behind ``REYN_PROF_DUMP``. Without this line, a
-    session that hit the cap and a session that never stalled again look
-    identical to the next reader: the stall/recovery notices keep firing
-    (:meth:`LoopTripwire.observe` is untouched by the cap), so silence on
-    the DUMP side alone would read as "no more stalls," not "stopped
-    recording them" — the same silence-hides-two-states shape #4761
-    exists to close, one level up."""
-    return (
-        f"stall dump cap reached ({session_dump_count}/{session_dump_cap} this "
-        "session) — stalls will still be reported above, but no further "
-        "stack dumps will be written"
-    )
-
-
 class StallDumpArm:
-    """The per-tick ``faulthandler`` dead-man's switch and the fd it dumps
-    into — the ONE implementation of the #5877/#5873 rules (#5898: lifted
-    out of ``TextualChatApp._watch_loop_responsiveness`` so ``reyn:web``'s
+    """The per-tick ``faulthandler`` dead-man's switch — the ONE
+    implementation of the #5877/#5873 fd-lifecycle rules AND #5977 ②'s
+    single-overwritten-file rule (#5898: lifted out of
+    ``TextualChatApp._watch_loop_responsiveness`` so ``reyn:web``'s
     tripwire dumps the same way, not a second copy of the same hazards).
+
+    **Why its own dedicated file, not ``reyn.log`` (#5977 ②)**: dump
+    volume measured on the owner's own machine was 49% of their entire
+    ``reyn.log`` (8,832 of 17,958 lines) — pushing OLDER OPERATIONAL log
+    lines (potentially a real ``Fatal Python error`` crash record) out of
+    the retained rotation window before an operator could read them. A
+    dump answers ONE question — "what was stuck at the moment of the
+    LAST stall" — and a later stall's dump is never a worse sample than
+    an earlier one it replaces, so keeping generations has no purpose;
+    the file is a single always-overwritten :func:`~reyn.runtime.
+    diagnostic_snapshot.diagnostic_snapshot` (#5978 ①'s general shape,
+    stall dump as its first caller). Boundedness comes from the SHAPE —
+    always exactly one dump, ~14.6 KB measured — not from a config knob:
+    "a limit that can be set is a limit someone can raise" (architect).
 
     **Why an fd of its own (#5877, architect ruling, real-machine
     measurement)**: ``faulthandler.dump_traceback_later`` captures the
     ``file`` argument's underlying FILE-DESCRIPTOR NUMBER at arm time, not
     a live object. A caller that stays armed across MANY of its own calls
-    must therefore arm against an fd nothing else can close and reuse: a
-    pending timer armed against a stream object whose fd number got reused
-    for something ELSE (an ``execnet`` socket, in the CI hang #5877
-    explains) silently dumps THERE instead — hanging the reader on the
-    other end. So this opens its OWN fd, once, against the root logger's
-    ``FileHandler`` path (never borrowing the handler's own stream) and
-    holds it for its whole lifetime. **No ``FileHandler`` installed means
-    :meth:`open` returns ``None`` and nothing ever arms** — deliberately,
-    not a fail-open: a dump with no genuinely stable destination was never
-    a safe thing to attempt.
+    must therefore arm against an fd nothing else can close and reuse —
+    :class:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot` opens
+    and holds exactly one, for this arm's whole lifetime. **No log path
+    installed means :meth:`open` returns ``None`` and nothing ever
+    arms** — deliberately, not a fail-open: a dump with no genuinely
+    stable destination was never a safe thing to attempt.
 
-    **Why the inode check (#5873)**: log rotation (``RotatingFileHandler``)
-    renames the path this fd was opened against out from under it on every
-    rollover — the underlying FILE moves to ``.1``, ``.2``, … until it is
-    unlinked past ``backup_count``. Left unhandled, every dump after the
-    first rollover would land in an ever-more-stale, eventually DELETED
-    generation nobody reads. Each :meth:`rearm` therefore compares
-    ``os.stat(path).st_ino`` against ``os.fstat(fd).st_ino`` —
-    deterministic, cut on the file identity changing, not a clock — and on
-    a mismatch disarms, closes the stale fd and opens a fresh one against
-    the same path before re-arming.
+    **The truncate-timing trap (architect, #5977)**: "arm every tick,
+    truncate every re-arm" is WRONG — ``dump_traceback_later`` commits to
+    the fd NUMBER at arm time, and a re-arm happens every
+    :data:`_TICK_SECONDS` (50 ms), so truncating on every re-arm would
+    erase a PENDING, not-yet-fired dump before it ever gets to write.
+    :meth:`mark_fired` — truncate + reopen for the NEXT episode — must be
+    called only AFTER the caller has OBSERVED a fire (the ``stack_dumped``
+    proxy turned ``True``), never on an ordinary re-arm.
 
     **Why ``repeat=False`` and re-arm every tick**: each re-arm cancels and
     replaces the PENDING one-shot timer, so it only ever actually FIRES
@@ -632,77 +616,55 @@ class StallDumpArm:
     thing it watches is blocked (see ``stall_trace.arm``'s own docstring).
     """
 
-    def __init__(self, *, seconds: float, log_path: str, fd: int, logger: logging.Logger, label: str) -> None:
+    def __init__(
+        self, *, seconds: float, snapshot: "DiagnosticSnapshot", logger: logging.Logger, label: str,
+    ) -> None:
         self._seconds = seconds
-        self._log_path = log_path
-        self._fd: "int | None" = fd
+        self._snapshot = snapshot
         self._logger = logger
         self._label = label
 
     @classmethod
     def open(
-        cls, *, seconds: float, log_path: "str | None", logger: logging.Logger, label: str,
+        cls, *, seconds: float, path: "str | None", logger: logging.Logger, label: str,
     ) -> "StallDumpArm | None":
-        """Open the dump fd once; ``None`` when there is no log path (no
-        ``FileHandler`` installed) or it cannot be opened — in both cases
+        """Open the dump destination once; ``None`` when there is no
+        *path* (no ``FileHandler`` installed to derive one from — see
+        :func:`stall_dump_path`) or it cannot be opened — in both cases
         the dead-man's switch simply never arms for this watcher."""
-        if log_path is None:
+        if path is None:
             return None
-        try:
-            fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
-        except OSError:
-            logger.exception("%s: could not open the tripwire's own stall-dump fd", label)
+        snapshot = diagnostic_snapshot(path)
+        if snapshot is None:
+            logger.error("%s: could not open the tripwire's own stall-dump snapshot at %s", label, path)
             return None
-        return cls(seconds=seconds, log_path=log_path, fd=fd, logger=logger, label=label)
+        return cls(seconds=seconds, snapshot=snapshot, logger=logger, label=label)
 
     @property
     def armed(self) -> bool:
         """Whether this arm currently holds a usable fd (False after a
         failed reopen — the switch stays disarmed until :meth:`close`)."""
-        return self._fd is not None
-
-    def points_at(self, path: str) -> bool:
-        """Whether this arm's fd is the CURRENT file at *path* (inode
-        identity — the #5873 question :meth:`rearm` answers before every
-        re-arm, exposed so a test can witness a reopen after a rotation
-        without reading the fd itself)."""
-        if self._fd is None:
-            return False
-        try:
-            return os.stat(path).st_ino == os.fstat(self._fd).st_ino
-        except OSError:
-            return False
+        return self._snapshot.fd is not None
 
     def rearm(self) -> bool:
         """Re-point the one process-wide timer :data:`_seconds` into the
-        future against this arm's own fd (reopening it first if a rotation
-        moved the file). Returns whether a timer is now pending."""
+        future against this arm's own fd. Returns whether a timer is now
+        pending."""
         from reyn.runtime.stall_trace import arm as _arm
-        from reyn.runtime.stall_trace import disarm as _disarm
 
-        if self._fd is None:
+        if self._snapshot.fd is None:
             return False
-        try:
-            stale = os.stat(self._log_path).st_ino != os.fstat(self._fd).st_ino
-        except OSError:
-            stale = False
-        if stale:
-            _disarm()
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            try:
-                self._fd = os.open(self._log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
-            except OSError:
-                self._logger.exception(
-                    "%s: could not reopen the tripwire's own stall-dump fd after a log rotation",
-                    self._label,
-                )
-                self._fd = None
-                return False
-        _arm(self._seconds, file=self._fd, repeat=False)
+        _arm(self._seconds, file=self._snapshot.fd, repeat=False)
         return True
+
+    def mark_fired(self) -> None:
+        """Call ONCE, right after the caller has OBSERVED (via the
+        ``stack_dumped`` proxy) that a dump this arm scheduled actually
+        fired — truncates and reopens the snapshot's fd so the NEXT
+        episode's dump overwrites cleanly, ready before it is next armed.
+        Never call this on an ordinary re-arm — see the class docstring's
+        truncate-timing trap."""
+        self._snapshot.reset()
 
     def close(self) -> None:
         """Disarm BEFORE closing the fd (#5877: the reverse order would let a
@@ -710,14 +672,10 @@ class StallDumpArm:
         already-reused fd number). Idempotent."""
         from reyn.runtime.stall_trace import disarm as _disarm
 
-        if self._fd is None:
+        if self._snapshot.fd is None:
             return
         _disarm()
-        try:
-            os.close(self._fd)
-        except OSError:
-            pass
-        self._fd = None
+        self._snapshot.close()
 
 
 async def watch_event_loop(
@@ -728,7 +686,6 @@ async def watch_event_loop(
     stack_dump: "StallDumpArm | None" = None,
     turn_active: "Callable[[], bool | None] | None" = None,
     on_tick: "Callable[[float, float], None] | None" = None,
-    on_dump_cap_reached: "Callable[[int, int], None] | None" = None,
     tick_seconds: float = _TICK_SECONDS,
     clock: "Callable[[], float]" = time.perf_counter,
     sleep: "Callable[[float], Any]" = asyncio.sleep,
@@ -746,13 +703,6 @@ async def watch_event_loop(
     with the clock as an INPUT — a test supplies a clock that jumps, never
     a ``time.sleep`` on the loop it is measuring (CLAUDE.md: a duration is
     an input you supply, not a wait).
-
-    ``on_dump_cap_reached(session_dump_count, session_dump_cap)`` (#5977
-    ①③): fires once, the tick the session-total dump cap is reached — see
-    :meth:`LoopTripwire.record_stack_dump`'s own once-only return. Passed
-    through rather than logged here directly so each caller (this module
-    has no logger of its own) reports it on its own already-established
-    surface, matching ``on_stall``/``on_recovered``'s own shape.
 
     **#5977 ① ordering (lead-coder BLOCKING, PR #5980)**: whether THIS
     tick's re-arm should happen is decided BEFORE the tick's own lateness
@@ -787,8 +737,14 @@ async def watch_event_loop(
                 # the SAME comparison observe() makes internally, never a
                 # readback of faulthandler's (nonexistent) fired state.
                 stack_dumped = lateness_ms > tripwire.threshold_ms
-                if stack_dumped and tripwire.record_stack_dump() and on_dump_cap_reached is not None:
-                    on_dump_cap_reached(tripwire.session_dump_count, tripwire.session_dump_cap)
+                if stack_dumped:
+                    tripwire.record_stack_dump()
+                    if stack_dump is not None:
+                        # #5977 ②: truncate + reopen for the NEXT episode
+                        # NOW, right after observing this fire — never on
+                        # an ordinary re-arm (StallDumpArm.mark_fired's own
+                        # docstring: the truncate-timing trap).
+                        stack_dump.mark_fired()
             if on_tick is not None:
                 on_tick(now, lateness_ms)
             active = turn_active() if turn_active is not None else None

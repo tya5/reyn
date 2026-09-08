@@ -2477,13 +2477,18 @@ class TextualChatApp(App):
         to the very lateness that risks triggering the next one
         (self-amplification). Re-arming is now gated on
         ``LoopTripwire.should_arm_stack_dump()`` — at most one dump per
-        episode, plus a session-total backstop — and ``LoopTripwire.
-        record_stack_dump()`` reports back when a dump actually fired, so
-        the episode-level allowance closes and the session count advances.
-        Reaching the session cap logs an always-visible (never
-        ``REYN_PROF_DUMP``-gated) notice exactly once — see
-        ``stall_dump_cap_reached_log_line``'s own docstring for why
-        silence there would be misread as "no more stalls."
+        episode — and ``LoopTripwire.record_stack_dump()`` reports back
+        when a dump actually fired, closing the episode-level allowance.
+
+        **#5977 ② (same issue, follow-up)**: the dump ALSO no longer
+        lands in ``reyn.log`` at all — real-machine measurement found 49%
+        of the owner's own log was dump lines, pushing older operational
+        lines (potentially a real crash record) out of the retained
+        rotation window. It now goes to its own single, always-overwritten
+        file beside ``reyn.log`` (:func:`~reyn.runtime.loop_tripwire.
+        stall_dump_path`) — see ``StallDumpArm``'s own docstring for the
+        full design and the truncate-timing trap ``mark_fired()`` exists
+        to avoid.
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
@@ -2498,7 +2503,7 @@ class TextualChatApp(App):
             _TRIPWIRE_MS,
             StallDumpArm,
             stall_banner,
-            stall_dump_cap_reached_log_line,
+            stall_dump_path,
             stall_log_line,
             stall_recovered_log_line,
         )
@@ -2509,14 +2514,15 @@ class TextualChatApp(App):
         # "did the loop stall" and "should a stack have been dumped for it"
         # can never disagree about WHERE the line is.
         _STACK_DUMP_SECONDS = _TRIPWIRE_MS / 1000
-        # #5877/#5873, ONE implementation since #5898: this worker's OWN fd,
-        # opened once and held for its whole lifetime, inode-checked and
-        # reopened across a log rotation on every re-arm — see StallDumpArm's
-        # own docstring (the CI-incident paragraph above is the history).
-        # `None` (no FileHandler installed) means this dead-man's switch
-        # never arms at all for this worker's lifetime.
+        # #5877/#5873/#5977 ②, ONE implementation since #5898: this
+        # worker's OWN fd, opened once against its own single dedicated
+        # dump file (never reyn.log — see stall_dump_path's own
+        # docstring) and held for its whole lifetime. `None` (no
+        # FileHandler installed, so no directory to derive a path from)
+        # means this dead-man's switch never arms at all for this
+        # worker's lifetime.
         _stack_dump = StallDumpArm.open(
-            seconds=_STACK_DUMP_SECONDS, log_path=_find_file_handler_path(),
+            seconds=_STACK_DUMP_SECONDS, path=stall_dump_path(_find_file_handler_path()),
             logger=logger, label="textual chat",
         )
 
@@ -2580,18 +2586,15 @@ class TextualChatApp(App):
                     # makes internally, never a readback of faulthandler's
                     # (nonexistent) fired state.
                     stack_dumped = lateness_ms > _TRIPWIRE_MS
-                    if stack_dumped and self._loop_tripwire.record_stack_dump():
-                        # #5977 ③: always-visible, never gated behind
-                        # REYN_PROF_DUMP — same reasoning as the recovery
-                        # notice below (silence here would read as "no more
-                        # stalls," not "stopped recording them").
-                        logger.warning(
-                            "textual chat: %s",
-                            stall_dump_cap_reached_log_line(
-                                self._loop_tripwire.session_dump_count,
-                                self._loop_tripwire.session_dump_cap,
-                            ),
-                        )
+                    if stack_dumped:
+                        self._loop_tripwire.record_stack_dump()
+                        if _stack_dump is not None:
+                            # #5977 ②: truncate + reopen for the NEXT
+                            # episode NOW, right after observing this fire
+                            # — never on an ordinary re-arm (StallDumpArm.
+                            # mark_fired's own docstring: the
+                            # truncate-timing trap).
+                            _stack_dump.mark_fired()
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()

@@ -187,7 +187,7 @@ async def _lifespan(app: FastAPI):
         _TRIPWIRE_MS,
         LoopTripwire,
         StallDumpArm,
-        stall_dump_cap_reached_log_line,
+        stall_dump_path,
         stall_log_line,
         stall_recovered_log_line,
         watch_event_loop,
@@ -202,15 +202,11 @@ async def _lifespan(app: FastAPI):
             on_stall=lambda ms: logger.warning("reyn:web: %s", stall_log_line(ms)),
             on_recovered=lambda: logger.warning("reyn:web: %s", stall_recovered_log_line()),
             stack_dump=StallDumpArm.open(
-                seconds=_TRIPWIRE_MS / 1000, log_path=find_file_handler_path(),
+                # #5977 ②: its own single, always-overwritten file beside
+                # reyn.log — never reyn.log itself (see stall_dump_path's
+                # own docstring for why).
+                seconds=_TRIPWIRE_MS / 1000, path=stall_dump_path(find_file_handler_path()),
                 logger=logger, label="reyn:web",
-            ),
-            # #5977 ①③: at most one stack dump per stall episode, capped
-            # session-total — this is the always-visible notice for when
-            # that cap is reached, never silent (see the free function's
-            # own docstring).
-            on_dump_cap_reached=lambda n, cap: logger.warning(
-                "reyn:web: %s", stall_dump_cap_reached_log_line(n, cap),
             ),
         ),
         name="loop-tripwire",
