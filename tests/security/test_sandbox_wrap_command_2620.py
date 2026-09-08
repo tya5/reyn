@@ -87,14 +87,39 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
 
 def test_seatbelt_wrap_command_cleanup_idempotent():
     """Tier 2: calling cleanup twice must not raise, on both the cached
-    (no-op) path and the uncached (best-effort unlink) path."""
+    (refcounted release, #5981) and the uncached (best-effort unlink) path.
+
+    #5981 co-vet, lead-coder's own witness demand: "not raise" alone is not
+    a witness for the cached branch's REAL contract — a `release_derivation`
+    call for an already-gone key is already a silent no-op, so "no raise"
+    would hold even with the `_released` idempotency guard removed entirely
+    (confirmed: lead-coder's own strip of that guard left every existing
+    test green, including the ORIGINAL two-line version of this test). The
+    actual invariant is that a double `cleanup()` on ONE checkout must not
+    consume a SECOND, still-outstanding checkout's release — witnessed here
+    by giving the cached case a second live checkout of the SAME policy and
+    asserting its path survives the first checkout's double-cleanup."""
     from reyn.security.sandbox.backends.seatbelt import _seatbelt_cache_dir
 
     backend = SeatbeltBackend()
+    policy = SandboxPolicy()
 
-    cached = backend.wrap_command(["cmd"], SandboxPolicy())
+    cached = backend.wrap_command(["cmd"], policy)
+    # A second, still-live checkout of the SAME policy — the thing an
+    # under-counting double-release would wrongly consume.
+    cached_second = backend.wrap_command(["cmd"], policy)
+    second_path = cached_second.argv[cached_second.argv.index("-f") + 1]
+
     cached.cleanup()
-    cached.cleanup()  # no-op both times — must not raise
+    cached.cleanup()  # must not raise, AND must not release a SECOND time
+    assert __import__("os").path.exists(second_path), (
+        "cached's own double cleanup() released cached_second's still-"
+        "outstanding checkout too — the `_released` idempotency guard is "
+        "the ONLY thing standing between a double-call and this"
+    )
+
+    cached_second.cleanup()  # the real last release — now it unlinks
+    assert not __import__("os").path.exists(second_path)
 
     uncached = backend.wrap_command(
         ["cmd"], SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())]),
