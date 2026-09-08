@@ -247,37 +247,23 @@ def test_a_quoted_re_read_marker_is_not_a_claim():
 # ── #5919 stage 3: borrow consolidation acceptance ──────────────────────────
 
 
-def test_no_private_attribute_is_read_off_tests_read_or_the_old_blocking_module():
+def test_check_open_blocking_checkboxes_is_not_loaded_by_this_gate_at_all():
     """Tier 1: LOAD-BEARING acceptance (architect + lead-coder, #5919 stage
-    3) — the exact shape that broke silently between stages 2 and 3 (this
-    gate's own borrow of `_blocking._BLOCKING_MARKER` going stale the
-    moment that name was renamed to `_MARKER_BLOCKING`, unnoticed by a
-    scoped test run because the break sat outside the renaming PR's own
-    diff). AST-walks the REAL source on disk (not the loaded module's
-    ``__dict__``, which cannot tell "borrowed a private name" from "never
-    imported it at all") for any ``Attribute`` access whose base is
-    ``_tests_read`` and whose attribute name starts with ``_`` — the
-    module no longer imports ``check_open_blocking_checkboxes.py`` as
-    ``_blocking`` at all, so THAT borrow class is structurally
-    unreachable (a NameError, not merely absent today)."""
+    3) — this module no longer imports `check_open_blocking_checkboxes.py`
+    as `_blocking` at all (a NameError, not merely absent today); everything
+    this gate needed from it was recognition, and has moved to
+    `_markers.py`. The general "no gate module reads a private attribute
+    off a dynamically-loaded sibling" census (of which the OLD, narrower
+    form of this exact test was a hand-maintained, 2-alias special case)
+    now lives repo-wide, both its populations derived rather than typed by
+    hand, in `test_5967_gate_module_private_borrow_census.py` (#5967 — the
+    #5919-stage-3-shaped test itself was #5967's own motivating instance:
+    it hardcoded `check_blocking_has_reread_note.py` and `{"_tests_read",
+    "_blocking"}`, so a THIRD file/alias would have gone unseen)."""
     import ast
 
     tree = ast.parse(
         (REPO_ROOT / "scripts" / "check_blocking_has_reread_note.py").read_text(encoding="utf-8"),
-    )
-    offenders = [
-        f"_tests_read.{node.attr}"
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == "_tests_read"
-        and node.attr.startswith("_")
-    ]
-    assert offenders == [], (
-        f"private attribute(s) read off _tests_read: {offenders} -- every "
-        "cross-module read must be either a PUBLIC name on the owning "
-        "module (a decision) or a name imported from _markers (a "
-        "recognition primitive), never a private one"
     )
     assert "_blocking" not in {
         node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
