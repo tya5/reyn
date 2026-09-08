@@ -217,3 +217,82 @@ def test_chained_redirects_on_the_same_segment_are_accepted() -> None:
         ExecRedirect(op=">", path="out.txt"),
         ExecRedirect(op="<", path="in.txt"),
     ]
+
+
+# ── reject: real-machine measured bypasses (lead-coder/architect co-vet,
+#    issuecomment-5578395294 / issuecomment-5578405655) ──────────────────
+
+
+@pytest.mark.parametrize("text", [
+    "FOO=bar rm -rf /tmp/x",
+    "PATH=/tmp/evil ls",
+])
+def test_leading_environment_assignment_is_rejected(text: str) -> None:
+    """Tier 1: architect's own real-machine measurement against this
+    module before this fix — a leading ``NAME=value`` prefix became
+    this parser's ``argv[0]``, hiding the real command (``rm``/``ls``)
+    from any future tool-axis policy entirely, the same basename-bypass
+    class Codex #28732 named.
+
+    Strip witness: removing the leading-assignment check in
+    ``parse_exec_plan``'s word-token branch makes ``argv[0]`` equal the
+    literal ``"FOO=bar"``/``"PATH=/tmp/evil"`` string instead of raising
+    — verified directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_environment_assignment_as_a_later_argument_is_accepted() -> None:
+    """Tier 1: the leading-only scope of the check above — a
+    ``NAME=value``-shaped token appearing AFTER a real command word
+    (``docker`` here) is a legitimate argument (``docker run -e
+    FOO=bar image``), not an environment-assignment prefix, and must
+    stay accepted."""
+    plan = parse_exec_plan("docker run -e FOO=bar image")
+    assert plan == [
+        ExecSegment(argv=("docker", "run", "-e", "FOO=bar", "image")),
+    ]
+
+
+@pytest.mark.parametrize("text", [
+    "echo hi > $HOME/out.txt",
+    "echo hi > ~/out.txt",
+    "rm *.txt",
+    "echo $FOO",
+    "echo a?b",
+    "echo [ab]",
+])
+def test_variable_glob_or_home_expansion_is_rejected(text: str) -> None:
+    """Tier 1: architect's own real-machine measurement — a token
+    containing ``$``/glob metacharacters/leading ``~`` resolves to
+    something DIFFERENT at real ``sh -c`` execution time than the
+    literal text this parser sees (measured: a redirect-target
+    permission check would see the literal string ``"$HOME/out.txt"``,
+    never the real expanded path; a threat scan over ``rm *.txt`` would
+    see the literal glob, never the files it actually matches).
+
+    Strip witness: emptying ``_EXPANSION_CHARS`` turns the ``$``/glob
+    cases here red (5 of 6 — the ``~`` case is a separate
+    ``token.startswith("~")`` check, unaffected by that one); verified
+    directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
+def test_quoted_operator_shaped_token_is_rejected_not_silently_split() -> None:
+    """Tier 1: lead-coder's own additional real-machine measurement —
+    ``grep '|' file`` (a literal pipe character as a quoted argument)
+    used to be silently accepted and split into TWO piped commands
+    (``grep`` | ``file``) instead of the one ``grep`` call the caller
+    actually wrote, because a quoted token's dequoted value is
+    string-identical to a real unquoted operator once shlex strips the
+    quotes. Now rejected outright — this parser cannot verify which the
+    real shell would do, and refuses to guess (the same judgement
+    ``_EXPANSION_CHARS`` above applies).
+
+    Strip witness: reverting ``_iter_tokens`` to classify purely by
+    token VALUE (dropping the raw-substring quote check) makes this
+    silently return a 2-segment plan (``grep`` piped to ``file``)
+    instead of raising — verified directly, restored after."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan("grep '|' file")

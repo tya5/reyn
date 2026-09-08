@@ -68,6 +68,25 @@ parser saw — the parse/execute gap class above:
   segment-level policy (段3) was never designed to scan.
 - Background execution: a bare ``&`` (not part of ``&&``) — changes
   process lifecycle in a way #5838's plan never modeled.
+- Variable/glob/home-directory expansion: any token containing ``$``,
+  a glob metacharacter (``* ? [``), or starting with ``~`` — resolves
+  to something DIFFERENT at real execution time than the literal text
+  this parser saw (measured bypasses: a redirect target check would
+  see the literal string ``"$HOME/out.txt"``, never the real expanded
+  path; a threat scan over ``rm *.txt`` would see the literal glob,
+  never the files it actually matches).
+- A leading ``NAME=value`` environment-assignment prefix — would become
+  the segment's ``argv[0]``, hiding the REAL command from tool-axis
+  policy entirely (``FOO=bar rm -rf /tmp/x`` → this parser's ``argv[0]``
+  would be ``"FOO=bar"``, never ``"rm"`` — the same basename-bypass
+  class Codex #28732 named, reached through assignment instead of a
+  relative path).
+- A QUOTED token whose dequoted value happens to consist entirely of
+  operator characters (e.g. ``grep '|' file``) — string-identical to a
+  real unquoted operator once ``shlex`` strips the quotes, so this
+  parser cannot verify which the shell would really do; see
+  :func:`_iter_tokens`'s own docstring for how this is detected and why
+  it is refused rather than guessed either way.
 - Any other unsupported punctuation sequence (``;;``, ``<>``, an
   isolated stray operator character, etc.).
 - An empty command line, an empty segment (a leading/trailing/doubled
@@ -79,34 +98,25 @@ never a silent pass-through — matching Claude Code's "解析不能なら
 プロンプトへ" / Codex's ``used_complex_parsing`` escalation / OpenClaw's
 "chain/redirect は全 segment が通らない限り拒否" (architect's own
 competitive summary): every competitor's shape is "refuse, don't guess."
-
-## Disclosed v1 limitation — a QUOTED operator-only token
-
-``shlex`` strips quotes before this module ever sees the resulting
-token value, so ``grep '|' file`` (a literal pipe character as an
-argument, quoted) is currently indistinguishable from an unquoted ``|``
-by VALUE alone once tokenizing is done — this parser rejects it as an
-operator. This is the SAFE direction (a false rejection, never a false
-acceptance that could misread a real operator as literal text) —
-"refuse, don't guess" holds even where the guess would have been
-right. Fixing it needs per-token quoting metadata ``shlex``'s public
-iterator does not expose; tracked as a known follow-up, not solved
-here.
 """
 from __future__ import annotations
 
+import io
+import re
 import shlex
 from dataclasses import dataclass
+from typing import cast
 
 # The operator/redirect characters this parser understands as
-# standalone tokens — everything else that shlex would otherwise fold
-# into a plain word stays a word (e.g. a quoted "|" is protected by
-# shlex's own quote handling, never reaches here as a punctuation
-# token at all). Backtick is added to shlex's own default punctuation
-# set (`shlex.punctuation_chars = True` gives ``();<>|&`` per the
-# stdlib docs) specifically so command substitution's backtick form is
-# caught by the SAME "not a recognised operator" rule as ``$(...)``'s
-# own ``(``/``)`` — one rejection path, not two.
+# standalone tokens — a token whose dequoted VALUE is entirely made of
+# these characters is either a real operator (unquoted) or, if it was
+# quoted, rejected outright (_iter_tokens's own docstring — this parser
+# cannot tell the two apart by value alone, and refuses to guess).
+# Backtick is added to shlex's own default punctuation set
+# (`shlex.punctuation_chars = True` gives ``();<>|&`` per the stdlib
+# docs) specifically so command substitution's backtick form is caught
+# by the SAME "not a recognised operator" rule as ``$(...)``'s own
+# ``(``/``)`` — one rejection path, not two.
 _PUNCTUATION_CHARS = "();<>|&`"
 
 # Single-character operator tokens this parser accepts standalone.
@@ -122,6 +132,53 @@ _REDIRECT_OPS_SINGLE = frozenset({">", "<"})
 # operator here.
 _CHAIN_OPS_DOUBLE = frozenset({"&&", "||"})
 _REDIRECT_OPS_DOUBLE = frozenset({">>"})
+
+# #5838 BLOCKING (architect co-vet, issuecomment-5578395294, real-machine
+# measurement against this module): a token containing ``$`` (variable
+# expansion), a glob metacharacter (``* ? [``), or starting with ``~``
+# (home-directory expansion) resolves to something DIFFERENT at real
+# `sh -c` execution time than the literal text this parser sees --
+# exactly the same "parser saw one thing, shell runs another" class this
+# module's own docstring names for `$(...)`/backtick, just via expansion
+# instead of substitution. Measured real bypasses: `echo hi >
+# $HOME/out.txt` let a redirect-target permission check (段3's future
+# `require_file_write`) see the literal string `"$HOME/out.txt"` instead
+# of the real path; `rm *.txt` let a threat scan see `"*.txt"` instead of
+# whatever files actually match at execution time. The SAME
+# "no way to know what this really is" gap a quoted operator-shaped
+# token (_iter_tokens's own docstring) is rejected for -- this closes
+# the inconsistency architect's own co-vet named: that gap was closed
+# for quoting and left open for expansion.
+_EXPANSION_CHARS = frozenset("$*?[")
+
+# #5838 BLOCKING (same co-vet): `FOO=bar rm -rf /tmp/x` -- a leading
+# `NAME=value` environment-assignment prefix -- is not stripped by this
+# parser, so `argv[0]` becomes the literal string `"FOO=bar"`, never
+# `"rm"`. Any future tool-axis policy (段3) reading `argv[0]` would
+# check the WRONG binary entirely; the real `rm` never reaches policy at
+# all -- the exact `./sed` basename-bypass class architect's own
+# competitive research (Codex #28732) names, reached through a different
+# door. Matched only in LEADING position (before the first real word of
+# a segment — see `_looks_like_leading_assignment`'s own caller) so a
+# legitimate later argument shaped like `NAME=value` (e.g. `docker run
+# -e FOO=bar image`) is unaffected: `docker` already satisfied "a real
+# word was seen" before `FOO=bar` appears.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _contains_expansion(token: str) -> bool:
+    """True if *token* would resolve to something this parser cannot
+    predict at real shell execution time — see ``_EXPANSION_CHARS``'s
+    own module-level comment for the measured bypasses this closes."""
+    return bool(_EXPANSION_CHARS.intersection(token)) or token.startswith("~")
+
+
+def _looks_like_leading_assignment(token: str) -> bool:
+    """True if *token* has the ``NAME=value`` shape of a shell
+    environment-assignment prefix — see ``_ASSIGNMENT_RE``'s own
+    module-level comment for the measured bypass this closes. Callers
+    apply this ONLY while still in a segment's leading position."""
+    return bool(_ASSIGNMENT_RE.match(token))
 
 
 class ExecPlanRejected(Exception):
@@ -194,26 +251,65 @@ def _iter_tokens(text: str) -> "list[tuple[str, bool]]":
     groups such a run into ONE token when ``punctuation_chars`` is set
     (e.g. ``"a && b"`` tokenizes to ``["a", "&&", "b"]`` directly, never
     ``["a", "&", "&", "b"]``) — this function does no merging of its
-    own, only classifies what ``shlex`` already produced. A quoted
-    ``'|'`` is never one of these: ``shlex``'s own quote handling keeps
-    it as part of a plain WORD token, so quoting something is exactly
-    what protects it from being read as an operator here — the same
-    guarantee real POSIX shell quoting gives.
+    own, only classifies what ``shlex`` already produced.
+
+    #5838 BLOCKING (lead-coder co-vet, issuecomment-5578405655, real
+    measurement): a QUOTED token whose dequoted VALUE happens to consist
+    entirely of punctuation characters (e.g. ``grep '|' file``) is
+    string-identical to a real unquoted operator once ``shlex`` strips
+    the quotes — ``list(shlex.shlex(...))``'s public iterator throws
+    that distinction away, and treating such a token as a literal word
+    (the earlier, WRONG assumption this docstring used to state) let
+    ``grep '|' file`` silently misparse into TWO piped commands instead
+    of one ``grep`` call with a literal ``|`` argument. Tracked here
+    instead by reading ``lexer.instream.tell()`` before/after each
+    ``get_token()`` call to recover the RAW source substring for that
+    token (``shlex``'s own scanner consumes a plain ``str`` through an
+    internal ``io.StringIO``, whose ``tell()`` is character-position-
+    accurate for this purpose) and checking whether that raw substring
+    contains a quote character. A token that is BOTH punctuation-only
+    AND was quoted raises :class:`ExecPlanRejected` outright — this
+    parser cannot verify which the real shell would do (treat it as
+    literal text, per the quoting, or — if some future construct this
+    parser does not yet know about defeats the quote — as the operator
+    it resembles) and refuses to guess, the SAME judgement
+    :data:`_EXPANSION_CHARS` applies to ``$``/glob/``~``.
 
     Raises :class:`ExecPlanRejected` for an unterminated quote (``shlex``
-    itself raises ``ValueError``)."""
+    itself raises ``ValueError``) or for a quoted operator-shaped token
+    (above)."""
     lexer = shlex.shlex(text, posix=True, punctuation_chars=_PUNCTUATION_CHARS)
     lexer.whitespace_split = True
+    # shlex.shlex(str, ...) wraps a plain str argument in an io.StringIO
+    # internally (stdlib source) -- typeshed's own instream type is a
+    # narrower read-only Protocol that doesn't declare .tell(), so this
+    # cast documents what is actually there rather than silencing an
+    # unrelated mypy finding.
+    instream = cast("io.StringIO", lexer.instream)
+    operator_chars = frozenset(_PUNCTUATION_CHARS)
+    tokens: "list[tuple[str, bool]]" = []
     try:
-        raw_tokens = list(lexer)
+        while True:
+            start = instream.tell()
+            token = lexer.get_token()
+            if token is None:
+                break
+            end = instream.tell()
+            raw = text[start:end]
+            quoted = "'" in raw or '"' in raw
+            is_operator = bool(token) and all(c in operator_chars for c in token)
+            if is_operator and quoted:
+                raise ExecPlanRejected(
+                    f"a quoted token that looks like an operator (token: "
+                    f"{token!r}) is not supported here — this parser cannot "
+                    "verify whether a real shell would treat it as literal "
+                    "text or as the operator it resembles, and refuses to "
+                    "guess"
+                )
+            tokens.append((token, is_operator))
     except ValueError as exc:
         raise ExecPlanRejected(f"could not parse arguments: {exc}") from exc
-
-    operator_chars = frozenset(_PUNCTUATION_CHARS)
-    return [
-        (token, all(c in operator_chars for c in token))
-        for token in raw_tokens
-    ]
+    return tokens
 
 
 def parse_exec_plan(text: str) -> "ExecPlan":
@@ -258,6 +354,20 @@ def parse_exec_plan(text: str) -> "ExecPlan":
                     f"parser (token: {token!r}) — put every argument before "
                     "the redirect"
                 )
+            if _contains_expansion(token):
+                raise ExecPlanRejected(
+                    f"variable/glob/home-directory expansion is not supported "
+                    f"here (token: {token!r}) — this parser cannot predict "
+                    "what it resolves to at execution time, the same "
+                    "uncertainty a quoted operator is rejected for"
+                )
+            if not current_argv and _looks_like_leading_assignment(token):
+                raise ExecPlanRejected(
+                    f"a leading NAME=value environment assignment is not "
+                    f"supported here (token: {token!r}) — it would become "
+                    "this segment's argv[0], hiding the real command from "
+                    "policy"
+                )
             current_argv.append(token)
             i += 1
             continue
@@ -276,6 +386,13 @@ def parse_exec_plan(text: str) -> "ExecPlan":
             nxt = tokens[i + 1] if i + 1 < len(tokens) else None
             if nxt is None or nxt[1]:
                 raise ExecPlanRejected(f"redirect {token!r} has no target path")
+            if _contains_expansion(nxt[0]):
+                raise ExecPlanRejected(
+                    f"variable/glob/home-directory expansion is not "
+                    f"supported in a redirect target (token: {nxt[0]!r}) — "
+                    "a future file-permission check would see this literal "
+                    "text, never the real expanded path"
+                )
             plan.append(ExecRedirect(op=token, path=nxt[0]))
             redirect_closed_segment = True
             i += 2
