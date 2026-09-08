@@ -18,6 +18,7 @@ shape rather than a second copy.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from pathlib import Path
 
@@ -69,11 +70,22 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
     skipping the re-arm IS the suppression), so
     ``LoopTripwire.session_dump_count`` stays at 1 for the whole episode.
 
-    Strip-falsify (verified by hand: `should_arm_stack_dump` temporarily
-    forced to always return ``True`` around the ``rearm()`` call in
-    ``watch_event_loop``): ``session_dump_count`` becomes 2 for this exact
-    script — the issue's own accept criterion ("抑制を外すと、同じ stall
-    で複数セット出ることを確認")."""
+    Strip-falsify (verified by hand: the ``tripwire.should_arm_stack_dump()``
+    read in the post-``observe()`` re-arm decision temporarily forced to
+    ``True``): ``session_dump_count`` becomes 2 for this exact script —
+    the issue's own accept criterion ("抑制を外すと、同じ stall で複数セット
+    出ることを確認").
+
+    ⚠️ This assertion alone does NOT witness the SEPARATE ordering defect
+    lead-coder found in review (PR #5980 BLOCKING): whether re-arming is
+    decided BEFORE vs. AFTER this tick's own detection can leave a REAL,
+    uncancelled ``faulthandler`` timer pending even while
+    ``session_dump_count`` stays byte-identical (bookkeeping, not "how
+    many actually landed on disk") — a real second dump needs real
+    wall-clock time to fire, which a scripted-clock test structurally
+    cannot wait for (CLAUDE.md: no duration a test depends on). See
+    ``test_watch_event_loop_decides_rearm_after_observing_not_before``
+    below for that property's own (structural) witness."""
     arm = _open_arm(tmp_path, label="t1")
     rearm_calls = 0
     real_rearm = arm.rearm
@@ -142,11 +154,12 @@ async def test_session_dump_cap_notice_fires_exactly_once(tmp_path: Path) -> Non
     further dump and no further cap notice: the count stays at 2 and the
     callback fires only once total, never silently past the cap.
 
-    Strip-falsify (verified by hand: dropping the ``not self.
-    _cap_notice_emitted`` guard in ``record_stack_dump``): the callback
-    would fire AGAIN in episode C too, since the count is still ``>=
-    cap`` there — this test's call-count-of-exactly-one assertion catches
-    that."""
+    Strip-falsify (verified by hand: ``record_stack_dump``'s ``return
+    self._session_dump_count == self._session_dump_cap`` changed to
+    ``return True``): the callback fires on EVERY dump instead of only
+    the one that reaches the cap — ``cap_reached`` becomes
+    ``[(1, 2), (2, 2)]`` for this exact script instead of ``[(2, 2)]``,
+    which this test's equality assertion catches."""
     arm = _open_arm(tmp_path, label="t3")
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.85, 0.90, 1.30, 1.35, 1.75, 1.80])
     tripwire = LoopTripwire(threshold_ms=250.0, session_dump_cap=2)
@@ -169,6 +182,53 @@ async def test_session_dump_cap_notice_fires_exactly_once(tmp_path: Path) -> Non
     assert stalls == [pytest.approx(350.0)] * 3, "three separate episodes each still report their own onset"
     assert tripwire.session_dump_count == 2, "episode C's stall must not produce a third dump"
     assert cap_reached == [(2, 2)], "the cap-reached notice fires exactly once, on the tick it is reached"
+
+
+def test_watch_event_loop_decides_rearm_after_observing_not_before() -> None:
+    """Tier 1: wiring gate — #5977's actual reported bug (lead-coder
+    BLOCKING, PR #5980) cannot be witnessed by ANY scripted-clock unit
+    test: the dangerous extra re-arm is a REAL ``faulthandler`` one-shot
+    timer that only fires after REAL wall-clock time elapses, and
+    CLAUDE.md's testing policy forbids a test that depends on waiting one
+    out. The only CI-safe witness left is the SOURCE ORDER itself — the
+    same shape ``test_5898_loop_tripwire.py``'s own
+    ``test_the_fail_close_driver_passes_its_own_lateness_to_the_sweep``
+    uses for an equivalent timer-driven ordering.
+
+    ``LoopTripwire.should_arm_stack_dump()``'s answer is only correct for
+    THIS tick once ``tripwire.observe()`` has already run — ``observe()``
+    is what resets the per-episode dump allowance at a recovery
+    transition and what closes it via ``record_stack_dump()`` on a fire.
+    Deciding earlier reads a stale flag on exactly the tick that matters
+    (see the previous test's own docstring) — so the re-arm decision must
+    appear AFTER ``observe()`` in source. Strip-falsify: reordering the
+    two lines in ``watch_event_loop`` would put ``observe_pos`` after
+    ``rearm_decision_pos``, failing this ``>``."""
+    source = inspect.getsource(watch_event_loop)
+    observe_pos = source.index("tripwire.observe(")
+    rearm_decision_pos = source.index("armed_last_tick = bool(")
+    assert rearm_decision_pos > observe_pos, (
+        "the re-arm decision must read should_arm_stack_dump() AFTER observe() "
+        "has already run this tick, not before"
+    )
+
+
+def test_app_inline_tick_loop_decides_rearm_after_observing_not_before() -> None:
+    """Tier 1: the SAME wiring gate as
+    ``test_watch_event_loop_decides_rearm_after_observing_not_before``,
+    against ``TextualChatApp._watch_loop_responsiveness``'s own inline
+    copy of the tick loop (it does not call ``watch_event_loop`` — a
+    pre-existing duplication, out of #5977's scope to unify — so the
+    same ordering fix was applied twice and needs its own witness)."""
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+
+    source = inspect.getsource(TextualChatApp._watch_loop_responsiveness)
+    observe_pos = source.index("self._loop_tripwire.observe(")
+    rearm_decision_pos = source.index("_armed_last_tick = bool(")
+    assert rearm_decision_pos > observe_pos, (
+        "the re-arm decision must read should_arm_stack_dump() AFTER observe() "
+        "has already run this tick, not before"
+    )
 
 
 def test_stall_dump_cap_reached_log_line_names_the_count_and_cap() -> None:

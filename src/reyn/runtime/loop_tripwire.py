@@ -754,14 +754,27 @@ async def watch_event_loop(
     has no logger of its own) reports it on its own already-established
     surface, matching ``on_stall``/``on_recovered``'s own shape.
 
+    **#5977 ① ordering (lead-coder BLOCKING, PR #5980)**: whether THIS
+    tick's re-arm should happen is decided BEFORE the tick's own lateness
+    is known to mean "the PREVIOUS arm just fired" — checking the two in
+    the reverse order (re-arm, THEN read ``stack_dumped``, THEN record)
+    always re-arms once more than intended, because the very tick that
+    detects a fire has, by that point, already scheduled the NEXT pending
+    timer — a real ``faulthandler`` commitment nothing then cancels. So
+    ``armed_last_tick`` carries "is there a pending arm to read back"
+    ACROSS ticks: each tick first asks whether the arm made LAST tick
+    fired (if any), records it, and only THEN decides whether to make a
+    NEW one — never both in the same breath.
+
     Runs until cancelled (the caller's shutdown); the ``finally`` releases
     the process-wide timer and this watcher's fd.
     """
     last = clock()
+    armed_last_tick = False
     if stack_dump is not None and tripwire.should_arm_stack_dump():
         # Arm for the FIRST wait too — a stall on the very first tick would
         # otherwise go undumped (#5870 stage 1).
-        stack_dump.rearm()
+        armed_last_tick = stack_dump.rearm()
     try:
         while True:
             await sleep(tick_seconds)
@@ -769,15 +782,7 @@ async def watch_event_loop(
             lateness_ms = (now - last - tick_seconds) * 1000
             last = now
             stack_dumped: "bool | None" = None
-            # #5977 ①: only re-arm while this episode hasn't dumped yet and
-            # the session cap isn't reached — skipping the re-arm IS the
-            # suppression (no separate faulthandler state to cancel; each
-            # arm is one-shot and replaces the previous pending timer).
-            if (
-                stack_dump is not None
-                and tripwire.should_arm_stack_dump()
-                and stack_dump.rearm()
-            ):
+            if armed_last_tick:
                 # Best-effort proxy for "did the pending dump just fire" —
                 # the SAME comparison observe() makes internally, never a
                 # readback of faulthandler's (nonexistent) fired state.
@@ -788,6 +793,22 @@ async def watch_event_loop(
                 on_tick(now, lateness_ms)
             active = turn_active() if turn_active is not None else None
             fired = tripwire.observe(lateness_ms, turn_active=active, stack_dumped=stack_dumped)
+            # #5977 ① (lead-coder BLOCKING follow-up, PR #5980): the re-arm
+            # decision must run AFTER `observe()`, not before — `observe()`
+            # is what resets the per-episode dump allowance at a recovery
+            # transition (mirrors `_fired`'s own reset). Deciding earlier
+            # reads a STALE "already dumped" flag on the exact tick a
+            # recovery happens, leaving nothing armed to catch the very
+            # next episode's onset (measured: a scripted second episode
+            # went undumped entirely under the earlier ordering). Skipping
+            # the re-arm IS the suppression — no separate faulthandler
+            # state to cancel, since each arm is one-shot and replaces the
+            # previous pending timer; a fire detected THIS tick has
+            # already closed via `record_stack_dump()` above, so it never
+            # re-arms a further timer for the SAME still-ongoing episode.
+            armed_last_tick = bool(
+                stack_dump is not None and tripwire.should_arm_stack_dump() and stack_dump.rearm()
+            )
             if fired is not None:
                 on_stall(fired)
             elif tripwire.consume_recovered() and on_recovered is not None:
