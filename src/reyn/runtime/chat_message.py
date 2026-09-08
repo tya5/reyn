@@ -25,7 +25,36 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, NewType
+
+#: #5973 裁定 4 (architect, precursor to that issue's ①②③): two byte
+#: counts this codebase measures are DIFFERENT resources that #5896's
+#: migration (inline body -> content_ref) let drift apart while both
+#: stayed a bare `int` -- nothing distinguished "how many bytes THIS ROW
+#: occupies while resident" from "how many bytes the BODY that row's ref
+#: points at is". `history_resident.max_bytes` (config/chat.py) counts
+#: the former (`ChatMessage.resident_bytes()`, this file); the file a
+#: `content_ref` names is the latter (`CONTENT_BYTES_META_KEY` below).
+#: Before #5896 a resident row WAS its body, so the two counts were the
+#: SAME number and nothing separated them; after #5896 a resident ref
+#: row can be ~400 bytes while the body it points at is hundreds of MB
+#: -- #5973's own root cause is exactly this: a bound written when the
+#: two currencies coincided kept counting the wrong one once they split.
+#:
+#: `NewType` is a STATIC-ONLY distinction (zero runtime cost, zero
+#: runtime enforcement -- both are still plain `int` at execution) that
+#: makes the TWO KINDS OF INT mypy-incompatible with each other: passing
+#: a `BodyBytes` value where a `ResidentBytes` is expected (or the
+#: reverse) is a real `[arg-type]` mypy finding, not merely a naming
+#: convention a reader has to remember to honor. This PR does that
+#: separation ONLY — no bound moves, no counting site changes what it
+#: measures, no behavior changes at all (see
+#: `tests/runtime/test_5973_resident_body_bytes_types.py` for the live
+#: mypy witness proving the distinction is enforced, and its own strip:
+#: reverting either `NewType` to a plain alias makes that witness's
+#: deliberately-wrong call type-check clean).
+ResidentBytes = NewType("ResidentBytes", int)
+BodyBytes = NewType("BodyBytes", int)
 
 
 class Spillability(StrEnum):
@@ -829,9 +858,9 @@ class ChatMessage:
         # it measures, drifting the computed size from what the pre-fix
         # `json.dumps(asdict(m))` call (still used verbatim as the
         # equivalence baseline in tests) would have produced.
-        self._resident_bytes_cache: "int | None" = None
+        self._resident_bytes_cache: "ResidentBytes | None" = None
 
-    def resident_bytes(self) -> int:
+    def resident_bytes(self) -> ResidentBytes:
         """This message's own serialized size in bytes — computed the
         FIRST time this is called, cached for the rest of this object's
         lifetime. Owner-hit incident (2026-09-07): ``Session.
@@ -875,9 +904,9 @@ class ChatMessage:
         across ``src/``, not just ``runtime/``) before trusting it
         again."""
         if self._resident_bytes_cache is None:
-            self._resident_bytes_cache = len(
+            self._resident_bytes_cache = ResidentBytes(len(
                 json.dumps(asdict(self), ensure_ascii=False).encode("utf-8"),
-            )
+            ))
         return self._resident_bytes_cache
 
     @property

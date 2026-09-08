@@ -4082,6 +4082,7 @@ class RouterLoop:
             TOOL_ERROR_MESSAGE_META_KEY,
             TOOL_STATUS_ERROR,
             TOOL_STATUS_META_KEY,
+            BodyBytes,
             LostReason,
         )
         for _result_seq, (tc, r) in enumerate(
@@ -4389,9 +4390,18 @@ class RouterLoop:
                     # no ref ever minted.
                     _write_unavailable = True
                 else:
+                    # #5973 裁定4: the body's own byte count is BodyBytes —
+                    # a DIFFERENT currency from ChatMessage.resident_bytes()
+                    # (this same row's serialized SIZE, ResidentBytes) even
+                    # though this ref row's own resident size stays tiny.
+                    # Computed here, not loaded from the type once stored:
+                    # `_tool_meta` is a plain `dict[str, Any]`, so the meta
+                    # KEY itself carries no static type -- this local is
+                    # where the distinction still holds.
+                    _body_bytes: BodyBytes = BodyBytes(len(_persist_body.encode("utf-8")))
                     _tool_meta[SPILLED_META_KEY] = False
                     _tool_meta[CONTENT_REF_META_KEY] = _block["path"]
-                    _tool_meta[CONTENT_BYTES_META_KEY] = len(_persist_body.encode("utf-8"))
+                    _tool_meta[CONTENT_BYTES_META_KEY] = _body_bytes
                     _tool_meta[CONTENT_MIME_META_KEY] = _block["mime_type"]
             # #5364 §1.5: an offload was ATTEMPTED and refused — content
             # stayed inline (never a ref to a file that doesn't exist), but
