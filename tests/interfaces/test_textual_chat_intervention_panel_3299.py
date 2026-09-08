@@ -290,9 +290,20 @@ async def _settle_until(pilot, until) -> None:
     ``pilot.pause()`` runs BEFORE every check, unconditionally -- it is
     not just a delay, it is the pump that flushes pending UI messages, so
     an already-true predicate must still get one pass before returning
-    (lead-coder review: checking first would silently skip that flush)."""
+    (lead-coder review: checking first must not silently skip that flush).
+
+    #5956 (#4986 variant C's own armed observer): the ONE real occurrence
+    of ``textual.pilot.WaitForScreenTimeout`` this repo has seen (#5331,
+    an unrelated PR's CI run) fired from exactly this ``pilot.pause()``
+    call, inside this exact loop. Wrapped so a recurrence carries ①②③
+    (pending workers / pump ticks / loop-tripwire state) as an exception
+    note -- see ``tests/_support/screen_timeout_diagnostics.py``'s own
+    module docstring for what each one is and why."""
+    from tests._support.screen_timeout_diagnostics import diagnosed_screen_wait
+
     while True:
-        await pilot.pause()
+        async with diagnosed_screen_wait(pilot.app):
+            await pilot.pause()
         if until():
             return
         await asyncio.sleep(0.01)
