@@ -981,7 +981,20 @@ class StallDumpArm:
         TUI startup bracket disarms before an interactive turn can begin,
         and the tripwire is the PERMANENT occupant of the timer from
         first frame onward) — this call inherits that same precondition,
-        it does not introduce a new one."""
+        it does not introduce a new one.
+
+        #6000 ②/architect (superseding this method's own original "this
+        call is what makes reset() safe" reasoning): ``DiagnosticSnapshot.
+        reset()`` itself now never releases its own fd NUMBER back to the
+        OS (``os.ftruncate``/``os.lseek`` in place, or ``os.dup2`` onto
+        the SAME number on an external-change reopen) — the fd-reuse
+        hazard this call originally guarded against is closed
+        STRUCTURALLY now, independent of whether any caller disarms
+        first. This call itself is UNCHANGED and still runs at every
+        site above — disarming before a call that no longer needs it is
+        harmless, and the disarm still has its own independent purpose
+        (a stale timer must not fire into a truncated-and-about-to-be-
+        rewritten file's PRIOR content either)."""
         from reyn.runtime.stall_trace import disarm as _disarm
 
         _disarm()

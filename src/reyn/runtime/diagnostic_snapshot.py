@@ -98,40 +98,67 @@ class DiagnosticSnapshot:
             return False
 
     def reset(self) -> None:
-        """Truncate and reopen for the NEXT write — see the class
-        docstring's truncate-timing trap for why this must be called only
-        after a PREVIOUS write is known to have landed, never
-        preemptively. Sets :attr:`fd` to ``None`` on a failed reopen
-        (parent directory removed mid-run, permissions changed, …) —
-        every further write attempt against this instance then no-ops,
-        matching :meth:`open`'s own "cannot open → never arms" posture.
+        """Truncate for the NEXT write — see the class docstring's
+        truncate-timing trap for why this must be called only after a
+        PREVIOUS write is known to have landed, never preemptively. Sets
+        :attr:`fd` to ``None`` on a failure — every further write attempt
+        against this instance then no-ops, matching :meth:`open`'s own
+        "cannot open → never arms" posture.
 
-        #5998: this method closes :attr:`fd` with no notion of whether a
-        TIMER-DRIVEN writer (``faulthandler.dump_traceback_later`` is
-        this module's own first such caller, via
-        :class:`~reyn.runtime.loop_tripwire.StallDumpArm`) is currently
-        armed against that exact fd NUMBER — deliberately: this class
-        stays reusable by any future snapshot writer, including ones with
-        no such consumer at all, so it does not import or know about
-        ``stall_trace``/``faulthandler``. A caller that DOES have such a
-        consumer must quiesce (disarm) it before calling :meth:`reset`,
-        the same way it must before calling :meth:`close` — see
-        :class:`~reyn.runtime.loop_tripwire.StallDumpArm`'s own
-        ``_disarm_before_reset`` for why: closing a still-armed fd frees
-        its number back to the OS, which can hand that SAME number to an
-        unrelated file/socket/pipe opened moments later, and the pending
-        timer then writes into THAT — silently, no exception, no
-        indication anything went wrong at either end."""
+        #6000 ②/architect (superseding #5998's own "the caller must
+        disarm first" contract, kept below as HISTORY): the fd NUMBER
+        this method exposes is now never released back to the OS across
+        a `reset`, in EITHER of its two cases —
+
+          - the common case (:meth:`points_at_current_file` still true —
+            nothing external touched *path*): truncated IN PLACE via
+            ``os.ftruncate`` + ``os.lseek``, never closed at all.
+          - the external-change case (something deleted/replaced *path*
+            since this fd was opened): a NEW fd is opened at *path*, then
+            :func:`os.dup2` onto :attr:`fd`'s OWN number — ``dup2`` is
+            POSIX-atomic, so that number is NEVER momentarily unused, the
+            decisive difference from "close old, then open new" (which
+            has exactly the momentary gap a stale, still-armed timer can
+            land in). :attr:`fd`'s own Python-side int is unchanged
+            either way.
+
+        #5998 history (now moot, not deleted): before this fix, this
+        method DID close :attr:`fd` with no notion of whether a
+        TIMER-DRIVEN writer (``faulthandler.dump_traceback_later``, via
+        :class:`~reyn.runtime.loop_tripwire.StallDumpArm`) was currently
+        armed against that exact fd number — a caller with such a
+        consumer had to disarm it first, or a freed number could be
+        handed to an unrelated file/socket/pipe moments later, with the
+        pending timer then writing into THAT. #5998's own `_disarm_
+        before_reset` callers are UNCHANGED (disarming before a call that
+        no longer needs it is harmless, not deleted for that reason) —
+        but the property "the fd number is stable" now holds
+        STRUCTURALLY, independent of whether a caller remembers to
+        disarm at all. This class still does not import or know about
+        ``stall_trace``/``faulthandler`` — the fix does not depend on
+        that either."""
         if self._fd is None:
             return
+        if self.points_at_current_file():
+            try:
+                os.ftruncate(self._fd, 0)
+                os.lseek(self._fd, 0, os.SEEK_SET)
+            except OSError:
+                try:
+                    os.close(self._fd)
+                except OSError:
+                    pass
+                self._fd = None
+            return
         try:
-            os.close(self._fd)
-        except OSError:
-            pass
-        try:
-            self._fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+            new_fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
         except OSError:
             self._fd = None
+            return
+        try:
+            os.dup2(new_fd, self._fd)
+        finally:
+            os.close(new_fd)
 
     def close(self) -> None:
         """Idempotent."""
