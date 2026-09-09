@@ -5,6 +5,20 @@ test.yml``) reports a normal summary and names where it stopped -- instead
 of being killed by that external ``timeout`` with zero pytest output
 surviving.
 
+NOT YET ARMED IN CI (lead-coder ruling, PR #6018): ``REYN_TEST_SESSION_
+DEADLINE_S`` is not exported anywhere in ``test.yml`` today -- this module
+lands as dormant, tested infrastructure. Real CI on this PR's own branch
+measured the FIRST attempted value (deadline_s=550s against `timeout 12m`
+=720s) firing on an entirely healthy, fully-passing 575.30s run (turning
+green into `exit 2`) -- and #5994's own 24-run measurement (mean 11.69 min
+= 701s) showed that run was the SHORT end, not an outlier: with `TOTAL_S
+=720` and the required `PER_TEST_TIMEOUT_S=120` subtracted, no deadline
+below 600s can be both "safely under the external kill" and "never reached
+by a normal run" -- that window does not currently exist. #5994② (measuring
+what the ~11.7-minute run is actually spent on) now comes FIRST; arming
+this in CI is a single `REYN_TEST_SESSION_DEADLINE_S=...` export in
+test.yml once ② gives a real number to derive it from.
+
 WHY THIS EXISTS (#5994's own measurement)
     24 recent main-push runs of ``pytest (Python 3.12)`` ranged 9.98-12.90
     minutes (mean 11.69), riding hard against the outer ``timeout 12m`` --
