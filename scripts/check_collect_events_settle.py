@@ -177,6 +177,8 @@ function, than the read.
 This gate's own starting population is zero (all 31 found instances were
 fixed in the same PR that added this gate) — any hit here is a new
 regression, not inherited debt.
+
+CI: gate
 """
 from __future__ import annotations
 

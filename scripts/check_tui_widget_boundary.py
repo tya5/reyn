@@ -16,6 +16,8 @@ silently erode as new widget files land.
 IS the seam between the wire and the widget tree) — excluded by name, not
 grandfathered by a baseline: this is a fixed architectural role, not a
 population of legacy violations to shrink over time.
+
+CI: gate
 """
 from __future__ import annotations
 

@@ -38,6 +38,8 @@ its own CI-rejected condition (``--check-growth``, diffed against a base
 ref). mypy's ratchet does not need this because a hand-edited baseline entry
 there is indistinguishable from a real, still-measured finding; a hand-edited
 entry here can exist with NO corresponding file on disk at all.
+
+CI: gate
 """
 from __future__ import annotations
 

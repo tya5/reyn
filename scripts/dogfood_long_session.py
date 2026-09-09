@@ -30,6 +30,8 @@ Note on --n-shot:
     server). If they don't exist you'll get a JSON-RPC "Unknown agent" error —
     in that case use the default agent (n-shot=1) or pre-create the agents with
     `reyn agent new`.
+
+CI: manual -- run by hand as a long-session dogfood driver
 """
 from __future__ import annotations
 

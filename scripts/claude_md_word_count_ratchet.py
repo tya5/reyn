@@ -40,6 +40,8 @@ explicit that adding rules is fine. What is forbidden is doing so for free:
 file, which is the concrete form of "write down that you are raising every
 session's per-turn cost" (lead-coder's own framing, #4872 dispatch) -- an
 action, not merely a comment nobody has to make.
+
+CI: gate
 """
 from __future__ import annotations
 

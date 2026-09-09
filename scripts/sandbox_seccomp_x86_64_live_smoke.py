@@ -37,6 +37,8 @@ shipped with, not all of them:
 Do not read a green run of this script as "the sandbox is validated". Read it as
 "the syscall-name-resolution gap #2975 flagged as predicted-not-measured is now
 measured on x86_64" — see the PR body for the fuller table (#2983).
+
+CI: gate
 """
 from __future__ import annotations
 

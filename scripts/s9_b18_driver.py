@@ -10,6 +10,8 @@ For each run:
   4. Invoke `reyn run index_docs '<json_input>'` with cost_warn_threshold:5 in input
   5. Parse trace dump for LLM decision
   6. Inspect workspace for chunks.jsonl / SQLite db / sources.yaml side effects
+
+CI: manual -- run by hand as a cost-preflight-gate dogfood driver
 """
 from __future__ import annotations
 

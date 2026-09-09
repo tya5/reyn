@@ -15,6 +15,8 @@ Verdict criteria:
   refuted      — recall not invoked, OR sources has only one source.
   inconclusive — driver/subprocess error.
   blocked      — structural blocker (e.g. tool absent from catalog).
+
+CI: manual -- run by hand as a batch-18 dogfood scenario driver
 """
 from __future__ import annotations
 

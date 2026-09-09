@@ -153,6 +153,8 @@ ruling defers it to "after 1-3, measured": the three changes above may
 already remove enough of the cost that a daemon's own complexity (a
 long-lived process per repo, its own staleness/restart questions) is not
 worth taking on without first seeing whether it is still needed.
+
+CI: gate
 """
 from __future__ import annotations
 

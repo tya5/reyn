@@ -46,6 +46,8 @@ expression evaluates against three locals: ``content`` (str|None),
 Tier 2 testing seam: ``classify_response`` is imported by the test
 suite to verify classifier ordering + fallback behaviour without
 running real subprocesses.
+
+CI: manual -- run by hand for an ablation comparison replay
 """
 from __future__ import annotations
 

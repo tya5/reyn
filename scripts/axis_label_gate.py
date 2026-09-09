@@ -72,6 +72,8 @@ constraint, reused here: an issue is a discussion vessel, not something
 this gate is allowed to stop. `needs-axis` only ever makes an existing gap
 VISIBLE (the same reason `blocked:external` works — "見えるから" — being
 seen is the entire mechanism), never closes or blocks the issue itself.
+
+CI: gate
 """
 from __future__ import annotations
 

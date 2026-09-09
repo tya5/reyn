@@ -96,6 +96,8 @@ generated-output directory; `git ls-files` needs none).
 
 Run directly against the real repo tree; see ``check_tests_path_literal_reference_baseline.json``
 and the paired test file's ``test_the_real_repo_tree_measurement_matches_the_baseline``.
+
+CI: gate
 """
 from __future__ import annotations
 

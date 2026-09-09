@@ -10,6 +10,8 @@ Usage:
     python scripts/detect_attractor.py --trace <jsonl_path> --output-format json
     python scripts/detect_attractor.py --trace <jsonl_path> --summary-only
     python scripts/detect_attractor.py --trace <jsonl_path> --filter-caller router
+
+CI: manual -- run by hand during a dogfooding trace review
 """
 from __future__ import annotations
 

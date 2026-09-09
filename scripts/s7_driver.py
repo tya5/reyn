@@ -16,6 +16,8 @@ Observations:
   2. Run N=3 chat turns via subprocess (reyn chat --cui s7_dogfood).
   3. Read events log to confirm recall tool was NOT called.
   4. Verify LLM reply references seeded memory content.
+
+CI: manual -- run by hand as a one-off dogfood driver
 """
 from __future__ import annotations
 

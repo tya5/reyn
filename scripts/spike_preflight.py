@@ -14,6 +14,8 @@ Checks:
 
 Exit 0 = all checks PASS or WARN.  Exit 1 = any check FAIL (hard error).
 The script is idempotent — repeated runs are safe.
+
+CI: manual -- run by hand once before a spike begins, per its own docstring
 """
 from __future__ import annotations
 

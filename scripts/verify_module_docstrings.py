@@ -20,6 +20,8 @@ on creative phrasings — those stay covered by review.
 
 stdlib-only (ast / re / argparse / pathlib), mirroring
 scripts/test_tier_audit.py, so CI runs it dep-free.
+
+CI: gate
 """
 from __future__ import annotations
 

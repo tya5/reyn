@@ -150,6 +150,8 @@ two exclusion classes above) returns ZERO hits. Requiring a baseline would
 mean committing an empty one — simpler to just fail on any hit, which also
 means a new violation surfaces immediately instead of needing
 `--write-baseline` run first to notice it slipped through.
+
+CI: gate
 """
 from __future__ import annotations
 

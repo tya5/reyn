@@ -36,6 +36,8 @@ to tell a legitimate short quote from an accidental one by shape alone);
 it reports every span >=15 words and leaves severity judgment to the
 reader, per #4858's own explicit warning that "always require both" is
 the wrong rule for this population.
+
+CI: report -- read by lead-coder when re-measuring CLAUDE.md overlap after an edit
 """
 from __future__ import annotations
 

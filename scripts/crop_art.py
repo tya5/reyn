@@ -13,6 +13,8 @@ Examples
 
 # Pass extra chafa options (after --):
   python scripts/crop_art.py horse.png -c 10 -H 6 -- --colors 256 --symbols block+sextant
+
+CI: manual -- run by hand as a chafa image-crop convenience wrapper
 """
 import argparse
 import subprocess

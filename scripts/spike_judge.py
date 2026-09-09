@@ -3,6 +3,8 @@
 Public API (imported by the driver, track B):
     judge_narration(*, final_output, narration, judge_focus) -> dict
     heuristic_grade(*, final_output, narration) -> dict
+
+CI: manual -- imported as a library by a G4 spike driver; its __main__ block is a smoke-test demo only
 """
 
 from __future__ import annotations

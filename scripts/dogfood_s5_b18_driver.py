@@ -14,6 +14,8 @@ Verdict criteria (per run):
   hallucination (B17-S5-1)
 - inconclusive: subprocess error / driver bug / can't determine
 - blocked: structural blocker
+
+CI: manual -- run by hand as a batch-18 dogfood scenario driver
 """
 from __future__ import annotations
 

@@ -37,6 +37,8 @@ the affirmative. Two mechanisms close it, and the FIRST is the one that matters:
    the first is success.** The patcher reports its call count; a scan that never
    invoked ``_replay`` (bad pattern, collection error, a fixture wired some other
    way) is reported as an error with a non-zero exit, never as "up to date".
+
+CI: manual -- run by hand to rekey test fixtures, not CI-wired
 """
 from __future__ import annotations
 

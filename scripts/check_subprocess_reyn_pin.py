@@ -89,6 +89,8 @@ appearing — nothing needs editing in the baseline for a fix to "count".
 
 Keyed on the FILE, not (file, line) — an unrelated edit elsewhere in the
 file must never itself flip the gate red.
+
+CI: gate
 """
 from __future__ import annotations
 

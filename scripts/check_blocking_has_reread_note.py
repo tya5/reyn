@@ -85,6 +85,8 @@ stdlib-only (argparse / json / subprocess — the marker regexes and SHA
 logic are IMPORTED, not reimplemented), mirroring
 `check_pr_closing_intent.py`/`check_tests_read_names_its_tree.py` so CI
 runs it dep-free.
+
+CI: gate
 """
 from __future__ import annotations
 

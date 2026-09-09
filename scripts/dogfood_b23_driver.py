@@ -21,6 +21,8 @@ After the chat finishes, the driver inspects:
 
 It emits a 4-outcome verdict (verified / inconclusive / refuted / blocked)
 following the prelude's prediction rubric.
+
+CI: manual -- run by hand as a dogfood scenario driver against a live reyn chat --cui
 """
 from __future__ import annotations
 

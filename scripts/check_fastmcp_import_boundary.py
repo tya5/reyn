@@ -43,6 +43,8 @@ Same reasoning as ``check_bare_tests_import_reference.py``/
 ``check_file_depth_reference.py``: whether a file imports ``fastmcp``
 directly is fully determined by its CURRENT content, no move or diff
 needed. A pure population scan against a real, verified-zero baseline.
+
+CI: gate
 """
 from __future__ import annotations
 

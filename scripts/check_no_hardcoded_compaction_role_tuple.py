@@ -39,6 +39,8 @@ Same reasoning as ``check_fastmcp_import_boundary.py``: whether a file
 hand-types the tuple is fully determined by its CURRENT content, no move
 or diff needed. A pure population scan against a real, verified-zero
 baseline (this gate's own starting population, post-#5699, is zero).
+
+CI: gate
 """
 from __future__ import annotations
 

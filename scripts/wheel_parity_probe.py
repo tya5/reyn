@@ -23,6 +23,8 @@ false-passes nothing.
 
 Exits 0 iff every check passes; exits 1 (with a ``[PASS]``/``[FAIL]`` line per
 check) on any assertion failure — reporting every failure, not stopping early.
+
+CI: gate
 """
 from __future__ import annotations
 

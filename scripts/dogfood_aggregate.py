@@ -23,6 +23,8 @@ Usage::
 Tier 2 testing seam: ``load_worker_results``, ``compute_totals``,
 ``build_aggregate``, and ``render_comparison_table`` are independent
 pure functions consumed by ``test_dogfood_aggregate.py``.
+
+CI: manual -- run by hand to aggregate per-worker dogfood JSON output
 """
 from __future__ import annotations
 

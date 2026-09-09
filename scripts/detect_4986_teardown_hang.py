@@ -50,6 +50,8 @@ the thin, separately-swappable network layer.
 Usage:
     python scripts/detect_4986_teardown_hang.py --run-id <id>
     python scripts/detect_4986_teardown_hang.py --log-file <path>
+
+CI: report -- read by lead-coder from the auto-posted PR comment -- workflow deliberately captures its exit code under set +e and never fails the job
 """
 from __future__ import annotations
 

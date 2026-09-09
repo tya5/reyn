@@ -25,6 +25,8 @@ Per-batch past-batch verdict citation: the prompts include the
 worker's prior verdicts pulled from the most recent ``past_batches``
 entry (= the one listed FIRST in the config). This eliminates the
 manual paste step that previously took ~10-15 min per batch dispatch.
+
+CI: manual -- run by hand to generate per-worker dogfood dispatch prompts/worktrees
 """
 from __future__ import annotations
 

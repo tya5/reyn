@@ -66,6 +66,8 @@ wrap_command-then-observe-the-filesystem oracle every existing probe uses)
 purely as CI-conformance evidence, exactly the ``axis_contract`` /
 ``test_sandbox_axis_contract_2983.py`` precedent CLAUDE.md names for
 "richer per-axis contract, CI-only".
+
+CI: gate
 """
 from __future__ import annotations
 

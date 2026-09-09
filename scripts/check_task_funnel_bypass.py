@@ -166,6 +166,8 @@ needed), forcing whoever introduced it to add a declared entry and
 classify it BEFORE the PR is green. That one required action is what
 makes ``"false_positive"`` entries countable: they are not a "same as
 before" default that requires nobody to write anything down.
+
+CI: report -- read by lead-coder from the workflow's ::warning:: annotation -- own main() is gate-shaped but task-funnel-bypass-gate.yml deliberately runs it warn-only
 """
 from __future__ import annotations
 

@@ -52,6 +52,8 @@ Usage:
     python scripts/detect_5265_startup_failure_blocked_prs.py --pr 5262
     python scripts/detect_5265_startup_failure_blocked_prs.py --head-sha <sha>
     python scripts/detect_5265_startup_failure_blocked_prs.py --fixture runs.json
+
+CI: manual -- run by backlog-watcher's own periodic patrol, invoked from outside GitHub Actions per its own docstring
 """
 from __future__ import annotations
 

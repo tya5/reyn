@@ -56,6 +56,8 @@ own machine. Note the direction of the gap: the runner sits ABOVE the installed
 base, not below it, so this job is *least* likely to see the ABI-gated defects.
 Do not read a green run of this script as "the sandbox is validated on Linux".
 Read it as: "on this one ABI, on this one kernel, all three denies fired today."
+
+CI: gate
 """
 from __future__ import annotations
 

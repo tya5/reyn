@@ -47,6 +47,8 @@ never as "the population is mostly Tier 1/2".
 5. `narrow_tier2` — the docstring declares "Tier 2" but the test body calls
    into exactly ONE distinct `reyn.*`-sourced name — a broad Tier claim
    resting on a single, narrow call site.
+
+CI: manual -- run by hand for a Tier-4-candidate signal report -- own docstring says not a CI gate
 """
 from __future__ import annotations
 

@@ -51,6 +51,8 @@ structural comparison against the real, current flat population, so a
 future flat file added tomorrow is covered automatically, the same way
 ``check_file_depth_reference.py``'s ``_support``/``fixtures`` detection
 needs no hardcoded directory names either.
+
+CI: gate
 """
 from __future__ import annotations
 
