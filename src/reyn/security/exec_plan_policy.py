@@ -121,6 +121,20 @@ unscanned only there. :func:`_check_redirect` now runs the SAME scan
 (:func:`_run_threat_scan`, factored out of :func:`_check_segment`) over
 the redirect's own path, before the resolver-presence check (scanning
 needs no resolver).
+
+## #5838 段5 (lead-coder ruling, #5838 issue thread) — audit needs to
+name what actually ran. Charter lens 7 (Observability — an audit-event
+trace must be sufficient to reconstruct what happened): a cmd-mode run's
+``argv0_resolved`` is ALWAYS ``/bin/sh`` (段4's own shape), so nothing in
+``.reyn/events`` said which binary a chained/piped command actually
+invoked. :func:`check_exec_plan_policy` now RETURNS the resolved
+``argv[0]`` for every segment it checks — the value it already computes
+internally for the tool-axis check — so ``sandboxed_exec.py`` can build
+its own ``sandboxed_exec_started``/``_completed`` ``plan`` field from
+THIS list, never by calling :func:`~reyn.security.sandbox.resolve.
+resolve_real_executable` a second time (the exact "policy saw one
+binary, audit recorded a different one" class #5991 BLOCKING ③ closed
+for ``env_path``/``cwd`` — now closed for the resolved name too).
 """
 from __future__ import annotations
 
@@ -142,7 +156,7 @@ if TYPE_CHECKING:
 
 async def check_exec_plan_policy(
     plan: "ExecPlan", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
-) -> None:
+) -> "list[dict[str, str]]":
     """Apply 段3 policy to every item of *plan* — see this module's own
     docstring for exactly what each item type is checked against. Raises
     :class:`PermissionError` on the FIRST denial encountered, in plan
@@ -150,7 +164,26 @@ async def check_exec_plan_policy(
     original text) — never collects every violation, matching every other
     ``require_*`` gate in this codebase (``file.py``'s own sequential
     write/read checks, ``sandboxed_exec.py``'s own single threat-scan
-    raise). Returns ``None`` when every item passes.
+    raise).
+
+    Returns ``[{"argv0": <original>, "resolved": <resolved absolute
+    path>}, ...]``, one entry per :class:`~reyn.security.exec_plan.
+    ExecSegment` in *plan*, in order — #5838 段5 (lead-coder ruling,
+    #5838), the pairing added on architect's own PR co-vet suggestion
+    (issuecomment-5594370219: recording ONLY the resolved value would
+    force a reader of ``sandboxed_exec_started``'s ``plan`` field to
+    re-parse ``cmd`` to know what each segment's ORIGINAL ``argv[0]`` was
+    — the pair also preserves whether/what a version-manager shim
+    resolved to, e.g. ``{"argv0": "python", "resolved": "/opt/.pyenv/
+    versions/3.12/bin/python"}``). ``resolved`` is the same absolute path
+    :func:`~reyn.security.sandbox.resolve.resolve_real_executable`
+    produced, already computed here for the tool-axis check — a caller
+    building the audit trace reuses THIS list rather than calling
+    ``resolve_real_executable`` a second time, the exact "policy saw one
+    binary, the trace recorded a different one" class #5991 BLOCKING ③
+    closed for env_path/cwd, now closed for the resolved name itself.
+    ``ExecChainOp``/``ExecRedirect`` entries contribute nothing to this
+    list (they have no argv[0] of their own).
 
     *env_path*/*cwd* are the ``PATH``/working-directory the eventual
     sandboxed run will actually see — BOTH REQUIRED, keyword-only, no
@@ -164,32 +197,42 @@ async def check_exec_plan_policy(
     Never executes anything, never re-parses *plan* — a pure policy
     check over an already-parsed :data:`~reyn.security.exec_plan.
     ExecPlan`."""
+    resolved_argv0: "list[dict[str, str]]" = []
     for item in plan:
         if isinstance(item, ExecSegment):
-            await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
+            resolved = await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
+            resolved_argv0.append({"argv0": item.argv[0] if item.argv else "", "resolved": resolved})
         elif isinstance(item, ExecRedirect):
             await _check_redirect(item, ctx)
         # ExecChainOp carries no policy-relevant data of its own — the
         # segments either side of it are checked independently.
+    return resolved_argv0
 
 
 async def _check_segment(
     segment: "ExecSegment", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
-) -> None:
+) -> str:
     """Tool-axis + threat-scan check for one segment — see this module's
-    own docstring, "What gets checked", point 1/2."""
+    own docstring, "What gets checked", point 1/2. Returns the RESOLVED
+    ``argv[0]`` (#5838 段5 — see :func:`check_exec_plan_policy`'s own
+    docstring for why this is returned rather than re-derived by a
+    caller)."""
     if not segment.argv:
         # Unreachable via parse_exec_plan (an empty segment is rejected at
         # parse time — exec_plan.py's own _flush_segment), kept as a
         # defensive no-op rather than an IndexError for any other future
-        # ExecPlan producer.
-        return
+        # ExecPlan producer. "" (not None) keeps the return type a plain
+        # str, matching every reachable path.
+        return ""
 
     # #2820 part A (the SAME resolution sandboxed_exec.py's own
     # argv0_resolved already performs): strip a version-manager shim
     # indirection, filesystem-only, no subprocess. Reduced to a basename
     # because the tool-axis narrowing this feeds (below) names tools by
-    # bare name ("exec", "grep", ...), never an absolute path.
+    # bare name ("exec", "grep", ...), never an absolute path — the
+    # UNREDUCED `argv0_resolved` (this function's own return value) is
+    # what a caller building an audit trace wants instead (matches
+    # `sandboxed_exec.py`'s own existing `argv0_resolved` field shape).
     argv0_resolved = resolve_real_executable(segment.argv[0], env_path=env_path, cwd=cwd)
     resolved_name = os.path.basename(argv0_resolved)
 
@@ -201,6 +244,7 @@ async def _check_segment(
         )
 
     await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
+    return argv0_resolved
 
 
 async def _run_threat_scan(ctx: "OpContext", text: str, *, subject: "list[str]") -> None:
