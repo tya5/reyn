@@ -35,10 +35,21 @@ point carried forward into this stage: the binary policy approved and
 the binary that runs must come from the identical PATH/cwd.
 
 Not yet wired: `cmd` is not exposed on the LLM `exec` tool schema or the
-pipeline `tool:` step (段6, a separate later stage); `sandboxed_exec_
-started`/`_completed`'s own `plan` field recording each segment's
-resolved argv[0] (段5) does not exist yet either — only `argv0_resolved`
-(always `/bin/sh` for a cmd-mode run) is recorded today.
+pipeline `tool:` step (段6, a separate later stage).
+
+#5838 段5 (lead-coder ruling): `sandboxed_exec_started`/`_completed` now
+carry a `plan` field — each segment's RESOLVED argv[0], in cmd-mode order
+(`None` in argv-mode) — sourced from `check_exec_plan_policy`'s own
+RETURN VALUE, never a second `resolve_real_executable` call here (see
+that function's own docstring: the exact "policy saw one binary, audit
+recorded a different one" class #5991 BLOCKING ③ closed for env_path/
+cwd, now closed for the resolved name itself). Before this, `argv0_
+resolved` (always `/bin/sh` for a cmd-mode run) was the ONLY binary-
+identifying field in the trace — a chained/piped command's actual
+per-segment binaries were unrecoverable from `.reyn/events` (charter
+lens 7: an audit-event trace must be sufficient to reconstruct what
+happened). NOT added to `sandboxed_exec_cancelled` — that event already
+omits `argv0_resolved` too, the same existing asymmetry.
 
 #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd` is
 read into a local (`cmd_text`) exactly once, near the top of `run_
@@ -132,6 +143,15 @@ async def run_sandboxed_exec(
     # — "the bytes policy saw are the bytes the shell receives" — must not
     # rest on an unstated "nobody mutates the op mid-call" assumption.
     cmd_text = op.cmd
+    # #5838 段5 (lead-coder ruling): `plan` -- each segment's RESOLVED
+    # argv[0], in order -- for the started/completed events below.
+    # `None` in argv-mode (unchanged shape: `argv0_resolved` alone already
+    # names what ran for a single command). Populated from
+    # `check_exec_plan_policy`'s own RETURN VALUE in cmd-mode, never by
+    # calling `resolve_real_executable` a second time here -- see that
+    # function's own docstring for why a second resolution is the exact
+    # bug class this closes.
+    plan_field: "list[str] | None" = None
 
     if cmd_text is not None:
         from reyn.security.exec_plan import ExecPlanRejected, parse_exec_plan
@@ -149,7 +169,7 @@ async def run_sandboxed_exec(
         # uniformly by dispatch_tool's own PermissionError handling
         # (execute_op status="denied"), the SAME channel the threat-scan
         # block below already uses for argv-mode.
-        await check_exec_plan_policy(_plan, ctx, env_path=env_path, cwd=cwd)
+        plan_field = await check_exec_plan_policy(_plan, ctx, env_path=env_path, cwd=cwd)
     else:
         # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
         # any exec. A block-severity hit denies via the permission-deny channel
@@ -351,6 +371,12 @@ async def run_sandboxed_exec(
         "sandboxed_exec_started",
         argv=reported_argv,
         argv0_resolved=argv0_resolved,
+        # #5838 段5: each segment's resolved argv[0], cmd-mode only --
+        # `argv0_resolved` alone is always `/bin/sh` for a cmd-mode run,
+        # so this is the ONLY place a chained/piped command's actual
+        # per-segment binaries are named in the audit trail (charter lens
+        # 7). `None` in argv-mode -- unchanged shape.
+        plan=plan_field,
         backend=backend.name,
         timeout_seconds=policy.timeout_seconds,
         network=policy.network,
@@ -456,6 +482,12 @@ async def run_sandboxed_exec(
         "sandboxed_exec_completed",
         argv=reported_argv,
         argv0_resolved=argv0_resolved,
+        # #5838 段5: carried onto `_completed` too, same shape/reason as
+        # `argv0_resolved` already being on BOTH events -- a reader
+        # filtering only `_completed` (the event that correlates with an
+        # actual result) must not have to cross-reference `_started` to
+        # learn what ran.
+        plan=plan_field,
         backend=backend.name,
         returncode=result.returncode,
         stdout_len=len(stdout_text),

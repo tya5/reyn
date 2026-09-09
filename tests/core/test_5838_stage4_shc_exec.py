@@ -156,6 +156,54 @@ async def test_cmd_runs_through_bin_sh_dash_c_with_the_original_string(tmp_path:
     assert started.data["argv"] == ["/bin/sh", "-c", 'echo "a  b"']
 
 
+# ─── plan field (#5838 段5) ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_a_chained_cmd_records_each_segments_resolved_argv0_as_plan(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5838 段5 -- a cmd-mode run with TWO segments (piped) emits
+    `plan` on BOTH started and completed, one resolved argv[0] entry per
+    segment, in order -- the ONLY place a chained command's actual
+    per-segment binaries are named (`argv0_resolved` alone is always
+    `/bin/sh`). Uses `/bin/echo`/`/usr/bin/true` (absolute, portable) so
+    the resolved value is deterministic across machines without depending
+    on PATH-search specifics."""
+    ctx, collected = _make_ctx(tmp_path)
+    op = SandboxedExecIROp(kind="sandboxed_exec", cmd="/bin/echo hi | /usr/bin/true")
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "ok"
+
+    await settle(ctx.events)
+    (started,) = [e for e in collected if e.type == "sandboxed_exec_started"]
+    (completed,) = [e for e in collected if e.type == "sandboxed_exec_completed"]
+    assert started.data["plan"] == ["/bin/echo", "/usr/bin/true"]
+    assert completed.data["plan"] == ["/bin/echo", "/usr/bin/true"]
+
+
+@pytest.mark.asyncio
+async def test_argv_mode_leaves_plan_none_on_both_events(tmp_path: Path) -> None:
+    """Tier 2: FP gate, sibling of the test above -- an ordinary argv-mode
+    run's `plan` field is `None` on both events, the unchanged shape (a
+    single command already has `argv0_resolved`; `plan` is cmd-mode-only,
+    lead-coder's own acceptance criterion ②)."""
+    ctx, collected = _make_ctx(tmp_path)
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "ok"
+
+    await settle(ctx.events)
+    (started,) = [e for e in collected if e.type == "sandboxed_exec_started"]
+    (completed,) = [e for e in collected if e.type == "sandboxed_exec_completed"]
+    assert started.data["plan"] is None
+    assert completed.data["plan"] is None
+
+
 # ─── deny side: policy runs BEFORE the backend ever spawns ────────────────
 
 
