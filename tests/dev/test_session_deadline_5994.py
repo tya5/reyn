@@ -30,6 +30,7 @@ throughout this codebase's own test suite. Both branches call the identical
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,20 +52,27 @@ def test_2():
 """
 
 
-def _run_inner(pytester: pytest.Pytester) -> str:
-    proc = pytester.popen(
+def _run_inner(pytester: pytest.Pytester, out_of_process_reyn: str) -> str:
+    # out_of_process_reyn (#3024): this subprocess's conftest imports
+    # `reyn.dev.testing.session_deadline` -- the module UNDER TEST. Without
+    # pinning PYTHONPATH, a worktree checkout (no venv of its own) resolves
+    # `reyn` from whatever the ambient venv's editable .pth points at, which
+    # can be a DIFFERENT checkout's copy of this exact file -- silently
+    # testing the wrong implementation (lead-coder, PR #6018 BLOCKING).
+    env = os.environ.copy()
+    env["PYTHONPATH"] = out_of_process_reyn + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-s", "test_inner.py"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
+        cwd=pytester.path,
+        env=env,
+        capture_output=True,
         text=True,
     )
-    stdout, _ = proc.communicate()
-    return stdout
+    return proc.stdout + proc.stderr
 
 
 def test_an_already_reached_deadline_stops_collection_before_any_item_and_still_reports(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch,
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str,
 ) -> None:
     """Tier 1: the #5994 ① mechanism's synchronous branch — an already-past
     deadline (``<= 0``) sets ``session.shouldstop`` before collection even
@@ -87,7 +95,7 @@ def test_an_already_reached_deadline_stops_collection_before_any_item_and_still_
     pytester.makepyfile(test_inner=_INNER_TEST_TWO_ITEMS)
     monkeypatch.setenv("REYN_TEST_SESSION_DEADLINE_S", "0")
 
-    stdout = _run_inner(pytester)
+    stdout = _run_inner(pytester, out_of_process_reyn)
 
     item1_started = Path(pytester.path) / "item1_started.marker"
     item2_started = Path(pytester.path) / "item2_started.marker"
@@ -102,7 +110,7 @@ def test_an_already_reached_deadline_stops_collection_before_any_item_and_still_
 
 
 def test_an_unset_deadline_changes_nothing_about_a_normal_run(
-    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch,
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, out_of_process_reyn: str,
 ) -> None:
     """Tier 1: the acceptance test's other direction — REYN_TEST_SESSION_
     DEADLINE_S unset (the default for every non-CI, and every CI run that
@@ -112,7 +120,7 @@ def test_an_unset_deadline_changes_nothing_about_a_normal_run(
     pytester.makepyfile(test_inner=_INNER_TEST_TWO_ITEMS)
     monkeypatch.delenv("REYN_TEST_SESSION_DEADLINE_S", raising=False)
 
-    stdout = _run_inner(pytester)
+    stdout = _run_inner(pytester, out_of_process_reyn)
 
     item2_started = Path(pytester.path) / "item2_started.marker"
     assert item2_started.exists(), "unset deadline must not stop collection"

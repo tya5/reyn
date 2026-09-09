@@ -10,7 +10,6 @@
   "tests/core/test_codeact_runner_harness_python_1663.py",
   "tests/core/test_windows_kill_tree_2292_2715.py",
   "tests/dev/test_5909_worker_forensics.py",
-  "tests/dev/test_session_deadline_5994.py",
   "tests/dev/test_stall_dump_4986.py",
   "tests/environment/test_container_backend_1115_stage2.py",
   "tests/environment/test_container_backend_cancel_3862.py",
