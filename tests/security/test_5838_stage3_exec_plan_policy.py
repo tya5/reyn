@@ -145,10 +145,13 @@ async def test_an_allowed_segment_emits_no_tool_axis_event_either_direction(
     tmp_path: Path,
 ) -> None:
     """Tier 2: #6016 ①'s own explicit scope -- the "allowed" side gets NO
-    event (lead-coder ruling: the case for one depends on a traffic
-    volume this repo could not measure). An ordinary, un-denied segment
-    leaves the event log with no ``exec_tool_axis_denied`` entry at
-    all -- not even a ``blocked=False``-shaped one."""
+    event (architect's structural reason, PR #6030 co-vet: the tool axis
+    has no "did not run" state to distinguish, unlike threat_scan, and
+    the allowed side is already recorded by 段5's own `plan` field --
+    see `exec_plan_policy.py`'s own module docstring, "#6016 ①"). An
+    ordinary, un-denied segment leaves the event log with no
+    ``exec_tool_axis_denied`` entry at all -- not even a
+    ``blocked=False``-shaped one."""
     ctx, collected = _ctx(tmp_path)
     plan = [ExecSegment(argv=("/usr/bin/true",))]
 
