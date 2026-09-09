@@ -631,11 +631,29 @@ class LostReason(StrEnum):
     in that window also reads as ``EXTERNAL``. Stage ③ (spilled-first
     ordering with un-spilled eviction, owner-confirmation-pending — NOT
     part of this change) is where this stops being derivable at all and
-    needs its own record."""
+    needs its own record.
+
+    ``OUTSIDE_BOUNDARY`` (#5982): a DIFFERENT failure class from the three
+    above — those all mean "the file used to be there and now genuinely
+    is not" (normal, an expected design property: an offloaded body may
+    be GC'd). This one means the entry's own ``ref`` resolves to a path
+    ``MediaStore`` refuses to read at all (outside ``history_content_
+    root``/``tool_results_dir`` — ``read_tool_result``'s own boundary
+    check, ``PermissionError``) — an ABNORMAL state: something constructed
+    a ``ref`` that never should have existed. #5982's own explicit
+    condition: this reason must never be folded into ``EXTERNAL`` or any
+    other "file missing" reason — mixing "normal" (file legitimately gone)
+    with "abnormal" (a malformed/malicious ref reached an internal reader)
+    would let the normal case bury the abnormal one from any observer
+    reading ``LostReason`` alone (the same "two zeros" shape #5991 ② named
+    for a different field). Computed fresh at read time, never persisted —
+    same "compute, don't store" discipline #5438 already established for
+    ``GC``/``EXTERNAL``, not a new ledger."""
 
     GC = "gc"
     NEVER_PERSISTED = "never_persisted"
     EXTERNAL = "external"
+    OUTSIDE_BOUNDARY = "outside_boundary"
 
 # #5612 (owner ruling — "永続化というのは llm に見える履歴が元に戻らない
 # ということ、history.jsonl に追記するということ"): the reactive
@@ -963,15 +981,17 @@ class ChatMessage:
 
         Returns ``None`` (never raises) for every "unknown" case: the ref
         is absent, ``media_store`` is unset, the backing file is missing
-        (``found=False``), OR the ref names a path OUTSIDE
-        ``media_store``'s own boundary (``read_tool_result_preview``
-        raises ``PermissionError`` there, caught here — the same fold
-        this file's own :func:`_materialise_path_ref_content` already
-        applies to this exact exception). This runs on the hot append
-        path (:meth:`Session._evict_oldest_resident_entries`, called
-        from every :meth:`Session._append_history`) — an uncaught raise
-        for one out-of-boundary row would make every future append fail,
-        turning a degrade into a hard stop."""
+        (``found=False``), OR the ref names a path OUTSIDE ``media_
+        store``'s own boundary — folded to ``found=False`` by ``media_
+        store``'s own internal-reader entrypoint (#5982:
+        :meth:`~reyn.data.workspace.media_store.MediaStore.read_tool_
+        result_preview_for_internal_reader`, which LOGS the fold
+        distinctly rather than silently dropping the "why" the way a
+        bare ``try/except PermissionError`` here used to). This runs on
+        the hot append path (:meth:`Session._evict_oldest_resident_
+        entries`, called from every :meth:`Session._append_history`) —
+        an uncaught raise for one out-of-boundary row would make every
+        future append fail, turning a degrade into a hard stop."""
         if not self._body_bytes_cached:
             self._body_bytes_cache = self._derive_body_bytes(media_store)
             self._body_bytes_cached = True
@@ -995,16 +1015,20 @@ class ChatMessage:
         # Session._append_history runs on EVERY append). Uncaught, ONE
         # out-of-boundary ref would make every future append raise,
         # turning a degrade (this PR's own "unknown -> treated safely by
-        # ①②③") into a hard stop. Folded to the SAME "unknown" None every
-        # other branch here returns — the same fold this file's own
-        # _materialise_path_ref_content already applies to this exact
-        # exception, not a new convention.
-        try:
-            _head, found, total_bytes = media_store.read_tool_result_preview(
-                ref, max_bytes=0,
-            )
-        except PermissionError:
-            return None
+        # ①②③") into a hard stop.
+        #
+        # #5982: switched from a bare try/except around the raising form
+        # to MediaStore's own internal-reader entrypoint — the earlier
+        # local fold (still shown in this comment's own history) silently
+        # dropped the "why" the moment PermissionError was caught here;
+        # the new entrypoint still folds to the SAME "unknown" None every
+        # other branch here returns, but now LOGS the fold distinctly
+        # from an ordinary not-found (see that method's own docstring)
+        # instead of the defect (a ref outside the boundary reached an
+        # internal reader) going permanently unobserved.
+        _head, found, total_bytes = media_store.read_tool_result_preview_for_internal_reader(
+            ref, max_bytes=0,
+        )
         return BodyBytes(total_bytes) if found else None
 
     @property
