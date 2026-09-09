@@ -2191,6 +2191,76 @@ failure mode is silence. Where you take the cheap one, write down what it
 counts and what it is standing in for, next to the number, so the next
 representation change has something to grep for.
 
+## 30. A distinction the caller cannot act on is not information — raise or return, decided both ways
+
+**The act that fires this: you are deciding how a failure reaches the
+caller** — raise it, or fold it into a return value; catch broadly, or let
+the unexpected propagate. Both decisions get made by habit, and both get
+made per call site, so the same question ends up answered two different ways
+in the same module.
+
+Two rules, and they are one rule read in opposite directions:
+
+> **Fold, when the caller has no branch.** An exception is a mechanism for
+> handing the caller a choice. Where every outcome leads to the same action,
+> there is no choice to hand over, and the exception is not information — it
+> is a crash the caller must write boilerplate to survive.
+>
+> **Absorb, only when the safe answer is the default one.** A predicate
+> whose False branch is the safe action may swallow an unknown failure: not
+> knowing costs an extra safe step. A function whose return value is
+> consumed as data may not: not knowing arrives at the caller wearing the
+> costume of a normal, empty result.
+
+### Four decisions, and two of them are "leave it alone"
+
+| | site | decision | why |
+|---|---|---|---|
+| 1 | an internal history reader, given a path outside the storage boundary | **fold** the `PermissionError` into the same "no body" the missing-file case returns | the reader renders a placeholder either way; there is no second branch |
+| 2 | the HTTP resource handler, same underlying failure | **keep raising** | it answers with a 400; here the distinction *is* the action |
+| 3 | draining a killed process's remaining output | **narrow** the catch to the two timeout types | the return value is captured output — an unexpected exception became "the process produced nothing" |
+| 4 | asking whether a process exited within a grace window | **keep the broad catch** | it returns a boolean that drives SIGTERM → SIGKILL; the worst an unknown failure buys is a redundant signal to an already-dead process |
+
+Rows 2 and 4 are why this is a rule rather than a preference. "Fold
+exceptions into values" would break row 2; "never catch broadly" would break
+row 4. A discriminant that only decides one direction is a slogan.
+
+### Folding the action does not fold the fact
+
+Row 1's caller has one branch. The *record* still has two things to say.
+The fix that landed keeps both: a WARNING for the operator reading now, and
+a typed value — `LostReason.OUTSIDE_BOUNDARY` — added to the enum that
+already carried "why is this body unavailable", so every existing reader of
+that enum receives the new reason without changing.
+
+Two details in that are worth copying. It **did not open a second channel**
+for the fact: the reason rides the one that already existed. And it put the
+durable half in the message's own metadata rather than only in `reyn.log` —
+which matters, because that log is size-capped, and a diagnostic that fires
+often will evict the operational history around it (§29's own table has an
+instance where exactly that happened).
+
+### What we learned about turning this into a check
+
+This discriminant was tried as a gate, twice, keyed on **the shape of the
+value assigned inside the handler**. The second attempt kept all three known
+bad cases — and flagged 46–53 of 74 survivors, a 62–72% false-positive rate.
+A check that wrong teaches its readers to dismiss it, which is worse than
+not having it.
+
+The reason is worth writing down: the shape of the assigned value is not the
+axis. **Where the value goes is.** A default assigned into a variable the
+function returns is a swallow; the same assignment consumed by a local
+branch, then discarded, is control flow. Two sites can be character-identical
+in the handler and land on opposite sides of the rule.
+
+That does not mean no check is possible — it means the check has to follow
+the value, and that a discriminant good enough for a person to apply is not
+automatically one a matcher can. If you build it, measure both sides on real
+code before believing it: the disqualifying cases surviving is the cheap
+half, and it is the survivors' false-positive rate that decides whether
+anyone will keep the check switched on.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
