@@ -887,8 +887,14 @@ class StallDumpArm:
     @property
     def armed(self) -> bool:
         """Whether this arm currently holds a usable fd (False after a
-        failed reopen — the switch stays disarmed until :meth:`close`)."""
-        return self._snapshot.fd is not None
+        failed reopen — the switch stays disarmed until :meth:`close`).
+
+        #6000 ②: reads ``DiagnosticSnapshot.usable``, not ``fd is None``
+        — after this class's own fix, a failed reset leaves the fd
+        NUMBER intact (never released) but marks the snapshot unusable;
+        ``fd is None`` would now read ``armed=True`` on a snapshot that
+        must NOT be written to again."""
+        return self._snapshot.usable
 
     @property
     def fd(self) -> "int | None":
@@ -936,14 +942,19 @@ class StallDumpArm:
         below disarms FIRST — see :meth:`_disarm_before_reset`'s own
         docstring for why a plain ``self._snapshot.reset()`` here would
         be the exact same fd-reuse hazard #5877 found and :meth:`close`
-        already guards against."""
+        already guards against.
+
+        #6000 ②: both checks below read ``DiagnosticSnapshot.usable``,
+        not ``fd is None`` — a failed reopen now leaves a real, held fd
+        number (never released) that must still not be armed again; see
+        that class's own docstring for why the two facts diverged."""
         from reyn.runtime.stall_trace import arm as _arm
 
-        if self._snapshot.fd is None:
+        if not self._snapshot.usable:
             return False
         if not self._snapshot.points_at_current_file():
             self._disarm_before_reset()
-            if self._snapshot.fd is None:
+            if not self._snapshot.usable:
                 self._logger.error(
                     "%s: could not reopen the tripwire's own stall-dump snapshot after "
                     "it was removed or moved out from under it", self._label,
@@ -981,7 +992,20 @@ class StallDumpArm:
         TUI startup bracket disarms before an interactive turn can begin,
         and the tripwire is the PERMANENT occupant of the timer from
         first frame onward) — this call inherits that same precondition,
-        it does not introduce a new one."""
+        it does not introduce a new one.
+
+        #6000 ②/architect (superseding this method's own original "this
+        call is what makes reset() safe" reasoning): ``DiagnosticSnapshot.
+        reset()`` itself now never releases its own fd NUMBER back to the
+        OS (``os.ftruncate``/``os.lseek`` in place, or ``os.dup2`` onto
+        the SAME number on an external-change reopen) — the fd-reuse
+        hazard this call originally guarded against is closed
+        STRUCTURALLY now, independent of whether any caller disarms
+        first. This call itself is UNCHANGED and still runs at every
+        site above — disarming before a call that no longer needs it is
+        harmless, and the disarm still has its own independent purpose
+        (a stale timer must not fire into a truncated-and-about-to-be-
+        rewritten file's PRIOR content either)."""
         from reyn.runtime.stall_trace import disarm as _disarm
 
         _disarm()
