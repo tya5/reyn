@@ -280,6 +280,17 @@ def _sweep_dead_pid_cache_dirs() -> None:
     exists to keep. `process_registry.py` (#5296) already established this
     exact substitution for the identical reason — reused here, not
     reinvented.
+
+    ⚠️ Theoretical race (architect co-vet, #6005): a parent dies right after
+    spawning its own ``sandbox-exec -f <profile>``, and a LATER reyn process
+    starts and sweeps the now-dead parent's pid subdir before that
+    ``sandbox-exec`` has finished reading the profile — a window measured
+    in milliseconds, requiring another process's startup to land inside it.
+    Considered unlikely enough not to warrant closing. **Do not "fix" this
+    by adding a fallback that runs the command WITHOUT a sandbox profile**:
+    the correct behaviour here is fail-CLOSED — ``sandbox-exec`` given a
+    missing profile path fails to launch at all, it does not silently run
+    unsandboxed. That failure mode is the point, not a bug to route around.
     """
     global _swept_dead_pid_dirs
     if _swept_dead_pid_dirs:
