@@ -463,7 +463,7 @@ def test_snapshot_becomes_unusable_but_keeps_its_fd_after_a_failed_reset(
 
 
 def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Tier 2: the real caller — `StallDumpArm.rearm()` must decline (not
     silently arm against a stale, un-truncated fd) once its own snapshot
@@ -472,11 +472,24 @@ def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
     "keep writing, un-truncated" fallback would have reintroduced: no
     arm means no more writes at all, not merely un-truncated ones.
 
-    Strip-falsifier (verified by hand: `armed`/`rearm`'s own checks
-    reverted to `fd is None`): this test goes red — `armed` reads `True`
-    and `rearm()` returns `True` even though the snapshot is unusable,
-    because the fd NUMBER itself was never released by the #6000 ② fix
-    (`fd is None` is never true here)."""
+    `armed` witnessed by RETURN VALUE (strip-falsifier, verified by hand:
+    `armed`'s own check reverted to `fd is None`): goes red directly --
+    `armed` reads `True` even though the snapshot is unusable.
+
+    `rearm`'s own FIRST guard (`if not usable: return False`) is
+    NOT witnessed by its return value -- lead-coder review of this PR's
+    first version: with that guard alone removed, `points_at_current_
+    file()` (unaffected -- it checks `usable` internally too) still
+    returns `False`, so `rearm` still enters its reopen branch, still
+    hits its OWN second `usable` check there, and still returns `False`
+    in the end -- the SAME observable return value either way. What
+    actually differs is called EVERY TICK on an already-unusable
+    snapshot without the first guard: `_disarm_before_reset()` runs (a
+    real disarm of the process-wide timer) and an ERROR is logged, both
+    unboundedly, on every single `rearm()` call from then on -- the
+    exact "reyn.log fills with a repeated line" class #5977 closed.
+    Witnessed here on THAT axis instead: disarm-call count and log
+    record count across MULTIPLE `rearm()` calls, not the return value."""
     path = tmp_path / "stall_dump.log"
     arm = StallDumpArm.open(seconds=60.0, path=str(path), logger=logging.getLogger("t6000"), label="t6000")
     assert arm is not None
@@ -498,10 +511,39 @@ def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
             "own reset failed -- fd staying open (never released) must "
             "not read as still armed"
         )
-        assert arm.rearm() is False, (
-            "#6000 REGRESSION: rearm() must refuse to arm against an "
-            "unusable snapshot -- writing un-truncated content is the "
-            "#5977 regression this refusal exists to prevent"
+
+        from reyn.runtime import stall_trace
+
+        disarm_calls: "list[None]" = []
+        real_disarm = stall_trace.disarm
+
+        def spy_disarm() -> None:
+            disarm_calls.append(None)
+            real_disarm()
+
+        monkeypatch.setattr(stall_trace, "disarm", spy_disarm)
+        caplog.set_level(logging.ERROR, logger="t6000")
+
+        for _ in range(3):
+            assert arm.rearm() is False, (
+                "#6000 REGRESSION: rearm() must refuse to arm against an "
+                "unusable snapshot -- writing un-truncated content is the "
+                "#5977 regression this refusal exists to prevent"
+            )
+
+        assert disarm_calls == [], (
+            f"#6000 REGRESSION: rearm()'s first `usable` guard must short-"
+            f"circuit BEFORE any disarm -- an already-unusable snapshot "
+            f"must not re-disarm the process-wide timer on every tick "
+            f"(the #5977-class log/disarm-flood this guard exists to "
+            f"prevent) — got {len(disarm_calls)} disarm call(s) across 3 "
+            f"rearm() calls"
+        )
+        assert caplog.records == [], (
+            f"#6000 REGRESSION: rearm() on an already-unusable snapshot "
+            f"logged {len(caplog.records)} record(s) across 3 calls -- "
+            f"the same repeated-ERROR-line shape #5977 closed, reintroduced "
+            f"here if the first `usable` guard is skipped"
         )
     finally:
         arm.close()

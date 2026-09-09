@@ -214,7 +214,7 @@ class DiagnosticSnapshot:
         try:
             new_fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, self._MODE)
         except OSError:
-            self._usable = False  # old fd stays open+held, still orphaned
+            self._usable = False  # old fd stays open and held, unchanged
             return
         try:
             os.dup2(new_fd, self._fd)
