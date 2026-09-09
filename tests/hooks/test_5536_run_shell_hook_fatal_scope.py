@@ -130,6 +130,20 @@ async def test_an_ordinary_exception_is_still_caught_and_logged(
         )
 
     assert result is None
-    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    # scoped to THIS test's own subject logger (shell_runner.py's
+    # `_log = logging.getLogger(__name__)`) — NOT every ERROR record in
+    # caplog's window. caplog.at_level(logging.ERROR) above captures the
+    # ROOT logger process-wide; under `-n auto` a background subject left
+    # by an EARLIER, unrelated test (measured: litellm's cached aiohttp
+    # ClientSession, GC'd mid-run, logs "Unclosed client session" via the
+    # stdlib `asyncio` logger) can land in this exact window on the same
+    # xdist worker. This test's own claim is "reyn's own bug is never
+    # swallowed by an outer catch" — it has no business counting a
+    # different subsystem's own log. Filtering by logger name is the
+    # narrowing (never widen the assertion to tolerate >1 record).
+    error_records = [
+        r for r in caplog.records
+        if r.levelno >= logging.ERROR and r.name == "reyn.hooks.shell_runner"
+    ]
     (only,) = error_records  # exactly one ERROR log — unpack-must-flip
     assert "true" in only.getMessage() or "OSError" in only.getMessage()

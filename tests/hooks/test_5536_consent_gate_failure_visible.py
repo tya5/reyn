@@ -88,7 +88,15 @@ async def test_consent_gate_raise_logs_the_fail_closed_fallback(caplog):
     with caplog.at_level(logging.WARNING):
         await disp.dispatch("turn_end", {})
 
-    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    # scoped to THIS test's own subject logger (dispatcher.py's
+    # `_log = logging.getLogger(__name__)`) — see test_5536_run_shell_hook_
+    # fatal_scope.py's sibling fix for why an unscoped caplog.records count
+    # is fragile under `-n auto` (a background subject left by an earlier,
+    # unrelated test can land in this same window).
+    warnings = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and r.name == "reyn.hooks.dispatcher"
+    ]
     (only,) = warnings  # exactly one warning — unpack-must-flip
     assert "fail-closed" in only.message
     assert "fail-open" not in only.message.lower() or "never fail-open" in only.message
@@ -115,7 +123,9 @@ async def test_a_non_raising_gate_logs_nothing(caplog):
     with caplog.at_level(logging.WARNING):
         await disp.dispatch("turn_end", {})
 
-    assert caplog.records == []
+    # scoped to this file's own subject logger — see the sibling
+    # test above and test_5536_run_shell_hook_fatal_scope.py for why.
+    assert [r for r in caplog.records if r.name == "reyn.hooks.dispatcher"] == []
     (call,) = run_shell.calls
     _args, kwargs = call
     assert kwargs["consent_bus"] == "a-real-live-bus-object"
