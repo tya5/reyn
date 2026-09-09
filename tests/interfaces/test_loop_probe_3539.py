@@ -731,13 +731,44 @@ def test_stall_and_recovered_lines_carry_pump_ticks_when_given() -> None:
     without_ticks = stall_log_line(1800.0)
     assert "42" not in without_ticks
     assert without_ticks == (
-        "the interface was unresponsive for 1.8s — re-run with "
-        "REYN_PROF_DUMP=<path> to record what it was doing"
+        "the interface was unresponsive for 1.8s — set REYN_PROF_DUMP=<path> to "
+        "record per-chunk wait/work timing detail (no stack-dump destination "
+        "is configured for this process)"
     )
 
     recovered_with_ticks = stall_recovered_log_line(pump_ticks=99)
     assert "99" in recovered_with_ticks
     assert stall_recovered_log_line() == "the interface recovered from the stall reported above"
+
+
+def test_stall_log_line_names_the_actual_dump_path_when_given() -> None:
+    """Tier 2: #5977 ③ — the exact defect the issue reports: before this,
+    every notice recommended "re-run with REYN_PROF_DUMP=<path>" even once
+    a stack dump was ALREADY being written on every stall (#5977 ②) — an
+    operator reading only reyn.log could not learn the dump existed, let
+    alone where. When a real dump path is given, the line must name it
+    and must NOT tell the operator to "re-run" (the dump already
+    happened) — REYN_PROF_DUMP is presented as a separate, additional
+    trace, not the only way to see what happened.
+
+    NON-VACUITY (strip-falsified locally, in-file Edit -> run -> Edit
+    back): removing the `if stack_dump_at:` branch in `stall_log_line` (so it
+    always takes the no-destination wording) makes this assertion fail."""
+    with_dump = stall_log_line(1800.0, stack_dump_at="/tmp/reyn-logs/stall_dump.4242.log")
+    assert "/tmp/reyn-logs/stall_dump.4242.log" in with_dump
+    assert "stack dump recorded to" in with_dump
+    assert "re-run" not in with_dump
+
+
+def test_stall_log_line_without_a_dump_path_does_not_claim_one_exists() -> None:
+    """Tier 2: strip-falsify's counterpart — the no-``dump_path`` branch
+    must not claim a stack dump exists (it may genuinely not: no
+    ``FileHandler`` installed for this process, per ``StallDumpArm.open``)
+    while still pointing the operator at ``REYN_PROF_DUMP`` as the one
+    thing this notice CAN offer."""
+    without_dump = stall_log_line(1800.0)
+    assert "stack dump recorded to" not in without_dump
+    assert "REYN_PROF_DUMP" in without_dump
 
 
 def test_stall_line_carries_a_self_contained_pump_delta() -> None:
@@ -1081,8 +1112,9 @@ def test_stall_line_carries_turn_active_when_given() -> None:
     unspecified = stall_log_line(1800.0)
     assert "turn active" not in unspecified and "turn idle" not in unspecified
     assert unspecified == (
-        "the interface was unresponsive for 1.8s — re-run with "
-        "REYN_PROF_DUMP=<path> to record what it was doing"
+        "the interface was unresponsive for 1.8s — set REYN_PROF_DUMP=<path> to "
+        "record per-chunk wait/work timing detail (no stack-dump destination "
+        "is configured for this process)"
     )
 
 

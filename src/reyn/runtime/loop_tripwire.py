@@ -489,6 +489,7 @@ def stall_log_line(
     keys_received: "int | None" = None,
     keys_delta: "int | None" = None,
     turn_active: "bool | None" = None,
+    stack_dump_at: "str | None" = None,
 ) -> str:
     """The durable record of a stall — the one that survives the operator
     looking away.
@@ -538,6 +539,19 @@ def stall_log_line(
     _watch_loop_responsiveness`) reads its own ``ActivityRow.state`` (already
     the app's existing "is a turn running" surface — see ``turn_active=`` at
     the compact-caps call site) at the same instant it reads ``pump_ticks``.
+
+    ``stack_dump_at`` (#5977 ③): the caller's own :attr:`StallDumpArm.path`
+    (never re-derived here — a second, independent call to
+    :func:`stall_dump_path` could disagree with the arm actually in use if
+    either ever changes shape). ``None`` means no stack-dump destination
+    is configured for THIS process (:func:`StallDumpArm.open` returned
+    ``None`` — no ``FileHandler`` installed), not "a dump wasn't written
+    for this particular notice" — #5977 ①'s suppression means a REPEAT
+    notice within the same still-ongoing episode has no NEW dump, but the
+    file from the episode's onset is still the current content (never
+    truncated until the NEXT distinct episode, #5992's own rule), so this
+    line still names it correctly on every notice within the episode, not
+    only the first.
     """
     ticks_note = ""
     if pump_ticks is not None:
@@ -560,10 +574,33 @@ def stall_log_line(
     turn_note = ""
     if turn_active is not None:
         turn_note = f" (turn {'active' if turn_active else 'idle'} at the time)"
+    # #5977 ③: name the ACTUAL stack-dump path when one is configured for
+    # this process (`stall_dump_path()`'s own value, passed by the caller —
+    # never re-derived here) rather than leaving an operator who reads only
+    # `reyn.log` unable to learn the dump exists at all, let alone where.
+    # The two branches below are deliberately NOT the same sentence with a
+    # value swapped in: `stack_dump_at` given means a stack dump genuinely
+    # exists already (unconditional, no env var needed) and REYN_PROF_DUMP
+    # is a SEPARATE, finer, opt-in trace on top of it; `stack_dump_at` absent
+    # means no stack-dump destination was ever configured for this process
+    # (no FileHandler installed — see `stall_dump_path`), so REYN_PROF_DUMP
+    # is the only recording this notice can point to at all. Collapsing
+    # these into one templated string is exactly the doc-drift #5977 ③
+    # itself found: "re-run with REYN_PROF_DUMP" read as the only option
+    # even once a stack dump was already being written on every stall.
+    if stack_dump_at:
+        dump_clause = (
+            f" — stack dump recorded to {stack_dump_at}; {_DUMP_ENV}=<path> is a "
+            "SEPARATE, opt-in trace for finer per-chunk wait/work timing detail"
+        )
+    else:
+        dump_clause = (
+            f" — set {_DUMP_ENV}=<path> to record per-chunk wait/work timing "
+            "detail (no stack-dump destination is configured for this process)"
+        )
     return (
         f"the interface was unresponsive for {lateness_ms / 1000:.1f}s"
-        f"{ticks_note}{keys_note}{turn_note} — re-run with {_DUMP_ENV}=<path> "
-        "to record what it was doing"
+        f"{ticks_note}{keys_note}{turn_note}{dump_clause}"
     )
 
 
@@ -704,6 +741,16 @@ class StallDumpArm:
         stand-in marker into at the exact point production code would
         have a real dump land (#5992)."""
         return self._snapshot.fd
+
+    @property
+    def path(self) -> str:
+        """This arm's dump destination — a thin passthrough to the
+        underlying :class:`~reyn.runtime.diagnostic_snapshot.
+        DiagnosticSnapshot`'s own ``path`` (#5977 ③): the caller-facing
+        surface a stall notice names in its own log line, so an operator
+        reading only ``reyn.log`` can find the dump without knowing this
+        module's internals."""
+        return self._snapshot.path
 
     def points_at_current_file(self) -> bool:
         """Whether this arm's fd points at the file CURRENTLY at its own

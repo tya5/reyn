@@ -2681,6 +2681,11 @@ class TextualChatApp(App):
                             keys_received=self._keys_received,
                             keys_delta=keys_delta,
                             turn_active=turn_active,
+                            # #5977 ③: name the dump this arm actually
+                            # writes to — None when no FileHandler was
+                            # installed for this worker (see
+                            # StallDumpArm.open's own docstring).
+                            stack_dump_at=_stack_dump.path if _stack_dump is not None else None,
                         ),
                     )
                     try:
