@@ -31,6 +31,7 @@ from reyn.interfaces.inline.textual_chat.loop_probe import (
     stall_banner,
     stall_log_line,
     stall_recovered_log_line,
+    tripwire_threshold_ms_from_env,
     write_record,
 )
 from reyn.interfaces.transport.client_transport import ClientTransportStub
@@ -159,6 +160,45 @@ def test_detail_is_off_unless_a_path_is_named(monkeypatch) -> None:
     assert dump_path() is None
 
 
+def test_tripwire_threshold_is_disabled_unless_the_env_var_is_set(monkeypatch, caplog) -> None:
+    """Tier 2: #6021 (owner ruling) — no ``REYN_TRIPWIRE_MS``, no
+    threshold: the function returns the disabled sentinel
+    (``float("inf")``), matching :func:`~reyn.runtime.stall_trace.
+    stall_trace_seconds_from_env`'s own "unset means off" shape."""
+    import logging
+
+    monkeypatch.delenv("REYN_TRIPWIRE_MS", raising=False)
+    logger = logging.getLogger("test-6021")
+
+    assert tripwire_threshold_ms_from_env(logger=logger) == float("inf")
+
+
+def test_tripwire_threshold_reads_a_valid_env_var(monkeypatch) -> None:
+    """Tier 2: set to a real number, that number is the threshold — the
+    OTHER accept criterion (armed fires at ITS value)."""
+    import logging
+
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "500")
+    logger = logging.getLogger("test-6021")
+
+    assert tripwire_threshold_ms_from_env(logger=logger) == 500.0
+
+
+@pytest.mark.parametrize("raw", ["not-a-number", "0", "-10", ""])
+def test_tripwire_threshold_falls_back_to_disabled_on_a_bad_value(
+    monkeypatch, raw: str,
+) -> None:
+    """Tier 2: non-numeric, zero, negative, or empty all mean "off," the
+    same as unset — never a crash, never a silently-adopted nonsense
+    threshold (e.g. a negative number would make EVERY tick a stall)."""
+    import logging
+
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", raw)
+    logger = logging.getLogger("test-6021")
+
+    assert tripwire_threshold_ms_from_env(logger=logger) == float("inf")
+
+
 def test_write_record_touches_nothing_when_off(monkeypatch, tmp_path: Path) -> None:
     """Tier 2: the default path creates no file anywhere.
 
@@ -230,15 +270,33 @@ def test_the_environment_axes_carry_host_load_and_process_footprint() -> None:
 
 
 def test_the_tripwire_stays_quiet_on_a_healthy_loop() -> None:
-    """Tier 2: a healthy stream never trips it.
+    """Tier 2: a healthy stream never trips an ARMED tripwire.
 
     The measured baseline is a 10 ms-period task never exceeding 12 ms over 463
     chunks. A tripwire that fired on those would be read as noise and ignored,
     which is the same as not having one.
     """
-    tripwire = LoopTripwire()
+    tripwire = LoopTripwire(threshold_ms=250.0)
 
     assert all(tripwire.observe(lateness) is None for lateness in (0.1, 5.0, 12.0, 40.0))
+    assert not tripwire.fired
+
+
+def test_the_default_tripwire_never_fires_at_all() -> None:
+    """Tier 2: #6021 (owner ruling) — the DEFAULT ``LoopTripwire()``, with
+    no ``threshold_ms`` given, never fires — not "on healthy loads," on
+    ANYTHING, including a magnitude that would have crossed the OLD
+    always-on default (250ms) many times over. This is the actual
+    property #6021 asks for: opt-in, not "a higher/safer default."
+
+    Strip-falsifier (verified by hand: ``_TRIPWIRE_MS`` reverted to
+    ``250.0``): this test goes red — ``observe(9000.0)`` returns a
+    magnitude, not ``None``."""
+    tripwire = LoopTripwire()
+
+    assert tripwire.observe(9000.0) is None, (
+        "the default tripwire must never fire, regardless of magnitude"
+    )
     assert not tripwire.fired
 
 
@@ -454,6 +512,10 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
 
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
     transport = QueueTransport()
+    # #6021: threshold is opt-in now (default: never fires) — arm it
+    # so this test's own clock.jump can be detected, matching the
+    # old always-on default's own value.
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
     app = TextualChatApp(transport=transport)
     logger_name = "reyn.interfaces.inline.textual_chat.app"
     # #4844: a virtual clock, not a real time.sleep() — see _VirtualClock's
@@ -462,7 +524,7 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     # magnitude past any margin a test could afford to wait for).
     clock = _VirtualClock()
     monkeypatch.setattr(time, "perf_counter", clock)
-    stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+    stall_seconds = (250.0 + 150) / 1000  # #6021: matches the REYN_TRIPWIRE_MS armed above
     with caplog.at_level(logging.WARNING, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -539,8 +601,12 @@ async def test_recovery_notice_survives_the_real_interactive_logging_floor(
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
         )
-        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        stall_seconds = (250.0 + 150) / 1000  # #6021: matches the REYN_TRIPWIRE_MS armed above
         transport = QueueTransport()
+        # #6021: threshold is opt-in now (default: never fires) — arm it
+        # so this test's own clock.jump can be detected, matching the
+        # old always-on default's own value.
+        monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -598,6 +664,10 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog, mo
     import logging
 
     transport = QueueTransport()
+    # #6021: threshold is opt-in now (default: never fires) — arm it
+    # so this test's own clock.jump can be detected, matching the
+    # old always-on default's own value.
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
     app = TextualChatApp(transport=transport)
     # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
     clock = _VirtualClock()
@@ -667,6 +737,10 @@ async def test_a_stall_costs_no_row_of_layout(caplog, monkeypatch) -> None:
     import logging
 
     transport = QueueTransport()
+    # #6021: threshold is opt-in now (default: never fires) — arm it
+    # so this test's own clock.jump can be detected, matching the
+    # old always-on default's own value.
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
     app = TextualChatApp(transport=transport)
     logger_name = "reyn.interfaces.inline.textual_chat.app"
     # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
@@ -893,8 +967,12 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
         )
-        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        stall_seconds = (250.0 + 150) / 1000  # #6021: matches the REYN_TRIPWIRE_MS armed above
         transport = QueueTransport()
+        # #6021: threshold is opt-in now (default: never fires) — arm it
+        # so this test's own clock.jump can be detected, matching the
+        # old always-on default's own value.
+        monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -1031,8 +1109,12 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
         )
-        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        stall_seconds = (250.0 + 150) / 1000  # #6021: matches the REYN_TRIPWIRE_MS armed above
         transport = QueueTransport()
+        # #6021: threshold is opt-in now (default: never fires) — arm it
+        # so this test's own clock.jump can be detected, matching the
+        # old always-on default's own value.
+        monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -1222,8 +1304,12 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
         )
-        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        stall_seconds = (250.0 + 150) / 1000  # #6021: matches the REYN_TRIPWIRE_MS armed above
         transport = QueueTransport()
+        # #6021: threshold is opt-in now (default: never fires) — arm it
+        # so this test's own clock.jump can be detected, matching the
+        # old always-on default's own value.
+        monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()

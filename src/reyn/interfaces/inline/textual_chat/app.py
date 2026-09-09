@@ -104,7 +104,7 @@ from .gutter import (
     ReynRightGutter,
 )
 from .intervention_panel import InterventionPanel
-from .loop_probe import LoopTripwire
+from .loop_probe import LoopTripwire, tripwire_threshold_ms_from_env
 from .presenter import (
     _COMPACTION_PROGRESS_KEY,
     _RESULT_KIND_KEY,
@@ -1534,8 +1534,11 @@ class TextualChatApp(App):
         #: path that ends a recording before it would fire disarms it first,
         #: see :meth:`_voice_cancel_timeout_timer`).
         self._voice_timeout_timer: "Timer | None" = None
-        #: Watches how late the event loop runs (#3539). Always on; see
-        #: ``loop_probe`` for why it is not opt-in. Reset via
+        #: Watches how late the event loop runs (#3539). #6021 (owner
+        #: ruling): opt-in via REYN_TRIPWIRE_MS, never fires by default
+        #: — see ``loop_probe``/``loop_tripwire``'s own module docstring
+        #: for the full story (a self-calibrating alternative was
+        #: designed and rejected by the owner directly). Reset via
         #: :meth:`reset_loop_tripwire`, not a constructor parameter —
         #: #4855 follow-up (lead-coder's own retraction, round 3): a
         #: test needing a CLEAN tripwire is reacting to contamination
@@ -1546,7 +1549,14 @@ class TextualChatApp(App):
         #: mount-time stall just the same, making a constructor seam
         #: unreachable dead code for the actual failure mode it would
         #: exist to fix.
-        self._loop_tripwire = LoopTripwire()
+        # #6021: threshold read fresh from REYN_TRIPWIRE_MS at construction
+        # — off (never fires) unless an operator who knows THIS machine's
+        # own healthy ceiling sets it. See tripwire_threshold_ms_from_env's
+        # own docstring for why (a self-calibrating threshold was designed
+        # and rejected — 2 new unmeasured constants of its own).
+        self._loop_tripwire = LoopTripwire(
+            threshold_ms=tripwire_threshold_ms_from_env(logger=logger),
+        )
         #: #5907 ①: the single-in-flight FIFO every wire-touching unit
         #: (a slash command's run unit, a submit round-trip) goes through,
         #: and its one worker — see :meth:`_enqueue_wire`.
@@ -2376,12 +2386,21 @@ class TextualChatApp(App):
     async def _watch_loop_responsiveness(self) -> None:
         """Report ONCE if the event loop stops running on time (#3539).
 
-        Always on. The symptom this watches for arrives unannounced, so an
-        opt-in probe would only ever be enabled after the occurrence someone
-        wanted to measure — #3638 closed that way. The cost is one float
-        comparison per tick against a measured baseline where a 10 ms task
-        never exceeded 12 ms over 463 chunks, so a healthy stream never trips
-        it.
+        #6021 (owner ruling, real-machine hit — supersedes the "always on"
+        paragraph this replaces): opt-in via ``REYN_TRIPWIRE_MS``, never
+        fires by default. Originally always-on for the reason below (the
+        symptom this watches for arrives unannounced, so an opt-in probe
+        would only ever be enabled after the occurrence someone wanted to
+        measure — #3638 closed that way), but the fixed threshold that
+        shipped with that decision (250ms, "well above a measured 10ms
+        task's own 12ms ceiling") was one machine's own number, applied
+        everywhere — the owner's own real machine (Windows/git-bash)
+        routinely exceeded it on healthy runs. A self-calibrating
+        threshold was designed and REJECTED by the owner directly (2 new
+        unmeasured constants of its own); the owner's own resolution is
+        this opt-in instead — see ``loop_tripwire``'s own module
+        docstring for the full account. The cost, when armed, is
+        unchanged: one float comparison per tick.
 
         The notice is decision-enabling rather than a bare complaint: it says
         how long, and how to record the detail next time.
@@ -2408,12 +2427,16 @@ class TextualChatApp(App):
         one process-wide ``faulthandler`` timer (re-armed every tick,
         ``repeat=False`` — see that module's own updated docstring for why
         this shape, not the turn-arm's ``repeat=True``): if a tick fails to
-        land within :data:`_TRIPWIRE_MS`, the PENDING timer fires on its own
+        land within the tripwire's own :attr:`~reyn.runtime.loop_tripwire.
+        LoopTripwire.threshold_ms`, the PENDING timer fires on its own
         OS thread — independent of this asyncio loop, so it fires even when
         the loop itself is the thing blocked — and dumps the main thread's
         stack to ``reyn.log`` mid-stall, not after. This is armed
-        UNCONDITIONALLY (no ``REYN_STALL_TRACE`` opt-in), matching the
-        tripwire's own "arrives unannounced" reasoning above; see
+        whenever the TRIPWIRE itself is (``REYN_TRIPWIRE_MS`` — #6021,
+        owner ruling, superseding the "unconditionally... arrives
+        unannounced" claim this paragraph used to make: NOT
+        ``REYN_STALL_TRACE``, a different opt-in entirely, still
+        unrelated to this one); see
         ``stall_trace.py``'s own docstring for what this costs the OTHER
         (turn-scoped) caller of the same global timer once this worker has
         started.
@@ -2502,6 +2525,7 @@ class TextualChatApp(App):
         updated docstring.
         """
         import asyncio  # noqa: PLC0415
+        import math  # noqa: PLC0415
         import time  # noqa: PLC0415
         from collections import deque  # noqa: PLC0415
 
@@ -2511,7 +2535,6 @@ class TextualChatApp(App):
 
         from .loop_probe import (  # noqa: PLC0415
             _TICK_SECONDS,
-            _TRIPWIRE_MS,
             StallDumpArm,
             stall_banner,
             stall_dump_path,
@@ -2524,17 +2547,33 @@ class TextualChatApp(App):
         # dead-man's switch and LoopTripwire.observe()'s own comparison, so
         # "did the loop stall" and "should a stack have been dumped for it"
         # can never disagree about WHERE the line is.
-        _STACK_DUMP_SECONDS = _TRIPWIRE_MS / 1000
-        # #5877/#5873/#5977 ②, ONE implementation since #5898: this
-        # worker's OWN fd, opened once against its own single dedicated
-        # dump file (never reyn.log — see stall_dump_path's own
-        # docstring) and held for its whole lifetime. `None` (no
-        # FileHandler installed, so no directory to derive a path from)
-        # means this dead-man's switch never arms at all for this
-        # worker's lifetime.
-        _stack_dump = StallDumpArm.open(
-            seconds=_STACK_DUMP_SECONDS, path=stall_dump_path(_find_file_handler_path()),
-            logger=logger, label="textual chat",
+        #
+        # #6021 (owner ruling, correcting lead-coder's own earlier "①
+        # threshold / ② dump-on-fire are separable" framing): reads
+        # ``self._loop_tripwire.threshold_ms`` — the SAME instance
+        # ``on_mount``/``reset_loop_tripwire`` already constructed from
+        # ``REYN_TRIPWIRE_MS`` — rather than a SECOND, independent env
+        # read of its own. Two mechanisms sharing one VALUE (not one
+        # SOURCE) is exactly the trap this issue itself was: whoever next
+        # changes one of the two would silently desync from the other.
+        _stack_dump_threshold_ms = self._loop_tripwire.threshold_ms
+        # #6021: "the default doesn't fire" means, per the owner's own
+        # words, the FILE never appears at all — not an empty one. #4986's
+        # own comment ("the log file is opened (empty) the moment the
+        # watchdog is armed") makes "armed" and "file exists" the SAME
+        # fact — so an UNARMED watchdog must mean `StallDumpArm.open`
+        # itself is never called, not called-then-inert. This reuses the
+        # SAME "no genuinely stable destination, no attempt" branch
+        # `path=None` already takes (#5977 ②) — no new branch shape, only
+        # a second reason to take the existing one.
+        _stack_dump = (
+            StallDumpArm.open(
+                seconds=_stack_dump_threshold_ms / 1000,
+                path=stall_dump_path(_find_file_handler_path()),
+                logger=logger, label="textual chat",
+            )
+            if math.isfinite(_stack_dump_threshold_ms)
+            else None
         )
 
         # #4761 ② (lead-coder review): a stall that never recovers — #4761's
@@ -2602,7 +2641,7 @@ class TextualChatApp(App):
                     # fire" — the SAME comparison LoopTripwire.observe
                     # makes internally, never a readback of faulthandler's
                     # (nonexistent) fired state.
-                    stack_dumped = lateness_ms > _TRIPWIRE_MS
+                    stack_dumped = lateness_ms > self._loop_tripwire.threshold_ms
                     if stack_dumped:
                         # #5992 (self-caught correction, lead-coder review
                         # of PR #5988): an EARLIER version called
@@ -3839,7 +3878,10 @@ class TextualChatApp(App):
         app.py) also touches every caller — a compile-time-visible
         breakage, not a silent no-op one file away.
         """
-        self._loop_tripwire = LoopTripwire()
+        # #6021: same env-var-derived threshold as the constructor site.
+        self._loop_tripwire = LoopTripwire(
+            threshold_ms=tripwire_threshold_ms_from_env(logger=logger),
+        )
 
     @property
     def pump_ticks(self) -> int:

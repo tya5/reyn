@@ -4,14 +4,28 @@
 Two layers, because they answer different questions and only one of them can be
 switched on in advance.
 
-**A tripwire that is always on.** The symptom this exists for — "the UI froze
-while a reply streamed" (#3539), "no HTTP request returned for 7 minutes"
-(#5898) — arrives unannounced, so an opt-in probe is only ever enabled *after*
-someone has already lost the occurrence they wanted to measure. #3638 closed
-exactly that way: by the time anyone could look, the symptom had stopped
-happening. The tripwire therefore runs unconditionally and costs a comparison
-against a float per tick; when the loop is late by more than
-:data:`_TRIPWIRE_MS` it says so ONCE, and says what to do next.
+**A tripwire that ran on by default, now opt-in (#6021, owner ruling —
+supersedes the paragraph below).** The symptom this exists for — "the UI
+froze while a reply streamed" (#3539), "no HTTP request returned for 7
+minutes" (#5898) — arrives unannounced, which argued for an unconditional
+default: an opt-in probe is only ever enabled *after* someone has already
+lost the occurrence they wanted to measure (#3638 closed exactly that
+way). But the THRESHOLD that decision shipped with (:data:`_TRIPWIRE_MS`)
+was one machine's own measurement, applied to every machine — the owner's
+real one (Windows/git-bash) routinely exceeded it on healthy runs, firing
+constantly and writing a full-thread-stack dump file every time (#6021).
+A self-calibrating threshold was designed and REJECTED by the owner
+directly: it would have introduced 2 new unmeasured constants of its own
+(a calibration window, a safety multiplier) — the SAME "a number nobody
+measured for THIS machine" shape one level down. The owner's own
+resolution: **no threshold by default — an operator who knows their own
+machine sets one.** :data:`_TRIPWIRE_MS` defaults to ``float("inf")``
+(never fires); :func:`tripwire_threshold_ms_from_env` reads
+:data:`_TRIPWIRE_ENV` for the opt-in value. When disabled,
+:class:`StallDumpArm` is never even opened — the dump FILE does not
+exist at all, matching the owner's own words ("規定は発火しない") read
+literally: what the owner calls "firing" is the file appearing, not an
+internal comparison.
 
 **Detail behind an env var.** Everything that costs more than a comparison —
 per-chunk wait/work split, per-delta handler timing — is written only when
@@ -56,12 +70,34 @@ from typing import Any, Callable
 from reyn.data.index.build_lock import pid_alive
 from reyn.runtime.diagnostic_snapshot import DiagnosticSnapshot, diagnostic_snapshot
 
-#: A loop tick later than this is worth telling someone about. Set well above
-#: the measured healthy ceiling (a 10 ms-period task never exceeded 12 ms over
-#: 463 chunks) so an ordinary stream never trips it — the tripwire's value is
-#: that it stays quiet, and a threshold that fires on healthy runs would be
-#: read as noise and ignored.
-_TRIPWIRE_MS = 250.0
+#: #6021 (owner ruling, real-machine hit): a loop tick later than this is
+#: worth telling someone about — OPT-IN, no threshold by default. The
+#: number this constant used to hold (250.0, "well above the measured
+#: healthy ceiling — a 10 ms-period task never exceeded 12 ms over 463
+#: chunks") was a measurement of ONE machine, applied unconditionally to
+#: every other one; the owner's own real machine (Windows/git-bash)
+#: routinely exceeds 250ms on an ordinary, healthy run, so the tripwire
+#: fired constantly there — the exact "read as noise and ignored" failure
+#: this module's own docstring already predicted for a threshold that
+#: fires on healthy runs. A self-calibrating threshold (observe this
+#: machine's own healthy ticks at startup, set the threshold from that)
+#: was designed and REJECTED by the owner directly — it would have
+#: introduced 2 new unmeasured constants of its own (a calibration window,
+#: a safety multiplier), reproducing the SAME "a number nobody measured
+#: for THIS machine" shape one level down. ``float("inf")`` — never fires
+#: — is the default; :func:`tripwire_threshold_ms_from_env` reads
+#: :data:`_TRIPWIRE_ENV` for an operator who has looked at THEIR OWN
+#: machine and knows what to set. No config surface with a numeric
+#: default exists to raise (CLAUDE.md: "a limit that can be set is a
+#: limit someone can raise") — there is no default to raise, only an
+#: explicit opt-in.
+_TRIPWIRE_MS = float("inf")
+
+#: #6021: names the ms threshold above :data:`_TRIPWIRE_MS`'s own default
+#: (never fires) — matches the existing env-var-opt-in idiom this module
+#: already has two instances of (:data:`_DUMP_ENV`/``REYN_PROF_DUMP``,
+#: and ``REYN_STALL_TRACE`` in ``stall_trace.py``), not a new style.
+_TRIPWIRE_ENV = "REYN_TRIPWIRE_MS"
 
 #: How often the tripwire wakes. Long enough to cost nothing, short enough that
 #: a stall a human would notice cannot hide between two ticks.
@@ -81,6 +117,48 @@ _TICK_SECONDS = 0.05
 _RECORD_INTERVAL_S = 2.0
 
 _DUMP_ENV = "REYN_PROF_DUMP"
+
+
+def tripwire_threshold_ms_from_env(*, logger: logging.Logger) -> float:
+    """The configured tripwire threshold in ms, or :data:`_TRIPWIRE_MS`
+    (``float("inf")`` — never fires) if the env var is unset, empty,
+    non-numeric, zero, or negative — every one of those means "off," the
+    default, matching :func:`~reyn.runtime.stall_trace.
+    stall_trace_seconds_from_env`'s own established shape for the SAME
+    reason (#6021): a caller need only construct :class:`LoopTripwire`
+    with this value, never branch on WHY it came out disabled.
+
+    ``logger`` is a required PARAMETER, not a module-level object — this
+    module has none (see :func:`_sweep_dead_pid_stall_dumps`'s own
+    identical shape): a runtime-generic module used by both the TUI and
+    ``reyn:web`` logs under whichever CALLER's own logger name, not a
+    third, hidden ``reyn.runtime.loop_tripwire`` namespace neither
+    consumer would think to look at.
+
+    Read at call time, not captured at import (the same reason
+    :func:`dump_path` reads :data:`_DUMP_ENV` per call) — a long-lived
+    process could in principle be told to start watching without a
+    restart, and every one of this function's 3 production call sites
+    already calls it fresh at its own ``LoopTripwire()`` construction
+    point, never once at import."""
+    raw = os.environ.get(_TRIPWIRE_ENV)
+    if not raw:
+        return _TRIPWIRE_MS
+    try:
+        threshold_ms = float(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not a number; loop tripwire stays disabled",
+            _TRIPWIRE_ENV, raw,
+        )
+        return _TRIPWIRE_MS
+    if threshold_ms <= 0:
+        logger.warning(
+            "%s=%r is not positive; loop tripwire stays disabled",
+            _TRIPWIRE_ENV, raw,
+        )
+        return _TRIPWIRE_MS
+    return threshold_ms
 
 
 def stall_dump_path(reyn_log_path: "str | None") -> "str | None":

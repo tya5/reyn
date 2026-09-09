@@ -173,38 +173,62 @@ async def _lifespan(app: FastAPI):
     install_asyncio_exception_handler(asyncio.get_running_loop())
 
     # ── Event-loop tripwire (#5898, #5894 ②) ───────────────────────────────
-    # Always on, shipped config: `reyn:web`'s loop blocked for 7 minutes on
-    # O(history bytes) CPU work and NOTHING in this process recorded it —
-    # `stall_trace.py` is a REYN_STALL_TRACE opt-in and the tripwire lived
-    # in textual_chat — so the stall was visible only as its clients'
-    # symptoms. Same watcher the CUI runs (reyn.runtime.loop_tripwire):
-    # one WARNING per stall episode + one at recovery on reyn's own log,
-    # and — when a log FileHandler is installed — the main thread's stack
-    # dumped INTO that log mid-stall by the per-tick faulthandler
-    # dead-man's switch, so "what was it doing" is answered by the
-    # process itself, not reconstructed from `sample` afterwards.
+    # #6021 (owner ruling): opt-in via REYN_TRIPWIRE_MS, never fires by
+    # default — see reyn.runtime.loop_tripwire's own module docstring for
+    # the full story (a self-calibrating threshold was designed and
+    # rejected). Originally always-on, shipped config: `reyn:web`'s loop
+    # blocked for 7 minutes on O(history bytes) CPU work and NOTHING in
+    # this process recorded it — `stall_trace.py` is a REYN_STALL_TRACE
+    # opt-in and the tripwire lived in textual_chat — so the stall was
+    # visible only as its clients' symptoms. Same watcher the CUI runs
+    # (reyn.runtime.loop_tripwire): one WARNING per stall episode + one
+    # at recovery on reyn's own log when armed, and — when a log
+    # FileHandler is ALSO installed — the main thread's stack dumped
+    # INTO that log mid-stall by the per-tick faulthandler dead-man's
+    # switch, so "what was it doing" is answered by the process itself,
+    # not reconstructed from `sample` afterwards.
+    import math  # noqa: PLC0415
+
     from reyn.runtime.loop_tripwire import (  # noqa: PLC0415
-        _TRIPWIRE_MS,
         LoopTripwire,
         StallDumpArm,
         stall_dump_path,
         stall_log_line,
         stall_recovered_log_line,
+        tripwire_threshold_ms_from_env,
         watch_event_loop,
     )
     from reyn.runtime.stall_trace import find_file_handler_path  # noqa: PLC0415
 
-    _tripwire = LoopTripwire()
+    # #6021: off (never fires) unless REYN_TRIPWIRE_MS names a value —
+    # matches the CUI's own construction (app.py's on_mount).
+    _tripwire = LoopTripwire(threshold_ms=tripwire_threshold_ms_from_env(logger=logger))
     app.state.loop_tripwire = _tripwire
     # #5977 ③: bound to a name (rather than passed inline) so the on_stall
     # lambda below can read its own .path — the same arm the dead-man's
     # switch itself uses, never a second, independently-derived path.
-    _stack_dump = StallDumpArm.open(
-        # #5977 ②: its own single, always-overwritten file beside
-        # reyn.log — never reyn.log itself (see stall_dump_path's
-        # own docstring for why).
-        seconds=_TRIPWIRE_MS / 1000, path=stall_dump_path(find_file_handler_path()),
-        logger=logger, label="reyn:web",
+    #
+    # #6021 (owner ruling): reads `_tripwire.threshold_ms` — the SAME
+    # instance just constructed above — rather than the module constant
+    # directly, so the arm timer's own duration and the tripwire's own
+    # stall comparison can never desync (see app.py's identical comment
+    # for the full story). When disabled (REYN_TRIPWIRE_MS unset),
+    # `StallDumpArm.open` itself is never called — "the default doesn't
+    # fire" means the file never appears at all, not an empty one
+    # (#4986's own "opened (empty) the moment the watchdog is armed" —
+    # unarmed means unopened).
+    _stack_dump_threshold_ms = _tripwire.threshold_ms
+    _stack_dump = (
+        StallDumpArm.open(
+            # #5977 ②: its own single, always-overwritten file beside
+            # reyn.log — never reyn.log itself (see stall_dump_path's
+            # own docstring for why).
+            seconds=_stack_dump_threshold_ms / 1000,
+            path=stall_dump_path(find_file_handler_path()),
+            logger=logger, label="reyn:web",
+        )
+        if math.isfinite(_stack_dump_threshold_ms)
+        else None
     )
     app.state.loop_tripwire_task = asyncio.create_task(
         watch_event_loop(
