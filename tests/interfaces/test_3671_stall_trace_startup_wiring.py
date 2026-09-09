@@ -167,6 +167,9 @@ async def test_stall_trace_disarmed_at_first_frame_via_on_mount(
     reyn.log-shaped destination exists (#5877 architect ruling) — without
     it this test's own SECOND-disarm premise would not hold at all."""
     monkeypatch.setenv("REYN_STALL_TRACE", "5")
+    # #6021: this test's own SECOND-disarm premise needs the tripwire's
+    # own worker to have armed something in the first place.
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
 
     calls: list[str] = []
     monkeypatch.setattr(stall_trace, "disarm", lambda: calls.append("disarm"))
@@ -204,9 +207,21 @@ async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
     borrowed stream object's fd number can be silently reused once that
     stream closes — see ``find_file_handler_path``'s own docstring for
     the reproduced mechanism). Deliberately with ``REYN_STALL_TRACE``
-    UNSET: this arm must fire regardless, the same "arrives unannounced,
-    so it cannot wait for a manual opt-in" reasoning ``loop_probe.py``'s
-    own module docstring already states for the tripwire itself. Wiring
+    UNSET: this arm must fire regardless — that opt-in gates a DIFFERENT
+    mechanism entirely (the turn-scoped watchdog, ``stall_trace.py``'s
+    own concern).
+
+    #6021 (owner ruling, supersedes this test's own earlier premise):
+    ``REYN_TRIPWIRE_MS`` IS set here, deliberately — this dead-man's
+    switch used to arm regardless of ANY env var ("arrives unannounced,
+    so it cannot wait for a manual opt-in," ``loop_probe.py``'s own
+    former module docstring), but the owner's own real-machine hit
+    (routine 250ms fires on a healthy machine) made THAT threshold
+    itself opt-in — the sibling test right below asserts the NEW
+    accept-side of that (no ``REYN_TRIPWIRE_MS`` → this arm never
+    happens, PERIOD, ``FileHandler`` or not). This test's own subject
+    (the fd/inode/repeat=False shape once armed) is unaffected — it
+    still needs a real arm to observe, so it explicitly opts in. Wiring
     only — no real delay, no threshold crossing (banned by testing
     policy's duration rules, this file's own module docstring).
 
@@ -214,6 +229,9 @@ async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
     path (``reyn.log``) — it is ``stall_dump_path()``'s derived single
     dedicated file, the SAME directory, a fixed different name."""
     monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+    # #6021: opt in explicitly — this test's own subject needs a real
+    # arm to observe (see the docstring's own #6021 paragraph above).
+    monkeypatch.setenv("REYN_TRIPWIRE_MS", "250")
 
     calls: "list[tuple[float, object, bool | None]]" = []
     monkeypatch.setattr(
@@ -256,6 +274,45 @@ async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
         assert os.fstat(file_arg).st_ino == expected_path.stat().st_ino, (
             "the armed fd does not point at the derived, pid-scoped stall-dump snapshot path"
         )
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_never_arms_or_opens_a_file_without_REYN_TRIPWIRE_MS(
+    monkeypatch, installed_file_handler: Path,
+) -> None:
+    """Tier 2: #6021 (owner ruling) — the NEW accept-side, the mirror of
+    ``test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists``
+    right above: with a REAL ``FileHandler`` installed (so the OLD
+    "#5877: no destination, no attempt" reason for staying disarmed does
+    NOT apply) but ``REYN_TRIPWIRE_MS`` left UNSET, the dead-man's switch
+    must still never arm — and, per the owner's own literal words ("規定
+    は発火しない" read together with the dump FILE being what "発火" means
+    to them), the destination FILE must not even come into existence.
+    Not "opened empty" — genuinely absent, matching #4986's own comment
+    that this class's own docstring quotes ("the log file is opened
+    (empty) the moment the watchdog is armed" — unarmed therefore means
+    unopened)."""
+    monkeypatch.delenv("REYN_STALL_TRACE", raising=False)
+    monkeypatch.delenv("REYN_TRIPWIRE_MS", raising=False)
+
+    calls: "list[object]" = []
+    monkeypatch.setattr(stall_trace, "arm", lambda *a, **kw: calls.append((a, kw)))
+    monkeypatch.setattr(stall_trace, "disarm", lambda: None)
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+    assert calls == [], (
+        f"the tripwire armed with no REYN_TRIPWIRE_MS set: {calls!r} — the "
+        "default must stay off even with a real FileHandler installed"
+    )
+    expected_path = installed_file_handler.with_name(f"stall_dump.{os.getpid()}.log")
+    assert not expected_path.exists(), (
+        "the dump file must not exist at all when disabled -- not created "
+        "empty, genuinely absent (StallDumpArm.open must never be called)"
+    )
 
 
 @pytest.mark.asyncio
