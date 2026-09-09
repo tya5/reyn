@@ -30,6 +30,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from reyn.data.index.build_lock import pid_alive
 from reyn.security.sandbox._derivation_cache import cached_derivation, release_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import (
@@ -214,16 +215,131 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
 # distinguishable from other processes' temp files.
 _CACHE_SUBDIR_NAME = "reyn-sandbox-profiles"
 
+# #5985: has THIS process already swept `_seatbelt_cache_root()` for dead-pid
+# siblings? Module-level, not per-call — the sweep only needs to run once per
+# process (repeating it on every cache-miss would just re-scan a directory
+# that hasn't changed since the last scan, in the same process).
+_swept_dead_pid_dirs = False
+
+
+def _seatbelt_cache_root() -> Path:
+    """Return the directory ALL processes' pid-scoped SBPL profile caches
+    live under — the sweep target for :func:`_sweep_dead_pid_cache_dirs`,
+    never written to directly (see :func:`_seatbelt_cache_dir` for the
+    per-process subdirectory that actually is)."""
+    return Path(tempfile.gettempdir()) / _CACHE_SUBDIR_NAME
+
 
 def _seatbelt_cache_dir() -> Path:
-    """Return the directory session-cached SBPL profiles are written under.
+    """Return the directory THIS process's session-cached SBPL profiles are
+    written under — a pid-scoped subdirectory of :func:`_seatbelt_cache_root`
+    (#5985), not the shared root itself.
 
     A function, not a module-level constant, so :func:`_profile_is_safe_to_cache`
     below always re-derives the CURRENT value rather than a value captured at
     import time — ``tempfile.gettempdir()`` itself never changes within a
     process, but this keeps the two functions symmetric and re-testable.
+
+    #5985: pid-scoped so a crashed/SIGKILLed process's leftover `.sb` files
+    are structurally isolated from every OTHER (including currently live)
+    process's own cache — sweeping dead entries (below) never has to touch
+    a directory a live process might still be reading from, because a live
+    process's own entries live under a DIFFERENT pid subdirectory entirely.
     """
-    return Path(tempfile.gettempdir()) / _CACHE_SUBDIR_NAME
+    return _seatbelt_cache_root() / str(os.getpid())
+
+
+def _sweep_dead_pid_cache_dirs() -> None:
+    """Remove every SIBLING pid-subdirectory of :func:`_seatbelt_cache_dir`
+    whose owning process is no longer alive (#5985).
+
+    Runs at most once per process (guarded by the module-level
+    ``_swept_dead_pid_dirs`` flag) — called right before this process
+    creates its OWN cache subdirectory, so it never races its own not-yet-
+    created directory.
+
+    ⚠️ Deliberately NOT a size/age-based or blanket sweep: this repo's own
+    #5981 investigation found a directory-wide sweep unsafe (owner runs
+    `reyn:web` and `reyn:chat` concurrently — sweeping on ANY process's
+    startup would delete a SIBLING's still-live `.sb` file out from under
+    its own `sandbox-exec`). Liveness, not age, is the only safe
+    discriminant a startup-time sweep can use here: an age threshold would
+    be an unearned constant (how old is "definitely dead"?), while a
+    liveness check has NO constant to get wrong — a pid subdir either has a
+    living owner or it does not, on the machine's own authority (``os.kill``
+    signal-0), not this module's guess. A REUSED pid reads as "alive" and
+    is therefore left alone — the failure mode of pid reuse here is "an
+    unrelated, unreapable dir lingers a little longer", never "a live
+    process's cache gets deleted out from under it".
+
+    Uses :func:`reyn.data.index.build_lock.pid_alive` (`os.kill(pid, 0)`),
+    NOT :func:`reyn.api.safe.process.pid_alive` — semantically identical
+    today, but the latter is the curated surface exposed to SANDBOXED
+    safe-mode python steps specifically (see that module's own docstring);
+    pulling it into trusted sandbox-backend code blurs the boundary it
+    exists to keep. `process_registry.py` (#5296) already established this
+    exact substitution for the identical reason — reused here, not
+    reinvented.
+
+    ⚠️ Theoretical race (architect co-vet, #6005): a parent dies right after
+    spawning its own ``sandbox-exec -f <profile>``, and a LATER reyn process
+    starts and sweeps the now-dead parent's pid subdir before that
+    ``sandbox-exec`` has finished reading the profile — a window measured
+    in milliseconds, requiring another process's startup to land inside it.
+    Considered unlikely enough not to warrant closing. **Do not "fix" this
+    by adding a fallback that runs the command WITHOUT a sandbox profile**:
+    the correct behaviour here is fail-CLOSED — ``sandbox-exec`` given a
+    missing profile path fails to launch at all, it does not silently run
+    unsandboxed. That failure mode is the point, not a bug to route around.
+    """
+    global _swept_dead_pid_dirs
+    if _swept_dead_pid_dirs:
+        return
+    _swept_dead_pid_dirs = True
+
+    root = _seatbelt_cache_root()
+    try:
+        entries = list(root.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        # Nothing to sweep yet (this process will create root itself) — still
+        # logged, for the same "ran" vs "never ran" reason as the loop's own
+        # summary line below.
+        _logger.info("sandbox profile cache sweep: cache root does not exist yet")
+        return
+
+    own_pid = os.getpid()
+    removed = 0
+    failed = 0
+    for entry in entries:
+        if not entry.is_dir():
+            continue  # a stray non-directory at this level is not ours to touch
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue  # not a pid-shaped name — not this sweep's population
+        if pid == own_pid:
+            continue  # never our own, not-yet-fully-created directory
+        if pid_alive(pid):
+            continue  # a live sibling's cache — the whole reason this isn't a blanket sweep
+        shutil.rmtree(entry, ignore_errors=True)
+        if entry.exists():
+            failed += 1
+        else:
+            removed += 1
+
+    # #5985 co-vet (architect ⑵, lead-coder ruling): `ignore_errors=True`
+    # makes "removed" / "couldn't remove" / "nothing to sweep" indistinguishable
+    # from each other — exactly the same silent-outcome shape #5991② closed
+    # earlier the same night, and #5985's own subject IS "a leftover nobody
+    # notices accumulating", so a sweep that silently no-ops or silently
+    # fails would defeat the fix while looking identical to it working.
+    # Logged unconditionally (including the 0/0 case) so "this ran" is
+    # observable on its own, not only inferable from the absence of a line.
+    _logger.info(
+        "sandbox profile cache sweep: removed %d dead-pid dir(s), "
+        "%d failed to remove",
+        removed, failed,
+    )
 
 
 def _profile_is_safe_to_cache(policy: SandboxPolicy) -> bool:
@@ -245,7 +361,7 @@ def _profile_is_safe_to_cache(policy: SandboxPolicy) -> bool:
     Only the SUBPATH direction is unsafe: a write grant on ``write_paths``
     makes that path and everything BELOW it writable, never anything above
     it, so the cache dir being an *ancestor* of a write_paths entry is fine
-    (e.g. cache dir ``/tmp/reyn-sandbox-profiles`` and a write grant on
+    (e.g. cache dir ``/tmp/reyn-sandbox-profiles/<pid>`` and a write grant on
     ``/tmp/reyn-sandbox-profiles/../workspace`` never overlaps the cache
     dir's own files).
     """
@@ -284,6 +400,12 @@ def _cached_profile_path(policy: SandboxPolicy, profile_text: str) -> tuple[str,
             return fh.name, False
 
     def _write_cached() -> str:
+        # #5985: sweep dead-pid siblings BEFORE creating our own subdirectory
+        # — see _sweep_dead_pid_cache_dirs's own docstring for why this is
+        # liveness-gated, not a blanket sweep, and why "before" (not "after")
+        # matters (our own dir doesn't exist yet, so there's nothing of ours
+        # for the sweep to even consider).
+        _sweep_dead_pid_cache_dirs()
         cache_dir = _seatbelt_cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
         fd, path = tempfile.mkstemp(suffix=".sb", dir=str(cache_dir))

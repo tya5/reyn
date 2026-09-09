@@ -417,6 +417,21 @@ def _reset_derivation_cache():
     _derivation_cache._reset_cache_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _reset_dead_pid_sweep_flag():
+    """#5985: `_sweep_dead_pid_cache_dirs` runs at most ONCE per process (a
+    module-level flag, not per-call) — without resetting it, whichever test
+    in the WHOLE pytest session first triggers a Seatbelt cache-miss
+    consumes that "once" for every other test that runs after it in the
+    SAME process, silently no-opping the sweep in every test that actually
+    means to exercise it."""
+    import reyn.security.sandbox.backends.seatbelt as _seatbelt_module
+
+    _seatbelt_module._swept_dead_pid_dirs = False
+    yield
+    _seatbelt_module._swept_dead_pid_dirs = False
+
+
 def test_seatbelt_cache_dir_is_outside_a_realistic_write_scope():
     """Tier 2: #4434's load-bearing precondition, derived from the policy
     object (via the same expand_policy_path + resolve every emitted SBPL
@@ -592,3 +607,184 @@ def test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe():
     wrapped1.cleanup()
     assert not os.path.exists(path1)
     wrapped2.cleanup()
+
+
+# ─── 7. Dead-pid cache-dir sweep (#5985) ────────────────────────────────────
+
+
+def _dead_pid() -> int:
+    """A real, guaranteed-not-alive pid — spawn a trivial subprocess and let
+    it exit, then use its own pid. Cheaper and more honest than guessing a
+    large integer that MIGHT collide with something real on a busy
+    machine — this is an ACTUAL process that ACTUALLY exited, not a faked
+    liveness answer."""
+    import subprocess
+    import sys as _sys
+
+    proc = subprocess.Popen([_sys.executable, "-c", "pass"])
+    proc.wait()
+    return proc.pid
+
+
+def test_sweep_removes_a_dead_pids_subdirectory():
+    """Tier 2: a sibling pid-subdirectory whose owning process has already
+    exited IS removed by the sweep — the "band question 1" answer #5985
+    exists to provide (crash/SIGKILL leftovers had no bounding subject
+    before this)."""
+
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    root = _seatbelt_cache_root()
+    dead = root / str(_dead_pid())
+    dead.mkdir(parents=True, exist_ok=True)
+    (dead / "leftover.sb").write_text("stale", encoding="utf-8")
+
+    _sweep_dead_pid_cache_dirs()
+
+    assert not dead.exists()
+
+
+def test_sweep_logs_the_removed_count(caplog):
+    """Tier 2: #5985 co-vet (architect ⑵, lead-coder ruling) — the sweep's
+    outcome must be OBSERVABLE, not silent on every branch the way a bare
+    `shutil.rmtree(ignore_errors=True)` is. This is the exact shape #5991②
+    closed the same night for a different mechanism: "ran and found
+    nothing" / "didn't run" / "ran and failed" must not all look identical.
+
+    NON-VACUITY (strip-falsified locally, in-file Edit -> run -> Edit
+    back): removing the `_logger.info(...)` call in
+    `_sweep_dead_pid_cache_dirs` makes this assertion fail — there would be
+    nothing in the log to assert on."""
+    import logging
+
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    root = _seatbelt_cache_root()
+    dead = root / str(_dead_pid())
+    dead.mkdir(parents=True, exist_ok=True)
+
+    with caplog.at_level(logging.INFO, logger="reyn.security.sandbox.backends.seatbelt"):
+        _sweep_dead_pid_cache_dirs()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("removed 1 dead-pid dir" in m for m in messages), (
+        "the sweep's own outcome (1 dir removed) left no observable trace — "
+        f"records were: {messages}"
+    )
+
+
+def test_sweep_does_not_remove_a_live_pids_subdirectory():
+    """Tier 2: strip-falsify's counterpart — a sibling pid-subdirectory
+    whose owning process is ALIVE (this test's own parent process, a real,
+    distinct, genuinely-running pid — not the test's own pid, which the
+    sweep already skips unconditionally) survives the sweep untouched.
+
+    NON-VACUITY (strip-falsified locally, in-file Edit → run → Edit back):
+    replacing the ``pid_alive(pid)`` check in ``_sweep_dead_pid_cache_dirs``
+    with an unconditional False makes THIS assertion fail — the
+    false-reject half of #5985's own "both directions" acceptance
+    criterion (the false-accept half is
+    ``test_sweep_removes_a_dead_pids_subdirectory`` above)."""
+    import os
+
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    root = _seatbelt_cache_root()
+    live_pid = os.getppid()  # the pytest runner's own parent — really alive
+    live = root / str(live_pid)
+    live.mkdir(parents=True, exist_ok=True)
+    (live / "still-needed.sb").write_text("in use", encoding="utf-8")
+
+    try:
+        _sweep_dead_pid_cache_dirs()
+        assert live.exists(), (
+            "a LIVE sibling's cache dir was removed — this is exactly the "
+            "failure #5981's own investigation ruled out a blanket sweep "
+            "over: a concurrently-running process's sandbox-exec would now "
+            "reference a deleted profile"
+        )
+    finally:
+        import shutil as _shutil
+
+        _shutil.rmtree(live, ignore_errors=True)  # tidy up regardless of outcome
+
+
+def test_sweep_ignores_non_pid_shaped_and_non_directory_entries():
+    """Tier 2: a stray file or a non-numeric-named directory under the cache
+    root (never written by this module, but the population isn't
+    guaranteed-pure — it's a real, shared OS temp subdirectory) is left
+    alone rather than raising or being swept as if it were a pid."""
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    root = _seatbelt_cache_root()
+    root.mkdir(parents=True, exist_ok=True)
+    stray_file = root / "not-a-pid-dir.txt"
+    stray_file.write_text("x", encoding="utf-8")
+    stray_dir = root / "not-numeric"
+    stray_dir.mkdir(exist_ok=True)
+
+    try:
+        _sweep_dead_pid_cache_dirs()  # must not raise
+        assert stray_file.exists()
+        assert stray_dir.exists()
+    finally:
+        stray_file.unlink(missing_ok=True)
+        stray_dir.rmdir()
+
+
+def test_sweep_runs_at_most_once_per_process():
+    """Tier 2: the module-level guard — a second call in the same process
+    is a no-op even if a fresh dead-pid subdirectory appears in between,
+    matching the docstring's own "at most once per process" claim."""
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    _sweep_dead_pid_cache_dirs()  # first call — consumes the "once"
+
+    root = _seatbelt_cache_root()
+    dead = root / str(_dead_pid())
+    dead.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _sweep_dead_pid_cache_dirs()  # second call — must be a no-op
+        assert dead.exists(), (
+            "the sweep ran a second time in the same process — the "
+            "module-level guard is not doing its job"
+        )
+    finally:
+        import shutil as _shutil
+
+        _shutil.rmtree(dead, ignore_errors=True)
+
+
+def test_wrap_command_triggers_the_sweep_before_creating_its_own_pid_dir():
+    """Tier 2: integration — a real ``wrap_command()`` cache-miss call
+    triggers the sweep as a side effect (not just the unit-level direct
+    call above), and a dead-pid sibling planted beforehand is gone
+    afterward."""
+    from reyn.security.sandbox.backends.seatbelt import _seatbelt_cache_root
+
+    root = _seatbelt_cache_root()
+    dead = root / str(_dead_pid())
+    dead.mkdir(parents=True, exist_ok=True)
+
+    backend = SeatbeltBackend()
+    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]))
+
+    assert not dead.exists()
+
+    wrapped.cleanup()
