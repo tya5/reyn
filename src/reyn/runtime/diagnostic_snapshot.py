@@ -104,7 +104,24 @@ class DiagnosticSnapshot:
         preemptively. Sets :attr:`fd` to ``None`` on a failed reopen
         (parent directory removed mid-run, permissions changed, …) —
         every further write attempt against this instance then no-ops,
-        matching :meth:`open`'s own "cannot open → never arms" posture."""
+        matching :meth:`open`'s own "cannot open → never arms" posture.
+
+        #5998: this method closes :attr:`fd` with no notion of whether a
+        TIMER-DRIVEN writer (``faulthandler.dump_traceback_later`` is
+        this module's own first such caller, via
+        :class:`~reyn.runtime.loop_tripwire.StallDumpArm`) is currently
+        armed against that exact fd NUMBER — deliberately: this class
+        stays reusable by any future snapshot writer, including ones with
+        no such consumer at all, so it does not import or know about
+        ``stall_trace``/``faulthandler``. A caller that DOES have such a
+        consumer must quiesce (disarm) it before calling :meth:`reset`,
+        the same way it must before calling :meth:`close` — see
+        :class:`~reyn.runtime.loop_tripwire.StallDumpArm`'s own
+        ``_disarm_before_reset`` for why: closing a still-armed fd frees
+        its number back to the OS, which can hand that SAME number to an
+        unrelated file/socket/pipe opened moments later, and the pending
+        timer then writes into THAT — silently, no exception, no
+        indication anything went wrong at either end."""
         if self._fd is None:
             return
         try:
