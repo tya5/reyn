@@ -39,6 +39,22 @@ pipeline `tool:` step (段6, a separate later stage); `sandboxed_exec_
 started`/`_completed`'s own `plan` field recording each segment's
 resolved argv[0] (段5) does not exist yet either — only `argv0_resolved`
 (always `/bin/sh` for a cmd-mode run) is recorded today.
+
+#6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd` is
+read into a local (`cmd_text`) exactly once, near the top of `run_
+sandboxed_exec`, and reused for BOTH the parse+policy call and the
+argv actually built for the backend — never re-read from `op.cmd` a
+second time after the `await check_exec_plan_policy(...)` boundary.
+`SandboxedExecIROp` is not frozen and has no `validate_assignment`, so
+nothing in the type system otherwise stops the two reads from
+observing different values (no live mutation path is shown; this closes
+the class structurally rather than respond to a demonstrated exploit) —
+the arc's own core property, "the bytes policy saw are the bytes the
+shell receives," must not rest on an unstated "nobody mutates the op
+mid-call" assumption. Freezing `SandboxedExecIROp` itself (or every
+IROp) was explicitly NOT requested for this PR (`models.py` has zero
+frozen IROp dataclasses today — a file-wide convention change, tracked
+separately).
 """
 from __future__ import annotations
 
@@ -105,12 +121,24 @@ async def run_sandboxed_exec(
     cwd = str(ctx.workspace.base_dir)
     env_path = os.environ.get("PATH")
 
-    if op.cmd is not None:
+    # #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd`
+    # is read into `cmd_text` here, ONCE, and reused below for both the
+    # parse+policy call AND the argv actually built for the backend --
+    # `SandboxedExecIROp` is not frozen and has no `validate_assignment`,
+    # so nothing in the type system stops `op.cmd` from differing between
+    # two SEPARATE reads across an `await` boundary (no live mutation
+    # path is shown; the fix is a local-variable-only structural close,
+    # not a response to an observed exploit). The arc's own core property
+    # — "the bytes policy saw are the bytes the shell receives" — must not
+    # rest on an unstated "nobody mutates the op mid-call" assumption.
+    cmd_text = op.cmd
+
+    if cmd_text is not None:
         from reyn.security.exec_plan import ExecPlanRejected, parse_exec_plan
         from reyn.security.exec_plan_policy import check_exec_plan_policy
 
         try:
-            _plan = parse_exec_plan(op.cmd)
+            _plan = parse_exec_plan(cmd_text)
         except ExecPlanRejected as _exc:
             return {
                 "kind": "sandboxed_exec",
@@ -263,15 +291,16 @@ async def run_sandboxed_exec(
     # what actually ran — the tell for a launcher-fork denial that survives.
     #
     # #5838 段4: cmd-mode's argv0 is always `/bin/sh` — the shell that will
-    # run *op.cmd* UNCHANGED (owner ruling (i): execute the ORIGINAL string,
-    # never a reconstruction from the parsed plan; `security/exec_plan.py`'s
-    # own module docstring has the full rationale). `_shell_argv` is what
-    # actually reaches the backend AND what the started/completed events
-    # below report as `argv` for this run — the parsed plan (already used,
-    # above, for policy) is not re-derived into an argv here.
+    # run *cmd_text* UNCHANGED (owner ruling (i): execute the ORIGINAL
+    # string, never a reconstruction from the parsed plan; `security/
+    # exec_plan.py`'s own module docstring has the full rationale).
+    # `_shell_argv` is what actually reaches the backend AND what the
+    # started/completed events below report as `argv` for this run — the
+    # parsed plan (already used, above, for policy) is not re-derived
+    # into an argv here.
     argv0_resolved: "str | None"
-    if op.cmd is not None:
-        _shell_argv = ["/bin/sh", "-c", op.cmd]
+    if cmd_text is not None:
+        _shell_argv = ["/bin/sh", "-c", cmd_text]
         argv0_resolved = resolve_real_executable(_shell_argv[0], env_path=env_path, cwd=cwd)
         effective_argv = [argv0_resolved, *_shell_argv[1:]]
         reported_argv = _shell_argv
@@ -314,7 +343,7 @@ async def run_sandboxed_exec(
     # not the op's request fields — the operator-or-default policy wins over op
     # fields, so the trace must show what was enforced (a network:true op under
     # a network:false policy ran WITHOUT network, and the event must say so).
-    # #5838 段4: `reported_argv` is `["/bin/sh", "-c", op.cmd]` in cmd-mode
+    # #5838 段4: `reported_argv` is `["/bin/sh", "-c", cmd_text]` in cmd-mode
     # (what actually runs), `list(op.argv)` otherwise — never `op.argv`
     # unconditionally, which would show an empty list for every cmd-mode
     # run.

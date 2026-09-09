@@ -22,9 +22,27 @@ regardless of which `cwd`/PATH is fed it for a bare or absolute name, so
 no behavioural difference exists to assert on; a genuine divergence
 witness would need a version-manager shim fixture (the #2820 part A
 scenario `resolve_real_executable` exists for), out of this file's scope.
+
+#6007 BLOCKING ③ (lead-coder co-vet, issuecomment-5594151412) is a
+DIFFERENT angle on `env_path`, covered below (`test_the_real_childs_
+path_matches_sandboxed_execs_own_env_path`): not "does changing PATH
+change the tool-axis verdict" (the disclosed gap above), but "does the
+value `env_path` actually holds match what a REAL spawned child's own
+PATH turns out to be" -- today it does (`policy.py`'s own
+`resolve_passthrough_env` drops PATH by default, and every backend's own
+fallback restores it from `os.environ` regardless), but nothing ties the
+two together structurally, so a future change on either side could
+silently diverge. No code change requested for this finding -- an
+OBSERVATION only, with the explicit condition that the assertion must
+NOT put `os.environ` on both sides of the same expression (that would
+transcribe the implementation and could never go red): the LEFT side
+below is a REAL subprocess's own reported `$PATH`, spawned through the
+actual default backend (which resolves env via `resolve_passthrough_env`
+internally) -- not a second call to the same accessor.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -229,3 +247,32 @@ async def test_an_unparseable_cmd_returns_a_structured_error_not_a_crash(tmp_pat
     assert result["status"] == "error"
     assert "could not be parsed" in result["error"]
     assert backend.ran is False
+
+
+# ─── #6007 BLOCKING ③ (lead-coder): env_path vs. the real child's PATH ────
+
+
+@pytest.mark.asyncio
+async def test_the_real_childs_path_matches_sandboxed_execs_own_env_path(tmp_path: Path) -> None:
+    """Tier 2: lead-coder co-vet (issuecomment-5594151412) -- an
+    OBSERVATION, not a code change (see this file's own module docstring
+    for the full framing). Runs a real command through the REAL default
+    backend (argv-mode -- `$PATH` is shell expansion, always rejected by
+    `parse_exec_plan`, so this witness deliberately does not go through
+    cmd-mode) that echoes its own `$PATH`, and asserts it equals
+    `os.environ.get("PATH")` -- the SAME value `run_sandboxed_exec`'s own
+    `env_path` local holds, used to resolve argv0 for both request
+    shapes. The LEFT side is a genuinely independent measurement (a real
+    subprocess's own env, reached through `resolve_passthrough_env` +
+    each backend's own PATH fallback), not a second call to the same
+    accessor the RIGHT side also calls -- so a future divergence between
+    the two (e.g. a backend that stops falling back to `os.environ`, or a
+    default `policy.env_deny_names` that starts denying PATH) goes RED
+    here rather than passing silently."""
+    ctx, _collected = _make_ctx(tmp_path)
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/sh", "-c", "echo $PATH"])
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "ok"
+    assert result["stdout"].strip() == os.environ.get("PATH")

