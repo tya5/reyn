@@ -135,6 +135,24 @@ THIS list, never by calling :func:`~reyn.security.sandbox.resolve.
 resolve_real_executable` a second time (the exact "policy saw one
 binary, audit recorded a different one" class #5991 BLOCKING ③ closed
 for ``env_path``/``cwd`` — now closed for the resolved name too).
+
+## #6016 ① (lead-coder ruling, #6016 issue thread) — a tool-axis denial
+left NO audit trace, unlike the threat axis in the SAME function. Since
+#5991 ②, a threat-scan outcome always leaves exactly one event
+(``exec_threat_scanned``/``exec_threat_scan_skipped``) whether it blocked
+or not; a tool-axis denial left ZERO events, only the raised
+:class:`PermissionError` (whose ``tool_failed.message`` a reader would
+have to PARSE as English to learn which binary was denied) —
+architect's own framing: "何が止められたか" (what was stopped) is asked
+BEFORE "何が走ったか" (what ran), the SAME lens 7 reasoning 段5 already
+applied to the allowed side. :func:`_check_segment` now emits
+``exec_tool_axis_denied`` (``argv0``/``resolved``/``effective_name``/
+``reason`` as separate FIELDS, never requiring a reader to parse
+``reason``'s own English text to extract the binary) immediately before
+raising. Deliberately has **no "allowed" sibling event** — the case for
+one depends on a traffic volume this repo's own working tree could not
+measure (no ``.reyn/`` directory to read); reopens once 段6 lands real
+``cmd``-mode traffic to measure against.
 """
 from __future__ import annotations
 
@@ -239,9 +257,22 @@ async def _check_segment(
     effective = gate_effective_tool_name(resolved_name, None)
     contextual = getattr(ctx, "contextual_permission", None)
     if effective is not None and tool_contextually_denied(contextual, effective):
-        raise PermissionError(
-            contextual_deny_message("command", effective, contextual)
+        message = contextual_deny_message("command", effective, contextual)
+        # #6016 ①: the SAME denial the threat axis already records
+        # (exec_threat_match/_blocked) but the tool axis never did — a
+        # reader had only `tool_failed.message`, an English sentence, to
+        # learn WHICH binary was denied. Fields, not prose: the denied
+        # binary is recoverable without parsing `message`. Deliberately
+        # does NOT have an "allowed" sibling event (lead-coder ruling,
+        # #6016: the case for one depends on a volume this repo could not
+        # measure — no `.reyn/` in this working tree — so it stays
+        # unbuilt until 段6 lands real cmd-mode traffic to measure).
+        ctx.events.emit(
+            "exec_tool_axis_denied",
+            argv0=segment.argv[0], resolved=argv0_resolved,
+            effective_name=effective, reason=message,
         )
+        raise PermissionError(message)
 
     await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
     return argv0_resolved
