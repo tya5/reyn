@@ -43,7 +43,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
-from reyn.security.sandbox._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES, communicate_capped
+from reyn.security.sandbox._subprocess_io import (
+    MAX_SUBPROCESS_OUTPUT_BYTES,
+    communicate_capped,
+    drain_after_kill,
+)
 from reyn.security.sandbox.backend import (
     AxisEnforcement,
     AxisEnforcementDeclaration,
@@ -777,12 +781,17 @@ class DockerEnvironmentBackend:
                 self.docker_bin, self.container, pidfile,
             )
             proc.kill()  # host-side client cleanup; does not itself stop the workload
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=3.0,
-                )
-            except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            # #6020: the post-kill drain read is now the ONE shared
+            # helper, see its own docstring — this was one of 8
+            # byte-identical copies. `cancelled` below still comes from
+            # THIS backend's own real verification (`verified_stopped`),
+            # not a bare `True` — the ONE genuine per-backend difference
+            # among the 8 sites, confirmed by reading all 4 files before
+            # collapsing, and deliberately left OUTSIDE the shared helper.
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="container_backend cancel",
+            )
             return SandboxResult(
                 returncode=-int(signal.SIGTERM),
                 stdout=stdout_b or b"", stderr=stderr_b or b"",
@@ -792,12 +801,10 @@ class DockerEnvironmentBackend:
             cancel_task.cancel()
             await self._kill_in_container(self.docker_bin, self.container, pidfile)
             proc.kill()
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=3.0,
-                )
-            except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="container_backend policy timeout",
+            )
             return SandboxResult(
                 returncode=-1, stdout=stdout_b or b"",
                 stderr=(stderr_b or b"") + f"\ntimed out after {policy.timeout_seconds}s".encode(),

@@ -17,7 +17,7 @@ import signal
 import subprocess
 from typing import TYPE_CHECKING, Callable
 
-from ._subprocess_io import communicate_capped, kill_process_tree
+from ._subprocess_io import communicate_capped, drain_after_kill, kill_process_tree
 from .backend import (
     AxisEnforcement,
     AxisEnforcementDeclaration,
@@ -293,40 +293,17 @@ class NoopBackend:
         if cancel_task in done:
             # cancel_inflight() fired: kill process group, then try to read
             # whatever output the drain captured before the kill (#5986:
-            # this is a BEST-EFFORT read, not a guarantee — see the
-            # except below for what happens when it doesn't land).
+            # this is a BEST-EFFORT read, not a guarantee — see
+            # drain_after_kill's own docstring for what happens when it
+            # doesn't land). #6020: the read itself now lives in ONE
+            # shared helper (_subprocess_io.drain_after_kill) — this was
+            # one of 8 byte-identical copies before this PR.
             await kill_process_tree(proc)
             cancel_task.cancel()
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=POST_KILL_DRAIN_GRACE_SECONDS,
-                )
-            except (asyncio.TimeoutError, subprocess.TimeoutExpired) as exc:
-                # #5986 (lead-coder review): narrowed from a bare
-                # `Exception` (which silently swallowed EVERYTHING,
-                # including a genuine bug in `communicate_capped` itself
-                # — #5990's own "nobody reports this failure" shape) to
-                # the two outcomes this drain can actually raise:
-                # `asyncio.TimeoutError` from this `wait_for` itself (the
-                # post-kill grace period elapsed with the streams still
-                # open — a killed process whose child inherited the pipe,
-                # #3862's own shape) and `subprocess.TimeoutExpired`,
-                # which `communicate_capped`'s own docstring declares it
-                # raises on ITS internal timeout. Any OTHER exception is
-                # a real defect, not an expected drain outcome, and is
-                # left to propagate rather than silently discarded here.
-                # The empty result below is a REAL LOSS (the process
-                # produced output between the kill and this timeout that
-                # nobody will ever see) — logged once, at WARNING, so an
-                # operator investigating a cancelled run with unexpectedly
-                # empty output has a reason on record, not silence.
-                _logger.warning(
-                    "noop_backend: could not capture partial output after "
-                    "cancel — drain did not complete within %.1fs of the "
-                    "kill (%s: %s); returning empty stdout/stderr",
-                    POST_KILL_DRAIN_GRACE_SECONDS, type(exc).__name__, exc,
-                )
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="noop_backend cancel",
+            )
             return SandboxResult(
                 returncode=-int(signal.SIGTERM),
                 stdout=stdout_b or b"",
@@ -338,21 +315,10 @@ class NoopBackend:
             # Timeout: kill and return with timeout marker.
             cancel_task.cancel()
             await kill_process_tree(proc)
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=POST_KILL_DRAIN_GRACE_SECONDS,
-                )
-            except (asyncio.TimeoutError, subprocess.TimeoutExpired) as exc:
-                # #5986: same narrowed exception set and the same real
-                # loss as the cancel branch above — see its own comment.
-                _logger.warning(
-                    "noop_backend: could not capture partial output after "
-                    "a policy timeout — drain did not complete within "
-                    "%.1fs of the kill (%s: %s); returning empty "
-                    "stdout/stderr",
-                    POST_KILL_DRAIN_GRACE_SECONDS, type(exc).__name__, exc,
-                )
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="noop_backend policy timeout",
+            )
             return SandboxResult(
                 returncode=-1,
                 stdout=stdout_b or b"",

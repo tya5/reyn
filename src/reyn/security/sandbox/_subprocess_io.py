@@ -382,7 +382,19 @@ async def kill_process_tree(proc: subprocess.Popen, grace_seconds: float = 2.0) 
     loop = asyncio.get_running_loop()
 
     async def _wait_grace() -> bool:
-        """True if the process exits within the grace window."""
+        """True if the process exits within the grace window.
+
+        #6020 (reviewed, deliberately left as-is): the same
+        ``except (asyncio.TimeoutError, Exception):`` shape #6020
+        collapsed 8 OTHER copies of into :func:`drain_after_kill`, but
+        this one is a DIFFERENT operation with a different, defensible
+        reason to catch broadly — it decides "did the process exit",
+        never returns output, and the escalation this drives (SIGTERM →
+        SIGKILL) is SAFE to trigger on any doubt: an unexpected
+        exception here answering ``False`` (escalate) costs nothing
+        worse than an already-dead process getting a redundant SIGKILL,
+        unlike the drain sites, where a broad catch was silently
+        discarding CAPTURED OUTPUT with a real information loss."""
         try:
             await asyncio.wait_for(
                 loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
@@ -416,3 +428,60 @@ async def kill_process_tree(proc: subprocess.Popen, grace_seconds: float = 2.0) 
                 proc.kill()
             except OSError:
                 pass
+
+
+async def drain_after_kill(
+    comm_future: "asyncio.Future", *, grace_seconds: float, context: str,
+) -> "tuple[bytes, bytes, bool]":
+    """Best-effort read of a just-killed process's already-in-flight drain
+    (``comm_future`` — already running via ``loop.run_in_executor`` before
+    the kill, per every caller's own comment on the deadline ordering),
+    bounded by ``grace_seconds``. Returns ``(stdout, stderr, truncated)``.
+
+    #6020 (architect census on #6017's own co-vet): every cancel/timeout
+    cleanup path across every sandbox backend (``container_backend.py``,
+    ``landlock.py``, ``seatbelt.py``, ``noop_backend.py`` — 8 call sites
+    total) did EXACTLY this same read, byte-identically copied. #5986/
+    #6017 found 3 defects in ``noop_backend.py``'s own two copies; this
+    collapses all 8 into the ONE place those fixes now live, so a 9th
+    copy can no longer happen by omission.
+
+    ``grace_seconds`` is a PARAMETER, not imported here — this module
+    (``_subprocess_io.py``) sits BELOW ``policy.py`` (which already
+    imports :data:`MAX_SUBPROCESS_OUTPUT_BYTES` from here); importing
+    ``POST_KILL_DRAIN_GRACE_SECONDS`` back from ``policy`` would be
+    circular. Every caller already imports that constant for its own
+    ``communicate_capped(..., timeout=policy.timeout_seconds +
+    POST_KILL_DRAIN_GRACE_SECONDS)`` call just above this one, so passing
+    it through costs nothing new and keeps this module's own dependency
+    direction one-way.
+
+    ``context`` names the calling backend + branch (e.g. ``"seatbelt
+    cancel"``) — the ONE place a WARNING on the empty-result path below
+    reads which caller it's for; every caller already has this string
+    available (its own backend name + which of the 2 branches it's in).
+
+    Raises anything OTHER than :class:`asyncio.TimeoutError` or
+    :class:`subprocess.TimeoutExpired` — the two outcomes this read can
+    actually produce (the second is ``communicate_capped``'s own declared
+    raise on ITS internal deadline; the first is this ``wait_for`` itself
+    giving up). A different exception is a real defect in
+    ``communicate_capped``, not an expected drain outcome, and must not
+    be silently discarded here (#5990's own "nobody reports this
+    failure" shape, #5986's own finding, applied once instead of 8
+    times)."""
+    try:
+        return await asyncio.wait_for(asyncio.shield(comm_future), timeout=grace_seconds)
+    except (asyncio.TimeoutError, subprocess.TimeoutExpired) as exc:
+        # The empty result below is a REAL LOSS (the process produced
+        # output between the kill and this timeout that nobody will ever
+        # see) — logged once, at WARNING, so an operator investigating a
+        # cancelled/timed-out run with unexpectedly empty output has a
+        # reason on record, not silence.
+        _logger.warning(
+            "%s: could not capture partial output — drain did not "
+            "complete within %.1fs of the kill (%s: %s); returning empty "
+            "stdout/stderr",
+            context, grace_seconds, type(exc).__name__, exc,
+        )
+        return b"", b"", False
