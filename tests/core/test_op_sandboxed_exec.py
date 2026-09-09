@@ -140,9 +140,19 @@ def test_op_no_longer_accepts_the_deleted_policy_fields():
     (`PermissionResolver.require_network`, called from `op_runtime/
     sandboxed_exec.py`'s own seam ONLY when the resolved policy already
     has network off). Moves from the `removed_field` loop below into the
-    EXPECTED set; the other 4 stay removed."""
+    EXPECTED set; the other 4 stay removed.
+
+    #5838 段4 (2026-09-09): `cmd` joins the EXPECTED set — a shell command
+    line, XOR `argv` (`SandboxedExecIROp._exactly_one_of_argv_or_cmd`'s own
+    validator), with a real reader from day one (`op_runtime/sandboxed_
+    exec.py`'s own `if op.cmd is not None:` branch: parsed for policy via
+    `security.exec_plan.parse_exec_plan` + `security.exec_plan_policy.
+    check_exec_plan_policy`, then executed UNCHANGED via `["/bin/sh", "-c",
+    cmd]`) — not the advertised-but-ignored shape this test's own removed-
+    field set exists to keep out. Not yet exposed on the LLM tool schema
+    (段6, separate later stage)."""
     fields = set(SandboxedExecIROp.model_fields)
-    assert fields == {"kind", "argv", "stdin", "timeout_seconds", "network"}
+    assert fields == {"kind", "argv", "cmd", "stdin", "timeout_seconds", "network"}
     for removed_field in (
         "read_paths", "write_paths", "allow_subprocess",
         "env_passthrough",

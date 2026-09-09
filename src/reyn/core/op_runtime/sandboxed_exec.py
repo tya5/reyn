@@ -17,6 +17,44 @@ op-dispatch entry point `handle` so `session_api.run_exec_async` (the
 background/async `exec` path) can reuse every line of it, differing only
 in the optional `sink` tee callback — see `run_sandboxed_exec`'s own
 docstring.
+
+#5838 段4: two mutually-exclusive request shapes, both handled here.
+`op.argv` (the original, unchanged form) runs argv0 through the existing
+version-manager-shim resolution and the WHOLE-op threat scan. `op.cmd`
+(new) is a shell command line: parsed via `security.exec_plan.
+parse_exec_plan` and checked via `security.exec_plan_policy.
+check_exec_plan_policy` (segment tool-axis + PER-SEGMENT threat scan +
+redirect file-axis) BEFORE anything runs — but the string actually
+executed is `cmd` UNCHANGED, via `["/bin/sh", "-c", cmd]`, never a
+reconstruction from the parsed plan (owner ruling (i), `security/
+exec_plan.py`'s own module docstring has the full rationale for why
+parse-for-policy/execute-original-string, not the other way around).
+`cwd`/`env_path` are resolved ONCE per call and reused for BOTH the
+policy check and the actual argv0 resolution — #5991 BLOCKING ③'s own
+point carried forward into this stage: the binary policy approved and
+the binary that runs must come from the identical PATH/cwd.
+
+Not yet wired: `cmd` is not exposed on the LLM `exec` tool schema or the
+pipeline `tool:` step (段6, a separate later stage); `sandboxed_exec_
+started`/`_completed`'s own `plan` field recording each segment's
+resolved argv[0] (段5) does not exist yet either — only `argv0_resolved`
+(always `/bin/sh` for a cmd-mode run) is recorded today.
+
+#6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd` is
+read into a local (`cmd_text`) exactly once, near the top of `run_
+sandboxed_exec`, and reused for BOTH the parse+policy call and the
+argv actually built for the backend — never re-read from `op.cmd` a
+second time after the `await check_exec_plan_policy(...)` boundary.
+`SandboxedExecIROp` is not frozen and has no `validate_assignment`, so
+nothing in the type system otherwise stops the two reads from
+observing different values (no live mutation path is shown; this closes
+the class structurally rather than respond to a demonstrated exploit) —
+the arc's own core property, "the bytes policy saw are the bytes the
+shell receives," must not rest on an unstated "nobody mutates the op
+mid-call" assumption. Freezing `SandboxedExecIROp` itself (or every
+IROp) was explicitly NOT requested for this PR (`models.py` has zero
+frozen IROp dataclasses today — a file-wide convention change, tracked
+separately).
 """
 from __future__ import annotations
 
@@ -69,29 +107,73 @@ async def run_sandboxed_exec(
     tool call this handler was written for is completely unaffected by
     this refactor — same behaviour, same return shape, sink simply never
     fires for it."""
-    # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
-    # any exec. A block-severity hit denies via the permission-deny channel
-    # (PermissionError → execute_op status="denied", decision-enabling); a warn
-    # emits + proceeds. Orthogonal to the sandbox (which confines exec EFFECTS) —
-    # both fire (§4 non-duplication). No-op when threat_scan is absent/disabled.
-    _ts = getattr(ctx, "threat_scan", None)
-    if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
-        from reyn.security.content_guard import first_blocking_match, scan_for_threats
-        _matches = scan_for_threats(" ".join(op.argv), _ts, scope="exec")
-        for _m in _matches:
-            ctx.events.emit(
-                "exec_threat_match", pattern_id=_m.pattern_id, severity=_m.severity, scope=_m.scope,
-            )
-        _block = first_blocking_match(_matches, getattr(_ts, "block_severity", "block"))
-        if _block is not None:
-            ctx.events.emit(
-                "exec_threat_blocked", pattern_id=_block.pattern_id, severity=_block.severity,
-            )
-            raise PermissionError(
-                f"command blocked: matched threat pattern '{_block.pattern_id}' "
-                f"(exec/{_block.severity}). Revise the command (avoid pipe-to-shell / "
-                f"reverse-shell / homograph URL / terminal-escape) and retry."
-            )
+    # #5838 段4: cmd-mode's own policy (segment tool-axis + PER-SEGMENT
+    # threat scan + redirect file-axis, all via `check_exec_plan_policy`)
+    # replaces the whole-op threat scan below for THIS op — the segment
+    # scan already covers exec-scope threat matching, more precisely (one
+    # scan per segment, not one scan over the whole joined string a
+    # chained command's second half could otherwise dilute). See this
+    # branch's own comment further down for the parse+policy call itself;
+    # `cwd`/`env_path` are computed once, here, and reused by BOTH that
+    # call and the (cmd-mode or argv-mode) argv0 resolution below — #5991
+    # BLOCKING ③'s own point, carried forward: the binary policy approves
+    # and the binary that runs must be resolved from the SAME PATH/cwd.
+    cwd = str(ctx.workspace.base_dir)
+    env_path = os.environ.get("PATH")
+
+    # #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd`
+    # is read into `cmd_text` here, ONCE, and reused below for both the
+    # parse+policy call AND the argv actually built for the backend --
+    # `SandboxedExecIROp` is not frozen and has no `validate_assignment`,
+    # so nothing in the type system stops `op.cmd` from differing between
+    # two SEPARATE reads across an `await` boundary (no live mutation
+    # path is shown; the fix is a local-variable-only structural close,
+    # not a response to an observed exploit). The arc's own core property
+    # — "the bytes policy saw are the bytes the shell receives" — must not
+    # rest on an unstated "nobody mutates the op mid-call" assumption.
+    cmd_text = op.cmd
+
+    if cmd_text is not None:
+        from reyn.security.exec_plan import ExecPlanRejected, parse_exec_plan
+        from reyn.security.exec_plan_policy import check_exec_plan_policy
+
+        try:
+            _plan = parse_exec_plan(cmd_text)
+        except ExecPlanRejected as _exc:
+            return {
+                "kind": "sandboxed_exec",
+                "status": "error",
+                "error": f"command could not be parsed for policy: {_exc}",
+            }
+        # Raises PermissionError on any segment/redirect denial -- caught
+        # uniformly by dispatch_tool's own PermissionError handling
+        # (execute_op status="denied"), the SAME channel the threat-scan
+        # block below already uses for argv-mode.
+        await check_exec_plan_policy(_plan, ctx, env_path=env_path, cwd=cwd)
+    else:
+        # FP-0050/#1822 S5 (EP4): exec-scope scan of the command (joined argv) BEFORE
+        # any exec. A block-severity hit denies via the permission-deny channel
+        # (PermissionError → execute_op status="denied", decision-enabling); a warn
+        # emits + proceeds. Orthogonal to the sandbox (which confines exec EFFECTS) —
+        # both fire (§4 non-duplication). No-op when threat_scan is absent/disabled.
+        _ts = getattr(ctx, "threat_scan", None)
+        if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
+            from reyn.security.content_guard import first_blocking_match, scan_for_threats
+            _matches = scan_for_threats(" ".join(op.argv), _ts, scope="exec")
+            for _m in _matches:
+                ctx.events.emit(
+                    "exec_threat_match", pattern_id=_m.pattern_id, severity=_m.severity, scope=_m.scope,
+                )
+            _block = first_blocking_match(_matches, getattr(_ts, "block_severity", "block"))
+            if _block is not None:
+                ctx.events.emit(
+                    "exec_threat_blocked", pattern_id=_block.pattern_id, severity=_block.severity,
+                )
+                raise PermissionError(
+                    f"command blocked: matched threat pattern '{_block.pattern_id}' "
+                    f"(exec/{_block.severity}). Revise the command (avoid pipe-to-shell / "
+                    f"reverse-shell / homograph URL / terminal-escape) and retry."
+                )
 
     # A runtime backend instance injected on the OpContext takes precedence over
     # name-based platform auto-selection (FP-0008 C7 #2). This lets a caller
@@ -192,12 +274,12 @@ async def run_sandboxed_exec(
         # backend stays unaware of the fg/bg distinction entirely.
         policy = dataclasses.replace(policy, timeout_seconds=effective_default)
 
-    # Anchor the working directory to the run's workspace base_dir — parity with
-    # the legacy `shell` op (FP-0008 PR-I). Without this, repo-relative `git` /
-    # `pytest` run in the harness process cwd instead of the repo root, which
-    # breaks concurrent benchmark runs. A workspace-coupled backend (e.g. a
-    # container backend) may ignore this host path and use its own baked cwd.
-    cwd = str(ctx.workspace.base_dir)
+    # `cwd`/`env_path` (the working directory the sandboxed child inherits —
+    # parity with the legacy `shell` op, FP-0008 PR-I, so repo-relative
+    # `git`/`pytest` resolve against the repo root, not the harness process
+    # cwd — and the PATH used to resolve a version-manager shim) were
+    # computed ONCE, above, before the threat-scan/policy branch — reused
+    # here unchanged for argv0 resolution.
 
     # #2820 part A: resolve argv[0] past any version-manager shim OUTSIDE the
     # sandbox, so the shim's launch-fork runs in the trusted parent instead of
@@ -207,13 +289,29 @@ async def run_sandboxed_exec(
     # Fail-open: unchanged argv[0] when resolution is unavailable (the denial then
     # stands, now explained by part B's denial_class). `argv0_resolved` records
     # what actually ran — the tell for a launcher-fork denial that survives.
-    env_path = os.environ.get("PATH")
-    argv0_resolved = (
-        resolve_real_executable(op.argv[0], env_path=env_path, cwd=cwd)
-        if op.argv
-        else None
-    )
-    effective_argv = [argv0_resolved, *op.argv[1:]] if op.argv else list(op.argv)
+    #
+    # #5838 段4: cmd-mode's argv0 is always `/bin/sh` — the shell that will
+    # run *cmd_text* UNCHANGED (owner ruling (i): execute the ORIGINAL
+    # string, never a reconstruction from the parsed plan; `security/
+    # exec_plan.py`'s own module docstring has the full rationale).
+    # `_shell_argv` is what actually reaches the backend AND what the
+    # started/completed events below report as `argv` for this run — the
+    # parsed plan (already used, above, for policy) is not re-derived
+    # into an argv here.
+    argv0_resolved: "str | None"
+    if cmd_text is not None:
+        _shell_argv = ["/bin/sh", "-c", cmd_text]
+        argv0_resolved = resolve_real_executable(_shell_argv[0], env_path=env_path, cwd=cwd)
+        effective_argv = [argv0_resolved, *_shell_argv[1:]]
+        reported_argv = _shell_argv
+    elif op.argv:
+        argv0_resolved = resolve_real_executable(op.argv[0], env_path=env_path, cwd=cwd)
+        effective_argv = [argv0_resolved, *op.argv[1:]]
+        reported_argv = list(op.argv)
+    else:
+        argv0_resolved = None
+        effective_argv = list(op.argv)
+        reported_argv = list(op.argv)
 
     # #5825 ①: the op's own REQUEST to run with network enabled (architect
     # ruling, issue #5825, 2026-09-06 — "ask is where a *request* meets a
@@ -237,7 +335,7 @@ async def run_sandboxed_exec(
             )
         await ctx.permission_resolver.require_network(
             ctx.permission_decl, ctx.intervention_bus, ctx.actor,
-            argv=op.argv, agent_name=ctx.agent_name or ctx.actor,
+            argv=reported_argv, agent_name=ctx.agent_name or ctx.actor,
         )
         policy = dataclasses.replace(policy, network=True)
 
@@ -245,9 +343,13 @@ async def run_sandboxed_exec(
     # not the op's request fields — the operator-or-default policy wins over op
     # fields, so the trace must show what was enforced (a network:true op under
     # a network:false policy ran WITHOUT network, and the event must say so).
+    # #5838 段4: `reported_argv` is `["/bin/sh", "-c", cmd_text]` in cmd-mode
+    # (what actually runs), `list(op.argv)` otherwise — never `op.argv`
+    # unconditionally, which would show an empty list for every cmd-mode
+    # run.
     ctx.events.emit(
         "sandboxed_exec_started",
-        argv=list(op.argv),
+        argv=reported_argv,
         argv0_resolved=argv0_resolved,
         backend=backend.name,
         timeout_seconds=policy.timeout_seconds,
@@ -325,7 +427,7 @@ async def run_sandboxed_exec(
         # #1470: emit distinct event on cancel (P6) — not sandboxed_exec_completed.
         ctx.events.emit(
             "sandboxed_exec_cancelled",
-            argv=list(op.argv),
+            argv=reported_argv,
             backend=backend.name,
             returncode=result.returncode,
             stdout_len=len(stdout_text),
@@ -352,7 +454,7 @@ async def run_sandboxed_exec(
 
     ctx.events.emit(
         "sandboxed_exec_completed",
-        argv=list(op.argv),
+        argv=reported_argv,
         argv0_resolved=argv0_resolved,
         backend=backend.name,
         returncode=result.returncode,
