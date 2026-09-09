@@ -173,8 +173,56 @@ jobs:
         # controller's PID from its own command line rather than threading a
         # PID through — this stays a single independent watcher, not another
         # moving part the main run has to hand anything to.
+        #
+        # REYN_TEST_SESSION_DEADLINE_S (#5994 stage ①): #5994 measured 24
+        # chronological main runs at 9.98-12.90 min (mean 11.69) against this
+        # step's own `timeout 12m` -- not a rare tail event, the distribution
+        # itself rides the ceiling, so a run landing in the upper tail is
+        # SIGKILLed (exit 124) with zero pytest summary: which test, how many
+        # passed, both unanswerable from the log. Rejected fix: raising the
+        # timeout -- that only moves the same collision later (band Q3: does
+        # the repair destroy the evidence?). Instead `session_deadline.py`
+        # (src/reyn/dev/testing/) sets `session.shouldstop` from inside
+        # pytest itself once this deadline passes, so the run reports its
+        # OWN normal summary and names where it stopped BEFORE the external
+        # `timeout` ever fires -- no config knob, no new number: the deadline
+        # below is arithmetic on the SAME `12`/`120` this step already runs
+        # with, computed here so the two can never drift apart independently.
+        #   TOTAL_S            = REYN_TEST_TIMEOUT_MINUTES * 60 (the `timeout
+        #                         12m` below, in seconds)
+        #   PER_TEST_TIMEOUT_S = REYN_TEST_PER_TEST_TIMEOUT_S (the
+        #                         `--timeout=` below) -- shouldstop is only
+        #                         CHECKED between items, so the item running
+        #                         exactly at the deadline can still take up
+        #                         to this long to finish afterward
+        #   REPORT_MARGIN_S    = pytest's own summary render + xdist
+        #                         controller aggregation + `tee` flush,
+        #                         after the last item returns
+        #   SAFETY_MARGIN_S    = genuine slack left unspent, not accounted
+        #                         for by any of the above -- the point of
+        #                         this line: worst case must land BELOW
+        #                         TOTAL_S, not exactly at it
+        #   DEADLINE_S = TOTAL_S - PER_TEST_TIMEOUT_S - REPORT_MARGIN_S
+        #                - SAFETY_MARGIN_S
+        #   worst_case = DEADLINE_S + PER_TEST_TIMEOUT_S + REPORT_MARGIN_S
+        #              = TOTAL_S - SAFETY_MARGIN_S  (< TOTAL_S, by
+        #                SAFETY_MARGIN_S)
+        # A normal run never reaches DEADLINE_S in the first place (mean
+        # 11.69 min = 701s < 550s is false today only in the sense that
+        # DEADLINE_S is deliberately BELOW the mean, not the ceiling --
+        # #5994②, deferred, measures what the 11.69 min is actually spent
+        # on; this deadline is a report-before-death guarantee, not a
+        # performance target).
         run: |
           set -o pipefail
+          REYN_TEST_TIMEOUT_MINUTES=12
+          REYN_TEST_PER_TEST_TIMEOUT_S=120
+          REYN_TEST_REPORT_MARGIN_S=20
+          REYN_TEST_SAFETY_MARGIN_S=30
+          REYN_TEST_SESSION_DEADLINE_S=$(( REYN_TEST_TIMEOUT_MINUTES * 60 \
+            - REYN_TEST_PER_TEST_TIMEOUT_S - REYN_TEST_REPORT_MARGIN_S \
+            - REYN_TEST_SAFETY_MARGIN_S ))
+          export REYN_TEST_SESSION_DEADLINE_S
           (
             sleep 620
             {
@@ -189,7 +237,7 @@ jobs:
               done
             } > /tmp/hang-ps.log 2>&1
           ) &
-          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout "${REYN_TEST_TIMEOUT_MINUTES}m" python -m pytest -q -n auto --timeout="$REYN_TEST_PER_TEST_TIMEOUT_S" -rs --durations=25 | tee /tmp/pytest-output.log
 
       # #4986: surface the stall dump above if (and only if) it fired. The
       # log file is opened (empty) the moment the watchdog is armed —
