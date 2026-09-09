@@ -5145,13 +5145,33 @@ class TextualChatApp(App):
 
     async def _clear_pending_command_ui_over_wire(self) -> None:
         """The round-trip half of the two ``clear_pending_command_ui`` calls
-        in :meth:`_handle_rewind_request` (#5894 ①-2) — a worker. The clear
-        is a courtesy to the server's read model (the picker is already
-        showing); a failure is logged exactly as the inline call logged it."""
+        in :meth:`_handle_rewind_request` (#5894 ①-2) — a worker.
+
+        #5990: a failure used to be ``logger.exception`` only — nothing
+        downstream ever reads it, so a real failure here was silent to the
+        operator (the picker they are already looking at is the only place
+        that could show it). Now draws an error row, the same idiom
+        :meth:`_cancel_turn_over_wire` and :meth:`_cancel_queued_over_wire`
+        use for their own round-trip couriers: the clear is a courtesy to
+        the server's read model, so a failed clear cannot corrupt this
+        client's own state — but a NEXT unrelated rewind could replay the
+        stale request if the server never got the clear, which is worth
+        naming rather than leaving to a log file nobody is tailing."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
         try:
             await self._transport.clear_pending_command_ui()
-        except Exception:
+        except Exception as exc:
             logger.exception("textual chat: command-UI clear failed")
+            self._ingest_frame(
+                OutboxMessage(
+                    kind="error",
+                    text=(
+                        f"command-UI clear failed: {type(exc).__name__}: {exc}"
+                        " — a stale rewind request may replay later"
+                    ),
+                )
+            )
 
     async def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
         """Consume a ``__rewind_list__`` sentinel: show the picker, or the text
@@ -7176,12 +7196,32 @@ class TextualChatApp(App):
         ①-2) — a worker. Same bookkeeping as the inline call had: a raise or
         a no-op removal forgets the restore entry, so a later, unrelated
         ``inbox_cancel`` delta cannot restore text this client never
-        cancelled."""
+        cancelled.
+
+        #5990: the raise branch used to be ``logger.exception`` plus the
+        bookkeeping pop — the pop is internal accounting nobody reads as a
+        signal, so a genuine transport failure here was invisible: the
+        operator pressed Enter on a queued row expecting it gone, and it
+        may not be. Now draws an error row too. The ``not removed`` branch
+        (below) stays silent on purpose — that is the server's own
+        legitimate "already dispatched, nothing to cancel" answer, not a
+        failure; :class:`SentQueue`'s row removal already told that story."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
         try:
             removed = await self._transport.cancel_queued(msg_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("textual chat: cancel_queued failed")
             self._pending_own_cancels.pop(msg_id, None)
+            self._ingest_frame(
+                OutboxMessage(
+                    kind="error",
+                    text=(
+                        f"cancel failed: {type(exc).__name__}: {exc}"
+                        " — the queued item may still be sent"
+                    ),
+                )
+            )
             return
         if not removed:
             self._pending_own_cancels.pop(msg_id, None)
@@ -7886,11 +7926,30 @@ class TextualChatApp(App):
         await self._submit(text, local_id=local_id)
 
     async def _shutdown_then_exit(self) -> None:
-        """``/quit``'s detach-then-exit, off the pump (#5894 ①-2)."""
+        """``/quit``'s detach-then-exit, off the pump (#5894 ①-2).
+
+        #5990: ``self.exit()`` used to run unconditionally after the
+        ``except`` — a shutdown failure was logged, then the app closed
+        the exact same way a clean shutdown does, so the operator's
+        terminal looked identical either way. The TUI itself is gone by
+        the time this would matter, so an ``OutboxMessage`` row (the idiom
+        the other ``_over_wire`` couriers use) cannot be the channel here —
+        nothing is left on screen to show it. Textual's own
+        ``App.exit(message=..., return_code=...)`` prints ``message`` to
+        the console AFTER the screen is torn down and sets the process's
+        real exit code, so both a human watching the terminal and a script
+        checking ``$?`` see the failure without any setting changed."""
         try:
             await self._transport.shutdown()
-        except Exception:
+        except Exception as exc:
             logger.exception("textual chat: transport shutdown failed on /quit")
+            self.exit(
+                return_code=1,
+                message=(
+                    f"reyn: shutdown failed on /quit: {type(exc).__name__}: {exc}"
+                ),
+            )
+            return
         self.exit()
 
     def _notify_blocked_on_attach(self) -> None:
