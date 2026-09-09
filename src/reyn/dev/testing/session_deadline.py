@@ -54,6 +54,17 @@ THE MARGIN
     cover that plus report-generation time plus a safety margin -- not
     restated here so this docstring cannot go stale if that arithmetic is
     retuned.
+
+WHY A DEADLINE <= 0 STOPS SYNCHRONOUSLY, NOT VIA A TIMER
+    ``threading.Timer(0, ...)`` (or a negative delay) still runs its
+    callback on a SEPARATE thread pytest never waits for -- nothing
+    guarantees that thread is scheduled before collection starts, so a
+    caller passing an already-past deadline (test.yml's own arithmetic
+    computing <= 0, a genuine possibility if the outer budget shrinks) could
+    still race collection into running items it should never reach. An
+    already-elapsed deadline needs no thread at all: this sets
+    ``session.shouldstop`` directly, in the same call, before any item is
+    collected -- deterministic, not a race.
 """
 from __future__ import annotations
 
@@ -79,6 +90,10 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             f"#5994: session-wide deadline ({deadline_s:.0f}s) reached -- "
             "stopping to report a summary before the external CI timeout"
         )
+
+    if deadline_s <= 0:
+        _stop()  # already past -- no thread, no race (see docstring)
+        return
 
     timer = threading.Timer(deadline_s, _stop)
     timer.daemon = True  # never blocks interpreter shutdown on its own
