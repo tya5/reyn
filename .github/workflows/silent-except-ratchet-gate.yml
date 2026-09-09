@@ -1,0 +1,42 @@
+name: silent-except ratchet
+
+# #5990 (follow-up gate): reject any NEW `except Exception`/`except
+# BaseException` block under src/reyn/interfaces/ that reports nothing an
+# operator would ever see (no log above debug, no known visible marker, no
+# re-raise) -- the same class as #5990's own headline defect. The 94
+# already-existing sites are grandfathered via the committed baseline
+# (scripts/silent_except_ratchet_baseline.json); this only blocks new
+# additions. See scripts/silent_except_ratchet.py's module docstring for
+# the full design (why "suspected", the false-accept/false-reject split,
+# the deliberate fail-closed divergence from #4846).
+#
+# `paths: src/reyn/interfaces/**` matches this gate's own v1 scope exactly
+# -- a change outside that tree cannot add or remove a silent-except site
+# this script counts, so there is nothing for it to check.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/interfaces/**"
+
+permissions:
+  contents: read
+
+jobs:
+  silent-except-ratchet:
+    name: silent-except ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/silent_except_ratchet.py is stdlib-only (ast / json /
+      # subprocess / pathlib). No pip install needed.
+      - name: Check no new silent except site under src/reyn/interfaces/
+        run: |
+          python scripts/silent_except_ratchet.py
