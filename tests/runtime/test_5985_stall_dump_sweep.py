@@ -9,6 +9,7 @@ put in this filename too, but nothing ever sweeps it) -- this file mirrors
 different mechanism (`unlink` on a flat file here, vs. `rmtree` on a
 pid-subdirectory there).
 """
+# EXEMPT: _dead_pid()'s subprocess.Popen([sys.executable, "-c", "pass"]) never touches reyn
 from __future__ import annotations
 
 import logging
