@@ -37,7 +37,7 @@ it reports every span >=15 words and leaves severity judgment to the
 reader, per #4858's own explicit warning that "always require both" is
 the wrong rule for this population.
 
-CI: report -- read by lead-coder when re-measuring CLAUDE.md overlap after an edit
+CI: manual -- run by hand by lead-coder when re-measuring CLAUDE.md overlap after an edit; not wired into any workflow
 """
 from __future__ import annotations
 

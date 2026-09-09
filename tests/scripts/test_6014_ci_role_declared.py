@@ -31,6 +31,21 @@ def _write_workflow(workflows_dir: Path, name: str, content: str) -> None:
     (workflows_dir / name).write_text(content, encoding="utf-8")
 
 
+def _write_script_with_code(
+    scripts_dir: Path, name: str, docstring_body: str, code_body: str,
+) -> None:
+    """Like ``_write_script``, but with real CODE after the docstring —
+    ``_write_script`` alone can only ever produce a bare docstring, which
+    ``_stripped_source`` now strips entirely (see #6032's own false-accept
+    fix): a test that needs a filename mentioned in actual CODE (a real
+    subprocess-target constant, not prose) must write code, not another
+    docstring line dressed up as one."""
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / name).write_text(
+        f'"""{docstring_body}"""\n{code_body}\n', encoding="utf-8",
+    )
+
+
 def test_a_script_with_no_ci_line_is_a_violation(tmp_path: Path) -> None:
     """Tier 2: the core state #6014 exists to close — a script that never
     said anything about its own CI role at all (the pre-migration state of
@@ -166,19 +181,51 @@ def test_a_script_spawned_by_a_directly_wired_sibling_script_counts_as_wired(
     """Tier 2: the real edge case #6014's own census found —
     ``wheel_parity_probe.py``/``wheel_plugin_install_probe.py`` are never
     named in any workflow file themselves; they are spawned by
-    ``wheel_reachability_smoke.py``, which IS directly workflow-wired.
-    One level of transitive closure (see ``_wiring_haystack``'s own
-    docstring) must resolve this without naming either script here."""
+    ``wheel_reachability_smoke.py``, which IS directly workflow-wired,
+    via a real CODE reference (``_PROBE_SCRIPT = ... / "wheel_parity_
+    probe.py"``), not a docstring mention. One level of transitive
+    closure (see ``_wiring_haystack``'s own docstring) must resolve this
+    without naming either script here."""
     scripts_dir = tmp_path / "scripts"
     workflows_dir = tmp_path / "workflows"
     _write_script(scripts_dir, "spawned_probe.py", "CI: gate\n")
-    _write_script(
-        scripts_dir, "parent_smoke.py",
-        "CI: gate\n\nSubprocess target: scripts/spawned_probe.py\n",
+    _write_script_with_code(
+        scripts_dir, "parent_smoke.py", "CI: gate\n",
+        'SPAWNED = "scripts/spawned_probe.py"\n',
     )
     _write_workflow(workflows_dir, "some.yml", "run: python scripts/parent_smoke.py\n")
 
     assert find_violations(scripts_dir, workflows_dir) == []
+
+
+def test_a_directly_wired_scripts_own_docstring_mention_is_not_wiring(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: the exact false-accept lead-coder's review of #6032 caught
+    live — ``check_ci_role_declared.py`` (this gate's own script) is
+    itself directly workflow-wired, and its own module docstring names
+    ``check_claude_md_doc_overlap.py`` as a worked example. Before the
+    fix, that PROSE mention alone (raw source text entering the
+    transitive-closure haystack) made the mentioned script read as
+    "wired" — the exact false-accept this gate exists to close, produced
+    by the sentence that explained it. A docstring is not code."""
+    scripts_dir = tmp_path / "scripts"
+    workflows_dir = tmp_path / "workflows"
+    _write_script(scripts_dir, "unwired_report.py", "CI: report -- someone\n")
+    _write_script_with_code(
+        scripts_dir, "wired_gate.py",
+        "A gate that mentions scripts/unwired_report.py as a worked example "
+        "in its own rationale, not as a real invocation.\n\nCI: gate\n",
+        "pass\n",
+    )
+    _write_workflow(workflows_dir, "some.yml", "run: python scripts/wired_gate.py\n")
+
+    violations = find_violations(scripts_dir, workflows_dir)
+
+    assert any("unwired_report.py" in v for v in violations), (
+        "a script named only in another directly-wired script's own "
+        "DOCSTRING must still be reported as not actually wired"
+    )
 
 
 def test_a_script_reached_only_via_an_unwired_siblings_docstring_is_still_a_violation(

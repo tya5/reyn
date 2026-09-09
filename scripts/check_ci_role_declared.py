@@ -140,6 +140,55 @@ def _declared_role(docstring: "str | None") -> "tuple[str, str] | None | list[st
     return role, reason
 
 
+def _stripped_source(path: Path) -> str:
+    """AST-reconstructed source with every module/class/function-level
+    DOCSTRING removed, and comments naturally absent (``ast`` never
+    retains them) -- what remains is CODE: real string-literal arguments
+    (a ``Path(...) / "other_script.py"`` construction), not commentary.
+
+    Exists because of a real bug (lead-coder review, #6032): this
+    script's OWN module docstring names ``check_claude_md_doc_overlap.py``
+    as a worked example of the ``report`` role. Once this script is
+    itself directly workflow-wired, its RAW source text (docstring
+    included) used to enter ``_wiring_haystack``'s transitive-closure
+    step, so that PROSE mention alone made ``check_claude_md_doc_overlap.
+    py`` read as "wired" -- the exact false-accept this module's own
+    design claims to prevent, produced by the sentence that made that
+    claim. A mention is not a call; only code is."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = node.body
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body.pop(0)
+    return ast.unparse(tree)
+
+
+_YAML_COMMENT_RE = re.compile(r"#.*$", re.MULTILINE)
+
+
+def _stripped_yaml(text: str) -> str:
+    """Strip ``#``-to-end-of-line comments from a workflow file's text —
+    the same false-accept shape as ``_stripped_source`` above, one layer
+    up: a workflow's own RATIONALE comment naming a script in passing
+    (this gate's own ``ci-role-declared-gate.yml`` names ``verify_env_
+    identity.py`` in exactly such a comment, explaining why ``tests/
+    conftest.py`` is in its own ``paths:`` list) must not count as
+    "wired" on its own. No ``run:`` line in this repo's workflows has
+    been found to contain a literal ``#`` inside a quoted string
+    (checked by hand, #6032) -- if one ever does, this naive strip would
+    truncate that line rather than mis-detect a script, a safe failure
+    direction (under-matching a real wiring line reads as a FALSE
+    violation, which a human notices and fixes, not a silent false
+    accept)."""
+    return _YAML_COMMENT_RE.sub("", text)
+
+
 def _wiring_haystack(scripts: "list[Path]", scripts_dir: Path, workflows_dir: Path) -> str:
     """"Wired" is not always a direct ``.github/workflows/*.yml`` mention —
     3 real scripts in this repo's own population are reached one layer
@@ -151,25 +200,40 @@ def _wiring_haystack(scripts: "list[Path]", scripts_dir: Path, workflows_dir: Pa
     workflow file themselves.
 
     Two real invocation mechanisms, not a hand-typed name list: workflow
-    files ∪ conftest.py files form the base haystack; any script whose OWN
-    name appears there is ITSELF added to the haystack (one level of
-    transitive closure) — this is how a sibling-script dispatch chain like
-    wheel_reachability_smoke.py -> wheel_parity_probe.py resolves without
-    naming either script here. Deliberately NOT extended to every
-    script's source (only ones already confirmed directly wired) — that
-    would let an unrelated script's passing docstring mention of another
-    script's filename count as "wired", the exact false-accept shape this
-    whole gate exists to close."""
+    files ∪ conftest.py files form the base haystack (comments stripped
+    from both -- see ``_stripped_yaml``/``_stripped_source``); any script
+    whose own name appears there is ITSELF added to the haystack, its own
+    comments/docstrings ALSO stripped (one level of transitive closure)
+    — this is how a sibling-script dispatch chain like
+    ``wheel_reachability_smoke.py -> wheel_parity_probe.py`` resolves
+    without naming either script here. Deliberately NOT extended to
+    every script's source (only ones already confirmed directly wired)
+    -- that would let an unrelated script's passing mention of another
+    script's filename count as "wired", the exact false-accept shape
+    this whole gate exists to close.
+
+    Residual disclosed, not solved: a real STRING LITERAL that merely
+    QUOTES another script's filename in an f-string/error message (not a
+    docstring, not a comment, but also not a real invocation -- e.g.
+    ``print(f"see {other_script} for detail")``) still reads as "wired"
+    here. Measured against the current 92-script population (#6032):
+    zero such sites found by hand-reviewing every ``gate``/``report``
+    verdict's own wiring path (see the PR body's own per-script table).
+    Not closed structurally because doing so would need parsing WHICH
+    AST context a string constant sits in (a subprocess/Path argument
+    vs. an arbitrary string) -- a real distinction, deferred until a
+    site is found, per this module's own "don't build unmeasured
+    machinery" bar."""
     workflow_text = "\n".join(
-        p.read_text() for p in sorted(workflows_dir.glob("*.yml"))
+        _stripped_yaml(p.read_text()) for p in sorted(workflows_dir.glob("*.yml"))
     )
     conftest_text = "\n".join(
-        p.read_text()
+        _stripped_source(p)
         for p in sorted(scripts_dir.parent.glob("tests/**/conftest.py"))
     )
     haystack = workflow_text + "\n" + conftest_text
     directly_wired = [s for s in scripts if s.name in haystack]
-    return haystack + "\n" + "\n".join(s.read_text() for s in directly_wired)
+    return haystack + "\n" + "\n".join(_stripped_source(s) for s in directly_wired)
 
 
 def find_violations(scripts_dir: Path, workflows_dir: Path) -> "list[str]":
