@@ -82,26 +82,56 @@ _DUMP_ENV = "REYN_PROF_DUMP"
 
 
 def stall_dump_path(reyn_log_path: "str | None") -> "str | None":
-    """The fixed, single-file destination for a stall's stack dump (#5977
-    ruling ②, #5978 ①'s ``diagnostic_snapshot`` shape) — the SAME
+    """The single-file destination for THIS PROCESS's stall stack dump
+    (#5977 ruling ②, #5978 ①'s ``diagnostic_snapshot`` shape) — the SAME
     directory ``reyn.log`` lives in, so an operator who already knows to
-    look there finds it, under a FIXED filename: no config surface at
-    all ("a limit that can be set is a limit someone can raise" —
-    architect, #5977).
+    look there finds it, under a filename derived from ``os.getpid()``:
+    no config surface (nothing here is operator-settable — "a limit that
+    can be set is a limit someone can raise," architect, #5977 — the pid
+    is read, never chosen).
+
+    **Boundedness is per-PROCESS, not per-workspace (#5992, lead-coder
+    review of PR #5988)**: a fixed, PID-less filename here would make
+    every process sharing this ``reyn.log`` directory (measured live:
+    ``reyn:web`` and ``reyn:chat`` attached to the SAME project,
+    ``lsof -a -p <pid> -d cwd`` confirming both) point their OWN
+    :class:`DiagnosticSnapshot` at the SAME inode. ``DiagnosticSnapshot``
+    opens ``O_TRUNC``, not ``O_APPEND`` — two processes would each write
+    from their OWN independent offset 0, so the LATER writer does not
+    cleanly "replace" the earlier one the way a single process's own
+    successive episodes do (architect's own "a later stall's dump is
+    never a worse sample" reasoning, #5977, is a claim about ONE
+    process's own successive stalls — it says nothing about a DIFFERENT
+    process's dump, which the current writer has no way to even know
+    exists). The two failure shapes: one process's dump silently
+    overwrites the other's (data loss with no signal), or the two writes
+    interleave into a torn, unreadable dump neither process's own
+    ``mark_fired()`` truncation ever detects. The PID suffix makes each
+    process's own destination genuinely distinct — the boundedness this
+    function's own docstring can claim is now "always exactly one dump
+    PER REYN PROCESS attached to this workspace," not "always exactly
+    one dump, full stop": N reyn processes against one workspace leave N
+    files, each individually still bounded the same way a single
+    process's own file always was. Not a config surface — nobody sets N,
+    it is simply how many reyn processes an operator happens to be
+    running against this one workspace at a time (in practice small and
+    human-driven, never something this function reasons about or bounds
+    itself).
 
     Overwritten in place rather than rotated: a dump answers "what was
-    stuck at the moment of the LAST stall," and a LATER stall's dump is
-    never a worse sample than an earlier one it replaces — there is no
-    reason to keep generations (architect's own self-correction, #5977:
-    an earlier ruling proposed rotation here, which #5977 itself exists
-    to call out — "a bound written for a mechanism this doesn't have").
+    stuck at the moment of the LAST stall," and a LATER stall's dump
+    (from the SAME process) is never a worse sample than an earlier one
+    it replaces — there is no reason to keep generations (architect's
+    own self-correction, #5977: an earlier ruling proposed rotation
+    here, which #5977 itself exists to call out — "a bound written for a
+    mechanism this doesn't have").
 
     ``None`` when there is no ``reyn.log`` path to sit beside — matches
     :meth:`StallDumpArm.open`'s own "no ``FileHandler`` installed → never
     arms" behaviour."""
     if reyn_log_path is None:
         return None
-    return str(Path(reyn_log_path).with_name("stall_dump.log"))
+    return str(Path(reyn_log_path).with_name(f"stall_dump.{os.getpid()}.log"))
 
 
 def dump_path() -> "str | None":
@@ -663,6 +693,18 @@ class StallDumpArm:
         failed reopen — the switch stays disarmed until :meth:`close`)."""
         return self._snapshot.fd is not None
 
+    @property
+    def fd(self) -> "int | None":
+        """The live fd ``faulthandler`` writes into — a thin passthrough
+        to the underlying :class:`~reyn.runtime.diagnostic_snapshot.
+        DiagnosticSnapshot`, exposed for the SAME reason that class
+        exposes its own ``fd``: a test verifying this arm's real EFFECT
+        (does the file's content actually reset between episodes, not
+        merely "was ``mark_fired`` called") needs a real fd to write a
+        stand-in marker into at the exact point production code would
+        have a real dump land (#5992)."""
+        return self._snapshot.fd
+
     def points_at_current_file(self) -> bool:
         """Whether this arm's fd points at the file CURRENTLY at its own
         destination path — a thin public passthrough to
@@ -698,12 +740,24 @@ class StallDumpArm:
         return True
 
     def mark_fired(self) -> None:
-        """Call ONCE, right after the caller has OBSERVED (via the
-        ``stack_dumped`` proxy) that a dump this arm scheduled actually
-        fired — truncates and reopens the snapshot's fd so the NEXT
-        episode's dump overwrites cleanly, ready before it is next armed.
-        Never call this on an ordinary re-arm — see the class docstring's
-        truncate-timing trap."""
+        """Truncate and reopen the snapshot's fd, clearing whatever this
+        arm most recently dumped.
+
+        #5992 (lead-coder review of PR #5988, self-caught): call this
+        ONLY when a PRIOR dump is about to be superseded by a NEW one
+        actually landing — i.e. right before recording a NEW episode's
+        own fire, never immediately after observing the PRIOR one. An
+        earlier version of this contract read "call right after
+        observing a fire," and callers that followed it literally
+        truncated their own dump on the SAME tick it landed — destroying
+        it before an operator could ever read it, with every existing
+        test still green (they counted call COUNT, never checked the
+        file's own content). The dump this arm just wrote must survive
+        the entire gap until (if ever) a NEW one is ready to replace it
+        — see :func:`watch_event_loop`'s own updated docstring for the
+        deferred-consumption shape this requires from the caller. Never
+        call this on an ordinary re-arm either — see the class
+        docstring's truncate-timing trap for why."""
         self._snapshot.reset()
 
     def close(self) -> None:
@@ -761,6 +815,11 @@ async def watch_event_loop(
     """
     last = clock()
     armed_last_tick = False
+    # #5992 (lead-coder review of PR #5988): whether THIS episode's own
+    # dump still needs truncating away before a FUTURE episode's own dump
+    # lands — see the block below for why this is a flag consumed on a
+    # LATER tick, never truncated the moment the fire is detected.
+    pending_truncate = False
     if stack_dump is not None and tripwire.should_arm_stack_dump():
         # Arm for the FIRST wait too — a stall on the very first tick would
         # otherwise go undumped (#5870 stage 1).
@@ -778,13 +837,29 @@ async def watch_event_loop(
                 # readback of faulthandler's (nonexistent) fired state.
                 stack_dumped = lateness_ms > tripwire.threshold_ms
                 if stack_dumped:
-                    tripwire.record_stack_dump()
-                    if stack_dump is not None:
-                        # #5977 ②: truncate + reopen for the NEXT episode
-                        # NOW, right after observing this fire — never on
-                        # an ordinary re-arm (StallDumpArm.mark_fired's own
-                        # docstring: the truncate-timing trap).
+                    # #5992 (self-caught correction, lead-coder review of
+                    # PR #5988): an EARLIER version of this method called
+                    # `mark_fired()` right HERE — truncating the dump the
+                    # SAME tick it is detected, before an operator could
+                    # ever read it (a build with this exact bug still
+                    # passed every existing test, because they counted
+                    # HOW MANY TIMES `mark_fired` was called, never
+                    # checked what it did to the FILE — #5992's own
+                    # finding). If a PRIOR episode's dump is still owed a
+                    # truncation (`pending_truncate`, set below by that
+                    # earlier episode), THIS is the correct point to pay
+                    # it — right before recording THIS NEW episode's own
+                    # dump, never before: the old dump must survive the
+                    # ENTIRE gap between episodes (arbitrarily long, or
+                    # forever if no further stall occurs), and must be
+                    # gone by the moment a NEW one is about to replace it.
+                    if pending_truncate and stack_dump is not None:
                         stack_dump.mark_fired()
+                    tripwire.record_stack_dump()
+                    # This episode's OWN dump is now the one owed a
+                    # truncation — deferred the same way, consumed by
+                    # whichever episode (if any) comes after it.
+                    pending_truncate = True
             if on_tick is not None:
                 on_tick(now, lateness_ms)
             active = turn_active() if turn_active is not None else None

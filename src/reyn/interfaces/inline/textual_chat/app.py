@@ -2491,6 +2491,15 @@ class TextualChatApp(App):
         stall_dump_path`) — see ``StallDumpArm``'s own docstring for the
         full design and the truncate-timing trap ``mark_fired()`` exists
         to avoid.
+
+        **#5992 (lead-coder review of PR #5988)**: ``mark_fired()`` for
+        the episode that JUST fired is deferred (``_pending_truncate``,
+        below) — consumed right before the NEXT episode's own fire is
+        recorded, never immediately after THIS one's. Truncating right
+        away destroyed the dump before an operator could read it, with
+        every prior test still green (they counted call COUNT, not the
+        file's own content) — see ``StallDumpArm.mark_fired``'s own
+        updated docstring.
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
@@ -2573,6 +2582,12 @@ class TextualChatApp(App):
         # implementation each, since this loop does not call that shared
         # one — see the module docstring's own duplication note).
         _armed_last_tick = False
+        # #5992 (lead-coder review of PR #5988): whether THIS episode's
+        # own dump still needs truncating away before a FUTURE episode's
+        # own dump lands — see the block below for why this is a flag
+        # consumed on a LATER tick, never truncated the moment the fire
+        # is detected.
+        _pending_truncate = False
         if _stack_dump is not None and self._loop_tripwire.should_arm_stack_dump():
             _armed_last_tick = _stack_dump.rearm()
         try:
@@ -2589,14 +2604,29 @@ class TextualChatApp(App):
                     # (nonexistent) fired state.
                     stack_dumped = lateness_ms > _TRIPWIRE_MS
                     if stack_dumped:
-                        self._loop_tripwire.record_stack_dump()
-                        if _stack_dump is not None:
-                            # #5977 ②: truncate + reopen for the NEXT
-                            # episode NOW, right after observing this fire
-                            # — never on an ordinary re-arm (StallDumpArm.
-                            # mark_fired's own docstring: the
-                            # truncate-timing trap).
+                        # #5992 (self-caught correction, lead-coder review
+                        # of PR #5988): an EARLIER version called
+                        # mark_fired() right HERE — truncating the dump
+                        # the SAME tick it is detected, before an operator
+                        # could ever read it (a build with this exact bug
+                        # still passed every existing test, because they
+                        # counted HOW MANY TIMES mark_fired was called,
+                        # never checked what it did to the FILE). If a
+                        # PRIOR episode's dump is still owed a truncation
+                        # (deferred from that earlier episode), THIS is
+                        # the correct point to pay it — right before
+                        # recording THIS NEW episode's own dump, never
+                        # before: the old dump must survive the ENTIRE gap
+                        # between episodes (arbitrarily long, or forever
+                        # if no further stall occurs), and must be gone by
+                        # the moment a NEW one is about to replace it.
+                        if _pending_truncate and _stack_dump is not None:
                             _stack_dump.mark_fired()
+                        self._loop_tripwire.record_stack_dump()
+                        # This episode's OWN dump is now the one owed a
+                        # truncation — deferred the same way, consumed by
+                        # whichever episode (if any) comes after it.
+                        _pending_truncate = True
                 pump_history.append((now, self._pump_ticks, self._keys_received))
                 while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                     pump_history.popleft()

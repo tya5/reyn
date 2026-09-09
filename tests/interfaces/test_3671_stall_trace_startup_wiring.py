@@ -249,9 +249,12 @@ async def test_the_tripwire_arms_its_own_fd_when_a_file_handler_exists(
             "its fd number can be reused once IT closes, silently redirecting "
             "a still-pending dump)"
         )
-        expected_path = installed_file_handler.with_name("stall_dump.log")
+        # #5992: the filename carries THIS process's own pid (cross-process
+        # boundedness — two reyn processes sharing a workspace must not
+        # point at the SAME file, see stall_dump_path's own docstring).
+        expected_path = installed_file_handler.with_name(f"stall_dump.{os.getpid()}.log")
         assert os.fstat(file_arg).st_ino == expected_path.stat().st_ino, (
-            "the armed fd does not point at the derived stall-dump snapshot path"
+            "the armed fd does not point at the derived, pid-scoped stall-dump snapshot path"
         )
 
 
