@@ -903,6 +903,17 @@ def pytest_configure(config: pytest.Config) -> None:
     stall_dump.pytest_configure(config)
 
 
+def pytest_sessionstart(session: pytest.Session) -> None:
+    # #5994 stage ①: graceful session-wide deadline — opt-in
+    # (REYN_TEST_SESSION_DEADLINE_S unset means this is a no-op), see that
+    # module's own docstring for why `session.shouldstop` and why armed here
+    # (this hook fires in EVERY xdist process, controller and each worker,
+    # since only a worker's own session ever has an item to stop).
+    from reyn.dev.testing import session_deadline
+
+    session_deadline.pytest_sessionstart(session)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item],
