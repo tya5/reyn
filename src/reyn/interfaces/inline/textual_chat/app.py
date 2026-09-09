@@ -2858,7 +2858,21 @@ class TextualChatApp(App):
         # docstring for the follow-up this leaves open).
         if self._read_model is not None:
             self._read_model.add_status_listener(self._on_session_status_delta)
-        self.run_worker(self._pump_frames(), name="frames", exclusive=True)
+        # #5995 (lead-coder ruling, #5978's own "a describing doc follows
+        # the code, a DECIDING doc does not" — this method's own class
+        # docstring below is the latter): `_pump_frames` re-raises its
+        # supply failure so the log/docstring's own claim is recoverable
+        # from a real traceback, but this worker must not take the whole
+        # app down over it — `exit_on_error=False` is what actually makes
+        # "the app stays open; only an explicit /quit exits" TRUE. Every
+        # other `run_worker` call site in this class keeps the Textual
+        # default (#5990's own census: 0 of 15 override it) — this is the
+        # ONE exception, and deliberately narrow: #5995 does not widen the
+        # other 5 crash-reaches-a-named-channel sites the same census
+        # found, those are tracked separately.
+        self.run_worker(
+            self._pump_frames(), name="frames", exclusive=True, exit_on_error=False,
+        )
         # #5050 ③: a SEPARATE worker, not sequenced inside ``_pump_frames``
         # itself — that loop can run forever (a live connection) or never
         # yield a single frame at all (the exact scenario this exists
@@ -7507,7 +7521,7 @@ class TextualChatApp(App):
                 "the app stays open; only an explicit /quit exits."
             )
             raise
-        except Exception:
+        except Exception as exc:
             # #5329 ②(landed, #5355): the loop's own supply,
             # ``self._transport.frames()``, was the one failure point in
             # this method with no handler — every other site above logs
@@ -7519,6 +7533,24 @@ class TextualChatApp(App):
                 ".frames()) raised (reason=supply_failed) — the app stays "
                 "open; only an explicit /quit exits."
             )
+            # #5995 (lead-coder): before this, a dead pump was reported
+            # ONLY to reyn.log — with `exit_on_error=False` (see
+            # `run_worker`'s own call site) the app no longer crashes
+            # LOUDLY over this either, so without a visible row the
+            # failure would be exactly #5990's own class: no frame ever
+            # arriving again, and nothing on screen says why. The chat
+            # pane is still alive at this point (this worker's own crash
+            # no longer takes it down), so the same `OutboxMessage` idiom
+            # #5990 used for its own round-trip couriers applies here too.
+            from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+            self._ingest_frame(OutboxMessage(
+                kind="error",
+                text=(
+                    f"connection lost: {type(exc).__name__}: {exc} — no more "
+                    "replies will arrive; /quit and reconnect"
+                ),
+            ))
             # #5694: force ONE render here — `_refresh_live_chrome` is
             # otherwise only ever called "as frames land" (its own
             # docstring), but the frame supply just died, so no frame is

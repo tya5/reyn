@@ -37,7 +37,7 @@ import logging
 from typing import AsyncIterator
 
 import pytest
-from textual.worker import WorkerFailed
+from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.transport.client_transport import ClientTransportStub
@@ -167,23 +167,46 @@ async def test_a_pump_exception_is_logged_distinguishably_before_exit(
     real frame and then hit the injected raise; CI's own ``--timeout`` is
     the only ceiling.
 
-    ``run_test``'s own pilot re-raises the worker's failure as
-    ``WorkerFailed`` on context exit — this is Textual's OWN pre-existing
-    behaviour (``Worker._run``'s ``exit_on_error`` path calls
-    ``app._handle_exception``, docstring: "Always results in the app
-    exiting"), unconditional on whether ``_pump_frames`` itself has a
-    handler. It fired identically before this fix (the bare, handler-less
-    ``try/finally`` never stopped the exception reaching the worker
-    machinery) — the fix adds the log line, not this propagation, so
-    asserting it here is not asserting the fix itself, only setting up a
-    place to observe it from."""
+    #5995 (lead-coder ruling): this test USED TO wrap the ``async with``
+    in ``pytest.raises(WorkerFailed)``, documented as Textual's own
+    pre-existing, unconditional propagation. lead-coder's own reading of
+    the method's class docstring — "the app stays open; only an explicit
+    /quit exits" — as a DECISION, not a description (CLAUDE.md: a
+    deciding doc is not falsified by an implementation that has not
+    caught up) means that propagation was itself the bug: this method's
+    own ``run_worker(..., name="frames", ...)`` call site now passes
+    ``exit_on_error=False``, so ``Worker._run`` never calls
+    ``app._handle_exception`` and ``WorkerFailed`` never reaches this
+    pilot at all — the app stays running, matching the docstring's own
+    claim for the first time. ``app.is_running`` below is this test's own
+    replacement witness for that (Textual's public, process-level
+    surface — the same one #5990's own ``return_code`` tests used).
+    Strip-falsifier for THIS half (verified by hand: the call site
+    reverted to Textual's ``exit_on_error`` default): ``app.is_running``
+    is ``False`` by the time the ``async with`` block would reach the
+    assertion — the block itself never completes normally, since the
+    pilot exits via the propagated ``WorkerFailed`` instead."""
     transport = _RaisingTransport()
     app = TextualChatApp(transport=transport)
     with caplog.at_level(logging.ERROR, logger=_LOGGER_NAME):
-        with pytest.raises(WorkerFailed):
-            async with app.run_test(size=(80, 24)) as pilot:
-                await pilot.pause()
-                await pilot.pause()
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            await pilot.pause()
+            assert app.is_running is True, (
+                "#5995 REGRESSION: a genuine _pump_frames exception must "
+                "not take the whole app down — the app should still be "
+                "running here"
+            )
+            errors = [
+                e.item.text
+                for e in app.query_one(FlowView).entries
+                if e.item.kind == "error"
+            ]
+            assert any("connection lost" in t for t in errors), (
+                f"#5995 REGRESSION: a dead pump that no longer crashes the "
+                f"app loudly must still be visible somewhere the operator "
+                f"looks — got {errors!r}"
+            )
 
     records = [r for r in caplog.records if r.name == _LOGGER_NAME]
     messages = [r.message for r in records]
@@ -223,8 +246,6 @@ async def test_a_clean_end_of_stream_logs_nothing_new(
     drifting, ``caplog`` catching nothing. The affirmative assert below
     closes that gap: it requires the SAME pump that would carry the new
     log line to have actually run and delivered its frame."""
-    from textual_flowview import FlowView
-
     transport = _CleanEndTransport()
     app = TextualChatApp(transport=transport)
     with caplog.at_level(logging.ERROR, logger=_LOGGER_NAME):
