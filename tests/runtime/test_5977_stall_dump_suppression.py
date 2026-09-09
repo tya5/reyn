@@ -32,7 +32,7 @@ from pathlib import Path
 import pytest
 
 from reyn.runtime.diagnostic_snapshot import DiagnosticSnapshot, diagnostic_snapshot
-from reyn.runtime.loop_tripwire import LoopTripwire, StallDumpArm, watch_event_loop
+from reyn.runtime.loop_tripwire import LoopTripwire, StallDumpArm, stall_dump_path, watch_event_loop
 
 
 class _ScriptedClock:
@@ -54,11 +54,11 @@ class _ScriptedClock:
             raise asyncio.CancelledError
 
 
-def _open_arm(tmp_path: Path, *, label: str) -> StallDumpArm:
+def _open_arm(tmp_path: Path, *, label: str) -> "tuple[StallDumpArm, Path]":
     path = tmp_path / "stall_dump.log"
     arm = StallDumpArm.open(seconds=0.25, path=str(path), logger=logging.getLogger(label), label=label)
     assert arm is not None
-    return arm
+    return arm, path
 
 
 def _counting(method):
@@ -73,6 +73,34 @@ def _counting(method):
         return method(*args, **kwargs)
 
     return wrapper, calls
+
+
+def _write_a_real_marker_on_every_recorded_dump(tripwire: LoopTripwire, arm: StallDumpArm) -> "list[bytes]":
+    """Wire ``tripwire.record_stack_dump`` to write a REAL, distinguishable
+    marker into ``arm``'s own fd at the exact point production code
+    detects a fire — standing in for the real (timer-driven, unwaitable
+    in a scripted-clock test) ``faulthandler`` write that would land
+    there.
+
+    #5992 (lead-coder review of PR #5988): counting HOW MANY TIMES
+    ``mark_fired()`` was called (this file's earlier form) verifies the
+    call happened, never that it had any EFFECT — a build that truncates
+    on the WRONG tick (or never at all) can still make every one of those
+    call-count assertions pass. Checking the file's own FINAL content
+    against ``markers[-1]`` (not merely "the last marker is present" —
+    every EARLIER one must be GONE too) is the real witness."""
+    markers: "list[bytes]" = []
+    real_record = tripwire.record_stack_dump
+
+    def record_and_write() -> None:
+        assert arm.fd is not None, "the arm must still be armed when a dump is recorded"
+        marker = f"dump #{len(markers) + 1}\n".encode()
+        markers.append(marker)
+        os.write(arm.fd, marker)
+        real_record()
+
+    tripwire.record_stack_dump = record_and_write  # type: ignore[method-assign]
+    return markers
 
 
 def _many_episode_clock_instants(n: int) -> "list[float]":
@@ -109,7 +137,7 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
 
     Strip-falsify (verified by hand: the ``tripwire.should_arm_stack_dump()``
     read in the post-``observe()`` re-arm decision temporarily forced to
-    ``True``): ``mark_fired`` fires twice for this exact script — the
+    ``True``): a SECOND marker gets written for this exact script — the
     issue's own accept criterion ("抑制を外すと、同じ stall で複数セット
     出ることを確認").
 
@@ -123,14 +151,13 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
     ``test_watch_event_loop_never_arms_a_second_timer_before_recording_the_first_dump``
     below, which ends WHILE STILL IN THE STALL (no recovery tick), for
     the script that actually separates the two orderings."""
-    arm = _open_arm(tmp_path, label="t1")
+    arm, path = _open_arm(tmp_path, label="t1")
     rearm_wrapper, rearm_calls = _counting(arm.rearm)
     arm.rearm = rearm_wrapper  # type: ignore[method-assign]
-    fired_wrapper, mark_fired_calls = _counting(arm.mark_fired)
-    arm.mark_fired = fired_wrapper  # type: ignore[method-assign]
 
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.85, 0.90])
     tripwire = LoopTripwire(threshold_ms=250.0)
+    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -141,10 +168,14 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
                 clock=clock,
                 sleep=clock.sleep,
             )
+        final_content = path.read_bytes()
     finally:
         arm.close()
 
-    assert mark_fired_calls[0] == 1, "one over-threshold tick already dumped; the second must not"
+    assert markers == [b"dump #1\n"], "one over-threshold tick already dumped; the second must not"
+    assert final_content == markers[-1], (
+        "the file must hold ONLY the last dump's marker (no earlier content lingering)"
+    )
     assert rearm_calls[0] == 3, (
         "initial arm + the ONE tick that dumped — the second over-threshold "
         "tick's re-arm must be skipped, not just its readback ignored"
@@ -156,13 +187,13 @@ async def test_a_second_stall_episode_gets_its_own_fresh_dump_allowance(tmp_path
     """Tier 2: #5977 ①. Recovery must reset the per-episode gate: a
     SECOND, separate stall episode after a full recovery gets its own
     dump. Script: healthy → late(onset A, dump#1) → recovered(A) →
-    late(onset B, dump#2) → recovered(B)."""
-    arm = _open_arm(tmp_path, label="t2")
-    fired_wrapper, mark_fired_calls = _counting(arm.mark_fired)
-    arm.mark_fired = fired_wrapper  # type: ignore[method-assign]
-
+    late(onset B, dump#2) → recovered(B). #5992: the file's own FINAL
+    content must hold ONLY B's marker — A's must be gone, not sitting
+    beside it."""
+    arm, path = _open_arm(tmp_path, label="t2")
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.50, 0.90, 0.95])
     tripwire = LoopTripwire(threshold_ms=250.0)
+    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -173,10 +204,12 @@ async def test_a_second_stall_episode_gets_its_own_fresh_dump_allowance(tmp_path
                 clock=clock,
                 sleep=clock.sleep,
             )
+        final_content = path.read_bytes()
     finally:
         arm.close()
 
-    assert mark_fired_calls[0] == 2, "two SEPARATE episodes each get their own one-shot dump"
+    assert markers == [b"dump #1\n", b"dump #2\n"], "two SEPARATE episodes each get their own one-shot dump"
+    assert final_content == markers[-1], "episode B's dump must have overwritten episode A's, not sat beside it"
 
 
 @pytest.mark.asyncio
@@ -191,17 +224,28 @@ async def test_no_session_cap_the_12th_episode_still_dumps(tmp_path: Path) -> No
     hiding every later one. This test runs 12 SEPARATE episodes (past the
     old cap of 10) and asserts all 12 dump.
 
-    Strip-falsify (verified by hand: re-adding ``if self._session_dump_
-    count >= 10: return False`` to ``should_arm_stack_dump``): the count
-    plateaus at 10 for this exact script instead of reaching 12 — the
+    Strip-falsify #1 (verified by hand: re-adding ``if self._session_dump_
+    count >= 10: return False`` to ``should_arm_stack_dump``): only 10
+    markers get written for this exact script instead of 12 — the
     issue's own accept criterion ("11 回目以降も dump ファイルが最新に
-    更新される")."""
-    arm = _open_arm(tmp_path, label="t3")
-    fired_wrapper, mark_fired_calls = _counting(arm.mark_fired)
-    arm.mark_fired = fired_wrapper  # type: ignore[method-assign]
+    更新される").
 
+    ⚠️ #5992 (lead-coder review of PR #5988): counting HOW MANY TIMES
+    ``mark_fired()`` was called (this test's earlier form) verifies the
+    call happened, never that it had any EFFECT — a build that truncates
+    the WRONG episode's dump (or the RIGHT one on the WRONG tick) can
+    still leave every one of those call-count assertions green. This
+    test instead checks the file's own FINAL content against the LAST
+    episode's marker alone. Strip-falsify #2 (verified by hand:
+    ``mark_fired()`` calls moved back to firing immediately upon
+    detecting EACH episode's own dump, rather than deferred to the START
+    of the NEXT episode): the file ends up EMPTY (episode 12's own
+    content gets destroyed by its OWN immediate truncation) instead of
+    holding episode 12's marker — failing the equality assertion below."""
+    arm, path = _open_arm(tmp_path, label="t3")
     clock = _ScriptedClock(_many_episode_clock_instants(12))
     tripwire = LoopTripwire(threshold_ms=250.0)
+    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -212,10 +256,18 @@ async def test_no_session_cap_the_12th_episode_still_dumps(tmp_path: Path) -> No
                 clock=clock,
                 sleep=clock.sleep,
             )
+        final_content = path.read_bytes()
     finally:
         arm.close()
 
-    assert mark_fired_calls[0] == 12, "no cap — every one of 12 separate episodes must dump"
+    assert markers == [f"dump #{i}\n".encode() for i in range(1, 13)], (
+        "no cap — every one of 12 separate episodes must dump"
+    )
+    assert final_content == markers[-1], (
+        "the file must hold ONLY episode 12's marker — every earlier one must have "
+        "been truncated away by mark_fired(), not accumulated beside it, and episode "
+        "12's own marker must have survived (not destroyed by its own truncation)"
+    )
 
 
 @pytest.mark.asyncio
@@ -239,14 +291,13 @@ async def test_watch_event_loop_never_arms_a_second_timer_before_recording_the_f
     pending for no reason. Strip-falsify (verified by hand, both
     directions): swapping the re-arm decision back to before ``observe()``
     in ``watch_event_loop`` turns this 2 into 3."""
-    arm = _open_arm(tmp_path, label="t4")
+    arm, path = _open_arm(tmp_path, label="t4")
     rearm_wrapper, rearm_calls = _counting(arm.rearm)
     arm.rearm = rearm_wrapper  # type: ignore[method-assign]
-    fired_wrapper, mark_fired_calls = _counting(arm.mark_fired)
-    arm.mark_fired = fired_wrapper  # type: ignore[method-assign]
 
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.85, 1.25])
     tripwire = LoopTripwire(threshold_ms=250.0)
+    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -257,10 +308,12 @@ async def test_watch_event_loop_never_arms_a_second_timer_before_recording_the_f
                 clock=clock,
                 sleep=clock.sleep,
             )
+        final_content = path.read_bytes()
     finally:
         arm.close()
 
-    assert mark_fired_calls[0] == 1
+    assert markers == [b"dump #1\n"]
+    assert final_content == markers[-1]
     assert rearm_calls[0] == 2, (
         "the tick that detects the first dump must not ALSO arm a second, "
         "uncancelled timer for the still-ongoing stall"
@@ -372,3 +425,27 @@ def test_diagnostic_snapshot_has_no_rotation_or_config_surface() -> None:
 
     params = set(inspect.signature(DiagnosticSnapshot.open).parameters)
     assert params == {"path"}, "no config surface beyond the destination itself"
+
+
+def test_stall_dump_path_is_scoped_to_this_process_not_the_workspace() -> None:
+    """Tier 1: #5992 (lead-coder review of PR #5988) — a fixed, PID-less
+    filename here would make every process sharing a ``reyn.log``
+    directory (measured live: ``reyn:web`` and ``reyn:chat`` attached to
+    the SAME project) point their own ``DiagnosticSnapshot`` at the SAME
+    inode; since ``DiagnosticSnapshot`` opens ``O_TRUNC`` (not
+    ``O_APPEND``), two processes would each write from independent
+    offset 0 — one silently overwriting the other, or the two writes
+    interleaving into a torn, unreadable dump. Embedding ``os.getpid()``
+    makes each process's own destination structurally distinct — not a
+    config surface (nobody SETS a pid; it is read, never chosen).
+
+    Non-vacuity / strip-falsify: a build that reverted to the fixed
+    ``"stall_dump.log"`` name would make this equality assertion pass
+    with an UNCHANGED path for every pid — this test's own second
+    assertion (the pid's digits appear in the result) is what a fixed
+    name fails, verified by hand (temporarily reverting the f-string to
+    the literal filename)."""
+    result = stall_dump_path("/tmp/example/.reyn/logs/reyn.log")
+    assert result is not None
+    assert result == f"/tmp/example/.reyn/logs/stall_dump.{os.getpid()}.log"
+    assert str(os.getpid()) in result, "the pid must actually appear in the derived filename"
