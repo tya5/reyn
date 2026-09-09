@@ -723,13 +723,19 @@ class StallDumpArm:
         :meth:`~reyn.runtime.diagnostic_snapshot.DiagnosticSnapshot.
         points_at_current_file`'s own docstring for why this matters: a
         write against an orphaned fd still succeeds, silently, into a
-        file nobody can find). Returns whether a timer is now pending."""
+        file nobody can find). Returns whether a timer is now pending.
+
+        #5998 (lead-coder, real-machine hazard from #5877): the reopen
+        below disarms FIRST — see :meth:`_disarm_before_reset`'s own
+        docstring for why a plain ``self._snapshot.reset()`` here would
+        be the exact same fd-reuse hazard #5877 found and :meth:`close`
+        already guards against."""
         from reyn.runtime.stall_trace import arm as _arm
 
         if self._snapshot.fd is None:
             return False
         if not self._snapshot.points_at_current_file():
-            self._snapshot.reset()
+            self._disarm_before_reset()
             if self._snapshot.fd is None:
                 self._logger.error(
                     "%s: could not reopen the tripwire's own stall-dump snapshot after "
@@ -738,6 +744,41 @@ class StallDumpArm:
                 return False
         _arm(self._seconds, file=self._snapshot.fd, repeat=False)
         return True
+
+    def _disarm_before_reset(self) -> None:
+        """Disarm the one process-wide timer BEFORE truncating+reopening
+        the snapshot's fd — the same order :meth:`close` already uses,
+        applied to the other two places this arm ever closes an fd out
+        from under a possibly-still-pending timer (:meth:`mark_fired`,
+        and :meth:`rearm`'s own reopen-on-external-change branch).
+
+        #5998 (lead-coder, real-machine hazard #5877 found again):
+        ``faulthandler.dump_traceback_later`` commits to the fd NUMBER at
+        ARM time, not a live object (#5877's own real-machine
+        reproduction: ``open("a")`` → arm → ``close`` → ``open("b")`` —
+        the OS handed back the SAME fd number, and the pending dump
+        landed in ``"b"``). ``DiagnosticSnapshot.reset()`` itself stays
+        arm-unaware ON PURPOSE (its own module docstring: a reusable
+        primitive other future snapshot writers, with no
+        ``faulthandler``/``stall_trace`` involvement at all, can use
+        without inheriting a dependency on this module) — THIS arm is
+        the one layer that actually knows a timer might be pending
+        against the fd about to close, so disarming belongs here, not
+        pushed down into the generic primitive.
+
+        ⚠️ :func:`~reyn.runtime.stall_trace.disarm` cancels the ONE
+        process-wide ``faulthandler`` timer — safe to call even when
+        nothing is armed (idempotent), but it would also cancel a
+        DIFFERENT caller's pending timer if one existed. Today only ONE
+        arm is ever armed at a time (this module's own docstring: the
+        TUI startup bracket disarms before an interactive turn can begin,
+        and the tripwire is the PERMANENT occupant of the timer from
+        first frame onward) — this call inherits that same precondition,
+        it does not introduce a new one."""
+        from reyn.runtime.stall_trace import disarm as _disarm
+
+        _disarm()
+        self._snapshot.reset()
 
     def mark_fired(self) -> None:
         """Truncate and reopen the snapshot's fd, clearing whatever this
@@ -755,10 +796,15 @@ class StallDumpArm:
         file's own content). The dump this arm just wrote must survive
         the entire gap until (if ever) a NEW one is ready to replace it
         — see :func:`watch_event_loop`'s own updated docstring for the
-        deferred-consumption shape this requires from the caller. Never
-        call this on an ordinary re-arm either — see the class
+        deferred-consumption shape this requires from the caller.
+
+        #5998: disarms before the reset (see
+        :meth:`_disarm_before_reset`) — a re-arm always follows shortly
+        after this call in :func:`watch_event_loop`'s own tick loop
+        (:meth:`rearm`, next tick), never inside this method itself.
+        Never call this on an ordinary re-arm either — see the class
         docstring's truncate-timing trap for why."""
-        self._snapshot.reset()
+        self._disarm_before_reset()
 
     def close(self) -> None:
         """Disarm BEFORE closing the fd (#5877: the reverse order would let a
