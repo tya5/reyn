@@ -156,7 +156,7 @@ if TYPE_CHECKING:
 
 async def check_exec_plan_policy(
     plan: "ExecPlan", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
-) -> "list[str]":
+) -> "list[dict[str, str]]":
     """Apply 段3 policy to every item of *plan* — see this module's own
     docstring for exactly what each item type is checked against. Raises
     :class:`PermissionError` on the FIRST denial encountered, in plan
@@ -166,19 +166,24 @@ async def check_exec_plan_policy(
     write/read checks, ``sandboxed_exec.py``'s own single threat-scan
     raise).
 
-    Returns the RESOLVED ``argv[0]`` (the same absolute path
+    Returns ``[{"argv0": <original>, "resolved": <resolved absolute
+    path>}, ...]``, one entry per :class:`~reyn.security.exec_plan.
+    ExecSegment` in *plan*, in order — #5838 段5 (lead-coder ruling,
+    #5838), the pairing added on architect's own PR co-vet suggestion
+    (issuecomment-5594370219: recording ONLY the resolved value would
+    force a reader of ``sandboxed_exec_started``'s ``plan`` field to
+    re-parse ``cmd`` to know what each segment's ORIGINAL ``argv[0]`` was
+    — the pair also preserves whether/what a version-manager shim
+    resolved to, e.g. ``{"argv0": "python", "resolved": "/opt/.pyenv/
+    versions/3.12/bin/python"}``). ``resolved`` is the same absolute path
     :func:`~reyn.security.sandbox.resolve.resolve_real_executable`
-    produced, already computed here for the tool-axis check) for every
-    :class:`~reyn.security.exec_plan.ExecSegment` in *plan*, in order —
-    #5838 段5 (lead-coder ruling, #5838): the resolved argv[0] this module
-    ALREADY derives internally is what ``sandboxed_exec_started``'s own
-    ``plan`` field records, so a caller building that audit trace must
-    reuse THIS list rather than call ``resolve_real_executable`` a second
-    time — the exact "policy saw one binary, the trace recorded a
-    different one" class #5991 BLOCKING ③ closed for env_path/cwd, now
-    closed for the resolved name itself. ``ExecChainOp``/``ExecRedirect``
-    entries contribute nothing to this list (they have no argv[0] of
-    their own).
+    produced, already computed here for the tool-axis check — a caller
+    building the audit trace reuses THIS list rather than calling
+    ``resolve_real_executable`` a second time, the exact "policy saw one
+    binary, the trace recorded a different one" class #5991 BLOCKING ③
+    closed for env_path/cwd, now closed for the resolved name itself.
+    ``ExecChainOp``/``ExecRedirect`` entries contribute nothing to this
+    list (they have no argv[0] of their own).
 
     *env_path*/*cwd* are the ``PATH``/working-directory the eventual
     sandboxed run will actually see — BOTH REQUIRED, keyword-only, no
@@ -192,10 +197,11 @@ async def check_exec_plan_policy(
     Never executes anything, never re-parses *plan* — a pure policy
     check over an already-parsed :data:`~reyn.security.exec_plan.
     ExecPlan`."""
-    resolved_argv0: "list[str]" = []
+    resolved_argv0: "list[dict[str, str]]" = []
     for item in plan:
         if isinstance(item, ExecSegment):
-            resolved_argv0.append(await _check_segment(item, ctx, env_path=env_path, cwd=cwd))
+            resolved = await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
+            resolved_argv0.append({"argv0": item.argv[0] if item.argv else "", "resolved": resolved})
         elif isinstance(item, ExecRedirect):
             await _check_redirect(item, ctx)
         # ExecChainOp carries no policy-relevant data of its own — the

@@ -38,17 +38,22 @@ Not yet wired: `cmd` is not exposed on the LLM `exec` tool schema or the
 pipeline `tool:` step (段6, a separate later stage).
 
 #5838 段5 (lead-coder ruling): `sandboxed_exec_started`/`_completed` now
-carry a `plan` field — each segment's RESOLVED argv[0], in cmd-mode order
-(`None` in argv-mode) — sourced from `check_exec_plan_policy`'s own
-RETURN VALUE, never a second `resolve_real_executable` call here (see
-that function's own docstring: the exact "policy saw one binary, audit
+carry a `plan` field — a list of `{"argv0": <original>, "resolved":
+<resolved absolute path>}`, one per segment, in cmd-mode order (`None`
+in argv-mode) — sourced from `check_exec_plan_policy`'s own RETURN
+VALUE, never a second `resolve_real_executable` call here (see that
+function's own docstring: the exact "policy saw one binary, audit
 recorded a different one" class #5991 BLOCKING ③ closed for env_path/
-cwd, now closed for the resolved name itself). Before this, `argv0_
-resolved` (always `/bin/sh` for a cmd-mode run) was the ONLY binary-
-identifying field in the trace — a chained/piped command's actual
-per-segment binaries were unrecoverable from `.reyn/events` (charter
-lens 7: an audit-event trace must be sufficient to reconstruct what
-happened). NOT added to `sandboxed_exec_cancelled` — that event already
+cwd, now closed for the resolved name itself). The pair shape is
+architect's own PR co-vet suggestion (#6015, issuecomment-5594370219):
+`resolved` alone would force a reader to re-parse `cmd` to learn each
+segment's ORIGINAL token, and would lose whether/what a version-manager
+shim resolved to. Before this, `argv0_resolved` (always `/bin/sh` for a
+cmd-mode run) was the ONLY binary-identifying field in the trace — a
+chained/piped command's actual per-segment binaries were unrecoverable
+from `.reyn/events` (charter lens 7: an audit-event trace must be
+sufficient to reconstruct what happened). NOT added to `sandboxed_exec_
+cancelled` — that event already
 omits `argv0_resolved` too, the same existing asymmetry.
 
 #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd` is
@@ -151,7 +156,7 @@ async def run_sandboxed_exec(
     # calling `resolve_real_executable` a second time here -- see that
     # function's own docstring for why a second resolution is the exact
     # bug class this closes.
-    plan_field: "list[str] | None" = None
+    plan_field: "list[dict[str, str]] | None" = None
 
     if cmd_text is not None:
         from reyn.security.exec_plan import ExecPlanRejected, parse_exec_plan
