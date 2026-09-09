@@ -87,6 +87,7 @@
     "tests/runtime/test_3793_stage2_agui_decoupled_and_is_attached_removed.py": 2,
     "tests/runtime/test_4387_history_resident_eviction.py": 2,
     "tests/runtime/test_5896_stage2_manifest_migration.py": 1,
+    "tests/runtime/test_5973_bounded_materialization.py": 1,
     "tests/runtime/test_concurrent_multiagent_rewind_1580.py": 2,
     "tests/runtime/test_multi_session_restore.py": 1,
     "tests/runtime/test_outbox_hub_broadcast.py": 1,

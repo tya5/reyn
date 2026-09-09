@@ -350,11 +350,45 @@ class SandboxedExecIROp(BaseModel):
     `require_network` at all, regardless of this field's value — the op
     can REQUEST network, never force it past a narrower operator policy.
     """
+    #5838 段4: `cmd` — a shell command line, XOR `argv` (validated below,
+    # same "exactly one of" shape `PresentIROp`/`RenderTemplateIROp` already
+    # use for their own XOR fields). Parsed via `security.exec_plan.
+    # parse_exec_plan` for POLICY ONLY (segment/redirect checks,
+    # `security.exec_plan_policy.check_exec_plan_policy`) — the string
+    # actually executed is `cmd` UNCHANGED, via `["/bin/sh", "-c", cmd]`,
+    # never a reconstruction from the parsed plan (owner ruling (i): match
+    # how Claude Code/Codex/OpenClaw/Hermes all actually work — see
+    # `security/exec_plan.py`'s own module docstring for the full
+    # rationale). `None` (the default) is byte-identical to before this
+    # field existed — every existing caller passes `argv`, unaffected.
+    # NOT YET exposed on the LLM `exec` tool or the pipeline `tool:` step
+    # schema (段6, a separate later stage) — this field exists at the op
+    # level only, reachable so far by a caller that constructs the op
+    # directly.
     kind: Literal["sandboxed_exec"]
-    argv: list[str]                                      # command + args; argv[0] is the executable
+    # #5838 段4: default changed from required to `[]` (via Field(default_
+    # factory=list), never a bare mutable `[]` literal) so a `cmd`-mode
+    # caller need not also invent an empty argv -- every EXISTING caller
+    # already passes a concrete argv explicitly (verified: every
+    # production/test construction site names `argv=`), so this default
+    # is unreachable for them and changes nothing they observe.
+    argv: list[str] = Field(default_factory=list)         # command + args; argv[0] is the executable
+    cmd: str | None = None                                # #5838 段4: shell command line, XOR argv -- see above
     stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
     timeout_seconds: float | None = None                 # #3903①: optional LLM override, checked against SandboxPolicy.max_timeout_seconds
     network: bool = False                                 # #5825①: REQUEST (not grant) that this call run with network enabled; see class docstring
+
+    @model_validator(mode="after")
+    def _exactly_one_of_argv_or_cmd(self) -> "SandboxedExecIROp":
+        # bool(self.argv): an empty list means "not given" here, the same
+        # as every other XOR-field validator in this file treats an empty/
+        # None value as "absent" -- `argv=[]` alone (the new default) is
+        # not a meaningful request on its own, only `cmd` makes it one.
+        if bool(self.argv) == (self.cmd is not None):
+            raise ValueError(
+                "sandboxed_exec requires exactly one of argv / cmd"
+            )
+        return self
 
 
 

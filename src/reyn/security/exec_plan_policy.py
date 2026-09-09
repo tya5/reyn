@@ -110,6 +110,17 @@ that will actually matter once 段4 lands.
    omitting either is a ``TypeError`` at the call site, not a runtime
    surprise later (lead-coder co-vet, issuecomment-5579159401: "cwd も
    同じ").
+
+## #6007 BLOCKING (architect co-vet, issuecomment-5580912677, found while
+reviewing 段4) — a redirect's own ``path`` was never threat-scanned.
+Argv-mode's whole-op scan (``sandboxed_exec.py``) sees every token
+including a redirect target (``" ".join(op.argv)``); this module's own
+per-segment scan never touched :attr:`ExecRedirect.path` at all — a
+surface UNIQUE to going through this module (cmd-mode) that was left
+unscanned only there. :func:`_check_redirect` now runs the SAME scan
+(:func:`_run_threat_scan`, factored out of :func:`_check_segment`) over
+the redirect's own path, before the resolver-presence check (scanning
+needs no resolver).
 """
 from __future__ import annotations
 
@@ -189,38 +200,47 @@ async def _check_segment(
             contextual_deny_message("command", effective, contextual)
         )
 
+    await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
+
+
+async def _run_threat_scan(ctx: "OpContext", text: str, *, subject: "list[str]") -> None:
+    """The threat-scan half of a segment's own check, factored out so
+    :func:`_check_redirect` can apply the IDENTICAL scan to a redirect's
+    own ``path`` (#6007 BLOCKING, architect co-vet, issuecomment-
+    5580912677: argv-mode's whole-op scan sees every token including a
+    redirect target — ``" ".join(op.argv)`` in ``sandboxed_exec.py`` —
+    but cmd-mode's per-segment scan never touched ``ExecRedirect.path``
+    at all, a surface UNIQUE to cmd-mode that was left unscanned only in
+    cmd-mode). *subject* is what the emitted event's own ``argv`` field
+    names — a segment's own argv, or a redirect's path wrapped in a
+    single-element list — never re-derived from *text* (a redirect path
+    with an embedded space must not be miscounted as multiple tokens).
+
+    Raises :class:`PermissionError` on a block-severity match; always
+    emits exactly ONE of ``exec_threat_scanned``/``exec_threat_scan_
+    skipped`` (#5991 BLOCKING ②'s own "two zeros" fix, unchanged here)."""
     threat_scan = getattr(ctx, "threat_scan", None)
     scan_will_run = threat_scan is not None and getattr(threat_scan, "enabled", True)
     if not scan_will_run:
-        # #5991 BLOCKING ②: a plan that was never scanned must leave a
-        # DIFFERENT trace than one that was scanned and found clean —
-        # ``ctx.threat_scan`` being unset/disabled is a real, legitimate
-        # state (a caller that hasn't wired one, or an operator who turned
-        # scanning off), but ``.reyn/events`` must be able to tell the two
-        # apart rather than showing the SAME empty trace for both.
         ctx.events.emit(
             "exec_threat_scan_skipped",
-            argv=list(segment.argv),
+            argv=subject,
             reason="disabled" if threat_scan is not None else "not_configured",
         )
         return
 
     from reyn.security.content_guard import first_blocking_match, scan_for_threats
 
-    matches = scan_for_threats(" ".join(segment.argv), threat_scan, scope="exec")
+    matches = scan_for_threats(text, threat_scan, scope="exec")
     for match in matches:
         ctx.events.emit(
             "exec_threat_match",
             pattern_id=match.pattern_id, severity=match.severity, scope=match.scope,
         )
     block = first_blocking_match(matches, getattr(threat_scan, "block_severity", "block"))
-    # #5991 BLOCKING ②: emitted whether or not a threat was found -- the
-    # positive "scan ran, N matches (possibly 0), blocked=<bool>" record
-    # that lets a later read of ``.reyn/events`` distinguish "clean" from
-    # "never scanned" (the skip branch above covers the latter).
     ctx.events.emit(
         "exec_threat_scanned",
-        argv=list(segment.argv), match_count=len(matches), blocked=block is not None,
+        argv=subject, match_count=len(matches), blocked=block is not None,
     )
     if block is not None:
         ctx.events.emit(
@@ -245,7 +265,19 @@ async def _check_redirect(redirect: "ExecRedirect", ctx: "OpContext") -> None:
     that will ever construct a real exec ``OpContext`` and call this
     function, is not built) — there is no existing behaviour to stay
     compatible with, so fail-open buys nothing and only weakens a
-    security gate for free. A missing resolver now DENIES."""
+    security gate for free. A missing resolver now DENIES.
+
+    #6007 BLOCKING (architect co-vet, issuecomment-5580912677): the
+    threat scan runs FIRST, unconditionally — the SAME scan
+    :func:`_check_segment` applies to a segment's own argv, applied here
+    to *redirect*'s own ``path`` (a surface argv-mode's whole-op scan
+    covers but this module's earlier version never touched at all). Runs
+    before the resolver-presence check on purpose: scanning does not
+    need a ``permission_resolver`` to be wired, so a redirect with no
+    resolver still gets scanned before it gets denied for the separate
+    (missing-resolver) reason."""
+    await _run_threat_scan(ctx, redirect.path, subject=[redirect.path])
+
     if ctx.permission_resolver is None:
         raise PermissionError(
             f"redirect {redirect.op!r} {redirect.path!r} cannot be checked "
