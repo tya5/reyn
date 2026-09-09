@@ -90,6 +90,32 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
+class ThreadedPumpFailed(RuntimeError):
+    """Raised from :meth:`ThreadedTransportProxy.frames` when the worker
+    thread's own frame-pump task (:meth:`ThreadedTransportProxy._pump_
+    frames`) died from an unhandled exception nobody else observed
+    (#5996). The original exception is chained as ``__cause__`` — this
+    class exists only to give the caller a type this module's own name
+    is attached to (a bare re-raise of, say, a transport-internal
+    ``RemoteProtocolError`` would look identical to one raised on the
+    caller's OWN thread, losing the "this crossed a thread boundary"
+    fact); the real cause is always still reachable via ``__cause__``."""
+
+
+class _PumpDied:
+    """The sentinel :meth:`ThreadedTransportProxy._on_pump_task_done`
+    pushes onto ``_caller_queue`` in place of a frame — #5996. Not a
+    ``Frame``/``BacklogBatch`` (the queue's own declared element types),
+    deliberately: :meth:`ThreadedTransportProxy.frames` checks for this
+    exact type before treating a queue item as a frame to yield, so a
+    real ``Frame`` can never be mistaken for this sentinel or vice versa
+    (a shared base/marker attribute on ``Frame`` itself would risk a
+    FUTURE frame variant accidentally satisfying it)."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 @dataclass(frozen=True)
 class _ThreadedSnapshot:
     """The frozen, single-slot value the caller (TUI) thread reads — every
@@ -201,7 +227,7 @@ class ThreadedTransportProxy(ClientTransport):
         self._thread: "threading.Thread | None" = None
         self._worker_thread_ident: "int | None" = None
         self._caller_loop: "asyncio.AbstractEventLoop | None" = None
-        self._caller_queue: "asyncio.Queue[Frame | BacklogBatch] | None" = None
+        self._caller_queue: "asyncio.Queue[Frame | BacklogBatch | _PumpDied] | None" = None
         # Single overwriting slot (#4995's own settled design, see module
         # docstring) — a plain attribute, not a queue: only the LATEST
         # snapshot is ever meaningful, so an older one is safe to discard
@@ -241,8 +267,49 @@ class ThreadedTransportProxy(ClientTransport):
         self._inner = self._transport_factory()
         self._inner.start()
         self._pump_task = loop.create_task(self._pump_frames())
+        # #5996: without this, a `_pump_frames` task that dies from an
+        # unhandled exception is simply GONE — asyncio's own default
+        # handler only logs "Task exception was never retrieved" at
+        # teardown/GC (never to this app's own logger), and the caller's
+        # own `frames()` waits on `_caller_queue.get()` forever, since
+        # nothing else will ever put anything there again. Runs on THIS
+        # (the worker) loop — `add_done_callback` always schedules its
+        # callback via the loop that owns the task, never synchronously.
+        self._pump_task.add_done_callback(self._on_pump_task_done)
         self._ready.set()
         loop.run_forever()
+
+    def _on_pump_task_done(self, task: "asyncio.Task") -> None:
+        """The callback :meth:`_run_worker` attaches to ``_pump_task`` —
+        #5996. Fires for EVERY way the task can end; only a genuine
+        unhandled exception gets forwarded:
+
+        - Cancelled (:meth:`_cancel_pump_on_worker`'s own doing, the
+          ``shutdown()`` path) — not a death, nothing to report.
+        - Ended with no exception (the inner stream's own async
+          generator returned normally) — also not a death; whatever the
+          inner transport wanted the caller to know about a clean end
+          already rode through as an ordinary frame before this fired
+          (e.g. a ``kind="__end__"`` sentinel), the SAME channel a live
+          frame uses, so this callback adds nothing for that case.
+        - Ended with a real exception — the ONLY case this pushes
+          anything: a :class:`_PumpDied` sentinel, carrying the real
+          exception, onto ``_caller_queue`` via ``call_soon_threadsafe``
+          (the SAME cross-thread handoff every real frame already uses
+          — no second mechanism introduced). :meth:`frames` on the
+          caller side raises :class:`ThreadedPumpFailed` the moment it
+          reads this sentinel back off the queue, unblocking the
+          ``await self._caller_queue.get()`` that would otherwise wait
+          forever."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        assert self._caller_loop is not None and self._caller_queue is not None
+        self._caller_loop.call_soon_threadsafe(
+            self._caller_queue.put_nowait, _PumpDied(exc),
+        )
 
     async def _pump_frames(self) -> None:
         """Runs ON THE WORKER LOOP. Drains the inner transport's own frame
@@ -283,6 +350,16 @@ class ThreadedTransportProxy(ClientTransport):
         assert self._caller_queue is not None
         while True:
             frame = await self._caller_queue.get()
+            # #5996: the ONE non-frame item this queue can ever carry —
+            # see :meth:`_on_pump_task_done`'s own docstring for when it
+            # is pushed. Raising here is what unblocks a caller that
+            # would otherwise wait on this same ``get()`` forever; every
+            # OTHER item is a real frame and falls through unchanged.
+            if isinstance(frame, _PumpDied):
+                raise ThreadedPumpFailed(
+                    f"the worker thread's frame pump died: "
+                    f"{type(frame.exc).__name__}: {frame.exc}"
+                ) from frame.exc
             # #3570: unconditional suspension point, once per frame — same
             # reasoning as ``InProcessTransport.frames``'s own identical
             # line (see ``drain.py``'s own docstring): ``Queue.get()``
@@ -507,4 +584,4 @@ class ThreadedTransportProxy(ClientTransport):
         await asyncio.to_thread(self._thread.join)
 
 
-__all__ = ["ThreadedTransportProxy"]
+__all__ = ["ThreadedPumpFailed", "ThreadedTransportProxy"]
