@@ -182,18 +182,67 @@ async def test_shutdown_of_a_never_finishing_pump_does_not_raise_threaded_pump_f
     direction: :meth:`ThreadedTransportProxy._cancel_pump_on_worker`
     (the ``shutdown()`` path) cancels a still-running pump task, and that
     CANCELLATION must not be mistaken for a death by the new
-    ``_on_pump_task_done`` callback. A build that forwarded on
-    cancellation too would make a completely ordinary ``/quit`` raise
-    ``ThreadedPumpFailed`` out of ``shutdown()`` itself.
+    ``_on_pump_task_done`` callback.
 
-    No duration: this transport's own ``frames()`` awaits a real
-    ``asyncio.Event`` that never fires on its own — the pump task is
-    genuinely, indefinitely alive until ``shutdown()``'s own real
-    ``task.cancel()`` ends it; nothing here is a timed wait."""
+    #5996 (lead-coder review, BLOCKING on PR #6004, self-corrected here):
+    an earlier version of this test called ``shutdown()`` WITHOUT ever
+    consuming ``frames()`` — ``ThreadedPumpFailed`` is only ever raised
+    from INSIDE ``frames()``'s own ``isinstance`` check (see that
+    method's own docstring), never from ``shutdown()`` itself, which
+    never reads the queue at all. A build that forwarded on cancellation
+    too would have merely left an unread ``_PumpDied`` sentinel sitting
+    in ``_caller_queue`` — the old test stayed green regardless, since
+    nothing ever looked. Fixed: a real consumer task is started on
+    ``frames()`` BEFORE ``shutdown()`` runs, so a wrongly-forwarded
+    sentinel has a real reader to reach.
+
+    No arbitrary wait: ``shutdown()`` itself is the real synchronization
+    point, not a chosen duration — it structurally requires several real
+    cross-thread round trips (``_call_on_worker("shutdown")``, then
+    ``_cancel_pump_on_worker`` via ``wrap_future``, then
+    ``asyncio.to_thread(self._thread.join)``), each of which yields the
+    CALLER loop back to the scheduler. ``_on_pump_task_done`` is
+    registered via ``add_done_callback`` at ``_run_worker`` time — before
+    ``_cancel_pump_on_worker``'s own ``await self._pump_task`` is ever
+    reached — so in a build that forwards on cancellation, the sentinel
+    would already have been pushed AND already have been read by
+    ``consumer`` by the time ``await proxy.shutdown()`` returns; nothing
+    here depends on picking a sleep long enough.
+
+    Strip-falsifier, verified by hand — NOT a bare deletion of ``if
+    task.cancelled(): return``: ``Task.exception()`` on an already-
+    CANCELLED task raises ``CancelledError`` itself (confirmed
+    interactively), so simply removing that guard makes
+    ``_on_pump_task_done`` raise INSIDE the ``add_done_callback``
+    machinery instead — asyncio's own callback invocation swallows that
+    (logged via the loop's default exception handler, never reaching
+    ``call_soon_threadsafe``), so a bare deletion leaves this test green
+    for an unrelated reason (nothing forwards, but also nothing is
+    diagnosed — a real, distinct gap, just not the one this test
+    targets). The strip that DOES turn this test red, and the one
+    verified by hand: replacing the cancellation guard with a mistake a
+    careless rewrite could plausibly make —
+    ``try: exc = task.exception() except asyncio.CancelledError as ce:
+    exc = ce`` — which treats the cancellation itself as a forwardable
+    failure. That reproduces the exact "an ordinary /quit raises
+    ThreadedPumpFailed" shape this test exists to catch."""
     transport = _NeverYieldsTransport()
     proxy = ThreadedTransportProxy(lambda: transport)
     proxy.start()
-    await proxy.shutdown()
-    assert transport.shutdown_calls == 1, (
-        "sanity: shutdown must have actually reached the inner transport"
-    )
+    consumer = asyncio.ensure_future(proxy.frames().__anext__())
+    try:
+        await proxy.shutdown()
+        assert transport.shutdown_calls == 1, (
+            "sanity: shutdown must have actually reached the inner transport"
+        )
+        assert not consumer.done(), (
+            "#5996 REGRESSION: an ordinary /quit must not deliver "
+            "ThreadedPumpFailed to a live frames() consumer — got "
+            f"{consumer.exception() if consumer.done() else 'n/a'!r}"
+        )
+    finally:
+        consumer.cancel()
+        try:
+            await consumer
+        except asyncio.CancelledError:
+            pass
