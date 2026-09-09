@@ -75,7 +75,9 @@ def _counting(method):
     return wrapper, calls
 
 
-def _write_a_real_marker_on_every_recorded_dump(tripwire: LoopTripwire, arm: StallDumpArm) -> "list[bytes]":
+def _write_a_real_marker_on_every_recorded_dump(
+    tripwire: LoopTripwire, arm: StallDumpArm, *, path: "Path | None" = None,
+) -> "tuple[list[bytes], list[bytes]]":
     """Wire ``tripwire.record_stack_dump`` to write a REAL, distinguishable
     marker into ``arm``'s own fd at the exact point production code
     detects a fire — standing in for the real (timer-driven, unwaitable
@@ -88,8 +90,19 @@ def _write_a_real_marker_on_every_recorded_dump(tripwire: LoopTripwire, arm: Sta
     on the WRONG tick (or never at all) can still make every one of those
     call-count assertions pass. Checking the file's own FINAL content
     against ``markers[-1]`` (not merely "the last marker is present" —
-    every EARLIER one must be GONE too) is the real witness."""
+    every EARLIER one must be GONE too) is the real witness.
+
+    #5992 (lead-coder, TESTS-READ on PR #5997): the 12-episode test's own
+    ``final_content`` read happened ONCE, after the loop — so "each
+    episode's dump was actually visible in the file at the time it fired"
+    was never asserted, only inferred from the LAST one plus the
+    in-memory ``markers`` bookkeeping. When *path* is given, this helper
+    ALSO reads the file back immediately after each write and returns
+    those per-episode snapshots as a second list — giving a caller that
+    wants the per-episode (not merely final) claim a real, per-write
+    witness rather than a single end-of-run read standing in for all 12."""
     markers: "list[bytes]" = []
+    snapshots: "list[bytes]" = []
     real_record = tripwire.record_stack_dump
 
     def record_and_write() -> None:
@@ -97,10 +110,12 @@ def _write_a_real_marker_on_every_recorded_dump(tripwire: LoopTripwire, arm: Sta
         marker = f"dump #{len(markers) + 1}\n".encode()
         markers.append(marker)
         os.write(arm.fd, marker)
+        if path is not None:
+            snapshots.append(path.read_bytes())
         real_record()
 
     tripwire.record_stack_dump = record_and_write  # type: ignore[method-assign]
-    return markers
+    return markers, snapshots
 
 
 def _many_episode_clock_instants(n: int) -> "list[float]":
@@ -157,7 +172,7 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
 
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.85, 0.90])
     tripwire = LoopTripwire(threshold_ms=250.0)
-    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
+    markers, _snapshots = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -193,7 +208,7 @@ async def test_a_second_stall_episode_gets_its_own_fresh_dump_allowance(tmp_path
     arm, path = _open_arm(tmp_path, label="t2")
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.50, 0.90, 0.95])
     tripwire = LoopTripwire(threshold_ms=250.0)
-    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
+    markers, _snapshots = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -245,7 +260,7 @@ async def test_no_session_cap_the_12th_episode_still_dumps(tmp_path: Path) -> No
     arm, path = _open_arm(tmp_path, label="t3")
     clock = _ScriptedClock(_many_episode_clock_instants(12))
     tripwire = LoopTripwire(threshold_ms=250.0)
-    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
+    markers, snapshots = _write_a_real_marker_on_every_recorded_dump(tripwire, arm, path=path)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
@@ -267,6 +282,18 @@ async def test_no_session_cap_the_12th_episode_still_dumps(tmp_path: Path) -> No
         "the file must hold ONLY episode 12's marker — every earlier one must have "
         "been truncated away by mark_fired(), not accumulated beside it, and episode "
         "12's own marker must have survived (not destroyed by its own truncation)"
+    )
+    # #5992 (lead-coder, TESTS-READ on PR #5997): a single end-of-run read
+    # only proves episode 12's own outcome — it does not, by itself, prove
+    # any of the earlier 11 were ever visible in the file AT THE TIME they
+    # fired (only that ``mark_fired`` was later called on them, via
+    # ``markers``' own bookkeeping). ``snapshots`` closes that: it is a
+    # real ``path.read_bytes()`` taken immediately after EACH episode's
+    # own write, so this asserts what was actually on disk at each of the
+    # 12 moments, not merely the last one.
+    assert snapshots == markers, (
+        "each episode's own marker must have been the file's ENTIRE content "
+        "at the moment it fired — not merely true for the last of the 12"
     )
 
 
@@ -297,7 +324,7 @@ async def test_watch_event_loop_never_arms_a_second_timer_before_recording_the_f
 
     clock = _ScriptedClock([0.0, 0.05, 0.45, 0.85, 1.25])
     tripwire = LoopTripwire(threshold_ms=250.0)
-    markers = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
+    markers, _snapshots = _write_a_real_marker_on_every_recorded_dump(tripwire, arm)
     try:
         with pytest.raises(asyncio.CancelledError):
             await watch_event_loop(
