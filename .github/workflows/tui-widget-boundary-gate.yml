@@ -1,0 +1,46 @@
+name: tui widget boundary gate
+
+# #6014 stage B: check_tui_widget_boundary.py (#5131 gate A) was written as
+# a gate -- pins that a textual_chat/ WIDGET module never imports
+# reyn.interfaces.transport or reyn.runtime.registry -- but was referenced
+# from neither a per-PR workflow nor main-invariant-sweep.yml's own
+# enumeration; its only tests/ coverage exercises the detector against a
+# synthetic tmp_path fixture, never the real tree. See #6014's own issue
+# body and comment thread for the census.
+#
+# The rule itself lives in src/reyn/interfaces/CLAUDE.md, not root CLAUDE.md
+# -- an owner ruling that TUI-specific rules stay next to the code they
+# bind, read only by a session that opens those files (an unrelated session
+# shouldn't have to carry them). Wiring this into a repo-wide gate would
+# have applied it to every PR regardless of whether it touches
+# src/reyn/interfaces/ at all, in tension with that ruling -- `paths` below
+# keeps this scoped to the same directory the rule already lives next to,
+# the same shape #6012's silent-except-ratchet-gate.yml took for the same
+# reason.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/interfaces/**"
+
+permissions:
+  contents: read
+
+jobs:
+  tui-widget-boundary:
+    name: tui widget boundary gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_tui_widget_boundary.py is stdlib-only (ast / pathlib /
+      # sys). No pip install needed.
+      - name: Check no textual_chat/ widget module imports transport or registry
+        run: |
+          python scripts/check_tui_widget_boundary.py

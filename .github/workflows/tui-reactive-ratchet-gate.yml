@@ -1,0 +1,48 @@
+name: tui reactive ratchet gate
+
+# #6014 stage B: check_tui_reactive_ratchet.py (#5131 gate B) was written as
+# a ratchet -- reactive_count never DECREASES, imperative_push_count never
+# INCREASES -- but was referenced from neither a per-PR workflow nor
+# main-invariant-sweep.yml's own enumeration; its only tests/ coverage
+# exercises the detector against a synthetic tmp_path fixture, never the
+# real tree. See #6014's own issue body and comment thread for the census.
+#
+# Same src/reyn/interfaces/CLAUDE.md scoping reasoning as
+# tui-widget-boundary-gate.yml -- this rule lives next to the TUI code it
+# binds (owner ruling), so `paths` keeps this gate from applying to every
+# PR regardless of whether it touches that directory.
+#
+# fetch-depth: 0 + --check-growth "origin/${{ github.base_ref }}" is the
+# same skeleton flat-tests-ratchet.yml/mypy already use for a
+# baseline-vs-merge-base diff (architect/#3726 precedent, cited in this
+# script's own module docstring) -- rejects a baseline edit that isn't
+# backed by a real measured change, not merely a baseline that changed.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/interfaces/**"
+
+permissions:
+  contents: read
+
+jobs:
+  tui-reactive-ratchet:
+    name: tui reactive ratchet gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_tui_reactive_ratchet.py is stdlib-only (argparse /
+      # ast / json / subprocess). No pip install needed.
+      - name: Check the reactive floor/imperative-push ceiling ratchet
+        run: |
+          python scripts/check_tui_reactive_ratchet.py --check-growth "origin/${{ github.base_ref }}"

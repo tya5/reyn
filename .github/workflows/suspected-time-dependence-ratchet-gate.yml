@@ -1,0 +1,46 @@
+name: suspected time dependence ratchet gate
+
+# #6014 stage B: suspected_time_dependence_ratchet.py (#4846) was already
+# LISTED in root CLAUDE.md's own `tests/` path-conditional gate line (run
+# it locally before opening a tests/-touching PR) but had no CI workflow of
+# its own -- so main's own doc told a human to run it, while nothing
+# mechanical enforced that they actually had. Its only tests/ coverage
+# exercises the detector against a synthetic tmp_path fixture, never the
+# real tree. See #6014's own issue body and comment thread for the census.
+#
+# `paths: tests/**` matches the CLAUDE.md line it's already conditioned on
+# exactly -- a change outside tests/ cannot add or remove a suspected
+# sleep/range/timeout site this script counts.
+#
+# No fetch-depth: 0 / --check-growth here -- this script only has
+# --write-baseline (see its own module docstring: "no exception-comment
+# escape hatch"), not a BASE_REF-diff mode; a plain run against the
+# committed baseline is the whole gate, same shallow-checkout shape as
+# bare-tests-import-reference-gate.yml.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  suspected-time-dependence-ratchet:
+    name: suspected time dependence ratchet gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/suspected_time_dependence_ratchet.py is stdlib-only (argparse
+      # / ast / json). No pip install needed.
+      - name: Check no new suspected sleep/range/timeout site under tests/
+        run: |
+          python scripts/suspected_time_dependence_ratchet.py
