@@ -50,12 +50,14 @@ file's own ``_spy_on_disarm_and_reset`` already uses for
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 import pytest
 
 from reyn.runtime.diagnostic_snapshot import DiagnosticSnapshot
+from reyn.runtime.loop_tripwire import StallDumpArm
 
 
 def test_reset_on_an_untouched_file_never_changes_the_fd_number(tmp_path: Path) -> None:
@@ -242,3 +244,264 @@ def test_the_external_change_case_never_calls_os_close_on_its_own_fd(
         f"called os.close({own_fd}) — the fd number was momentarily "
         f"released back to the OS instead of dup2'd onto in place"
     )
+
+
+# ---------------------------------------------------------------------------
+# lead-coder review of this PR's first version: the two SUCCESS paths above
+# are not "either of its two cases" -- an OSError inside either one is a
+# real THIRD case, and the first version's own except branches closed the
+# fd (common case) or silently leaked it (external-change case) on
+# failure, both routes this method's own docstring claimed did not exist.
+# ---------------------------------------------------------------------------
+
+
+def _is_open(fd: int) -> bool:
+    try:
+        os.fstat(fd)
+        return True
+    except OSError:
+        return False
+
+
+def test_a_failed_truncate_never_closes_or_nulls_the_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the common-case failure path — an `os.ftruncate` OSError
+    must leave `fd` untouched: same number, still genuinely OPEN (not a
+    stale int left over from a closed fd), never `None`.
+
+    Strip-falsifier (verified by hand: the `except OSError` branch
+    reverted to `os.close(self._fd); self._fd = None`): this test goes
+    red — `snapshot.fd` becomes `None`."""
+    snapshot = DiagnosticSnapshot.open(str(tmp_path / "snap.log"))
+    assert snapshot is not None
+    before = snapshot.fd
+
+    def failing_ftruncate(fd: int, length: int) -> None:
+        raise OSError("simulated ftruncate failure")
+
+    monkeypatch.setattr(os, "ftruncate", failing_ftruncate)
+    snapshot.reset()
+
+    assert snapshot.fd == before, (
+        f"#6000 REGRESSION: a failed truncate changed fd ({before} -> "
+        f"{snapshot.fd}) instead of leaving it untouched"
+    )
+    assert snapshot.fd is not None and _is_open(snapshot.fd), (
+        "#6000 REGRESSION: a failed truncate left fd as a closed/stale "
+        "number, not a genuinely open one"
+    )
+
+
+def test_a_failed_external_reopen_never_closes_or_nulls_the_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the external-change failure path — an `os.open` OSError
+    (reopening the NEW file at *path*) must leave the OLD fd untouched:
+    same number, still open, never `None`, never silently dropped.
+
+    Strip-falsifier (verified by hand: the `except OSError` branch
+    reverted to `self._fd = None` with no `os.close` at all — a genuine
+    LEAK, not merely a stale value): this test goes red — `snapshot.fd`
+    becomes `None` (the leak itself is invisible to THIS assertion, which
+    is exactly why the number/None check matters here, not fstat)."""
+    path = tmp_path / "snap.log"
+    snapshot = DiagnosticSnapshot.open(str(path))
+    assert snapshot is not None
+    before = snapshot.fd
+
+    path.unlink()
+    path.write_text("", encoding="utf-8")
+
+    def failing_open(*args: object, **kwargs: object) -> int:
+        raise OSError("simulated reopen failure")
+
+    monkeypatch.setattr(os, "open", failing_open)
+    snapshot.reset()
+
+    assert snapshot.fd == before, (
+        f"#6000 REGRESSION: a failed external reopen changed fd "
+        f"({before} -> {snapshot.fd}) instead of leaving the OLD one "
+        f"untouched"
+    )
+    assert snapshot.fd is not None and _is_open(snapshot.fd), (
+        "#6000 REGRESSION: a failed external reopen left fd as a closed/"
+        "stale number, not a genuinely open one"
+    )
+
+
+def test_a_failed_dup2_never_closes_or_nulls_the_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the external-change branch's own `dup2` failure — POSIX
+    guarantees `dup2` either succeeds atomically or leaves `oldfd`
+    unmodified on failure; this must not additionally close or null it
+    out on the Python side.
+
+    Strip-falsifier (verified by hand: the `dup2` call left un-caught,
+    letting the raised `OSError` propagate out of `reset()`): this test
+    goes red — the call raises instead of returning."""
+    path = tmp_path / "snap.log"
+    snapshot = DiagnosticSnapshot.open(str(path))
+    assert snapshot is not None
+    before = snapshot.fd
+
+    path.unlink()
+    path.write_text("", encoding="utf-8")
+
+    real_dup2 = os.dup2
+
+    def failing_dup2(fd: int, fd2: int) -> int:
+        # Scoped to THIS snapshot's own fd only -- pytest's own fd-capture
+        # teardown machinery also calls the real os.dup2, and a blanket
+        # patch would break it (observed by hand: an unscoped patch here
+        # crashes pytest's own "Captured stdout teardown" step).
+        if fd2 == before:
+            raise OSError("simulated dup2 failure")
+        return real_dup2(fd, fd2)
+
+    monkeypatch.setattr(os, "dup2", failing_dup2)
+    snapshot.reset()
+
+    assert snapshot.fd == before, (
+        f"#6000 REGRESSION: a failed dup2 changed fd ({before} -> "
+        f"{snapshot.fd}) instead of leaving it untouched"
+    )
+    assert snapshot.fd is not None and _is_open(snapshot.fd), (
+        "#6000 REGRESSION: a failed dup2 left fd as a closed/stale "
+        "number, not a genuinely open one"
+    )
+
+
+def test_open_creates_the_file_with_mode_0o600(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: architect review — `0o600`, deliberately NARROWER than
+    the historical `open(path, "a")`'s own default (`0o666`), not merely
+    matched to it: a stall/diagnostic dump can contain a path or argv,
+    which is worth keeping unreadable by other local users. (`os.open`'s
+    own default, `0o777` masked by umask, would be wider still.)"""
+    real_open = os.open
+    modes: "list[int]" = []
+
+    def spy_open(path: str, flags: int, mode: int = 0o777, *a: object, **kw: object) -> int:
+        modes.append(mode)
+        return real_open(path, flags, mode, *a, **kw)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    snapshot = DiagnosticSnapshot.open(str(tmp_path / "snap.log"))
+    assert snapshot is not None
+
+    assert modes == [0o600], (
+        f"#6000 REGRESSION: DiagnosticSnapshot.open() did not pass an "
+        f"explicit mode=0o600 to os.open — got {modes!r}"
+    )
+
+
+def test_external_reopen_creates_the_file_with_mode_0o600(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the same mode fix, for `reset()`'s own external-change
+    reopen call site — a second `os.open` call this class makes, easy to
+    miss fixing only the first one."""
+    path = tmp_path / "snap.log"
+    snapshot = DiagnosticSnapshot.open(str(path))
+    assert snapshot is not None
+
+    path.unlink()
+    path.write_text("", encoding="utf-8")
+
+    real_open = os.open
+    modes: "list[int]" = []
+
+    def spy_open(p: str, flags: int, mode: int = 0o777, *a: object, **kw: object) -> int:
+        modes.append(mode)
+        return real_open(p, flags, mode, *a, **kw)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    snapshot.reset()
+
+    assert modes == [0o600], (
+        f"#6000 REGRESSION: reset()'s external-change reopen did not "
+        f"pass an explicit mode=0o600 to os.open — got {modes!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# lead-coder + architect ruling: `_fd = None` was conflating "don't have a
+# number" with "not safe to use" -- once reset() stopped ever releasing the
+# number, those two facts diverged. `usable` is the new, separate answer to
+# "may this snapshot be armed/written to." Witnessed here at the
+# StallDumpArm level (the real caller), not just DiagnosticSnapshot's own.
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_becomes_unusable_but_keeps_its_fd_after_a_failed_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the two facts, witnessed together on the SAME failure — a
+    failed reset leaves `fd` unchanged (the number is held, not
+    released) AND `usable` false (do not write here again)."""
+    snapshot = DiagnosticSnapshot.open(str(tmp_path / "snap.log"))
+    assert snapshot is not None
+    before = snapshot.fd
+    assert snapshot.usable is True
+
+    def failing_ftruncate(fd: int, length: int) -> None:
+        raise OSError("simulated ftruncate failure")
+
+    monkeypatch.setattr(os, "ftruncate", failing_ftruncate)
+    snapshot.reset()
+
+    assert snapshot.fd == before, (
+        "#6000 REGRESSION: a failed reset must not change the fd number"
+    )
+    assert snapshot.usable is False, (
+        "#6000 REGRESSION: a failed reset must mark the snapshot unusable "
+        "-- fd staying open is not the same as safe to write to again"
+    )
+
+
+def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: the real caller — `StallDumpArm.rearm()` must decline (not
+    silently arm against a stale, un-truncated fd) once its own snapshot
+    has gone unusable, and `armed` must reflect that too. This is the
+    property that actually prevents the #5977-class regression a silent
+    "keep writing, un-truncated" fallback would have reintroduced: no
+    arm means no more writes at all, not merely un-truncated ones.
+
+    Strip-falsifier (verified by hand: `armed`/`rearm`'s own checks
+    reverted to `fd is None`): this test goes red — `armed` reads `True`
+    and `rearm()` returns `True` even though the snapshot is unusable,
+    because the fd NUMBER itself was never released by the #6000 ② fix
+    (`fd is None` is never true here)."""
+    path = tmp_path / "stall_dump.log"
+    arm = StallDumpArm.open(seconds=60.0, path=str(path), logger=logging.getLogger("t6000"), label="t6000")
+    assert arm is not None
+    try:
+        assert arm.rearm() is True
+        assert arm.armed is True
+
+        def failing_ftruncate(fd: int, length: int) -> None:
+            raise OSError("simulated ftruncate failure")
+
+        monkeypatch.setattr(os, "ftruncate", failing_ftruncate)
+        # mark_fired() is the real call site that reaches reset() on the
+        # common (untouched-file) path -- same shape test_5998's own
+        # test_mark_fired_disarms_before_resetting_the_snapshot uses.
+        arm.mark_fired()
+
+        assert arm.armed is False, (
+            "#6000 REGRESSION: armed must go False once the snapshot's "
+            "own reset failed -- fd staying open (never released) must "
+            "not read as still armed"
+        )
+        assert arm.rearm() is False, (
+            "#6000 REGRESSION: rearm() must refuse to arm against an "
+            "unusable snapshot -- writing un-truncated content is the "
+            "#5977 regression this refusal exists to prevent"
+        )
+    finally:
+        arm.close()
