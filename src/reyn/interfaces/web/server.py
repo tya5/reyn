@@ -196,18 +196,27 @@ async def _lifespan(app: FastAPI):
 
     _tripwire = LoopTripwire()
     app.state.loop_tripwire = _tripwire
+    # #5977 ③: bound to a name (rather than passed inline) so the on_stall
+    # lambda below can read its own .path — the same arm the dead-man's
+    # switch itself uses, never a second, independently-derived path.
+    _stack_dump = StallDumpArm.open(
+        # #5977 ②: its own single, always-overwritten file beside
+        # reyn.log — never reyn.log itself (see stall_dump_path's
+        # own docstring for why).
+        seconds=_TRIPWIRE_MS / 1000, path=stall_dump_path(find_file_handler_path()),
+        logger=logger, label="reyn:web",
+    )
     app.state.loop_tripwire_task = asyncio.create_task(
         watch_event_loop(
             _tripwire,
-            on_stall=lambda ms: logger.warning("reyn:web: %s", stall_log_line(ms)),
-            on_recovered=lambda: logger.warning("reyn:web: %s", stall_recovered_log_line()),
-            stack_dump=StallDumpArm.open(
-                # #5977 ②: its own single, always-overwritten file beside
-                # reyn.log — never reyn.log itself (see stall_dump_path's
-                # own docstring for why).
-                seconds=_TRIPWIRE_MS / 1000, path=stall_dump_path(find_file_handler_path()),
-                logger=logger, label="reyn:web",
+            on_stall=lambda ms: logger.warning(
+                "reyn:web: %s",
+                stall_log_line(
+                    ms, stack_dump_at=_stack_dump.path if _stack_dump is not None else None,
+                ),
             ),
+            on_recovered=lambda: logger.warning("reyn:web: %s", stall_recovered_log_line()),
+            stack_dump=_stack_dump,
         ),
         name="loop-tripwire",
     )
