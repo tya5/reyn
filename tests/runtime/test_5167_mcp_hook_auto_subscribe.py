@@ -151,6 +151,19 @@ async def test_declared_concrete_hook_is_subscribed_with_no_turn_and_no_tool_cal
         )
     finally:
         await session.aclose_mcp_connections()
+        # #6022: session construction unconditionally kicks off
+        # RouterHostAdapter.ensure_mcp_tools_cached's background tools-probe
+        # (start_mcp_probe, #4401 A-4) as a TRACKED task
+        # (session._background_tasks, disposition="await") — a SEPARATE
+        # object from whatever client `aclose_mcp_connections` drains above.
+        # Production drains it via `AgentRegistry.shutdown()` ->
+        # `aclose_background_tasks()`; this test constructs Session directly
+        # (bypassing the registry) so nothing calls that seam without this
+        # line, and the leaked task then survives to pytest-asyncio's own
+        # blanket `_cancel_all_tasks` sweep at scope teardown (60s+ measured
+        # in CI, #6022's own root-cause instrumentation) instead of ending
+        # here, in this test's own scope, on this test's own terms.
+        await session.aclose_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -165,9 +178,14 @@ async def test_no_declared_hook_means_no_subscribe_attempt(tmp_path: Path):
         permission_resolver=resolver,
     )
 
-    await session._auto_subscribe_mcp_resource_hooks()
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
 
-    assert _subscribed_uris(session, "srv") == []
+        assert _subscribed_uris(session, "srv") == []
+    finally:
+        # #6022: see the sibling test above for why both calls are needed.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
 
 
 # ── ② silence closed: every non-concrete/failed case is named, never mute ──
@@ -185,17 +203,25 @@ async def test_unconfigured_server_emits_warning_and_audit_event(tmp_path: Path)
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
     collected = collect_events(events)
 
-    await session._auto_subscribe_mcp_resource_hooks()
-    await settle(events)
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
+        await settle(events)
 
-    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
-    assert matching, (
-        "an unconfigured-server hook produced no mcp_hook_subscribe_not_applied "
-        "audit-event — the declaration's non-effect went silent"
-    )
-    assert matching[0].data.get("server") == "not-configured"
-    assert matching[0].data.get("uri") == _URI
-    assert "not configured" in str(matching[0].data.get("reason", ""))
+        matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+        assert matching, (
+            "an unconfigured-server hook produced no mcp_hook_subscribe_not_applied "
+            "audit-event — the declaration's non-effect went silent"
+        )
+        assert matching[0].data.get("server") == "not-configured"
+        assert matching[0].data.get("uri") == _URI
+        assert "not configured" in str(matching[0].data.get("reason", ""))
+    finally:
+        # #6022: see test_declared_concrete_hook_... above for why both
+        # calls are needed. No `mcp_servers` here, but session construction
+        # still kicks off ensure_mcp_tools_cached's tracked background task
+        # unconditionally, so it must still be drained.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -218,14 +244,20 @@ async def test_permission_denied_emits_warning_and_audit_event(tmp_path: Path):
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
     collected = collect_events(events)
 
-    await session._auto_subscribe_mcp_resource_hooks()
-    await settle(events)
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
+        await settle(events)
 
-    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
-    assert matching, "a permission-denied auto-subscribe must not fail silently"
-    assert matching[0].data.get("server") == "srv"
-    assert "permission" in str(matching[0].data.get("reason", "")).lower()
-    assert _subscribed_uris(session, "srv") == []
+        matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+        assert matching, "a permission-denied auto-subscribe must not fail silently"
+        assert matching[0].data.get("server") == "srv"
+        assert "permission" in str(matching[0].data.get("reason", "")).lower()
+        assert _subscribed_uris(session, "srv") == []
+    finally:
+        # #6022: see test_declared_concrete_hook_... above for why both
+        # calls are needed.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -249,16 +281,22 @@ async def test_glob_uri_matcher_is_not_auto_subscribed_but_is_reported(tmp_path:
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
     collected = collect_events(events)
 
-    await session._auto_subscribe_mcp_resource_hooks()
-    await settle(events)
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
+        await settle(events)
 
-    assert _subscribed_uris(session, "srv") == [], (
-        "a glob uri must never be auto-subscribed — it names a SET, not one "
-        "concrete resource"
-    )
-    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
-    assert matching, "a glob-uri hook's non-effect must still be reported"
-    assert "glob" in str(matching[0].data.get("reason", "")).lower()
+        assert _subscribed_uris(session, "srv") == [], (
+            "a glob uri must never be auto-subscribed — it names a SET, not one "
+            "concrete resource"
+        )
+        matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+        assert matching, "a glob-uri hook's non-effect must still be reported"
+        assert "glob" in str(matching[0].data.get("reason", "")).lower()
+    finally:
+        # #6022: see test_declared_concrete_hook_... above for why both
+        # calls are needed.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -282,13 +320,19 @@ async def test_matcher_missing_server_or_uri_is_reported_not_silently_skipped(
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
     collected = collect_events(events)
 
-    await session._auto_subscribe_mcp_resource_hooks()
-    await settle(events)
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
+        await settle(events)
 
-    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
-    assert matching, "a matcher-less hook's non-effect must still be reported"
-    assert matching[0].data.get("server") is None
-    assert matching[0].data.get("uri") is None
+        matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+        assert matching, "a matcher-less hook's non-effect must still be reported"
+        assert matching[0].data.get("server") is None
+        assert matching[0].data.get("uri") is None
+    finally:
+        # #6022: see test_declared_concrete_hook_... above for why both
+        # calls are needed.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
 
 
 @pytest.mark.asyncio
@@ -317,19 +361,25 @@ async def test_ephemeral_session_never_subscribes_but_still_reports_why(
     session._hook_dispatcher.replace_registry(session._build_hook_registry())
     collected = collect_events(events)
 
-    await session._auto_subscribe_mcp_resource_hooks()
-    await settle(events)
+    try:
+        await session._auto_subscribe_mcp_resource_hooks()
+        await settle(events)
 
-    assert _subscribed_uris(session, "srv") == [], (
-        "an ephemeral session must never actually subscribe — no persistent "
-        "connection exists for a push to arrive on"
-    )
-    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
-    assert matching, (
-        "an ephemeral session's declared hook produced no "
-        "mcp_hook_subscribe_not_applied audit-event — declared, never "
-        "honored, never explained is the exact #5167 bug shape"
-    )
-    assert matching[0].data.get("server") == "srv"
-    assert matching[0].data.get("uri") == _URI
-    assert "ephemeral" in str(matching[0].data.get("reason", "")).lower()
+        assert _subscribed_uris(session, "srv") == [], (
+            "an ephemeral session must never actually subscribe — no persistent "
+            "connection exists for a push to arrive on"
+        )
+        matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+        assert matching, (
+            "an ephemeral session's declared hook produced no "
+            "mcp_hook_subscribe_not_applied audit-event — declared, never "
+            "honored, never explained is the exact #5167 bug shape"
+        )
+        assert matching[0].data.get("server") == "srv"
+        assert matching[0].data.get("uri") == _URI
+        assert "ephemeral" in str(matching[0].data.get("reason", "")).lower()
+    finally:
+        # #6022: see test_declared_concrete_hook_... above for why both
+        # calls are needed.
+        await session.aclose_mcp_connections()
+        await session.aclose_background_tasks()
