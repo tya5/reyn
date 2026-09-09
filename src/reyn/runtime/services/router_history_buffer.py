@@ -82,7 +82,10 @@ def bounded_content_preview(media_store: Any, ref: str, *, max_bytes: int) -> st
     never two that could drift apart."""
     if media_store is None:
         return "(content unavailable — media store not configured)"
-    head, found, total_bytes = media_store.read_tool_result_preview(
+    # #5982: the internal-reader form -- a boundary-violating ref folds
+    # to found=False (logged, never a silent swallow) instead of an
+    # uncaught PermissionError stopping this wire-build.
+    head, found, total_bytes = media_store.read_tool_result_preview_for_internal_reader(
         ref, max_bytes=max_bytes,
     )
     if not found:
@@ -381,11 +384,57 @@ def resolve_history_content(
     def _file_exists(rel_path: str) -> bool:
         return (_Path(project_dir) / rel_path).is_file()
 
-    resolved = resolve(
-        HistoryContentEntry(spilled=spilled, content=content, ref=ref),
-        file_exists=_file_exists,
-        read_text=read_text,
-    )
+    def _lost(*, reason: "LostReason") -> str:
+        # #5982: the single place BOTH `resolve()`'s own "lost" branch
+        # (file genuinely missing) and the PermissionError catch below
+        # (a boundary violation) land -- so the placeholder text and the
+        # audit-event are written once, not duplicated per caller.
+        if events is not None and (seen_lost_refs is None or ref not in seen_lost_refs):
+            if seen_lost_refs is not None:
+                seen_lost_refs.add(ref)
+            import hashlib
+            ref_sha256 = "sha256:" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
+            events.emit(
+                "offloaded_content_unavailable",
+                ref=ref, reason=str(reason), ref_sha256=ref_sha256,
+            )
+        if reason == LostReason.OUTSIDE_BOUNDARY:
+            # Deliberately DIFFERENT wording from the branch below -- the
+            # file may well still EXIST on disk (just outside the
+            # boundary this reader may access), so "no longer exists /
+            # deleted or garbage-collected" would be an ACTIVELY FALSE
+            # claim for this reason, not merely a vaguer one.
+            return (
+                f"[content lost: the offloaded body at {ref!r} could not be "
+                f"read — it resolves outside the storage boundary this "
+                f"reader is permitted to access (reason: {reason})]"
+            )
+        return (
+            f"[content lost: the offloaded body at {ref!r} no longer exists "
+            f"on disk — it may have been deleted or garbage-collected "
+            f"(reason: {reason})]"
+        )
+
+    try:
+        resolved = resolve(
+            HistoryContentEntry(spilled=spilled, content=content, ref=ref),
+            file_exists=_file_exists,
+            read_text=read_text,
+        )
+    except PermissionError:
+        # #5982: `read_text` (in production, `MediaStore.read_tool_
+        # result`) raises when `ref` resolves outside its own boundary --
+        # a MALFORMED or malicious ref, never a legitimately-missing file
+        # (resolve()'s own "lost" branch already covers "missing", via
+        # `file_exists() is False`, BEFORE `read_text` is ever called —
+        # reaching read_text at all means `file_exists` already said
+        # True). Folded to the SAME "lost" answer an internal reader
+        # already has for a missing file (never re-raised, so this stops
+        # being an uncaught-exception class), but with a DISTINCT reason
+        # — never attributed to GC/EXTERNAL, which would misleadingly
+        # claim the file used to legitimately exist and is now gone (see
+        # LostReason.OUTSIDE_BOUNDARY's own docstring).
+        return _lost(reason=LostReason.OUTSIDE_BOUNDARY)
     if resolved.kind == "inline":
         return resolved.value
     if resolved.kind == "lost":
@@ -396,20 +445,7 @@ def resolve_history_content(
             reason = LostReason.GC
         else:
             reason = LostReason.EXTERNAL
-        if events is not None and (seen_lost_refs is None or ref not in seen_lost_refs):
-            if seen_lost_refs is not None:
-                seen_lost_refs.add(ref)
-            import hashlib
-            ref_sha256 = "sha256:" + hashlib.sha256(ref.encode("utf-8")).hexdigest()
-            events.emit(
-                "offloaded_content_unavailable",
-                ref=ref, reason=str(reason), ref_sha256=ref_sha256,
-            )
-        return (
-            f"[content lost: the offloaded body at {ref!r} no longer exists "
-            f"on disk — it may have been deleted or garbage-collected "
-            f"(reason: {reason})]"
-        )
+        return _lost(reason=reason)
     return content
 
 

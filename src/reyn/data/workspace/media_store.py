@@ -2170,6 +2170,50 @@ class MediaStore:
             preview = f.read(max_bytes)
         return preview, True, total_bytes
 
+    def read_tool_result_preview_for_internal_reader(
+        self, path_str: str, *, max_bytes: int,
+    ) -> "tuple[str, bool, int]":
+        """#5982: the SAME read as :meth:`read_tool_result_preview`, for
+        an INTERNAL reader that must not be stopped by an uncaught
+        exception on a malformed/malicious ``path_str`` — a boundary
+        violation is folded into the SAME ``found=False`` an internal
+        reader already gets for a genuinely missing file (both answer
+        "no body available" identically to a caller with no separate
+        channel for "why").
+
+        ⚠️ **Not the same as silently swallowing the distinction.** A
+        boundary violation logs a WARNING distinct from the ordinary
+        not-found case before folding — ``path_str`` reaching this method
+        outside the valid boundary is itself a defect (something
+        constructed an invalid ref), and #5982's own condition is that
+        folding must never make that defect permanently invisible. This
+        is the LOG-only sibling of :func:`~reyn.runtime.services.
+        router_history_buffer.resolve_history_content`'s own fold (which
+        goes further — an audit-event plus a distinct ``LostReason``,
+        because that caller already has a structured "reason" channel a
+        raw preview read does not).
+
+        **External-boundary callers keep the raising form.**
+        :meth:`read_tool_result_preview` itself is UNCHANGED — an
+        external-input caller (none exist for the preview form today,
+        but the pattern must not silently invert) that needs to
+        distinguish "malicious path" from "legitimately missing" for its
+        own response (the same reason ``interfaces/web/routers/
+        resources.py`` keeps calling the raising :meth:`read_tool_result`
+        for the non-preview form) still has that raising primitive
+        available."""
+        try:
+            return self.read_tool_result_preview(path_str, max_bytes=max_bytes)
+        except PermissionError:
+            logger.warning(
+                "read_tool_result_preview_for_internal_reader: %r resolved "
+                "outside the storage boundary — folded to not-found for "
+                "this internal reader (this ref should never have reached "
+                "here; the caller is the thing to investigate, not this "
+                "read)", path_str,
+            )
+            return "", False, 0
+
     # ── Cross-host routing (#385 β core impl sub-task 1) ──────────────
 
     def _attach_cross_host_fields(
