@@ -45,15 +45,31 @@ async def test_collects_real_pump_ticks_and_loop_tripwire_state() -> None:
     app = TextualChatApp(transport=_empty_transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        # #5986 (lead-coder, CI flake trace): this asserts the COLLECTOR
+        # reads REAL values off a real app's LoopTripwire, not that a real
+        # host managed to schedule this test's own ticks within threshold
+        # -- the two got conflated by reading the tripwire's state as
+        # accumulated since MOUNT, which genuinely CAN exceed the
+        # threshold on a loaded CI runner (owner-hit: PR #5979, run
+        # `34180575013`). ``reset_loop_tripwire()`` -- the SAME public
+        # seam ``test_loop_probe_3539.py``'s own tests already use for
+        # "a clean instance, deterministic regardless of what happened
+        # during mount" -- gives this read a freshly-constructed,
+        # never-yet-observed-a-tick tripwire: `fired` and
+        # `max_lateness_ms` are then trivially, structurally correct
+        # (there has been no tick since reset to observe ANY lateness on,
+        # real or not), not a bet on this run's own scheduling luck.
+        app.reset_loop_tripwire()
         diagnostics = collect_screen_timeout_diagnostics(app)
 
         assert isinstance(diagnostics["pump_ticks"], int)
         tripwire = diagnostics["loop_tripwire"]
-        assert tripwire["fired"] is False, "a healthy run must not report an active stall"
+        assert tripwire["fired"] is False, "a freshly-reset tripwire must not report an active stall"
         assert tripwire["max_lateness_ms"] < tripwire["threshold_ms"], (
-            "a healthy run's worst observed lateness must stay under its "
-            "own threshold -- both real values, read off the app's own "
-            "LoopTripwire, not pinned to an exact synthetic number"
+            "a freshly-reset tripwire's own zero-lateness starting state "
+            "must read back under its own threshold -- both real values, "
+            "read off the app's own LoopTripwire, not pinned to an exact "
+            "synthetic number"
         )
         # A fresh TextualChatApp already runs its own real internal worker
         # (e.g. `_pump_frames`) -- this asserts the SHAPE is right, not
