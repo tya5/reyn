@@ -55,6 +55,8 @@ async def _wait_for_file(path) -> None:
     matching ``test_subprocess_cancel_1470.py``'s own established helper;
     CI's own kill switch is the ceiling, not a chosen count."""
     while not path.exists():
+        # Condition-poll tick. No assert depends on this value; there is no
+        # ceiling here (CI's own --timeout is the ceiling).
         await asyncio.sleep(0.01)
 
 
