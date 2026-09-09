@@ -2091,6 +2091,106 @@ answer — but write down *why*, next to the list, so the next person does not
 re-derive the question. A list with a stated reason is a decision; a list
 without one is an accident that outlives its author.
 
+## 29. Change what a record MEANS and every bound that counted it keeps passing, guarding nothing
+
+**The act that fires this: you are about to change what a record's contents
+mean** — a body moved out of a line and replaced by a reference, a value
+replaced by an id, a synchronous field replaced by a promise. The new shape
+is usually better. The bounds that were counting the old shape do not
+notice, and they do not fail: they keep running, keep passing, and keep
+reporting a number that no longer stands for the resource they exist to
+limit.
+
+This is not §28's failure. There the population went stale — the list
+stopped naming everything it should. Here the population is complete and
+every member is counted correctly. What moved is the **unit**: the quantity
+being measured stopped being the quantity that hurts.
+
+### The instance: one migration, three bounds, none of them touched
+
+`#5896` moved tool-result bodies out of `history.jsonl` and left a
+`content_ref` behind. Disk went from 663 MB to 8.8 MB — the migration did
+exactly what it promised. Three separate bounds were counting the old line:
+
+| bound | what it counts | what it was there to limit | after the change |
+|---|---|---|---|
+| `history_resident.max_bytes` = 256 MiB | `len(json.dumps(asdict(msg)))` | how much history stays in memory | a ref row serialises to ~400 B, so the cap stopped evicting |
+| `read_history_after(max_bytes=)` = 8 MiB | bytes of the JSONL **lines** read | how much a compaction pass materialises | 8 MiB of refs admits 597 MB of bodies |
+| `process_footprint.cap_bytes` | — | the process's own memory ceiling | shipped as `None` with `enforce=False` |
+
+None of the three raised. None went red. Two of them were still printing
+a byte number in a config the operator could read, and that number was
+true about the thing being counted and false about the thing being
+guarded.
+
+The result, measured on a live machine: startup 91 MB, attach 285 MB, and
+then **one `hello` message took the process to 16 GB** — 600,321,181
+characters of request payload, uploaded over 85.6 seconds before the
+provider refused it with a 413. The recovery path then read the same
+600 MB again.
+
+### Why the guard's own docstring did not help
+
+`read_history_after`'s cap was not an accident. Its docstring says, in the
+words of the two reviewers who put it there, **"Bounded materialization, not
+bounded examination"** — it was written by people thinking about exactly
+this failure, and it names the right property. It still stopped guarding,
+because the sentence describes an intent and the code counts a proxy. When
+the proxy's relationship to the resource changed, the sentence stayed true
+as a statement of purpose and became false as a description of behaviour.
+
+**A bound's docstring cannot tell you whether it still binds.** Only the
+relationship between what it counts and what it protects can, and that
+relationship lives outside the bound.
+
+### The question, asked at change time and not at design time
+
+The usual advice — "make sure your limit measures the right thing" — fires
+when the limit is written, which is the one moment it is certainly correct.
+The failure lands later, in a change that never touches the limit at all.
+So the question belongs to the **change**:
+
+> **Can you name every bound that counts this record?**
+
+That population is derivable, which is the point (§28): the record type has
+a reader set, and `git grep` produces it. What is not derivable is the
+intent behind each bound, so the enumeration is where a human has to look —
+but the enumeration itself should never be a list someone maintains.
+
+### Two things that make the answer cheap
+
+**Measure the resource, not a stand-in, when you can.** The fix that landed
+counts a resident row's own bytes **plus** the body its reference can pull
+(`session.py`'s eviction weight), so the cap once again bounds the thing
+that grows. Where the real quantity is expensive to obtain, store it when
+you write the record rather than deriving it at read time.
+
+**Give the two quantities different types.** `ResidentBytes` and
+`BodyBytes` are now distinct `NewType`s over `int`. Before that they were
+both `int`, and passing one where the other belonged was invisible; a
+reviewer had to notice. The type does not make the bound correct — it makes
+the specific confusion that broke it unconstructible.
+
+### A fourth kind, which is not a unit drift at all
+
+`process_footprint.cap_bytes` was `None` with `enforce=False`. Nothing
+about its unit was wrong; the mechanism existed and was not in effect. It
+is worth keeping in the same table only to make the distinction visible:
+**"the mechanism exists" and "the mechanism is in effect" are different
+observations, and a config key answers the first one.** A memory ceiling
+had been asked for, built, and shipped off — and the question "did we build
+that?" returned yes for a year of reading.
+
+### The cost, stated
+
+Deriving a bound's real quantity is not free. Counting a body's bytes may
+mean a `stat` per row, or a field written at persist time that then has to
+stay correct. The alternative on offer is not "a cheaper correct bound" —
+it is a bound that is cheap because it counts something else, and whose
+failure mode is silence. Where you take the cheap one, write down what it
+counts and what it is standing in for, next to the number, so the next
+representation change has something to grep for.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
