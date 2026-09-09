@@ -48,10 +48,12 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
 
+from reyn.data.index.build_lock import pid_alive
 from reyn.runtime.diagnostic_snapshot import DiagnosticSnapshot, diagnostic_snapshot
 
 #: A loop tick later than this is worth telling someone about. Set well above
@@ -132,6 +134,80 @@ def stall_dump_path(reyn_log_path: "str | None") -> "str | None":
     if reyn_log_path is None:
         return None
     return str(Path(reyn_log_path).with_name(f"stall_dump.{os.getpid()}.log"))
+
+
+_STALL_DUMP_NAME_RE = re.compile(r"^stall_dump\.(\d+)\.log$")
+
+#: Has THIS process already swept dead-pid sibling ``stall_dump.<pid>.log``
+#: files? Module-level, at-most-once-per-process guard — same shape as
+#: `security/sandbox/backends/seatbelt.py`'s `_swept_dead_pid_dirs` (#5985),
+#: this mechanism's own precedent for the identical reason: repeating the
+#: scan on every dump-arm open would just re-scan a directory that hasn't
+#: changed since the last scan, in the same process.
+_swept_dead_pid_stall_dumps = False
+
+
+def _sweep_dead_pid_stall_dumps(own_path: str, *, logger: logging.Logger) -> None:
+    """Remove every SIBLING ``stall_dump.<pid>.log`` beside *own_path*
+    whose owning process is no longer alive (#5985, remainder of the
+    ``.sb`` cache fix — lead-coder's own finding: #5997 put a pid in this
+    file's name too, reproducing the identical unbounded-leftover class a
+    crash/SIGKILL leaves behind, with no sweep of its own).
+
+    Deliberately the SAME shape as `_sweep_dead_pid_cache_dirs`
+    (`backends/seatbelt.py`, #5985) — liveness, not age, is the only safe
+    discriminant a startup-time sweep can use here for the identical
+    reason: an age threshold needs a constant nobody can justify ("how old
+    is definitely dead?"), while liveness has none — the machine answers
+    (`os.kill` signal-0), not this module's guess. A REUSED pid reads as
+    "alive" and is left alone, so pid reuse fails toward "an unrelated file
+    lingers a little longer," never toward deleting a live process's own
+    dump. No config knob, for the same reason.
+
+    Runs at most once per process (`_swept_dead_pid_stall_dumps`) — called
+    right before THIS process opens its own dump file, so it never
+    considers its own not-yet-created destination."""
+    global _swept_dead_pid_stall_dumps
+    if _swept_dead_pid_stall_dumps:
+        return
+    _swept_dead_pid_stall_dumps = True
+
+    directory = Path(own_path).parent
+    try:
+        entries = list(directory.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        logger.info("stall dump sweep: destination directory does not exist yet")
+        return
+
+    own_pid = os.getpid()
+    removed = 0
+    failed = 0
+    for entry in entries:
+        if not entry.is_file():
+            continue  # a directory or other stray entry is not this sweep's population
+        match = _STALL_DUMP_NAME_RE.match(entry.name)
+        if match is None:
+            continue  # not a stall-dump-shaped name — not this sweep's population
+        pid = int(match.group(1))
+        if pid == own_pid:
+            continue  # never our own, not-yet-fully-created destination
+        if pid_alive(pid):
+            continue  # a live sibling's dump — the whole reason this isn't a blanket sweep
+        try:
+            entry.unlink()
+        except OSError:
+            failed += 1
+        else:
+            removed += 1
+
+    # #5985 co-vet precedent (architect/lead-coder, PR #6005): the
+    # sweep's outcome must be observable on every branch — logged
+    # unconditionally, including the 0/0 case, so "this ran" is visible
+    # from the log line's presence, not only inferable from its absence.
+    logger.info(
+        "stall dump sweep: removed %d dead-pid file(s), %d failed to remove",
+        removed, failed,
+    )
 
 
 def dump_path() -> "str | None":
@@ -718,6 +794,12 @@ class StallDumpArm:
         the dead-man's switch simply never arms for this watcher."""
         if path is None:
             return None
+        # #5985: sweep dead-pid sibling dumps BEFORE opening our own — the
+        # same "sweep before create" ordering `_sweep_dead_pid_cache_dirs`
+        # (backends/seatbelt.py, #5985) uses, for the same reason: our own
+        # destination doesn't exist yet at this point, so there's nothing
+        # of ours for the sweep to even consider.
+        _sweep_dead_pid_stall_dumps(path, logger=logger)
         snapshot = diagnostic_snapshot(path)
         if snapshot is None:
             logger.error("%s: could not open the tripwire's own stall-dump snapshot at %s", label, path)
