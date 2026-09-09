@@ -169,10 +169,10 @@ A rule nobody is told to read is not a rule. Every entry below names the act
 that triggers it; "when in doubt" is not a trigger, because the failures these
 prevent are the ones that remove the doubt.
 
-- **Before filing an issue** — `docs/deep-dives/contributing/issue-management.md`. An issue gets its axis label(s) when it is **filed**, not later; no axis label means "not yet judged", so an unlabelled backlog carries no order to dispatch by.
-- **Before reading a green as evidence, or listing what to cover/exempt** — `docs/deep-dives/contributing/verification-hazards.md`
+- **Before filing an issue** — `docs/deep-dives/contributing/issue-management.md`. An issue gets its axis label(s) at **filing**, not later; no axis label means "not yet judged", so an unlabelled backlog has no dispatch order.
+- **Before reading a green as evidence, listing what to cover/exempt, or redefining a record** — `docs/deep-dives/contributing/verification-hazards.md`
 - **Before writing a blocking point** — `docs/deep-dives/contributing/test-review-six-questions.md`
-- **When a Tier-1 rule above seems wrong or costly** — `docs/deep-dives/contributing/tier1-rationale.md`; **PR workflow's** own rationale: `docs/deep-dives/contributing/pr-workflow.md`
+- **When a Tier-1 rule seems wrong or costly** — `docs/deep-dives/contributing/tier1-rationale.md`; **PR workflow's** own rationale: `docs/deep-dives/contributing/pr-workflow.md`
 - **When you touch session/agent state on disk** — `docs/concepts/runtime/workspace.md`; **`.reyn/` layout** (recovery-core vs persist/audit/cache, the write-gate): `docs/reference/runtime/reyn-dir-layout.md`
 - **When you emit, read, or replay an audit-event** — `docs/concepts/runtime/events.md`
 - **When you add or change a permission decision** — `docs/concepts/runtime/permission-model.md`
