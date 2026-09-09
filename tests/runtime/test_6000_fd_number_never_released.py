@@ -489,7 +489,23 @@ def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
     unboundedly, on every single `rearm()` call from then on -- the
     exact "reyn.log fills with a repeated line" class #5977 closed.
     Witnessed here on THAT axis instead: disarm-call count and log
-    record count across MULTIPLE `rearm()` calls, not the return value."""
+    record count across MULTIPLE `rearm()` calls, not the return value.
+
+    lead-coder review: `caplog.records` collects every record that
+    reached the ROOT logger in this worker process, not just this
+    arm's own `"t6000"` logger -- `caplog.set_level(..., logger=...)`
+    only raises that ONE logger's threshold, it does not filter what
+    `.records` accumulates. Filtered to `r.name == "t6000"` below (the
+    exact shape #6033 fixed the same day elsewhere in this repo, after
+    an unrelated background `asyncio` warning on the same pytest-xdist
+    worker falsely reddened an unfiltered `caplog.records == []`
+    assertion on PR #6031).
+
+    `stall_trace.disarm` is spied (real call still runs, only the call
+    is recorded), not faked -- CLAUDE.md's no-fake-a-collaborator rule
+    still applies here: this module exposes no public seam for "how
+    many times was disarm called," so wrapping the real function is
+    the way to observe that fact without inventing one."""
     path = tmp_path / "stall_dump.log"
     arm = StallDumpArm.open(seconds=60.0, path=str(path), logger=logging.getLogger("t6000"), label="t6000")
     assert arm is not None
@@ -539,9 +555,10 @@ def test_stall_dump_arm_refuses_to_rearm_after_a_failed_reset(
             f"prevent) — got {len(disarm_calls)} disarm call(s) across 3 "
             f"rearm() calls"
         )
-        assert caplog.records == [], (
+        own_records = [r for r in caplog.records if r.name == "t6000"]
+        assert own_records == [], (
             f"#6000 REGRESSION: rearm() on an already-unusable snapshot "
-            f"logged {len(caplog.records)} record(s) across 3 calls -- "
+            f"logged {len(own_records)} record(s) across 3 calls -- "
             f"the same repeated-ERROR-line shape #5977 closed, reintroduced "
             f"here if the first `usable` guard is skipped"
         )
