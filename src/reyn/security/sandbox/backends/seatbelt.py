@@ -301,9 +301,15 @@ def _sweep_dead_pid_cache_dirs() -> None:
     try:
         entries = list(root.iterdir())
     except (FileNotFoundError, NotADirectoryError):
-        return  # nothing to sweep yet — this process will create root itself
+        # Nothing to sweep yet (this process will create root itself) — still
+        # logged, for the same "ran" vs "never ran" reason as the loop's own
+        # summary line below.
+        _logger.info("sandbox profile cache sweep: cache root does not exist yet")
+        return
 
     own_pid = os.getpid()
+    removed = 0
+    failed = 0
     for entry in entries:
         if not entry.is_dir():
             continue  # a stray non-directory at this level is not ours to touch
@@ -316,6 +322,24 @@ def _sweep_dead_pid_cache_dirs() -> None:
         if pid_alive(pid):
             continue  # a live sibling's cache — the whole reason this isn't a blanket sweep
         shutil.rmtree(entry, ignore_errors=True)
+        if entry.exists():
+            failed += 1
+        else:
+            removed += 1
+
+    # #5985 co-vet (architect ⑵, lead-coder ruling): `ignore_errors=True`
+    # makes "removed" / "couldn't remove" / "nothing to sweep" indistinguishable
+    # from each other — exactly the same silent-outcome shape #5991② closed
+    # earlier the same night, and #5985's own subject IS "a leftover nobody
+    # notices accumulating", so a sweep that silently no-ops or silently
+    # fails would defeat the fix while looking identical to it working.
+    # Logged unconditionally (including the 0/0 case) so "this ran" is
+    # observable on its own, not only inferable from the absence of a line.
+    _logger.info(
+        "sandbox profile cache sweep: removed %d dead-pid dir(s), "
+        "%d failed to remove",
+        removed, failed,
+    )
 
 
 def _profile_is_safe_to_cache(policy: SandboxPolicy) -> bool:

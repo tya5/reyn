@@ -647,6 +647,38 @@ def test_sweep_removes_a_dead_pids_subdirectory():
     assert not dead.exists()
 
 
+def test_sweep_logs_the_removed_count(caplog):
+    """Tier 2: #5985 co-vet (architect ⑵, lead-coder ruling) — the sweep's
+    outcome must be OBSERVABLE, not silent on every branch the way a bare
+    `shutil.rmtree(ignore_errors=True)` is. This is the exact shape #5991②
+    closed the same night for a different mechanism: "ran and found
+    nothing" / "didn't run" / "ran and failed" must not all look identical.
+
+    NON-VACUITY (strip-falsified locally, in-file Edit -> run -> Edit
+    back): removing the `_logger.info(...)` call in
+    `_sweep_dead_pid_cache_dirs` makes this assertion fail — there would be
+    nothing in the log to assert on."""
+    import logging
+
+    from reyn.security.sandbox.backends.seatbelt import (
+        _seatbelt_cache_root,
+        _sweep_dead_pid_cache_dirs,
+    )
+
+    root = _seatbelt_cache_root()
+    dead = root / str(_dead_pid())
+    dead.mkdir(parents=True, exist_ok=True)
+
+    with caplog.at_level(logging.INFO, logger="reyn.security.sandbox.backends.seatbelt"):
+        _sweep_dead_pid_cache_dirs()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("removed 1 dead-pid dir" in m for m in messages), (
+        "the sweep's own outcome (1 dir removed) left no observable trace — "
+        f"records were: {messages}"
+    )
+
+
 def test_sweep_does_not_remove_a_live_pids_subdirectory():
     """Tier 2: strip-falsify's counterpart — a sibling pid-subdirectory
     whose owning process is ALIVE (this test's own parent process, a real,
