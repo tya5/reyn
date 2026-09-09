@@ -69,6 +69,8 @@ predate this gate entirely). A NEW top-level ``tests/<name>/`` directory
 ``--write-baseline`` and ``--check-growth`` mirror ``flat_tests_ratchet.py``
 exactly, including the same hand-edit-the-baseline loophole and the same
 guard against it.
+
+CI: gate
 """
 from __future__ import annotations
 

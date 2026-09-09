@@ -25,6 +25,8 @@ Verdict criteria (= 原則 12 verdict false-attribution discipline):
   attractor, not multi-source related)
 - inconclusive: driver / subprocess error
 - blocked: structural pre-check fail (= recall not in catalog)
+
+CI: manual -- run by hand as a batch-20 dogfood scenario driver
 """
 from __future__ import annotations
 

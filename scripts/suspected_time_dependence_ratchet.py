@@ -104,6 +104,8 @@ read as a healthy, fully-baselined zero, indistinguishable from "347
 suspects, all now fixed." `main()` asserts the scanned-file count is
 nonzero BEFORE ever comparing against the baseline, and fails loud,
 separately from the ratchet's own pass/fail, if it is not.
+
+CI: gate
 """
 from __future__ import annotations
 

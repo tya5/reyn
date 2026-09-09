@@ -48,6 +48,8 @@ responsibility onto genuinely works.
 
 Exits 0 iff every check passes; exits 1 with a ``[PASS]``/``[FAIL]`` line per
 check.
+
+CI: gate
 """
 from __future__ import annotations
 

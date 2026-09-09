@@ -26,6 +26,8 @@ Usage:
       [--tiers weak strong]
 
 Idempotent resume: completed runs are skipped via runs.jsonl in --out dir.
+
+CI: manual -- run by hand as a multi-tier false-positive retest driver against a live reyn web
 """
 from __future__ import annotations
 

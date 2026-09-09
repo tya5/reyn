@@ -43,6 +43,8 @@ NOT a duplication detector, NOT a proof of sufficiency — a floor and a
 ceiling that stop this specific regression from being silent, nothing
 more. See ``src/reyn/interfaces/CLAUDE.md``'s own #5131 section for the
 4 rules this gate is a PARTIAL, structural witness for.
+
+CI: gate
 """
 from __future__ import annotations
 

@@ -15,6 +15,8 @@ Notes on permission gating in A2A web context:
     BEFORE the server's resolver is constructed (lazy init).  If the resolver was
     already constructed earlier, we mutate it via a debug HTTP call (if available),
     otherwise we observe the deny path and report.
+
+CI: manual -- run by hand as a batch-18 dogfood driver against a local A2A server
 """
 from __future__ import annotations
 

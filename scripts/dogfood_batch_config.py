@@ -36,6 +36,8 @@ Config shape (YAML)::
         aggregate_path: docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/aggregate.json
 
     journal_dir: docs/deep-dives/journal/dogfood/2026-05-21-batch-44-...
+
+CI: manual -- imported as a shared config/loader library by the dogfood_*_driver scripts, never run directly
 """
 from __future__ import annotations
 

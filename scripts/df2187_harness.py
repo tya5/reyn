@@ -12,6 +12,8 @@ A/B by codebase on the import path:
 Self-validate FIRST (lead mandate): confirm the harness drives the ownership chain
 (execute-wake → child_settled → completion-join → lead DONE) on the #2187 arm before
 taking the A/B differential — so a harness bug can't confound the efficacy result.
+
+CI: manual -- run by hand as a #2187 dogfood A/B session driver
 """
 from __future__ import annotations
 

@@ -59,7 +59,10 @@ than folded into :func:`find_violations` above so the two axes stay
 independently testable — a fixture exercising only the `vocabulary=`
 axis (the tests below) does not also have to supply a real
 `token_map=` to stay a valid accept-case, and vice versa. `main()`
-below reports both."""
+below reports both.
+
+CI: gate
+"""
 from __future__ import annotations
 
 import ast

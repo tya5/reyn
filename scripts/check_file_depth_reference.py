@@ -157,6 +157,8 @@ restricting to module-level glob roots specifically targets "eager
 fixture discovery at import time" (this gate's real broken instance)
 while structurally excluding the runtime-directory false-positive risk
 the review flagged. See :func:`_missing_module_level_glob_roots`.
+
+CI: gate
 """
 from __future__ import annotations
 

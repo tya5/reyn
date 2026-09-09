@@ -49,6 +49,8 @@ attributes, so a newly landed bundle updates it with no edit here.
 stdlib-only (``ast``/``pathlib``), no ``reyn`` import: both registries and the
 signature are AST-derived from the file on disk, so a hand-maintained list can
 never drift from what is measured.
+
+CI: manual -- its module is imported by a test to derive a predicate; the CLI entry point itself is never wired to gate anything
 """
 from __future__ import annotations
 

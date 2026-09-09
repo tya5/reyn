@@ -306,6 +306,8 @@ The parsing logic (``find_closing_declarations`` / ``find_nonclosing_declaration
 / ``check_contradictions``) is pure — no network, no subprocess — so it is
 fully unit-testable. ``fetch_pr_data`` is a thin ``gh`` wrapper kept
 separate so the pure logic can be exercised without hitting GitHub.
+
+CI: gate
 """
 from __future__ import annotations
 

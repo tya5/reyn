@@ -78,6 +78,8 @@ is set-theoretic: declared ⊆ reachable-without-LLM. Landing #5190 with
 today's 9 declarable kinds and today's 9 registered citations makes the
 diff empty NOW — every future kind added to the schema must arrive with
 its own citation in the SAME PR, or this gate fails.
+
+CI: gate
 """
 from __future__ import annotations
 

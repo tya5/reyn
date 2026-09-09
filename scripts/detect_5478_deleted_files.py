@@ -51,6 +51,8 @@ together would blur which one actually fired.
 Usage:
     python scripts/detect_5478_deleted_files.py --pr 123
     python scripts/detect_5478_deleted_files.py --base origin/main --head HEAD
+
+CI: report -- read by lead-coder from the PR comment this posts -- own docstring says report, never block
 """
 from __future__ import annotations
 

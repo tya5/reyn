@@ -33,6 +33,8 @@ Ref-classes checked:
 
 stdlib-only (ast / re / argparse / pathlib) so CI can run it without deps,
 mirroring scripts/test_tier_audit.py.
+
+CI: manual -- run by hand as the C-series post-refactor straggler check, per its own docstring
 """
 from __future__ import annotations
 

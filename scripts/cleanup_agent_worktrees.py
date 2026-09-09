@@ -15,6 +15,8 @@ Usage:
     python scripts/cleanup_agent_worktrees.py --include-alive --dry-run  # dangerous
     python scripts/cleanup_agent_worktrees.py --include-dirty --dry-run  # dangerous
     python scripts/cleanup_agent_worktrees.py --json        # machine-readable
+
+CI: manual -- run by whoever is clearing stale agent worktrees, via its own CLI flags
 """
 from __future__ import annotations
 

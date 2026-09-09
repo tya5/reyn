@@ -32,6 +32,8 @@ dependency (#3723) — it reads `pip`'s own recorded provenance
 ``reyn`` actually came from. ``CHECKS`` below is the enumeration; each entry
 carries the remedy for its own finding, so the gate that fires is the thing that
 explains itself.
+
+CI: gate
 """
 from __future__ import annotations
 

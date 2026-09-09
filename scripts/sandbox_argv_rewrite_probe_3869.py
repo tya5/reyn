@@ -25,6 +25,8 @@ Landlock+seccomp-restricted child CAN rewrite both its argv and its
 PR_SET_NAME) was recorded on #3869, and the CI step was then removed —
 this file is kept as a standalone script for a future rerun (e.g. after a
 sandbox-layer change) rather than deleted, but is not itself a gate.
+
+CI: manual -- kept for a future one-shot rerun per its own docstring; the CI step that used it was already removed
 """
 from __future__ import annotations
 

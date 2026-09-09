@@ -41,6 +41,8 @@ ALGORITHM it now delegates to is exercised for real by
 consumer this script shares it with); if the underlying CACHE MECHANISM
 itself needs a test, that belongs on ``reyn/__init__.py``'s own
 TIKTOKEN_CACHE_DIR default, not here.
+
+CI: manual -- run by an operator diagnosing a tiktoken cache issue, per its own docstring
 """
 from __future__ import annotations
 

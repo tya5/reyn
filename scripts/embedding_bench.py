@@ -39,6 +39,8 @@ no router state attached (= static-categories only). Dynamic categories
 as their static-category placeholders only; this is intentional — bench
 queries target the universal-catalog surface a fresh-context LLM would
 see, not the per-session catalog superset.
+
+CI: manual -- run by hand as an embedding benchmark -- gate-shaped exit codes exist but it is not wired into any workflow
 """
 from __future__ import annotations
 
