@@ -74,6 +74,8 @@ runs immediately; the anchor check below it needs `mkdocs build --strict -f
 its output in `site/` at the repo root — wired as an additional step in the
 same CI job right after that build, in `.github/workflows/test.yml`, so no
 second build and no new dependency).
+
+CI: gate
 """
 from __future__ import annotations
 

@@ -115,7 +115,10 @@ value's placeholder-ness declared" — so :func:`find_unwired_key_
 violations` does not consult ①②③ at all; see its own docstring for the
 full reasoning and #5771's own issue thread for why this axis is
 deliberately reported wide (every unbacked key), not filtered down to
-an allowlisted few."""
+an allowlisted few.
+
+CI: gate
+"""
 from __future__ import annotations
 
 import ast

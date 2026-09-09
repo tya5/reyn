@@ -34,6 +34,8 @@ Usage:
 
 Reads only the file given. No git, no network: to measure a merge-base, check
 it out (or ``git show <sha>:<path> > /tmp/x.py``) and run this on that copy.
+
+CI: manual -- run by hand to print structural function-shape metrics for a PR body, not a pass/fail check
 """
 from __future__ import annotations
 

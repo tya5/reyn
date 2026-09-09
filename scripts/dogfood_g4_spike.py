@@ -17,6 +17,8 @@ Usage:
       --phase primary \\
       [--smoke-test] \\
       [--out spike_results/fp_0011/]
+
+CI: manual -- run by hand as a G4 spike A/B driver against a live reyn web
 """
 from __future__ import annotations
 

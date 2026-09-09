@@ -31,6 +31,8 @@ Usage:
 
     # Legacy fixture byte-identity check (future Phase 5 prep):
     python scripts/dogfood_sp_render.py --legacy-check
+
+CI: manual -- run by hand as a dogfooding render/dev utility
 """
 from __future__ import annotations
 

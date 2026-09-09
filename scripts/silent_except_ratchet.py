@@ -102,6 +102,8 @@ evidence this has ever actually happened is on record (the same
 "population measured as zero, so not built" reasoning architect gave for
 #6009's directory-sweep candidate) — flagged here as a disclosed gap,
 not engineered around.
+
+CI: gate
 """
 from __future__ import annotations
 

@@ -25,6 +25,8 @@ Usage:
 
 Emits a JSON summary to stdout (redirect to a file for the #1128 record, then
 cat+copy it — never hand-type the numbers).
+
+CI: manual -- run by hand for one-off compaction-outcome research
 """
 from __future__ import annotations
 

@@ -23,6 +23,8 @@ issue #318 / #319 workaround note: when calling this script against a
 freshly-installed server, edit reyn.local.yaml to (a) add `type: stdio`
 and (b) rename the auto-generated `server-foo` key to a stable short
 name. See issues for repro details.
+
+CI: manual -- run by hand to confirm a fresh MCP server install/connectivity, per its own docstring
 """
 from __future__ import annotations
 

@@ -61,6 +61,8 @@ something outside ``[project].dependencies`` entirely — an extra, a dev
 tool, a test-only package) is silently fine, by construction: it is
 never even checked against the manifest-completeness failure mode, which
 only walks ``pyproject.toml``'s own core list.
+
+CI: gate
 """
 from __future__ import annotations
 

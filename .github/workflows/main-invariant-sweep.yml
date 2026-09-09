@@ -179,3 +179,22 @@ jobs:
       - name: no-hardcoded-compaction-role-tuple
         if: ${{ !cancelled() }}
         run: python scripts/check_no_hardcoded_compaction_role_tuple.py
+
+      # #6014 stage C: these 3 were never in this file's enumeration and
+      # not referenced from any CLAUDE.md path-conditional line either —
+      # written, but never actually run against the real tree since the
+      # day each landed (their own `tests/` coverage only drives the
+      # detector against a synthetic `tmp_path` fixture, never the real
+      # tree). All 3 measured rc=0 against main before being added here
+      # (see #6014's own issue body and comment thread).
+      - name: approval-ledger-import-boundary
+        if: ${{ !cancelled() }}
+        run: python scripts/check_approval_ledger_import_boundary.py
+
+      - name: hooks-declared-reachable
+        if: ${{ !cancelled() }}
+        run: python scripts/check_hooks_declared_reachable.py
+
+      - name: remote-snapshot-placeholder-declared
+        if: ${{ !cancelled() }}
+        run: python scripts/check_remote_snapshot_placeholder_declared.py

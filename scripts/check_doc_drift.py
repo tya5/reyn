@@ -131,6 +131,8 @@ fallback, `_print_findings_and_exit_code` (still returns 1 on a
 finding — useful for a human running `--pr N` by hand; only the CI
 workflow ignores it now), and every existing test. None of that was
 what broke.
+
+CI: gate
 """
 from __future__ import annotations
 

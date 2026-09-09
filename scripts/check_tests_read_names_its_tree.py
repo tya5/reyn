@@ -107,6 +107,8 @@ already warns about.
 
 stdlib-only (argparse / json / re / subprocess), mirroring
 ``scripts/check_pr_closing_intent.py`` so CI runs it dep-free.
+
+CI: gate
 """
 from __future__ import annotations
 

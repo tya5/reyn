@@ -21,6 +21,8 @@ by pure alphabetical tie-break — forcing CI to require a specific directory
 would make an ordinary refactor's import-line diff fail the gate for a reason
 unrelated to the refactor itself. See ``check_no_new_flat_tests.py`` for the
 one thing Stage 0 DOES enforce (no new file lands directly in ``tests/``).
+
+CI: manual -- run by hand or invoked interactively -- own docstring says deliberately advisory, not enforced
 """
 from __future__ import annotations
 

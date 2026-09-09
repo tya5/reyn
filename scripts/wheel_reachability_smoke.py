@@ -61,6 +61,8 @@ Exits 0 iff every check passes; exits non-zero (with a PASS/FAIL line per
 check) on the first structural failure or any assertion failure. Cleans up
 the temp wheel directory and venv in a ``finally`` block, on success or
 failure alike.
+
+CI: gate
 """
 from __future__ import annotations
 

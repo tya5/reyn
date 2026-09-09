@@ -17,6 +17,8 @@ Usage:
 
 Covers EVERY ``*.html`` under the site (completeness — no page left without a
 legacy redirect).
+
+CI: report -- read by whoever reviews pages.yml's own build output -- a generator, not a checker
 """
 from __future__ import annotations
 

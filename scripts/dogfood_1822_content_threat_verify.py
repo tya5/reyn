@@ -21,6 +21,8 @@ runs); legit argv is checked via the same scan logic the handler uses (no exec).
 
 Config = production default: ThreatScanConfig() (enabled, fence_enabled,
 block_severity="block", fail_open).
+
+CI: manual -- run by hand for a #1822 live threat-scan coverage pass
 """
 from __future__ import annotations
 

@@ -63,6 +63,8 @@ PASS, and the gate goes quietly blind rather than failing loud. Deriving
 the path from the REAL module's own ``__file__`` means a rename raises
 ``ImportError`` here instead — the gate breaks LOUDLY at the moment the
 thing it protects moves, rather than silently protecting nothing.
+
+CI: gate
 """
 from __future__ import annotations
 

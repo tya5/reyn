@@ -32,6 +32,8 @@ exits 0 so the harness batch keeps going::
     {"instance_id": "...", "model_name_or_path": "reyn", "error": "..."}
 
 All progress / diagnostic messages go to stderr only.
+
+CI: manual -- run by hand as an SWE-bench harness driver; own docstring says it exits 0 so the batch keeps going regardless of outcome
 """
 from __future__ import annotations
 

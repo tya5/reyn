@@ -1,0 +1,51 @@
+name: ci-role declared gate
+
+# #6014 follow-up: every top-level scripts/*.py file must declare its own
+# `CI: gate|report|manual` role (see scripts/check_ci_role_declared.py's
+# own module docstring for the full design and what each value obligates).
+# Not a baseline/ratchet -- see that script's own "Deliberately NOT a
+# ratchet" section for why a grandfathered-undeclared population would be
+# the exact silence #6014 exists to close.
+#
+# `paths: scripts/**` catches a new/edited script missing its own
+# declaration, or a script's role no longer matching its actual wiring.
+# `paths: .github/workflows/**` catches a workflow file edit that removes
+# a `gate`/`report` script's wiring without touching the script itself (a
+# rename, a step deleted from an unrelated cleanup). `paths: tests/
+# conftest.py` catches the THIRD wiring mechanism check_ci_role_declared.py
+# recognises (see its own `_wiring_haystack` docstring): removing the
+# `verify_env_identity.py` autouse-fixture reference there would silently
+# un-wire that script without touching either of the other two trees.
+# Between the three, every PR that could change any side of "declared vs.
+# actually wired" triggers this -- no composition gap to close via
+# main-invariant-sweep.yml the way #4257's diff-scoped gates needed one
+# (this check re-scans the WHOLE population every run, not a diff).
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "tests/conftest.py"
+
+permissions:
+  contents: read
+
+jobs:
+  ci-role-declared:
+    name: ci-role declared gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_ci_role_declared.py is stdlib-only (ast / re /
+      # pathlib / sys). No pip install needed.
+      - name: Check every scripts/*.py declares and satisfies its CI role
+        run: |
+          python scripts/check_ci_role_declared.py

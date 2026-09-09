@@ -104,6 +104,8 @@ from OUTSIDE Actions (a peer session's own sweep, or reyn-broker's
 Usage:
     python scripts/detect_5265_missing_required_context.py --pr 5912
     python scripts/detect_5265_missing_required_context.py --head-sha <sha>
+
+CI: manual -- run by backlog-watcher's own periodic patrol, invoked from outside GitHub Actions per its own docstring
 """
 from __future__ import annotations
 

@@ -74,6 +74,8 @@ that same gate's own "not every hand-rolled shape is traceable" caveat.
 This gate only scans ``src/`` (production code) — the failure mode is a
 production defect (a real shutdown silently appearing to complete), not
 a test-authoring one.
+
+CI: gate
 """
 from __future__ import annotations
 

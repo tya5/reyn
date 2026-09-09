@@ -9,6 +9,8 @@ Usage in scenario driver:
     sys.path.insert(0, "<reyn_root>/scripts")
     from dogfood_rag_helper import register_fake_embedding_provider, seed_test_files
     register_fake_embedding_provider()
+
+CI: manual -- imported as a shared setup library by other dogfood drivers, never run directly
 """
 from __future__ import annotations
 

@@ -114,6 +114,54 @@ async def test_segment_with_contextually_denied_binary_is_rejected(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_a_tool_axis_denial_emits_an_event_naming_the_binary_in_fields(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #6016 ① -- a tool-axis denial now leaves an
+    ``exec_tool_axis_denied`` event carrying the ORIGINAL argv[0], the
+    RESOLVED absolute path, and the effective (basename) name checked
+    against the deny set -- all as separate FIELDS, so a reader can
+    extract WHICH binary was denied without parsing ``reason``'s own
+    English sentence (the acceptance criterion lead-coder's own ruling
+    named explicitly: ``tool_failed.message`` alone is not "追える")."""
+    ctx, collected = _ctx(
+        tmp_path, contextual=ContextualPermission(tool_deny=frozenset({"true"})),
+    )
+    plan = [ExecSegment(argv=("/usr/bin/true", "--extra"))]
+
+    with pytest.raises(PermissionError):
+        await _check(plan, ctx)
+
+    await settle(ctx.events)
+    (denied,) = [e for e in collected if e.type == "exec_tool_axis_denied"]
+    assert denied.data["argv0"] == "/usr/bin/true"
+    assert denied.data["resolved"] == "/usr/bin/true"
+    assert denied.data["effective_name"] == "true"
+    assert "true" in denied.data["reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_allowed_segment_emits_no_tool_axis_event_either_direction(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #6016 ①'s own explicit scope -- the "allowed" side gets NO
+    event (architect's structural reason, PR #6030 co-vet: the tool axis
+    has no "did not run" state to distinguish, unlike threat_scan, and
+    the allowed side is already recorded by 段5's own `plan` field --
+    see `exec_plan_policy.py`'s own module docstring, "#6016 ①"). An
+    ordinary, un-denied segment leaves the event log with no
+    ``exec_tool_axis_denied`` entry at all -- not even a
+    ``blocked=False``-shaped one."""
+    ctx, collected = _ctx(tmp_path)
+    plan = [ExecSegment(argv=("/usr/bin/true",))]
+
+    await _check(plan, ctx)  # does not raise
+
+    await settle(ctx.events)
+    assert not [e for e in collected if e.type == "exec_tool_axis_denied"]
+
+
+@pytest.mark.asyncio
 async def test_segment_not_on_the_deny_set_passes(tmp_path: Path) -> None:
     """Tier 2: FP gate -- an ordinary segment under a narrowing that denies
     a DIFFERENT name passes silently (never elevates, never over-denies)."""

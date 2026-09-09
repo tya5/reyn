@@ -86,6 +86,8 @@ wrappers below are the separately-swappable network/subprocess layer.
 Usage:
     python scripts/detect_5419_behind_files.py --base origin/main --head HEAD
     python scripts/detect_5419_behind_files.py --pr 123
+
+CI: report -- read by lead-coder from the workflow's ::warning:: annotation -- own docstring says report, not block
 """
 from __future__ import annotations
 

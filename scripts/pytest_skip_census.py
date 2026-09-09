@@ -58,6 +58,8 @@ things pytest's own `-r` summary already prints for free:
   contributes 0 to the skipped tally, not 1), so a collection-error count
   needs its OWN, separate line on the same summary or that population
   stays invisible even after this script ships.
+
+CI: report -- read by whoever reviews test.yml's own step output -- own docstring says its exit code is always 0
 """
 from __future__ import annotations
 

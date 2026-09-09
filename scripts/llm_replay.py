@@ -19,6 +19,8 @@ Usage:
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
         --patch 'tools[0].function.parameters.properties.name.enum=["a","b"]' \\
         --diff --n 10
+
+CI: manual -- run by hand for an interactive/one-off LLM-call replay and patch session
 """
 from __future__ import annotations
 

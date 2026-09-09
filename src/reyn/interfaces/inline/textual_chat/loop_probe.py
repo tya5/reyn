@@ -15,6 +15,7 @@ from reyn.runtime.loop_tripwire import (
     _DUMP_ENV,
     _RECORD_INTERVAL_S,
     _TICK_SECONDS,
+    _TRIPWIRE_ENV,
     _TRIPWIRE_MS,
     LoopTripwire,
     StallDumpArm,
@@ -24,6 +25,7 @@ from reyn.runtime.loop_tripwire import (
     stall_dump_path,
     stall_log_line,
     stall_recovered_log_line,
+    tripwire_threshold_ms_from_env,
     watch_event_loop,
     write_record,
 )
@@ -32,6 +34,7 @@ __all__ = [
     "_DUMP_ENV",
     "_RECORD_INTERVAL_S",
     "_TICK_SECONDS",
+    "_TRIPWIRE_ENV",
     "_TRIPWIRE_MS",
     "LoopTripwire",
     "StallDumpArm",
@@ -41,6 +44,7 @@ __all__ = [
     "stall_dump_path",
     "stall_log_line",
     "stall_recovered_log_line",
+    "tripwire_threshold_ms_from_env",
     "watch_event_loop",
     "write_record",
 ]

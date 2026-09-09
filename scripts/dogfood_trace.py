@@ -15,6 +15,8 @@ Usage:
     # Multiple trace files (merged chronologically):
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl --trace b.jsonl
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl,b.jsonl
+
+CI: manual -- run by hand as the LLM-trace analysis entry point, per CLAUDE.md's own 'when you analyse a trace' line
 """
 from __future__ import annotations
 

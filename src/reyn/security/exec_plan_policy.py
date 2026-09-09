@@ -135,6 +135,50 @@ THIS list, never by calling :func:`~reyn.security.sandbox.resolve.
 resolve_real_executable` a second time (the exact "policy saw one
 binary, audit recorded a different one" class #5991 BLOCKING ③ closed
 for ``env_path``/``cwd`` — now closed for the resolved name too).
+
+## #6016 ① (lead-coder ruling, #6016 issue thread) — a tool-axis denial
+left NO audit trace, unlike the threat axis in the SAME function. Since
+#5991 ②, a threat-scan outcome always leaves exactly one event
+(``exec_threat_scanned``/``exec_threat_scan_skipped``) whether it blocked
+or not; a tool-axis denial left ZERO events, only the raised
+:class:`PermissionError` (whose ``tool_failed.message`` a reader would
+have to PARSE as English to learn which binary was denied) —
+architect's own framing: "何が止められたか" (what was stopped) is asked
+BEFORE "何が走ったか" (what ran), the SAME lens 7 reasoning 段5 already
+applied to the allowed side. :func:`_check_segment` now emits
+``exec_tool_axis_denied`` (``argv0``/``resolved``/``effective_name``/
+``reason`` as separate FIELDS, never requiring a reader to parse
+``reason``'s own English text to extract the binary) immediately before
+raising. Deliberately has **no "allowed" sibling event** — the case for
+one was FIRST scoped by lead-coder as "not now" (a traffic volume this
+repo's own working tree could not measure; no ``.reyn/`` directory to
+read — reopens once 段6 lands real ``cmd``-mode traffic to measure
+against), but architect's own PR co-vet (#6030, issuecomment-5595519318)
+gave the STRONGER, structural reason a volume measurement can never
+overturn — "measured low" would still be a reason to add one; this is a
+reason NOT to:
+
+1. **The tool axis has no "did not run" state to distinguish.**
+   :func:`~reyn.security.permissions.effective.gate_effective_tool_name`
+   always runs — unlike ``ctx.threat_scan`` (``None``/disabled is a REAL
+   state #5991 ② had to give its own event, ``exec_threat_scan_
+   skipped``, specifically so "zero matches" and "never scanned" would
+   not read the same in ``.reyn/events``), there is no configuration
+   under which the tool-axis check itself does not execute. A "passed"
+   event would only ever report ONE state, never distinguish it from a
+   second one the way ``exec_threat_scanned`` must.
+2. **The allowed side is ALREADY recorded — by 段5's own ``plan``.** A
+   segment that passes this check returns its resolved ``argv[0]`` (see
+   :func:`check_exec_plan_policy`'s own docstring) and lands in
+   ``sandboxed_exec_started``/``_completed``'s ``plan`` field — an
+   entry existing there for a segment IS the "passed the tool axis"
+   record, and it already carries the resolved binary name, which a
+   dedicated per-segment allow event would only duplicate.
+
+Recorded here (not filed as a separate follow-up — architect's own
+choice) for the future reader who reaches for "measured low enough"
+as a reason to add one anyway: that reason was never the load-bearing
+one, even before this PR: the SAME fact holds regardless of volume.
 """
 from __future__ import annotations
 
@@ -239,9 +283,23 @@ async def _check_segment(
     effective = gate_effective_tool_name(resolved_name, None)
     contextual = getattr(ctx, "contextual_permission", None)
     if effective is not None and tool_contextually_denied(contextual, effective):
-        raise PermissionError(
-            contextual_deny_message("command", effective, contextual)
+        message = contextual_deny_message("command", effective, contextual)
+        # #6016 ①: the SAME denial the threat axis already records
+        # (exec_threat_match/_blocked) but the tool axis never did — a
+        # reader had only `tool_failed.message`, an English sentence, to
+        # learn WHICH binary was denied. Fields, not prose: the denied
+        # binary is recoverable without parsing `message`. Deliberately
+        # does NOT have an "allowed" sibling event -- see this module's
+        # own docstring, "#6016 ①", for why (architect's structural
+        # reason, not merely "not measured yet"): the tool axis has no
+        # "did not run" state to distinguish (unlike threat_scan), and
+        # the allowed side is already recorded by 段5's own `plan` field.
+        ctx.events.emit(
+            "exec_tool_axis_denied",
+            argv0=segment.argv[0], resolved=argv0_resolved,
+            effective_name=effective, reason=message,
         )
+        raise PermissionError(message)
 
     await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
     return argv0_resolved

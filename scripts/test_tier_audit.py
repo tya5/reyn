@@ -18,6 +18,8 @@ Usage:
     python scripts/test_tier_audit.py --strict tests/
     python scripts/test_tier_audit.py --check format-pinning tests/
     python scripts/test_tier_audit.py --json tests/ | jq .
+
+CI: gate
 """
 from __future__ import annotations
 

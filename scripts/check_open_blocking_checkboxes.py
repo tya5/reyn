@@ -140,6 +140,8 @@ normalization. Same unit condition B already uses (one line).
 stdlib-only (argparse / json / re / subprocess), mirroring
 `check_pr_closing_intent.py`/`check_tests_read_names_its_tree.py` so CI
 runs it dep-free.
+
+CI: gate
 """
 from __future__ import annotations
 

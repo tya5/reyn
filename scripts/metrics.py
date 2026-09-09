@@ -29,6 +29,8 @@ methods):
     on every other line; everything left over is code.
 
 Purely reads structure; makes no behavioural claim about the code.
+
+CI: manual -- run by hand to produce a PR-body report; own docstring says it makes no behavioural claim about the code
 """
 import argparse
 import ast

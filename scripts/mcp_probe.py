@@ -14,6 +14,8 @@ Usage::
 
 All flags optional; sensible defaults derive from the script's own
 location (= the repo's project root) and the `reyn` on PATH.
+
+CI: manual -- run by hand for a quick dev-only MCP-stdio probe, per its own docstring
 """
 from __future__ import annotations
 

@@ -33,6 +33,8 @@ which is the whole point of the matrix per the #3698 acceptance criterion):
 Run: python scripts/mcp_conformance.py
 Writes: docs/reference/runtime/mcp-conformance.json (machine, diffed by ②)
         docs/reference/runtime/mcp-conformance.md   (human, generated FROM the json)
+
+CI: manual -- run by hand for an MCP conformance investigation, writes report files for a human to read
 """
 from __future__ import annotations
 

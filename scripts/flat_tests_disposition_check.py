@@ -93,6 +93,8 @@ either way (it's frozen), so a file with a recorded `moved` entry whose PR
 hasn't merged yet is accounted for (has a disposition entry), not
 unprocessed — correct: the outstanding work is "land the PR," not "decide
 what to do with this file."
+
+CI: manual -- run by hand as a #3879 disposition bookkeeping tool, not listed in any workflow or CLAUDE.md pre-PR check
 """
 from __future__ import annotations
 

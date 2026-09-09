@@ -6,6 +6,8 @@ blind to, (2) split platform-independent vs Windows-only, and (3) empirically an
 cacheable-vs-per-call (does a cached client survive a 2nd call + close without the task-boundary
 crash?). Owner crash keywords: BaseExceptionGroup / cancel scope crossed task boundary /
 BrokenResourceError / ConnectionReset.
+
+CI: manual -- run by hand as a scratch investigation tool, per its own docstring
 """
 from __future__ import annotations
 

@@ -9,6 +9,8 @@ observing:
 
 Clears history.jsonl between runs to ensure N=3 independence
 (fix for B16-S1-1 pattern).
+
+CI: manual -- run by hand as a dogfood scenario driver
 """
 from __future__ import annotations
 

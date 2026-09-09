@@ -45,6 +45,8 @@ Cache behavior:
     a cached file is used if it exists and contains valid JSON; a corrupt or
     missing file triggers a live fetch. Cache files are never expired
     automatically — delete the directory to force a full re-fetch.
+
+CI: manual -- run by hand for HN research, not CI-wired
 """
 from __future__ import annotations
 
