@@ -214,7 +214,8 @@ Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KI
 ```
 
 フィールド:
-- `argv`（必須）— コマンドと引数。`argv[0]` が実行可能ファイル。
+- `argv`（デフォルト `[]`）— コマンドと引数。`argv[0]` が実行可能ファイル。`argv` / `cmd` のどちらか一方が必須（両方または両方省略は構築時エラー — `SandboxedExecIROp` 自身の `model_validator`）。
+- `cmd`（省略可、デフォルト `None`）— **#5838 段4**: シェルコマンド行、`argv` と排他。`security.exec_plan.parse_exec_plan` でポリシー判定可能な plan に解析し、`security.exec_plan_policy.check_exec_plan_policy`（segment ごとの tool 軸 + threat scan、redirect 先は既存の `require_file_write`/`require_file_read`）でチェック — 解析不能または policy 拒否は何も spawn する前に起こる。実際に**実行される**文字列は `cmd` そのまま、`["/bin/sh", "-c", cmd]` 経由で、解析済み plan からの再構築ではない（owner 裁定: Claude Code/Codex/OpenClaw/Hermes の実際の動作に合わせる — 詳細は `security/exec_plan.py` 自身のモジュール docstring）。LLM の `exec` tool schema や pipeline `tool:` step にはまだ露出していない（別の later stage）— 今のところ op を直接構築する呼び手からのみ到達可能。
 - `stdin`（省略可、デフォルト `None`）— プロセスの stdin に書き込むバイト列（pipeline `tool` step は前ステップの pipe-data を `args: {argv: [...], stdin_pipe: !expr pipe}` 経由で JSON としてここに渡せる — [Pipeline DSL](pipeline-dsl.ja.md#tool) 参照）。
 - `timeout_seconds`（省略可、デフォルト `None`）— **#3903①（2026-08-11、下の段落からの意図的な方針転換）**: LLM は `SandboxPolicy.timeout_seconds` 自身のデフォルトを超える前景ウォールクロックタイムアウトを、`SandboxPolicy.max_timeout_seconds`（operator 自身が設定する上限 — ハードコード値ではない）まで要求できます（`max_timeout_seconds` をデフォルトの 600 秒より狭めた operator にはその上限が実際に強制される。LLM が operator 自身の狭い設定を広げることはできない）。`None`（デフォルト）は policy 自身の `timeout_seconds` を使う。上限を超える値は**拒否**され（`status: "error"`、実際に設定された上限を名指し）、静かに切り詰められることはない — それをすると、下の段落で閉じたはずの「advertised だが無視される」形が、フィールドが黙って落とされる代わりに値が黙って変わる形で再来してしまう。非正の値も同様に拒否される。
 

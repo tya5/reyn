@@ -366,7 +366,8 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
 ```
 
 Fields:
-- `argv` (required) — command + arguments. `argv[0]` is the executable.
+- `argv` (default `[]`) — command + arguments. `argv[0]` is the executable. Exactly one of `argv` / `cmd` is required (a construction-time error otherwise — `SandboxedExecIROp`'s own `model_validator`).
+- `cmd` (optional, default `None`) — **#5838 段4**: a shell command line, XOR `argv`. Parsed via `security.exec_plan.parse_exec_plan` into a policy-checkable plan and checked (`security.exec_plan_policy.check_exec_plan_policy`: per-segment tool-axis + threat scan, redirect targets through the existing `require_file_write`/`require_file_read`) — a parse rejection or a policy denial happens BEFORE anything spawns. The string that actually EXECUTES is `cmd` UNCHANGED, via `["/bin/sh", "-c", cmd]`, never a reconstruction from the parsed plan (owner ruling: match how Claude Code/Codex/OpenClaw/Hermes all actually work — see `security/exec_plan.py`'s own module docstring for the full rationale). Not yet exposed on the LLM `exec` tool schema or the pipeline `tool:` step (a separate later stage) — reachable today only by a caller that constructs the op directly.
 - `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (a pipeline `tool` step can thread the previous step's pipe-data here as JSON via `args: {argv: [...], stdin_pipe: !expr pipe}` — see [Pipeline DSL](pipeline-dsl.md#tool)).
 - `timeout_seconds` (optional, default `None`) — **#3903① (2026-08-11), a
   deliberate reversal of the paragraph below**: the LLM may request a
