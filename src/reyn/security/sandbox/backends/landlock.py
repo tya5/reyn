@@ -36,7 +36,7 @@ import signal
 import subprocess
 from typing import TYPE_CHECKING, Callable
 
-from .._subprocess_io import communicate_capped, kill_process_tree
+from .._subprocess_io import communicate_capped, drain_after_kill, kill_process_tree
 from ..backend import (
     AxisEnforcement,
     AxisEnforcementDeclaration,
@@ -618,14 +618,14 @@ class LandlockBackend:
         )
 
         if cancel_task in done:
+            # #6020: the post-kill drain read is now the ONE shared
+            # helper, see its own docstring — this was one of 8 copies.
             await kill_process_tree(proc)
             cancel_task.cancel()
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=3.0,
-                )
-            except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="landlock cancel",
+            )
             return SandboxResult(
                 returncode=-int(signal.SIGTERM),
                 stdout=stdout_b or b"",
@@ -636,12 +636,10 @@ class LandlockBackend:
         elif not done:
             cancel_task.cancel()
             await kill_process_tree(proc)
-            try:
-                stdout_b, stderr_b, _trunc = await asyncio.wait_for(
-                    asyncio.shield(comm_future), timeout=3.0,
-                )
-            except (asyncio.TimeoutError, Exception):
-                stdout_b, stderr_b, _trunc = b"", b"", False
+            stdout_b, stderr_b, _trunc = await drain_after_kill(
+                comm_future, grace_seconds=POST_KILL_DRAIN_GRACE_SECONDS,
+                context="landlock policy timeout",
+            )
             return SandboxResult(
                 returncode=-1,
                 stdout=stdout_b or b"",

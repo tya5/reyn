@@ -48,7 +48,15 @@ from reyn.security.sandbox.noop_backend import NoopBackend
 from reyn.security.sandbox.policy import SandboxPolicy
 
 _POLICY = SandboxPolicy(timeout_seconds=30)
-_LOGGER = "reyn.security.sandbox.noop_backend"
+# #6020: the narrowed except's own `_logger.warning` call moved out of
+# noop_backend.py and into the shared `_subprocess_io.drain_after_kill()`
+# helper (8 byte-identical copies across 4 backend files collapsed into
+# one) -- the PROPERTY this file's own tests guard (a drain that cannot
+# complete in time is logged, not silently swapped for empty output) is
+# unchanged; only the module that emits the warning moved, so this
+# constant follows that move rather than the tests re-asserting a stale
+# emission site.
+_LOGGER = "reyn.security.sandbox._subprocess_io"
 
 
 async def _wait_for_file(path) -> None:

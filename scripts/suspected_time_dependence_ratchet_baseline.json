@@ -192,6 +192,7 @@
     "tests/runtime/test_startup_timing_3671.py": 21,
     "tests/scripts/test_reyn_web_proc.py": 4,
     "tests/security/test_5986_drain_grace_narrowed_except.py": 1,
+    "tests/security/test_6020_drain_after_kill_collapse.py": 1,
     "tests/security/test_subprocess_cancel_1470.py": 1
   }
 }
