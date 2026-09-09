@@ -485,6 +485,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "embedding_index_build_started",
     "exec_threat_blocked",
     "exec_threat_match",
+    "exec_threat_scan_skipped",
+    "exec_threat_scanned",
     "file_changed",
     "file_read_media_denied",
     "file_read_media_write_unavailable",
