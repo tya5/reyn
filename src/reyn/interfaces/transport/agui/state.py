@@ -29,10 +29,13 @@ the transport edge as defense in depth (idempotent for the terminal surface).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from reyn.core.present.guard import get_neutralizer
 from reyn.llm.pricing import CostBreakdown
+
+logger = logging.getLogger(__name__)
 
 
 def _cost_breakdown_wire(breakdown: "CostBreakdown | None") -> "dict | None":
@@ -387,8 +390,33 @@ class RemoteQueueView:
     def apply_turn_started(self, *, chain_id: "str | None", seq: int) -> bool:
         """Apply a dispatch delta (removes the queued item matching
         ``chain_id``, if any); returns False (no-op) if the seq gate rejects
-        it as already reflected."""
+        it as already reflected.
+
+        #5989 ③ (lead-coder review, self-correction on the earlier "the log
+        was empty so nothing failed" reading — this class had zero
+        ``logger`` calls of its own, ``user_submitted``'s own rejection is
+        covered by its CALLER, :meth:`~reyn.interfaces.inline.textual_chat.
+        app.TextualChatApp._handle_user_submitted_event`, but a
+        dispatch/cancel rejection had no observer anywhere): a rejection
+        here is EXPECTED (a genuine replay — this exact dispatch was
+        already applied, and its matching queued item is already gone) when
+        no item with this ``chain_id`` remains in :attr:`items` — logged at
+        ``DEBUG``. It is SUSPICIOUS (the item this delta would have
+        promoted/removed is still sitting here, un-promoted — exactly the
+        shape of a wrongly-rejected delta, not a correctly-rejected one)
+        when a matching item DOES remain — logged at ``WARNING``. No new
+        state: both branches only ever READ :attr:`items`, the same
+        collection the gate already owns."""
         if seq <= self._last_seq:
+            stuck = [item for item in self.items.values() if item.get("chain_id") == chain_id]
+            log = logger.warning if stuck else logger.debug
+            log(
+                "RemoteQueueView: seq-gate rejected turn_started (chain_id=%r, seq=%r, "
+                "baseline=%r) — %s",
+                chain_id, seq, self._last_seq,
+                "a matching queued item is STILL present (unpromoted)" if stuck
+                else "already reflected, no matching item remains",
+            )
             return False
         for msg_id, item in list(self.items.items()):
             if item.get("chain_id") == chain_id:
@@ -405,8 +433,24 @@ class RemoteQueueView:
         order-race protocol as ``apply_user_submitted``/``apply_turn_started``
         (design-pass pin D): exclusive with a ``turn_started`` for the same
         item (the server guarantees only one of the two ever fires,
-        issue #3300 owner addendum §6a), so no double-removal ambiguity."""
+        issue #3300 owner addendum §6a), so no double-removal ambiguity.
+
+        #5989 ③: same discriminator as :meth:`apply_turn_started` — EXPECTED
+        (``DEBUG``) when ``msg_id`` is already absent from :attr:`items`
+        (already removed, a genuine replay of a cancel already applied);
+        SUSPICIOUS (``WARNING``) when it is still present (the row this
+        cancel targets never left the queue — the operator who cancelled it
+        would see it sitting there regardless)."""
         if seq <= self._last_seq:
+            stuck = msg_id in self.items
+            log = logger.warning if stuck else logger.debug
+            log(
+                "RemoteQueueView: seq-gate rejected inbox_cancel (msg_id=%r, seq=%r, "
+                "baseline=%r) — %s",
+                msg_id, seq, self._last_seq,
+                "the targeted item is STILL present (uncancelled)" if stuck
+                else "already reflected, item already absent",
+            )
             return False
         self.items.pop(msg_id, None)
         self._last_seq = seq
