@@ -1,0 +1,211 @@
+"""Tier 2: #5989 symptom 3 — reyn.runtime.early_log_buffer.
+
+A WARNING+ record (or a bare ``warnings.warn``) emitted BEFORE the
+interactive CUI's own ``RotatingFileHandler`` installs must not be
+unrecoverably lost — it should replay into the real handler once one
+exists, and the buffer holding it in the meantime must be bounded even
+if no target ever attaches. See that module's own docstring for the
+full design (including the ``MemoryHandler``-without-a-target gap this
+was built to avoid).
+
+Real ``logging`` module throughout (no mocks) — global logging state
+(root handlers/level, ``logging.captureWarnings``'s own guard, and this
+module's own installed-singleton) is saved+restored per test, the same
+pattern ``test_inline_interactive_logging.py`` already established.
+"""
+from __future__ import annotations
+
+import logging
+import warnings
+
+from reyn.runtime import early_log_buffer
+
+
+def _save_logging_state():
+    root = logging.getLogger()
+    return root.handlers[:], root.level
+
+
+def _restore_logging_state(saved) -> None:
+    handlers, level = saved
+    root = logging.getLogger()
+    logging.captureWarnings(False)
+    root.handlers[:] = handlers
+    root.setLevel(level)
+    # early_log_buffer's own test-support seam (module docstring: "never
+    # called from production code") -- not a private-attribute poke, this
+    # module deliberately provides it so a test can start the next case
+    # as if install() had never run.
+    early_log_buffer._reset_for_tests()
+
+
+def test_install_is_idempotent() -> None:
+    """Tier 2: a second `install()` call returns the SAME instance, not a
+    fresh one — the whole point is ONE buffer per process, installed once
+    at the true start."""
+    saved = _save_logging_state()
+    try:
+        first = early_log_buffer.install()
+        second = early_log_buffer.install()
+        assert first is second, (
+            "#5989 REGRESSION: install() must not double-install a second "
+            "buffer instance on a repeated call"
+        )
+    finally:
+        _restore_logging_state(saved)
+
+
+def test_a_warning_emitted_before_a_target_attaches_replays_into_it() -> None:
+    """Tier 2: the core accept criterion — a record emitted in the "before
+    any real handler exists" window is NOT lost, once a target attaches.
+
+    Strip-falsifier (verified by hand: `install()` reverted to installing
+    nothing / a no-op): this test goes red — the target handler's own
+    captured records stays empty, since nothing buffered the early
+    record for later replay."""
+    saved = _save_logging_state()
+    captured: "list[str]" = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    try:
+        buffer = early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("early-marker-4a11")
+
+        target = _RecordingHandler()
+        buffer.replay_into(target)
+
+        assert captured == ["early-marker-4a11"], (
+            f"#5989 REGRESSION: a WARNING emitted before a target attached "
+            f"did not replay into it — got {captured!r}"
+        )
+    finally:
+        _restore_logging_state(saved)
+
+
+def test_replay_clears_the_buffer_so_a_second_replay_is_a_no_op() -> None:
+    """Tier 2: `replay_into` is idempotent — a record already replayed once
+    must not replay AGAIN into a second target (double-delivery)."""
+    saved = _save_logging_state()
+    first_capture: "list[str]" = []
+    second_capture: "list[str]" = []
+
+    class _RecordingHandler(logging.Handler):
+        def __init__(self, sink: "list[str]") -> None:
+            super().__init__()
+            self._sink = sink
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self._sink.append(record.getMessage())
+
+    try:
+        buffer = early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("replay-once-marker")
+
+        buffer.replay_into(_RecordingHandler(first_capture))
+        buffer.replay_into(_RecordingHandler(second_capture))
+
+        assert first_capture == ["replay-once-marker"]
+        assert second_capture == [], (
+            f"#5989 REGRESSION: a second replay_into() delivered the same "
+            f"record again — got {second_capture!r}"
+        )
+    finally:
+        _restore_logging_state(saved)
+
+
+def test_the_buffer_never_grows_past_its_own_capacity() -> None:
+    """Tier 2: six-questions #5 — MORE records than `capacity` are emitted
+    with NO target ever attached; the buffer must stay capped (oldest
+    dropped), not grow without bound (the real gap in stdlib's own
+    `MemoryHandler` without a target — module docstring, verified by
+    reading cpython's source)."""
+    saved = _save_logging_state()
+    try:
+        buffer = early_log_buffer.install(capacity=3)
+        logger = logging.getLogger("reyn.canary")
+        for i in range(10):
+            logger.warning("marker-%d", i)
+
+        # The exact-contents check below also pins the count (exactly 3
+        # survivors) -- six-questions #5's own answer, "capped at
+        # capacity, oldest dropped," is what this asserts, not a bare
+        # size.
+        kept = [r.getMessage() for r in buffer.buffer]
+        assert kept == ["marker-7", "marker-8", "marker-9"], (
+            f"#5989 REGRESSION: buffer must stay capped at capacity=3, "
+            f"oldest dropped — expected exactly the 3 most recent "
+            f"markers, got {kept!r}"
+        )
+    finally:
+        _restore_logging_state(saved)
+
+
+def test_a_bare_warnings_warn_before_a_target_attaches_also_replays(
+) -> None:
+    """Tier 2: accept criterion ③ — `captureWarnings(True)` is armed in
+    THIS early window too (not only later inside `_setup_interactive_
+    logging`), so a bare `warnings.warn` before any real handler exists
+    is captured into the SAME buffer as a logging call, and replays the
+    same way.
+
+    Strip-falsifier (verified by hand: `install()`'s own
+    `logging.captureWarnings(True)` call removed): this test goes red —
+    the bare warning never reaches the logging system at all, so nothing
+    is in the buffer to replay."""
+    saved = _save_logging_state()
+    captured: "list[str]" = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    try:
+        buffer = early_log_buffer.install()
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.warn(
+                "early-bare-warning-marker", category=ResourceWarning, stacklevel=1,
+            )
+
+        target = _RecordingHandler()
+        buffer.replay_into(target)
+
+        assert any("early-bare-warning-marker" in m for m in captured), (
+            f"#5989 REGRESSION: a bare warnings.warn() before a target "
+            f"attached did not reach the early buffer — got {captured!r}"
+        )
+    finally:
+        _restore_logging_state(saved)
+
+
+def test_with_no_target_ever_attached_stderr_visibility_is_unchanged() -> None:
+    """Tier 2: the "handler never attaches" path (--cui / non-TTY, or an
+    early crash) — the stderr mirror `install()` also attaches must keep
+    showing WARNING+ records, matching what `logging.lastResort` already
+    did before this module existed. Regression guard for the
+    non-interactive path, not just "the buffer doesn't grow.\""""
+    import io
+    import sys
+
+    saved = _save_logging_state()
+    fake_stderr = io.StringIO()
+    real_stderr = sys.stderr
+    try:
+        sys.stderr = fake_stderr
+        early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("stderr-mirror-marker")
+        for h in logging.getLogger().handlers:
+            h.flush()
+
+        assert "stderr-mirror-marker" in fake_stderr.getvalue(), (
+            "#5989 REGRESSION: with no target ever attached, a WARNING "
+            "must still reach stderr (the same visibility "
+            "logging.lastResort already provided) — got "
+            f"{fake_stderr.getvalue()!r}"
+        )
+    finally:
+        sys.stderr = real_stderr
+        _restore_logging_state(saved)
