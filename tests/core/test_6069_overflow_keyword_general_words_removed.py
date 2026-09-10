@@ -37,17 +37,6 @@ vacuous" item (4 in the issue's own numbering) are pinned in
 (the 413/litellm-type checks, already-existing and already covered there);
 see this file's own last test for the fallback-reporting witness anyway,
 via the public ``caplog`` surface (never a private field).
-
-#6073 follow-up (2026-09-10 CI failure): a 4th real overflow shape —
-``"context_length_exceeded"`` (litellm's/OpenAI's own ``error.code``
-spelling, confirmed in the installed ``litellm`` package source, arriving
-here as free text inside a plain exception's message rather than as the
-already-handled structured ``.code`` attribute) — was added to
-``_CONTEXT_OVERFLOW_KEYWORDS``. It is underscore-joined, not
-whitespace-joined, so the structural gate below was widened from "must
-contain whitespace" to "must contain whitespace OR an underscore" (see
-``_is_multi_component``'s own docstring) rather than silently adding a
-keyword the gate itself would otherwise have rejected.
 """
 from __future__ import annotations
 
@@ -224,60 +213,28 @@ def test_fallback_no_match_is_also_reported_not_silent(caplog) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _is_multi_component(kw: str) -> bool:
-    """Shared by the gate and its falsify-test below: *kw* is either a
-    whitespace-joined PHRASE or an underscore-joined error-CODE-shaped
-    identifier — never a single bare word.
-
-    #6073 (2026-09-10 CI failure, the gate's own first real collision):
-    ``"context_length_exceeded"`` is litellm's/OpenAI's own ``error.code``
-    spelling (confirmed verbatim in the installed ``litellm`` package —
-    ``litellm/types/llms/openai.py``), joined by underscores rather than
-    spaces because that is how the PROVIDER spells its own error code —
-    this module has no authority to re-punctuate a third party's literal
-    identifier into a space-joined phrase just to satisfy this gate's
-    original whitespace check. The architect's own discriminator (#6069,
-    2nd comment) never said "must contain whitespace" — it said "a
-    partial match is safe only when the spelling can ONLY appear when
-    the condition is true"; whitespace was this gate's PROXY for that
-    principle, built when every known phrase happened to be space-joined.
-    An underscore-joined multi-component identifier is exactly as narrow
-    a spelling as a space-joined phrase (arguably narrower: it is a
-    known, fixed provider error-code string, not assembled English) — so
-    the proxy is widened to "contains whitespace OR an underscore",
-    rather than silently bypassed by adding the new keyword without
-    updating the check it must still pass. A single bare word like
-    ``"limit"`` contains neither and still fails both forms of the gate."""
-    return any(ch.isspace() for ch in kw) or "_" in kw
-
-
 def test_context_overflow_keywords_contain_no_bare_words() -> None:
     """Tier 1: the structural gate itself — every element of
-    ``_CONTEXT_OVERFLOW_KEYWORDS`` must be multi-component (a whitespace-
-    joined PHRASE, or an underscore-joined error-code-shaped identifier —
-    see :func:`_is_multi_component`'s own docstring for why underscore
-    joins this gate's "not a bare word" check rather than bypassing it),
-    scoped to ONLY this one constant, never a general "ban short
-    keywords" rule over the codebase.
+    ``_CONTEXT_OVERFLOW_KEYWORDS`` must contain whitespace (i.e. be a
+    multi-word PHRASE), scoped to ONLY this one constant, never a
+    general "ban short keywords" rule over the codebase.
 
-    Deliberately STRUCTURAL (checks each string's own punctuation), not a
-    hand-maintained list of "banned words" — the point is that nobody can
-    re-add a bare single word to THIS constant, including a word nobody
-    has thought of yet, without this failing.
+    Deliberately STRUCTURAL (checks whether each string contains
+    whitespace), not a hand-maintained list of "banned words" — the
+    point is that nobody can re-add a bare single word to THIS constant,
+    including a word nobody has thought of yet, without this failing.
 
-    Disclosed limit (PR body's own caveat, restated here): passing this
-    check does not mean collision-IMPOSSIBLE — a phrase like "too large"
-    could still theoretically appear in an unrelated message (the
+    Disclosed limit (PR body's own caveat, restated here): whitespace-
+    containing does not mean collision-IMPOSSIBLE — a phrase like "too
+    large" could still theoretically appear in an unrelated message (the
     architect's own example: a filename containing "context window").
     This gate raises the bar the discriminator sets; it does not claim
     to make a false positive impossible."""
     for kw in _CONTEXT_OVERFLOW_KEYWORDS:
-        assert _is_multi_component(kw), (
-            f"{kw!r} is a single bare word (no whitespace, no "
-            "underscore) — _CONTEXT_OVERFLOW_KEYWORDS may only contain "
-            "multi-word phrases or underscore-joined error-code-shaped "
-            "identifiers (see this test's own docstring and the #6069 "
-            "PR body)"
+        assert any(ch.isspace() for ch in kw), (
+            f"{kw!r} is a single word (no whitespace) — "
+            "_CONTEXT_OVERFLOW_KEYWORDS may only contain multi-word "
+            "phrases (see this test's own docstring and the #6069 PR body)"
         )
 
 
@@ -288,7 +245,7 @@ def test_context_overflow_keywords_gate_is_falsified_by_restoring_a_bare_word() 
     sensitive to exactly this shape and not vacuously green regardless
     of content. Never mutates the production constant."""
     reverted = (*_CONTEXT_OVERFLOW_KEYWORDS, "limit")
-    assert not all(_is_multi_component(kw) for kw in reverted), (
+    assert not all(any(ch.isspace() for ch in kw) for kw in reverted), (
         "restoring a bare single word must make the structural check go "
         "red — if it doesn't, the check isn't testing what it claims to"
     )

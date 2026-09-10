@@ -470,7 +470,14 @@ def test_token_axis_fold_persist_policy_controls_compaction(
     class _AlwaysNonByteOverflowLoop:
         async def run(self, *, user_text: str, history: list) -> None:
             # No status_code — a plain context-length overflow, not a 413.
-            raise RuntimeError("context_length_exceeded: too many tokens")
+            # Real observed provider text (#6069's own positive-control
+            # fixture, itself modelled on OpenAI's actual API error copy) —
+            # this stub's only requirement is "a non-413, non-status_code
+            # overflow", which any textually-plausible overflow message
+            # satisfies; it does not need an invented spelling.
+            raise RuntimeError(
+                "This model's maximum context length is 128000 tokens."
+            )
 
     with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(

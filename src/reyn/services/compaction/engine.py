@@ -1100,31 +1100,9 @@ class ContextOverflowError(Exception):
 #: there regardless of what this tuple contains. This tuple is the
 #: fallback of last resort for a message whose STRUCTURE was also
 #: stripped by an intermediate proxy — see this function's own docstring.
-#:
-#: ``"context_length_exceeded"`` (#6073 CI failure, 2026-09-10): a 4th
-#: observed shape — this time the message carries the error CODE itself
-#: (litellm's/OpenAI's own ``error.code`` spelling, confirmed present
-#: verbatim in the installed ``litellm`` package source —
-#: ``litellm/types/llms/openai.py``'s own ``code: str  # e.g.,
-#: 'context_length_exceeded'`` — the SAME literal string
-#: ``_CONTEXT_OVERFLOW_ERROR_CODES`` above already recognises when it
-#: arrives as a STRUCTURED ``.code`` attribute) but as free text inside
-#: ``str(exc)`` with no ``.code`` attribute set at all (a plain
-#: ``RuntimeError("context_length_exceeded: too many tokens")`` — no
-#: ``status_code``, no ``.code``, no litellm type to check first; see
-#: ``test_token_axis_fold_persist_policy_controls_compaction``,
-#: ``tests/runtime/test_retry_loop_chat_wiring_1125.py``). No typed
-#: signal exists to wire this to instead: the exception carries nothing
-#: but a message, so the keyword fallback is the only layer that can
-#: catch it. Added VERBATIM (underscore-joined, as litellm/OpenAI
-#: actually spell it) rather than invented — see
-#: ``test_context_overflow_keywords_contain_no_bare_words``'s own
-#: docstring for why this element's lack of whitespace does not make it
-#: a "bare general word" the structural gate below is meant to reject.
 _CONTEXT_OVERFLOW_KEYWORDS = (
     "too long", "too large",
     "maximum context", "context length", "context window",
-    "context_length_exceeded",
 )
 
 #: #5699 (owner real-machine incident): the OpenAI/litellm structured
