@@ -5621,12 +5621,38 @@ class TextualChatApp(App):
         # marker`` tag) absorb into the SAME single flowview entry the
         # episode's progress lives on, TUI-local — the source emission is
         # UNCHANGED (other surfaces with no episode-entry mechanism, e.g.
-        # AG-UI, still receive these frames exactly as before). Absorbed
-        # only while an entry is actually open; a marker arriving with no
-        # open entry (a REMOTE reconnect mid-episode, or the entry already
-        # settled) falls through and appends as its own row rather than
-        # being silently dropped.
-        if meta.get("compaction_episode_marker") and self._compaction_progress_entry is not None:
+        # AG-UI, still receive these frames exactly as before).
+        #
+        # #6085 stage 1: absorption is gated on ``compaction_episode_seq``
+        # IDENTITY, not merely "is some entry open" — the ROW's own settle
+        # (``_settle_compaction_progress``) and the MARKER frames arrive on
+        # two independent channels (a polled status snapshot vs. discrete
+        # display frames) with no ordering guarantee between them; a
+        # marker-tagged frame for the episode that JUST ended could
+        # therefore arrive AFTER the row already settled (reproduced live,
+        # #6085's own issue thread) — under the OLD "is not None" guard
+        # that late frame fell through and appeared as its own separate
+        # row (the reported "4 lines" symptom). Keeping the entry
+        # ADDRESSABLE past its own settle (see :meth:`_settle_compaction_
+        # progress`, which no longer clears the reference) and comparing
+        # STAMPED ids — never re-reading "what episode is current right
+        # now" at THIS decision point, which would just reproduce the same
+        # race one level up — closes that gap without any lock or wait.
+        #
+        # A MISMATCHED id (a genuinely new episode already started; or
+        # either side carries no id at all, e.g. an older producer/a
+        # forwarder built with no session context) falls through and
+        # appends as its own row — never silently absorbed into the wrong
+        # entry, and never silently dropped either (lead-coder ruling:
+        # "見えて間違う方が良い" — a stray extra row an operator can see and
+        # question beats a wrong fold nobody can see happened at all).
+        entry = self._compaction_progress_entry
+        if (
+            meta.get("compaction_episode_marker")
+            and entry is not None
+            and meta.get("compaction_episode_seq") is not None
+            and entry.item.meta.get("compaction_episode_seq") == meta.get("compaction_episode_seq")
+        ):
             return
         op_id = meta.get("op_id")
         if kind in ("tool_call_completed", "tool_call_failed") and op_id is not None:
@@ -7913,8 +7939,7 @@ class TextualChatApp(App):
         self._settle_compaction_progress(terminal_text=terminal_text, meta=meta)
 
     def _ensure_compaction_progress_entry(self, raw: dict) -> None:
-        """#5588: create the shrink-flow-episode row ONCE (idempotent — a
-        no-op while :attr:`_compaction_progress_entry` is already set) and
+        """#5588: create the shrink-flow-episode row ONCE per episode and
         start its spinner, mirroring :meth:`_begin_running_indicator`'s own
         two-step shape (stamp :data:`_RUNNING_SINCE_KEY`, register the
         per-entry ``animate_entry`` timer) rather than
@@ -7923,8 +7948,22 @@ class TextualChatApp(App):
         ``textual_flowview`` (confirmed: its own ``try``/``except`` swallows
         the ``AttributeError`` every time, so a pipeline run's row never
         actually spins today — a real, pre-existing, OUT-OF-SCOPE bug for
-        THIS issue, disclosed rather than silently copied into new code)."""
-        if self._compaction_progress_entry is not None:
+        THIS issue, disclosed rather than silently copied into new code).
+
+        #6085 stage 1: idempotency is now keyed on the entry's own
+        :attr:`~textual_flowview.Entry.state`, not merely "is a reference
+        held" — :meth:`_settle_compaction_progress` no longer clears
+        :attr:`_compaction_progress_entry` (kept addressable so a late
+        marker for the episode that just ended can still find it — see
+        that method's own docstring and ``_ingest_frame``'s absorption
+        check), so a bare ``is not None`` guard here would treat every
+        SETTLED prior episode's own row as "still open" and silently
+        block every later episode from ever getting its own row again. A
+        RUNNING entry blocks a new one (still genuinely the same, open
+        episode); a SUCCESS/ERROR entry does not (a new episode is
+        starting)."""
+        entry = self._compaction_progress_entry
+        if entry is not None and entry.state is EntryState.RUNNING:
             return
         from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
 
@@ -7935,32 +7974,52 @@ class TextualChatApp(App):
                 _COMPACTION_PROGRESS_KEY: True,
                 _RUNNING_SINCE_KEY: self._clock(),
                 "is_compacting": True,
+                # #6085 stage 1: this episode's own id, stamped ONCE at
+                # creation — read from the SAME snapshot dict the caller
+                # (_refresh_compaction_progress) already has in hand, never
+                # a second, separate "what's current now" read.
+                "compaction_episode_seq": raw.get("episode_seq"),
             },
         )
         try:
-            entry = self.conversation.append(item)
-            entry.set_state(EntryState.RUNNING)
-            self._flow.animate_entry(entry, 1.0 / self.RUNNING_BODY_FPS, lambda e: e.update())
+            new_entry = self.conversation.append(item)
+            new_entry.set_state(EntryState.RUNNING)
+            self._flow.animate_entry(new_entry, 1.0 / self.RUNNING_BODY_FPS, lambda e: e.update())
         except Exception:
             logger.exception("textual chat: could not start compaction progress row")
             return
-        self._compaction_progress_entry = entry
+        self._compaction_progress_entry = new_entry
         self._compaction_progress_terminal_baseline = raw.get("terminal_seq") or 0
 
     def _settle_compaction_progress(
         self, *, terminal_text: "str | None", meta: "dict | None" = None,
     ) -> None:
         """#5588 acceptance ③: stop the spinner and give the row a terminal
-        state EXACTLY ONCE — a no-op when no entry is open (already
-        settled, or never started), so a caller may call this
-        unconditionally every refresh cycle while ``is_compacting`` reads
-        False. *terminal_text* is ``None`` for a success settle (architect:
-        keep the EXISTING ``[↑ N turns compacted]`` marker as the success
-        text elsewhere — this row's own text never duplicates it, only its
-        gutter state flips to SUCCESS) or the resolved ``RetryLoopTerminal``
-        sentence for a genuine unrecovered failure."""
+        state EXACTLY ONCE — a no-op when no entry is open (never started)
+        OR the open entry has already been settled, so a caller may call
+        this unconditionally every refresh cycle while ``is_compacting``
+        reads False. *terminal_text* is ``None`` for a success settle
+        (architect: keep the EXISTING ``[↑ N turns compacted]`` marker as
+        the success text elsewhere — this row's own text never duplicates
+        it, only its gutter state flips to SUCCESS) or the resolved
+        ``RetryLoopTerminal`` sentence for a genuine unrecovered failure.
+
+        #6085 stage 1: the entry reference is deliberately NOT cleared at
+        the end any more (was ``self._compaction_progress_entry = None``)
+        — kept addressable so a marker-tagged display frame for THIS
+        episode that arrives late (reproduced live: the row's own settle
+        is driven by a POLLED status snapshot, a channel independent of
+        the discrete marker frames, with no ordering guarantee between
+        the two) can still find and fold into it via ``_ingest_frame``'s
+        own episode-id check, rather than falling through as its own
+        stray row. The "settled already" half of this no-op guard
+        (``entry.state is not RUNNING``) is what keeps this safe to call
+        every idle frame forever without redundant re-work — re-settling
+        an already-terminal entry on every subsequent False read would
+        otherwise bump its revision (and repaint it) once per frame,
+        unboundedly, for as long as the app stays idle."""
         entry = self._compaction_progress_entry
-        if entry is None:
+        if entry is None or entry.state is not EntryState.RUNNING:
             return
         try:
             self._flow.stop_entry_animation(entry)
@@ -7977,7 +8036,6 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: could not settle compaction progress row")
         entry.set_state(EntryState.ERROR if terminal_text is not None else EntryState.SUCCESS)
-        self._compaction_progress_entry = None
 
     def watch__destination(self, old_value: "_Destination", new_value: "_Destination") -> None:
         """#5131: the App is now showing a DIFFERENT agent (init or a real
