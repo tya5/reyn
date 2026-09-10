@@ -436,6 +436,23 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # Session._check_turn_mid_memory_ladder's own docstring for why an
     # operator's own cancel must never be conflated with this safety net.
     "turn_stopped_memory": frozenset({"footprint_bytes", "cap_bytes"}),
+    # history_oversized_content_spilled / _truncated (#6042): Session.
+    # _enforce_per_message_content_cap's own two outcomes -- a durable
+    # history.jsonl row whose content exceeded history_resident.
+    # per_message_max_bytes got either fully preserved off-row (spilled,
+    # PRIMARY path) or truncated with a preview (FALLBACK, no MediaStore
+    # configured or the spill write itself failed). Two distinct kinds,
+    # not one with an "outcome" field, because the required fields
+    # genuinely differ (spilled names the on-disk path; truncated names
+    # how much of the preview survived) -- same reasoning
+    # permission_approval_revoked/_granted already established for this
+    # file (#5065).
+    "history_oversized_content_spilled": frozenset(
+        {"role", "seq", "original_bytes", "cap_bytes", "path"}
+    ),
+    "history_oversized_content_truncated": frozenset(
+        {"role", "seq", "original_bytes", "cap_bytes", "preview_bytes"}
+    ),
 }
 
 
@@ -543,6 +560,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "file_read_media_write_unavailable",
     "force_close_triggered",
     "history_hydration_stopped_reading_early_unsafe",
+    "history_oversized_content_spilled",
+    "history_oversized_content_truncated",
     "hook_changed",
     "hook_drain_task_died",
     "hook_event_emitted",

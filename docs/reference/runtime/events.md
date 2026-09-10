@@ -97,6 +97,8 @@ file_read_media_denied
 file_read_media_write_unavailable
 force_close_triggered
 history_hydration_stopped_reading_early_unsafe
+history_oversized_content_spilled
+history_oversized_content_truncated
 hook_changed
 hook_drain_task_died
 hook_event_emitted
@@ -562,6 +564,8 @@ does not touch) — do not read the rows below as exhaustive coverage of
 | `chat_started`, `chat_stopped` | Chat session lifecycle | — |
 | `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). | `chain_id` |
 | `turn_stopped_memory` | #5851 PR-3 ③' — the turn-mid memory mini-ladder's own terminal step: `Session._check_turn_mid_memory_ladder`, polled at the SAME router-loop iteration boundary as the cancel checkpoint, found the process footprint still over `process_memory.max_bytes` after both ①' (an immediate compaction fold, excluding the in-flight turn's own messages) and ②' (PR-1's shared cache-release step) failed to bring it back under cap — so the turn ends at THIS boundary, never mid-tool-call. Deliberately a DIFFERENT kind from `turn_cancelled`: an operator's own cancel and this safety net must never be conflated (a reader needs to be able to tell "the user stopped it" from "the ladder stopped it"). The exit is otherwise shaped exactly like a cooperative cancel — history and WAL stay consistent, and the next turn starts normally. | `chain_id`, `footprint_bytes`, `cap_bytes` |
+| `history_oversized_content_spilled` | #6042 — `Session._enforce_per_message_content_cap`, checked at `_append_history`'s own convergence point ("every role funnels through" — its own docstring), found *msg.content* over `history_resident.per_message_max_bytes` and fully preserved it by spilling to a file via the SAME seam `MediaStore.save_tool_result` already uses for tool results (#5896) — the durable `history.jsonl` row's content becomes a short pointer text, never the original bytes. Real-machine grounding: #6089 (architect) measured a 462 MB single `role=tool` entry in a live `history.jsonl`, past the existing (non-airtight) tool-result spill gate. Role-agnostic by design (lead-coder ruling) — assistant-authored content is in scope too, even though `max_tokens` makes it unlikely to actually reach this cap in practice. | `role`, `seq`, `original_bytes`, `cap_bytes`, `path` |
+| `history_oversized_content_truncated` | #6042 — the FALLBACK sibling of `history_oversized_content_spilled`, fired when no `MediaStore` is configured (or the spill write itself failed): the content is truncated, but never silently — the durable row's own `meta` carries `content_truncated`/`content_truncated_original_bytes`, and `msg.content` itself becomes a preview of the first bytes (never a bare boolean marker with nothing else — lead-coder ruling: "何が失われたか" must stay at least partially readable). | `role`, `seq`, `original_bytes`, `cap_bytes`, `preview_bytes` |
 
 ## Session and turn lifecycle
 

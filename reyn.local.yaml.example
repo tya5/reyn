@@ -938,6 +938,16 @@
 # -----------------------------------------------------------------------------
 # history_resident:
 #   max_bytes: 268435456   # 256 MiB — ceiling on Session.history's resident size
+#   # per_message_max_bytes (#6042): a SEPARATE axis from max_bytes above —
+#   # bounds how big any ONE message's own content may be at DURABLE write
+#   # time (Session._append_history, history.jsonl), never how many messages
+#   # stay resident. An ESTIMATE, not a measurement: chosen to sit clearly
+#   # above the tool-read inline caps (read_cap.inline_bytes) and clearly
+#   # below the 13 MB / 462 MB sizes a real-machine incident (#6089) found
+#   # slipping past the existing tool-result spill gate. Enabled by default
+#   # (unlike process_memory below, which shipped observe-only pending real
+#   # data) because this incident already happened on an unmodified config.
+#   per_message_max_bytes: 10485760   # 10 MiB — over this, content is spilled to a file (or truncated with a preview, if no media store is configured)
 
 
 # -----------------------------------------------------------------------------
