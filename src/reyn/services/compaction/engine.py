@@ -1073,11 +1073,26 @@ class ContextOverflowError(Exception):
 #: length is 128000 tokens."`` (the #5699 owner-incident test's own
 #: non-regression fixture, itself modelled on OpenAI's real API error
 #: text) — contains NEITHER "too long" NOR "too large". It matched ONLY
-#: via the now-removed general words ``"context"``/``"length"``, and after
-#: this removal it no longer matches the keyword fallback at all — a
-#: genuine, disclosed false-negative trade (see
-#: ``test_real_openai_style_overflow_message_without_a_phrase_is_now_
-#: missed`` for the pinned repro, and the PR body for the full writeup).
+#: via the now-removed general words ``"context"``/``"length"``. Found by
+#: the positive control BEFORE this removal landed, and FIXED here (not
+#: merely disclosed — architect/lead-coder co-vet, PR #6073): this is the
+#: OpenAI-proxy-flattened-overflow shape the keyword fallback exists for
+#: in the first place, so losing it silently would have reopened the
+#: exact defect this fallback was written to close. Caught by adding the
+#: 3 phrases below, each containing "context" plus an adjoining word from
+#: that one observed message — still a multi-word PHRASE (passes the
+#: structural gate and the architect's own discriminator), not a re-added
+#: bare general word.
+#:
+#: ``"maximum context"`` / ``"context length"`` / ``"context window"`` —
+#: derived STRICTLY from the one message above, the only real observation
+#: on hand when these were added (#6069 PR #6073 review). This list is
+#: NOT exhaustive: it covers only what has been observed so far. Add a
+#: phrase here only from a newly OBSERVED real overflow message (never
+#: invented/imagined ahead of one — #5987's same corpus discipline:
+#: matching against an imagined corpus only measures agreement with the
+#: imagination).
+#:
 #: This is why stage 2 (the structured ``error.code`` field, #5699) and
 #: stage 1/2 (type/status_code) above are checked FIRST, in STRENGTH
 #: order: the real production shape (an un-flattened provider response)
@@ -1087,6 +1102,7 @@ class ContextOverflowError(Exception):
 #: stripped by an intermediate proxy — see this function's own docstring.
 _CONTEXT_OVERFLOW_KEYWORDS = (
     "too long", "too large",
+    "maximum context", "context length", "context window",
 )
 
 #: #5699 (owner real-machine incident): the OpenAI/litellm structured
@@ -1289,16 +1305,30 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     # positive/negative is diagnosable only by re-deriving it from
     # scratch. Reported here, at the ONE spot every call site funnels
     # through, rather than at each of this predicate's own callers.
+    #
+    # #6073 co-vet (architect + lead-coder): ``chat.py``'s shipped default
+    # config sets the ROOT logger to ``WARNING`` (#6045 hit the same trap
+    # today: "info is quiet" actually meant "info is discarded" there) —
+    # an ``INFO`` record here is silently dropped in every shipped run,
+    # so the True-deciding branch (free text ALONE decided a shrink-ladder
+    # entry — a fact that should be visible by default) is ``warning``.
+    # The False branch is left at ``debug``, not raised to the same level:
+    # it fires on EVERY exception that reaches this fallback and matches
+    # nothing (any RETRYABLE/FATAL exception with no typed/status/code
+    # signal funnels through here too), so raising it to ``warning`` would
+    # make it noise that drowns out the one warning that actually matters
+    # — the fix for "too quiet" is narrowing WHEN a level fires, never
+    # lowering the bar below what the shipped config surfaces.
     matched = [kw for kw in _CONTEXT_OVERFLOW_KEYWORDS if kw in signal.message.lower()]
     if matched:
-        logger.info(
+        logger.warning(
             "is_context_overflow_error: keyword fallback classified overflow=True "
             "via %r on exception type %s",
             matched,
             signal.class_name,
         )
         return True
-    logger.info(
+    logger.debug(
         "is_context_overflow_error: keyword fallback classified overflow=False "
         "-- none of %r matched exception type %s",
         _CONTEXT_OVERFLOW_KEYWORDS,

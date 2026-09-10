@@ -118,8 +118,18 @@ def test_is_context_overflow_error_bare_context_word_no_longer_matches() -> None
     containing "limit"). 'context'/'token'/'length'/'limit' fail the
     architect's own discriminator (the spelling can appear when the
     condition is NOT true) and were removed; only multi-word phrases
-    remain."""
-    assert is_context_overflow_error(Exception("context window exceeded")) is False
+    remain.
+
+    #6073 (positive-control follow-up): the fixture below is deliberately
+    "context exceeded", NOT "context window exceeded" — #6073's own fix
+    added the observed phrase "context window" back to
+    ``_CONTEXT_OVERFLOW_KEYWORDS`` (see that constant's own docstring),
+    so a fixture using that exact 2-word spelling would now match via the
+    PHRASE, not the bare word, and stop pinning what this test's name
+    claims. "context exceeded" carries neither "context window" nor
+    "context length" nor "maximum context" — still an isolated bare
+    word."""
+    assert is_context_overflow_error(Exception("context exceeded")) is False
 
 
 def test_is_context_overflow_error_bare_token_word_no_longer_matches() -> None:

@@ -109,7 +109,31 @@ def test_out_of_scope_http_404_sites_are_unchanged() -> None:
     ruling excluded the other 5 family sites from this fix (they pass the
     same discriminator, or are not partial-string-matches at all) — reads
     each site's own source text directly, never re-implementing its
-    logic, to witness the literal needle strings this PR did not touch."""
+    logic, to witness the literal needle strings this PR did not touch.
+
+    #6073 co-vet (architect's finding): source-pinning means a FUTURE
+    follow-up that converts these 5 sites from a ``"HTTP 404" in
+    str(exc)`` string match to a real status-code check (each site's own
+    exception — ``RegistryError``/``litellm``'s own error types — carries
+    no structured status_code of its own today; adding one is a DIFFERENT
+    PR's scope, not this one's) will make THIS test go red.
+
+    Deliberately kept as a source-pin rather than converted to a
+    behavioural check (option (a) the co-vet also offered): these 5 sites
+    are NOT one shared classifier predicate the way
+    ``is_context_overflow_error`` is — they are 3 different modules
+    (``mcp_install.py``, ``registry/client.py``, ``mcp/registry.py``, plus
+    ``router_loop.py``'s 2 string checks) each doing DIFFERENT things with
+    the match (continue-to-next-URL, raise-with-guidance, emit a
+    parameter-stripping retry) — there is no single function to call and
+    assert True/False against; building a behavioural harness per site
+    would mean faking each site's own I/O boundary (an HTTP client, a
+    litellm call) for a test whose only job is "did the 5 sites move",
+    which is a materially larger test than the question being asked.
+
+    THIS RED IS EXPECTED AND CORRECT, not a regression: when that
+    follow-up lands, delete or rewrite this test in THAT PR — do not
+    resurrect the old string literals to keep it green."""
     import inspect
 
     from reyn.core.op_runtime import mcp_install
@@ -131,12 +155,19 @@ def test_fallback_match_is_reported_not_silent(caplog) -> None:
     first), the matched spelling and the exception's type name are now
     reported via the public logging surface — never silent, the way the
     original #6070 false positive was (nothing recorded WHICH spelling
-    matched or on what exception type)."""
+    matched or on what exception type).
+
+    #6073 co-vet: this is ``logger.warning``, not ``logger.info`` —
+    ``chat.py``'s shipped default config sets the ROOT logger to
+    ``WARNING``, so an ``info`` record here would be silently discarded
+    in every shipped run (the same trap #6045 hit the same day). Asserted
+    at ``logging.WARNING`` here, not ``INFO``, so this test cannot stay
+    green against a regression back to ``info``."""
     exc = litellm.BadRequestError(
         message="the input is too large for this model",
         model="gpt-4", llm_provider="openai",
     )
-    with caplog.at_level(logging.INFO, logger="reyn.services.compaction.engine"):
+    with caplog.at_level(logging.WARNING, logger="reyn.services.compaction.engine"):
         assert is_context_overflow_error(exc) is True
     matched_records = [r for r in caplog.records if "too large" in r.getMessage()]
     assert matched_records, (
@@ -147,17 +178,28 @@ def test_fallback_match_is_reported_not_silent(caplog) -> None:
         "the exception's type name must also be reported alongside the "
         "matched spelling"
     )
+    assert all(r.levelno >= logging.WARNING for r in matched_records), (
+        "the deciding (True) branch must be visible at the shipped "
+        "default root level (WARNING) -- not silently below it"
+    )
 
 
 def test_fallback_no_match_is_also_reported_not_silent(caplog) -> None:
     """Tier 2: acceptance 5, the False-deciding half — a message that
-    reaches the fallback but matches nothing must also be reported (not
-    only the True case), so a future FALSE NEGATIVE (a real overflow
-    message missing every remaining phrase — see
-    ``tests/runtime/test_5699_compaction_window_fold_parity.py``'s own
-    #6069 positive-control test) is diagnosable via the same surface."""
+    reaches the fallback but matches nothing is also reported (not only
+    the True case), so a future false negative is diagnosable via the
+    same surface.
+
+    #6073 co-vet: this half stays at ``logger.debug``, deliberately NOT
+    raised to ``warning`` alongside the True branch above — it fires on
+    EVERY exception that reaches this fallback and matches nothing
+    (every RETRYABLE/FATAL exception lacking a typed/status/code signal
+    funnels through here too), so raising it to ``warning`` would bury
+    the one warning that actually matters in noise. Asserted at
+    ``logging.DEBUG`` here (not ``WARNING``), matching what the
+    production code actually emits."""
     exc = MissingFixture("... safety_limit_no_listener.jsonl ...")
-    with caplog.at_level(logging.INFO, logger="reyn.services.compaction.engine"):
+    with caplog.at_level(logging.DEBUG, logger="reyn.services.compaction.engine"):
         assert is_context_overflow_error(exc) is False
     assert any(
         "MissingFixture" in r.getMessage() and "False" in r.getMessage()

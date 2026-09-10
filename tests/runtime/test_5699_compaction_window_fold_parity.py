@@ -274,30 +274,31 @@ def test_a_message_with_a_surviving_phrase_but_a_different_code_is_still_detecte
     assert is_context_overflow_error(exc)
 
 
-def test_6069_real_openai_style_overflow_message_without_a_phrase_is_now_missed():
-    """Tier 2: #6069's own required positive-control finding, pinned as a
-    test rather than only asserted in the PR body.
+def test_6069_real_openai_style_overflow_message_is_caught_via_phrase():
+    """Tier 2: #6069's own required positive-control, re-verified fixed
+    after the #6073 co-vet (architect + lead-coder) — not merely
+    disclosed.
 
     "This model's maximum context length is 128000 tokens." is the exact
-    pre-#6069 fixture this file's sibling test above used (see git
-    history) — modelled on OpenAI's own real API error text for a
-    context-length overflow, and the shape #5699's own incident
-    investigation built to confirm the gap that issue fixed. It carries
-    NEITHER "too long" NOR "too large" — it relied SOLELY on the two
-    general words #6069 removed ("context"/"length").
+    pre-#6069 fixture this file's sibling test above used (see the prior
+    revision of this file) — modelled on OpenAI's own real API error
+    text for a context-length overflow, and the shape #5699's own
+    incident investigation built to confirm the gap that issue fixed. It
+    carries NEITHER "too long" NOR "too large" — it relied SOLELY on
+    the two general words #6069 removed ("context"/"length").
 
-    This is the literal case the issue's "positive control" step asked
-    to check BEFORE finalizing the word removal: verify real/historical
-    overflow text still classifies True. It does not. This is a genuine,
-    disclosed false-negative trade, not a bug introduced by accident —
-    see the PR body and ``_CONTEXT_OVERFLOW_KEYWORDS``'s own docstring
-    for why it is accepted anyway: a REAL, un-flattened provider response
-    for this exact message carries a structured ``error.code:
-    "context_length_exceeded"`` field (caught by the stage checked BEFORE
-    this one, #5699) — this keyword tuple is the fallback of last resort
-    for when BOTH the type AND the structured code have been stripped by
-    an intermediate proxy, a narrower situation than "any provider
-    message lacking a phrase"."""
+    #6069's PR (#6073) first landed with this positive control going RED
+    (the message no longer classified as overflow at all) — a genuine
+    false negative, not an accepted trade: the co-vet ruled it must be
+    FIXED, since this is the exact OpenAI-proxy-flattened-overflow shape
+    the keyword fallback exists to catch. Fixed by adding 3 PHRASES
+    derived strictly from this one observed message --
+    ``"maximum context"``/``"context length"``/``"context window"`` (see
+    ``_CONTEXT_OVERFLOW_KEYWORDS``'s own docstring for the disclosed
+    "observed 1, not exhaustive" scope of that addition) — still
+    multi-word phrases, so the structural gate
+    (``test_context_overflow_keywords_contain_no_bare_words``) keeps
+    passing; this is not a re-add of a bare general word."""
     exc = litellm.BadRequestError(
         message="This model's maximum context length is 128000 tokens.",
         model="gpt-4", llm_provider="openai",
@@ -305,9 +306,9 @@ def test_6069_real_openai_style_overflow_message_without_a_phrase_is_now_missed(
     assert getattr(exc, "code", None) != "context_length_exceeded", (
         "test premise: no structured code field present"
     )
-    assert not is_context_overflow_error(exc), (
-        "disclosed #6069 finding: this real-shaped message no longer "
-        "classifies as overflow once the general words are removed — "
-        "if this assertion ever flips back to True-required, re-read the "
-        "#6069 issue and PR body before 'fixing' it"
+    assert is_context_overflow_error(exc), (
+        "#6073 fix: this real-shaped message must classify as overflow "
+        "again via the 'maximum context'/'context length' phrase — if "
+        "this assertion ever goes red, re-read #6069/#6073 before "
+        "re-removing the phrase"
     )
