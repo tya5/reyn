@@ -61,13 +61,26 @@ def test_mtime_read_failure_warns_and_reports_never_built(tmp_path, monkeypatch,
         con.close()
 
     real_stat = pathlib.Path.stat
+    calls_on_db_path = 0
 
     def _stat(self, *args, **kwargs):
-        # `Path.exists()` calls `self.stat(follow_symlinks=...)` internally
-        # -- only fail the PLAIN `db_path.stat()` call `_read_index_state`
-        # itself makes (no kwargs), not the earlier `.exists()` check.
-        if self == db_path and not kwargs:
-            raise OSError("simulated stat failure")
+        # `Path.exists()` calls `self.stat(...)` internally too -- on
+        # Python 3.11 with NO `follow_symlinks` kwarg at all (that
+        # parameter was only added in 3.12), so filtering by "no kwargs"
+        # (an earlier version of this test did that, and it broke under
+        # 3.11 in CI: `.exists()`'s own stat call has no kwargs there
+        # either, so it got intercepted too, and `.exists()` re-raised
+        # before `_read_index_state` ever reached either `try` block --
+        # a Python-version-dependent test bug, not a production one).
+        # Order-based instead, version-independent: the FIRST stat() on
+        # `db_path` is always `.exists()`'s own (called once, before any
+        # try block); only the SECOND ONWARD is the mtime read this test
+        # targets.
+        nonlocal calls_on_db_path
+        if self == db_path:
+            calls_on_db_path += 1
+            if calls_on_db_path > 1:
+                raise OSError("simulated stat failure")
         return real_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(pathlib.Path, "stat", _stat)
