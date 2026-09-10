@@ -21,6 +21,10 @@ surface: that the ORIGINAL `cmd` text still reaches the event unchanged
 when routed through the TOOL layer (`EXEC.handler`), not only through a
 directly-constructed op (the stage4 file's own path).
 """
+# EXEMPT: sys.executable below is SANDBOXED PAYLOAD data (the argv `exec`
+# spawns through the sandbox, a trivial `python -c "print('hi')"`), not a
+# subprocess this test launches itself to resolve the `reyn` package --
+# #5028's own "Population imprecision" example, verbatim.
 from __future__ import annotations
 
 import functools
@@ -156,6 +160,9 @@ async def test_cmd_with_async_is_a_tool_error_and_argv_async_still_works(tmp_pat
         router_state=RouterCallerState(sandboxed_exec_async_fn=async_fn),
     )
 
+    # `sys.executable` below is SANDBOXED PAYLOAD data (the command `exec`
+    # spawns through the sandbox), not a subprocess the test itself
+    # launches to resolve `reyn` -- see the module-level `# EXEMPT:` note.
     argv_async = await EXEC.handler(
         {"argv": [sys.executable, "-c", "print('hi')"], "collect": "async"}, async_ctx,
     )

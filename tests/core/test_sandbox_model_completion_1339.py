@@ -81,8 +81,8 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
 
 def test_tool_schema_is_argv_and_timeout_only():
     """Tier 2: #1339 — the exec TOOL exposes only argv (+ timeout, #3903①;
-    + collect, #4733) — the LLM cannot set network / fs scope (those stay
-    operator-or-default). The pin this test actually protects is THAT
+    + collect, #4733; + cmd, #5838 段6) — the LLM cannot set network / fs
+    scope (those stay operator-or-default). The pin this test actually protects is THAT
     boundary (no sandbox-policy axis ever reaches the schema), not "the
     key set never grows" — a new key belongs in the EXPECTED set the
     moment it adds a non-axis capability, same as `timeout` did below.
@@ -109,11 +109,20 @@ def test_tool_schema_is_argv_and_timeout_only():
     `PermissionResolver.require_network`), read ONLY when the resolved
     policy already has network off. It moves from the `removed` loop
     below into the EXPECTED set; the other 4 (fs/subprocess axes) stay
-    removed."""
+    removed.
+
+    #5838 段6 (2026-09-10): `cmd` joins the EXPECTED set too — same
+    reasoning as `timeout`/`collect`/`network` above, not a reopening of
+    the #3907 gap: it is a second, mutually-exclusive REQUEST SHAPE
+    alongside `argv` (a shell command-line string), not a sandbox-policy
+    axis — it sets no fs/subprocess/network field, it is read by
+    `EXEC._handle` and turned into the SAME `/bin/sh -c <cmd>` argv the
+    sandbox already enforces policy against. It belongs in the EXPECTED
+    set for the same reason `timeout`/`collect`/`network` do."""
     from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
     props = set(_EXEC_PARAMETERS["properties"])
-    assert props == {"argv", "timeout", "collect", "network"}
+    assert props == {"argv", "cmd", "timeout", "collect", "network"}
     for removed in (
         "write_paths", "allow_subprocess", "deny_subprocess",
         "env_deny_names", "read_deny_paths", "write_deny_paths",
