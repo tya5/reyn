@@ -16,21 +16,21 @@ from reyn.interfaces.cli.env_backend import build_environment_backend, register_
 def register(sub) -> None:
     p = sub.add_parser(
         "web",
-        help="Web UI ゲートウェイサーバを起動する",
-        description="FastAPI + AG-UI SSE ゲートウェイを uvicorn で起動します。",
+        help="Start the Web UI gateway server",
+        description="Start the FastAPI + AG-UI SSE gateway with uvicorn.",
     )
     p.add_argument(
         "--host",
         default="127.0.0.1",
         metavar="HOST",
-        help="バインドするホスト (デフォルト: 127.0.0.1)",
+        help="Host to bind to (default: 127.0.0.1)",
     )
     p.add_argument(
         "--port",
         type=int,
         default=8080,
         metavar="PORT",
-        help="バインドするポート番号 (デフォルト: 8080)",
+        help="Port number to bind to (default: 8080)",
     )
     p.add_argument(
         "--uds",
@@ -38,15 +38,15 @@ def register(sub) -> None:
         metavar="PATH",
         dest="uds",
         help=(
-            "UNIX ドメインソケットにバインドする (T2 same-machine; 指定時は "
-            "--host/--port を無視)。同一マシンの thin-client 接続向け — 認証は "
-            "OS の peer-credential (SO_PEERCRED / getpeereid)。"
+            "Bind to a UNIX domain socket (T2 same-machine; when given, "
+            "--host/--port are ignored). For same-machine thin-client "
+            "connections -- auth is the OS peer-credential (SO_PEERCRED / getpeereid)."
         ),
     )
     p.add_argument(
         "--reload",
         action="store_true",
-        help="コード変更時に自動リロードする (開発用)",
+        help="Auto-reload on code changes (for development)",
     )
     p.add_argument(
         "--log-level",
@@ -54,14 +54,14 @@ def register(sub) -> None:
         choices=["critical", "error", "warning", "info", "debug", "trace"],
         dest="log_level",
         metavar="LEVEL",
-        help="uvicorn のログレベル (デフォルト: info)",
+        help="uvicorn log level (default: info)",
     )
     p.add_argument(
         "--default-design",
         default=None,
         metavar="SLUG",
         dest="default_design",
-        help="デフォルトの design slug (env REYN_WEB_DEFAULT_DESIGN に設定)",
+        help="Default design slug (set via env REYN_WEB_DEFAULT_DESIGN)",
     )
     # Parity with `reyn chat --eager-embedding-build` (= B25-S5-1).
     # Builds the action-index synchronously on session start so
@@ -75,10 +75,10 @@ def register(sub) -> None:
         default=False,
         dest="eager_embedding_build",
         help=(
-            "action_embedding_index を session 起動時 sync で build "
-            "(env REYN_WEB_EAGER_EMBEDDING_BUILD=1 と同等)。"
-            " search_actions を 1 turn 目から見せたい dogfood / web "
-            "デプロイで有効化。"
+            "Build action_embedding_index synchronously at session start "
+            "(equivalent to env REYN_WEB_EAGER_EMBEDDING_BUILD=1). "
+            "Enable for dogfood / web deployments that want search_actions "
+            "visible from turn 1."
         ),
     )
     # #1401: scoped capabilities for the A2A server path — symmetric with
@@ -95,9 +95,9 @@ def register(sub) -> None:
         default=None,
         metavar="NAMES",
         help=(
-            "LLM の visible catalog から隠すツール名 (カンマ区切り、例 "
-            "web_search,web_fetch)。faithful eval の web-leak 抑止に "
-            "(`reyn chat --exclude-tools` と同等)。"
+            "Tool names to hide from the LLM's visible catalog (comma-separated, "
+            "e.g. web_search,web_fetch). For suppressing web-leak in faithful "
+            "eval (equivalent to `reyn chat --exclude-tools`)."
         ),
     )
     # FP-0058 P2: per-surface opt-in/opt-out mount toggles. Repeatable
@@ -113,8 +113,8 @@ def register(sub) -> None:
         default=None,
         metavar="SURFACE",
         help=(
-            "指定した surface を opt-in で有効化する (繰り返し指定可、例 "
-            "--enable a2a --enable mcp)。CLI > config > secure-default。"
+            "Opt in to enable the given surface (repeatable, e.g. "
+            "--enable a2a --enable mcp). Precedence: CLI > config > secure-default."
         ),
     )
     p.add_argument(
@@ -124,8 +124,8 @@ def register(sub) -> None:
         default=None,
         metavar="SURFACE",
         help=(
-            "指定した surface を無効化する (繰り返し指定可、例 --disable api)。"
-            "CLI > config > secure-default。"
+            "Disable the given surface (repeatable, e.g. --disable api). "
+            "Precedence: CLI > config > secure-default."
         ),
     )
     p.set_defaults(func=run)
