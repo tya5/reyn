@@ -58,7 +58,13 @@ from reyn.config import (  # noqa: F401
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
-from reyn.core.events.backend import DiscardEventBackend, EventBackend, LocalEventBackend
+from reyn.core.events.backend import (
+    DiscardEventBackend,
+    EventBackend,
+    EventStoreLike,
+    LocalEventBackend,
+    NetworkEventBackend,
+)
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
@@ -5869,10 +5875,10 @@ class Session:
         return self._hot_reloader.seam_names()
 
     def _build_events_backend(self, event_store: EventStore) -> "EventBackend":
-        """#4496 PR-2: resolve ``self._events_config.backend`` (``"local"`` /
-        ``"discard"`` — ``"network"`` is not yet a real value, see
-        ``AuditEventsConfig.backend``'s own docstring) to a concrete
-        ``EventBackend`` wrapping *event_store*.
+        """#4496 PR-2/PR-4: resolve ``self._events_config.backend`` (``"local"``
+        / ``"discard"`` / ``"network"``) to a concrete ``EventBackend``
+        wrapping *event_store* (``"local"``) or standing alone (the other
+        two).
 
         Deliberately NOT threaded as an ``EventLog`` subscriber (unlike
         pre-PR-2 shape) — see ``reyn.core.events.backend``'s module
@@ -5882,9 +5888,31 @@ class Session:
         the state-change converter / OTEL: a raising backend in the
         subscriber list would abort delivery to every subscriber
         registered after it (the exact "discard silences the UI" failure
-        mode #4496 forbids)."""
+        mode #4496 forbids).
+
+        ``"network"``'s optional local spool (``on_failure: spool`` only —
+        see ``NetworkEventBackend``'s own docstring) reuses the SAME
+        ``EventStore`` class *event_store* itself is, pointed at a
+        dedicated sibling directory under this agent's own events dir
+        (``<events_dir>/network_spool``) and capped by
+        ``network_spool_max_bytes`` — never the same store/path
+        *event_store* uses, so a spooled event can never be mistaken for
+        one the `local` backend itself wrote."""
         if self._events_config.backend == "discard":
             return DiscardEventBackend()
+        if self._events_config.backend == "network":
+            spool_store: "EventStoreLike | None" = None
+            if self._events_config.on_failure == "spool":
+                spool_store = EventStore(
+                    self.events_dir / "network_spool",
+                    max_bytes=self._events_config.network_spool_max_bytes,
+                )
+            return NetworkEventBackend(
+                endpoint=self._events_config.network_endpoint,
+                on_failure=self._events_config.on_failure,
+                spool_store=spool_store,
+                timeout_s=self._events_config.network_timeout_s,
+            )
         return LocalEventBackend(
             event_store,
             agent_delta_coalesce_fragments=self._events_config.agent_delta_coalesce_fragments,
@@ -5962,6 +5990,10 @@ class Session:
                 # "SR5b: silently ignored" branch.
                 audit_events.add_subscriber(otel_exporter, kinds=HANDLED_EVENT_TYPES)
         except Exception:  # noqa: BLE001 — OTEL attach must never break session init
+            logger.warning(
+                "observability.otel export could not be attached; the "
+                "session continues without it", exc_info=True,
+            )
             otel_exporter = None
         return _AuditEventBundle(
             event_store=event_store,
@@ -6370,6 +6402,13 @@ class Session:
                 # dependency / malformed config), fall through to "no index"
                 # so the rest of the session continues without
                 # search_actions rather than refusing to start.
+                logger.warning(
+                    "embedding.index.actions is enabled but the "
+                    "action-embedding provider/index could not be built "
+                    "(missing dependency or malformed embedding config); "
+                    "search_actions stays unavailable this session",
+                    exc_info=True,
+                )
                 embedding_provider = None
                 action_embedding_index = None
                 embedding_model_class = None
@@ -11996,6 +12035,21 @@ class Session:
         """
         await self._audit_events.drain()
         await self._audit_events.stop_dispatch()
+        # #4496 PR-4: `NetworkEventBackend` owns a background thread (see
+        # its own docstring for why — never blocking `emit()`'s caller on
+        # a network send). Same "last backend teardown hook before this
+        # session's EventLog is abandoned" reasoning as the drain/
+        # stop_dispatch pair above; a no-op daemon thread would otherwise
+        # survive this session with no caller left to ever join it. Duck-
+        # typed (``close`` only exists on ``NetworkEventBackend`` — local/
+        # discard have nothing to close) so this needs no isinstance check
+        # against a class this module would otherwise not import.
+        close_backend = getattr(self._audit_events.backend, "close", None)
+        if callable(close_backend):
+            # `close()` joins a background thread (bounded by
+            # `network_timeout_s + 5s`) — off-loop via `to_thread` so
+            # teardown never blocks the event loop for that long.
+            await asyncio.to_thread(close_backend)
 
     # --- RouterLoop orchestration ---
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import stat
 import warnings
@@ -34,6 +35,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Refresh buffer: if a token expires within this window we refresh
 # proactively so the caller never sees a 401. RFC 6749 §6 doesn't
@@ -549,6 +552,12 @@ async def _poll_token(
     try:
         body: dict[str, Any] = resp.json()
     except ValueError:
+        # Never log the response body itself here — a token endpoint's
+        # non-JSON reply can legitimately be (or embed) sensitive text.
+        _log.warning(
+            "oauth token endpoint %r returned a non-JSON body (status %s)",
+            provider.token_url, resp.status_code,
+        )
         body = {}
     return resp.status_code, body
 

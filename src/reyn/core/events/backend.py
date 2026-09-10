@@ -60,26 +60,47 @@ PR-2). This is deliberate, not incidental:
       a backend exception is caught right where it's raised, before the
       subscriber loop even starts.
 
-## Scope: `network` is deferred, not silently dropped
+## `network` backend + `on_failure` (#4496, owner ruling 2026-09-09)
 
-The owner's #4496 write-up leaves one point genuinely undecided: what a
-`network` backend does when the network call fails (discard-and-let-the-
-seq-gap-show-it / spool-locally / halt-the-run — three real options, see
-issue #4496's "決めるべき残り1点"). Building a `NetworkEventBackend` ahead
-of that decision would mean guessing at owner-owned UX. `local` and
-`discard` need no such decision (their only failure mode is disk I/O
-raising, already covered by contract ③'s try/except at the call site) —
-this PR ships those two; `network` is issue #4496's own next PR once the
-owner has resolved the open question above.
+The owner's #4496 write-up left one point open: what a `network` backend
+does when the network send fails — discard-and-let-the-seq-gap-show-it /
+spool-locally / halt-the-run (three options the issue itself names). The
+owner's own recorded words settle it (issue body, 2026-08-13): "呼び戻し
+がないと reyn 動けないわけじゃない" ("reyn doesn't need a callback to
+function") — so **discard-and-continue is the default** (`on_failure:
+discard`), never "halt the run" (explicitly rejected — stopping a run over
+an audit-delivery failure is excessive; a capacity-limited spool already
+covers the rare case that genuinely needs to not lose the record). `spool`
+is an explicit opt-in: an operator who chose `network` specifically to NOT
+keep events locally must not have that silently reversed on a transient
+failure — see `NetworkEventBackend`'s own docstring for the exact mechanics
+and `AuditEventsConfig.on_failure`'s docstring for the config-side framing.
+
+**Wire protocol — NOT specified by the issue thread.** No existing
+general-purpose "send an arbitrary audit-event over the network" primitive
+exists in this repo (`observability/otel_exporter.py` maps a FIXED set of
+event kinds to OTel's own GenAI span/metric/log vocabulary — a different,
+narrower contract, not a transport this backend can reuse for an arbitrary
+event). Chose the minimal, conservative shape: one HTTP POST per event, to
+an operator-configured `endpoint`, with `event.model_dump(mode="json")` as
+the JSON body — documented here plainly as a choice, not a derivation.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import queue
+import threading
 import time
-from typing import Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Callable, Literal, Protocol, runtime_checkable
 
 from reyn.schemas.models import Event
+
+if TYPE_CHECKING:
+    import httpx
+
+logger = logging.getLogger(__name__)
 
 #: #4960 — architect ruling C: ``agent_delta`` (one audit-event per
 #: streamed content chunk) is NOT durably written per-fragment. Live
@@ -734,6 +755,222 @@ class DiscardEventBackend:
             "backend: discard) — `reyn events replay`, support-bundle, "
             "and dogfood_trace have nothing to read for this run",
         ]
+
+
+_NETWORK_QUEUE_SENTINEL = object()
+
+
+class NetworkEventBackend:
+    """Sends each event over the network (one HTTP POST per event), per
+    #4496's `network` backend + `on_failure` knob (owner ruling,
+    2026-09-09 — see this module's own docstring for the full design and
+    why discard-and-continue is the default).
+
+    ## Off-loop by construction (never blocks `EventLog.emit()`)
+
+    `write()` only enqueues *event* onto a bounded in-process queue and
+    returns — the actual HTTP POST runs on a single dedicated background
+    thread (`_run`), never on the caller's thread. This mirrors every
+    other off-loop write primitive in this package (`EventStore` routes
+    its own I/O through `DurabilityWorker`; `OtelExporter`'s OTLP export
+    runs on a background thread via `BatchSpanProcessor`) for the same
+    reason: `emit()` is called from synchronous AND async call sites,
+    many of them hot paths, and a blocking network call inline would
+    stall every one of them on a slow or unreachable endpoint — exactly
+    the kind of cost this module's contract ③ (a backend's failure must
+    never reach a subscriber) is adjacent to but does not, by itself,
+    prevent (a SLOW backend is not a RAISING backend).
+
+    A full ``queue`` (``queue_maxsize``, bounded so a persistently
+    unreachable endpoint cannot grow memory without limit) is treated
+    identically to a failed send — the event goes through the SAME
+    `on_failure` policy below, never silently dropped with no trace
+    (the dropped count is WARN-logged once per process, latched, same
+    "do not spam on a broken endpoint" discipline as `OtelExporter`'s own
+    `_latch_error`).
+
+    ## `on_failure` (owner ruling: discard is the default, spool is opt-in)
+
+    - ``"discard"`` (default): a failed send does nothing further — the
+      event disappears from durable storage. `EventLog.emit()` already
+      stamped `audit_seq` on it BEFORE handing it to this backend (#4496
+      PR-1 — this backend never touches `audit_seq`), so a receiver that
+      DOES get delivery for neighbouring events sees a skipped number —
+      "not silent" per contract 3, even though nothing is written here.
+    - ``"spool"``: a failed send is written to *spool_store* instead (an
+      `EventStoreLike` — typically a plain `EventStore` pointed at a
+      dedicated local directory) — the owner's own framing (issue
+      #4496): choosing `network` to NOT keep events locally, and then
+      having a failure silently keep them locally anyway, would reverse
+      the operator's own choice without telling them. `declare_gaps()`
+      below says plainly, when `spool` is active, that events ARE being
+      held on local disk despite choosing `network`.
+
+    Never raises from `write()` — a send failure (queue full, connection
+    error, non-2xx response, timeout) is always caught and routed through
+    `on_failure` above; `EventLog.emit()`'s own try/except around
+    `self._backend.write(event)` is a second, redundant line of defense
+    for a bug in this class, not the primary mechanism."""
+
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        on_failure: Literal["discard", "spool"] = "discard",
+        spool_store: "EventStoreLike | None" = None,
+        timeout_s: float = 5.0,
+        client: "httpx.Client | None" = None,
+        queue_maxsize: int = 1000,
+    ) -> None:
+        self._endpoint = endpoint
+        self._on_failure: Literal["discard", "spool"] = on_failure
+        self._spool_store = spool_store
+        self._timeout_s = timeout_s
+        # Test seam (mirrors this repo's existing idiom, e.g.
+        # `LocalEventBackend`'s injectable `clock`): production passes
+        # `client=None` and this constructs the standard DRY client
+        # (`reyn._network.build_sync_http_client` — the ONE constructor
+        # every reyn-owned `httpx.Client` must go through, per #3075's
+        # completeness gate); a test injects a real `httpx.Client` wired
+        # to `httpx.MockTransport` (a real httpx collaborator, not a
+        # fake of reyn's own code) or a real client pointed at a
+        # connection-refused address for a genuine failure.
+        self._client = client
+        self._owns_client = client is None
+        self._queue: "queue.Queue[object]" = queue.Queue(maxsize=max(1, queue_maxsize))
+        self._dropped_for_full_queue = 0
+        self._error_latched = False
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run, name="reyn-network-event-backend", daemon=True,
+        )
+        self._thread.start()
+
+    def write(self, event: Event) -> None:
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            self._dropped_for_full_queue += 1
+            self._latch_warning(
+                "network event backend queue is full (endpoint=%s, "
+                "maxsize=%d) — treating as a send failure under "
+                "on_failure=%s", self._endpoint, self._queue.maxsize,
+                self._on_failure,
+            )
+            self._handle_failure(event)
+
+    def _run(self) -> None:
+        client = self._client
+        if client is None:
+            from reyn._network import build_sync_http_client
+
+            client = build_sync_http_client(egress="audit_events_network_backend")
+            self._client = client
+        while True:
+            item = self._queue.get()
+            if item is _NETWORK_QUEUE_SENTINEL:
+                self._queue.task_done()
+                return
+            event = item
+            assert isinstance(event, Event)
+            try:
+                self._send(client, event)
+            except Exception as exc:  # noqa: BLE001 — never let a send
+                # failure kill this worker thread; route through policy.
+                self._latch_warning(
+                    "network event backend send failed (endpoint=%s): %s",
+                    self._endpoint, exc,
+                )
+                self._handle_failure(event)
+            finally:
+                self._queue.task_done()
+
+    def _send(self, client: "httpx.Client", event: Event) -> None:
+        response = client.post(
+            self._endpoint,
+            json=event.model_dump(mode="json"),
+            timeout=self._timeout_s,
+        )
+        response.raise_for_status()
+
+    def _handle_failure(self, event: Event) -> None:
+        if self._on_failure != "spool" or self._spool_store is None:
+            return  # "discard" (default): the event disappears, on purpose
+        try:
+            self._spool_store.write(event)
+        except Exception:
+            logger.exception(
+                "network event backend on_failure=spool: writing the "
+                "failed event to the local spool ALSO failed (endpoint=%s) "
+                "— this event is lost", self._endpoint,
+            )
+
+    def _latch_warning(self, msg: str, *args: object) -> None:
+        if self._error_latched:
+            return
+        self._error_latched = True
+        logger.warning(
+            msg + " — suppressing further network-backend warnings for "
+            "this process (subscriber delivery and audit_seq continuity "
+            "are unaffected)", *args,
+        )
+
+    def wait_idle(self) -> None:
+        """Block until every currently-queued event has been sent (or
+        handled via `on_failure`) — a real wait on queue state
+        (`queue.Queue.join`'s task-count, not a sleep), for a caller (a
+        test, or a deliberate shutdown barrier) that must observe this
+        backend's effect before proceeding. Never returns early just
+        because the queue was momentarily empty — `join()` only returns
+        once every `put` has a matching `task_done`."""
+        self._queue.join()
+
+    def close(self) -> None:
+        """Stop the background thread after draining the queue. Idempotent.
+        The thread is a daemon, so this is not required for process exit —
+        it exists for deterministic test teardown (no thread leaked across
+        tests) and for a graceful session shutdown path."""
+        if self._closed:
+            return
+        self._closed = True
+        self._queue.put(_NETWORK_QUEUE_SENTINEL)
+        self._thread.join(timeout=self._timeout_s + 5.0)
+        if self._owns_client and self._client is not None:
+            try:
+                self._client.close()
+            except Exception:  # noqa: BLE001 — best-effort on shutdown
+                pass
+
+    def declare_gaps(self) -> list[str]:
+        gaps = [
+            "this backend sends events over the network (audit_events."
+            f"backend: network, endpoint={self._endpoint!r}) instead of "
+            "writing them to `.reyn/events` — `reyn events replay`, "
+            "support-bundle, and dogfood_trace have nothing to read "
+            "LOCALLY for any event this backend handles, delivered or "
+            "not (those tools only ever read this process's local disk; "
+            "whatever the network endpoint does with a delivered event "
+            "is outside this process's own audit trail).",
+        ]
+        if self._on_failure == "spool":
+            gaps.append(
+                "on_failure=spool: a FAILED network send is buffered "
+                "locally on disk for retry — 'not saving locally' "
+                "becomes inexact once this is chosen: events that fail "
+                "delivery ARE being held on local disk (a capacity-"
+                "limited spool, not a re-enabled local backend).",
+            )
+        else:
+            gaps.append(
+                "on_failure=discard (the default): a FAILED network send "
+                "is dropped — the event disappears entirely, with no "
+                "local copy. `audit_seq` still increments for it "
+                "(stamped before this backend ever runs), so a receiver "
+                "that DOES get delivery for neighbouring events sees a "
+                "skipped number — not silent, even though nothing is "
+                "written anywhere.",
+            )
+        return gaps
 
 
 class EventStoreLike(Protocol):

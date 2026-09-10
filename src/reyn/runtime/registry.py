@@ -413,6 +413,18 @@ class AgentRegistry:
         # unchanged (it is a caller-provided closure, 60+ construction sites).
         self._delegation_capability_default = delegation_capability_default
         self._constructing_as_delegate = False
+        # #6061 ⑵: "exec tool-axis restriction only checks argv[0], not the
+        # binary that actually runs" -- one operator-facing notice per
+        # DISTINCT composed tool-axis narrowing (never a bare process-lived
+        # bool: architect's own review, #6058/#6059 same night -- a
+        # process-lifetime memo is what silently swallows a LATER, real
+        # change, here a hot-reloaded config producing a different
+        # narrowing). Keyed on the narrowing's own (tool_allow, tool_deny)
+        # content in resolved_profile_for's own final composition, so the
+        # SAME narrowing composed again (same agent, same config) stays
+        # quiet, and a genuinely DIFFERENT one (a different agent, or the
+        # same agent after a hot-reload) warns again.
+        self._tool_axis_binary_limit_warned: "set[tuple[frozenset[str] | None, frozenset[str]]]" = set()
         # #2103: WAL kinds the as-of-cut DROP primitive treats as entity-creates.
         # Each such event carries {entity_kind: "agent"|"session", name, sid?}; on
         # rewind, an entity whose create-event seq > the cut is torn down (it did
@@ -5915,7 +5927,83 @@ class AgentRegistry:
 
         if not resolved:
             return None, frozenset()
-        return compose_resolved(resolved)
+        composed = compose_resolved(resolved)
+        self._maybe_warn_tool_axis_binary_limit(composed[0])
+        return composed
+
+    def _maybe_warn_tool_axis_binary_limit(self, contextual: "object | None") -> None:
+        """#6061 ⑵ (architect design, lead-coder ruling): the operator-facing
+        notice for the tool axis's own real limit — it restricts each exec
+        segment's resolved ``argv[0]`` name, not the binary that actually
+        runs once a wrapper (``env``/``xargs``/``sh -c``/``timeout``/``nice``)
+        is involved (#6061's own root-cause finding). NOT "a hole was
+        closed" — the doc row this warning quotes states the SAME limit,
+        just in the promise rather than only at runtime; this is the
+        runtime-visible half of that same fix.
+
+        Fires only when BOTH hold (architect's condition (ii), the
+        HIGHER-precision of the two offered — condition (i), "any
+        narrowing at all", was rejected: an operator who narrowed only
+        REYN tools would see this and learn to ignore it, so the ONE time
+        it would matter later gets read past too):
+
+        1. A real tool-axis narrowing is present AND ``exec`` itself is not
+           denied outright (`tool_contextually_denied(contextual, "exec")`
+           is False) — if `exec` can't run at all, this limit affects
+           nobody.
+        2. The narrowing's own name set (``tool_allow | tool_deny``)
+           contains at least one name NOT in the registered reyn tool
+           registry (:func:`reyn.tools.get_default_registry`) — a name
+           that can only be pointing at a BINARY the operator meant to
+           restrict via `exec`, not a reyn tool name. Derived from the
+           real registry, never a hand-maintained list (#6061's own
+           architect ruling on why a wrapper DENYLIST is not adopted here
+           applies equally to inventing a second list for this check).
+
+        Routed through ``logging`` at WARNING (lead-coder BLOCKING on
+        PR #6064: a bare ``print(..., file=sys.stderr)`` here would have
+        been the exact class #6043 closed — this function's caller,
+        ``resolved_profile_for``, runs from ``chat._session_factory`` on
+        EVERY session construction, including a spawn/attach AFTER the
+        inline TUI already owns the terminal, and the content-keyed dedup
+        means a differently-narrowed agent's FIRST spawn is exactly when
+        this fires; #2103 C2's own same-spot ``print`` being a precedent
+        is not the same claim as it being safe — a precedent nobody has
+        hit yet is not evidence). ``#6043``/``#6045``'s own established
+        shape: ``reyn.log`` always gets it (the file handler is
+        unconditional now); ``--cui``/non-TTY ALSO gets it on stderr (the
+        existing conditional StreamHandler); the inline TUI's own
+        terminal never does. Deliberately does NOT touch #2103 C2's own
+        ``print`` calls a few lines above in this same function — separate
+        subject, not this PR's scope."""
+        from reyn.security.permissions.effective import tool_contextually_denied
+
+        if contextual is None:
+            return
+        if tool_contextually_denied(contextual, "exec"):
+            return
+        narrowed_names = (contextual.tool_allow or frozenset()) | contextual.tool_deny
+        if not narrowed_names:
+            return
+        from reyn.tools import get_default_registry
+
+        registered = frozenset(t.name for t in get_default_registry())
+        if narrowed_names <= registered:
+            return  # every narrowed name is a real reyn tool -- no binary-intent signal
+
+        key = (contextual.tool_allow, contextual.tool_deny)
+        if key in self._tool_axis_binary_limit_warned:
+            return
+        self._tool_axis_binary_limit_warned.add(key)
+
+        logger.warning(
+            "exec tool-axis restriction is in force, but it can only "
+            "check each command's own argv[0]. A wrapper -- env, xargs, "
+            "sh -c, timeout, nice -- passes under its own name and runs "
+            "its argument unchecked: restricting X does not prevent "
+            "env X. Threat-scan patterns and the sandbox's own limits "
+            "still apply. See #6061."
+        )
 
     def per_session_narrowing(self, name: str, sid: "str | None" = None) -> "dict | None":
         """#3546: the per-session narrowing MAPPING persisted for ``(name, sid)`` —

@@ -260,7 +260,9 @@ class SandboxBackend(Protocol):
         """
         ...
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None",
+    ) -> WrappedCommand:
         """Return a command-level sandbox wrap of *argv* for a persistent-process
         launch (e.g. a stdio MCP server) that cannot go through the one-shot
         ``run()``. Every backend implements this uniformly so NO agent-reachable
@@ -276,6 +278,24 @@ class SandboxBackend(Protocol):
         Synchronous and side-effect-light (may perform local I/O such as
         writing a temp profile file) — it does not itself spawn the wrapped
         process; the caller owns that.
+
+        ``env_path`` (#6058, REQUIRED — #6063 BLOCKING co-vet): the ``PATH``
+        this wrap's own env-fallback should use when *policy*'s own
+        passthrough env doesn't already carry one — a single value the
+        CALLER read once, at ITS OWN operation's entry point (or, for a
+        caller with no per-operation entry point to read at — the MCP stdio
+        launch / CodeAct spawn / ``enforcement_self_test`` call sites, none
+        of which separately resolve an argv0 against ``PATH`` elsewhere in
+        the SAME call that this wrap's env would then have to agree with —
+        a single LOCAL read at that call site), threaded down explicitly.
+        ``None`` is a legitimate VALUE (the caller read ``PATH`` and it was
+        genuinely unset) — distinct from the parameter being OMITTED, which
+        is now a ``TypeError``, not a silent independent re-read: a second,
+        divergent read of ``ambient_path()`` inside this method is the exact
+        #6008 defect this parameter exists to close, so the implementation
+        MUST NOT fall back to calling :func:`ambient_path` itself. See that
+        function's own docstring for why this is a parameter now, not a
+        module-level memo.
         """
         ...
 
@@ -289,8 +309,24 @@ class SandboxBackend(Protocol):
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None",
     ) -> SandboxResult:
         """Execute argv under the given policy and return the result.
+
+        ``env_path`` (#6058, REQUIRED — #6063 BLOCKING co-vet): same contract
+        as :meth:`wrap_command`'s own ``env_path`` — the caller's single
+        per-operation ``PATH`` read, threaded down rather than re-derived
+        here. ``sandboxed_exec.py`` reads it ONCE (``ambient_path()``) and
+        passes the SAME value to both this method and the policy check
+        (``check_exec_plan_policy``'s own ``env_path``) so the binary policy
+        approved and the binary the child's env resolves against are the
+        identical ``PATH`` — never two independent reads of it. A caller
+        with no per-operation value to share (e.g. the shell-hook runner)
+        now reads ``ambient_path()`` itself, explicitly, at its own call
+        site and passes the result — this method no longer falls back to
+        an uncached read of its own: an OMITTED argument is a ``TypeError``,
+        and a second, independent read inside this method is the exact
+        #6008 defect this parameter exists to close.
 
         ``cwd`` is the working directory the command runs in. The OS passes the
         run's ``workspace.base_dir`` (= parity with the legacy ``shell`` op,
@@ -389,59 +425,50 @@ def all_concrete_backend_classes() -> "tuple[type, ...]":
     return (SeatbeltBackend, LandlockBackend, NoopBackend, DockerEnvironmentBackend)
 
 
-_ambient_path_read = False
-_ambient_path_cache: "str | None" = None
-
-
 def ambient_path() -> "str | None":
-    """The process's own ambient ``PATH`` — read from the real environment
-    exactly ONCE per process, then memoized for the rest of this process's
-    life (#6008, architect ruling).
+    """The process's own ambient ``PATH`` — one plain, UNCACHED read of
+    ``os.environ``. #6058 (which REPLACES #6008's own process-lifetime memo
+    here — see that history below): this function no longer remembers
+    anything between calls. It exists as a named call site (not an inline
+    ``os.environ.get("PATH")`` at every caller) purely so a reader can grep
+    ONE name to find every place reyn reads the ambient PATH for this
+    purpose — not so two callers can rely on getting the same answer
+    without coordinating. A caller that needs the SAME value agreed on by
+    two different consumers within one operation (the actual #6008
+    requirement — see below) must read this ONCE, at that operation's own
+    entry point, and thread the result down explicitly as the ``env_path``
+    parameter now on :meth:`SandboxBackend.run`/:meth:`SandboxBackend.
+    wrap_command`/:func:`~reyn.security.exec_plan_policy.
+    check_exec_plan_policy` — never rely on two independent calls to this
+    function to agree.
 
-    WHY THIS EXISTS: ``check_exec_plan_policy`` (policy) and a sandbox
-    backend's own env-building (``noop_backend.py``/``seatbelt.py``/
-    ``landlock.py``, exec) each used to read the ambient ``PATH``
-    independently, with an ``await`` (a real suspension point — the
-    policy check itself) between the two reads. Nothing in reyn ever
-    WRITES this variable (measured, architect: a `git grep` across `src/`
-    for env-mutating calls — `[...]=`/`setdefault`/`update`/`pop` — found
-    zero touching `PATH`, only `LITELLM_*`/`TIKTOKEN_*`/`REYN_*`/`OTEL_*`
-    names) — but a plugin or third-party library sharing this process
-    could, between the two reads, and #5838's own invariant ("the value
-    policy checked is the value exec uses") would then silently not
-    hold: policy would approve a binary resolved against one PATH, exec
-    would run a binary resolved against another.
+    #6008's ORIGINAL requirement, PRESERVED (the part #6058 does NOT
+    change): ``check_exec_plan_policy`` (policy) and a sandbox backend's
+    own env-building (exec) must see the IDENTICAL ``PATH``, because #5838's
+    invariant — "the value policy checked is the value exec uses" — would
+    otherwise silently not hold across the ``await`` between the two. #6008
+    closed that gap with a PROCESS-LIFETIME memo (this function's global
+    cache, now removed). #6058 (architect/lead-coder, filed 2026-09-10):
+    that memo over-corrected — "policy and exec read at different times"
+    became "every caller for the rest of the process's life reads whatever
+    was read FIRST", which (a) makes CI's `-n auto` worker/test ordering
+    decide whether ``tests/security/test_sandbox_argv0_resolve_2820.py``'s
+    own ``monkeypatch.setenv("PATH", ...)`` is honored (confirmed: main and
+    every PR alternated red/green by worker assignment, not by any code a
+    PR changed), and (b) would, in a long-lived reyn process, make a real
+    ambient ``PATH`` change invisible FOREVER, not merely within one
+    exec's own window. The fix keeps #6008's invariant (same value, within
+    one operation) but drops its LIFETIME (process, not operation): read
+    once per operation, pass the SAME value to both consumers as an
+    explicit parameter — never a global both sides independently consult.
 
-    WHY MEMOIZE-ON-FIRST-USE, NOT AN EXPLICIT STARTUP INIT (rejected,
-    architect): an explicit "read PATH here, at boot" call site creates
-    exactly one thing to forget to call before some other, less obvious
-    path reaches policy/exec first — memoizing inside the accessor itself
-    means every caller, in any order, converges on the SAME single real
-    read with no init step to skip.
-
-    WHY NOT A CALLER-SUPPLIED ``env`` PARAMETER (rejected, architect):
-    ``launcher.py`` deliberately has no caller-controlled arbitrary-env
-    escape hatch; threading one through here would reopen exactly that
-    closed hole for the sake of this one field.
-
-    ⚠️ COST, STATED (this is the point, not a side effect): once ANY
-    caller has read this, a change to the ambient PATH for the rest of
-    this process's life is invisible to every future caller here — a
-    running reyn process will not pick up a new PATH without a restart.
-    That is the correct direction for THIS invariant: the requirement is
-    "policy and exec see the SAME value", not "both see the latest
-    value".
-
-    Disclosed, not closed: this only bounds reyn's own two read sites (see
-    the module-level cache variables just above this function). A caller
-    that reaches into the environment directly, or a stdlib call that
-    reads it internally (e.g. ``shutil.which()`` with no explicit
-    ``path=``), is outside this accessor's reach."""
-    global _ambient_path_read, _ambient_path_cache
-    if not _ambient_path_read:
-        _ambient_path_cache = os.environ.get("PATH")
-        _ambient_path_read = True
-    return _ambient_path_cache
+    A caller with nothing to thread (no separate PATH-based resolution
+    elsewhere in the SAME call this read would need to agree with — the
+    shell-hook runner, the MCP stdio launch, ``enforcement_self_test``) may
+    call this directly as its own single, local read; that is not the
+    hazard #6008/#6058 are about, since there is no second site in the
+    same operation for it to disagree with."""
+    return os.environ.get("PATH")
 
 
 def find_posix_true_binary() -> "list[str] | None":

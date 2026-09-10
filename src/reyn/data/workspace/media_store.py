@@ -1226,15 +1226,18 @@ class MediaStore:
         write, no race window) and never removes a legitimately-tracked
         entry, live or still-queued.
 
-        This IS a genuine, previously-unpruned gap, not a no-op: neither
-        eviction call site (``_evict_cross_session_over_cap`` nor the
-        write-time-cap path) ever calls ``.discard()`` on these sets after
-        ``path.unlink()`` — a file this SAME process deleted stays
-        tracked here forever until this method (or a fresh
-        ``MediaStore`` construction, which re-derives from the manifest
-        and self-prunes there) runs. Filed separately, deliberately NOT
-        fixed here (different subject from this PR's own "release what
-        the ladder asks for"): https://github.com/tya5/reyn/issues/6050.
+        #6050 (fixed after this method landed): both eviction call sites
+        now route their own ``Path.unlink()`` through
+        :meth:`_unlink_tracked`, which calls :meth:`_forget` on every
+        successful delete — a file THIS process's own eviction removes no
+        longer lingers in these sets waiting for this method (or a fresh
+        ``MediaStore`` construction) to catch up. This method still earns
+        its keep for the OTHER source of drift these sets have: a file
+        removed by something OTHER than this store's own eviction (an
+        operator ``rm``, an external cleanup tool) — #6050's own fix
+        cannot see that, since nothing here calls unlink for it; existence
+        is still checked live against the filesystem for exactly that
+        reason.
 
         Returns ``(entries_before, entries_after)`` — the union of both
         sets' sizes, before and after the prune."""
@@ -1245,6 +1248,67 @@ class MediaStore:
         self._unspilled_paths = {p for p in self._unspilled_paths if p.exists()}
         after = len(self._history_content_spill_paths | self._unspilled_paths)
         return before, after
+
+    def _resolve_tracked_path(self, path: "str | Path") -> Path:
+        """The ONE resolution rule every tracked-path site uses (#6050):
+        relative → against ``project_root``, then ``.resolve()``;
+        absolute → ``.resolve()`` directly. Both
+        :meth:`is_history_content_spill`/:meth:`is_unspilled_file`/
+        :meth:`is_known_file` (the read side, this store's own public
+        surface for "does this set know about *path*") and :meth:`_forget`
+        (the write side) call this SAME method rather than each keeping
+        their own copy of the resolution — the two sides diverging is
+        exactly how a raw, un-resolved path silently no-ops a
+        ``.discard()`` against a set that only ever holds resolved ones
+        (#6050's own root cause: eviction's candidates come from
+        :func:`_eviction_order`'s raw ``rglob`` entries, never resolved;
+        a symlink anywhere on the path to root — e.g. macOS's own
+        ``/tmp`` → ``/private/tmp`` — would make the un-resolved and
+        resolved forms compare unequal)."""
+        p = Path(path)
+        if not p.is_absolute():
+            return (self._project_root / p).resolve()
+        return p.resolve()
+
+    def _forget(self, path: "str | Path") -> None:
+        """Remove *path* from BOTH tracked-path sets, resolved via
+        :meth:`_resolve_tracked_path` — the same resolution every read
+        site uses (#6050). Only :meth:`_unlink_tracked` calls this;
+        never call it directly against a path this store has not
+        actually deleted (this method does not check the filesystem —
+        it is pure bookkeeping, callable even for a path that was never
+        tracked at all, a no-op ``.discard()`` in that case)."""
+        resolved = self._resolve_tracked_path(path)
+        self._history_content_spill_paths.discard(resolved)
+        self._unspilled_paths.discard(resolved)
+
+    def _unlink_tracked(self, path: Path) -> int:
+        """The ONE place in this class allowed to call ``Path.unlink()``
+        (#6050) — CI-enforced by
+        ``scripts/check_media_store_unlink_single_caller.py``, the same
+        "collapse the delete口 so a 3rd caller cannot reopen the gap"
+        shape ``#5978``/PR #6054 already established for
+        ``faulthandler``'s timer API.
+
+        Deletion and bookkeeping are fused so they cannot be split apart
+        again: on success, :meth:`_forget` runs UNCONDITIONALLY, in the
+        same call, so a future eviction path added to this class gets
+        the bookkeeping for free rather than needing to remember its own
+        ``.discard()`` (the exact gap #6050 was filed for — TWO existing
+        call sites both independently forgot it).
+
+        Raises ``OSError`` on failure, mirroring ``Path.stat()``/
+        ``Path.unlink()``'s own contract — the sets stay untouched (the
+        file still exists, or its absence is itself the OSError), so a
+        caller's existing ``except OSError`` + ``logger.warning`` handling
+        (kept at each call site, not moved here — the log text names a
+        different issue number per caller) is unaffected. Returns the
+        file's own size in bytes, read BEFORE the unlink (matching what
+        both existing callers already did inline)."""
+        size = path.stat().st_size
+        path.unlink()
+        self._forget(path)
+        return size
 
     def is_history_content_spill(self, path: "str | Path") -> bool:
         """#4381 (renamed #5564): whether *path* is a file THIS store
@@ -1271,11 +1335,7 @@ class MediaStore:
         path it recorded (against ``project_root`` when relative), so a
         caller may pass either the project-relative path a tool result
         block carries or an absolute one."""
-        p = Path(path)
-        if not p.is_absolute():
-            p = (self._project_root / p).resolve()
-        else:
-            p = p.resolve()
+        p = self._resolve_tracked_path(path)
         return p in self._history_content_spill_paths
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
@@ -1633,13 +1693,10 @@ class MediaStore:
         see :func:`cross_session_eviction_candidates`'s own docstring for
         why that is deliberately not implemented here.
 
-        Resolves *path* the same way :meth:`is_history_content_spill`
-        does (relative → against ``project_root``), for the same reason."""
-        p = Path(path)
-        if not p.is_absolute():
-            p = (self._project_root / p).resolve()
-        else:
-            p = p.resolve()
+        Resolves *path* via :meth:`_resolve_tracked_path` — the same
+        resolution :meth:`is_history_content_spill` uses, for the same
+        reason."""
+        p = self._resolve_tracked_path(path)
         return p in self._unspilled_paths
 
     def is_known_file(self, path: "str | Path") -> bool:
@@ -1657,13 +1714,10 @@ class MediaStore:
         KNOWN un-spilled file — see :meth:`is_unspilled_file`'s sibling
         exclusion.
 
-        Resolves *path* the same way :meth:`is_history_content_spill`
-        does (relative → against ``project_root``), for the same reason."""
-        p = Path(path)
-        if not p.is_absolute():
-            p = (self._project_root / p).resolve()
-        else:
-            p = p.resolve()
+        Resolves *path* via :meth:`_resolve_tracked_path` — the same
+        resolution :meth:`is_history_content_spill` uses, for the same
+        reason."""
+        p = self._resolve_tracked_path(path)
         return p in self._history_content_spill_paths
 
     def is_open_turn_file(self, path: Path, *, current_chain_id: str) -> bool:
@@ -1755,8 +1809,7 @@ class MediaStore:
             if not self.is_known_file(path):
                 continue
             try:
-                size = path.stat().st_size
-                path.unlink()
+                size = self._unlink_tracked(path)
             except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
                 logger.warning(
                     "#5364 §1.6: eviction of %s under the history-content "
@@ -1968,8 +2021,7 @@ class MediaStore:
             if total <= max_bytes:
                 return
             try:
-                size = path.stat().st_size
-                path.unlink()
+                size = self._unlink_tracked(path)
             except OSError as e:  # noqa: BLE001 — best-effort; LOG (don't silently swallow)
                 logger.warning(
                     "#5366 §3: cross-session eviction of %s under the "

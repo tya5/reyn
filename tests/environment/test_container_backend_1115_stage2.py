@@ -158,7 +158,7 @@ def test_run_is_login_shell_docker_exec_no_bridge(tmp_path: Path) -> None:
     be = DockerEnvironmentBackend(
         container="testc", repo_dir="/testbed", runner=_record_runner,
     )
-    res = asyncio.run(be.run(["pytest", "-x"], SandboxPolicy(timeout_seconds=30)))
+    res = asyncio.run(be.run(["pytest", "-x"], SandboxPolicy(timeout_seconds=30), env_path=None))
 
     assert res.returncode == 0 and res.stdout == b"out"
     # exactly one exec call — no host-diff / reset / clean / apply steps
@@ -201,6 +201,7 @@ def test_run_adds_i_flag_only_when_stdin_provided(tmp_path: Path) -> None:
             ["python", "-m", "reyn.core.kernel._python_harness"],
             SandboxPolicy(timeout_seconds=30),
             stdin=b'{"req": 1}',
+            env_path=None,
         )
     )
     [with_stdin] = calls
@@ -210,7 +211,7 @@ def test_run_adds_i_flag_only_when_stdin_provided(tmp_path: Path) -> None:
 
     # falsification: no stdin → no `-i` (sandboxed_exec path unchanged)
     calls.clear()
-    asyncio.run(be.run(["pytest", "-x"], SandboxPolicy(timeout_seconds=30)))
+    asyncio.run(be.run(["pytest", "-x"], SandboxPolicy(timeout_seconds=30), env_path=None))
     [no_stdin] = calls
     assert "-i" not in no_stdin, f"a stdin-less exec must NOT use `-i`: {no_stdin}"
 
@@ -235,7 +236,7 @@ def test_run_argv_passed_as_positional_params_not_interpolated(tmp_path: Path) -
         container="testc", repo_dir="/testbed", runner=_record_runner,
     )
     hostile = ["python", "-c", "print('a; rm -rf $HOME')", "x y", '"q"']
-    asyncio.run(be.run(hostile, SandboxPolicy(timeout_seconds=30)))
+    asyncio.run(be.run(hostile, SandboxPolicy(timeout_seconds=30), env_path=None))
 
     [argv] = calls
     prefix = ["docker", "exec", "-w", "/testbed", "testc",

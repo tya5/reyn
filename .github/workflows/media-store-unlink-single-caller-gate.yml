@@ -1,0 +1,46 @@
+name: media_store.py unlink single-caller gate
+
+# Regression-prevention gate for #6050: the only place inside
+# src/reyn/data/workspace/media_store.py allowed to call Path.unlink() is
+# MediaStore._unlink_tracked itself. This gate is ALREADY GREEN -- this PR
+# collapsed the two pre-existing call sites into the one sanctioned caller
+# before adding it, so it is a ratchet against a future THIRD call site
+# appearing, not a cleanup. See
+# scripts/check_media_store_unlink_single_caller.py's own module docstring
+# for the full design (mirrors #5978/PR #6054's
+# faulthandler-timer-api-single-caller gate shape).
+#
+# `paths: src/reyn/data/workspace/media_store.py` matches this gate's own
+# scan scope exactly -- its population is this one file.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/data/workspace/media_store.py"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/reyn/data/workspace/media_store.py"
+
+permissions:
+  contents: read
+
+jobs:
+  media-store-unlink-single-caller:
+    name: media_store.py unlink single-caller gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_media_store_unlink_single_caller.py is stdlib-only
+      # (ast / pathlib). No pip install needed.
+      - name: Check media_store.py's own .unlink() has a single caller
+        run: |
+          python scripts/check_media_store_unlink_single_caller.py

@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 def register(sub) -> None:
@@ -172,6 +175,10 @@ def _meta(session, since_raw, manifest) -> dict:
         from importlib.metadata import version as _v
         reyn_version = _v("reyn")
     except Exception:
+        _log.warning(
+            "reyn's own installed version could not be determined for "
+            "the support bundle's meta.json", exc_info=True,
+        )
         reyn_version = "unknown"
     config_summary: dict = {}
     try:
