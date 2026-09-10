@@ -42,6 +42,7 @@ from reyn.security.sandbox.backend import (
     AxisEnforcementDeclaration,
     SandboxResult,
     WrappedCommand,
+    ambient_path,
 )
 from reyn.security.sandbox.capability import CapabilityDeclaration, CapabilitySupport
 
@@ -616,8 +617,10 @@ class SeatbeltBackend:
                 pass
 
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            path = ambient_path()  # #6008: memoized, one real read per process
+            if path is not None:
+                env["PATH"] = path
 
         return WrappedCommand(
             argv=["sandbox-exec", "-f", profile_path, *argv],
@@ -656,8 +659,10 @@ class SeatbeltBackend:
         # Build env from passthrough allowlist ∪ the standard proxy/CA env
         # (#3075); fall back PATH if not listed.
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            path = ambient_path()  # #6008: memoized, one real read per process
+            if path is not None:
+                env["PATH"] = path
         # #4204 bucket E: see NoopBackend.run's matching comment — a direct
         # exec (no shell) never resets $PWD the way a real shell would, so
         # the whole parent env's stale value would otherwise leak through

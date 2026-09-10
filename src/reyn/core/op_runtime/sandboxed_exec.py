@@ -75,11 +75,11 @@ separately).
 from __future__ import annotations
 
 import logging
-import os
 from typing import Callable
 
 from reyn.schemas.models import SandboxedExecIROp
 from reyn.security.sandbox import SandboxPolicy
+from reyn.security.sandbox.backend import ambient_path
 from reyn.security.sandbox.launcher import resolve_backend, run_and_classify
 from reyn.security.sandbox.policy import (
     deny_narrowed_write_grants,
@@ -135,7 +135,7 @@ async def run_sandboxed_exec(
     # BLOCKING ③'s own point, carried forward: the binary policy approves
     # and the binary that runs must be resolved from the SAME PATH/cwd.
     cwd = str(ctx.workspace.base_dir)
-    env_path = os.environ.get("PATH")
+    env_path = ambient_path()  # #6008: memoized, one real read per process
 
     # #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd`
     # is read into `cmd_text` here, ONCE, and reused below for both the

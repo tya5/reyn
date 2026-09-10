@@ -389,6 +389,61 @@ def all_concrete_backend_classes() -> "tuple[type, ...]":
     return (SeatbeltBackend, LandlockBackend, NoopBackend, DockerEnvironmentBackend)
 
 
+_ambient_path_read = False
+_ambient_path_cache: "str | None" = None
+
+
+def ambient_path() -> "str | None":
+    """The process's own ambient ``PATH`` — read from the real environment
+    exactly ONCE per process, then memoized for the rest of this process's
+    life (#6008, architect ruling).
+
+    WHY THIS EXISTS: ``check_exec_plan_policy`` (policy) and a sandbox
+    backend's own env-building (``noop_backend.py``/``seatbelt.py``/
+    ``landlock.py``, exec) each used to read the ambient ``PATH``
+    independently, with an ``await`` (a real suspension point — the
+    policy check itself) between the two reads. Nothing in reyn ever
+    WRITES this variable (measured, architect: a `git grep` across `src/`
+    for env-mutating calls — `[...]=`/`setdefault`/`update`/`pop` — found
+    zero touching `PATH`, only `LITELLM_*`/`TIKTOKEN_*`/`REYN_*`/`OTEL_*`
+    names) — but a plugin or third-party library sharing this process
+    could, between the two reads, and #5838's own invariant ("the value
+    policy checked is the value exec uses") would then silently not
+    hold: policy would approve a binary resolved against one PATH, exec
+    would run a binary resolved against another.
+
+    WHY MEMOIZE-ON-FIRST-USE, NOT AN EXPLICIT STARTUP INIT (rejected,
+    architect): an explicit "read PATH here, at boot" call site creates
+    exactly one thing to forget to call before some other, less obvious
+    path reaches policy/exec first — memoizing inside the accessor itself
+    means every caller, in any order, converges on the SAME single real
+    read with no init step to skip.
+
+    WHY NOT A CALLER-SUPPLIED ``env`` PARAMETER (rejected, architect):
+    ``launcher.py`` deliberately has no caller-controlled arbitrary-env
+    escape hatch; threading one through here would reopen exactly that
+    closed hole for the sake of this one field.
+
+    ⚠️ COST, STATED (this is the point, not a side effect): once ANY
+    caller has read this, a change to the ambient PATH for the rest of
+    this process's life is invisible to every future caller here — a
+    running reyn process will not pick up a new PATH without a restart.
+    That is the correct direction for THIS invariant: the requirement is
+    "policy and exec see the SAME value", not "both see the latest
+    value".
+
+    Disclosed, not closed: this only bounds reyn's own two read sites (see
+    the module-level cache variables just above this function). A caller
+    that reaches into the environment directly, or a stdlib call that
+    reads it internally (e.g. ``shutil.which()`` with no explicit
+    ``path=``), is outside this accessor's reach."""
+    global _ambient_path_read, _ambient_path_cache
+    if not _ambient_path_read:
+        _ambient_path_cache = os.environ.get("PATH")
+        _ambient_path_read = True
+    return _ambient_path_cache
+
+
 def find_posix_true_binary() -> "list[str] | None":
     """#4364 PR-2: locate a known-good, args-free, always-exit-0 binary —
     the shared positive-control lookup Seatbelt and Landlock both need for
