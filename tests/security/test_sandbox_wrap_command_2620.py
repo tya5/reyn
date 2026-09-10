@@ -38,7 +38,7 @@ def test_noop_wrap_command_returns_argv_unchanged():
     wrap_command, it just enforces nothing."""
     backend = NoopBackend()
     argv = ["my-server", "--flag", "value"]
-    wrapped = backend.wrap_command(argv, SandboxPolicy())
+    wrapped = backend.wrap_command(argv, SandboxPolicy(), env_path=None)
     assert isinstance(wrapped, WrappedCommand)
     assert wrapped.argv == argv
     assert wrapped.argv is not argv  # defensive copy, not aliasing the input
@@ -49,7 +49,7 @@ def test_noop_wrap_command_does_not_mutate_input_argv():
     """Tier 2: mutating the returned argv must not alias the caller's list."""
     backend = NoopBackend()
     argv = ["cmd", "a"]
-    wrapped = backend.wrap_command(argv, SandboxPolicy())
+    wrapped = backend.wrap_command(argv, SandboxPolicy(), env_path=None)
     wrapped.argv.append("b")
     assert argv == ["cmd", "a"]  # caller's list untouched
 
@@ -68,7 +68,7 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec():
     outstanding case, and test_seatbelt_wrap_command_does_not_cache_when_
     write_scope_is_unsafe for the never-cached (always unlinks) case."""
     backend = SeatbeltBackend()
-    wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy())
+    wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy(), env_path=None)
     assert wrapped.argv[0] == "sandbox-exec"
     assert wrapped.argv[1] == "-f"
     profile_path = Path(wrapped.argv[2])
@@ -104,10 +104,10 @@ def test_seatbelt_wrap_command_cleanup_idempotent():
     backend = SeatbeltBackend()
     policy = SandboxPolicy()
 
-    cached = backend.wrap_command(["cmd"], policy)
+    cached = backend.wrap_command(["cmd"], policy, env_path=None)
     # A second, still-live checkout of the SAME policy — the thing an
     # under-counting double-release would wrongly consume.
-    cached_second = backend.wrap_command(["cmd"], policy)
+    cached_second = backend.wrap_command(["cmd"], policy, env_path=None)
     second_path = cached_second.argv[cached_second.argv.index("-f") + 1]
 
     cached.cleanup()
@@ -123,6 +123,7 @@ def test_seatbelt_wrap_command_cleanup_idempotent():
 
     uncached = backend.wrap_command(
         ["cmd"], SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())]),
+        env_path=None,
     )
     uncached.cleanup()
     uncached.cleanup()  # must not raise on a missing file
@@ -134,7 +135,7 @@ def test_landlock_wrap_command_uses_reexec_shim():
     args) — the COMMAND-level analog of the Seatbelt wrap. No cleanup
     resource is owned."""
     backend = LandlockBackend()
-    wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy())
+    wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy(), env_path=None)
     assert wrapped.argv[0] == sys.executable
     assert wrapped.argv[1:3] == ["-m", "reyn.security.sandbox.landlock_exec"]
     sep = wrapped.argv.index("--")
@@ -168,7 +169,7 @@ def test_noop_wrap_command_env_passes_through_by_default(monkeypatch):
     would catch that divergence)."""
     monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-pass-through")
     backend = NoopBackend()
-    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy(), env_path=None)
     assert wrapped.env.get("REYN_3822_WRAP_TEST_MARKER") == "should-pass-through"
 
 
@@ -176,7 +177,7 @@ def test_seatbelt_wrap_command_env_passes_through_by_default(monkeypatch):
     """Tier 2: #3822/#3901 — same invariant as the Noop case above, for Seatbelt."""
     monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-pass-through")
     backend = SeatbeltBackend()
-    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy(), env_path=None)
     assert wrapped.env.get("REYN_3822_WRAP_TEST_MARKER") == "should-pass-through"
     wrapped.cleanup()
 
@@ -185,7 +186,7 @@ def test_landlock_wrap_command_env_passes_through_by_default(monkeypatch):
     """Tier 2: #3822/#3901 — same invariant as the Noop case above, for Landlock."""
     monkeypatch.setenv("REYN_3822_WRAP_TEST_MARKER", "should-pass-through")
     backend = LandlockBackend()
-    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
+    wrapped = backend.wrap_command(["cmd"], SandboxPolicy(), env_path=None)
     assert wrapped.env.get("REYN_3822_WRAP_TEST_MARKER") == "should-pass-through"
 
 
@@ -197,7 +198,7 @@ def test_wrap_command_env_honors_a_declared_deny_name(monkeypatch):
     monkeypatch.setenv("REYN_3822_WRAP_TEST_DENIED", "should-not-pass-through")
     policy = SandboxPolicy(env_deny_names=["REYN_3822_WRAP_TEST_DENIED"])
     for backend in (NoopBackend(), SeatbeltBackend(), LandlockBackend()):
-        wrapped = backend.wrap_command(["cmd"], policy)
+        wrapped = backend.wrap_command(["cmd"], policy, env_path=None)
         assert "REYN_3822_WRAP_TEST_DENIED" not in wrapped.env, (
             f"{backend.name}: declared env_deny_names name reached wrapped.env"
         )

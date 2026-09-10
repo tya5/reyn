@@ -135,7 +135,16 @@ async def run_sandboxed_exec(
     # BLOCKING ③'s own point, carried forward: the binary policy approves
     # and the binary that runs must be resolved from the SAME PATH/cwd.
     cwd = str(ctx.workspace.base_dir)
-    env_path = ambient_path()  # #6008: memoized, one real read per process
+    # #6008/#6058: ONE real read, here, at this operation's own entry point
+    # — threaded down explicitly (never re-read) to BOTH the policy check
+    # (`check_exec_plan_policy`'s own `env_path`, below) and the exec side
+    # (`resolve_real_executable` below, and `run_and_classify`'s own
+    # `env_path` -> `backend.run()`, further down) so the binary policy
+    # approves and the binary the child's env resolves against come from
+    # the identical `PATH` — #6058 replaced the FORMER fix (a process-
+    # lifetime memo inside `ambient_path()` itself) with this per-operation
+    # thread: see `ambient_path()`'s own docstring for why.
+    env_path = ambient_path()
 
     # #6007 BLOCKING (architect co-vet, issuecomment-5580912677): `op.cmd`
     # is read into `cmd_text` here, ONCE, and reused below for both the
@@ -447,7 +456,7 @@ async def run_sandboxed_exec(
 
     launched = await run_and_classify(
         backend, effective_argv, policy, cwd=cwd, cancel_event=ctx.cancel_event, stdin=op.stdin,
-        sink=sink,
+        sink=sink, env_path=env_path,
     )
     result = launched.result
 

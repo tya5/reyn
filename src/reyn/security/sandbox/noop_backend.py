@@ -22,7 +22,6 @@ from .backend import (
     AxisEnforcementDeclaration,
     SandboxResult,
     WrappedCommand,
-    ambient_path,
 )
 from .capability import CapabilityDeclaration, CapabilitySupport
 from .policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy, resolve_passthrough_env
@@ -53,15 +52,21 @@ def _reset_warning_for_tests() -> None:
     _NOOP_WARNING_ISSUED = False
 
 
-def _build_env(policy: SandboxPolicy) -> dict[str, str]:
+def _build_env(policy: SandboxPolicy, env_path: "str | None") -> dict[str, str]:
     # #3901 PR-B ④: resolve_passthrough_env passes the whole environment
     # minus policy.env_deny_names (compat default, owner ruling B) — no
     # longer a curated union with a standard proxy/CA set.
     env = resolve_passthrough_env(policy)
     if "PATH" not in env:
-        path = ambient_path()  # #6008: memoized, one real read per process
-        if path is not None:
-            env["PATH"] = path
+        # #6058/#6063: env_path is REQUIRED on both of this function's
+        # callers (`run()`/`wrap_command()`, both required themselves) —
+        # the caller's own per-operation PATH read, already resolved.
+        # `None` is a legitimate VALUE ("PATH is genuinely unset"), never
+        # a signal to fall back to an independent `ambient_path()` read
+        # here — that second read is the exact #6008 defect this
+        # parameter exists to close.
+        if env_path is not None:
+            env["PATH"] = env_path
     return env
 
 
@@ -160,7 +165,9 @@ class NoopBackend:
         honestly, not inherit a silent pass by omission."""
         return True
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None",
+    ) -> WrappedCommand:
         """Passthrough: argv is returned UNCHANGED — no enforcement — but the
         call still went THROUGH the sandbox abstraction (the owner-acceptable
         no-isolation case, #2620), as opposed to a caller that never consulted
@@ -170,7 +177,7 @@ class NoopBackend:
         environment merely because the sandbox backend is Noop) is unrelated
         to OS enforcement and stays in force."""
         _warn_once()
-        return WrappedCommand(argv=list(argv), env=_build_env(policy), cleanup=None)
+        return WrappedCommand(argv=list(argv), env=_build_env(policy, env_path), cleanup=None)
 
     async def run(
         self,
@@ -182,10 +189,11 @@ class NoopBackend:
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None",
     ) -> SandboxResult:
         _warn_once()
 
-        env = _build_env(policy)
+        env = _build_env(policy, env_path)
         # #4204 bucket E: a real shell resets $PWD to its own cwd at startup;
         # a direct exec (no shell in between) does not — the whole parent
         # env passes through (resolve_passthrough_env, #3901 PR-B ④)

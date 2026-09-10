@@ -105,7 +105,7 @@ async def test_landlock_run_raises_when_unavailable(
     backend = LandlockBackend()
 
     with pytest.raises(RuntimeError, match="not available"):
-        await backend.run(["echo", "hi"], SandboxPolicy())
+        await backend.run(["echo", "hi"], SandboxPolicy(), env_path=None)
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ async def test_landlock_runs_echo() -> None:
         network=False,
         timeout_seconds=10,
     )
-    result = await backend.run(["/bin/echo", "hi"], policy)
+    result = await backend.run(["/bin/echo", "hi"], policy, env_path=None)
     assert result.returncode == 0
     assert result.stdout == b"hi\n"
 
