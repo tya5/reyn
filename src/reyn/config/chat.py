@@ -589,13 +589,36 @@ class HistoryResidentConfig:
     max_bytes: ResidentBytes = field(
         default=ResidentBytes(256 * 1024 * 1024), metadata={"axis": Axis.BOUNDING},
     )  # 256 MiB
+    # #6042: a THIRD, deliberately separate axis from max_bytes above and
+    # from the hydrate-window (this class's own docstring already warns
+    # against conflating those two — this is a different question again:
+    # how big may any ONE message's own content be at DURABLE write time
+    # (``Session._append_history``, ``history.jsonl``), independent of how
+    # many messages stay resident or how a window is read back). #6089
+    # (architect, real-machine): a single `role=tool` entry reached 462 MB
+    # in `.reyn/agents/default/state/sessions/6e13efdf/history.jsonl` — the
+    # existing tool-result spill gate (#5896/#5944) is real but NOT
+    # airtight (the SAME file had a 13 MB tool result sitting un-spilled
+    # next to a correctly-spilled one) — this is the backstop that catches
+    # whatever slips past upstream spill decisions, regardless of why they
+    # didn't fire, at the ONE point every role/path converges.
+    # 10 MiB default: no measured "typical large legitimate message" size
+    # to derive this from (disclosed, not fabricated precision) — chosen
+    # to sit clearly above ReadCapConfig.inline_bytes/MultimodalConfig's
+    # own much smaller inline thresholds (this is a LAST-RESORT bound, not
+    # the primary "keep inline" decision those make) and clearly below the
+    # 13 MB/462 MB real-machine sizes #6089 measured, so it would have
+    # caught both. Operator-overridable — see the field's own knob.
+    per_message_max_bytes: int = field(
+        default=10 * 1024 * 1024, metadata={"axis": Axis.BOUNDING},
+    )  # 10 MiB
 
 
 def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
-    """Parse the `history_resident:` section (#4387 Phase B ③).
+    """Parse the `history_resident:` section (#4387 Phase B ③, #6042).
 
-    Missing or malformed -> default (256 MiB). A non-numeric or non-positive
-    value falls back to the default — same discipline as
+    Missing or malformed -> default (256 MiB / 10 MiB). A non-numeric or
+    non-positive value falls back to the default — same discipline as
     ``_build_read_cap_config``: an operator typo must not silently disable
     the cap (zero/negative would evict everything or never fire)."""
     if not isinstance(raw, dict):
@@ -613,7 +636,21 @@ def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
             max_bytes, defaults.max_bytes,
         )
         max_bytes = defaults.max_bytes
-    return HistoryResidentConfig(max_bytes=ResidentBytes(max_bytes))
+    per_message_max_bytes = raw.get("per_message_max_bytes", defaults.per_message_max_bytes)
+    try:
+        per_message_max_bytes = int(per_message_max_bytes)
+        if per_message_max_bytes <= 0:
+            per_message_max_bytes = defaults.per_message_max_bytes
+    except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "history_resident.per_message_max_bytes=%r is invalid (not an int); using %r",
+            per_message_max_bytes, defaults.per_message_max_bytes,
+        )
+        per_message_max_bytes = defaults.per_message_max_bytes
+    return HistoryResidentConfig(
+        max_bytes=ResidentBytes(max_bytes), per_message_max_bytes=per_message_max_bytes,
+    )
 
 
 @dataclass

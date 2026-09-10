@@ -2146,11 +2146,13 @@ Caps `Session.history`'s in-memory footprint (#4387 Phase B ③, applying #4431'
 ```yaml
 history_resident:
   max_bytes: 268435456   # 256 MiB — ceiling on Session.history's resident size
+  per_message_max_bytes: 10485760   # 10 MiB — ceiling on any ONE message's own content at durable write time
 ```
 
 | Field | Axis | Type | Default | Description |
 |---|---|---|---|---|
 | `max_bytes` | bounding | int | `268435456` (256 MiB) | Ceiling, in bytes, on `Session.history`'s in-memory footprint. Once exceeded, the oldest resident entries are evicted (never the just-appended newest one) until the cap is met again. A non-positive or non-numeric value falls back to the default. |
+| `per_message_max_bytes` | bounding | int | `10485760` (10 MiB) | #6042 — a SEPARATE axis from `max_bytes` above: bounds how big any ONE message's own content may be at DURABLE write time (`Session._append_history`, `history.jsonl`), never how many messages stay resident. Checked at `_append_history`'s own convergence point — every role funnels through it, so this catches an oversized message regardless of which path produced it. Over the cap: the content is spilled to a file (the same seam `MediaStore.save_tool_result` already uses for tool results, #5896) and the durable row keeps a short pointer text — never truncated when a media store is available. Only when no media store is configured (or the spill write itself fails) does it fall back to truncating, and even then a durable marker plus a preview of the first bytes survive (never a silent cut). An ESTIMATE, not a measurement: chosen to sit clearly above the tool-read inline caps (`read_cap.inline_bytes`) and clearly below the 13 MB / 462 MB single-entry sizes a real-machine incident (#6089) found slipping past the existing tool-result spill gate. A non-positive or non-numeric value falls back to the default. |
 
 Eviction is not information loss: `Session.history` is a cache, not the source of truth — `history.jsonl` (append-only, on disk) is, and every entry evicted from memory reloads on demand via the already-shipped backward-hydrate path (TUI scrollback paging, in-conversation search, and WAL rewind visibility all already page older entries back in as needed). This closes an unbounded-growth defect (`self.history` previously had no cap at all — see #4387) independent of any claim about what fraction of a given memory ceiling `history` itself accounts for, which this config does not measure or claim to fix.
 

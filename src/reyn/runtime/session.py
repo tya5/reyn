@@ -4352,6 +4352,12 @@ class Session:
         # and skipped if already anchored (a re-append keeps its original anchor).
         if self._state_log is not None and "wal_seq" not in msg.meta:
             msg.meta["wal_seq"] = self._state_log.current_seq
+        # #6042: the per-message durable-content byte cap -- BEFORE the
+        # resident append and the disk write below, so neither ever
+        # transiently holds the oversized content (lead-coder ruling,
+        # #5851 issue thread: "durable な行が一度も過大な content を持たない
+        # ことを witness する"). Mutates msg.content/msg.meta in place.
+        self._enforce_per_message_content_cap(msg)
         self.history.append(msg)
         # #5896 (#5364 §1.1 "A"): the durable line is ``history_record``'s
         # form, not ``asdict`` — an un-spilled tool row's body stays on the
@@ -4362,6 +4368,104 @@ class Session:
             f.write(json.dumps(history_record(msg), ensure_ascii=False) + "\n")
         self._evict_oldest_resident_entries()
         self._update_untrusted_taint_on_append(msg)
+
+    def _enforce_per_message_content_cap(self, msg: ChatMessage) -> None:
+        """#6042 — the per-message durable-content byte cap, checked at
+        ``_append_history``'s own convergence point (its docstring already
+        establishes "every role funnels through" here). Design ruled on:
+        https://github.com/tya5/reyn/issues/6042 (lead-coder-approved,
+        2026-09-10).
+
+        Real-machine grounding (#6089, architect): a single ``role=tool``
+        entry reached 462 MB in a live ``history.jsonl`` — the existing
+        tool-result spill gate (#5896/#5944) is real but not airtight (the
+        SAME file had a 13 MB tool result sitting un-spilled next to a
+        correctly-spilled one). This is the backstop that catches whatever
+        slips past upstream spill decisions, regardless of why they didn't
+        fire — deliberately NOT another per-call-site check (this issue's
+        own premise: grep's own cap / #5896's tool-result file-backing /
+        ``enforce_new_msg_budget``'s pre-turn refusal each cover exactly
+        ONE path; adding a 4th would repeat the same shape).
+
+        Skips a message already carrying ``CONTENT_REF_META_KEY`` — that
+        row went through the EXISTING write-ahead externalization
+        (``RouterLoop.persist_feedback`` / #5364 §1.1 "A"): its real body
+        is already off this row (``history_record`` blanks it at write
+        time), so measuring ``msg.content`` here would double-count an
+        already-solved case.
+
+        Role-AGNOSTIC by design (lead-coder ruling): assistant-authored
+        content is in scope too, even though it is bounded by the model's
+        own ``max_tokens`` in practice and so is unlikely to actually
+        reach this cap — excluding it by role would undercut the very
+        argument for placing this check at the convergence point (adding
+        a role-based branch is the same "N+1th special case" shape this
+        design otherwise avoids).
+
+        PRIMARY path: spill to a file via the SAME seam ``MediaStore.
+        save_tool_result`` already uses for tool results (#5896), fully
+        preserving the content (never truncating it) — replaces
+        ``msg.content`` with a short, model-readable pointer text (same
+        shape ``router_loop.py``'s own ``_build_media_tail_preview``
+        already uses for an analogous over-budget-media case), and marks
+        the durable record so a reader can tell this was NOT originally a
+        ref (``meta["oversized_content_spilled"]``).
+
+        FALLBACK (no ``self._media_store`` configured, or the spill write
+        itself failed): truncate, but never silently — a durable marker
+        (``meta["content_truncated"]``, the original byte count) PLUS a
+        preview of the first bytes (lead-coder ruling: a bare boolean
+        marker is not enough — "何が失われたか" must be readable, at least
+        partially, without needing to reconstruct the original)."""
+        cap = self._history_resident_config.per_message_max_bytes
+        if cap is None or cap <= 0:
+            return
+        if msg.meta.get(CONTENT_REF_META_KEY):
+            return
+        content = msg.content
+        if isinstance(content, str):
+            content_str = content
+        else:
+            content_str = json.dumps(content, ensure_ascii=False)
+        content_bytes = len(content_str.encode("utf-8"))
+        if content_bytes <= cap:
+            return
+
+        if self._media_store is not None:
+            try:
+                saved = self._media_store.save_tool_result(
+                    content_str, mime_type="text/plain", tool=f"oversized_{msg.role}",
+                    chain_id=str(msg.meta.get("chain_id") or ""),
+                )
+            except Exception:
+                logger.exception(
+                    "#6042: spilling an oversized (%d bytes, cap %d) role=%s message's "
+                    "content failed -- falling back to truncate+preview",
+                    content_bytes, cap, msg.role,
+                )
+            else:
+                msg.content = (
+                    f"[content too large ({content_bytes} bytes, cap {cap}) -- spilled "
+                    f"to {saved['path']}; read via read_file(path={saved['path']!r})]"
+                )
+                msg.meta["oversized_content_spilled"] = True
+                msg.meta["oversized_content_original_bytes"] = content_bytes
+                self._audit_events.emit(
+                    "history_oversized_content_spilled",
+                    role=msg.role, seq=msg.seq, original_bytes=content_bytes, cap_bytes=cap,
+                    path=saved["path"],
+                )
+                return
+
+        preview = content_str[:2000]
+        msg.content = preview
+        msg.meta["content_truncated"] = True
+        msg.meta["content_truncated_original_bytes"] = content_bytes
+        self._audit_events.emit(
+            "history_oversized_content_truncated",
+            role=msg.role, seq=msg.seq, original_bytes=content_bytes, cap_bytes=cap,
+            preview_bytes=len(preview.encode("utf-8")),
+        )
 
     def _update_untrusted_taint_on_append(self, msg: ChatMessage) -> None:
         """#5276 (architect ruling): the single mutation-side update point
