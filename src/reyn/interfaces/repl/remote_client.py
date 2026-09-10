@@ -24,6 +24,7 @@ import time
 import uuid
 from typing import AsyncIterator
 
+from reyn.interfaces.transport.agui.protocol import LONG_RUNNING_PAYLOAD_TYPES
 from reyn.interfaces.transport.control_outcome import ControlOutcome
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ _HEARTBEAT_INTERVAL = _env_float("REYN_AGUI_HEARTBEAT_INTERVAL_S", 25.0)
 
 #: #5894 (architect ruling ①-1): the read timeout for a BOUNDED control
 #: POST (submit / cancel / answer / heartbeat, and every other payload
-#: type :data:`~reyn.interfaces.transport.agui.endpoint.BOUNDED_PAYLOAD_
+#: type :data:`~reyn.interfaces.transport.agui.protocol.BOUNDED_PAYLOAD_
 #: TYPES` names) — the one constant, the one place. The SSE stream keeps
 #: ``read=None`` (a live stream legitimately reads forever); a bounded
 #: control request must not share that policy. Owner-hit: the server was
@@ -62,7 +63,7 @@ _HEARTBEAT_INTERVAL = _env_float("REYN_AGUI_HEARTBEAT_INTERVAL_S", 25.0)
 #: turns into a non-delivery (``None``) the TUI can name.
 #:
 #: #6083 ⑵-a: NOT every control POST is bounded, though — one class
-#: (:data:`~reyn.interfaces.transport.agui.endpoint.LONG_RUNNING_
+#: (:data:`~reyn.interfaces.transport.agui.protocol.LONG_RUNNING_
 #: PAYLOAD_TYPES`, currently just ``attach_request``) has a server-side
 #: handler that awaits an operation with genuinely unbounded duration
 #: (a first-attach session load replaying its persisted WAL history).
@@ -77,7 +78,7 @@ _CONTROL_TIMEOUT_S = _env_float("REYN_AGUI_CONTROL_TIMEOUT_S", 10.0)
 def _read_timeout_for(ptype: "object", *, override: "float | None" = None) -> "float | None":
     """The read timeout :func:`post_control` should use for one payload
     ``type`` — ``None`` (unbounded, matching the SSE stream's own policy)
-    for :data:`~reyn.interfaces.transport.agui.endpoint.LONG_RUNNING_
+    for :data:`~reyn.interfaces.transport.agui.protocol.LONG_RUNNING_
     PAYLOAD_TYPES`; :data:`_CONTROL_TIMEOUT_S` (or ``override``, when a
     caller supplies one — the same seam tests already use to inject T)
     otherwise.
@@ -87,9 +88,16 @@ def _read_timeout_for(ptype: "object", *, override: "float | None" = None) -> "f
     takes no client, opens no socket, and its whole body is one membership
     check, so a test can assert its return value directly rather than
     proving "did not time out" by watching a clock.
-    """
-    from reyn.interfaces.transport.agui.endpoint import LONG_RUNNING_PAYLOAD_TYPES
 
+    Reads the module-level ``LONG_RUNNING_PAYLOAD_TYPES`` name (a plain
+    global lookup, not a fresh re-import each call) — a Python function
+    body resolves a bare name against its OWN module's current globals at
+    CALL time, so reassigning ``remote_client.LONG_RUNNING_PAYLOAD_TYPES``
+    (this module's own bound copy of ``protocol.py``'s set — see the
+    import at the top of this file) is visible here immediately, the same
+    liveness the earlier per-call ``from ... import`` had, without paying
+    for a fresh import on every control POST.
+    """
     if ptype in LONG_RUNNING_PAYLOAD_TYPES:
         return None
     return _CONTROL_TIMEOUT_S if override is None else override

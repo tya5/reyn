@@ -1423,80 +1423,6 @@ async def agui_seize(request: Request):
     return JSONResponse({"seized": True})
 
 
-#: #6083 ⑵-a: the ``ptype`` values below whose branch, in :func:`agui_submit`,
-#: awaits an operation with genuinely UNBOUNDED duration — these are exempt
-#: from the client's bounded control-POST read timeout
-#: (``remote_client.py``'s own ``_CONTROL_TIMEOUT_S``, #5894 ①-1), which
-#: instead reads ``None`` (unbounded) for them, matching the SSE stream's
-#: own policy. Traced structurally into each branch's own awaited callee,
-#: not assumed — see the docstring on :data:`BOUNDED_PAYLOAD_TYPES` below
-#: for the ones that were traced and found bounded instead:
-#:
-#: - ``attach_request``: ``registry.attach()`` → ``get_or_load()`` (on a
-#:   first attach to a not-yet-loaded agent) → ``_construct_session()`` →
-#:   the session factory, which replays that agent's persisted WAL history
-#:   to rebuild in-memory state — a cost proportional to session length
-#:   (the SAME shape #6099's own ``build_history()`` finding named), with
-#:   no upper bound. The ONE unbounded operation found among all 10
-#:   ``ptype`` branches below.
-#:
-#: A ``ptype`` that reaches neither this set nor :data:`BOUNDED_PAYLOAD_
-#: TYPES` is a DERIVATION GAP — a new branch nobody has classified yet.
-#: ``test_6083_2a_long_running_control_timeout_class.py`` fails CI the
-#: moment one exists (walks :func:`agui_submit`'s own AST for every
-#: literal ``ptype ==`` comparison and asserts it is classified either
-#: side) — the population is DERIVED from the dispatch's own structure,
-#: never a name list someone has to remember to update by hand. An
-#: unclassified type is read as BOUNDED at runtime regardless (fail-closed,
-#: lead-coder ruling: the side the timeout still applies to — an unknown
-#: handler that turns out to hang is CUT, not awaited forever), but the
-#: test is what keeps that fallback from ever being silent.
-#:
-#: ⚠️ Cross-version limitation, deliberately NOT solved here: a
-#: ``--connect`` client and the server it talks to can run different reyn
-#: builds, and this set is read from the CLIENT's own installed copy of
-#: THIS module — accurate only for a same-install deployment. A client on
-#: an older build talking to a server whose newer ``agui_submit`` added a
-#: genuinely long-running branch would still apply the bounded timeout to
-#: it (the pre-#6100 symptom, one level up). Out of scope for this PR.
-LONG_RUNNING_PAYLOAD_TYPES = frozenset({"attach_request"})
-
-#: #6083 ⑵-a: the remaining ``ptype`` values :func:`agui_submit` handles —
-#: each one's own awaited callee was traced and confirmed BOUNDED (no
-#: external I/O whose duration scales with anything unbounded):
-#:
-#: - ``heartbeat``: no ``await`` at all — a pure in-memory timestamp write.
-#: - ``user_message``: ``session.submit_user_text()`` ENQUEUES the turn
-#:   (#3300's sent-queue) and returns once queued — it does not await the
-#:   turn's own LLM call. #5894's own original scope.
-#: - ``slash_command``: no longer awaits its own handler to completion at
-#:   all (#6100 ⑵-b) — hands off to the session's background-task funnel
-#:   and returns immediately.
-#: - ``cancel_inflight`` / ``cancel_queued``: signal-only (a flag flip / a
-#:   WAL-tombstone write + in-memory prune) — never await the turn they
-#:   target to actually finish. #5894's own original scope (cancel).
-#: - ``TOOL_CALL_RESULT`` (``_handle_answer``): records/delivers the
-#:   answer by id and returns — the TURN the answer unblocks resumes on
-#:   its OWN separately-running task, never awaited here. #5894's own
-#:   original scope (answer).
-#: - ``session_switch_request``: ``registry.attach_session()`` requires the
-#:   target session to be ALREADY loaded (a sync, in-memory
-#:   ``_peek_session()`` lookup) and raises rather than building one —
-#:   unlike ``attach_request`` above, this branch never constructs a
-#:   session or replays a WAL.
-#: - ``artifact_list_request`` / ``session_list_request`` /
-#:   ``load_older_backlog_request``: capped reads (a limited artifact-ref
-#:   list, an in-memory session-id roster, ONE backlog page — #5139 C's
-#:   own "one page per request" design) — bounded by construction, not by
-#:   how fast anything external answers.
-BOUNDED_PAYLOAD_TYPES = frozenset({
-    "heartbeat", "user_message", "slash_command", "cancel_inflight",
-    "cancel_queued", "TOOL_CALL_RESULT", "session_switch_request",
-    "artifact_list_request", "session_list_request",
-    "load_older_backlog_request",
-})
-
-
 @router.post("/agui/chat/{agent_name}")
 async def agui_submit(request: Request):
     """Client→server: turn submit, HITL answer, cancel, and heartbeat.
@@ -1544,6 +1470,13 @@ async def agui_submit(request: Request):
         return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
     ptype = payload.get("type")
+    # #6083 ⑵-a: each branch below has a declared control-POST timeout
+    # class (does its own await resolve in bounded time, or not) — the
+    # declaration itself lives in ``protocol.py``'s ``LONG_RUNNING_
+    # PAYLOAD_TYPES``/``BOUNDED_PAYLOAD_TYPES`` (a fact both ends of the
+    # wire need, not this module's own implementation detail), NOT here.
+    # A branch added below with no entry on either side there fails CI
+    # (that module's own derivation test AST-walks THIS function).
 
     # Heartbeat fast-path (liveness): a pure in-memory refresh of the surface's
     # keepalive timestamp, deliberately dispatched BEFORE ``registry.exists()``
@@ -1941,6 +1874,4 @@ __all__ = [
     "authenticate_request",
     "AGUI_OPERATOR_CHANNEL",
     "session_backlog_frames",
-    "LONG_RUNNING_PAYLOAD_TYPES",
-    "BOUNDED_PAYLOAD_TYPES",
 ]

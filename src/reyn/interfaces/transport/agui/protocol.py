@@ -157,6 +157,96 @@ CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
     "__open_artifact__",
 })
 
+# #6083 ⑵-a: the control-POST TIMEOUT CLASS of each ``type`` a client→server
+# POST can carry (``endpoint.py``'s own ``agui_submit`` dispatch on the
+# server side; ``remote_client.py``'s ``_read_timeout_for`` on the client
+# side). Lives HERE, not in ``endpoint.py`` where it was first drafted —
+# architect co-vet (PR #6105): "その payload の POST がどれだけ掛かり得るか"
+# is a fact BOTH ends need, not one side's implementation detail, and this
+# module is already "the one place a Frame is turned into an AG-UI event and
+# back" for exactly that reason (this file's own module docstring) — the
+# ``__attach_request__`` vocabulary above already lived here for the same
+# reason before #4534 retired it. Declaring it here also means NEITHER end
+# needs to import the other's implementation module to read it (the prior
+# draft had ``remote_client.py`` import ``endpoint.py`` directly — a
+# client→server-implementation dependency neither previously had, and
+# architect's own concern was precedent, not correctness: the first such
+# import makes a second one look normal).
+#
+# ``LONG_RUNNING_PAYLOAD_TYPES``: a POST of this ``type`` awaits an operation
+# with genuinely UNBOUNDED duration server-side, so the client's bounded
+# control-POST read timeout (``remote_client.py``'s own ``_CONTROL_TIMEOUT_
+# S``, #5894 ①-1) does not apply — it reads ``None`` (unbounded) instead,
+# matching the SSE stream's own policy. Traced structurally into each
+# branch's own awaited callee, not assumed — see ``BOUNDED_PAYLOAD_TYPES``
+# below for the ones traced and found bounded instead:
+#
+# - ``attach_request``: ``registry.attach()`` -> ``get_or_load()`` (on a
+#   first attach to a not-yet-loaded agent) -> ``_construct_session()`` ->
+#   the session factory, which replays that agent's persisted WAL history to
+#   rebuild in-memory state — a cost proportional to session length (the
+#   SAME shape #6099's own ``build_history()`` finding named), with no upper
+#   bound. The ONE unbounded operation found among all 10 ``ptype`` branches
+#   ``agui_submit`` handles.
+#
+# A ``ptype`` in neither this set nor ``BOUNDED_PAYLOAD_TYPES`` is a
+# DERIVATION GAP — a new branch nobody has classified yet.
+# ``test_6083_2a_long_running_control_timeout_class.py`` fails CI the moment
+# one exists: it AST-walks ``endpoint.agui_submit``'s OWN source for every
+# ``ptype == "<literal>"`` comparison (see that test module's own docstring
+# for exactly what shape the walk does and does not see) and asserts each
+# one is classified on exactly one of the two sets HERE — the population is
+# derived from the dispatch's own structure; only the classification's
+# location moved, not the derivation. An unclassified type is read as
+# BOUNDED at runtime regardless (fail-closed, lead-coder ruling: the side
+# the timeout still applies to — an unknown handler that turns out to hang
+# is CUT, not awaited forever), but the test is what keeps that fallback
+# from ever being silent.
+#
+# ⚠️ Cross-version limitation, deliberately NOT solved here: a ``--connect``
+# client and the server it talks to can run different reyn builds, and this
+# set is read from the CLIENT's own installed copy of THIS module —
+# accurate only for a same-install deployment. A client on an older build
+# talking to a server whose newer ``agui_submit`` added a genuinely
+# long-running branch would still apply the bounded timeout to it (the
+# pre-#6100 symptom, one level up). Out of scope for this PR.
+LONG_RUNNING_PAYLOAD_TYPES: "frozenset[str]" = frozenset({"attach_request"})
+
+# #6083 ⑵-a: the remaining ``ptype`` values ``agui_submit`` handles — each
+# one's own awaited callee was traced and confirmed BOUNDED (no external I/O
+# whose duration scales with anything unbounded):
+#
+# - ``heartbeat``: no ``await`` at all — a pure in-memory timestamp write.
+# - ``user_message``: ``session.submit_user_text()`` ENQUEUES the turn
+#   (#3300's sent-queue) and returns once queued — it does not await the
+#   turn's own LLM call. #5894's own original scope.
+# - ``slash_command``: no longer awaits its own handler to completion at
+#   all (#6100 ⑵-b) — hands off to the session's background-task funnel and
+#   returns immediately.
+# - ``cancel_inflight`` / ``cancel_queued``: signal-only (a flag flip / a
+#   WAL-tombstone write + in-memory prune) — never await the turn they
+#   target to actually finish. #5894's own original scope (cancel).
+# - ``TOOL_CALL_RESULT`` (``_handle_answer``): records/delivers the answer
+#   by id and returns — the TURN the answer unblocks resumes on its OWN
+#   separately-running task, never awaited here. #5894's own original scope
+#   (answer).
+# - ``session_switch_request``: ``registry.attach_session()`` requires the
+#   target session to be ALREADY loaded (a sync, in-memory
+#   ``_peek_session()`` lookup) and raises rather than building one — unlike
+#   ``attach_request`` above, this branch never constructs a session or
+#   replays a WAL.
+# - ``artifact_list_request`` / ``session_list_request`` /
+#   ``load_older_backlog_request``: capped reads (a limited artifact-ref
+#   list, an in-memory session-id roster, ONE backlog page — #5139 C's own
+#   "one page per request" design) — bounded by construction, not by how
+#   fast anything external answers.
+BOUNDED_PAYLOAD_TYPES: "frozenset[str]" = frozenset({
+    "heartbeat", "user_message", "slash_command", "cancel_inflight",
+    "cancel_queued", "TOOL_CALL_RESULT", "session_switch_request",
+    "artifact_list_request", "session_list_request",
+    "load_older_backlog_request",
+})
+
 # Reserved frontend-tool namespace for the HITL round-trip (ADR-0039 P3, D6/R4).
 # An intervention rides the wire in TWO representations: the P2 ``DisplayFrame``
 # (kind ``intervention`` → the reyn client's NATIVE prompt UI) AND — added here —
@@ -762,6 +852,8 @@ __all__ = [
     "MESSAGES_SNAPSHOT",
     "CUSTOM",
     "CONTROL_FILTER_KINDS",
+    "LONG_RUNNING_PAYLOAD_TYPES",
+    "BOUNDED_PAYLOAD_TYPES",
     "encode_frame",
     "encode_frame_wire",
     "TextStreamTracker",

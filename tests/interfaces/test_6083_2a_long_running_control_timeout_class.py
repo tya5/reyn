@@ -4,17 +4,21 @@ an operation with genuinely unbounded duration is exempt (unbounded read,
 matching the SSE stream's own policy); every other one stays on the bounded
 10s default #5894 established.
 
-★ Population is DERIVED, never hand-listed. ``endpoint.py``'s own
+★ Population is DERIVED, never hand-listed. ``protocol.py``'s own
 ``LONG_RUNNING_PAYLOAD_TYPES`` / ``BOUNDED_PAYLOAD_TYPES`` are the single
-declared classification (co-located with ``agui_submit``'s own dispatch, by
-lead-coder's own ruling — the party that KNOWS whether a handler awaits to
-completion is the one who writes it, not the client that merely reads it).
-This module's own :func:`test_every_ptype_agui_submit_branches_on_is_classified`
-is what keeps that declaration from silently falling behind a NEW branch: it
-AST-walks ``agui_submit``'s real source for every literal ``ptype ==``
-comparison and asserts each one is classified on exactly one side. A new
-branch nobody classified is a DERIVATION GAP this test fails on, not a name
-someone forgot to add to a list they never look at again.
+declared classification — architect co-vet (PR #6105): this is a fact BOTH
+ends of the wire need (how long a payload's own POST can legitimately take),
+not one side's implementation detail, so it lives in the wire-protocol codec
+module both ends already import, not in ``endpoint.py`` (the server's own
+implementation) where it was first drafted. This module's own
+:func:`test_every_ptype_agui_submit_branches_on_is_classified` is what keeps
+that declaration from silently falling behind a NEW branch: it AST-walks
+``endpoint.agui_submit``'s real source (the population is still derived from
+the SERVER dispatch's own structure — only the classification's location
+moved) for every literal ``ptype ==`` comparison and asserts each one is
+classified on exactly one side. A new branch nobody classified is a
+DERIVATION GAP this test fails on, not a name someone forgot to add to a
+list they never look at again.
 
 The decision itself (:func:`reyn.interfaces.repl.remote_client._read_timeout_
 for`) is tested as a PURE FUNCTION — no live socket, no wait — per
@@ -32,12 +36,12 @@ import inspect
 
 import pytest
 
+from reyn.interfaces.repl import remote_client as remote_client_mod
 from reyn.interfaces.repl.remote_client import _CONTROL_TIMEOUT_S, _read_timeout_for
-from reyn.interfaces.transport.agui import endpoint as endpoint_mod
-from reyn.interfaces.transport.agui.endpoint import (
+from reyn.interfaces.transport.agui.endpoint import agui_submit
+from reyn.interfaces.transport.agui.protocol import (
     BOUNDED_PAYLOAD_TYPES,
     LONG_RUNNING_PAYLOAD_TYPES,
-    agui_submit,
 )
 
 
@@ -47,7 +51,24 @@ def _ptypes_agui_submit_branches_on() -> "set[str]":
     REAL population the classification below must fully cover. Never a
     hand-typed mirror of the branches: this walks the function's own
     current source, so a new branch is picked up automatically the next
-    time this runs."""
+    time this runs.
+
+    ⚠️ Scope (lead-coder BLOCKING, PR #6105): this walk recognizes exactly
+    ONE shape — an ``ast.Compare`` with a single ``Eq`` op, comparing a
+    bare ``ptype`` ``Name`` against a string ``Constant`` (either operand
+    order). It does NOT see ``ptype in (...)``, a ``match`` statement, or a
+    dict-dispatch table — a future branch written in one of those forms
+    would not be found here, so :func:`test_every_ptype_agui_submit_
+    branches_on_is_classified` would stay green while actually missing a
+    real, unclassified branch. This is a scope limit of THIS derivation,
+    not something the test's own vacuity guard
+    (:func:`test_the_ast_derivation_itself_is_not_vacuous`) catches —
+    that guard only floors on the two ``ptype``s already known to exist
+    today, so a new branch in one of the unrecognized forms would not
+    trip it either. Deliberately not widened: matching more shapes here
+    would mean guessing every form a future branch might take, which
+    would just replace the AST walk with a second hand-maintained list.
+    """
     source = inspect.getsource(agui_submit)
     tree = ast.parse(source)
     found: "set[str]" = set()
@@ -87,10 +108,10 @@ def test_every_ptype_agui_submit_branches_on_is_classified() -> None:
     unclassified = found - classified
     assert not unclassified, (
         f"agui_submit branches on {unclassified!r} with no timeout-class "
-        f"decision recorded in LONG_RUNNING_PAYLOAD_TYPES/BOUNDED_PAYLOAD_"
-        f"TYPES -- classify it on one side (endpoint.py, next to the "
-        f"branch, per lead-coder's own ruling: the party that knows "
-        f"whether the handler awaits to completion writes the decision)."
+        f"decision recorded in protocol.py's LONG_RUNNING_PAYLOAD_TYPES/"
+        f"BOUNDED_PAYLOAD_TYPES -- classify it on one side there (the "
+        f"fact both ends of the wire need: does this payload's own POST "
+        f"legitimately take a long time)."
     )
 
 
@@ -150,22 +171,24 @@ def test_an_override_bounds_a_bounded_type_but_not_a_long_running_one() -> None:
 
 def test_strip_falsify_removing_attach_request_from_the_set_changes_the_decision() -> None:
     """Tier 2: strip-falsify, in-process (no git stash/checkout/restore,
-    per lead-coder's own instruction) -- temporarily empty the REAL
-    ``LONG_RUNNING_PAYLOAD_TYPES`` set ``_read_timeout_for`` reads from
-    (via its own lazy import), confirm the decision flips to bounded, then
-    restore. Proves this test module is actually reading the production
-    set, not a copy that could silently drift from it.
+    per lead-coder's own instruction) -- temporarily empty
+    ``remote_client``'s own bound name for ``LONG_RUNNING_PAYLOAD_TYPES``
+    (its module-level import of ``protocol.py``'s set -- the exact
+    global ``_read_timeout_for`` resolves at call time, per that
+    function's own docstring), confirm the decision flips to bounded,
+    then restore. Proves this test module is actually exercising the
+    production coupling, not a copy that could silently drift from it.
     """
-    original = endpoint_mod.LONG_RUNNING_PAYLOAD_TYPES
+    original = remote_client_mod.LONG_RUNNING_PAYLOAD_TYPES
     assert "attach_request" in original, "arrange: the real set must start non-empty"
     try:
-        endpoint_mod.LONG_RUNNING_PAYLOAD_TYPES = frozenset()
+        remote_client_mod.LONG_RUNNING_PAYLOAD_TYPES = frozenset()
         assert _read_timeout_for("attach_request") == _CONTROL_TIMEOUT_S, (
-            "stripping attach_request out of the real set did not change "
+            "stripping attach_request out of the bound set did not change "
             "_read_timeout_for's own decision -- it is not actually reading "
-            "the production set"
+            "remote_client's own module-level name"
         )
     finally:
-        endpoint_mod.LONG_RUNNING_PAYLOAD_TYPES = original
+        remote_client_mod.LONG_RUNNING_PAYLOAD_TYPES = original
     # Restored: the ordinary (non-stripped) behavior returns.
     assert _read_timeout_for("attach_request") is None
