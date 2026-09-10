@@ -37,6 +37,28 @@ name: main invariant sweep
 # has no such artifact — running it would be an always-green check watching
 # nothing), the latter isn't `pull_request`/`push`-triggered at all.
 #
+# #6117: `litellm-proxy-patch-scaffold.yml` / `check-doc-drift-fixture.yml`
+# are NOT folded into the step list below either, though both CAN run
+# against `main` alone (neither needs a PR diff) — unlike the exclusions
+# above, this is a fit problem with THIS job, not a meaning problem with
+# them: `litellm-proxy-patch-scaffold` needs an ISOLATED Python 3.13 venv
+# carrying ONLY `litellm[proxy]==1.95.0` + pytest (owner ruling, #5620:
+# deliberately excludes reyn's own [dev]/[mcp]/[web] extras), which this
+# job's single shared Python-3.11-plus-`pip install -e .` environment
+# cannot host without breaking that isolation; `check-doc-drift-fixture`
+# needs `fetch-depth: 0` (full git history, for `git show <pinned-sha>:
+# <path>`) on ITS checkout, while this job's own checkout is shallow
+# (lead-coder ruling, #5298: paying full-clone cost on every hourly/every-
+# push run for 2 rarely-touched files was rejected there for the same
+# reason it would be rejected here). Both ALREADY have their own
+# `push: branches: [main]` leg (path-scoped to the same files their
+# `pull_request` trigger watches) — narrower than this sweep's
+# unconditional-every-push coverage, but real: a push to `main` that
+# touches either gate's own watched files re-runs it independently of
+# this file. Neither is a whole-tree gate over unrelated files the way the
+# 9+14 gates above are, so the composition-gap risk this workflow exists
+# to close is structurally small for both to begin with.
+#
 # Deliberately NOT a required status check (not referenced from branch
 # protection) — this runs on a schedule independent of any one PR, so
 # folding its result into a PR's merge gate would block merges on an
@@ -301,3 +323,84 @@ jobs:
       - name: remote-snapshot-placeholder-declared
         if: ${{ !cancelled() }}
         run: python scripts/check_remote_snapshot_placeholder_declared.py
+
+      # #6117 (lead-coder, split from #6113): 17 path-filtered, per-PR-only
+      # gates had NO discovery path for the SAME composition-gap class
+      # #4257 named above — a PR touching neither of two files that
+      # together violate one of these gates never triggers it, and (unlike
+      # the 9 gates above) nothing else re-checked them against `main`
+      # either. Measured runnable against `main` alone (no PR/diff context
+      # needed) and added here — 13 of the 14 below are stdlib-only; the
+      # 14th (bash-node-kind-count) needs the SAME `reyn` install already
+      # paid for above (#6014), so it costs nothing new. 2 of the 17 are
+      # NOT here — see this file's own exclusion note further down for
+      # why, and #6117's own comment for the third correction (`mypy
+      # (ratchet)` was miscounted into the 17 in #6113 — it already runs
+      # unconditionally on every PR via `test.yml`, no `paths:` filter, so
+      # it already had a discovery path and needs no entry here).
+      - name: audit-event-firing-condition
+        if: ${{ !cancelled() }}
+        run: python scripts/audit_event_firing_condition_gate.py
+
+      - name: bash-node-kind-count-ratchet
+        if: ${{ !cancelled() }}
+        run: python scripts/bash_node_kind_count_ratchet.py
+
+      - name: ci-role-declared
+        if: ${{ !cancelled() }}
+        run: python scripts/check_ci_role_declared.py
+
+      - name: faulthandler-timer-api-single-caller
+        if: ${{ !cancelled() }}
+        run: python scripts/check_faulthandler_timer_api_single_caller.py
+
+      - name: load-yaml-vocabulary
+        if: ${{ !cancelled() }}
+        run: python scripts/check_load_yaml_vocabulary.py
+
+      - name: media-store-unlink-single-caller
+        if: ${{ !cancelled() }}
+        run: python scripts/check_media_store_unlink_single_caller.py
+
+      - name: no-core-dep-importorskip
+        if: ${{ !cancelled() }}
+        run: python scripts/check_no_core_dep_importorskip.py
+
+      - name: silent-except-ratchet
+        if: ${{ !cancelled() }}
+        run: python scripts/silent_except_ratchet.py
+
+      - name: silent-except-return-reachability
+        if: ${{ !cancelled() }}
+        run: python scripts/check_silent_except_return_reachability.py
+
+      - name: suspected-time-dependence-ratchet
+        if: ${{ !cancelled() }}
+        run: python scripts/suspected_time_dependence_ratchet.py
+
+      # No `--check-growth` here (unlike this gate's own per-PR workflow,
+      # which passes `--check-growth "origin/${{ github.base_ref }}"`) —
+      # that flag needs a base ref to diff AGAINST, the same "no PR here to
+      # diff against" reason `tests-dir-names-gate` is excluded above. The
+      # bare form still checks the CURRENT measured counts against the
+      # committed baseline (the same skeleton `mypy_ratchet.py`'s own
+      # `--full`, argument-free invocation uses) — a real, narrower check,
+      # not a no-op: it still fails on a baseline the tree no longer
+      # matches, it just cannot ALSO catch a same-PR baseline edit gamed
+      # without a matching measured change (that half of the gate stays
+      # per-PR-only, same as it always was).
+      - name: tui-reactive-ratchet
+        if: ${{ !cancelled() }}
+        run: python scripts/check_tui_reactive_ratchet.py
+
+      - name: tui-widget-boundary
+        if: ${{ !cancelled() }}
+        run: python scripts/check_tui_widget_boundary.py
+
+      - name: unfiltered-caplog-consumption
+        if: ${{ !cancelled() }}
+        run: python scripts/check_unfiltered_caplog_consumption.py
+
+      - name: user-facing-lang
+        if: ${{ !cancelled() }}
+        run: python scripts/user_facing_lang_gate.py
