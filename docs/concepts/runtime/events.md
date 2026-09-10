@@ -103,6 +103,30 @@ reference](../../reference/config/reyn-yaml.md#audit_events-block)):
   particular is the tool operators use to report bugs), not a free lunch.
 - **`network`** (#4496 PR-4) — sends each event over HTTP to
   `audit_events.network_endpoint` instead of writing to `.reyn/events`.
+
+  **What actually goes out** (read this before pointing `network_endpoint`
+  at anything): `NetworkEventBackend.write()` POSTs
+  `event.model_dump(mode="json")` — the SAME object the `local` backend
+  would have written to disk, unmodified. There is no redaction specific
+  to this backend, in either direction: nothing extra is stripped for the
+  network path, and nothing extra is added. Whatever the existing
+  content-opt-in knobs already decided belongs in the event (e.g.
+  `agent_delta`'s own `text` field, gated by
+  `audit_events.agent_delta_include_text`, default `false` — see that
+  knob's own section below for the full per-kind picture; the same
+  "opt-in, default metadata-only" shape applies to the other
+  `*_include_text` knobs) is what travels to `network_endpoint`, exactly
+  as it would have been written locally. Choosing `network` changes
+  WHERE the event goes, not WHAT is in it.
+
+  **No scheme restriction** (deliberate — a local collector at
+  `http://127.0.0.1:<port>` is a legitimate, common target): `reyn` does
+  not require `https://` or validate the endpoint's TLS posture.
+  Pointing `network_endpoint` at a plain `http://` address on an
+  untrusted network sends every event's full payload — including any
+  opted-in content fields — in clear text. This is the operator's choice
+  to make with that in mind, not something this backend decides for you.
+
   Same diagnostic trade-off as `discard` above (replay / support-bundle /
   dogfood_trace have nothing local to read), PLUS its own on-failure
   policy (`audit_events.on_failure`, owner ruling 2026-09-09):
