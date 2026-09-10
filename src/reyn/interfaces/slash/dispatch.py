@@ -223,14 +223,58 @@ async def maybe_dispatch_slash(
         # input loop is not a pump).
         if locus == "session":
             ran = await transport.run_slash_command(name, args)
+            if not ran:
+                # #6083: this branch's own ``ran`` comes back from a REAL
+                # control POST (`run_slash_command`), so ``False`` does NOT
+                # mean "this client has no session" — that claim was
+                # hardcoded here regardless of cause, and the owner's own
+                # real-machine report shows it firing on a compaction that
+                # had ALREADY SUCCEEDED server-side.
+                #
+                # lead-coder BLOCKING (PR #6094, self-caught in review): an
+                # earlier version of this fix still asserted "could not
+                # run" unconditionally, appending the real detail only as a
+                # SUFFIX — a reader reads left to right and classifies on
+                # the FIRST assertion, so "could not run: <claim>. —
+                # <detail>" still reads as the claim, the detail merely
+                # supporting it, never correcting it. ``ControlOutcome``'s
+                # own two failure kinds say DIFFERENT things and must not
+                # share a prefix: ``refused`` genuinely means the server
+                # said no — it did not run, and the text may say so.
+                # ``not_delivered`` means UNCONFIRMED, not unrun — #6083's
+                # own report is exactly this case (a control-read timeout
+                # on an operation that ran to completion regardless), so
+                # THIS prefix must not claim non-execution either.
+                from reyn.interfaces.transport.control_outcome import ControlOutcome
+
+                outcome = transport.last_control_outcome()
+                if isinstance(outcome, ControlOutcome) and outcome.kind == "refused":
+                    prefix = f"/{name} could not run"
+                else:
+                    # not_delivered, or no typed outcome recorded — neither
+                    # confirms non-execution, so this text does not claim
+                    # it. ⚠️ This alone does not fix "a SUCCESS is reported
+                    # as a failure" (the operation itself is not confirmed
+                    # either way here) — see #6083's own PR body for stage
+                    # 2 (an immediate accept + completion reported over the
+                    # existing SSE broadcast, the same channel compaction's
+                    # own lifecycle markers already use).
+                    prefix = f"/{name}: no confirmation received"
+                _display(transport, "error", prefix)
         else:
             ctx = SlashContext(transport=transport, session=None)
             ran = await execute_slash_command(ctx, name, args)
-        if not ran:
-            _display(
-                transport, "error",
-                f"/{name} could not run: this client has no session to run it on.",
-            )
+            if not ran:
+                # This branch's own ``ran`` comes back from a LOCAL,
+                # in-process call (`execute_slash_command`, no control POST
+                # at all — see the ``locus`` comment above) — `False` here
+                # genuinely does mean "this client has no session to run it
+                # on" (the client/connection-locus handler's own precondition
+                # check), unchanged from before #6083.
+                _display(
+                    transport, "error",
+                    f"/{name} could not run: this client has no session to run it on.",
+                )
 
     if runner is not None:
         runner(_run())
