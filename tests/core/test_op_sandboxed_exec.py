@@ -177,7 +177,7 @@ class _RecordingBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None, env_path=None) -> SandboxResult:
         self.run_called = True
         self.received_policy = policy
         return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
@@ -516,7 +516,7 @@ async def test_noop_run_echo():
     # #3901 PR-B ④: env is compat by default (env_deny_names empty), so PATH
     # needs no explicit passthrough declaration anymore.
     policy = SandboxPolicy()
-    result = await backend.run(["echo", "hi"], policy)
+    result = await backend.run(["echo", "hi"], policy, env_path=None)
     assert isinstance(result, SandboxResult)
     assert result.returncode == 0
     assert b"hi" in result.stdout
@@ -528,7 +528,7 @@ async def test_noop_run_timeout():
     """Tier 2: NoopBackend wall-clock timeout returns returncode=-1 + message."""
     backend = NoopBackend()
     policy = SandboxPolicy(timeout_seconds=1)
-    result = await backend.run(["sleep", "5"], policy)
+    result = await backend.run(["sleep", "5"], policy, env_path=None)
     assert result.returncode == -1
     assert b"timed out" in result.stderr.lower() or b"timeout" in result.stderr.lower()
 
@@ -539,7 +539,7 @@ async def test_noop_run_nonzero_exit():
     backend = NoopBackend()
     policy = SandboxPolicy()
     # `false` exits with status 1 on POSIX
-    result = await backend.run(["false"], policy)
+    result = await backend.run(["false"], policy, env_path=None)
     assert result.returncode != 0
 
 
@@ -654,7 +654,7 @@ class _StubBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None, sink=None, env_path=None) -> SandboxResult:
         self.received_cwd = cwd
         return SandboxResult(returncode=0, stdout=b"from-stub", stderr=b"")
 
@@ -757,8 +757,8 @@ async def test_noop_emits_warning_once(caplog):
 
     import logging
     with caplog.at_level(logging.WARNING, logger="reyn.security.sandbox.noop_backend"):
-        await backend.run(["echo", "1"], policy)
-        await backend.run(["echo", "2"], policy)
+        await backend.run(["echo", "1"], policy, env_path=None)
+        await backend.run(["echo", "2"], policy, env_path=None)
 
     warns = [r for r in caplog.records if "no isolation enforced" in r.message]
     (warn,) = warns  # exactly one warning: unpacking raises ValueError if not

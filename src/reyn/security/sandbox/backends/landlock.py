@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import platform
 import signal
 import subprocess
@@ -429,7 +428,9 @@ class LandlockBackend:
         vacuously."""
         return True
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None",
+    ) -> WrappedCommand:
         """Prepend the ``landlock_exec`` re-exec shim to *argv* for a
         persistent-process launch (e.g. a stdio MCP server, #1344 follow-up E).
         Landlock has no CLI wrapper, so the shim (a re-exec-and-restrict-self
@@ -445,8 +446,14 @@ class LandlockBackend:
 
         executable, shim_argv = build_landlock_exec_argv(policy, argv[0], list(argv[1:]))
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            # #6058/#6063: env_path is REQUIRED now — the caller's own
+            # per-operation read, always supplied explicitly. No fallback
+            # to `ambient_path()` here: a second, independent read inside
+            # this method is the exact #6008 defect this parameter exists
+            # to close. See `backend.py`'s own `ambient_path()` docstring.
+            if env_path is not None:
+                env["PATH"] = env_path
         return WrappedCommand(argv=[executable, *shim_argv], env=env, cleanup=None)
 
     async def run(
@@ -459,6 +466,7 @@ class LandlockBackend:
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None",
     ) -> SandboxResult:
         """Execute argv under Landlock isolation and return the result.
 
@@ -484,8 +492,14 @@ class LandlockBackend:
         # (#3075) — mirrors NoopBackend/SeatbeltBackend exactly via the shared
         # resolve_passthrough_env chokepoint.
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            # #6058/#6063: env_path is REQUIRED now — the caller's own
+            # per-operation read, always supplied explicitly. No fallback
+            # to `ambient_path()` here: a second, independent read inside
+            # this method is the exact #6008 defect this parameter exists
+            # to close. See `backend.py`'s own `ambient_path()` docstring.
+            if env_path is not None:
+                env["PATH"] = env_path
         # #4204 bucket E: see NoopBackend.run's matching comment — a direct
         # exec (no shell) never resets $PWD the way a real shell would, so
         # the whole parent env's stale value would otherwise leak through

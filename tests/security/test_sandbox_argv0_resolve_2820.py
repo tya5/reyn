@@ -297,7 +297,7 @@ class _CapturingBackend:
 
     async def run(
         self, argv, policy, *, stdin=None, cwd=None, cancel_event=None,
-        hook_process_context=None, sink=None,
+        hook_process_context=None, sink=None, env_path=None,
     ):
         from reyn.security.sandbox.backend import SandboxResult
 

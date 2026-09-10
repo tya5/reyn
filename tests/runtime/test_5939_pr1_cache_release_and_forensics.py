@@ -17,6 +17,7 @@ falsified here, not just asserted in prose.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 from pathlib import Path
@@ -199,7 +200,7 @@ def test_run_cache_release_and_forensics_emits_the_audit_event():
     collected = collect_events(events)
     guard = ProcessMemoryGuard(reader=_fake_reader_sequence([1000, 400]))
 
-    forensics = run_cache_release_and_forensics(guard, events, chain_id="chain-pr1")
+    forensics = asyncio.run(run_cache_release_and_forensics(guard, events, chain_id="chain-pr1"))
 
     assert isinstance(forensics, ProcessMemoryForensics)
     assert forensics.footprint_before == 1000
@@ -239,7 +240,7 @@ def test_run_cache_release_and_forensics_writes_to_the_real_stderr(
     events = EventLog()
     guard = ProcessMemoryGuard(reader=_fake_reader_sequence([500, 500]))
 
-    run_cache_release_and_forensics(guard, events)
+    asyncio.run(run_cache_release_and_forensics(guard, events))
 
     output = fake_stderr.getvalue()
     assert "process_memory_forensics" in output
@@ -259,7 +260,7 @@ def test_stderr_summary_bypasses_a_rebound_sys_stderr(monkeypatch: pytest.Monkey
     events = EventLog()
     guard = ProcessMemoryGuard(reader=_fake_reader_sequence([500, 500]))
 
-    run_cache_release_and_forensics(guard, events)
+    asyncio.run(run_cache_release_and_forensics(guard, events))
 
     assert "process_memory_forensics" in real_stderr.getvalue()
     assert rebound_stderr.getvalue() == ""
@@ -276,7 +277,7 @@ def test_run_cache_release_and_forensics_logs_to_reyn_log(caplog):
     guard = ProcessMemoryGuard(reader=_fake_reader_sequence([777, 111]))
 
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.process_memory_release"):
-        run_cache_release_and_forensics(guard, events)
+        asyncio.run(run_cache_release_and_forensics(guard, events))
 
     (matching,) = [r for r in caplog.records if r.name == "reyn.runtime.process_memory_release"]
     assert "777" in matching.getMessage()

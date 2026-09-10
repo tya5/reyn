@@ -1199,6 +1199,53 @@ class MediaStore:
         except OSError:
             pass
 
+    def clear_spill_path_cache(self) -> "tuple[int, int]":
+        """#5939/#5851 PR-5: the owning module's own public clear function
+        for ``_history_content_spill_paths``/``_unspilled_paths`` — PR-1's
+        "never reach into another module's private state directly"
+        discipline (``process_memory_release.py``'s own module docstring),
+        generalized from MODULE-level to INSTANCE-level: ``Session.
+        _drop_instance_caches`` calls this rather than clearing
+        ``self._media_store``'s two sets by hand from outside.
+
+        Prunes only entries whose file no longer exists ON DISK — checked
+        directly against the filesystem, never against a fresh
+        :meth:`_load_spill_manifest` re-read. **This is a correction of
+        this method's own first draft** (design comment, #5851): a naive
+        "reset to what the manifest currently holds" is UNSAFE here,
+        because :meth:`save_tool_result`'s own manifest append is
+        deferred/fire-and-forget (#5364 §1.4, same worker as the content
+        write, FIFO-serial but off-loop) — a path this SAME process just
+        spilled can still be QUEUED, not yet durably in the manifest, at
+        the exact moment ② fires. Re-deriving from the manifest at that
+        instant would silently drop a real, just-written entry from
+        memory before it ever reached disk — the very hot-path
+        correctness regression :meth:`is_history_content_spill`/
+        :meth:`is_unspilled_file` (both read these sets) must never see.
+        Checking each path's own existence is always LIVE (no deferred
+        write, no race window) and never removes a legitimately-tracked
+        entry, live or still-queued.
+
+        This IS a genuine, previously-unpruned gap, not a no-op: neither
+        eviction call site (``_evict_cross_session_over_cap`` nor the
+        write-time-cap path) ever calls ``.discard()`` on these sets after
+        ``path.unlink()`` — a file this SAME process deleted stays
+        tracked here forever until this method (or a fresh
+        ``MediaStore`` construction, which re-derives from the manifest
+        and self-prunes there) runs. Filed separately, deliberately NOT
+        fixed here (different subject from this PR's own "release what
+        the ladder asks for"): https://github.com/tya5/reyn/issues/6050.
+
+        Returns ``(entries_before, entries_after)`` — the union of both
+        sets' sizes, before and after the prune."""
+        before = len(self._history_content_spill_paths | self._unspilled_paths)
+        self._history_content_spill_paths = {
+            p for p in self._history_content_spill_paths if p.exists()
+        }
+        self._unspilled_paths = {p for p in self._unspilled_paths if p.exists()}
+        after = len(self._history_content_spill_paths | self._unspilled_paths)
+        return before, after
+
     def is_history_content_spill(self, path: "str | Path") -> bool:
         """#4381 (renamed #5564): whether *path* is a file THIS store
         itself wrote via :meth:`save_tool_result` — i.e. a history-content

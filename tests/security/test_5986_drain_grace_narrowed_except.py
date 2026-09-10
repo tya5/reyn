@@ -118,7 +118,7 @@ async def test_a_drain_that_cannot_complete_in_time_warns_and_returns_empty(
 
     fire_task = asyncio.create_task(_fire_cancel())
     try:
-        result = await backend.run(["/bin/sh", "-c", script], _POLICY, cancel_event=event)
+        result = await backend.run(["/bin/sh", "-c", script], _POLICY, cancel_event=event, env_path=None)
         await fire_task
 
         assert result.cancelled is True
@@ -162,7 +162,7 @@ async def test_a_normal_cancel_with_time_to_drain_needs_no_warning(tmp_path, cap
         event.set()
 
     fire_task = asyncio.create_task(_fire_cancel())
-    result = await backend.run(["/bin/sh", "-c", script], _POLICY, cancel_event=event)
+    result = await backend.run(["/bin/sh", "-c", script], _POLICY, cancel_event=event, env_path=None)
     await fire_task
 
     assert result.cancelled is True

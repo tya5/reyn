@@ -13,6 +13,7 @@ exception instead) since the real call would kill the test worker.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -200,7 +201,7 @@ def test_ladder_is_inert_when_not_enforced(tmp_path: Path):
     s = _session(tmp_path, guard=guard)
     events = collect_events(s)
 
-    s._check_memory_ladder(chain_id=None, footprint=999_999_999_999)
+    asyncio.run(s._check_memory_ladder(chain_id=None, footprint=999_999_999_999))
 
     assert events == []
     assert s.halted_reason is None
@@ -216,9 +217,9 @@ def test_ladder_enters_backpressure_over_cap_and_clears_when_it_drops(tmp_path: 
     s = _session(tmp_path, guard=guard)
     events = collect_events(s)
 
-    s._check_memory_ladder(chain_id="c1", footprint=150)  # over cap -> enter
-    s._check_memory_ladder(chain_id="c1", footprint=150)  # still over, no compaction seen -> no-op
-    s._check_memory_ladder(chain_id="c1", footprint=50)  # back under -> cleared
+    asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=150))  # over cap -> enter
+    asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=150))  # still over, no compaction seen -> no-op
+    asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=50))  # back under -> cleared
 
     entered = [e for e in events if e.type == "session_memory_backpressure"]
     cleared = [e for e in events if e.type == "session_memory_backpressure_cleared"]
@@ -250,12 +251,12 @@ def test_ladder_escalates_to_halt_and_exit_when_still_over_after_compaction_and_
     s = _session(tmp_path, guard=guard)
     events = collect_events(s)
 
-    s._check_memory_ladder(chain_id="c1", footprint=500)  # ① enter backpressure
+    asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=500))  # ① enter backpressure
     assert s.halted_reason is None  # sanity: not escalated yet
 
     s._audit_events.emit("compaction_completed")  # arms the judge
     with pytest.raises(_ExitCalled):
-        s._check_memory_ladder(chain_id="c1", footprint=500)  # ②③④
+        asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=500))  # ②③④
 
     assert s.halted_reason == "process_memory"
     assert s.halt_remedies
@@ -281,7 +282,7 @@ def test_ladder_does_not_escalate_before_a_compaction_is_observed(tmp_path: Path
     s = _session(tmp_path, guard=guard)
 
     for _ in range(5):
-        s._check_memory_ladder(chain_id="c1", footprint=500)
+        asyncio.run(s._check_memory_ladder(chain_id="c1", footprint=500))
 
     assert s.halted_reason is None
 
