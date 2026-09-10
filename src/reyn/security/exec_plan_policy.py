@@ -94,15 +94,16 @@ that will actually matter once 段4 lands.
    recording what happened either way (``exec_threat_scanned`` when the
    scan ran, ``exec_threat_scan_skipped`` when it did not) — see
    :func:`_check_segment`.
-3. **``argv[0]`` resolution read ambient ``os.environ["PATH"]``, not the
-   env a sandboxed run will actually see.** ``sandbox/seatbelt.py:425``
-   only falls back to ``os.environ`` when the caller passes no explicit
-   PATH — 段4's own sandbox env can differ, and resolving against the
-   wrong one reproduces the EXACT class #5984 found 4 instances of, one
-   layer down: the binary this module approves and the binary that
-   actually runs could be two different files. :func:`check_exec_plan_
-   policy` now takes BOTH ``env_path`` AND ``cwd`` (a version-manager's
-   per-directory config is read from ``cwd`` too — the same resolution
+3. **``argv[0]`` resolution read the ambient PATH directly, not the
+   env a sandboxed run will actually see.** A sandbox backend's own
+   env-building only falls back to the ambient PATH when the caller
+   passes no explicit one — 段4's own sandbox env can differ, and
+   resolving against the wrong one reproduces the EXACT class #5984
+   found 4 instances of, one layer down: the binary this module approves
+   and the binary that actually runs could be two different files.
+   :func:`check_exec_plan_policy` now takes BOTH ``env_path`` AND ``cwd``
+   (a version-manager's per-directory config is read from ``cwd`` too —
+   the same resolution
    input, same risk) as REQUIRED keyword-only arguments (no internal
    fallback to ``os.environ``, no internal derivation from
    ``ctx.workspace``) — every caller, present and future, must decide and
@@ -233,7 +234,9 @@ async def check_exec_plan_policy(
     sandboxed run will actually see — BOTH REQUIRED, keyword-only, no
     internal fallback (#5991 BLOCKING ③, this module's own docstring):
     every caller must decide the real values (``sandboxed_exec.py``'s own
-    ``env_path = os.environ.get("PATH")`` / ``cwd = str(ctx.workspace.
+    ``env_path = ambient_path()`` (#6008 — the process-lifetime-memoized
+    accessor in ``sandbox/backend.py``, the SAME one every sandbox
+    backend's own env-building calls) / ``cwd = str(ctx.workspace.
     base_dir)``, once 段4 wires this module in, is the pair to reuse)
     rather than let this function silently resolve against values that
     may not match what actually executes.

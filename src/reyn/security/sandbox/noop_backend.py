@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import subprocess
 from typing import TYPE_CHECKING, Callable
@@ -23,6 +22,7 @@ from .backend import (
     AxisEnforcementDeclaration,
     SandboxResult,
     WrappedCommand,
+    ambient_path,
 )
 from .capability import CapabilityDeclaration, CapabilitySupport
 from .policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy, resolve_passthrough_env
@@ -58,8 +58,10 @@ def _build_env(policy: SandboxPolicy) -> dict[str, str]:
     # minus policy.env_deny_names (compat default, owner ruling B) — no
     # longer a curated union with a standard proxy/CA set.
     env = resolve_passthrough_env(policy)
-    if "PATH" not in env and "PATH" in os.environ:
-        env["PATH"] = os.environ["PATH"]
+    if "PATH" not in env:
+        path = ambient_path()  # #6008: memoized, one real read per process
+        if path is not None:
+            env["PATH"] = path
     return env
 
 

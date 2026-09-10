@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import platform
 import signal
 import subprocess
@@ -42,6 +41,7 @@ from ..backend import (
     AxisEnforcementDeclaration,
     SandboxResult,
     WrappedCommand,
+    ambient_path,
 )
 from ..capability import CapabilityDeclaration, CapabilitySupport
 
@@ -445,8 +445,10 @@ class LandlockBackend:
 
         executable, shim_argv = build_landlock_exec_argv(policy, argv[0], list(argv[1:]))
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            path = ambient_path()  # #6008: memoized, one real read per process
+            if path is not None:
+                env["PATH"] = path
         return WrappedCommand(argv=[executable, *shim_argv], env=env, cleanup=None)
 
     async def run(
@@ -484,8 +486,10 @@ class LandlockBackend:
         # (#3075) — mirrors NoopBackend/SeatbeltBackend exactly via the shared
         # resolve_passthrough_env chokepoint.
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            path = ambient_path()  # #6008: memoized, one real read per process
+            if path is not None:
+                env["PATH"] = path
         # #4204 bucket E: see NoopBackend.run's matching comment — a direct
         # exec (no shell) never resets $PWD the way a real shell would, so
         # the whole parent env's stale value would otherwise leak through
