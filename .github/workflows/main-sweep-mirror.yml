@@ -74,7 +74,7 @@ jobs:
         id: verdict
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: b02492a30864f033b316d4bc941d1b8c0f0eafc9  # TEMP strip-falsify (#6014) — revert
           REPO: ${{ github.repository }}
         # Keyed on the BASE COMMIT, never "the newest run on main"
         # (lead-coder ruling, #6014): the question this job answers is "is
