@@ -667,7 +667,7 @@ def test_router_context_overflow_unrecovered_names_mid_floor() -> None:
     ))
     (only,) = _drain(q)
     assert only.kind == "system"
-    assert "1つのやり取りが単独で大きすぎます" in only.text
+    assert "A single exchange is too large on its own" in only.text
     assert "shrink flow failed" in only.text
 
 
@@ -681,7 +681,7 @@ def test_router_context_overflow_unrecovered_names_room_floor() -> None:
         data={"error": "ContextOverflowError(...)", "terminal": "room_floor"},
     ))
     (only,) = _drain(q)
-    assert "最新のメッセージだけで窓に入りません" in only.text
+    assert "The most recent messages alone don't fit in the window" in only.text
 
 
 def test_router_context_overflow_unrecovered_without_terminal_degrades_gracefully() -> None:
