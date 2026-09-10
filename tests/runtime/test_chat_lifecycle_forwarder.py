@@ -658,7 +658,17 @@ def test_compaction_failed_carries_the_episode_marker_meta() -> None:
 def test_router_context_overflow_unrecovered_names_mid_floor() -> None:
     """Tier 2: #5588 architect ruling — the true end-of-ladder failure is
     named via the RetryLoopTerminal member itself, never a parse of
-    error's own repr() text."""
+    error's own repr() text.
+
+    #6106 stage 1: the fallback text here is the member's own ``.name``
+    (``"MID_FLOOR"``), never a hand-authored English sentence — this
+    runtime layer names WHAT happened; the polished sentence
+    (``compaction_failure_text``) lives in exactly one place,
+    ``interfaces``, reached independently by ``app.py`` for the flowview
+    entry's own row (see ``test_entry_settles_error_with_the_real_
+    retry_loop_terminal_text`` in ``tests/interfaces/test_5588_
+    compaction_progress_chrome.py`` — that assertion is unaffected by
+    this change, a different code path entirely)."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(
@@ -667,8 +677,8 @@ def test_router_context_overflow_unrecovered_names_mid_floor() -> None:
     ))
     (only,) = _drain(q)
     assert only.kind == "system"
-    assert "A single exchange is too large on its own" in only.text
-    assert "shrink flow failed" in only.text
+    assert only.text == "[✗ shrink flow failed: MID_FLOOR]"
+    assert only.meta.get("shrink_flow_failed_terminal") == "mid_floor"
 
 
 def test_router_context_overflow_unrecovered_names_room_floor() -> None:
@@ -681,7 +691,23 @@ def test_router_context_overflow_unrecovered_names_room_floor() -> None:
         data={"error": "ContextOverflowError(...)", "terminal": "room_floor"},
     ))
     (only,) = _drain(q)
-    assert "The most recent messages alone don't fit in the window" in only.text
+    assert only.text == "[✗ shrink flow failed: ROOM_FLOOR]"
+    assert only.meta.get("shrink_flow_failed_terminal") == "room_floor"
+
+
+def test_router_context_overflow_unrecovered_names_mid_floor_and_room_floor_distinctly() -> None:
+    """Tier 2: #6106 stage 1 deny — an unrecognised terminal VALUE (not a
+    real RetryLoopTerminal member) must degrade to the generic marker,
+    never half-match or raise; the mid/room floor markers above must stay
+    distinct from each other and from this generic one."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="router_context_overflow_unrecovered",
+        data={"error": "UnrecoveredError(...)", "terminal": "not_a_real_terminal"},
+    ))
+    (only,) = _drain(q)
+    assert only.text == "[✗ shrink flow failed]"
 
 
 def test_router_context_overflow_unrecovered_without_terminal_degrades_gracefully() -> None:

@@ -156,6 +156,28 @@ def test_failure_text_mid_floor_and_room_floor_are_distinct():
     )
 
 
+def test_failure_text_covers_every_retry_loop_terminal_member():
+    """Tier 1: #6106 stage 1 exhaustiveness witness — every REAL
+    ``RetryLoopTerminal`` member (never a hand-maintained list of the 2
+    known today) must resolve to a real sentence through the actual
+    production function; a member with no entry must raise loud
+    (``compaction_failure_text``'s own dict-keyed-by-member lookup
+    already does this — a plain ``[terminal]`` index, never ``.get()``),
+    not silently degrade.
+
+    Strip-falsify (performed during review, per #6106's own architect
+    ruling — witness is "add a member, leave the mapping untouched, go
+    RED"): add a 3rd member to ``RetryLoopTerminal`` in
+    ``reyn/services/compaction/engine.py`` without adding it to
+    ``compaction_failure_text``'s own table — this test goes RED with a
+    ``KeyError`` on the new member. Reverted after confirming."""
+    for member in RetryLoopTerminal:
+        text = compaction_failure_text(member)
+        assert isinstance(text, str) and text, (
+            f"{member!r} did not resolve to a non-empty sentence"
+        )
+
+
 # ── the Ctx pane's ``folded`` row (#5578's persisted watermark) ─────────
 #
 # Three states that must stay distinct: two of them arrive as ``None`` at

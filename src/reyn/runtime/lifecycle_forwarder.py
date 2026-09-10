@@ -21,6 +21,7 @@ own EventLog (#2570: a pipeline driver-session's live step progress).
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from typing import Any, Callable
 
 from reyn.runtime.outbox import OutboxMessage
@@ -319,12 +320,24 @@ class ChatLifecycleForwarder:
         ladder-terminal distinction at all) carries no ``terminal`` field
         (never fabricated) and degrades to a generic marker.
 
-        The 2-line mapping is a SMALL, deliberate duplicate of
-        ``compaction_progress.py``'s own ``compaction_failure_text`` —
-        that module is INTERFACES-layer (imports ``textual``); this one is
-        RUNTIME-layer, so importing it here would invert the dependency
-        direction (same reasoning this module's own ``_compact_token_
-        count`` docstring already gives for not importing ``gutter.py``).
+        ★ #6106 stage 1 (architect/lead-coder ruling): this handler used
+        to carry its OWN small English-sentence table for
+        ``RetryLoopTerminal``, a literal duplicate of ``compaction_
+        progress.py``'s own ``compaction_failure_text`` — #6104's CI
+        caught the two drifting (one side translated, the other not).
+        Fixed structurally, not by re-syncing the duplicate: this handler
+        now passes ``_enqueue(marker=(...))`` — see that method's own
+        docstring — so the fallback text here is the member's own
+        ``.name`` (a structural identifier), never a hand-authored
+        sentence. The polished sentence lives in EXACTLY one place
+        (``compaction_progress.compaction_failure_text``), reached by
+        ``app.py`` independently (reading the same ``terminal`` value off
+        the cached ``compaction_progress_raw()`` snapshot to build the
+        flowview entry's own row) — not through this forwarder at all.
+        ``str(terminal)`` + ``.get()`` (silently ``None`` on an unmapped
+        value) is also gone: a value that does not resolve to a real
+        ``RetryLoopTerminal`` member degrades to the generic marker
+        instead of ever half-matching.
 
         ★ #6085 stage 2 (lead-coder ruling): this frame deliberately
         carries NO ``compaction_episode_marker`` meta, unlike its 3
@@ -345,12 +358,15 @@ class ChatLifecycleForwarder:
         oversight #5588 left behind).
         """
         terminal = data.get("terminal")
-        text = {
-            "mid_floor": "A single exchange is too large on its own",
-            "room_floor": "The most recent messages alone don't fit in the window",
-        }.get(str(terminal))
-        if text is not None:
-            self._enqueue(f"[✗ shrink flow failed: {text}]")
+        member = None
+        if terminal is not None:
+            from reyn.services.compaction.engine import RetryLoopTerminal as _RLT
+            try:
+                member = _RLT(terminal)
+            except ValueError:
+                member = None
+        if member is not None:
+            self._enqueue(marker=("shrink flow failed", member))
         else:
             self._enqueue("[✗ shrink flow failed]")
 
@@ -587,7 +603,13 @@ class ChatLifecycleForwarder:
         kind = str(data.get("kind") or "?")
         self._enqueue(f"[✗ intervention denied: {kind}]")
 
-    def _enqueue(self, text: str, *, meta: "dict | None" = None) -> None:
+    def _enqueue(
+        self,
+        text: "str | None" = None,
+        *,
+        meta: "dict | None" = None,
+        marker: "tuple[str, Enum] | None" = None,
+    ) -> None:
         # Fire-and-forget: lifecycle markers are advisory, never block the
         # session loop. Uses ``kind="system"`` so the conv pane's
         # ``_render_system_message`` path styles it as a dim marker line.
@@ -605,6 +627,43 @@ class ChatLifecycleForwarder:
         # a doc/comment goes stale the moment the mechanism it describes
         # changes; fixed here in the same PR that found it, per that rule —
         # the writer itself is untouched).
+        #
+        # *marker* (#6106 stage 1) — ``(label, member)``, the TYPED
+        # alternative to a hand-authored *text* string. Pass this when a
+        # handler is naming WHICH closed-vocabulary outcome fired, not
+        # authoring English prose about it. This is the ONE new path
+        # stage 1 moves onto (:meth:`on_router_context_overflow_
+        # unrecovered`'s ``RetryLoopTerminal``); the other 24 ``_enqueue``
+        # call sites in this module are untouched — #6106 architect
+        # ruling: this module IS a runtime-layer renderer (25 call
+        # sites), and stage 1 closes only the ONE duplicated table, not
+        # the module's whole contract.
+        #
+        # The fallback text built here is *member.name* — the enum's own
+        # structural identifier (``"MID_FLOOR"``), never a hand-authored
+        # sentence: this runtime layer names WHAT happened, an
+        # interfaces-layer subscriber reading the SAME source audit-event
+        # (``app.py``'s own ``compaction_failure_text(RetryLoopTerminal(
+        # terminal))`` call, building the flowview entry's row, #5588)
+        # renders the polished sentence independently — importing
+        # ``interfaces`` here would invert the layer (#6106 architect
+        # ruling). A surface with no such richer mechanism (AG-UI generic
+        # client, plain CUI) shows this mechanical fallback as-is — the
+        # same "a surface without that mechanism shows the line as-is"
+        # contract :meth:`on_recovery_summary_persisted`'s own docstring
+        # already names for the (unrelated) ``compaction_episode_marker``
+        # fold. Also stamps ``meta[label + "_terminal"] = member.value``
+        # (the raw wire value, e.g. ``"mid_floor"``) — nothing reads it
+        # yet; kept for a future consumer, same as ``lifecycle_bundle_
+        # key`` above started inert too.
+        #
+        # *text* and *marker* are mutually exclusive.
+        if marker is not None:
+            assert text is None, "_enqueue: pass text OR marker, never both"
+            label, member = marker
+            text = f"[✗ {label}: {member.name}]"
+            meta = {**(meta or {}), f"{label.replace(' ', '_')}_terminal": member.value}
+        assert text is not None, "_enqueue requires text or marker"
         try:
             self.outbox.put_nowait(OutboxMessage(kind="system", text=text, meta=meta or {}))
         except asyncio.QueueFull:
