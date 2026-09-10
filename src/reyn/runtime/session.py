@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from reyn.runtime.fs_watcher import FsWatcher
     from reyn.runtime.hot_reload import HotReloader
     from reyn.runtime.process_memory import ProcessMemoryGuard
+    from reyn.runtime.process_memory_release import CacheDropResult
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
     from reyn.runtime.services.compaction_controller import ForceCompactResult
@@ -7959,7 +7960,22 @@ class Session:
         if self._memory_backpressure_active:
             self._compaction_seen_since_backpressure = True
 
-    def _check_memory_ladder(self, *, chain_id: "str | None", footprint: "int | None") -> None:
+    def _ladder_sessions(self) -> "list[object]":
+        """#5939/#5851 PR-5: every LIVE session whose instance-attribute
+        caches a ② cache-release pass should also reach — the population
+        for :meth:`Session._drop_instance_caches`, DERIVED from
+        ``AgentRegistry.all_sessions()`` (#5939 PR-2) rather than a
+        separately hand-maintained list (design:
+        https://github.com/tya5/reyn/issues/5851). ``[self]`` when no
+        registry is attached (an embedded/test session with no
+        multi-session process — THIS session is the only one, by
+        construction, matching :meth:`_memory_exit`'s own identical
+        no-registry fallback)."""
+        if self._registry is not None:
+            return list(self._registry.all_sessions())
+        return [self]
+
+    async def _check_memory_ladder(self, *, chain_id: "str | None", footprint: "int | None") -> None:
         """#5939 PR-2 — the steady-state memory ladder's own judge, called
         once per turn-end sample (right after :meth:`_emit_process_footprint`
         took *footprint*, same call site, no second read): ① backpressure
@@ -8026,7 +8042,9 @@ class Session:
 
         from reyn.runtime.process_memory_release import run_cache_release_and_forensics
 
-        forensics = run_cache_release_and_forensics(guard, self._audit_events, chain_id=chain_id)
+        forensics = await run_cache_release_and_forensics(
+            guard, self._audit_events, chain_id=chain_id, sessions=self._ladder_sessions(),
+        )
         still_over = (
             forensics.footprint_after is not None
             and forensics.footprint_after > guard.cap_bytes
@@ -8252,7 +8270,9 @@ class Session:
         # ladder's own ② (PR-1, process_memory_release.py).
         from reyn.runtime.process_memory_release import run_cache_release_and_forensics
 
-        forensics = run_cache_release_and_forensics(guard, self._audit_events, chain_id=chain_id)
+        forensics = await run_cache_release_and_forensics(
+            guard, self._audit_events, chain_id=chain_id, sessions=self._ladder_sessions(),
+        )
         footprint = forensics.footprint_after
         over_cap = footprint is not None and footprint > guard.cap_bytes
         host_critical = guard.host_critical()
@@ -8272,6 +8292,59 @@ class Session:
             chain_id=chain_id, footprint_bytes=footprint, cap_bytes=guard.cap_bytes,
         )
         return "turn_stopped_memory"
+
+    async def _drop_instance_caches(self) -> "list[CacheDropResult]":
+        """#5939/#5851 PR-5: this session's OWN instance-attribute caches
+        — the population every ladder ② call site (steady-state PR-2,
+        turn-mid PR-3, hydration PR-4) now reaches through
+        ``AgentRegistry.all_sessions()`` (or ``[self]`` with no registry
+        attached), never a separately-maintained instance list (design:
+        #5851 issue comment, lead-coder-approved — the population is
+        DERIVED from session enumeration, which #5939 PR-2 already built,
+        rather than hand-registered).
+
+        Only ``MediaStore``'s two spill-path sets are in scope — see the
+        design comment for why ``ContextBudgetAdvisor._history_token_
+        cache`` (a fixed 5-key dict, O(1) regardless of conversation
+        length) and ``MediaStore._base64_cache`` (already self-bounded,
+        FIFO-evicted at 64 entries) are NOT instance-cache targets at
+        all, despite both appearing in architect's own original
+        inventory. Delegates to :meth:`MediaStore.clear_spill_path_cache`
+        — this method never reaches into ``_media_store``'s own private
+        state directly, the same "owning module's [now: owning
+        instance's] own public clear function" discipline PR-1
+        established for the module-level caches, generalized one level.
+
+        ``await self._media_store.flush()`` BEFORE the prune (#5851
+        issue thread, lead-coder ruling on the 2nd race I found while
+        implementing this): ``clear_spill_path_cache``'s own prune reads
+        each path's LIVE existence on disk — a real, just-written file
+        whose content write is still queued on ``MediaStore``'s
+        fire-and-forget worker (``save_tool_result``'s own deferred
+        write) would otherwise read as "gone" and be wrongly pruned,
+        silently defeating ``read_file``'s own re-spill guard
+        (``core/op_runtime/file.py``, ``is_history_content_spill``). This
+        flush is not NEW latency in practice — ``router_loop.py`` already
+        calls the SAME ``flush()`` unconditionally once per iteration,
+        right before the next LLM call; this just reorders that already-
+        mandatory drain to happen before the prune, so the pre-existing
+        per-iteration flush() call right after becomes a no-op (nothing
+        left queued).
+
+        A session with no multimodal support configured
+        (``self._media_store is None``) returns an empty list — nothing
+        to drop, not an error."""
+        if self._media_store is None:
+            return []
+        from reyn.runtime.process_memory_release import CacheDropResult
+
+        await self._media_store.flush()
+        before, after = self._media_store.clear_spill_path_cache()
+        return [
+            CacheDropResult(
+                name="media_store_spill_paths", entries_before=before, entries_after=after,
+            ),
+        ]
 
     @property
     def process_memory_guard(self) -> "ProcessMemoryGuard":
@@ -12591,7 +12664,7 @@ class Session:
                     # judge reads the SAME sample the emit above just
                     # took -- same turn-end boundary, no second
                     # guard.read() call.
-                    self._check_memory_ladder(chain_id=chain_id, footprint=_footprint)
+                    await self._check_memory_ladder(chain_id=chain_id, footprint=_footprint)
                     try:
                         # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
                         # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b

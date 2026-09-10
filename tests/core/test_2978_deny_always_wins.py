@@ -113,7 +113,7 @@ def test_deny_wins_over_overlapping_write_grant_read_and_write(tmp_path):
     )
 
     def _run(argv: list[str]) -> int:
-        wrapped = backend.wrap_command(argv, policy)
+        wrapped = backend.wrap_command(argv, policy, env_path=None)
         try:
             return subprocess.run(wrapped.argv, capture_output=True).returncode  # #4397: no test-owned timeout
         finally:
@@ -140,7 +140,7 @@ def test_read_deny_and_write_deny_are_independent_axes(tmp_path):
         pytest.skip("sandbox-exec not available on this machine")
 
     def _run(policy: SandboxPolicy, argv: list[str]) -> int:
-        wrapped = backend.wrap_command(argv, policy)
+        wrapped = backend.wrap_command(argv, policy, env_path=None)
         try:
             return subprocess.run(wrapped.argv, capture_output=True).returncode  # #4397: no test-owned timeout
         finally:

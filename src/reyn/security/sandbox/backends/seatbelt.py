@@ -532,7 +532,9 @@ class SeatbeltBackend:
         see that Protocol method's own docstring)."""
         return _profile_is_safe_to_cache(policy)
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None",
+    ) -> WrappedCommand:
         """Prepend ``sandbox-exec -f <profile>`` to *argv* for a persistent-process
         launch (e.g. a stdio MCP server, #1344).
 
@@ -616,8 +618,14 @@ class SeatbeltBackend:
                 pass
 
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            # #6058/#6063: env_path is REQUIRED now — the caller's own
+            # per-operation read, always supplied explicitly. No fallback
+            # to `ambient_path()` here: a second, independent read inside
+            # this method is the exact #6008 defect this parameter exists
+            # to close. See `backend.py`'s own `ambient_path()` docstring.
+            if env_path is not None:
+                env["PATH"] = env_path
 
         return WrappedCommand(
             argv=["sandbox-exec", "-f", profile_path, *argv],
@@ -635,6 +643,7 @@ class SeatbeltBackend:
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None",
     ) -> SandboxResult:
         """Execute *argv* under the SBPL policy derived from *policy*.
 
@@ -656,8 +665,14 @@ class SeatbeltBackend:
         # Build env from passthrough allowlist ∪ the standard proxy/CA env
         # (#3075); fall back PATH if not listed.
         env = resolve_passthrough_env(policy)
-        if "PATH" not in env and "PATH" in os.environ:
-            env["PATH"] = os.environ["PATH"]
+        if "PATH" not in env:
+            # #6058/#6063: env_path is REQUIRED now — the caller's own
+            # per-operation read, always supplied explicitly. No fallback
+            # to `ambient_path()` here: a second, independent read inside
+            # this method is the exact #6008 defect this parameter exists
+            # to close. See `backend.py`'s own `ambient_path()` docstring.
+            if env_path is not None:
+                env["PATH"] = env_path
         # #4204 bucket E: see NoopBackend.run's matching comment — a direct
         # exec (no shell) never resets $PWD the way a real shell would, so
         # the whole parent env's stale value would otherwise leak through

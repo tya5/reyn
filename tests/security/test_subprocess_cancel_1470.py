@@ -38,7 +38,8 @@ async def test_noop_cancel_none_stdout() -> None:
     """Tier 2: cancel_event=None → stdout captured correctly (Popen-equivalence)."""
     backend = NoopBackend()
     result = await backend.run(
-        ["/bin/echo", "hello"], _POLICY, cancel_event=None
+        ["/bin/echo", "hello"], _POLICY, cancel_event=None,
+        env_path=None,
     )
     assert result.returncode == 0
     assert b"hello" in result.stdout
@@ -50,7 +51,8 @@ async def test_noop_cancel_none_nonzero_returncode() -> None:
     """Tier 2: cancel_event=None → non-zero returncode preserved (Popen-equivalence)."""
     backend = NoopBackend()
     result = await backend.run(
-        ["/bin/sh", "-c", "exit 42"], _POLICY, cancel_event=None
+        ["/bin/sh", "-c", "exit 42"], _POLICY, cancel_event=None,
+        env_path=None,
     )
     assert result.returncode == 42
     assert not result.cancelled
@@ -63,7 +65,8 @@ async def test_noop_cancel_event_set_kills_subprocess() -> None:
     event = asyncio.Event()
     event.set()  # pre-set: cancel fires immediately
     result = await backend.run(
-        ["/bin/sleep", "60"], _POLICY, cancel_event=event
+        ["/bin/sleep", "60"], _POLICY, cancel_event=event,
+        env_path=None,
     )
     assert result.cancelled
     assert result.returncode != 0  # killed, not clean exit
@@ -96,7 +99,8 @@ async def test_noop_cancel_mid_run_kills_subprocess(tmp_path) -> None:
 
     fire_task = asyncio.create_task(_fire_cancel())
     result = await backend.run(
-        ["/bin/sh", "-c", script], _POLICY, cancel_event=event
+        ["/bin/sh", "-c", script], _POLICY, cancel_event=event,
+        env_path=None,
     )
     await fire_task
     assert result.cancelled
@@ -128,7 +132,8 @@ async def test_noop_cancel_partial_stdout(tmp_path) -> None:
 
     fire_task = asyncio.create_task(_fire_cancel())
     result = await backend.run(
-        ["/bin/sh", "-c", script], _POLICY, cancel_event=event
+        ["/bin/sh", "-c", script], _POLICY, cancel_event=event,
+        env_path=None,
     )
     await fire_task
 
@@ -146,7 +151,8 @@ async def test_noop_no_cancel_does_not_set_cancelled() -> None:
     backend = NoopBackend()
     event = asyncio.Event()  # never set
     result = await backend.run(
-        ["/bin/echo", "ok"], _POLICY, cancel_event=event
+        ["/bin/echo", "ok"], _POLICY, cancel_event=event,
+        env_path=None,
     )
     assert not result.cancelled
     assert result.returncode == 0
@@ -170,7 +176,8 @@ async def test_seatbelt_cancel_kills_subprocess() -> None:
     event.set()  # pre-set
 
     result = await backend.run(
-        ["/bin/sleep", "60"], _POLICY, cancel_event=event
+        ["/bin/sleep", "60"], _POLICY, cancel_event=event,
+        env_path=None,
     )
     assert result.cancelled
     assert result.returncode != 0
@@ -187,7 +194,8 @@ async def test_seatbelt_cancel_none_equivalence() -> None:
         pytest.skip("sandbox-exec not available")
 
     result = await backend.run(
-        ["/bin/echo", "seatbelt_ok"], _POLICY, cancel_event=None
+        ["/bin/echo", "seatbelt_ok"], _POLICY, cancel_event=None,
+        env_path=None,
     )
     assert result.returncode == 0
     assert b"seatbelt_ok" in result.stdout
@@ -219,7 +227,8 @@ async def test_landlock_cancel_kills_subprocess() -> None:
     event.set()  # pre-set so the cancel path is taken immediately
 
     result = await backend.run(
-        ["/bin/sleep", "60"], _POLICY, cancel_event=event
+        ["/bin/sleep", "60"], _POLICY, cancel_event=event,
+        env_path=None,
     )
     assert result.cancelled                       # killed, not run-to-completion
     assert result.returncode != 0
@@ -237,7 +246,8 @@ async def test_landlock_cancel_none_equivalence() -> None:
         pytest.skip("Landlock LSM not available (needs Linux 5.13+ + landlock pkg)")
 
     result = await backend.run(
-        ["/bin/echo", "landlock_ok"], _POLICY, cancel_event=None
+        ["/bin/echo", "landlock_ok"], _POLICY, cancel_event=None,
+        env_path=None,
     )
     assert result.returncode == 0
     assert b"landlock_ok" in result.stdout

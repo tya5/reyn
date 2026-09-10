@@ -71,14 +71,16 @@ async def test_seatbelt_blocks_child_spawn_when_subprocess_disallowed():
     spawn_cmd = ["/bin/sh", "-c", "/bin/echo SPAWNED_CHILD | /bin/cat"]
 
     denied = await backend.run(
-        spawn_cmd, SandboxPolicy(deny_subprocess=True, timeout_seconds=10)
+        spawn_cmd, SandboxPolicy(deny_subprocess=True, timeout_seconds=10),
+        env_path=None,
     )
     assert b"SPAWNED_CHILD" not in denied.stdout, (
         f"child spawn must be blocked when deny_subprocess=True (stdout={denied.stdout!r})"
     )
 
     allowed = await backend.run(
-        spawn_cmd, SandboxPolicy(deny_subprocess=False, timeout_seconds=10)
+        spawn_cmd, SandboxPolicy(deny_subprocess=False, timeout_seconds=10),
+        env_path=None,
     )
     assert b"SPAWNED_CHILD" in allowed.stdout, (
         f"child spawn must work when deny_subprocess=False (stdout={allowed.stdout!r})"
