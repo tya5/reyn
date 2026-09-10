@@ -1,0 +1,170 @@
+name: main sweep mirror
+
+# #6014 charter Q1 — "who stops this if it repeats?" had no answer.
+#
+# `main-invariant-sweep.yml` runs on pushes to `main` and is NOT a required
+# status check, so its red stops nothing: a PR's checks never mention it, and
+# a merge never waits on it. That is not a hypothetical — the sweep was red
+# for 28 consecutive runs (~20 hours, 2026-09-09/10) and the break was found
+# only because someone went looking. A gate nobody is blocked by is a gate
+# whose red is optional, and optional reds get read as "known red".
+#
+# Two obvious fixes were rejected, with the reason, so they are not
+# re-proposed:
+#
+#   - Make the sweep itself a required status check. It stops merges, but it
+#     also runs the whole sweep (checkout + install + every gate) once per
+#     PR — the per-PR CI spend #4239's owner ruling exists to bound ("opening
+#     a PR and spending CI are separate decisions"). Cost scales with the
+#     number of PRs, which is exactly the wrong axis: the information is only
+#     ever new when `main` itself changed.
+#   - Route the failure to a channel someone reads (broker / telegram / an
+#     auto-filed issue). It costs nothing and stops nothing: a notification
+#     compels reading, never repair. That is the most dangerous of the
+#     enforcement classes, not the safest — results ARRIVE, so inspection
+#     stops, and nobody is blocked when the arriving result is bad.
+#
+# What this workflow does instead: it separates WHO IS STOPPED by the red
+# from WHO RUNS THE CHECKS.
+#
+#   `mirror`  — reads the verdict main's own sweep already produced for this
+#               PR's base commit. One API call, no checkout, no install,
+#               seconds. This is the job whose result becomes the required
+#               context (see the PR that adds it to branch protection), so
+#               the subject that cannot ignore a red main is "whoever wants
+#               to merge next": leaving it red means their own PR does not
+#               land. That is a bound, not a habit — it does not depend on
+#               anyone remembering to look.
+#
+#   `sweep-on-merge-result`
+#             — runs ONLY when the mirror says the base is red, and runs the
+#               real sweep (via `workflow_call`, never a second copy of the
+#               step list) against THIS PR's merge result. This is the escape
+#               hatch: the PR that fixes the break proves "merge me and it is
+#               green" without an admin flipping branch protection. Cost is
+#               paid while `main` is actually broken, never per PR.
+#
+#   `verdict` — the aggregate. Green when the base was green, or when the
+#               merge-result sweep passed. Red when the base is red and this
+#               PR does not fix it.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  # Reading another workflow's run conclusions. Grantable here, unlike
+  # `administration` (#5487/#5488 — branch protection cannot be read from a
+  # workflow at all, which is why nothing here tries to self-check whether
+  # this job is required; that fact lives in the PR body and in #6014).
+  actions: read
+
+jobs:
+  mirror:
+    name: main sweep mirror
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # #4239: a draft PR is 'not yet asking for CI' — same guard the ruff job
+    # in test.yml uses, same reason.
+    if: github.event.pull_request.draft == false
+    outputs:
+      base_red: ${{ steps.verdict.outputs.base_red }}
+    steps:
+      - name: Read main's sweep verdict for this PR's base commit
+        id: verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REPO: ${{ github.repository }}
+        # Keyed on the BASE COMMIT, never "the newest run on main"
+        # (lead-coder ruling, #6014): the question this job answers is "is
+        # the tree this PR is built on healthy", not "what did the most
+        # recent execution happen to say". `gh run list` reports the FINAL
+        # attempt, so a newer run — or somebody's re-run of an unrelated
+        # commit — would otherwise answer for a base it never examined.
+        run: |
+          set -euo pipefail
+          runs=$(gh api \
+            "repos/${REPO}/actions/workflows/main-invariant-sweep.yml/runs?head_sha=${BASE_SHA}&per_page=20" \
+            --jq '[.workflow_runs[] | {status, conclusion, url: .html_url}]')
+          echo "base commit: ${BASE_SHA}"
+          echo "sweep runs for it: ${runs}"
+          completed=$(echo "${runs}" | jq -c '[.[] | select(.status == "completed")]')
+          if [ "$(echo "${completed}" | jq 'length')" -eq 0 ]; then
+            # No FINISHED sweep for this base yet — the run is queued, still
+            # going, or the base predates this workflow. Reported as NOT red,
+            # deliberately: failing here would block every PR for the minutes
+            # after each merge while the sweep runs, which is a cost with no
+            # information behind it. The hole this leaves is named rather
+            # than hidden: a break introduced by the very last merge is
+            # invisible to a PR whose base is that merge, until that PR's
+            # next event re-evaluates. Narrower than today, where NOTHING
+            # blocks; not a claim of completeness.
+            echo "::notice::no completed main-invariant-sweep run for ${BASE_SHA} yet — treating as not-red (see this step's own comment)"
+            echo "base_red=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bad=$(echo "${completed}" | jq -c '[.[] | select(.conclusion != "success")]')
+          if [ "$(echo "${bad}" | jq 'length')" -gt 0 ]; then
+            echo "::error::main-invariant-sweep is RED for this PR's base commit ${BASE_SHA}"
+            echo "${bad}" | jq -r '.[] | "  \(.conclusion): \(.url)"'
+            echo "base_red=true" >> "$GITHUB_OUTPUT"
+            # FAIL, not "report true and exit 0". The output is written
+            # first, so `sweep-on-merge-result` still sees it (that job
+            # guards on `always()` for exactly this reason). A job named
+            # "main sweep mirror" reporting PASS while the thing it
+            # mirrors is red is the same defect this whole workflow
+            # exists to remove: a red nobody is shown. The checks list
+            # is the only place a PR author looks, so the red has to be
+            # THERE, not only inside `verdict`'s log. When this PR
+            # actually repairs the break the two rows disagree on
+            # purpose — "the base is broken (x) and this PR fixes it
+            # (check)" is the true reading, and `verdict` (the required
+            # context) is the one that decides mergeability.
+            exit 1
+          fi
+          echo "base_red=false" >> "$GITHUB_OUTPUT"
+
+  sweep-on-merge-result:
+    # The escape hatch. Runs the REAL sweep (not a copy of its step list)
+    # against this PR's merge result, and only while `main` is already
+    # broken — so a PR that repairs the break can prove it here instead of
+    # waiting for an admin to lift branch protection.
+    needs: mirror
+    # `always()` because `mirror` FAILS when the base is red (see its own
+    # comment) — without it, GitHub's default `success()` gate would skip
+    # this job in exactly the case it exists for, and the escape hatch
+    # would never run. Still gated on the output, so a mirror that failed
+    # for any OTHER reason does not silently start a full sweep.
+    if: always() && needs.mirror.outputs.base_red == 'true'
+    uses: ./.github/workflows/main-invariant-sweep.yml
+
+  verdict:
+    # THE REQUIRED CONTEXT. Its `name:` below is what branch protection
+    # matches, as a literal string (#5327: a gate that fires but is not
+    # named in `required_status_checks.contexts` stops neither a red nor a
+    # pending). Renaming this job silently un-requires it.
+    name: main sweep mirror verdict
+    needs: [mirror, sweep-on-merge-result]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Decide
+        env:
+          BASE_RED: ${{ needs.mirror.outputs.base_red }}
+          FIX_RESULT: ${{ needs.sweep-on-merge-result.result }}
+        run: |
+          set -euo pipefail
+          echo "base_red=${BASE_RED} sweep-on-merge-result=${FIX_RESULT}"
+          if [ "${BASE_RED}" != "true" ]; then
+            echo "main's sweep was green for this PR's base commit."
+            exit 0
+          fi
+          if [ "${FIX_RESULT}" = "success" ]; then
+            echo "main's sweep is red, but this PR's merge result passes it — this PR repairs the break."
+            exit 0
+          fi
+          echo "::error::main-invariant-sweep is red on this PR's base and this PR's merge result does not fix it."
+          echo "Fix the sweep (or land the fix first) — see the mirror job's log for the failing run."
+          exit 1
