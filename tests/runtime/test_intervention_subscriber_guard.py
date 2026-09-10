@@ -245,18 +245,6 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
 # ── 6. Session end-to-end: interactive + timeout=0 + no listener, normal turn ──
 
 
-@pytest.mark.skip(
-    reason=(
-        "#6070: this fixture's recorded model is a synthetic placeholder "
-        "(openai/test-standard-model) with no real backend in CI/dev "
-        "environments, and no scripted generation path exists for it (unlike "
-        "fp0063_arc_witness's own REYN_FP0063_ARC_WITNESS_GENERATE=1 path) -- "
-        "so it cannot be re-recorded here. It broke when #5838 stage 6 added "
-        "`cmd` to the exec tool schema (the LLMReplay key hashes the tools "
-        "schema; the fixture's recorded hash is now stale). Restore when "
-        "#6070 lands a way to regenerate/repair this fixture family."
-    )
-)
 @pytest.mark.replay("fixtures/llm/intervention_guard/safety_limit_no_listener.jsonl")
 def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _llm_replay,
@@ -265,16 +253,27 @@ def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     + ``ask_timeout_seconds=0`` + no UI listener registered — runs a normal
     (under-cap) turn to completion without hanging.
 
-    **SKIPPED (#6070), as of #5838 stage 6**: adding ``cmd`` to the ``exec``
-    tool's schema changed the tools-schema hash ``LLMReplay`` keys fixtures
-    against, invalidating this test's recorded
-    ``safety_limit_no_listener.jsonl``. Unlike ``fp0063_arc_witness``'s own
-    scripted ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` re-record path, this
-    fixture's model is a synthetic placeholder
-    (``openai/test-standard-model``) with no real backend and no scripted
-    generation path — it cannot be re-recorded in this environment. Restore
-    this test once #6070 lands a way to regenerate/repair this fixture
-    family.
+    **#6070 (was SKIPPED, restored here)**: #5838 stage 6 added ``cmd`` to
+    the ``exec`` tool's own schema, moving the tools-schema hash
+    ``LLMReplay`` keys fixtures against and invalidating this test's
+    recorded ``safety_limit_no_listener.jsonl`` — this fixture's model is a
+    synthetic placeholder (``openai/test-standard-model``, ``tests/_support/
+    session.py``'s own ``TEST_MODEL_RESOLVER``), so no real backend
+    recognises it and (unlike ``fp0063_arc_witness``'s own scripted
+    ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` path) this file had no per-fixture
+    regeneration script either. #6070 gave ``LLMReplay`` itself a repair-by-
+    replay path (``reyn.dev.testing.replay``'s own module docstring, "#6070:
+    repair-by-replay" section): a record-mode call whose ``group_signature``
+    (model + tool_choice + per-message digests, excluding ``tools``) matches
+    an entry already on disk REPLAYS that entry's own response instead of
+    reaching a real LLM — reproducing the recorded answer, not fabricating a
+    new one. This fixture's own regenerated entry carries
+    ``"reused_from_key"`` naming the stale key it was re-keyed from — see
+    that field, and that module docstring's own "Disclosed limit" paragraph:
+    this re-key assumes (does not verify) that the recorded response is
+    still correct under the new ``exec`` schema, true here because this
+    test's own subject (short-circuit wiring under zero listeners) never
+    depends on what tools the model can see.
 
     #3440: this test used to *also* claim to drive the router cap to
     exhaustion first (via ``session._router_invocations_this_turn = 3``,

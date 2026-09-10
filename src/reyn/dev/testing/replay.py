@@ -43,6 +43,11 @@ Three shapes share one file, distinguished by ``"kind"`` (absent/``"completion"`
 - ``response``  ``litellm.ModelResponse.model_dump()`` (completion) or
   ``litellm.EmbeddingResponse.model_dump()`` (embedding), serialised to dict.
   On replay the dict is reconstructed as the matching litellm response type.
+- ``reused_from_key`` (completion, #6070, OPTIONAL — absent means "a genuine
+  live answer", the pre-#6070 default) the OLD key this entry's own
+  ``response`` was REPLAYED from during record mode, rather than freshly
+  fetched from the real LLM — see this module's own "#6070: repair-by-
+  replay" section below for when this happens and its disclosed limit.
 
 Environment preconditions (#3473)
 ---------------------------------
@@ -89,6 +94,68 @@ a new key" (drop the old one) from "a different call recorded by a sibling
 test sharing this same fixture file" (keep it) — and
 ``tests/dev/test_replay_fixture_no_stacking_3634.py`` for the CI gate that fails
 if any committed fixture holds a stacked group anyway.
+
+#6070: repair-by-replay, before falling through to the real LLM
+-----------------------------------------------------------------
+A tool's own schema (its JSON schema, description included) is part of the
+``tools`` component :meth:`key` hashes. Adding a field to ANY tool a
+fixture's scenario has in its catalog moves that fixture's key, even when
+the scenario itself does not call that tool and nothing about the
+CONVERSATION changed — a routine, expected edit (#6065/#5838 stage 6:
+adding ``cmd`` to ``exec``'s own schema) still turns every such fixture's
+recorded entry into a ``MissingFixture``.
+
+Before #6070, repairing this required a REAL LLM call under
+``REYN_LLM_RECORD=1`` (fine for a real, billable model) or a per-file
+hand-written scripted stand-in (``test_fp0063_arc_witness.py``'s own
+``REYN_FP0063_ARC_WITNESS_GENERATE=1`` path — see that file's module
+docstring). Neither works for a fixture recorded against a SYNTHETIC
+placeholder model (``tests/_support/session.py``'s own
+``TEST_MODEL_RESOLVER``, e.g. ``openai/test-standard-model`` — "never a
+real provider/model pairing anyone would bill against"): no real backend
+recognises that model name, and writing a bespoke script per fixture is
+exactly the per-file tax lead-coder's #6070 ruling rejected ("この1本に自
+前script → 絆創膏").
+
+:meth:`_record` now checks, BEFORE reaching the real LLM: does an entry
+ALREADY on disk (loaded at construction, i.e. the fixture as it stood
+before this regeneration run) share this call's
+:func:`replay_stacking.group_signature` — model + tool_choice + per-message
+digests, deliberately EXCLUDING ``tools`` (the one component a schema
+change is *expected* to move, #3634's own established grouping rule)? If
+so, that on-disk response is REPLAYED under the freshly-computed key — the
+SAME content the fixture already carried, never a newly fabricated answer
+(the distinction lead-coder's ruling required: "monkeypatch が作る応答は
+『記録の再現』であって『新しい応答の捏造』ではない"). Only a call with NO
+matching prior generation — a genuinely new conversation shape, not merely
+a re-key — still reaches the real ``_original_acompletion``, exactly as
+before. :meth:`flush`'s own #3634 in-place-replace-by-group_signature logic
+already expects and correctly handles an entry "re-recorded" this way, so
+no change was needed there.
+
+This is intentionally NOT gated on the model being a synthetic placeholder
+— the same repair-by-replay applies uniformly to every ``REYN_LLM_RECORD=1``
+rerun, real-model fixtures included. A pure re-key (the ONLY case this can
+match — see the group_signature exclusion above) never needed a fresh live
+answer in the first place; skipping the live call there is strictly
+cheaper and does not change what the fixture asserts. What still requires
+a real backend (or a per-file script, à la FP-0063) is unchanged: a
+GENUINELY new call shape — one the on-disk fixture never recorded any
+generation of.
+
+**Disclosed limit (lead-coder's ruling, condition 3 — not a solved
+problem)**: this re-key ASSUMES the recorded response is still the
+CORRECT response under the new tools schema — it does not verify this.
+Usually true (model and messages are byte-identical, so this is a
+re-key of a recording, not a fabrication) — but false for a test whose
+own SUBJECT is "what does the model do once it can SEE a new/changed
+tool" (a genuinely different tools payload can change what a real model
+would choose to do, even though ``group_signature`` cannot see that
+difference by construction). For such a test, this repair path makes it
+green while still checking the OLD world — the green does not by itself
+prove the new schema is handled correctly. ``reused_from_key`` (see
+Fixture format above) is the only in-band signal a later reader has to
+notice this and re-record for real when it matters.
 
 Sensitive data note
 -------------------
@@ -268,6 +335,15 @@ class LLMReplay:
         # Per-component key fingerprints of the recorded completion entries —
         # what a miss is attributed against (#3473).
         self._fingerprints: list[dict] = []
+        # #6070: group_signature (model + tool_choice + per-message digests,
+        # EXCLUDING tools) -> the on-disk key it was loaded under, for EVERY
+        # completion entry the fixture held BEFORE this session recorded
+        # anything -- the repair-by-replay source `_record` consults before
+        # ever reaching the real LLM. Populated once, in `_load`, and never
+        # updated afterward (a call this SESSION records must never repair
+        # itself from another call this same session already answered --
+        # only the fixture as it stood at construction time is a source).
+        self._prior_group_signatures: "dict[tuple, str]" = {}
         # key → serialised ModelResponse dict (kind="completion")
         self._records: dict[str, dict] = {}
         # key → serialised EmbeddingResponse dict (kind="embedding")
@@ -422,6 +498,16 @@ class LLMReplay:
                     components = entry.get("key_components")
                     if isinstance(components, dict):
                         self._fingerprints.append(components)
+                        # #6070: first entry wins on a signature collision
+                        # (setdefault) -- two on-disk completion entries
+                        # sharing a group_signature is itself the #3634
+                        # stacking defect a committed fixture must not
+                        # carry (enforced by test_replay_fixture_no_
+                        # stacking_3634.py); an unstacked fixture never
+                        # exercises the tie-break either way.
+                        self._prior_group_signatures.setdefault(
+                            group_signature(components), entry["key"],
+                        )
             except Exception:
                 # Skip corrupt lines — fixture is a test artifact; silent skip
                 # is acceptable (same policy as BudgetLedger).
@@ -931,12 +1017,41 @@ class LLMReplay:
         observed: dict[str, Any],
         request: ReplayRequest,
     ) -> Any:
-        """Call the real LLM, save the response, and return it."""
-        response = await self._original_acompletion(
-            model=model, messages=messages, **extra_kwargs
+        """Save + return a response for *key* — either the REAL LLM's answer,
+        or (#6070) a REPLAYED one reused from a prior generation of this
+        exact call, when one exists. See the module docstring's own #6070
+        section for the full rationale and its disclosed limit.
+
+        #6070 repair-by-replay: computed BEFORE the real call so the call is
+        skippable entirely. ``group_signature`` deliberately excludes
+        ``tools`` — condition 1 of lead-coder's own ruling ("group_signature
+        が完全一致のときだけ再利用... messages が 1 文字でも違えば再利用し
+        ない") is already what that exclusion-of-only-``tools`` IS: every
+        OTHER component (model, per-message digests, tool_choice) must match
+        byte-for-byte for two calls to share a signature — this reuses the
+        EXISTING #3634 grouping rule verbatim rather than inventing a new,
+        possibly looser one."""
+        components = fingerprint(
+            request.model, request.messages, request.tools, request.tool_choice,
         )
-        # Serialise to a plain dict for JSONL storage.
-        response_dict = response.model_dump()
+        reused_from_key = self._prior_group_signatures.get(group_signature(components))
+        if reused_from_key is not None and reused_from_key in self._records:
+            # #6070: REPLAY the prior generation's own response rather than
+            # fabricating one — see module docstring. `response` mirrors
+            # what `_replay` itself returns for a hit (a reconstructed
+            # `litellm.ModelResponse`), so a caller cannot tell this apart
+            # from a genuine live answer by TYPE — only by the fixture's own
+            # `reused_from_key` field, condition 2 of lead-coder's ruling.
+            response_dict = self._records[reused_from_key]
+            import litellm
+
+            response = litellm.ModelResponse(**response_dict)
+        else:
+            response = await self._original_acompletion(
+                model=model, messages=messages, **extra_kwargs
+            )
+            # Serialise to a plain dict for JSONL storage.
+            response_dict = response.model_dump()
         preview = self._prompt_preview(messages)
         entry = {
             "key": key,
@@ -953,11 +1068,15 @@ class LLMReplay:
             # against. Taken over the RAW request, not the scrubbed key input —
             # on a miss the reader wants everything that moved, including what
             # the key deliberately ignores.
-            "key_components": fingerprint(
-                request.model, request.messages, request.tools, request.tool_choice,
-            ),
+            "key_components": components,
             "response": response_dict,
         }
+        if reused_from_key is not None:
+            # #6070 condition 2 (lead-coder's ruling): the fixture itself
+            # must show this was re-keyed, not freshly recorded, so a LATER
+            # reader can trace "what does this green actually witness" —
+            # never inferred, never left to a git-blame archaeology.
+            entry["reused_from_key"] = reused_from_key
         self._records[key] = response_dict
         self._pending.append(entry)
         return response
