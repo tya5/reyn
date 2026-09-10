@@ -8475,25 +8475,51 @@ async def run_textual_chat(
     _stall_seconds = stall_trace_seconds_from_env()
     if _stall_seconds is not None:
         _arm_stall_trace(_stall_seconds)
-    try:
-        mark_app_constructed()
-        with stage("tui-boot:construct"):
-            app = TextualChatApp(
-                transport=transport,
-                read_model=read_model,
-                agent_name=agent_name,
-                config=config,
-                initial_history_messages=_initial_history_messages,
-            )
-        # #5168: sys.stdout/sys.stderr are the RENDERER's own from here until
-        # run_async returns — anything else writing to them (a third-party
-        # print(file=sys.stderr), a warnings.warn) corrupts the live region.
-        # See stray_output.py's own module docstring for the full rationale;
-        # __exit__ restores BOTH streams unconditionally, including a crash
-        # inside run_async, so the operator's terminal is never left mid-swap.
-        with capture_stray_output(app) as stray_output_stats:
-            app._stray_output_stats = stray_output_stats
+    mark_app_constructed()
+    with stage("tui-boot:construct"):
+        app = TextualChatApp(
+            transport=transport,
+            read_model=read_model,
+            agent_name=agent_name,
+            config=config,
+            initial_history_messages=_initial_history_messages,
+        )
+    # #5168/#5989 stage 1: sys.stdout/sys.stderr are the RENDERER's own from
+    # here until THIS WHOLE FUNCTION returns or raises — not merely
+    # `app.run_async()`'s own await span (#5168's original, narrower scope).
+    # See stray_output.py's own module docstring for the base rationale;
+    # __exit__ restores BOTH streams unconditionally, including a crash
+    # inside run_async, so the operator's terminal is never left mid-swap.
+    #
+    # #5989: widened on purpose. `_setup_interactive_logging`'s own
+    # background daemon threads (e.g. `_litellm_warm_worker`) are NEVER
+    # joined (lead-coder ruling, #5989: joining would add a wait that
+    # collides with #6077's own "loop must not block" concern) — one of
+    # them can still
+    # call `logging` after `app.run_async()` has already returned but
+    # before this function's own remaining teardown (`_disarm_stall_trace`)
+    # has finished, and a `logging.Handler.handleError` firing at that
+    # exact moment used to write straight past this capture (the OLD,
+    # narrower `with` exited the instant `run_async()` returned, before
+    # that teardown ran) — see the strip-falsified reproduction in
+    # `test_5989_capture_window_outlives_run_async.py`.
+    #
+    # Deliberately still NOT process-lifetime: a `try`/`finally` scope, so
+    # a genuinely FATAL exception unwinding OUT of this whole function
+    # exits this `with` (restoring the real streams) via `finally` BEFORE
+    # Python's own top-level unhandled-exception printer ever runs — a
+    # real crash still reaches the operator's actual terminal, not
+    # reyn.log where nobody would think to look for "why did reyn die".
+    # The residual gap this does NOT close: a daemon thread that outlives
+    # this ENTIRE function's own return (not just `run_async()`'s) can
+    # still write past capture in the instant after it exits — closing
+    # that needs joining the thread, which this fix deliberately does not
+    # do (see the acknowledged-gap test's own docstring, and #5989's own
+    # PR body).
+    with capture_stray_output(app) as stray_output_stats:
+        app._stray_output_stats = stray_output_stats
+        try:
             await app.run_async(inline=inline)
-    finally:
-        if _stall_seconds is not None:
-            _disarm_stall_trace()
+        finally:
+            if _stall_seconds is not None:
+                _disarm_stall_trace()
