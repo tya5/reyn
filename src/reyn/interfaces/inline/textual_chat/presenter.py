@@ -188,6 +188,25 @@ def _pipeline_row(meta: dict) -> "RenderableType":
     A run whose ``total_steps`` is unknown gets the step count with no bar,
     rather than a bar over a guessed denominator: a bar that is not measuring
     anything is worse than none.
+
+    #6076: ``step_index`` is READ DIRECTLY as the "steps completed so far"
+    count, for BOTH ``pipeline_step_started`` and ``pipeline_step_completed``
+    — never adjusted here based on ``step_event``. This is
+    ``core/pipeline/executor.py``'s own canonical meaning for the field
+    (see ``_run_from``'s own comment at its two ``events.emit`` call sites,
+    and matches ``PipelineResult.step_index`` / ``record_pipeline_state``'s
+    own resume-``start_index`` — the SAME name means the SAME thing
+    everywhere in the pipeline subsystem): ``i`` steps are done before step
+    ``i`` STARTS, and ``i + 1`` are done once step ``i`` COMPLETES —
+    executor.py emits exactly those two values already, un-adjusted. A
+    consumer that adds its own ``+1`` "for completed" double-counts: at the
+    FINAL step's completion, ``step_index`` already equals ``total_steps``,
+    so a further ``+1`` produced ``total_steps + 1`` — the owner-reported
+    ``"5/4"`` regression (#6076) this fix closes. See
+    ``lifecycle_forwarder._enqueue_pipeline_step``'s own comment for why
+    ITS "started" branch legitimately adds 1 anyway — a DIFFERENT, correct
+    convention (1-based CURRENT step ordinal for a text line, not a
+    done-count for a progress bar), not a copy of this bug.
     """
     from rich.progress_bar import ProgressBar
     from rich.table import Table
@@ -196,9 +215,7 @@ def _pipeline_row(meta: dict) -> "RenderableType":
     kind = str(meta.get("step_kind") or "?")
     index = meta.get("step_index")
     total = meta.get("total_steps")
-    done = (index or 0) + (
-        1 if meta.get("step_event") == "pipeline_step_completed" else 0
-    )
+    done = index or 0
 
     if not (isinstance(total, int) and total > 0):
         return Text.assemble((name, "bold"), (f"  step {done}  ", ""), (kind, _CC_DIM))

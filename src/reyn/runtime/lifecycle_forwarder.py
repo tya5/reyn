@@ -683,6 +683,23 @@ class ChatLifecycleForwarder:
         self._pipeline_subs[run_id] = (driver_events, _on_driver_event, tool)
 
     def _enqueue_pipeline_step(self, pipeline_name: str, event_type: str, data: dict) -> None:
+        # #6076: `data["step_index"]` is executor.py's own "steps completed
+        # so far" count (0 before step 0 starts, i before step i starts,
+        # i+1 once step i completes — see that emit site's own comment).
+        # `n` here is DELIBERATELY a different quantity from that raw
+        # count: the 1-based ORDINAL of the step this text line is ABOUT
+        # ("step 3 of 10 starting" / "step 3 of 10 done"), which for
+        # "started" is `step_index + 1` and for "completed" is
+        # `step_index` unmodified (step_index is already that step's own
+        # 1-based number once it has completed). Not the same "+1 for
+        # completed" bug presenter.py's own progress-bar `done` count fix
+        # closed (#6076) — that consumer wants steps-done as a fraction
+        # of total for a BAR, this one wants a step's own ordinal for a
+        # TEXT line, and the two conventions are not interchangeable.
+        # Neither ever exceeds total_steps: `step_index` ranges 0..
+        # total_steps-1 while "started", so `n = step_index + 1` ranges
+        # 1..total_steps; `step_index` ranges 1..total_steps while
+        # "completed", read unmodified.
         step_index = data.get("step_index")
         total_steps = data.get("total_steps")
         step_kind = data.get("step_kind", "?")

@@ -32,10 +32,23 @@ def _plain(meta: dict) -> str:
 
 
 def _step_meta(index: int, *, total: "int | None" = 15, completed: bool = False) -> dict:
+    """*index* is the CONCEPTUAL 0-based step number ("step 6 of the run").
+
+    #6076: the ``step_index`` VALUE this puts in meta is NOT always
+    ``index`` — it matches whatever ``core/pipeline/executor.py``'s own
+    ``_run_from`` actually emits for that event kind (see that method's
+    own comment at its two ``events.emit`` call sites): ``index`` while
+    started (``i`` steps done before step ``i`` starts), ``index + 1``
+    while completed (``i + 1`` done once step ``i`` finishes). A fixture
+    that instead put ``index`` unmodified for the completed case (this
+    file's own pre-#6076 shape) was quietly out of step with the real
+    producer, and pinned presenter.py's OWN pre-#6076 bug (a redundant
+    consumer-side ``+1``) as if it were correct.
+    """
     return {
         PIPELINE_RUN_KEY: "run-1",
         "pipeline_name": "rag_ingest.ingest",
-        "step_index": index,
+        "step_index": index + 1 if completed else index,
         "total_steps": total,
         "step_kind": "transform",
         "step_event": (
@@ -91,3 +104,26 @@ def test_the_row_does_not_read_the_frame_text() -> None:
     row = _plain(_step_meta(2))
 
     assert "rag_ingest.ingest" in row  # rendered without any msg.text existing
+
+
+def test_the_final_steps_completion_shows_done_equal_to_total_not_over_it() -> None:
+    """Tier 2: #6076 regression — the owner-reported "5/4" (a completed
+    count exceeding its own total). The LAST step of an N-step run
+    completing carries ``step_index == total_steps`` already (the real
+    ``core/pipeline/executor.py`` shape — see ``_step_meta``'s own #6076
+    docstring); the row must show that value UN-ADJUSTED, never
+    ``total_steps + 1``.
+
+    NON-VACUITY (strip-falsified by hand, in-file Edit -> run -> Edit
+    back): restoring presenter.py's old ``done = (index or 0) + (1 if
+    ... == "pipeline_step_completed" else 0)`` line makes this assertion
+    fail with "5/4" for this exact fixture (index=3, total=4) — the
+    literal shape the owner reported.
+    """
+    row = _plain(_step_meta(3, total=4, completed=True))
+
+    assert "4/4" in row, (
+        f"expected the final step's completion to read 4/4, not an "
+        f"over-total count: {row!r}"
+    )
+    assert "5/4" not in row
