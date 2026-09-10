@@ -1065,6 +1065,49 @@ async def watch_event_loop(
     the wake-up landed, feed :class:`LoopTripwire`, re-arm the dead-man's
     switch, and hand the once-per-episode notices to the caller.
 
+    **#6000 (architect measurement, platform-independent of the Windows
+    question this issue otherwise turns on): re-arming ``stack_dump``
+    every ``tick_seconds`` (50 ms) makes ``faulthandler.dump_traceback_
+    later`` tear down and recreate its own OS thread ~20 times/second —
+    ~72,000 thread churns/hour — and ``cancel_dump_traceback_later``
+    (called internally on every re-arm) BLOCKS the event-loop thread on
+    ``PyThread_acquire_lock(thread.running, 1)`` until the outgoing
+    thread's own join completes. The mechanism meant to detect the loop
+    stalling was adding to the very lateness it watches for, on every
+    single tick, whether or not a stall was ever happening.
+
+    Fixed: re-arm at most once every ``tripwire.threshold_ms / 2``
+    (:data:`_stack_dump_rearm_interval_seconds` below), not every tick.
+    ``armed_last_tick`` still carries "is a timer currently pending"
+    across ticks where the interval hasn't elapsed — the underlying
+    ``faulthandler`` timer stays pending regardless of whether THIS tick
+    chose to refresh it, so skipping a refresh does not un-arm anything.
+
+    Why HALF the threshold, not some other fraction: each successful
+    re-arm resets the pending timer to fire ``threshold_ms`` in the
+    future FROM THAT MOMENT (``dump_traceback_later`` always commits to
+    a fresh full-length countdown, never an increment). Spacing re-arms
+    ``threshold_ms / 2`` apart means the CURRENTLY pending timer always
+    has at least ``threshold_ms / 2`` of remaining slack at the moment
+    the NEXT re-arm is due — since a healthy loop's own tick cadence
+    (``tick_seconds``, normally far below ``threshold_ms / 2``) reaches
+    that due moment long before the pending timer could expire on its
+    own, the timer can only ever actually fire because of a genuine
+    stall, never because a re-arm merely ran a little late.
+
+    Detection-delay bound for a genuine, permanent stall (derived, not
+    copied from the issue's own first-pass estimate — verified against
+    ``dump_traceback_later``'s actual "full reset per call" semantics,
+    see this module's own #6000 history): the pending timer active when
+    the stall begins was itself armed somewhere between 0 and
+    ``threshold_ms / 2`` before the stall's own onset (the most recent
+    due re-arm before onset), so it fires between
+    ``threshold_ms - threshold_ms / 2`` and ``threshold_ms`` after the
+    stall started — i.e. within ``(threshold_ms / 2, threshold_ms]``.
+    This is NOT slower than the old every-tick cadence's own ~
+    ``threshold_ms`` delay (same upper bound), only occasionally faster;
+    what changes is thread churn, not worst-case detection latency.
+
     ``on_stall(lateness_ms)`` fires the FIRST tick of each stall episode
     (``LoopTripwire.observe``'s own once-only return); ``on_recovered()``
     fires once when the episode ends. ``turn_active`` (if the caller has
@@ -1097,10 +1140,19 @@ async def watch_event_loop(
     # lands — see the block below for why this is a flag consumed on a
     # LATER tick, never truncated the moment the fire is detected.
     pending_truncate = False
+    # #6000: half the tripwire's own threshold — see this function's own
+    # docstring for the derivation. Reads `tripwire.threshold_ms` (not a
+    # module constant) so a changed REYN_TRIPWIRE_MS changes this too,
+    # the same single-source-of-truth reasoning #6021 already applied to
+    # `StallDumpArm`'s own `seconds=` argument.
+    stack_dump_rearm_interval_seconds = tripwire.threshold_ms / 1000 / 2
+    last_stack_dump_rearm_at: "float | None" = None
     if stack_dump is not None and tripwire.should_arm_stack_dump():
         # Arm for the FIRST wait too — a stall on the very first tick would
         # otherwise go undumped (#5870 stage 1).
         armed_last_tick = stack_dump.rearm()
+        if armed_last_tick:
+            last_stack_dump_rearm_at = last
     try:
         while True:
             await sleep(tick_seconds)
@@ -1154,9 +1206,27 @@ async def watch_event_loop(
             # previous pending timer; a fire detected THIS tick has
             # already closed via `record_stack_dump()` above, so it never
             # re-arms a further timer for the SAME still-ongoing episode.
-            armed_last_tick = bool(
-                stack_dump is not None and tripwire.should_arm_stack_dump() and stack_dump.rearm()
-            )
+            #
+            # #6000: unlike the suppression above, "not yet due" does NOT
+            # touch `armed_last_tick` — the previous re-arm's own timer is
+            # still genuinely pending (this function's own docstring: a
+            # skipped refresh doesn't un-arm anything), so the "is there a
+            # pending arm to read back" flag must survive unchanged across
+            # ticks where the interval hasn't elapsed yet, exactly as it
+            # already does across every tick within a single stall episode
+            # once suppressed. Only `should_arm_stack_dump()` being False
+            # forces the flag to False — the one case where the caller
+            # deliberately stopped wanting a pending timer at all.
+            if stack_dump is None or not tripwire.should_arm_stack_dump():
+                armed_last_tick = False
+            elif (
+                last_stack_dump_rearm_at is None
+                or (now - last_stack_dump_rearm_at) >= stack_dump_rearm_interval_seconds
+            ):
+                armed_last_tick = stack_dump.rearm()
+                if armed_last_tick:
+                    last_stack_dump_rearm_at = now
+            # else: not yet due — armed_last_tick keeps its prior value.
             if fired is not None:
                 on_stall(fired)
             elif tripwire.consume_recovered() and on_recovered is not None:
