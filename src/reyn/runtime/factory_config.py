@@ -137,6 +137,7 @@ class SessionFactoryConfig:
         from reyn.data.skills.registry import build_skill_registry
         from reyn.runtime.process_memory import (
             ProcessMemoryGuard,
+            make_host_swap_free_reader,
             make_process_memory_reader,
             process_memory_metric_name,
         )
@@ -175,6 +176,12 @@ class SessionFactoryConfig:
                 metric=process_memory_metric_name(),
                 cap_bytes=config.process_memory.max_bytes,
                 enforce=config.process_memory.enforce,
+                # #5939 PR-2: the host-condition OR -- see
+                # ProcessMemoryConfig's own docstring for the inert
+                # default's disclosed gap (does not cover owner's own
+                # motivating case) and the byte-proxy disclosure.
+                host_swap_critical_bytes=config.process_memory.host_swap_critical_bytes,
+                host_swap_reader=make_host_swap_free_reader(),
             ),
             # #5366 §3: the project-wide (cross-session) storage cap/pin.
             storage_config=config.storage,

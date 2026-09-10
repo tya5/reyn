@@ -2161,17 +2161,23 @@ Eviction is not information loss: `Session.history` is a cache, not the source o
 ```yaml
 process_memory:
   max_bytes: 2147483648   # cap, in bytes — absent/unset = no cap (observe only)
-  enforce: false           # halt when exceeded — stage (a) ships no halt; a later
-                            # stage wires this. Setting it true today is validated
-                            # (see below) but has no runtime effect yet.
+  enforce: false           # halt (via the #5939 PR-2 memory ladder: backpressure ->
+                            # cache release -> session halt -> process exit) when
+                            # exceeded — requires max_bytes to also be set.
+  host_swap_critical_bytes: null  # #5939 PR-2 — ADDITIONAL trigger: the HOST's free
+                            # swap at/under this many bytes also trips the ladder,
+                            # independent of this process's own footprint. Absent/
+                            # null (default) = inert; only evaluated once
+                            # enforce+max_bytes have already opted the ladder in.
 ```
 
 | Field | Axis | Type | Default | Description |
 |---|---|---|---|---|
-| `max_bytes` | bounding | int \| absent | absent (no cap) | Ceiling, in bytes, on the process's measured footprint. Absent/unset = no cap, observe-only — this is the shipped stage (a) default. Deliberately NOT `0` for "no cap": a non-positive or non-numeric value is treated as ABSENT (falls back to no-cap), never coerced to the literal number 0. |
-| `enforce` | bounding | bool | `false` | Whether exceeding `max_bytes` halts the process — **inert in stage (a)**: no halt mechanism exists yet (a later stage adds it). Validated at config-LOAD time regardless: `enforce: true` with no `max_bytes` set, or on a platform with no reader (only darwin/linux are measured today), is a config-load ERROR, not a silent no-op — an operator who asks to be halted by an unenforceable cap is told immediately. |
+| `max_bytes` | bounding | int \| absent | absent (no cap) | Ceiling, in bytes, on the process's measured footprint. Absent/unset = no cap, observe-only. Deliberately NOT `0` for "no cap": a non-positive or non-numeric value is treated as ABSENT (falls back to no-cap), never coerced to the literal number 0. |
+| `enforce` | bounding | bool | `false` | Whether exceeding `max_bytes` (or `host_swap_critical_bytes`) drives the memory ladder (#5939 PR-2: ① backpressure — new turns refused — → ② cache release → ③ `session_halted{reason="process_memory"}` → ④ process exit, broadcast to every co-resident session in this process). Validated at config-LOAD time: `enforce: true` with no `max_bytes` set, or on a platform with no reader (only darwin/linux are measured today), is a config-load ERROR, not a silent no-op — an operator who asks to be halted by an unenforceable cap is told immediately. |
+| `host_swap_critical_bytes` | bounding | int \| absent | absent (inert) | #5939 PR-2 — an ADDITIONAL, independent trigger: the HOST's free-swap reading at or under this many bytes also trips the ladder, regardless of this process's own footprint (owner's own motivating case: a host can be in danger from swap pressure another process caused). ⚠️ This default does NOT cover the owner's own motivating case ("最悪 swap 多発で" — swap THRASHING, a frequency) — free-swap-bytes is a disclosed PROXY (less free swap makes thrashing more likely, it does not confirm it is happening); see `ProcessMemoryGuard.host_critical`'s own docstring (`runtime/process_memory.py`) for the one-pass check into a more directly matching rate-based alternative. Only evaluated once `enforce`+`max_bytes` have already opted the ladder in — this key cannot opt in on its own. |
 
-Two independent facts, two keys — setting a cap does not itself turn on halting, and turning on halting requires a real, checkable cap. `process_footprint` / `process_footprint_unavailable` audit-events (`docs/reference/runtime/events.md`) record the measured value regardless of whether a cap or `enforce` is set at all — observe-only ships the observation.
+Setting a cap does not itself turn on halting, and turning on halting requires a real, checkable cap. `process_footprint` / `process_footprint_unavailable` audit-events (`docs/reference/runtime/events.md`) record the measured value regardless of whether a cap or `enforce` is set at all — observe-only ships the observation. Once `enforce` is on, `session_memory_backpressure` / `_cleared` / `session_halted` / `session_memory_exit` (same doc) record the ladder's own escalation.
 
 ## `logs` block
 

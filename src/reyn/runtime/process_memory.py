@@ -154,6 +154,98 @@ def make_process_memory_reader() -> ProcessMemoryReader:
     return lambda: None
 
 
+def _read_darwin_swap_free_bytes() -> "int | None":
+    """``sysctlbyname("vm.swapusage")`` -> the kernel's own ``xsw_usage``
+    struct — ``xsu_avail`` is free swap, in bytes. No subprocess (a
+    ``sysctl`` CLI call would itself spawn a process — the same harm
+    #5851's own reader avoids for the footprint itself)."""
+    import ctypes
+    import ctypes.util
+
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    except OSError:
+        return None
+
+    class _XswUsage(ctypes.Structure):
+        _fields_ = [
+            ("xsu_total", ctypes.c_uint64),
+            ("xsu_avail", ctypes.c_uint64),
+            ("xsu_used", ctypes.c_uint64),
+            ("xsu_pagesize", ctypes.c_uint32),
+            ("xsu_encrypted", ctypes.c_uint8),
+        ]
+
+    buf = _XswUsage()
+    size = ctypes.c_size_t(ctypes.sizeof(buf))
+    rv = libc.sysctlbyname(
+        b"vm.swapusage", ctypes.byref(buf), ctypes.byref(size), None, 0,
+    )
+    if rv != 0:
+        return None
+    return int(buf.xsu_avail)
+
+
+def _read_linux_swap_free_bytes() -> "int | None":
+    """``/proc/meminfo``'s ``SwapFree:`` line, in bytes — no subprocess,
+    matching ``_read_linux_rss``'s own no-fork constraint."""
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("SwapFree:"):
+                    kb = int(line.split()[1])
+                    return kb * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def make_host_swap_free_reader() -> ProcessMemoryReader:
+    """#5939 PR-2 — the host-condition reader (independent of THIS
+    process's own footprint): platform-selected, same "inject a
+    ``Callable[[], int | None]``, never fabricate on an unsupported
+    platform" shape :func:`make_process_memory_reader` already
+    establishes.
+
+    ``bytes free`` is a PROXY, not a direct measurement of what the
+    owner actually named (lead-coder review, #5939 PR-2): owner's own
+    motivating case was "最悪 swap 多発で" — swap THRASHING, a
+    *frequency* (how often the kernel pages in/out), not a *quantity*
+    (how much swap space remains unused). The direction is: **less free
+    swap makes thrashing MORE likely** (a nearly-full swap forces the
+    kernel to page more aggressively to keep making room), but a low
+    reading here does not itself confirm thrashing is happening, and a
+    host could in principle thrash with swap space still nominally free
+    (many small alloc/free cycles hitting already-swapped pages).
+
+    One-pass check for a more directly matching (rate-based) observation
+    — done, not measured further (lead-coder: "測定は求めません"):
+    - **Linux**: ``/proc/vmstat``'s ``pswpin``/``pswpout`` ARE real
+      swap-specific page counters, but they are CUMULATIVE since boot —
+      turning them into a rate needs a second sample and an elapsed-time
+      denominator, i.e. this reader would need to hold state across
+      calls (the SAME "duration as an input, never derived from two
+      samples inline" shape this repo's own testing policy already
+      warns a single stateless reader cannot cleanly provide). Not
+      chosen for v1: the byte-quantity proxy stays a single, stateless,
+      one-shot read, matching every other reader in this module.
+    - **macOS**: no dedicated swap-only rate counter was found at the
+      syscall level — ``host_statistics64``'s ``vm_statistics64`` (the
+      Mach API ``vm_stat(1)`` itself reads) has ``pageouts``, but that
+      figure conflates ordinary file-backed paging with swap paging;
+      isolating the swap-specific component was not confirmed possible
+      without further investigation this pass did not do.
+    A rate-based reader remains a candidate for a later PR if the
+    byte-quantity proxy proves insufficient in practice — tracked as a
+    disclosed follow-up (#5939 issue comment, observer: lead-coder), not
+    silently deferred."""
+    if sys.platform == "darwin":
+        return _read_darwin_swap_free_bytes
+    if sys.platform.startswith("linux"):
+        return _read_linux_swap_free_bytes
+    return lambda: None
+
+
 @dataclass
 class ProcessMemoryGuard:
     """#5851 ②: ONE instance per process — created at registry bootstrap
@@ -175,6 +267,23 @@ class ProcessMemoryGuard:
     metric: "str | None" = field(default_factory=process_memory_metric_name)
     cap_bytes: "int | None" = None
     enforce: bool = False
+    # #5939 PR-2 — the host-condition OR (independent of this process's
+    # own cap_bytes/footprint): owner's own motivating case for the
+    # memory ladder (#5939: "最悪 swap 多発でコマンド打てる状況になくな
+    # る") is a HOST-wide fact, not a per-process one. `None` (the
+    # default) is INERT — same shape as `cap_bytes`/`enforce` above, 0
+    # lines run for an operator who never opted in.
+    #
+    # ⚠️ This default does NOT cover the owner's own motivating case —
+    # see `make_host_swap_free_reader`'s own docstring for why free-
+    # SWAP-BYTES is a proxy for swap-THRASHING (a frequency, what the
+    # owner actually named), not a direct measurement of it, and for the
+    # one-pass check (done, not measured) into a more directly matching
+    # rate-based alternative. Tracked as a disclosed follow-up — #5939
+    # issue comment, observer: lead-coder — not silently left as "the
+    # knob exists" being mistaken for "the owner's own case is covered".
+    host_swap_critical_bytes: "int | None" = None
+    host_swap_reader: ProcessMemoryReader = field(default_factory=make_host_swap_free_reader)
     # #5851 ⑤: process_footprint_unavailable fires "起動時1回" — process-
     # scoped (this guard IS the process, by construction: one instance,
     # shared by every session's factory_config), not per-session, so a
@@ -188,6 +297,19 @@ class ProcessMemoryGuard:
         cannot measure is a disclosed fact (``metric is None`` / a
         transient read failure), not a caller-visible exception."""
         return self.reader()
+
+    def host_critical(self) -> bool:
+        """#5939 PR-2 — True when the host-condition OR fires: a
+        configured ``host_swap_critical_bytes`` AND the host's current
+        free-swap reading is at or below it. Always False when
+        ``host_swap_critical_bytes`` is ``None`` (inert default) or the
+        reader itself produced nothing (never fabricated)."""
+        if self.host_swap_critical_bytes is None:
+            return False
+        value = self.host_swap_reader()
+        if value is None:
+            return False
+        return value <= self.host_swap_critical_bytes
 
     def claim_unavailable_announcement(self) -> bool:
         """True the FIRST time this is called on this guard instance,
