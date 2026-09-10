@@ -1789,7 +1789,7 @@ class Session:
         # or re-derives it (the #5350-class hazard: two counters for one
         # concept drift apart). Every OTHER layer (``lifecycle_forwarder.py``,
         # ``app.py``) only CARRIES the value this method hands them via
-        # :meth:`compaction_episode_seq` — never re-reads "the current value"
+        # :meth:`_read_compaction_episode_seq` — never re-reads "the current value"
         # to decide anything at absorption time (that read-the-live-value-
         # to-decide shape IS the race #6085 found: a marker-tagged frame and
         # a snapshot-driven settle arrive on two independent channels with no
@@ -1839,7 +1839,7 @@ class Session:
                 # forwarder gets read access to ONE number, not this whole
                 # Session (same narrow-accessor idiom as
                 # `register_file_handler_path`/`find_file_handler_path`).
-                compaction_episode_seq=self.compaction_episode_seq,
+                compaction_episode_seq=self._read_compaction_episode_seq,
             )
         )
         # Generic events-log subscriber converting op-emitted events to state_change history entries (#398 v4 emitter family, see session-construction.md#misc-lifecycle-wiring)
@@ -12311,11 +12311,11 @@ class Session:
             # #6085 stage 1: read via the SAME accessor lifecycle_forwarder.py
             # uses to stamp its own marker frames — one code path, one
             # transition-detector, whichever caller happens to read first.
-            "episode_seq": self.compaction_episode_seq(),
+            "episode_seq": self._read_compaction_episode_seq(),
             **figures,
         }
 
-    def compaction_episode_seq(self) -> int:
+    def _read_compaction_episode_seq(self) -> int:
         """#6085 stage 1: this compaction EPISODE's own identifier — see
         :attr:`_compaction_episode_seq`'s own construction-site comment for
         why it exists separately from :meth:`_recovery_episode`. Advances
@@ -12324,7 +12324,16 @@ class Session:
         poll) and :class:`~reyn.runtime.lifecycle_forwarder.
         ChatLifecycleForwarder` (stamping a marker frame at the moment it
         is built) read the identical, already-current value from the ONE
-        place that increments it — neither one counts independently."""
+        place that increments it — neither one counts independently.
+
+        Private (lead-coder ruling, #6092 CI — Session's own #3595 S4
+        public-member ceiling): the ONE external caller
+        (``ChatLifecycleForwarder``) is handed a BOUND METHOD, not a name
+        — a receiver of a bound method needs no more access than this
+        already grants, so there was never a reason to publish it. Every
+        OTHER god-object-pressure ratchet in this codebase makes the same
+        point about a NEW public member that nobody calls by name from
+        outside; this one doesn't need to be the exception."""
         self._advance_compaction_episode_seq()
         return self._compaction_episode_seq
 

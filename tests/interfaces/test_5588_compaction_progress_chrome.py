@@ -404,7 +404,7 @@ async def test_compaction_episode_marker_frame_absorbs_into_the_open_entry(
             kind="system", text="[⟳ compacting 3 turns]",
             meta={
                 "compaction_episode_marker": True,
-                "compaction_episode_seq": session.compaction_episode_seq(),
+                "compaction_episode_seq": session._read_compaction_episode_seq(),
             },
         ))
         after = list(app.conversation.entries)
