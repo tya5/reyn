@@ -12,6 +12,7 @@ paired name, must still flag an unpaired sibling-less name).
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -126,3 +127,84 @@ def test_a_new_uncommitted_finding_would_be_caught() -> None:
     measured_now = set(findings(_FIXTURES / "has_sink_literals.py"))
     assert new_findings(measured_now, set()) == measured_now
     assert measured_now, "expected at least one finding from this fixture, wiring is broken"
+
+
+# ── gate-hole ⑴ (lead-coder, #6084): DrawerRow's registered kwargs must ──
+# ── match what its OWN render property actually shows the operator ──────
+
+
+def _fields_rendered_by(cls: type, property_name: str) -> "set[str]":
+    """AST-derive every `self.<name>` attribute *cls*'s own *property_name*
+    property reads, by walking that property's real source — never a
+    second, hand-maintained guess at "which fields are text". This is the
+    SAME shape `_collect_i18n_pair_exempt_ids` already uses elsewhere in
+    this gate (a structural AST condition, not a name/file list): the
+    class's own rendering code is the single source of truth for "what
+    reaches the operator's screen" through it, since that is the literal
+    reason the property exists."""
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(cls))
+    class_node = ast.parse(source).body[0]
+    assert isinstance(class_node, ast.ClassDef)
+    (prop_node,) = [
+        n for n in class_node.body
+        if isinstance(n, ast.FunctionDef) and n.name == property_name
+    ]
+    fields: "set[str]" = set()
+    for node in ast.walk(prop_node):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        ):
+            fields.add(node.attr)
+    return fields
+
+
+def test_drawerrow_sink_spec_matches_its_own_render_property() -> None:
+    """Tier 2: the derivation gate for gate-hole ⑴ itself. `DrawerRow.text`
+    (`chrome.py`'s own docstring: "the row as the pane renders it") is the
+    class's single declared rendering path — every `self.<field>` it reads
+    is a field that can carry a kana literal all the way to the operator's
+    screen. `_SINK_SPECS["DrawerRow"]` must register EXACTLY that set, in
+    both directions: a field `text` reads but this spec does not register
+    is the gate-hole class this test exists to close (the ORIGINAL defect
+    — `note` was read by `text`, absent from the spec); a field registered
+    here that `text` does NOT read would be a stale/over-broad entry
+    (drift the other direction — question 4's own "would it stay green
+    having nothing to bite on" concern, applied to a spec instead of a
+    finding set).
+
+    STRIP-FALSIFY (verified by hand, file-internal Edit only, reverted):
+    removing `("kwarg", "note")` from `_SINK_SPECS["DrawerRow"]` turns
+    this red (`text`'s own AST still reads `self.note`, the spec no
+    longer does) — confirming this test genuinely depends on the spec
+    covering what the property renders, not just a fixed literal set."""
+    from reyn.interfaces.inline.textual_chat.chrome import DrawerRow
+    from scripts.user_facing_lang_gate import _SINK_SPECS
+
+    rendered = _fields_rendered_by(DrawerRow, "text")
+    assert rendered, "arrange: text's own AST must reference at least one field"
+    registered = {
+        key for kind, key in _SINK_SPECS["DrawerRow"] if kind == "kwarg"
+    }
+    assert registered == rendered, (
+        f"_SINK_SPECS['DrawerRow'] registers {registered!r} but "
+        f"DrawerRow.text actually reads {rendered!r} -- a mismatch either "
+        f"way means the gate is not watching (or is watching a stale set "
+        f"of) exactly what reaches the operator's screen"
+    )
+
+
+def test_drawerrow_command_is_correctly_excluded() -> None:
+    """Tier 2: deny side, named explicitly (question 1's own "who would
+    miss this test" answer: a future reader wondering why `command` isn't
+    in `_SINK_SPECS` needs this, not just the equality check above passing
+    silently) — `command` is a slash-command identifier, never referenced
+    by `DrawerRow.text`, so the render-derived set correctly excludes it
+    without this test needing a hand-written exemption list."""
+    from reyn.interfaces.inline.textual_chat.chrome import DrawerRow
+
+    assert "command" not in _fields_rendered_by(DrawerRow, "text")

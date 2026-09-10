@@ -1220,9 +1220,9 @@ def task_pane_entries(
             bits.append(elapsed)
         cancellable = bool(task.get("cancellable"))
         if not cancellable:
-            note = "中断不可"
+            note = "not cancellable"
         elif task.get("cancel_requested_at"):
-            note = "中断要求済"
+            note = "cancel requested"
         else:
             note = None
         task_id = str(task.get("task_id") or "")

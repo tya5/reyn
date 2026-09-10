@@ -31,8 +31,22 @@ site**:
   POSITIONAL argument
 - `argparse` `.add_argument(help=...)` and `.add_parser(..., help=...,
   description=...)`
-- `DrawerRow(label=...)` — the one confirmed custom-widget kwarg
-  (`src/reyn/interfaces/inline/textual_chat/chrome.py`)
+- `DrawerRow(label=..., note=..., state=...)` — the custom-widget kwargs
+  that reach the operator (`src/reyn/interfaces/inline/textual_chat/
+  chrome.py`). #6084 gate-hole ⑴ (lead-coder): the ORIGINAL sink spec here
+  registered only `label` — `note` (and `state`) were the same shape,
+  never registered, and a real kana literal (`chrome.py:1223/1225`) sat
+  unflagged from this gate's own first day. `_SINK_SPECS["DrawerRow"]`
+  now covers every kwarg :class:`~reyn.interfaces.inline.textual_chat.
+  chrome.DrawerRow`'s OWN `text` property (the class's single declared
+  "the row as the pane renders it" — chrome.py's own docstring) actually
+  reads via `self.<field>` — `command` is deliberately excluded (never
+  referenced there; it is a slash-command identifier the pane renders
+  elsewhere, not display prose). `tests/scripts/test_user_facing_lang_
+  gate_6084.py`'s own render-property cross-check is what keeps this from
+  silently falling behind DrawerRow's own future fields again: it derives
+  the "actually rendered" kwarg set from `text`'s AST and fails if this
+  spec and that derived set ever diverge, in EITHER direction.
 
 Anywhere else in `interfaces/` a user-facing string might originate — a
 different custom widget's kwarg not in this list, `App.notify(...)` (whose
@@ -125,7 +139,7 @@ _SINK_SPECS: "dict[str, list[tuple[str, object]]]" = {
     "reply_error": [("pos", 1)],
     "add_argument": [("kwarg", "help")],
     "add_parser": [("kwarg", "help"), ("kwarg", "description")],
-    "DrawerRow": [("kwarg", "label")],
+    "DrawerRow": [("kwarg", "label"), ("kwarg", "note"), ("kwarg", "state")],
 }
 
 
