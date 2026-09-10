@@ -206,7 +206,11 @@ def test_run_cache_release_and_forensics_emits_the_audit_event():
     assert forensics.footprint_before == 1000
     assert forensics.footprint_after == 400
     assert forensics.host is None
-    assert forensics.top_history_rows is None
+    # #5851 D7: top_history_rows is now genuinely built (was None while
+    # #5896 was still landing) — this call passes no `sessions`, so the
+    # population is correctly empty, never None (the field's own OLD
+    # type; see test_5851_d7_top_history_rows.py for the populated case).
+    assert forensics.top_history_rows == []
 
     (matching,) = [e for e in collected if e.type == "process_memory_forensics"]
     payload = matching.data
