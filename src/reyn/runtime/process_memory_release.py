@@ -84,7 +84,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Iterable
 
 from reyn.core.events.events import EventLog
 from reyn.data.workspace.artifact_ref import table_cache_clear
@@ -162,19 +162,53 @@ class ProcessMemoryForensics:
     top_history_rows: "None" = None
 
 
-def run_cache_release_and_forensics(
+async def run_cache_release_and_forensics(
     guard: ProcessMemoryGuard,
     events: EventLog,
     *,
     chain_id: "str | None" = None,
+    # #5939/#5851 PR-5: every LIVE session whose own instance-attribute
+    # caches (currently: MediaStore's spill-path sets) should be dropped
+    # alongside the module-level caches above. ``None`` (every pre-PR-5
+    # caller: hydration, and any caller not yet updated) means "no
+    # instance caches in scope" — byte-identical to before this
+    # parameter existed. Duck-typed (``getattr(s, "_drop_instance_caches",
+    # None)``) rather than importing ``Session`` — this module is
+    # imported FROM ``session.py``, so a real ``Session`` import here
+    # would be circular; every real caller passes real ``Session``
+    # objects, this is a structural avoidance, not a design choice about
+    # what may be passed.
+    sessions: "Iterable[object] | None" = None,
 ) -> ProcessMemoryForensics:
     """Run ladder step ②: measure, release, measure again, report on all
     3 faces (audit-event / ``reyn.log`` / real stderr). The single entry
     point every ladder context (steady-state, in-turn, hydration) calls
     — see the module docstring for why it is the SAME function
-    everywhere, not one per caller."""
+    everywhere, not one per caller.
+
+    #5939/#5851 PR-5: ``sessions`` extends this SAME call, SAME event,
+    SAME forensics report to each live session's own instance-attribute
+    caches — no new call site, no new event kind. Design:
+    https://github.com/tya5/reyn/issues/5851 (lead-coder-approved,
+    2026-09-10) — the population of "instances holding a cache" is
+    DERIVED from session enumeration (``AgentRegistry.all_sessions()``,
+    #5939 PR-2) rather than a separately hand-maintained registry.
+
+    ``async`` (PR-5, was sync before): ``Session._drop_instance_caches``
+    needs to ``await`` a flush before it is safe to prune (see that
+    method's own docstring for the race this closes) — this function is
+    the one chokepoint that reaches it, so it must be able to propagate
+    that await. Every call site was already inside an ``async def``
+    (``Session._check_memory_ladder``, itself moved async in a SEPARATE
+    commit for exactly this — and ``Session._check_turn_mid_memory_
+    ladder``, already async)."""
     footprint_before = guard.read()
     dropped = release_reconstructable_caches()
+    if sessions is not None:
+        for s in sessions:
+            drop_fn = getattr(s, "_drop_instance_caches", None)
+            if callable(drop_fn):
+                dropped.extend(await drop_fn())
     footprint_after = guard.read()
     forensics = ProcessMemoryForensics(
         footprint_before=footprint_before,

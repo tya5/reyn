@@ -14,6 +14,7 @@ footprint reader.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
@@ -104,7 +105,7 @@ def test_ladder_enters_backpressure_on_host_critical_alone_under_own_cap(tmp_pat
     s = _session(tmp_path, guard=guard)
     events = collect_events(s)
 
-    s._check_memory_ladder(chain_id=None, footprint=10)
+    asyncio.run(s._check_memory_ladder(chain_id=None, footprint=10))
 
     (entered,) = [e for e in events if e.type == "session_memory_backpressure"]
     assert entered.data["bytes"] == 10  # this session's own footprint, still under its own cap
