@@ -53,7 +53,8 @@ time, read back from the compiled artifact that actually ships and actually
 parses at runtime, rather than a separate JSON file that would need its own
 provenance check every time the dependency is bumped. This module derives
 from THAT API. The resulting population (236 unique node-kind strings across
-280 symbol ids in tree-sitter-bash 0.25.1 — see
+280 symbol ids in tree-sitter-bash 0.25.1 — ratcheted by
+``scripts/bash_node_kind_count_ratchet.py``, see
 :data:`EXPECTED_NODE_KIND_COUNT_RATCHET`) differs from ``node-types.json``'s
 184 because the two are structurally different artifacts: ``node-types.json``
 also lists ABSTRACT supertype nodes (``_statement``, ``_expression``,
@@ -135,7 +136,10 @@ def derive_bash_node_kind_names() -> "frozenset[str]":
 #: package for #5987 stage 1 — NOT the 184 the pre-ruling research cited,
 #: which counted ``node-types.json``'s entries, a file this package does not
 #: ship; see module docstring). A future dependency bump that changes the
-#: grammar will change this number — ``tests/security/
-#: test_5987_bash_node_kinds_stage1.py`` pins it as a ratchet so that change
-#: is visible, not silent drift.
+#: grammar will change this number — ``scripts/bash_node_kind_count_ratchet.py``
+#: (committed baseline + ``--write-baseline``) is the CI gate that pins it,
+#: so that change is visible, not silent drift. This constant is kept only
+#: as informational documentation of the value at the time this module was
+#: written; the enforcement mechanism is the script's own committed
+#: baseline, not this constant.
 EXPECTED_NODE_KIND_COUNT_RATCHET = 236
