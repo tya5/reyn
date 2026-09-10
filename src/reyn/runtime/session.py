@@ -1238,6 +1238,27 @@ class Session:
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
+        # #5939 PR-4 — a HISTORICAL fact about how THIS session's history
+        # was hydrated, never a live/clearing state: True means
+        # `load_history()`'s own byte-budget early-stop
+        # (`read_history_tail_with_byte_budget`) cut the backward read
+        # short BEFORE finding a summary message. The ONLY consumer that
+        # reads this is `_latest_summary()`'s own compaction-candidate
+        # gate — see that method's docstring for the exact defect this
+        # guards ("re-compacting content a not-yet-loaded summary already
+        # covers"). Does NOT literally clear once resolved: the actual
+        # gate is `stop_reading_early_unsafe AND _latest_summary() is
+        # None` (see `_latest_summary`), which naturally stops blocking
+        # the moment a summary IS found in `self.history` (e.g. via
+        # `extend_history_backward` loading far enough) — no separate
+        # "resolved" flip needed, and none exists. If hydration is never
+        # redone and no extend ever reaches a summary, this stays True
+        # for the rest of the session's lifetime — that is the correct,
+        # disclosed shape (lead-coder review, #5939 PR-4): the fact it
+        # records ("was this session's own hydration read truncated by
+        # its own byte budget") does not change unless hydration itself
+        # is redone.
+        self._history_hydration_stopped_reading_early_unsafe: bool = False
         # #5851 stage (a): consulted at the 2 observation points wired in
         # this stage (load_history's own finally, and _run_router_loop's
         # finally next to the turn_end dispatch) — the ruling's other 2
@@ -5501,7 +5522,10 @@ class Session:
         path) with ONE emit call rather than three."""
         if not self.history_path.exists():
             return
-        from reyn.runtime.history_tail_reader import read_history_tail, read_last_line
+        from reyn.runtime.history_tail_reader import (
+            read_history_tail_with_byte_budget,
+            read_last_line,
+        )
 
         last_line = read_last_line(self.history_path)
         last_seq = 0
@@ -5512,10 +5536,27 @@ class Session:
                 last_seq = 0
 
         if last_seq > 0:
-            for line in read_history_tail(
-                self.history_path, min_lines=_HISTORY_HYDRATE_MIN_LINES,
-            ):
+            # #5939 PR-4 — hydration mini-ladder step "stop_reading_early"
+            # (deliberately NOT named "①''"/reusing PR-2's own
+            # backpressure vocabulary — a distinct name for a distinct
+            # act, lead-coder review): the byte budget IS
+            # history_resident's own existing cap
+            # (architect ruling, #5851 comment 11 — "先に効かせるだけ",
+            # not a new mechanism), applied live during the read instead
+            # of post-hoc.
+            lines, truncated_unsafe = read_history_tail_with_byte_budget(
+                self.history_path,
+                min_lines=_HISTORY_HYDRATE_MIN_LINES,
+                max_bytes=int(self._history_resident_config.max_bytes),
+            )
+            for line in lines:
                 self._append_parsed_history_line(line)
+            if truncated_unsafe:
+                self._history_hydration_stopped_reading_early_unsafe = True
+                self._audit_events.emit(
+                    "history_hydration_stopped_reading_early_unsafe",
+                    lines_loaded=len(lines), max_bytes=int(self._history_resident_config.max_bytes),
+                )
             self._next_seq = last_seq + 1
             # #5276: this path populates self.history via a bare .append
             # (_append_parsed_history_line), bypassing _append_history's
@@ -6856,6 +6897,12 @@ class Session:
             # rather than papered over with the #4471 skip-branch).
             history_from_disk=self._durable_active_history_after,
             latest_summary=self._latest_summary,
+            # #5939 PR-4: lets force_compact_now refuse rather than derive
+            # a wrong prev_cover from a hydration read this session's own
+            # byte budget cut short before finding a summary.
+            history_load_truncated_unsafe=(
+                lambda: self._history_hydration_stopped_reading_early_unsafe
+            ),
             compaction_engine_factory=_build_chat_compaction_engine,
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers, *, covers_from_seq: ChatMessage(
@@ -8323,6 +8370,16 @@ class Session:
         halted; ``None`` while running. The operator-visible in-memory state paired with the
         ``SessionHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
         return self._halted_reason
+
+    @property
+    def history_hydration_stopped_reading_early_unsafe(self) -> bool:
+        """#5939 PR-4: public read of
+        ``self._history_hydration_stopped_reading_early_unsafe`` — the
+        sanctioned surface for tests/diagnostics (mirrors ``token_cache_
+        size()``'s own snapshot-style-read precedent; the underlying
+        field stays private). See that field's own docstring for what
+        it means and why it does not literally clear."""
+        return self._history_hydration_stopped_reading_early_unsafe
 
     @property
     def halt_remedies(self) -> "tuple[str, ...] | None":
@@ -10103,7 +10160,24 @@ class Session:
     # helpers that are still needed as injected callbacks.
 
     def _latest_summary(self) -> ChatMessage | None:
-        """Return the most recent summary message, or None."""
+        """Return the most recent summary message, or None.
+
+        ⚠️ #5939 PR-4: ``None`` here is ambiguous by itself — it means
+        EITHER "genuinely no summary exists yet" (the normal case) OR
+        "this session's own hydration read stopped, by byte budget,
+        before ever reaching a summary that DOES exist further back on
+        disk" (``self._history_hydration_stopped_reading_early_unsafe``).
+        This method does NOT disambiguate — it stays a pure, cheap scan
+        of resident ``self.history``, unchanged for its other callers
+        (``_compaction_watermark`` / ``_ephemeral_contextual_for_turn``,
+        narrowing scope, where treating an unresolved ``None`` as "not
+        yet covered" is already the safe direction). The ONE caller that
+        cannot tolerate the ambiguity, ``CompactionController.
+        force_compact_now`` (candidate SELECTION — a wrong ``prev_cover``
+        here means re-selecting content a real, not-yet-loaded summary
+        already covers, a genuine double-compaction defect), checks
+        ``_history_hydration_stopped_reading_early_unsafe`` itself,
+        separately, before trusting this method's own ``None``."""
         for m in reversed(self.history):
             if m.role == "summary":
                 return m

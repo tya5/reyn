@@ -83,7 +83,7 @@ class ForceCompactResult:
     message had to hedge between causes it could not distinguish (the exact
     defect this closes).
 
-    ``outcome`` is one of the 4 literal strings ``force_compact_now``'s own
+    ``outcome`` is one of the literal strings ``force_compact_now``'s own
     ``self._events.emit("compaction_check", outcome=...)`` calls use —
     passed through the SAME variable at each call site (see that method's
     body), never re-typed, so this type and the audit trail cannot drift
@@ -93,8 +93,11 @@ class ForceCompactResult:
     to fold" (``forced_sync_no_turns``), "did the internal invariant hold"
     (``compaction_input_gap_invariant_violated``), "did an attempt run,
     and if so on how many candidates" (``forced_sync`` + ``candidate_
-    count``) — collapsing them into one true/false would re-lose exactly
-    the distinction this type exists to carry.
+    count``), "was this refused because the watermark cannot be trusted
+    yet" (``history_load_unsafe``, #5939 PR-4 — see ``force_compact_
+    now``'s own body for exactly when this fires) — collapsing them into
+    one true/false would re-lose exactly the distinction this type exists
+    to carry.
 
     ``failed`` (#5708 acceptance ④, added mid-fix on lead-coder review):
     ``_run_compaction`` raising is
@@ -387,6 +390,14 @@ class CompactionController:
         # turn text is secret-redacted before entering the summarizer input.
         # None (test paths) → no redaction (byte-identical).
         threat_scan: "object | None" = None,
+        # #5939 PR-4: zero-argument callable returning True when THIS
+        # session's own hydration read was truncated (byte budget) before
+        # a summary was ever found — see
+        # ``Session._history_hydration_stopped_reading_early_unsafe``'s
+        # own docstring. None (default) means "never unsafe" (test paths,
+        # and any construction predating PR-4) — byte-identical to before
+        # this parameter existed.
+        history_load_truncated_unsafe: "Callable[[], bool] | None" = None,
     ) -> None:
         self._events = event_log
         self._config = config
@@ -399,6 +410,7 @@ class CompactionController:
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
         self._compacting: bool = False
+        self._history_load_truncated_unsafe = history_load_truncated_unsafe
 
     @property
     def is_compacting(self) -> bool:
@@ -734,6 +746,26 @@ class CompactionController:
             return ForceCompactResult(outcome=outcome)
 
         latest = self._latest_summary()
+        # #5939 PR-4: refuse rather than derive a WRONG prev_cover.
+        # `latest is None` here can mean either "genuinely no summary
+        # exists" (the normal case, `prev_cover=0` is correct) OR "this
+        # session's own hydration read stopped (byte budget) before
+        # reaching a summary that DOES exist further back on disk" (in
+        # which case `prev_cover=0` would be WRONG -- messages the real,
+        # not-yet-loaded summary already covers would be selected as
+        # candidates again, a genuine double-compaction defect). The two
+        # are indistinguishable from `latest is None` alone; the
+        # hydration-side flag is what tells them apart. Once a summary
+        # IS found (via `extend_history_backward` loading far enough,
+        # any time after boot), `latest is not None` and this branch
+        # never fires again for this session -- no separate "resolved"
+        # flip is needed (see `Session._history_hydration_stopped_
+        # reading_early_unsafe`'s own docstring).
+        if latest is None and self._history_load_truncated_unsafe is not None \
+                and self._history_load_truncated_unsafe():
+            outcome = "history_load_unsafe"
+            self._events.emit("compaction_check", outcome=outcome)
+            return ForceCompactResult(outcome=outcome)
         prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
         # #4472: read the candidate INPUT from the durable store
         # (history.jsonl), never residency-gated — see
