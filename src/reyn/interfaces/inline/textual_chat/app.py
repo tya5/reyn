@@ -5949,7 +5949,13 @@ class TextualChatApp(App):
         don't-fabricate-a-failure lesson). Every step is guarded so one orphan's
         settle failure never kills the pump or leaves the others un-swept; the
         dict is cleared unconditionally at the end so no turn's leftovers bleed
-        into the next."""
+        into the next.
+
+        Also sweeps :attr:`_pipeline_runs` (#6076 ②) via
+        :meth:`_sweep_orphaned_pipeline_runs` at the end — a SEPARATE dict
+        this method never touched before, so a ``run_pipeline`` row whose
+        own completion frame never arrived stayed RUNNING forever even
+        though every tool-row orphan above it settled correctly."""
         for entry in list(self._running_tools.values()):
             try:
                 self._flow.stop_entry_animation(entry)
@@ -6008,6 +6014,47 @@ class TextualChatApp(App):
                     logger.exception(
                         "textual chat: could not settle an orphaned call-parent"
                     )
+        self._sweep_orphaned_pipeline_runs()
+
+    def _sweep_orphaned_pipeline_runs(self) -> None:
+        """Force-settle any pipeline row still open in :attr:`_pipeline_runs`
+        at a TURN BOUNDARY (#6076 ②).
+
+        The SAME orphan class :meth:`_sweep_orphaned_running_tools` above
+        closes for a tool row — a ``run_pipeline`` call's own completion
+        frame never arrives (the turn ends first: a cancel, a reconnect, an
+        unrelated failure elsewhere in the turn) — but that sweep only ever
+        touched :attr:`_running_tools`; :attr:`_pipeline_runs` is a
+        SEPARATE dict (keyed by ``run_id``, not ``op_id``) that nothing else
+        in this class clears at a turn boundary. Before this fix, a pipeline
+        row orphaned this way stayed open FOREVER — the exact
+        "終わってるはずなのに表示が上の方に張り付いてたり" (stuck after
+        completion) shape #6076 reported, independent of #6076 ①'s own
+        off-by-one (that fix is presenter.py-only and does not touch
+        lifecycle at all).
+
+        Same #72/#3296 discipline as the tool-row sweep: CANCELLED, never
+        SUCCESS (would claim it finished) or ERROR (would claim it failed)
+        — the run's own report simply never arrived, which is neither. Every
+        step guarded so one orphan's settle failure never leaves the rest
+        un-swept; the dict is cleared unconditionally at the end so no
+        turn's leftovers bleed into the next (mirrors
+        :meth:`_sweep_orphaned_running_tools`'s own ``_running_tools.clear()``
+        for the identical reason)."""
+        for entry in list(self._pipeline_runs.values()):
+            try:
+                self._flow.stop_entry_animation(entry)
+            except Exception:
+                logger.exception(
+                    "textual chat: could not stop orphaned-pipeline animation"
+                )
+            try:
+                entry.set_state(EntryState.CANCELLED)
+            except Exception:
+                logger.exception(
+                    "textual chat: could not settle an orphaned pipeline row"
+                )
+        self._pipeline_runs.clear()
 
     def _settle_turn_parent(self) -> None:
         """#4691 arc item ① — give the CURRENT turn's own parent (the user
