@@ -195,7 +195,7 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
 - `_halted_reason` (#2259 PR-3) — set when the session FAIL-STOPS (e.g.
   `"durability_failure"`); `None` while running. In-memory only (durability is dead → it
   cannot itself be a durable event) — the operator-visible pair to the raised
-  `DurabilityHaltError`. #2280: the first time this latches (on EITHER the accept-edge
+  `SessionHaltError`. #2280: the first time this latches (on EITHER the accept-edge
   `_put_inbox` raise or the process-edge `run_one_iteration` halt — guarded so it fires
   once), a `session_halted` audit-event carrying `reason` is emitted, so an operator who is
   IDLE (not currently submitting an op) learns the halt proactively — the TUI status line

@@ -228,12 +228,12 @@ async def test_restore_all_consistent_prefix_from_torn_midline_wal_truncation(tm
 async def test_durability_failure_fail_stops_and_surfaces(tmp_path):
     """Tier 2: B — a persistent (§4-exhausted) fire-and-forget durable-write failure latches the
     worker health-signal; the session FAIL-STOPS — rejects new ops at the accept-edge (`_put_inbox`
-    raises ``DurabilityHaltError`` = the synchronous operator-surface) AND halts the run loop
+    raises ``SessionHaltError`` = the synchronous operator-surface) AND halts the run loop
     (process-edge → stops in-memory advancing) — never silently keeps racing ahead of a dead disk
     (the owner's "no silent unbounded loss"). RED if the consumer is absent (the op is accepted /
     the loop keeps running)."""
     from reyn.core.events.durability_worker import DurabilityWorker
-    from reyn.runtime.session import DurabilityHaltError
+    from reyn.runtime.session import SessionHaltError
 
     worker = DurabilityWorker(max_write_attempts=1)  # fail-fast: no slow backoff in the test
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
@@ -249,8 +249,8 @@ async def test_durability_failure_fail_stops_and_surfaces(tmp_path):
         await log.flush()  # drain → retry-exhaust → latch (never swallowed)
         assert log.durability_failed, "the §4-exhausted fire-and-forget failure must latch the health-signal"
 
-        # (a) accept-edge: `_put_inbox` REJECTS new ops with DurabilityHaltError (= operator-surface).
-        with pytest.raises(DurabilityHaltError):
+        # (a) accept-edge: `_put_inbox` REJECTS new ops with SessionHaltError (= operator-surface).
+        with pytest.raises(SessionHaltError):
             await session._put_inbox("user", {"text": "after disk death"})
 
         # (b) process-edge: the run loop HALTS (stops advancing in-memory) + records the reason.

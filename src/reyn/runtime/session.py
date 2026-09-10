@@ -566,12 +566,17 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 
 
 
-class DurabilityHaltError(RuntimeError):
-    """#2259 PR-3: raised when an operation is submitted to an agent whose durability has FAILED
-    persistently (a §4-retry-exhausted fire-and-forget durable write — disk full / dead). The agent
-    has FAIL-STOPPED: it no longer accepts operations, because in-memory state must not race ahead
-    of a dead disk (the owner's "no silent unbounded loss"). The raise IS the operator-surface — the
-    caller sees it synchronously on their next op, not only a CRITICAL log they would scroll past."""
+class SessionHaltError(RuntimeError):
+    """#2259 PR-3 (renamed from ``DurabilityHaltError``, #5939 PR-2 —
+    pure rename here, no behavior change; see that PR's own next commit
+    for the shared-halt-reason behavior this name anticipates): raised
+    when an operation is submitted to an agent whose durability has
+    FAILED persistently (a §4-retry-exhausted fire-and-forget durable
+    write — disk full / dead). The agent has FAIL-STOPPED: it no longer
+    accepts operations, because in-memory state must not race ahead of a
+    dead disk (the owner's "no silent unbounded loss"). The raise IS the
+    operator-surface — the caller sees it synchronously on their next
+    op, not only a CRITICAL log they would scroll past."""
 
 
 @dataclass(frozen=True)
@@ -7940,7 +7945,7 @@ class Session:
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
         halted; ``None`` while running. The operator-visible in-memory state paired with the
-        ``DurabilityHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
+        ``SessionHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
         return self._halted_reason
 
     @property
@@ -7959,7 +7964,7 @@ class Session:
         return self._run_completed
 
     def _fail_stop_if_durability_dead(self) -> None:
-        """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``DurabilityHaltError`` (recording the
+        """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``SessionHaltError`` (recording the
         halt reason first, so it surfaces consistently with the process-edge) when durability has
         FAILED persistently — the agent stops accepting operations rather than accept one whose
         durable record will never land.
@@ -7975,7 +7980,7 @@ class Session:
             if self._halted_reason is None:
                 self._halted_reason = "durability_failure"
                 self._audit_events.emit("session_halted", reason=self._halted_reason)
-            raise DurabilityHaltError(
+            raise SessionHaltError(
                 f"agent '{self.agent_name}' halted: persistent durability failure — the agent "
                 "stopped accepting operations to avoid silent unbounded loss (in-memory state must "
                 "not race ahead of a dead disk)"
