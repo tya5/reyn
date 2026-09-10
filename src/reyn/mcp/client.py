@@ -2406,11 +2406,23 @@ class MCPClient:
         not on what mechanism sandboxes them.
         """
         from reyn.security.sandbox import get_default_backend
+        from reyn.security.sandbox.backend import ambient_path
 
         argv = [command, *args]
         try:
             backend = get_default_backend()
-            wrapped = backend.wrap_command(argv, self._build_mcp_sandbox_policy())
+            # #6058/#6063: an MCP stdio launch has NO operation context to
+            # read an `env_path` from (named explicitly, per lead-coder's
+            # #6063 BLOCKING co-vet, rather than papered over) — it does
+            # no separate PATH-based argv0 resolution this value would
+            # need to agree with (and `wrapped.env` is discarded below
+            # regardless — see this method's own docstring), so a single,
+            # local read of `ambient_path()` here is the caller's own
+            # "read once, thread down explicitly" — not a fallback inside
+            # the backend.
+            wrapped = backend.wrap_command(
+                argv, self._build_mcp_sandbox_policy(), env_path=ambient_path()
+            )
         except Exception as exc:  # noqa: BLE001 — a backend probe/wrap must not block a launch
             warnings.warn(
                 f"MCP stdio server {command!r} runs UNSANDBOXED "

@@ -250,7 +250,7 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     # The profile PATH differs (#4434: each DISTINCT policy OBJECT gets its own
     # session-cache entry, even when two objects render identical SBPL text), so
     # compare everything else — the exact same code path codeact now runs.
-    direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, timeout_seconds=30.0))
+    direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, timeout_seconds=30.0), env_path=None)
     assert argv[0] == direct.argv[0] == "sandbox-exec"
     assert argv[1] == direct.argv[1] == "-f"
     assert argv[3:] == direct.argv[3:] == base_argv
@@ -306,6 +306,7 @@ def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
     direct = backend.wrap_command(
         base_argv,
         SandboxPolicy(network=False, timeout_seconds=30.0),
+        env_path=None,
     )
     assert argv == direct.argv  # byte-identical — same deterministic build
 

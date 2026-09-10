@@ -75,7 +75,7 @@ class _RecordingBackend:
         return True
 
     async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None,
-                   hook_process_context=None, sink=None) -> SandboxResult:
+                   hook_process_context=None, sink=None, env_path=None) -> SandboxResult:
         self.ran = True
         self.received_argv = list(argv)
         return SandboxResult(returncode=0, stdout=b"ran", stderr=b"")

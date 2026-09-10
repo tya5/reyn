@@ -91,6 +91,7 @@ async def test_docker_backend_run_passes_policy_max_output_bytes_through():
     policy = SandboxPolicy(timeout_seconds=30, max_output_bytes=over)
     result = await backend.run(
         [sys.executable, "-c", "import sys; sys.stdout.write('x' * 8192)"], policy,
+        env_path=None,
     )
     assert result.truncated is True
     assert len(result.stdout) <= over
