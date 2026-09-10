@@ -1,0 +1,52 @@
+name: node-kind-coverage ratchet
+
+# #6112: every tree-sitter-bash node kind a LIVE re-derivation of the real
+# corpus (.github/workflows/** run: lines, docs/** fenced shell code
+# blocks, scripts/** subprocess shell calls) surfaces must be in EXACTLY
+# ONE of src/reyn/security/exec_plan.py's _ALLOWED_NODE_KINDS or
+# scripts/node_kind_coverage_ratchet.py's own
+# _DELIBERATELY_NOT_ALLOWED_NODE_KINDS -- a red here means either a real,
+# deliberate decision is owed (add the kind to one of the two sets, with
+# a reason string on the "not allowed" side) or the corpus extraction
+# itself broke. See that script's own module docstring for the full
+# design and why it re-derives the corpus every run rather than reading a
+# committed snapshot.
+#
+# No `paths` filter, deliberately: the corpus this gate re-derives lives
+# across .github/workflows/**, docs/**, AND scripts/**, any one of which
+# can introduce a new node kind without touching exec_plan.py itself --
+# narrowing `paths` to those three globs would be equivalent to "on every
+# PR" in practice (most PRs touch at least one) while adding a silent gap
+# for the one that doesn't but still changes the grammar's own derivation
+# (a tree-sitter-bash dependency bump). Runs on every PR instead, same as
+# ruff/mypy.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  node-kind-coverage-ratchet:
+    name: node-kind-coverage ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/node_kind_coverage_ratchet.py imports reyn.security.exec_plan
+      # (tree-sitter/tree-sitter-bash, core deps) and PyYAML (to walk a real
+      # workflow's `run:` bodies) -- an editable install of the project
+      # itself is required, same as bash_node_kind_count_ratchet.py.
+      - name: Install reyn (core deps only)
+        run: pip install -e . -c ci-constraints.txt
+
+      - name: Check the node-kind-coverage ratchet
+        run: |
+          python scripts/node_kind_coverage_ratchet.py
