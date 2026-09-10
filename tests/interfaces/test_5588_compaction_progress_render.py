@@ -33,27 +33,27 @@ def test_compacting_with_only_the_flag_still_renders_line_1():
     signal available renders something true."""
     snap = CompactionProgressSnapshot(is_compacting=True)
     lines = compaction_progress_lines(snap)
-    assert lines == ["⟳ 文脈を縮めています（自動で終わります）"]
+    assert lines == ["⟳ Compacting context (will finish automatically)"]
 
 
 def test_line_2_names_summary_wait_with_elapsed():
-    """Tier 1: waiting_for='summary' renders the 要約 (summary) wait line,
-    with the elapsed seconds appended when known."""
+    """Tier 1: waiting_for='summary' renders the summary wait line, with
+    the elapsed seconds appended when known."""
     snap = CompactionProgressSnapshot(
         is_compacting=True, waiting_for="summary", waiting_elapsed_s=12.7,
     )
     lines = compaction_progress_lines(snap)
-    assert lines[1] == "  要約の応答を待っています 12秒"
+    assert lines[1] == "  Waiting for summary's response 12s"
 
 
 def test_line_2_names_main_call_wait_without_elapsed_when_unknown():
-    """Tier 1: waiting_for='main_call' renders the 本文 (main body) wait
-    line; waiting_elapsed_s=None omits the clock entirely rather than
-    coercing to 0秒 (mirrors activity_row.py's own "never fabricate an
-    unknown elapsed time" rule)."""
+    """Tier 1: waiting_for='main_call' renders the main body wait line;
+    waiting_elapsed_s=None omits the clock entirely rather than coercing to
+    0s (mirrors activity_row.py's own "never fabricate an unknown elapsed
+    time" rule)."""
     snap = CompactionProgressSnapshot(is_compacting=True, waiting_for="main_call")
     lines = compaction_progress_lines(snap)
-    assert lines[1] == "  本文の応答を待っています"
+    assert lines[1] == "  Waiting for main body's response"
 
 
 def test_line_2_absent_when_waiting_for_is_none():
@@ -62,7 +62,7 @@ def test_line_2_absent_when_waiting_for_is_none():
     a stall occurred; see the module's own docstring)."""
     snap = CompactionProgressSnapshot(is_compacting=True)
     lines = compaction_progress_lines(snap)
-    assert lines == ["⟳ 文脈を縮めています（自動で終わります）"]
+    assert lines == ["⟳ Compacting context (will finish automatically)"]
 
 
 def test_line_3_shows_spill_and_call_count_together():
@@ -74,7 +74,7 @@ def test_line_3_shows_spill_and_call_count_together():
         is_compacting=True, spill_done=5, spill_total=2469, call_count=43,
     )
     lines = compaction_progress_lines(snap)
-    assert "① 退避 5/2469  呼び出し 43" in lines[-1]
+    assert "① spill 5/2469  calls 43" in lines[-1]
 
 
 def test_line_3_spill_without_call_count_omits_the_call_segment():
@@ -82,8 +82,8 @@ def test_line_3_spill_without_call_count_omits_the_call_segment():
     still renders alone, never a fabricated call count."""
     snap = CompactionProgressSnapshot(is_compacting=True, spill_done=5, spill_total=2469)
     lines = compaction_progress_lines(snap)
-    assert "① 退避 5/2469" in lines[-1]
-    assert "呼び出し" not in lines[-1]
+    assert "① spill 5/2469" in lines[-1]
+    assert "calls" not in lines[-1]
 
 
 def test_line_3_all_four_rungs_plus_lap_plus_active_marker():
@@ -101,12 +101,12 @@ def test_line_3_all_four_rungs_plus_lap_plus_active_marker():
     )
     lines = compaction_progress_lines(snap)
     line3 = lines[-1]
-    assert "① 退避 5/2469  呼び出し 43" in line3
-    assert "② 分割 4" in line3
-    assert "③ 補充 head/tail" in line3
-    assert "④ 予算 1/4" in line3
-    assert "周回 2" in line3
-    assert "← 今 ①" in line3
+    assert "① spill 5/2469  calls 43" in line3
+    assert "② slice 4" in line3
+    assert "③ refill head/tail" in line3
+    assert "④ budget 1/4" in line3
+    assert "lap 2" in line3
+    assert "← now ①" in line3
 
 
 def test_line_3_refill_shows_only_the_still_available_side():
@@ -116,7 +116,7 @@ def test_line_3_refill_shows_only_the_still_available_side():
         is_compacting=True, head_available=True, tail_available=False,
     )
     lines = compaction_progress_lines(snap)
-    assert "③ 補充 head" in lines[-1]
+    assert "③ refill head" in lines[-1]
     assert "tail" not in lines[-1]
 
 
@@ -126,8 +126,8 @@ def test_line_3_absent_when_no_rung_field_is_known():
     snap = CompactionProgressSnapshot(is_compacting=True, waiting_for="summary")
     lines = compaction_progress_lines(snap)
     assert lines == [
-        "⟳ 文脈を縮めています（自動で終わります）",
-        "  要約の応答を待っています",
+        "⟳ Compacting context (will finish automatically)",
+        "  Waiting for summary's response",
     ]
 
 
@@ -135,7 +135,7 @@ def test_failure_text_mid_floor():
     """Tier 1: MID_FLOOR maps to architect's own exact wording — never a
     parse of UnrecoveredError's own reason/repr() text."""
     assert compaction_failure_text(RetryLoopTerminal.MID_FLOOR) == (
-        "1つのやり取りが単独で大きすぎます"
+        "A single exchange is too large on its own"
     )
 
 
@@ -144,7 +144,7 @@ def test_failure_text_room_floor():
     from MID_FLOOR's — the issue's own deny criterion (the two members
     must never collapse to the same text)."""
     assert compaction_failure_text(RetryLoopTerminal.ROOM_FLOOR) == (
-        "最新のメッセージだけで窓に入りません"
+        "The most recent messages alone don't fit in the window"
     )
 
 

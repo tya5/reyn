@@ -95,7 +95,7 @@ def test_reported_but_empty_shows_a_distinct_deny_text_not_zero_rows():
     as visibly DIFFERENT things — an empty OptionList and a marker row are
     not interchangeable to an operator glancing at the tab."""
     entries = task_pane_entries({"tasks_reported": True, "tasks": []})
-    assert entries == [("実行中の task はありません", "")]
+    assert entries == [("No tasks currently running", "")]
 
 
 def test_a_running_prompt_task_renders_kind_target_elapsed_and_cancel_command():
