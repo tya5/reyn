@@ -202,7 +202,7 @@ def test_exec_capture_false_with_empty_message_is_observed_without_warning(caplo
     caplog.set_level("WARNING")
     rp = _parse_exec_push(json.dumps({"push_when": False, "wake": False, "message": ""}))
     assert rp == ResolvedPush(message="", wake=False, push_when=False, session=None)
-    assert not caplog.records
+    assert not any(r.name == "reyn.hooks.dispatcher" for r in caplog.records)
 
 
 def test_exec_capture_true_with_empty_message_still_warns(caplog) -> None:

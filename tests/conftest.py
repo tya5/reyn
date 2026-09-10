@@ -50,6 +50,7 @@ import asyncio
 import copy
 import faulthandler
 import importlib.util
+import logging
 import os
 import sys
 import warnings
@@ -717,6 +718,54 @@ def _clear_find_project_root_cache() -> Iterator[None]:
     _find_project_root_uncached.cache_clear()
     yield
     _find_project_root_uncached.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_root_logging_handlers() -> Iterator[None]:
+    """Save + restore ``logging.getLogger()``'s own ``handlers``/``level``,
+    and turn ``captureWarnings`` back off, around every test (main-red,
+    2026-09-10, CI finding).
+
+    ``chat._setup_interactive_logging`` calls ``logging.basicConfig(...,
+    force=True)`` — REPLACING root's entire handler list, including (as of
+    #6045) attaching a bare ``logging.StreamHandler()`` when
+    ``is_interactive=False``, which binds WHATEVER ``sys.stderr`` object
+    is live at that exact call — under pytest's default ``fd``/``sys``
+    capture, that is THIS test's own per-test capture stream, not a
+    process-lifetime one. Every test in ``tests/`` that calls this
+    function (or drives ``chat._run``/``_run_remote`` directly) already
+    saves+restores ``root.handlers``/``level`` itself — this fixture is a
+    second, process-level net for the SAME class of hole
+    ``_isolate_stall_trace_file_handler_registration`` below already
+    closed for ``stall_trace``'s own registered path: a process-global a
+    test can mutate is this file's own responsibility to isolate, not
+    every individual caller's.
+
+    Real incident this closes: `test_stderr_summary_bypasses_a_rebound_
+    sys_stderr` (`test_5939_pr1_cache_release_and_forensics.py`) and
+    `test_with_no_target_ever_attached_the_exit_fallback_reaches_stderr`
+    (`test_5989_early_log_buffer.py`) both failed on `main` under `-n
+    auto`, in different xdist workers, neither reproducible by re-running
+    either test file alone or together with every other direct caller of
+    `_setup_interactive_logging` found by hand — consistent with a THIRD
+    test (never identified) elsewhere on the same worker leaving a bare
+    `StreamHandler()` attached to root whose own bound stream pytest later
+    closed at ITS OWN per-test teardown, independent of whether the
+    leaking test itself ever restored `root.handlers` (a python-level
+    restore does not undo pytest's own fd/stream lifecycle). Both target
+    tests' OWN claims were re-verified as still true in isolation before
+    writing this fixture — the fix is closing the class of hole, not
+    rewriting either test."""
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    yield
+    for handler in root.handlers:
+        if handler not in saved_handlers:
+            handler.close()
+    root.handlers[:] = saved_handlers
+    root.setLevel(saved_level)
+    logging.captureWarnings(False)
 
 
 @pytest.fixture(autouse=True)

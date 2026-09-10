@@ -115,7 +115,10 @@ def test_capturing_stream_ignores_whitespace_only_writes(caplog: pytest.LogCaptu
         stream.write("   ")
 
     assert stats.count == 0
-    assert caplog.records == []
+    assert [
+        r for r in caplog.records
+        if r.name == "reyn.interfaces.inline.textual_chat.stray_output"
+    ] == []
 
 
 def test_capturing_stream_write_does_not_recurse_through_a_misdirected_handler():

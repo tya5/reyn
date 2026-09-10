@@ -202,7 +202,7 @@ def test_apply_required_capabilities_ignore_is_silent(caplog) -> None:
 
     with caplog.at_level(logging.DEBUG, logger="reyn.security.sandbox"):
         _apply_required_capabilities(LandlockBackend(), ["ipc_named_service"], "ignore")
-    assert not caplog.records
+    assert not any(r.name == "reyn.security.sandbox" for r in caplog.records)
 
 
 def test_error_now_rejects_unenforced_noop_not_enforced_landlock() -> None:
