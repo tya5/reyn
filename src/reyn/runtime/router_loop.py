@@ -2258,6 +2258,12 @@ class RouterLoop:
         # FP-0005 max_iterations checkpoint: outer while allows re-entry after
         # an approved extension. _loop_cancelled tracks cancel-break vs exhaustion.
         _loop_cancelled = False
+        # #5851 PR-3: turn-mid memory mini-ladder's own stop reason, kept
+        # SEPARATE from _loop_cancelled — a memory-triggered stop must be
+        # recorded and acknowledged distinctly from an operator's own
+        # cancel (#5851 acceptance: "その停止が turn_cancelled ではない
+        # 理由で記録される"), never folded into the same flag.
+        _memory_stopped_reason: "str | None" = None
         while True:
          for _iteration in range(self.max_iterations):
             self._delta_round_index += 1
@@ -2271,6 +2277,38 @@ class RouterLoop:
                 host.events.emit("turn_cancelled", chain_id=self.chain_id)
                 _loop_cancelled = True
                 break
+            # #5851 PR-3: turn-mid memory mini-ladder, checked at the SAME
+            # boundary as the cancel checkpoint immediately above it, and
+            # BEFORE the LLM call further below (architect ruling, #5939
+            # issue thread — this exact position, never right after a
+            # `tool_returned`, is the only point every preceding round's
+            # tool_call/tool_result pairs are guaranteed complete: a round
+            # can issue several tool calls, and compacting between the
+            # first return and the last would risk folding the
+            # assistant(tool_calls) message while later results are still
+            # in flight, handing the provider an orphaned tool_result it
+            # is expected to reject — see Session._check_turn_mid_memory_
+            # ladder's own docstring). getattr-guarded → phase hosts that
+            # don't implement the hook are a no-op (byte-identical).
+            _memory_check_fn = getattr(host, "_check_turn_mid_memory", None)
+            if callable(_memory_check_fn):
+                _memory_stopped_reason = await _memory_check_fn()
+                if _memory_stopped_reason is not None:
+                    break
+                # #5939/#5851 architect ruling: the ladder above may have
+                # just awaited a real compaction LLM call — that await
+                # ALWAYS makes the cancel observation taken above stale (a
+                # cancel could have fired while this coroutine waited), so
+                # it MUST be re-read here before the turn's own next LLM
+                # call reads the pre-await snapshot as "not cancelled".
+                # Dropping this re-check would be a NEW defect distinct
+                # from the one #5851 exists to close: a cancel fired
+                # during compaction would be silently ignored for one
+                # whole iteration, spending one real, unwanted LLM call.
+                if callable(_cancel_fn) and _cancel_fn():
+                    host.events.emit("turn_cancelled", chain_id=self.chain_id)
+                    _loop_cancelled = True
+                    break
             # #1909 / #3501 (OPT-IN, default off): intra-turn untrusted-content
             # re-narrowing. ``self._intra_turn_contextual_for_turn_fn`` is
             # None unless ``safety.threat_scan.capability_narrowing`` is
@@ -3148,6 +3186,8 @@ class RouterLoop:
             return self._total_usage
 
          # end of inner for loop
+         if _memory_stopped_reason is not None:
+            break  # #5851 PR-3: memory-stopped, exit outer while, handled below
          if _loop_cancelled:
             break  # cancelled: exit outer while, emit error below
 
@@ -3182,6 +3222,30 @@ class RouterLoop:
         # ws cancel). max_iterations exhaustion takes the limit-deny / on_limit
         # path below (where _loop_cancelled is False), never this branch, so this
         # message is cancel-only.
+        # #5851 PR-3: memory-stopped path — an acknowledgement of a SAFETY
+        # NET tripping, not an error and NOT the operator's own cancel
+        # (#5851 acceptance: "その停止が turn_cancelled ではない理由で記録
+        # される"). Mirrors the cancelled branch immediately below in
+        # SHAPE (same clean, history/WAL-consistent exit — "降りる、殺さ
+        # ない": the next turn starts normally exactly the way a
+        # cooperative-cancel's own next turn does) but with its own
+        # distinct outbox text and meta.kind, so an operator or a later
+        # reader of history.jsonl can tell the two apart.
+        if _memory_stopped_reason is not None:
+            await self.host.put_outbox(
+                kind="system",
+                text="⚠ turn paused — process memory limit reached",
+                persist_as=None,
+                meta={"chain_id": self.chain_id},
+            )
+            self.host.append_history_entry(
+                role="system",
+                content="Turn paused: process memory limit reached.",
+                meta={"kind": "turn_stopped_memory", "chain_id": self.chain_id},
+                disclosure=Disclosure.OPERATOR,
+            )
+            return self._total_usage
+
         if _loop_cancelled:
             await self.host.put_outbox(
                 kind="system",

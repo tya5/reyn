@@ -428,6 +428,14 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     "session_memory_exit": frozenset(
         {"footprint", "cap_bytes", "metric", "session_count", "broadcast_path", "delivered", "remedies"}
     ),
+    # turn_stopped_memory (#5851 PR-3 ③'): the turn-mid mini-ladder's own
+    # terminal step -- the turn ends at the NEXT iteration boundary,
+    # never mid-tool-call, once fold (①') and cache release (②') both
+    # failed to bring the footprint back under cap. Deliberately a
+    # DIFFERENT kind from `turn_cancelled` -- see
+    # Session._check_turn_mid_memory_ladder's own docstring for why an
+    # operator's own cancel must never be conflated with this safety net.
+    "turn_stopped_memory": frozenset({"footprint_bytes", "cap_bytes"}),
 }
 
 
@@ -751,6 +759,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "turn_completed",
     "turn_settled",
     "turn_started",
+    "turn_stopped_memory",
     "turn_too_large_truncated",
     "untrusted_narrowing_engaged",
     "untrusted_narrowing_lifted",
