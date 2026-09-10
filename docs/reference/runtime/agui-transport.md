@@ -40,17 +40,23 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
     at-most-once retry).
   - `{"type": "slash_command", "name": "model", "args": "strong"}` — run a
     registered slash command (#3595 S5). The response body is
-    `{"status": "ok", "ran": true|false}`; `ran: false` means this server's
-    registry has no such command (a client on a different build), never a
-    crash. ★ The client has ALREADY interpreted the operator's `/…` line and
-    resolved the NAME against its own registry — nothing on the wire or on the
-    server tests a leading `/`, which is the whole point of #3595: `Session`
-    interprets no string, and a client maps typed text onto published
-    operations. A remote client sends this rather than running the command
-    itself because it holds no `Session`, and the commands that still read
-    session state can only run where that session is. Permission-gated by the
-    same `authorize_write` check `user_message` passes, and the command's reply
-    rides the ordinary display stream.
+    `{"status": "ok", "accepted": true|false}`; `accepted: false` means this
+    server's registry has no such command (a client on a different build),
+    never a crash. ★ The client has ALREADY interpreted the operator's `/…`
+    line and resolved the NAME against its own registry — nothing on the wire
+    or on the server tests a leading `/`, which is the whole point of #3595:
+    `Session` interprets no string, and a client maps typed text onto
+    published operations. A remote client sends this rather than running the
+    command itself because it holds no `Session`, and the commands that still
+    read session state can only run where that session is. Permission-gated by
+    the same `authorize_write` check `user_message` passes.
+    #6083 ⑵-b: `accepted: true` means the command was HANDED OFF to the
+    session's own background-task funnel, not that it has finished — a slow
+    handler (e.g. `/compact`) no longer holds this POST open until it
+    completes (the false-failure shape #6083 itself reports). The command's
+    real success/failure line still rides the ordinary display stream, exactly
+    as before; a caller that needs the actual outcome reads it from there, not
+    from this response.
   - `{"type": "heartbeat"}` — a liveness keepalive.
 
   An input type the server does not model is a **graceful no-op** (a `200` ack),

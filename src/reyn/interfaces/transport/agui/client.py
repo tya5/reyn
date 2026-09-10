@@ -694,11 +694,25 @@ class AgUiTransport(ClientTransport):
         # no transport re-tests ``startswith("/")`` and the server executes a
         # named operation rather than sniffing a string. The server re-resolves
         # the name against its OWN registry (a client and a server can be
-        # running different builds) and answers whether it ran.
+        # running different builds).
+        #
+        # #6083 ⑵-b: the server no longer awaits the command to completion
+        # before answering — it hands the command to its own background-task
+        # funnel and answers ``accepted`` immediately (endpoint.py's own
+        # comment on the ``slash_command`` arm has the full reasoning). So
+        # ``True`` here means "the server accepted this and will run it",
+        # NOT "it already ran" / "it succeeded" — a meaning narrower than
+        # this method's own ABC docstring states for the general case
+        # (``ClientTransport.run_slash_command``), which still holds for
+        # ``InProcessTransport``'s synchronous, local execution. A caller
+        # that needs the real outcome reads it off the display stream this
+        # command's own success/error line already rides (the SAME SSE
+        # broadcast every other reply uses — see endpoint.py), same as it
+        # always had to for any other asynchronously-reported effect.
         result = await self._send(
             {"type": "slash_command", "name": name, "args": args}
         )
-        return bool((result or {}).get("ran"))
+        return bool((result or {}).get("accepted"))
 
     async def request_attach(self, agent_name: str) -> bool:
         # #4534 PR-1/PR-2: same shape as run_slash_command above, a second
