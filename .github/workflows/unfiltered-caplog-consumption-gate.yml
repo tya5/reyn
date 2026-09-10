@@ -1,0 +1,42 @@
+name: unfiltered caplog consumption gate
+
+# Recurrence-prevention gate for the caplog-consumption bug pattern that
+# hit #6031, #6035, and #6038 independently the same day: a test asserting
+# on caplog.records/.messages/.text without filtering to its own subject
+# (logger name or message content) first -- flaky-by-construction under
+# `-n auto`, since caplog's handler is attached to the ROOT logger for the
+# whole pytest-xdist worker process. Zero-tolerance (no baseline) -- see
+# scripts/check_unfiltered_caplog_consumption.py's own module docstring
+# for the full design (the 3 named dangerous shapes, the caplog.text scope
+# decision, the false-positive/recall disclosure).
+#
+# `paths: tests/**` matches this gate's own scan scope exactly -- a change
+# outside that tree cannot add or remove a caplog-consumption site this
+# script counts.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  unfiltered-caplog-consumption:
+    name: unfiltered caplog consumption gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_unfiltered_caplog_consumption.py is stdlib-only
+      # (ast / subprocess / pathlib). No pip install needed.
+      - name: Check no unfiltered caplog.records/.messages/.text consumption
+        run: |
+          python scripts/check_unfiltered_caplog_consumption.py

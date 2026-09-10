@@ -217,7 +217,11 @@ def test_no_token_bound_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
             None, model=model,
         )
     assert result is MediaMaterialiseFailure.NO_TOKEN_BOUND
-    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+    assert not any(
+        r.levelno >= logging.WARNING
+        for r in caplog.records
+        if r.name == "reyn.runtime.router_loop"
+    )
 
 
 def test_strip_falsify_the_gate_by_hand() -> None:

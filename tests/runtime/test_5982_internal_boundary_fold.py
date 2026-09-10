@@ -187,7 +187,7 @@ def test_preview_for_internal_reader_missing_file_returns_not_found_without_warn
         )
 
     assert (preview, found, total_bytes) == ("", False, 0)
-    assert not caplog.records, (
+    assert not any(r.name == "reyn.data.workspace.media_store" for r in caplog.records), (
         f"an ordinary not-found must not warn — got: {[r.message for r in caplog.records]}"
     )
 
