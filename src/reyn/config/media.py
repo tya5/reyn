@@ -187,11 +187,17 @@ def _build_web_fetch_config(raw: object) -> WebFetchConfig:
     else:
         verify_ssl = bool(verify_ssl_raw)
     defaults = WebFetchConfig()
+    max_download_bytes_raw = raw.get("max_download_bytes", defaults.max_download_bytes)
     try:
-        max_download_bytes = int(raw.get("max_download_bytes", defaults.max_download_bytes))
+        max_download_bytes = int(max_download_bytes_raw)
         if max_download_bytes <= 0:
             max_download_bytes = defaults.max_download_bytes
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "web_fetch.max_download_bytes=%r is invalid (not an int); using %r",
+            max_download_bytes_raw, defaults.max_download_bytes,
+        )
         max_download_bytes = defaults.max_download_bytes
     # #1956: bool, but tolerate a truthy string (e.g. an interpolated ${VAR}).
     ap_raw = raw.get("allow_private_ips")
@@ -258,11 +264,17 @@ def _build_gateway_config(raw: object) -> GatewayConfig:
     defaults."""
     if not isinstance(raw, dict):
         return GatewayConfig()
+    ws_max_size_raw = raw.get("ws_max_size", DEFAULT_WS_MAX_SIZE)
     try:
-        ws_max_size = int(raw.get("ws_max_size", DEFAULT_WS_MAX_SIZE))
+        ws_max_size = int(ws_max_size_raw)
         if ws_max_size <= 0:
             ws_max_size = DEFAULT_WS_MAX_SIZE
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "gateway.ws_max_size=%r is invalid (not an int); using %r",
+            ws_max_size_raw, DEFAULT_WS_MAX_SIZE,
+        )
         ws_max_size = DEFAULT_WS_MAX_SIZE
     default_design_raw = raw.get("default_design")
     default_design = (
@@ -369,6 +381,11 @@ def _build_multimodal_config(raw: object) -> MultimodalConfig:
     try:
         max_bytes = int(max_bytes_raw) if max_bytes_raw is not None else 5_000_000
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "multimodal.max_bytes=%r is invalid (not an int); using %r",
+            max_bytes_raw, 5_000_000,
+        )
         max_bytes = 5_000_000
     if max_bytes < 0:
         max_bytes = 5_000_000

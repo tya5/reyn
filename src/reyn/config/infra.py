@@ -1705,6 +1705,11 @@ def _build_fs_watch_config(raw: object) -> FsWatchConfig:
     try:
         debounce_seconds = float(debounce)
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "fs_watch.debounce_seconds=%r is invalid (not a float); using %r",
+            debounce, 0.2,
+        )
         debounce_seconds = 0.2
     return FsWatchConfig(paths=paths, debounce_seconds=debounce_seconds)
 
@@ -1729,6 +1734,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if cleanup_val < 0:
             cleanup_val = defaults.cleanup_period_days
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.cleanup_period_days=%r is invalid (not an int); using %r",
+            cleanup, defaults.cleanup_period_days,
+        )
         cleanup_val = defaults.cleanup_period_days
     disk_percent = raw.get("max_disk_usage_percent", defaults.max_disk_usage_percent)
     try:
@@ -1736,6 +1746,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if disk_percent_val < 0:
             disk_percent_val = defaults.max_disk_usage_percent
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.max_disk_usage_percent=%r is invalid (not a float); using %r",
+            disk_percent, defaults.max_disk_usage_percent,
+        )
         disk_percent_val = defaults.max_disk_usage_percent
     # #4496 PR-2: `network` is a declared future value, not yet backed by an
     # implementation (see AuditEventsConfig.backend's own docstring) — an
@@ -1758,6 +1773,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if coalesce_fragments_val <= 0:
             coalesce_fragments_val = defaults.agent_delta_coalesce_fragments
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.agent_delta_coalesce_fragments=%r is invalid (not an int); using %r",
+            coalesce_fragments, defaults.agent_delta_coalesce_fragments,
+        )
         coalesce_fragments_val = defaults.agent_delta_coalesce_fragments
     coalesce_interval_ms = raw.get(
         "agent_delta_coalesce_interval_ms", defaults.agent_delta_coalesce_interval_ms,
@@ -1767,6 +1787,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if coalesce_interval_ms_val <= 0:
             coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.agent_delta_coalesce_interval_ms=%r is invalid (not an int); using %r",
+            coalesce_interval_ms, defaults.agent_delta_coalesce_interval_ms,
+        )
         coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
     # #4975: same "malformed/non-positive falls back to the default"
     # discipline as every other numeric field above.
@@ -1778,6 +1803,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if provider_body_max_chars_val <= 0:
             provider_body_max_chars_val = defaults.provider_body_max_chars
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.provider_body_max_chars=%r is invalid (not an int); using %r",
+            provider_body_max_chars, defaults.provider_body_max_chars,
+        )
         provider_body_max_chars_val = defaults.provider_body_max_chars
     # #5891: same "malformed/non-positive falls back to the default"
     # discipline as every other numeric field above.
@@ -1789,6 +1819,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         if tool_result_max_chars_val <= 0:
             tool_result_max_chars_val = defaults.tool_result_max_chars
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.tool_result_max_chars=%r is invalid (not an int); using %r",
+            tool_result_max_chars, defaults.tool_result_max_chars,
+        )
         tool_result_max_chars_val = defaults.tool_result_max_chars
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
@@ -1911,6 +1946,11 @@ def _build_artifacts_config(raw: object) -> ArtifactsConfig:
         if limit_val <= 0:
             limit_val = defaults.remote_fallback_limit
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "artifacts.remote_fallback_limit=%r is invalid (not an int); using %r",
+            limit, defaults.remote_fallback_limit,
+        )
         limit_val = defaults.remote_fallback_limit
     return ArtifactsConfig(remote_fallback_limit=limit_val)
 

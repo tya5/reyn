@@ -442,6 +442,11 @@ def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
         if max_output_chars <= 0:
             max_output_chars = defaults.max_output_chars
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "render_template.max_output_chars=%r is invalid (not an int); using %r",
+            max_output_chars, defaults.max_output_chars,
+        )
         max_output_chars = defaults.max_output_chars
 
     wall_clock_seconds = raw.get("wall_clock_seconds", defaults.wall_clock_seconds)
@@ -450,6 +455,11 @@ def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
         if wall_clock_seconds <= 0:
             wall_clock_seconds = defaults.wall_clock_seconds
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "render_template.wall_clock_seconds=%r is invalid (not a float); using %r",
+            wall_clock_seconds, defaults.wall_clock_seconds,
+        )
         wall_clock_seconds = defaults.wall_clock_seconds
 
     return RenderTemplateConfig(
@@ -518,6 +528,11 @@ def _build_read_cap_config(raw: object) -> "ReadCapConfig":
         if inline_bytes <= 0:
             inline_bytes = defaults.inline_bytes
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "read_cap.inline_bytes=%r is invalid (not an int); using %r",
+            inline_bytes, defaults.inline_bytes,
+        )
         inline_bytes = defaults.inline_bytes
     return ReadCapConfig(inline_bytes=inline_bytes)
 
@@ -592,6 +607,11 @@ def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
         if max_bytes <= 0:
             max_bytes = defaults.max_bytes
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "history_resident.max_bytes=%r is invalid (not an int); using %r",
+            max_bytes, defaults.max_bytes,
+        )
         max_bytes = defaults.max_bytes
     return HistoryResidentConfig(max_bytes=ResidentBytes(max_bytes))
 
@@ -692,6 +712,11 @@ def _build_logs_config(raw: object) -> "LogsConfig":
         if max_bytes <= 0:
             max_bytes = defaults.max_bytes
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "logs.max_bytes=%r is invalid (not an int); using %r",
+            max_bytes, defaults.max_bytes,
+        )
         max_bytes = defaults.max_bytes
     backup_count = raw.get("backup_count", defaults.backup_count)
     try:
@@ -699,6 +724,11 @@ def _build_logs_config(raw: object) -> "LogsConfig":
         if backup_count < 0:
             backup_count = defaults.backup_count
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "logs.backup_count=%r is invalid (not an int); using %r",
+            backup_count, defaults.backup_count,
+        )
         backup_count = defaults.backup_count
     return LogsConfig(max_bytes=max_bytes, backup_count=backup_count)
 
@@ -729,6 +759,11 @@ def _build_process_memory_config(raw: object) -> "ProcessMemoryConfig":
             if candidate > 0:
                 max_bytes = candidate
         except (TypeError, ValueError):
+            import logging
+            logging.getLogger(__name__).warning(
+                "process_memory.max_bytes=%r is invalid (not an int); using %r",
+                raw["max_bytes"], None,
+            )
             max_bytes = None
     enforce = bool(raw.get("enforce", False))
     return ProcessMemoryConfig(max_bytes=max_bytes, enforce=enforce)
@@ -780,6 +815,11 @@ def _build_image_config(raw: object) -> "ImageConfig":
         if row_height_cells <= 0:
             row_height_cells = defaults.row_height_cells
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "image.row_height_cells=%r is invalid (not an int); using %r",
+            row_height_cells, defaults.row_height_cells,
+        )
         row_height_cells = defaults.row_height_cells
     return ImageConfig(row_height_cells=row_height_cells)
 
@@ -825,6 +865,11 @@ def _build_tui_config(raw: object) -> "TuiConfig":
         if not (0 <= warn_percent <= 100):
             warn_percent = defaults.context_usage_warn_percent
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "tui.context_usage_warn_percent=%r is invalid (not an int); using %r",
+            warn_percent, defaults.context_usage_warn_percent,
+        )
         warn_percent = defaults.context_usage_warn_percent
     return TuiConfig(context_usage_warn_percent=warn_percent)
 
@@ -1631,6 +1676,11 @@ def _build_cost_warn_config(raw: object) -> "CostWarnConfig":
     try:
         threshold = float(threshold)
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "cost_warn.model_threshold_per_1m_input_usd=%r is invalid (not a float); using %r",
+            threshold, defaults.model_threshold_per_1m_input_usd,
+        )
         threshold = defaults.model_threshold_per_1m_input_usd
     block_on_high_cost = raw.get("block_on_high_cost", defaults.block_on_high_cost)
     return CostWarnConfig(
@@ -1648,11 +1698,21 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
         try:
             hard = float(hard)
         except (TypeError, ValueError):
+            import logging
+            logging.getLogger(__name__).warning(
+                "cost.*.hard_limit=%r is invalid (not a float); using %r",
+                hard, None,
+            )
             hard = None
     warn_ratio = raw.get("warn_ratio", 0.8)
     try:
         warn_ratio = float(warn_ratio)
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "cost.*.warn_ratio=%r is invalid (not a float); using %r",
+            warn_ratio, 0.8,
+        )
         warn_ratio = 0.8
     # FP-0005 (#1877): ``ask_on_exceed`` was subsumed into the unified
     # ``safety.on_limit`` 3-mode policy (clean-break, no shim). Warn an
@@ -1704,6 +1764,11 @@ def _build_cost_config(raw: object) -> CostConfig:
     try:
         warn_ratio = float(warn_ratio)
     except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "cost.rate_limit_warn_ratio=%r is invalid (not a float); using %r",
+            warn_ratio, 0.8,
+        )
         warn_ratio = 0.8
     return CostConfig(
         per_agent_tokens=_build_cost_limit(raw.get("per_agent_tokens")),
