@@ -34,7 +34,7 @@ valid in one is not necessarily valid in the other:
 | `session_start` | `builtin:lifecycle:session_start` | session opens | ✅ | ✅ |
 | `session_end` | `builtin:lifecycle:session_end` | session closes | ✅ | ✅ |
 | `turn_start` | `builtin:lifecycle:turn_start` | a turn begins | ✅ | ✅ |
-| `turn_end` | `builtin:lifecycle:turn_end` | a turn's terminal `stop_reason` | ✅ | ✅ |
+| `turn_end` | `builtin:lifecycle:turn_end` | one `_run_router_loop` iteration reaches a terminal `stop_reason` — see [Lifecycle points](#lifecycle-points) below for why this is not the same thing as "the operator's own turn" | ✅ | ✅ |
 | `mcp_resource_updated` | `builtin:external:mcp_resource_updated` | a subscribed MCP resource pushes an update | ✅ | ✅ |
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
 | `cron_fired` | `builtin:external:cron_fired` | a `cron:` job fires (either `action`, #5209) | ✅ | ✅ |
@@ -228,7 +228,17 @@ the first turn begins.
 
 Implementation anchors:
 
-- `turn_end` fires at the terminal `stop_reason`
+- 🔴 **`turn_end` fires once per `_run_router_loop` ITERATION, not once per
+  operator-submitted turn.** `Session._run_router_loop` has more than one
+  caller (`session.py`) — including agent-to-agent message injection, not
+  only the local operator's own submitted message — and `turn_end`
+  dispatches unconditionally, in the same `finally` block, on EVERY one of
+  them. An operator hitting `turn_end` fire repeatedly for what reads as
+  "one" conversational turn is not a duplicate-emit bug; it is this row's
+  own name reading as narrower than what it actually covers. If your hook
+  needs "the operator's own turn ended, exactly once", filter on the
+  firing event's own fields (`chain_id`, `user_text`) rather than assuming
+  the point name alone answers that.
 
 ## External-event points
 
