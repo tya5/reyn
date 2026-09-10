@@ -7931,7 +7931,7 @@ class Session:
         if self._memory_backpressure_active:
             self._compaction_seen_since_backpressure = True
 
-    def _check_memory_ladder(self, *, chain_id: "str | None", footprint: "int | None") -> None:
+    async def _check_memory_ladder(self, *, chain_id: "str | None", footprint: "int | None") -> None:
         """#5939 PR-2 — the steady-state memory ladder's own judge, called
         once per turn-end sample (right after :meth:`_emit_process_footprint`
         took *footprint*, same call site, no second read): ① backpressure
@@ -12548,7 +12548,7 @@ class Session:
                     # judge reads the SAME sample the emit above just
                     # took -- same turn-end boundary, no second
                     # guard.read() call.
-                    self._check_memory_ladder(chain_id=chain_id, footprint=_footprint)
+                    await self._check_memory_ladder(chain_id=chain_id, footprint=_footprint)
                     try:
                         # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
                         # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
