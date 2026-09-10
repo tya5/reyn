@@ -68,27 +68,29 @@ could itself be under pressure; ``reyn.log``'s handler may not be
 installed in every caller; stderr may be invisible if the terminal
 itself is unresponsive), so all three fire independently.
 
-``host`` (swap/memory-pressure) and ``top_history_rows`` fields named in
-architect's own schema sketch are OUT of scope for this PR specifically:
-- ``host`` is PR-2's own field (the host-OR-condition reader that decides
-  whether ④ fires belongs with ④ itself, not duplicated here) — carried
-  as ``None`` with a docstring note, not a placeholder number.
-- ``top_history_rows`` is genuinely buildable now (#5896 landed all 3
-  stages — a history row carries its own resident-byte count, no walk
-  needed) but reading LIVE session history needs the same instance-
-  registry PR-5 will add; until then this is ``None`` too, disclosed,
-  not silently omitted from the schema.
+``host`` (swap/memory-pressure), a field named in architect's own schema
+sketch, is OUT of scope for THIS module: it is PR-2's own field (the
+host-OR-condition reader that decides whether ④ fires belongs with ④
+itself, not duplicated here) — carried as ``None`` with a docstring
+note, not a placeholder number.
+
+``top_history_rows`` (#5851 D7) is filled in — see :func:`_top_history_
+rows`. Reading LIVE session history needed PR-5's own ``sessions``
+parameter (:func:`run_cache_release_and_forensics`'s own docstring) AND
+#5896's per-row resident-byte caching to both land first; until 09-10
+this stayed ``None``, disclosed, not silently omitted from the schema.
 """
 from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
 from reyn.core.events.events import EventLog
 from reyn.data.workspace.artifact_ref import table_cache_clear
 from reyn.interfaces.repl.status import config_derived_cache_clear
+from reyn.runtime.chat_message import CONTENT_REF_META_KEY, SPILLED_META_KEY
 from reyn.runtime.process_memory import ProcessMemoryGuard
 from reyn.services.compaction.engine import token_cache_clear
 
@@ -150,16 +152,90 @@ class ProcessMemoryForensics:
     report, assembled from step ②'s own before/after measurements
     rather than a separate walk.
 
-    ``host`` / ``top_history_rows`` are ``None`` in THIS stage — see the
-    module docstring's "Diagnostics" section for why, and which later
-    PR owns filling them in."""
+    ``host`` is still ``None`` in THIS stage — see the module docstring's
+    "Diagnostics" section for why, and which later PR owns filling it in.
+
+    ``top_history_rows`` (#5851 D7, filled in here — was ``None`` while
+    #5896 was still landing): the ``limit`` largest resident history rows
+    across every session in :func:`run_cache_release_and_forensics`'s own
+    ``sessions``, by weight — see :func:`_top_history_rows` for exactly
+    what "weight" means and why building this list touches no I/O in the
+    steady state this function actually runs in."""
 
     footprint_before: "int | None"
     footprint_after: "int | None"
     metric: "str | None"
     dropped: "list[CacheDropResult]"
     host: "None" = None
-    top_history_rows: "None" = None
+    top_history_rows: "list[dict]" = field(default_factory=list)
+
+
+#: #5851 D7: how many rows :func:`_top_history_rows` reports — matches
+#: :func:`_write_stderr_summary`'s own "<=5 lines" convention (this list
+#: is meant to fit in that same operator-facing summary), not a value
+#: derived from anything else. A caller that wants more can read the
+#: same field wider by calling :func:`_top_history_rows` directly with a
+#: different ``limit`` — nothing downstream assumes this exact number.
+_TOP_HISTORY_ROWS_LIMIT = 5
+
+
+def _top_history_rows(
+    sessions: "Iterable[object] | None", *, limit: int = _TOP_HISTORY_ROWS_LIMIT,
+) -> "list[dict]":
+    """#5851 D7 (09-10 ruling: "#5896 landed all 3 stages, ``top_history_
+    rows`` is genuinely buildable now — walk not needed"): the ``limit``
+    largest resident history rows across every ``sessions`` entry, as
+    ``{"tool": ..., "bytes": ..., "ts": ...}`` dicts (architect's own
+    schema sketch, #5939).
+
+    ★ Each row's WEIGHT is ``ChatMessage.resident_bytes()`` (the
+    row's own serialised shell — cached since #5896, never re-computed
+    here) PLUS ``body_bytes()`` for an un-spilled content-ref row (its
+    real, reachable body size — the SAME two-term sum ``Session._evict_
+    oldest_resident_entries``'s own ``_pull_weight`` uses, #5973's own
+    correction: a resident shell ALONE reads ~400 bytes for exactly the
+    rows that are actually large, since #5896 moved the body out of the
+    shell). Reusing that formula here, not `resident_bytes()` alone, is
+    deliberate — a diagnostic meant to show "why is memory large" that
+    used the misleading number would defeat its own purpose.
+
+    ★ "no walk" is true in the steady state this function
+    actually runs in, not universally: `resident_bytes()` is warmed for
+    EVERY resident row by `_evict_oldest_resident_entries` on every
+    single append (`Session._append_history`), and `body_bytes()` is
+    warmed there too for every content-ref row currently in scope — both
+    caches are already hot by the time step ② runs (it fires from `_check_
+    memory_ladder`, itself checked at a turn boundary `_append_history`
+    already crossed). `body_bytes()` CAN fall through to a real stat for
+    a row missing its `CONTENT_BYTES_META_KEY` stamp (a pre-#5896-migrated
+    row that was never re-appended since) — that one case is a real,
+    accepted cost `_pull_weight` already pays on the SAME hot path this
+    reuses, not a NEW one this function introduces.
+
+    ★ Never raises on a malformed/foreign session object:
+    ``sessions`` is duck-typed the same way :func:`run_cache_release_and_
+    forensics`'s own docstring already establishes for ``_drop_instance_
+    caches`` — an object with no ``history`` attribute contributes no
+    rows rather than erroring.
+    """
+    if not sessions:
+        return []
+    weighted: "list[tuple[int, dict]]" = []
+    for s in sessions:
+        history = getattr(s, "history", None)
+        if not history:
+            continue
+        media_store = getattr(s, "_media_store", None)
+        for m in history:
+            weight = int(m.resident_bytes())
+            meta = m.meta or {}
+            if meta.get(CONTENT_REF_META_KEY) and not meta.get(SPILLED_META_KEY):
+                body = m.body_bytes(media_store)
+                if body is not None:
+                    weight += body
+            weighted.append((weight, {"tool": m.name, "bytes": weight, "ts": m.ts}))
+    weighted.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _, row in weighted[:limit]]
 
 
 async def run_cache_release_and_forensics(
@@ -215,6 +291,7 @@ async def run_cache_release_and_forensics(
         footprint_after=footprint_after,
         metric=guard.metric,
         dropped=dropped,
+        top_history_rows=_top_history_rows(sessions),
     )
     _emit_forensics_event(events, forensics, chain_id=chain_id)
     _log_forensics_summary(forensics)
@@ -238,6 +315,11 @@ def _emit_forensics_event(
             }
             for d in forensics.dropped
         ],
+        # #5851 D7: the machine-readable face is where the full list
+        # belongs (unlike the log/stderr summaries below, which stay at
+        # their own already-established, line-budgeted shape rather than
+        # growing to fit up to `_TOP_HISTORY_ROWS_LIMIT` more rows).
+        top_history_rows=forensics.top_history_rows,
         chain_id=chain_id,
     )
 

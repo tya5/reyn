@@ -341,10 +341,14 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # moved -- the "RAM消費要因の候補を数値と共に" owner requirement,
     # assembled as a byproduct of ② itself rather than a separate walk.
     # ``dropped`` is a list of {name, entries_before, entries_after}.
-    # ``host``/``top_history_rows`` ride as ``None`` in this stage --
-    # see process_memory_release.py's own module docstring for which
-    # later PR fills them in; the KEYS are present now so a reader never
-    # has to special-case an older event shape once they land.
+    # ``top_history_rows`` (#5851 D7) is now a real list of
+    # {tool, bytes, ts} dicts, the `_TOP_HISTORY_ROWS_LIMIT` biggest
+    # resident rows across every session passed to ladder step ②'s own
+    # `sessions` -- see process_memory_release.py's `_top_history_rows`
+    # for the weight formula. ``host`` still rides as ``None`` (PR-2's
+    # own field, out of scope for this module) -- see that module's own
+    # docstring for which PR fills it in; the KEY is present now so a
+    # reader never has to special-case an older event shape once it does.
     "process_memory_forensics": frozenset(
         {"footprint_before", "footprint_after", "metric", "dropped", "host", "top_history_rows"}
     ),
