@@ -309,6 +309,38 @@ async def _settle_until(pilot, until) -> None:
         await asyncio.sleep(0.01)
 
 
+async def _press_keeping_focus(pilot, widget, *keys: str) -> None:
+    """Send ``keys`` to ``pilot`` one at a time, RE-ASSERTING ``widget``'s
+    focus immediately before each one (#6074).
+
+    #4051's fix for the panel's DEFERRED ``call_after_refresh(radios[0
+    ].focus)`` one-shot steal (``intervention_panel.py``'s
+    ``on_tabbed_content_tab_activated``) was a single focus-until-it-sticks
+    loop run ONCE, before the whole keypress batch. That closes the race
+    only when the steal lands DURING that loop; ``textual.App._press_keys``
+    pumps the message queue (``wait_for_idle``) BETWEEN every individual key
+    it sends, so a steal that has not fired yet at the moment the pre-batch
+    check passes can still land in one of THOSE gaps — after the last
+    re-assert, with nothing left in the batch to re-claim focus. Confirmed
+    (#6074 investigation): forcing a steal to land exactly there — after an
+    otherwise-identical pre-press focus-until-it-sticks check passed, before
+    the "y","e","s" batch — leaves ``transport.submitted`` empty forever
+    (this repo's sibling test's own unbounded ``_settle_until`` at the
+    bottom then hangs rather than failing, matching #6074's reported
+    symptom exactly: CI's ``pytest-timeout`` kill, not an assertion).
+
+    Re-asserting before EVERY key closes this structurally: the steal is a
+    ONE-SHOT (the panel's own doc comment), so by the time any single
+    re-assert has observed ``widget`` already focused, nothing in the
+    system will displace it again before the NEXT key — there is no
+    "batch" left for the one-shot to land inside of."""
+    for key in keys:
+        while pilot.app.focused is not widget:
+            widget.focus()
+            await pilot.pause()
+        await pilot.press(key)
+
+
 @pytest.mark.asyncio
 async def test_choice_intervention_panel_selection_delivers_correct_choice_id() -> None:
     """Tier 2b: F1 permission-band reachability — a closed-set intervention
@@ -398,27 +430,25 @@ async def test_composer_submit_during_pending_intervention_is_always_a_new_turn(
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         composer = app.query_one(Composer)
-        # #4051: the arriving intervention frame's own hidden→shown transition
-        # posts a TabbedContent.TabActivated message that schedules a DEFERRED
-        # call_after_refresh(radios[0].focus) (intervention_panel.py's
-        # on_tabbed_content_tab_activated) — a ONE-SHOT callback that can land
-        # on any later refresh, including one after a plain composer.focus()
-        # call, stealing focus back to the RadioSet with nothing left to
-        # re-claim it: the keypresses below then land on the RadioSet instead
-        # of the Composer, submit_user_text is never called, and
-        # transport.submitted stays empty forever (the wait at the bottom of
-        # this test is unbounded by design, #3748). A single focus() + wait-
-        # for-condition does not structurally close this — the one-shot steal
-        # can still land AFTER the check passes. RE-ASSERT focus every pump
-        # until it demonstrably sticks, so the race resolves regardless of
-        # which pump the deferred callback lands on (same "wait on the
-        # condition, not a pause count" shape as #4044's fix, but the
-        # condition here needs an accompanying retry, not just an observation).
-        while app.focused is not composer:
-            composer.focus()
-            await pilot.pause()
-        await pilot.press("y", "e", "s")
-        await pilot.press("enter")
+        # #4051 / #6074: the arriving intervention frame's own hidden→shown
+        # transition posts a TabbedContent.TabActivated message that
+        # schedules a DEFERRED call_after_refresh(radios[0].focus)
+        # (intervention_panel.py's on_tabbed_content_tab_activated) — a
+        # ONE-SHOT callback that can land on any later refresh, stealing
+        # focus back to the RadioSet. A single pre-batch focus-until-it-
+        # sticks check does not structurally close this: the steal can
+        # still land in one of the message-pump gaps BETWEEN individual
+        # keys of a ``pilot.press(...)`` batch, after that check already
+        # passed, with nothing left in the batch to re-claim focus — the
+        # keypresses then land on the RadioSet instead of the Composer,
+        # submit_user_text is never called, and transport.submitted stays
+        # empty forever (the wait at the bottom of this test is unbounded
+        # by design, #3748 — confirmed by #6074's investigation to be
+        # exactly the reported CI hang, not an unrelated flake).
+        # ``_press_keeping_focus`` re-asserts focus before EVERY key, not
+        # just once before the batch, closing the race regardless of which
+        # single pump the one-shot deferred callback lands on.
+        await _press_keeping_focus(pilot, composer, "y", "e", "s", "enter")
         # #3720: wait for the submit to ARRIVE, not for one turn of the loop.
         # A bare ``pause()`` asserts that the send completes within a single
         # pass of the event loop, which is a property of the machine rather
