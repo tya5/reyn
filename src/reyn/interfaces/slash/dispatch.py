@@ -223,14 +223,42 @@ async def maybe_dispatch_slash(
         # input loop is not a pump).
         if locus == "session":
             ran = await transport.run_slash_command(name, args)
+            if not ran:
+                # #6083: this branch's own ``ran`` comes back from a REAL
+                # control POST (`run_slash_command`), so ``False`` is NOT
+                # "this client has no session" — that claim was hardcoded
+                # here regardless of cause, and the owner's own real-machine
+                # report shows it firing on a compaction that had ALREADY
+                # SUCCEEDED server-side, with the actual cause (a 10s
+                # control-read timeout — #5894 ①-1) merely appended as a
+                # SUFFIX by ``_display``'s own ``with_control_failure`` call.
+                # A suffix does not fix a false prefix: a reader parses
+                # "could not run: <claim>. — <detail>" as the claim PLUS
+                # supporting detail, not the detail CORRECTING the claim.
+                # The typed ``ControlOutcome`` (delivered/refused/
+                # not_delivered — `transport.last_control_outcome()`,
+                # already recorded by this same call) already knows which
+                # of those three happened; this text no longer guesses
+                # ahead of it. ⚠️ This alone does not fix "a SUCCESS is
+                # reported as a failure" — see #6083's own PR body.
+                _display(
+                    transport, "error",
+                    f"/{name} could not run: the server did not confirm it ran.",
+                )
         else:
             ctx = SlashContext(transport=transport, session=None)
             ran = await execute_slash_command(ctx, name, args)
-        if not ran:
-            _display(
-                transport, "error",
-                f"/{name} could not run: this client has no session to run it on.",
-            )
+            if not ran:
+                # This branch's own ``ran`` comes back from a LOCAL,
+                # in-process call (`execute_slash_command`, no control POST
+                # at all — see the ``locus`` comment above) — `False` here
+                # genuinely does mean "this client has no session to run it
+                # on" (the client/connection-locus handler's own precondition
+                # check), unchanged from before #6083.
+                _display(
+                    transport, "error",
+                    f"/{name} could not run: this client has no session to run it on.",
+                )
 
     if runner is not None:
         runner(_run())
