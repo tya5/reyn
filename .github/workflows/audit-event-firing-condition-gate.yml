@@ -1,0 +1,45 @@
+name: audit-event firing-condition gate
+
+# #6071: ratchets a NEW audit-event kind whose docs/reference/runtime/
+# events.md row names no firing condition (fires / only when / once per /
+# etc.) -- see scripts/audit_event_firing_condition_gate.py's own module
+# docstring for the exact marker phrases and lead-coder's ruling on scope
+# (the existing ~grandfathered findings are a SEPARATE, wider count this
+# gate's own baseline, scripts/audit_event_firing_condition_gate_baseline.json,
+# deliberately does not mass-fix).
+#
+# `paths` covers every input this scan actually reads: the events doc
+# itself, the closed vocabulary it's measured against, and the gate/
+# baseline files -- same reasoning as user-facing-lang-gate.yml's own
+# path scoping.
+on:
+  pull_request:
+    paths:
+      - "docs/reference/runtime/events.md"
+      - "src/reyn/core/events/event_schema.py"
+      - "scripts/audit_event_firing_condition_gate.py"
+      - "scripts/audit_event_firing_condition_gate_baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  audit-event-firing-condition-gate:
+    name: audit-event firing-condition gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/audit_event_firing_condition_gate.py is stdlib-only
+      # (argparse / json / re / pathlib), plus one import of reyn's own
+      # event_schema module -- no pip install needed.
+      - name: Check no new undocumented-firing-condition event kind
+        run: |
+          python scripts/audit_event_firing_condition_gate.py
