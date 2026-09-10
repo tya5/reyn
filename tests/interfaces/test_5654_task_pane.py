@@ -140,7 +140,7 @@ def test_a_crash_recovered_task_is_not_cancellable_and_carries_no_command():
         {"tasks_reported": True, "tasks": [_task(cancellable=False)]}, now=_NOW,
     )
     text, command = entries[0]
-    assert "中断不可" in text
+    assert "not cancellable" in text
     assert command == ""
 
 
@@ -156,7 +156,7 @@ def test_a_cancel_already_requested_task_shows_the_note_but_keeps_its_command():
         now=_NOW,
     )
     text, command = entries[0]
-    assert "中断要求済" in text
+    assert "cancel requested" in text
     assert command == "/tasks cancel abc123"
 
 
