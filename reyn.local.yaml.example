@@ -935,6 +935,18 @@
 # (no cap, enforce off) — the shipped stage (a) default; a non-positive/
 # non-numeric max_bytes falls back to no-cap, never to the literal 0.
 #
+# host_swap_critical_bytes (#5939 PR-2): a THIRD, independent key — the
+# HOST's free swap at/under this many bytes ALSO trips the memory ladder
+# (backpressure -> cache release -> session halt -> process exit),
+# regardless of this process's own footprint. Absent/null (default) is
+# inert, same shape as max_bytes. This default does NOT cover the
+# owner's own motivating case for the ladder ("最悪 swap 多発で" — swap
+# THRASHING, a frequency) — free-swap-bytes is a documented PROXY (less
+# free swap makes thrashing more likely, a low reading does not confirm
+# it is happening); see ProcessMemoryGuard.host_critical's own docstring.
+# Only evaluated once enforce+max_bytes have already opted the ladder
+# in — this key cannot opt in on its own.
+#
 # enforce: true is INERT in stage (a) — no halt mechanism exists yet (a
 # later stage adds it) — but IS validated at config-load time regardless:
 # enforce: true with no max_bytes set, or on a platform with no reader
@@ -944,6 +956,7 @@
 # process_memory:
 #   max_bytes: 2147483648   # cap, in bytes — absent/unset = no cap (observe only)
 #   enforce: false           # halt when exceeded — inert until a later stage
+#   host_swap_critical_bytes: null  # ADDITIONAL trigger — host's free swap, bytes; null = inert
 
 
 # -----------------------------------------------------------------------------

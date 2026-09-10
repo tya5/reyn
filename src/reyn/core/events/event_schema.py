@@ -398,6 +398,36 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # (reyn.runtime.turn_behavior_tally) that triggered escalation, so a
     # reader can see WHY the judge ran without re-deriving it.
     "behavior_anomaly_judged": frozenset({"verdict", "chain_id", "anomalous_op_count"}),
+    # session_halted (#2259/#2280, ``remedies`` added #5939 PR-2): emitted by
+    # Session._latch_halt, the ONE chokepoint every halt reason goes through
+    # (durability_failure, shutdown_requested, cancelled, and process_memory
+    # once #5939 PR-2's steady-state ladder lands). ``remedies`` is MANDATORY
+    # here, not optional: _latch_halt's own signature has no default for it
+    # and raises ValueError on an empty tuple -- a halt with nothing telling
+    # the operator what to do next cannot even be constructed, let alone
+    # emitted. Requiring it here too means the schema itself, not just the
+    # code that happens to call it today, states that a session_halted
+    # without remedies is a malformed event.
+    "session_halted": frozenset({"reason", "remedies"}),
+    # session_memory_backpressure (#5939 PR-2 ①): the memory ladder's own
+    # recoverable step -- new turns refused while over cap, latched (one
+    # emit per transition, never per-tick -- #5901's own ruling, reused
+    # rather than a new latch shape). The sibling
+    # `session_memory_backpressure_cleared` carries no required fields
+    # beyond the ones every emit already stamps (chain_id/agent_id/etc)
+    # -- omitted here rather than declared with an empty set, same as
+    # every other zero-requirement kind in this dict (its absence IS the
+    # "no requirements" answer).
+    "session_memory_backpressure": frozenset({"bytes", "cap_bytes", "metric"}),
+    # session_memory_exit (#5939 PR-2 ④): the process is about to
+    # terminate. `broadcast_path` ("none" | "registry") and
+    # `session_count` together answer "how many sessions were told, and
+    # was there even a channel to tell more than this one" -- see
+    # Session._memory_exit's own docstring for why collapsing both into
+    # session_count alone would fail-open (the #6035 `_fd=None` shape).
+    "session_memory_exit": frozenset(
+        {"footprint", "cap_bytes", "metric", "session_count", "broadcast_path", "delivered", "remedies"}
+    ),
 }
 
 
@@ -666,6 +696,9 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "semantic_search_started",
     "session_completed",
     "session_halted",
+    "session_memory_backpressure",
+    "session_memory_backpressure_cleared",
+    "session_memory_exit",
     "session_restored",
     # #5694 stage 2 (architect ruling): the registry's own single
     # done-callback funnel for every (name, sid) session.run() background

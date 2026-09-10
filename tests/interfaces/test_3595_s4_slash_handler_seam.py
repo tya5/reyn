@@ -653,7 +653,18 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: about a slash handler reaches through this — it exists so a STATUS READ
 #: MODEL (not a slash command) can surface a per-session sandbox-config
 #: fact, same shape/reasoning as the 123->124 entry above.
-_PUBLIC_MEMBER_CEILING = 125
+#: 125->126 (#5939 PR-2, lead-coder ruling): ``halt_remedies`` — the
+#: public read of the remedies paired with ``halted_reason`` (see that
+#: property's own sibling docstring). Cannot be added without growing the
+#: public surface: ``_latch_halt``'s own structural fix (remedies
+#: required, no default) is only observable to a caller/operator if the
+#: remedies it stores are actually readable — a private-only field would
+#: make the structural guarantee real internally but invisible to
+#: anything outside ``Session`` (the TUI status line, a future `/halt`
+#: inspection command). Genuinely unrelated to #3595 S4's slash-handler-
+#: encapsulation concern, same reasoning as the 123->124/124->125 entries
+#: above.
+_PUBLIC_MEMBER_CEILING = 126
 
 
 def test_session_public_surface_does_not_grow() -> None:

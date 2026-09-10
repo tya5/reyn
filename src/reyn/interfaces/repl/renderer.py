@@ -167,7 +167,7 @@ class ConsoleChatRenderer(ChatRenderer):
         # (``None`` while running) — surfaced via ``bottom_toolbar`` below so a
         # plain ``--cui`` operator sitting idle at the prompt sees it the
         # moment it happens, not only on their next submit's raised
-        # ``DurabilityHaltError``.
+        # ``SessionHaltError``.
         self._halted_reason: "str | None" = None
         # #3318: opt-in body ESC/OSC neutralize (chat.neutralize_body), default
         # off — see format_inline_message/_body_renderable's own docstrings.

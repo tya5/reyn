@@ -566,12 +566,17 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 
 
 
-class DurabilityHaltError(RuntimeError):
-    """#2259 PR-3: raised when an operation is submitted to an agent whose durability has FAILED
-    persistently (a §4-retry-exhausted fire-and-forget durable write — disk full / dead). The agent
-    has FAIL-STOPPED: it no longer accepts operations, because in-memory state must not race ahead
-    of a dead disk (the owner's "no silent unbounded loss"). The raise IS the operator-surface — the
-    caller sees it synchronously on their next op, not only a CRITICAL log they would scroll past."""
+class SessionHaltError(RuntimeError):
+    """#2259 PR-3 (named ``DurabilityHaltError`` until #5939 PR-2): raised
+    when an operation is submitted to an agent that has FAIL-STOPPED —
+    originally durability-only (a §4-retry-exhausted fire-and-forget
+    durable write — disk full / dead; in-memory state must not race
+    ahead of a dead disk, the owner's "no silent unbounded loss"), now
+    the shared exception every halt reason raises (durability failure,
+    shutdown, cancellation, process-memory pressure — see
+    ``Session._latch_halt``). The raise IS the operator-surface — the
+    caller sees it synchronously on their next op, not only a CRITICAL
+    log they would scroll past."""
 
 
 @dataclass(frozen=True)
@@ -1479,6 +1484,28 @@ class Session:
         # Kept directly (not only via journal), see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
+        # #5939 PR-2: the remedies paired with `_halted_reason` above —
+        # ALWAYS set together, by `_latch_halt` (the one chokepoint every
+        # halt reason goes through). Never `None` once `_halted_reason`
+        # is set, never empty (see `_latch_halt`'s own docstring for the
+        # structural enforcement).
+        self._halt_remedies: "tuple[str, ...] | None" = None
+        # #5939 PR-2: memory ladder step ① (backpressure) state. `True`
+        # while this session's own process_footprint (or a later PR's
+        # host-condition reader) is over cap -- new turns are refused
+        # while this is set (see `_check_memory_ladder`). `False` is
+        # also the correct value for a process with no cap configured
+        # (`ProcessMemoryGuard.enforce=False`/`cap_bytes=None`), matching
+        # every OTHER stage (a)/(b) mechanism's inert-by-default shape.
+        self._memory_backpressure_active: bool = False
+        # #5939 PR-2: the ①->③ escalation judge's own bounding subject
+        # (architect ruling: "段①→②の判別子は「時計でも回数でもない」…
+        # 圧縮が走った。それでも下がらなかった") -- set True by a
+        # `compaction_completed` audit-event observed WHILE backpressure
+        # is active, reset False whenever backpressure (re)enters. The
+        # judge only escalates past ① on a turn-end sample taken AFTER
+        # this is True, never on elapsed time or a turn count.
+        self._compaction_seen_since_backpressure: bool = False
         # #5214: True once run()'s own while-loop has exited and the
         # terminal session_completed audit event has been emitted.
         # run_one_iteration() itself has NO awareness of whether run()
@@ -1702,6 +1729,13 @@ class Session:
         # get shown as the next one's progress.
         self._compaction_progress_episode: "int | None" = None
         self._audit_events.add_subscriber(self._on_compaction_progress_event)
+        # #5939 PR-2: arms the memory ladder's own ①->③ escalation judge
+        # (see `_compaction_seen_since_backpressure`'s own field
+        # docstring, near `_halt_remedies` above).
+        self._audit_events.add_subscriber(
+            self._on_compaction_completed_during_backpressure,
+            kinds=("compaction_completed",),
+        )
         # Publish reyn.yaml llm.router.* as the ambient router config (#1829 S3b, see docs/reference/runtime/session-construction.md#misc-lifecycle-wiring)
         if router_config is not None:
             from reyn.llm.llm import set_router_config
@@ -7780,7 +7814,7 @@ class Session:
             reg.ensure_session_running(target_agent, target_session_id)
         return True
 
-    def _emit_process_footprint(self, *, chain_id: "str | None" = None) -> None:
+    def _emit_process_footprint(self, *, chain_id: "str | None" = None) -> "int | None":
         """#5851 stage (a), architect ruling ⑤: the shared emit body for
         BOTH real observation/record points (``load_history``'s own
         ``finally`` above; ``_run_router_loop``'s ``finally``, next to the
@@ -7799,7 +7833,13 @@ class Session:
         docstring) when this platform has none. Never raises — a
         measurement that failed is a disclosed fact in the audit trail,
         not a caller-visible exception this method's own callers (a
-        turn's ``finally``, ``load_history``) would then have to guard."""
+        turn's ``finally``, ``load_history``) would then have to guard.
+
+        #5939 PR-2: returns the measured ``bytes`` value (``None`` when
+        unavailable) — the turn-end call site passes it straight to
+        :meth:`_check_memory_ladder` so the ladder's own judge reads the
+        SAME sample this emit already took, never a second ``guard.read()``
+        call for the same turn boundary."""
         guard = self._process_memory_guard
         value = guard.read()
         if value is None:
@@ -7807,7 +7847,7 @@ class Session:
                 self._audit_events.emit(
                     "process_footprint_unavailable", platform=sys.platform,
                 )
-            return
+            return None
         self._audit_events.emit(
             "process_footprint",
             bytes=value,
@@ -7816,6 +7856,186 @@ class Session:
             enforce=guard.enforce,
             chain_id=chain_id,
         )
+        return value
+
+    def _on_compaction_completed_during_backpressure(self, event) -> None:
+        """#5939 PR-2: arms the ①→③ escalation judge's own bounding
+        subject (see ``_compaction_seen_since_backpressure``'s own field
+        docstring). Scoped to ``kinds=("compaction_completed",)`` at
+        subscription time — never dispatched for any other event type, so
+        this body does not need its own type check. A no-op while
+        backpressure is not active (nothing to arm)."""
+        if self._memory_backpressure_active:
+            self._compaction_seen_since_backpressure = True
+
+    def _check_memory_ladder(self, *, chain_id: "str | None", footprint: "int | None") -> None:
+        """#5939 PR-2 — the steady-state memory ladder's own judge, called
+        once per turn-end sample (right after :meth:`_emit_process_footprint`
+        took *footprint*, same call site, no second read): ① backpressure
+        (latch a rejection of new turns) → ② cache release (PR-1's shared
+        step, called through ``process_memory_release.run_cache_release_
+        and_forensics``) → ③ session halt → ④ process exit
+        (:meth:`_memory_exit`), reached immediately once ③ latches — owner
+        ruling makes ④ the DEFAULT terminal step once the ladder gets
+        here, and ③'s own halt means there is no later turn-end sample on
+        THIS session to re-check on anyway (see :meth:`_memory_exit`'s
+        own docstring).
+
+        Inert by construction when no cap is configured (``enforce=False``
+        or ``cap_bytes is None``) — matches every other stage (a)/(b)
+        mechanism's own default (0 lines run for an operator who never
+        opted in).
+
+        Fires on the OR of two conditions (architect ruling, #5851 issue
+        comment 2026-09-07T12:02): THIS session's own footprint over
+        ``cap_bytes``, OR the HOST's free swap at/under
+        ``host_swap_critical_bytes`` (inert ``None`` default — see
+        ``ProcessMemoryGuard.host_critical``'s own docstring for why this
+        default does not cover owner's own motivating case, and for the
+        proxy disclosure). Owner's own reasoning: what's being protected
+        is the HOST's operability, not this process's own size alone —
+        a host already swap-starved by something else (#5939's own
+        real-machine measurement: litellm, not reyn, held 6.5GB of an
+        owner-hit host's swap) is in danger even while THIS session's
+        own footprint is still under its own cap."""
+        guard = self._process_memory_guard
+        # Base gate unchanged from stage (a)'s own established inert
+        # contract ("enforce: false / cap_bytes 未設定のままなら1行も
+        # 走りません") -- the host-condition OR below only ever adds a
+        # SECOND way to trip the ladder once the base gate has already
+        # let it run, it never replaces `cap_bytes` as a way to opt in.
+        if not guard.enforce or guard.cap_bytes is None or footprint is None:
+            return
+        over_cap = footprint > guard.cap_bytes
+        host_critical = guard.host_critical()
+        if not over_cap and not host_critical:
+            if self._memory_backpressure_active:
+                self._memory_backpressure_active = False
+                self._compaction_seen_since_backpressure = False
+                self._audit_events.emit("session_memory_backpressure_cleared", chain_id=chain_id)
+            return
+
+        if not self._memory_backpressure_active:
+            self._memory_backpressure_active = True
+            self._compaction_seen_since_backpressure = False
+            self._audit_events.emit(
+                "session_memory_backpressure",
+                bytes=footprint, cap_bytes=guard.cap_bytes, metric=guard.metric,
+                chain_id=chain_id,
+            )
+            return
+
+        # Already in backpressure. Architect's own judge (#5939): escalate
+        # past ① only on a sample taken AFTER a compaction has completed —
+        # never on elapsed time or a turn count (the ladder gives the
+        # process's OWN shrink mechanism, compaction, the chance its
+        # bounding-subject role requires before concluding it didn't help).
+        if not self._compaction_seen_since_backpressure:
+            return
+
+        from reyn.runtime.process_memory_release import run_cache_release_and_forensics
+
+        forensics = run_cache_release_and_forensics(guard, self._audit_events, chain_id=chain_id)
+        still_over = (
+            forensics.footprint_after is not None
+            and forensics.footprint_after > guard.cap_bytes
+        )
+        if not still_over:
+            self._memory_backpressure_active = False
+            self._compaction_seen_since_backpressure = False
+            self._audit_events.emit("session_memory_backpressure_cleared", chain_id=chain_id)
+            return
+
+        remedies = (
+            "/compact -- shrinks resident history now; already-summarized content becomes a "
+            "spill reference instead of being held in memory",
+            "close other sessions running in this process -- process_memory is a "
+            "PROCESS-wide resource, not a per-session one; closing a session other than the "
+            "one that grew only helps if that session, not this one, is the cause",
+            "raise process_memory.max_bytes in reyn.yaml -- an explicit, recorded choice to "
+            "accept a larger footprint",
+            "restart -- reclaims memory the process itself cannot release back to the OS "
+            "(measured: CPython/libmalloc do not always return freed large allocations)",
+        )
+        self._latch_halt("process_memory", remedies=remedies)
+        # ④, immediately: owner ruling (#5939) makes process exit the
+        # DEFAULT terminal step, not opt-in, once the ladder reaches here
+        # -- and there IS no later turn-end sample to re-check on for
+        # THIS session (③'s own accept-edge guard, generalized above,
+        # now rejects every further op this session would need to run
+        # another turn at all). ③ still exists as its own named,
+        # observable step (a distinct halt reason + event) before ④'s
+        # more drastic action, not as a separate waiting state.
+        self._memory_exit(footprint=forensics.footprint_after, remedies=remedies)
+
+    def _memory_exit(self, *, footprint: "int | None", remedies: "tuple[str, ...]") -> None:
+        """#5939 PR-2 step ④ — process exit. Broadcasts the SAME halt
+        (reason + remedies) to every co-resident session in this process
+        BEFORE terminating (owner ruling #5939: "終了前に全attach先へ
+        理由を配ってから終了する"), via the registry's own
+        :meth:`~reyn.runtime.registry.AgentRegistry.all_sessions` when one
+        is attached.
+
+        ``broadcast_path`` distinguishes the TWO different reasons
+        ``session_count`` can be 1 (lead-coder review, #5939 PR-2):
+        ``"none"`` — no registry attached (an embedded/test session with
+        no multi-session process to broadcast into; THIS session is the
+        only one, by construction, not because it's the only one found)
+        vs. ``"registry"`` with ``session_count=1`` — a registry IS
+        attached and genuinely has only one live session right now. The
+        same number means two different facts; the field is what keeps a
+        reader from conflating them (the #6035 ``_fd=None`` shape,
+        generalized)."""
+        import os  # noqa: PLC0415 -- rare path (process exit), lazy import matches this module's own convention
+
+        if self._registry is not None:
+            sessions = self._registry.all_sessions()
+            broadcast_path = "registry"
+        else:
+            sessions = [self]
+            broadcast_path = "none"
+
+        delivered = 0
+        for s in sessions:
+            latch = getattr(s, "_latch_halt", None)
+            if callable(latch):
+                try:
+                    latch("process_memory", remedies=remedies)
+                    delivered += 1
+                except Exception:
+                    logger.exception(
+                        "session_memory_exit: failed to broadcast the halt to a "
+                        "co-resident session — continuing with the remaining ones "
+                        "and the process exit itself",
+                    )
+
+        guard = self._process_memory_guard
+        self._audit_events.emit(
+            "session_memory_exit",
+            footprint=footprint, cap_bytes=guard.cap_bytes, metric=guard.metric,
+            session_count=len(sessions), broadcast_path=broadcast_path, delivered=delivered,
+            remedies=list(remedies),
+        )
+        logger.critical(
+            "process_memory: exiting the process -- footprint %s exceeded cap_bytes=%s "
+            "(metric=%s) and did not recover after compaction + cache release. "
+            "Broadcast reason+remedies to %d/%d co-resident session(s) (path=%s) before exit. "
+            "Remedies: %s",
+            footprint, guard.cap_bytes, guard.metric, delivered, len(sessions), broadcast_path,
+            "; ".join(remedies),
+        )
+        stream = sys.__stderr__
+        if stream is not None:
+            try:
+                stream.write(
+                    "process_memory: exiting -- footprint over cap after compaction + cache "
+                    f"release ({delivered}/{len(sessions)} session(s) notified, path={broadcast_path})\n"
+                    + "\n".join(f"  - {r}" for r in remedies) + "\n"
+                )
+                stream.flush()
+            except (OSError, ValueError):
+                pass
+        os._exit(1)
 
     @property
     def process_memory_guard(self) -> "ProcessMemoryGuard":
@@ -7940,8 +8160,51 @@ class Session:
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
         halted; ``None`` while running. The operator-visible in-memory state paired with the
-        ``DurabilityHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
+        ``SessionHaltError`` raise (durability is dead → the reason cannot be a durable event)."""
         return self._halted_reason
+
+    @property
+    def halt_remedies(self) -> "tuple[str, ...] | None":
+        """#5939 PR-2: the remedies paired with :attr:`halted_reason` —
+        ``None`` while running, ALWAYS a non-empty tuple once halted (see
+        :meth:`_latch_halt`'s own docstring for why an empty tuple can
+        never reach here)."""
+        return self._halt_remedies
+
+    def _latch_halt(self, reason: str, remedies: "tuple[str, ...]") -> None:
+        """#5939 PR-2 — the ONE chokepoint every halt reason goes through
+        (durability failure, shutdown, cancellation, process-memory
+        pressure, and whatever N+1th reason a later PR adds). Replaces 4
+        previously-duplicated ``if self._halted_reason is None: ...``
+        blocks (#2259 PR-3 accept-edge, #2259 PR-3 process-edge, #5329 B
+        shutdown_requested, cancelled) with one call each.
+
+        ``remedies`` is a REQUIRED positional-or-keyword parameter with
+        NO default — lead-coder's own explicit instruction (#5939 PR-2
+        dispatch): "remedies を書き忘れた halt が作れない形（型で要求）
+        …「必ず書く」という約束では4箇所目を足す人が忘れます". A 5th
+        call site literally cannot omit it; ``TypeError`` at the call,
+        not a silently-empty audit-event. The runtime check below is
+        defense in depth for the one shape Python's own signature cannot
+        catch — passing an empty tuple explicitly.
+
+        First reason wins (matches the pre-existing ``_halted_reason is
+        None`` guard every one of the 4 replaced sites already used) —
+        at most one halt notice per session; a session already halted
+        for reason A does not overwrite with reason B just because a
+        second, unrelated bounding subject also tripped."""
+        if not remedies:
+            raise ValueError(
+                f"_latch_halt(reason={reason!r}) was given an empty remedies "
+                "tuple -- every halt reason must name at least one concrete "
+                "recovery action (CLAUDE.md: an operator hitting this halt "
+                "must be told what to do, not just that something stopped)"
+            )
+        if self._halted_reason is not None:
+            return
+        self._halted_reason = reason
+        self._halt_remedies = remedies
+        self._audit_events.emit("session_halted", reason=reason, remedies=list(remedies))
 
     @property
     def run_completed(self) -> bool:
@@ -7959,23 +8222,48 @@ class Session:
         return self._run_completed
 
     def _fail_stop_if_durability_dead(self) -> None:
-        """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``DurabilityHaltError`` (recording the
+        """#2259 PR-3: the fail-stop ACCEPT-edge guard. Raise ``SessionHaltError`` (recording the
         halt reason first, so it surfaces consistently with the process-edge) when durability has
         FAILED persistently — the agent stops accepting operations rather than accept one whose
         durable record will never land.
 
-        #2280: the FIRST time this latches, also emit a ``session_halted`` audit-event (guarded by
-        ``self._halted_reason is None`` so a durability-dead session that keeps rejecting further
-        ops does not re-emit on every subsequent submit) — the observability half of the halt. The
-        raise above is unconditional and IS the safety mechanism (synchronous, on every call, no
-        gating); this emit is purely so an operator surface (TUI status line / plain bottom
-        toolbar) can proactively show the reason instead of only learning it from the exception
-        text on the operator's own next interaction."""
+        #5939 PR-2 review (lead-coder, caught by a real test failure —
+        #5214's own MessageBus tests): this ACCEPT-edge stays
+        DURABILITY-SPECIFIC on purpose, unlike the PROCESS-edge (see
+        ``run_one_iteration``'s own generalized check). Durability is the
+        ONE reason a message must not even be ACCEPTED — accepting it
+        means "this will eventually be durably recorded", which is false
+        when durability itself is dead. Every OTHER halt reason
+        (``shutdown_requested``, ``cancelled``, ``process_memory``)
+        leaves durability perfectly healthy — a late message is safely
+        QUEUED (never lost, WAL-durable), it simply never gets
+        PROCESSED, because the PROCESS-edge already stopped the loop
+        from pumping anything further. #5214's own design deliberately
+        keeps "queued but unprocessed" distinguishable from "rejected
+        outright" — ``MessageBus.request`` is what discloses the stuck,
+        accepted-but-never-pumped message (a WARNING, not silent), and a
+        blanket accept-edge raise here would have collapsed that
+        distinction for every reason but durability.
+
+        #2280: the FIRST time durability itself latches, also emit a
+        ``session_halted`` audit-event (via :meth:`_latch_halt`, guarded
+        on ``self._halted_reason is None`` so a durability-dead session
+        that keeps rejecting further ops does not re-emit on every
+        subsequent submit) — the observability half of the halt. The
+        raise above is unconditional and IS the safety mechanism
+        (synchronous, on every call, no gating); this emit is purely so
+        an operator surface (TUI status line / plain bottom toolbar) can
+        proactively show the reason instead of only learning it from the
+        exception text on the operator's own next interaction."""
         if self._state_log is not None and self._state_log.durability_failed:
-            if self._halted_reason is None:
-                self._halted_reason = "durability_failure"
-                self._audit_events.emit("session_halted", reason=self._halted_reason)
-            raise DurabilityHaltError(
+            self._latch_halt(
+                "durability_failure",
+                remedies=(
+                    "restart the agent -- a durable write has persistently failed and the agent "
+                    "will not accept new operations until disk/storage health is restored",
+                ),
+            )
+            raise SessionHaltError(
                 f"agent '{self.agent_name}' halted: persistent durability failure — the agent "
                 "stopped accepting operations to avoid silent unbounded loss (in-memory state must "
                 "not race ahead of a dead disk)"
@@ -8474,11 +8762,30 @@ class Session:
         ``run_one_iteration`` receives ``ride_alongs`` for 4a contract
         compatibility but no longer re-stages them.
         """
-        # #2259 PR-3 / #2280: fail-stop PROCESS-edge — see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal (`_halted_reason`).
+        # #5939 PR-2 review (lead-coder, caught by #5214's own MessageBus
+        # test suite): the PROCESS-edge -- unlike the ACCEPT-edge above --
+        # IS generalized to ANY already-latched halt reason, checked
+        # FIRST. This is where "process_memory" (latched by
+        # `_check_memory_ladder` at a PRIOR turn's own end, from OUTSIDE
+        # this method) actually gets its teeth: without this, the flag
+        # would be set and `session_halted` announced, but `run()`'s own
+        # `while await self.run_one_iteration():` loop would keep
+        # pumping the NEXT inbox item regardless -- a halt that
+        # announces itself but does not halt. `durability_failure` (the
+        # pre-existing reason) is now reached through this SAME generic
+        # branch instead of its own separate check -- byte-identical
+        # behavior (still latches via `_latch_halt`, still returns
+        # False), just no longer a special case.
+        if self._halted_reason is not None:
+            return False
         if self._state_log is not None and self._state_log.durability_failed:
-            if self._halted_reason is None:
-                self._halted_reason = "durability_failure"
-                self._audit_events.emit("session_halted", reason=self._halted_reason)
+            self._latch_halt(
+                "durability_failure",
+                remedies=(
+                    "restart the agent -- a durable write has persistently failed and the agent "
+                    "will not accept new operations until disk/storage health is restored",
+                ),
+            )
             return False
         # #1800 slice 4a/4b: drain up to the first wake=true trigger.
         # ride_alongs holds wake=false C messages accumulated before the
@@ -8498,9 +8805,14 @@ class Session:
             # "shutdown sentinel" apart from "durability_failure"/"cancelled"
             # without this. Same `_halted_reason is None` guard as its
             # siblings: at most one halt notice per session.
-            if self._halted_reason is None:
-                self._halted_reason = "shutdown_requested"
-                self._audit_events.emit("session_halted", reason=self._halted_reason)
+            self._latch_halt(
+                "shutdown_requested",
+                remedies=(
+                    "restart the agent to continue working -- this was an intentional shutdown, "
+                    "not a failure; the run-loop stops here and this session's inbox will not be "
+                    "consumed again until it is restarted",
+                ),
+            )
             return False
         kind, payload = trigger
         # proposal 0060 Phase 1 (A7): stamp per-turn provenance — see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode (`_current_turn_origin`).
@@ -9009,9 +9321,14 @@ class Session:
             # parallel signal. Guarded on ``_halted_reason is None`` for
             # the same reason #2280's own emits are: at most one halt
             # notice per session.
-            if self._halted_reason is None:
-                self._halted_reason = "cancelled"
-                self._audit_events.emit("session_halted", reason=self._halted_reason)
+            self._latch_halt(
+                "cancelled",
+                remedies=(
+                    "restart run() for this agent to continue -- the run-loop was cancelled "
+                    "(e.g. Ctrl-C or an explicit cancel) and its inbox will not be consumed "
+                    "again until a new run() is started",
+                ),
+            )
             logger.warning(
                 "Session.run() for agent '%s' is ending because it was cancelled — "
                 "the run-loop stops here and its inbox will not be consumed again.",
@@ -11988,7 +12305,12 @@ class Session:
                     # nested-finally discipline — a turn_end hook that
                     # raised still reaches this, same as it must not skip
                     # the hot_reloader step right after it).
-                    self._emit_process_footprint(chain_id=chain_id)
+                    _footprint = self._emit_process_footprint(chain_id=chain_id)
+                    # #5939 PR-2: the steady-state memory ladder's own
+                    # judge reads the SAME sample the emit above just
+                    # took -- same turn-end boundary, no second
+                    # guard.read() call.
+                    self._check_memory_ladder(chain_id=chain_id, footprint=_footprint)
                     try:
                         # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
                         # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b

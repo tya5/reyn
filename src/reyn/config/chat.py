@@ -652,9 +652,22 @@ class ProcessMemoryConfig:
     ``_validate_retrieval_scheme_embedding``/``_validate_skill_
     visibility`` in that file. An operator who asks to be halted by a
     cap that cannot be checked must be told immediately, not find out
-    the hard way that ``enforce: true`` never had a chance to fire."""
+    the hard way that ``enforce: true`` never had a chance to fire.
+
+    ``host_swap_critical_bytes: int | None`` — #5939 PR-2: a THIRD,
+    independent key. ``None`` (default) is inert, same shape as
+    ``max_bytes``. ⚠️ This default does NOT cover the owner's own
+    motivating case for the memory ladder ("最悪 swap 多発で") — see
+    ``ProcessMemoryGuard.host_critical``'s own docstring
+    (``runtime/process_memory.py``) for why free-swap-BYTES is a proxy
+    for swap-THRASHING (a frequency), not a direct measurement, and for
+    the one-pass check into a more directly matching rate-based
+    alternative that was done but not adopted for v1. Only evaluated
+    once ``enforce``/``max_bytes`` have already opted the ladder in —
+    it adds a SECOND way to trip it, never a way to opt in on its own."""
     max_bytes: "int | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
     enforce: bool = field(default=False, metadata={"axis": Axis.BOUNDING})
+    host_swap_critical_bytes: "int | None" = field(default=None, metadata={"axis": Axis.BOUNDING})
 
 
 @dataclass
@@ -766,7 +779,23 @@ def _build_process_memory_config(raw: object) -> "ProcessMemoryConfig":
             )
             max_bytes = None
     enforce = bool(raw.get("enforce", False))
-    return ProcessMemoryConfig(max_bytes=max_bytes, enforce=enforce)
+    host_swap_critical_bytes: "int | None" = None
+    if "host_swap_critical_bytes" in raw:
+        try:
+            candidate = int(raw["host_swap_critical_bytes"])
+            if candidate > 0:
+                host_swap_critical_bytes = candidate
+        except (TypeError, ValueError):
+            import logging
+            logging.getLogger(__name__).warning(
+                "process_memory.host_swap_critical_bytes=%r is invalid (not an int); using %r",
+                raw["host_swap_critical_bytes"], None,
+            )
+            host_swap_critical_bytes = None
+    return ProcessMemoryConfig(
+        max_bytes=max_bytes, enforce=enforce,
+        host_swap_critical_bytes=host_swap_critical_bytes,
+    )
 
 
 @dataclass
