@@ -1046,6 +1046,17 @@ class MCPClient:
         # underlying anyio subprocess), but ``tempfile.TemporaryFile``
         # does. Lazily created in ``_open_stdio``; closed in ``close``.
         self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
+        # #5989: the SAFE-FALLBACK sink for the child's stderr when
+        # ``self._stderr_capture`` above could not be opened (tempfile
+        # failure) — see ``_initialize_stdio``'s own comment for why this
+        # must NEVER be left unset. Kept as a SEPARATE attribute from
+        # ``_stderr_capture`` deliberately: that property's own documented
+        # contract (None initially / after close, tests assert on it
+        # directly) stays exactly what it was BEFORE this fix — a
+        # devnull placeholder standing in for it here would be a second,
+        # silent meaning for the same "None" a caller already reads as
+        # "no diagnostics available".
+        self._devnull_errlog: Any = None  # opened os.devnull TextIO | None
         # #1344 / #2620: cleanup callable for whatever resource the sandbox
         # backend's ``wrap_command()`` allocated for a stdio MCP server's
         # subprocess wrap (e.g. Seatbelt's temp ``.sb`` profile file), if any.
@@ -1281,8 +1292,55 @@ class MCPClient:
             # an errlog= TextIO directly (a real fileno, same requirement).
             try:
                 self._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
-            except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
+            except OSError as e:
+                # #5989 (lead-coder finding): the #5990 shape ("swallow, fall
+                # back to a default that is WORSE than failing loud") — the
+                # OLD `except Exception: pass` left `self._stderr_capture`
+                # None and said nothing, so the `errlog=` kwarg below was
+                # OMITTED entirely. `mcp.client.stdio.stdio_client`'s own
+                # `errlog` parameter default is `sys.stderr`, bound ONCE at
+                # SDK import time — before reyn's interactive-TUI path ever
+                # redirects `sys.stderr` (#5989's own established finding:
+                # Textual's `redirect_stdout`/`redirect_stderr` only rebinds
+                # the IN-PROCESS `sys.stdout`/`sys.stderr` objects; a CHILD
+                # process's inherited fd 2 is untouched by that rebinding
+                # regardless). A tempfile failure therefore handed the
+                # child's raw stderr straight to the operator's own real
+                # terminal — silently, and specifically on the platform
+                # (Windows) where a tempfile open is more likely to fail.
+                # Reported (not swallowed), and NEVER left to default to the
+                # SDK's own choice — see the `errlog=` construction below for
+                # the os.devnull fallback this failure routes into instead.
                 self._stderr_capture = None
+                logger.warning(
+                    "MCP server %r: could not open a stderr-capture tempfile "
+                    "(%s) -- init-failure diagnostics for this server's "
+                    "stderr will be unavailable. NOT falling back to the "
+                    "mcp SDK's own default (which would hand the "
+                    "subprocess's stderr to the operator's own terminal) -- "
+                    "routing it to os.devnull instead. See #5989.",
+                    self._server_name, e,
+                )
+                try:
+                    self._devnull_errlog = open(  # noqa: SIM115 — lifetime is this connection's, closed in close_stderr_capture()
+                        os.devnull, mode="w", encoding="utf-8",
+                    )
+                except OSError as devnull_e:
+                    # #5989: both sinks failed -- there is genuinely nowhere
+                    # safe to route the child's stderr. Refusing to start
+                    # the server is the ONLY remaining option that does not
+                    # hand the operator's terminal to a third-party
+                    # subprocess (lead-coder ruling: os.devnull OR fail
+                    # loud, never silently default).
+                    self._devnull_errlog = None
+                    raise MCPError(
+                        f"stdio MCP server {self._server_name!r}: could not "
+                        f"obtain any safe sink for the subprocess's stderr "
+                        f"(tempfile failed: {e}; os.devnull also failed: "
+                        f"{devnull_e}) -- refusing to start it with the "
+                        f"mcp SDK's own default, which would hand its "
+                        f"stderr to the operator's own terminal"
+                    ) from devnull_e
             # The SDK performs the spawn; Reyn chooses only these hand-off
             # parameters. ``env=None`` is intentional: MCP is a third-party
             # server trust path, distinct from Reyn-owned sandbox children, so
@@ -1304,9 +1362,33 @@ class MCPClient:
             # generator's `.gen.ag_frame` after `Client` has entered it —
             # same technique, same object, just entered by a different
             # caller (live-verified, see this PR's commit message).
-            stdio_cm = stdio_client(
-                params, **({"errlog": self._stderr_capture} if self._stderr_capture else {}),
-            )
+            # #5989: `errlog=` is ALWAYS supplied now, never omitted — the
+            # tempfile branch above guarantees one of `_stderr_capture` /
+            # `_devnull_errlog` is a real, open file (or this method has
+            # already raised) before reaching here, so `stdio_client`'s OWN
+            # `errlog: TextIO = sys.stderr` default (bound at
+            # `mcp.client.stdio` import time, which reyn's own lazy import
+            # above can make happen WHILE Textual owns the terminal) is
+            # NEVER reached — closing both the "child's stderr reaches the
+            # operator's real terminal" case AND the "errlog is Textual's
+            # own fileno()==-1 _PrintCapture, so the child fails to spawn
+            # at all" case the SAME import-timing hazard could otherwise
+            # produce depending on WHEN the first stdio connection happens.
+            errlog = self._stderr_capture if self._stderr_capture is not None else self._devnull_errlog
+            if errlog is None:
+                # Unreachable in practice — the tempfile except block above
+                # already raises MCPError whenever neither sink could be
+                # opened — but an `assert` here would be stripped under
+                # `-O`, and the one thing this whole fix must never do is
+                # silently fall through to `stdio_client`'s own default.
+                raise MCPError(
+                    f"stdio MCP server {self._server_name!r}: no stderr "
+                    f"sink available for the subprocess (internal "
+                    f"invariant violated) -- refusing to start it with the "
+                    f"mcp SDK's own default, which would hand its stderr "
+                    f"to the operator's own terminal"
+                )
+            stdio_cm = stdio_client(params, errlog=errlog)
             elicitation_callback = None
             if self._elicitation_handler is not None:
                 elicitation_callback = _adapt_elicitation_handler(self._elicitation_handler)
@@ -2218,7 +2300,14 @@ class MCPClient:
     def close_stderr_capture(self) -> None:
         """Close + delete the stderr temp file + the #1344/#2620 sandbox wrap's
         cleanup resource (e.g. Seatbelt's temp ``.sb`` profile), if any.
-        Idempotent — called at every teardown path."""
+        Idempotent — called at every teardown path.
+
+        #5989: also closes ``self._devnull_errlog`` (the tempfile-failure
+        safe-fallback sink, see ``_initialize_stdio``) — a SEPARATE ``if``
+        from ``_stderr_capture``'s own, not an ``elif``: the two are
+        mutually exclusive in practice (only one is ever opened per
+        connection) but nothing enforces that as an invariant, and closing
+        both unconditionally costs nothing when one is already None."""
         # #1344/#2620: invoke the sandbox backend's wrap_command() cleanup
         # (Seatbelt: unlink the temp .sb profile; Noop/Landlock: no-op).
         # Best-effort; a leaked temp file must not break teardown.
@@ -2230,13 +2319,19 @@ class MCPClient:
             except OSError:
                 pass
         capture = self._stderr_capture
-        if capture is None:
-            return
-        self._stderr_capture = None
-        try:
-            capture.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if capture is not None:
+            self._stderr_capture = None
+            try:
+                capture.close()
+            except Exception:  # noqa: BLE001
+                pass
+        devnull_errlog = self._devnull_errlog
+        if devnull_errlog is not None:
+            self._devnull_errlog = None
+            try:
+                devnull_errlog.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # ── transport dispatch ──────────────────────────────────────────────────
 

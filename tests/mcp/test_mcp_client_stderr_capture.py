@@ -245,3 +245,83 @@ def test_initialize_failure_with_real_subprocess_captures_its_actual_stderr() ->
         f"message via the official SDK's errlog plumbing: {msg!r}"
     )
     assert client.stderr_capture is None
+
+
+# ── 6. #5989: a tempfile failure must never hand errlog to the SDK's own
+#      default (= the operator's own terminal, via stdio_client's own
+#      `errlog: TextIO = sys.stderr` bound at mcp.client.stdio import
+#      time) ─────────────────────────────────────────────────────────────
+
+
+def test_tempfile_failure_falls_back_to_devnull_never_the_sdks_own_default(
+    monkeypatch, tmp_path,
+) -> None:
+    """Tier 2: #5989 -- lead-coder's own corrected accept (architect caught
+    the ORIGINAL one's vacuous-green risk): "the child's stderr never
+    reaches the terminal" is ALSO true when the child fails to SPAWN at
+    all -- exactly the failure mode a broken ``errlog`` (e.g. Textual's own
+    ``_PrintCapture``, whose ``fileno()`` returns -1) would produce. A test
+    that only asserted "didn't reach the terminal" would go green for that
+    wrong reason too (six-questions #4: green over an empty/never-happened
+    case).
+
+    Forces ``tempfile.TemporaryFile`` to fail, then proves BOTH real
+    properties, not just one:
+
+    1. **Present sibling** -- the REAL child subprocess actually started
+       and ran: it writes a marker file via a side channel (argv/pathlib)
+       independent of stdio/errlog entirely. A broken errlog would make
+       the SDK's own subprocess spawn raise before the child's code ever
+       runs, and this marker would never appear.
+    2. The ``errlog`` object reyn handed ``stdio_client`` was NOT its own
+       ``sys.stderr``-bound default -- a real, distinct file this client
+       itself opened (``self._devnull_errlog``, not ``self._stderr_capture``,
+       not ``sys.stderr`` itself).
+
+    ``stdio_client`` is wrapped (spy), not faked -- it still calls the REAL
+    SDK function with the SAME ``errlog`` it received, so the subprocess
+    spawn is the genuine one, not simulated."""
+    marker = tmp_path / "started.marker"
+    client = MCPClient({
+        "type": "stdio",
+        "command": sys.executable,
+        "args": [
+            "-c",
+            f"import pathlib; pathlib.Path({str(marker)!r}).write_text('started'); "
+            "import sys; sys.stderr.write('should-not-reach-the-terminal\\n'); sys.exit(1)",
+        ],
+    })
+
+    def _broken_tempfile(*args, **kwargs):
+        raise OSError("simulated tempfile failure (e.g. disk full, no writable /tmp)")
+
+    monkeypatch.setattr("reyn.mcp.client.tempfile.TemporaryFile", _broken_tempfile)
+
+    from mcp.client.stdio import stdio_client as _real_stdio_client
+
+    captured: dict = {}
+
+    def _spying_stdio_client(params, errlog=None):
+        captured["errlog"] = errlog
+        return _real_stdio_client(params, errlog=errlog)
+
+    monkeypatch.setattr("mcp.client.stdio.stdio_client", _spying_stdio_client)
+
+    import asyncio
+    with pytest.raises(MCPError):
+        asyncio.run(client.initialize())
+
+    assert marker.exists(), (
+        "the real child process never ran -- a broken errlog (the exact "
+        "class of hazard architect caught in the original accept) would "
+        "make the SDK's own subprocess spawn fail before the child's code "
+        "ever executes, which is a vacuous green on 'stderr never reached "
+        "the terminal' for the WRONG reason"
+    )
+    assert captured.get("errlog") is not None, (
+        "errlog= must never be omitted -- an omitted errlog falls through "
+        "to stdio_client's own default, which IS the operator's terminal"
+    )
+    assert captured["errlog"] is not sys.stderr and captured["errlog"] is not sys.__stderr__, (
+        "must be reyn's own devnull sink, never the real terminal stream"
+    )
