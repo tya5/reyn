@@ -81,6 +81,12 @@ async def test_a_control_read_timeout_does_not_claim_no_session(
         f"a control-read-timeout was reported as 'no session' -- the exact "
         f"#6083 owner-hit symptom, text was: {text!r}"
     )
+    assert "could not run" not in text, (
+        f"lead-coder BLOCKING (PR #6094): 'not_delivered' means UNCONFIRMED, "
+        f"not unrun -- the owner's own /compact ran to completion despite "
+        f"this outcome, so this prefix must not assert non-execution either, "
+        f"text was: {text!r}"
+    )
     assert "did not respond" in text and "ReadTimeout" in text, (
         f"expected the REAL typed outcome (not_delivered) in the text, got: {text!r}"
     )
@@ -91,7 +97,10 @@ async def test_a_server_refusal_says_refused_not_no_session(
     _throwaway_session_command: str,
 ) -> None:
     """Tier 2: the sibling typed outcome (``refused``) must also read as
-    what actually happened, not the same hardcoded guess."""
+    what actually happened, not the same hardcoded guess. Unlike
+    ``not_delivered`` above, ``refused`` genuinely DOES mean the command
+    never ran -- the server said no -- so "could not run" is an accurate
+    claim here and is deliberately NOT forbidden by this test."""
     async def _send(payload: dict) -> "ControlOutcome":
         return ControlOutcome.refused(403, "forbidden")
 
