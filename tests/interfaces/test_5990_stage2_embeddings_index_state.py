@@ -75,7 +75,14 @@ def test_mtime_read_failure_warns_and_reports_never_built(tmp_path, monkeypatch,
         # Order-based instead, version-independent: the FIRST stat() on
         # `db_path` is always `.exists()`'s own (called once, before any
         # try block); only the SECOND ONWARD is the mtime read this test
-        # targets.
+        # targets. Depends on `_read_index_state` calling `.exists()` on
+        # `db_path` EXACTLY once before the mtime read (true today) --
+        # if production ever added a SECOND `.exists()` call, this would
+        # intercept THAT one instead and stay green without ever
+        # exercising the mtime `except OSError:` this test claims to
+        # cover; a future change adding another `.exists()`/`.stat()`
+        # call on `db_path` earlier in the function needs a different
+        # discriminator here.
         nonlocal calls_on_db_path
         if self == db_path:
             calls_on_db_path += 1
