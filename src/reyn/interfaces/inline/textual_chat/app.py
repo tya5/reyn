@@ -5951,11 +5951,12 @@ class TextualChatApp(App):
         dict is cleared unconditionally at the end so no turn's leftovers bleed
         into the next.
 
-        Also sweeps :attr:`_pipeline_runs` (#6076 ②) via
-        :meth:`_sweep_orphaned_pipeline_runs` at the end — a SEPARATE dict
-        this method never touched before, so a ``run_pipeline`` row whose
-        own completion frame never arrived stayed RUNNING forever even
-        though every tool-row orphan above it settled correctly."""
+        Does NOT also sweep :attr:`_pipeline_runs` (#6076 ②) — that dict's
+        orphan class is a SEPARATE sibling, :meth:`_sweep_orphaned_pipeline_runs`,
+        called from its own guarded site at the same turn-boundary trigger
+        (next to this method's own call and :meth:`_sweep_orphaned_streaming_replies`'s),
+        not nested here — a failure partway through THIS method's own loops
+        must not also skip that one."""
         for entry in list(self._running_tools.values()):
             try:
                 self._flow.stop_entry_animation(entry)
@@ -6014,11 +6015,17 @@ class TextualChatApp(App):
                     logger.exception(
                         "textual chat: could not settle an orphaned call-parent"
                     )
-        self._sweep_orphaned_pipeline_runs()
 
     def _sweep_orphaned_pipeline_runs(self) -> None:
         """Force-settle any pipeline row still open in :attr:`_pipeline_runs`
         at a TURN BOUNDARY (#6076 ②).
+
+        Called from :meth:`_pump_frames`'s own ``_TURN_END_EVENT_TYPES`` leg,
+        in its OWN guarded ``try``/``except`` sibling to
+        :meth:`_sweep_orphaned_running_tools`'s and
+        :meth:`_sweep_orphaned_streaming_replies`'s calls there — deliberately
+        NOT nested inside either of those methods, so a failure partway
+        through one dict's own sweep loop can never skip this one.
 
         The SAME orphan class :meth:`_sweep_orphaned_running_tools` above
         closes for a tool row — a ``run_pipeline`` call's own completion
@@ -7565,6 +7572,18 @@ class TextualChatApp(App):
                             except Exception:
                                 logger.exception(
                                     "textual chat: orphaned-stream sweep failed"
+                                )
+                            try:
+                                # #6076 ②: its own sibling try/except, NOT
+                                # nested at the tail of the tool sweep above —
+                                # a mid-sweep failure in THAT dict's loop must
+                                # not also skip this one; each dict's orphan
+                                # class is swept independently, same as the
+                                # tool/stream pair already is.
+                                self._sweep_orphaned_pipeline_runs()
+                            except Exception:
+                                logger.exception(
+                                    "textual chat: orphaned-pipeline sweep failed"
                                 )
                             try:
                                 # #4691 arc item ①: settle the turn's own parent
