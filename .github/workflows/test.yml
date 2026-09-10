@@ -166,8 +166,16 @@ jobs:
         # network_gate already uses here) before judging.
         # REYN_STALL_TRACE_CI=600 (#4986): a session-spanning stack dump if
         # the pytest process itself does not finish within 600s — 180s of
-        # margin below this step's own `timeout 13m` (780s) kill, comfortably
-        # above this suite's own normal completion (~7-8 min measured). Exists
+        # margin below this step's own `timeout 13m` (780s) kill. Measured
+        # (n=19 post-#6025 green runs, this step's own wall-clock): mean
+        # 538s (~8.97min), max 627s (~10.45min) — the max is ABOVE 600s, so
+        # a healthy (non-hanging) run can occasionally trigger this dump.
+        # OPEN QUESTION, not resolved in this PR: whether 600 itself needs
+        # re-deriving now that the teardown-side 60s×4 wait (#6022/#6025)
+        # is gone and the step's own distribution has shifted — left to
+        # #5994's owner to decide; this PR only corrects the stale "~7-8
+        # min" text to the actual measured numbers above; it does not
+        # change the 600 value itself. Exists
         # because neither `--timeout=120` (pytest-timeout) nor pytest's own
         # builtin faulthandler_timeout can ever see a hang in SESSION
         # teardown — both wrap only `pytest_runtest_protocol` per item and
@@ -184,7 +192,9 @@ jobs:
         # so a genuinely still-running controller has already had its stack
         # dumped by the time this fires, and the two diagnostics read in the
         # same causal order the stall-trace file and the per-worker files
-        # already do. On a healthy run (~7-8 min, well under 620s) the
+        # already do. On a healthy run (mean ~538s / max ~627s measured,
+        # n=19 — see the REYN_STALL_TRACE_CI note above for the same
+        # numbers and the open question about 600s) the
         # `sleep 620` never returns before this step's own foreground command
         # exits, so nothing is ever written to `/tmp/hang-ps.log` and the
         # backgrounded subshell is reaped with the step — no added cost on
