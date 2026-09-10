@@ -2038,6 +2038,22 @@ class PipelineExecutor:
             step = steps[i]
             kind = _step_kind(step)
             if events is not None:
+                # #6076: ``step_index`` on EVERY pipeline_step_* event (both
+                # kinds, and record_pipeline_state's own field below, and
+                # PipelineResult.step_index at the bottom of this method) is
+                # the SAME thing throughout this subsystem: the count of
+                # steps completed so far. Here, before step `i` has run,
+                # that count IS `i` (0-based: steps 0..i-1 are done) —
+                # emitted UN-ADJUSTED. A consumer wanting "how many are
+                # done" reads this value directly, for EITHER event kind
+                # (see pipeline_step_completed below for why its own value
+                # is already the done-count too, needing no adjustment
+                # there either) — a consumer-side "+1 for completed"
+                # double-counts against THAT event's own already-
+                # incremented value; that double-count is the exact #6076
+                # regression ("5/4" at the final step) presenter.py's own
+                # fix removed. See that fix's own docstring for the full
+                # account.
                 events.emit(
                     "pipeline_step_started",
                     run_id=run_id, step_index=i, step_kind=kind, total_steps=total_steps,
@@ -2089,6 +2105,15 @@ class PipelineExecutor:
                 durable=durable,
             )
             if events is not None:
+                # #6076: `step_index` here is `i + 1` (line above) — ALREADY
+                # the count of steps done, INCLUDING this one — the same
+                # "steps completed so far" meaning `pipeline_step_started`
+                # emits (see that call site's own comment). A consumer must
+                # read it as-is; adding another +1 "because this is the
+                # completed event" double-counts. At the FINAL step
+                # (i == total_steps - 1), step_index here == total_steps
+                # exactly — a further +1 is what produced the #6076 "5/4"
+                # regression.
                 events.emit(
                     "pipeline_step_completed",
                     run_id=run_id, step_index=step_index, step_kind=kind,
