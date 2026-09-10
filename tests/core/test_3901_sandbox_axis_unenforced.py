@@ -220,7 +220,10 @@ async def test_unenforced_axis_also_emits_a_warn_log_line(tmp_path, caplog):
     with caplog.at_level(logging.WARNING, logger="reyn.core.op_runtime.sandboxed_exec"):
         await handle(op, ctx)
 
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "reyn.core.op_runtime.sandboxed_exec"
+    ]
     assert warnings, "expected a WARN log line when an axis is unenforced"
     assert "read_deny_paths" in warnings[0].getMessage()
     assert "landlock" in warnings[0].getMessage()

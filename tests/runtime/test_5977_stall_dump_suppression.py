@@ -165,7 +165,16 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
     converge either way). See
     ``test_watch_event_loop_never_arms_a_second_timer_before_recording_the_first_dump``
     below, which ends WHILE STILL IN THE STALL (no recovery tick), for
-    the script that actually separates the two orderings."""
+    the script that actually separates the two orderings.
+
+    #6000 (unrelated axis, same call-count witness): ``rearm_calls`` no
+    longer means "once per healthy tick" even on a build with ①'s own
+    gate correctly applied — ``watch_event_loop`` also throttles calling
+    ``StallDumpArm.rearm()`` to at most once every ``threshold_ms / 2``
+    (250 / 2 = 125 ms here), so the healthy tick at 0.05 (only 50 ms
+    after the initial arm) is skipped too, not just the suppressed
+    second over-threshold tick — see this test's own updated assertion
+    below for the arithmetic."""
     arm, path = _open_arm(tmp_path, label="t1")
     rearm_wrapper, rearm_calls = _counting(arm.rearm)
     arm.rearm = rearm_wrapper  # type: ignore[method-assign]
@@ -191,9 +200,12 @@ async def test_watch_event_loop_dumps_at_most_once_per_stall_episode(tmp_path: P
     assert final_content == markers[-1], (
         "the file must hold ONLY the last dump's marker (no earlier content lingering)"
     )
-    assert rearm_calls[0] == 3, (
-        "initial arm + the ONE tick that dumped — the second over-threshold "
-        "tick's re-arm must be skipped, not just its readback ignored"
+    assert rearm_calls[0] == 2, (
+        "#6000: init + the recovery tick's own fresh-episode re-arm — the "
+        "tick BETWEEN onset and recovery (0.05, healthy, not yet due for "
+        "its #6000 interval re-arm at this threshold) and the SECOND "
+        "over-threshold tick (0.85, suppressed by ①'s gate) must both be "
+        "skipped, not just have their readback ignored"
     )
 
 
@@ -310,14 +322,18 @@ async def test_watch_event_loop_never_arms_a_second_timer_before_recording_the_f
 
     Correct (decide re-arm AFTER ``observe()``): the tick that detects
     dump#1 (0.45) has ALREADY closed the episode's allowance by the time
-    it decides whether to re-arm, so it does not — 2 total ``rearm()``
-    calls (init + the one healthy tick). Buggy (decide BEFORE
-    ``observe()``, checking "should I arm" and "did the arm I just made
-    fire" together): the SAME tick both re-arms unconditionally AND
-    detects the fire — a 3rd, uncancelled call, a real live timer left
-    pending for no reason. Strip-falsify (verified by hand, both
-    directions): swapping the re-arm decision back to before ``observe()``
-    in ``watch_event_loop`` turns this 2 into 3."""
+    it decides whether to re-arm, so it does not — only the INITIAL arm
+    ever lands; the healthy tick at 0.05 is also skipped, but for a
+    SEPARATE reason (#6000: not yet due for its own ``threshold_ms / 2``
+    interval re-arm at this threshold — 50 ms < 125 ms). 1 total
+    ``rearm()`` call. Buggy (decide BEFORE ``observe()``, checking
+    "should I arm" and "did the arm I just made fire" together): the
+    0.45 tick both re-arms (using the STALE pre-``observe()``
+    ``should_arm_stack_dump()`` reading, and by 0.45 the #6000 interval
+    IS due) AND detects the fire — a 2nd, uncancelled call, a real live
+    timer left pending for no reason. Strip-falsify (verified by hand):
+    swapping the re-arm decision back to before ``observe()`` in
+    ``watch_event_loop`` turns this 1 into 2."""
     arm, path = _open_arm(tmp_path, label="t4")
     rearm_wrapper, rearm_calls = _counting(arm.rearm)
     arm.rearm = rearm_wrapper  # type: ignore[method-assign]
@@ -341,9 +357,65 @@ async def test_watch_event_loop_never_arms_a_second_timer_before_recording_the_f
 
     assert markers == [b"dump #1\n"]
     assert final_content == markers[-1]
-    assert rearm_calls[0] == 2, (
+    assert rearm_calls[0] == 1, (
         "the tick that detects the first dump must not ALSO arm a second, "
-        "uncancelled timer for the still-ongoing stall"
+        "uncancelled timer for the still-ongoing stall — only the initial "
+        "arm should ever land for this script"
+    )
+
+
+@pytest.mark.asyncio
+async def test_healthy_ticks_rearm_at_most_once_per_half_threshold_not_every_tick(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #6000 — architect's own real-machine measurement:
+    re-arming ``StallDumpArm`` every ``tick_seconds`` (50 ms) makes
+    ``faulthandler.dump_traceback_later`` tear down and recreate its own
+    OS thread ~20 times/second, and the internal
+    ``cancel_dump_traceback_later`` BLOCKS the event-loop thread on the
+    outgoing thread's own join — the watchdog was adding to the very
+    lateness it exists to detect, on every healthy tick, not only during
+    a real stall.
+
+    Clock script: 6 entirely healthy ticks (50 ms apart, never exceeding
+    ``threshold_ms``), 250 ms of coverage at threshold_ms=250 (so the
+    #6000 re-arm interval is 125 ms). A rearm is due every 125 ms —
+    roughly every OTHER tick, not every tick — so this asserts strictly
+    FEWER ``rearm()`` calls than ticks: init + 2 due re-arms (at the
+    ticks landing at/after 0.15 and 0.30) = 3, not init + 6 = 7 (the old
+    every-tick cadence's own count for this same script).
+
+    Strip-falsify (verified by hand: the ``(now - last_stack_dump_rearm_
+    at) >= stack_dump_rearm_interval_seconds`` gate in
+    ``watch_event_loop`` temporarily forced to always-``True``, restoring
+    the pre-#6000 every-tick cadence): ``rearm_calls[0]`` goes from 3 to
+    7 for this exact script."""
+    arm, path = _open_arm(tmp_path, label="t6000")
+    rearm_wrapper, rearm_calls = _counting(arm.rearm)
+    arm.rearm = rearm_wrapper  # type: ignore[method-assign]
+
+    clock = _ScriptedClock([0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30])
+    tripwire = LoopTripwire(threshold_ms=250.0)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await watch_event_loop(
+                tripwire,
+                on_stall=lambda _ms: None,
+                stack_dump=arm,
+                tick_seconds=0.05,
+                clock=clock,
+                sleep=clock.sleep,
+            )
+    finally:
+        arm.close()
+
+    assert rearm_calls[0] == 3, (
+        f"expected init + 2 due re-arms (every ~125ms) over 6 healthy "
+        f"50ms ticks, not one re-arm per tick — got {rearm_calls[0]}"
+    )
+    assert rearm_calls[0] < 7, (
+        "#6000 REGRESSION: re-arming on every tick regardless of the "
+        "#6000 interval would give 7 (init + 6 ticks) for this script"
     )
 
 
