@@ -198,8 +198,9 @@ def test_a_freshly_recorded_entry_carries_no_reused_from_key_field(tmp_path, mon
 
     asyncio.run(_record())
     lines = [json.loads(line) for line in fixture_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert len(lines) == 1
-    assert "reused_from_key" not in lines[0]
+    new_key = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_OLD, tool_choice="auto")
+    entry = next(e for e in lines if e.get("key") == new_key)
+    assert "reused_from_key" not in entry
 
 
 def test_only_the_on_disk_fixture_at_construction_is_a_repair_source(tmp_path, monkeypatch):
