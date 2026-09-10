@@ -320,6 +320,31 @@ def test_run_remote_selects_inline_renderer_on_interactive_tty(tmp_path, monkeyp
     assert isinstance(forced["renderer"], ConsoleChatRenderer)
 
 
+def test_run_remote_logs_the_tty_probe_line(tmp_path, monkeypatch) -> None:
+    """Tier 2: #6043 ruling ② — the 3 individual booleans feeding
+    `is_interactive` (`cui` / `stdin_isatty` / `stdout_isatty`) are
+    otherwise only screen-visible (the AND in `_inline_interactive`
+    collapses them into one bool); an owner report of "TUI looks live
+    but logging still acts non-interactive" needs them on a durable,
+    branch-independent surface. This pins that `_run_remote` logs all 4
+    values (the 3 inputs + the resolved `is_interactive`) to reyn.log.
+
+    Strip-falsifier (verified by hand: the `logger.warning("startup tty
+    probe: ...")` call removed from `_run_remote`): this test goes red
+    — reyn.log has no "startup tty probe" line at all."""
+    _capture_remote_renderer(
+        _connect_args(), stdin_isatty=True, stdout_isatty=False,
+        tmp_path=tmp_path, monkeypatch=monkeypatch,
+    )
+    log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
+    contents = log_file.read_text()
+    assert "startup tty probe" in contents
+    assert "cui=False" in contents
+    assert "stdin_isatty=True" in contents
+    assert "stdout_isatty=False" in contents
+    assert "is_interactive=False" in contents
+
+
 # --- shared driver: one body drives the remote transport to termination --------
 
 

@@ -577,6 +577,26 @@ def _run_remote(
     _setup_interactive_logging(
         _find_project_root(Path.cwd()) or Path.cwd(), is_interactive=is_interactive,
     )
+    # #6043 ruling ②: the 3 individual booleans feeding is_interactive are
+    # otherwise only screen-visible (the AND collapses them) — record them
+    # on a branch-independent surface (reyn.log) so an owner-reported
+    # "TUI looks live but is_interactive came out False" report is
+    # diagnosable without reproducing it live. Placed AFTER
+    # _setup_interactive_logging (immediately above) so the real
+    # RotatingFileHandler is already installed and this line lands in
+    # reyn.log directly, regardless of is_interactive.
+    # level=WARNING, not INFO: this module's `logger` has no explicit
+    # level of its own, so it inherits root's basicConfig(level=WARNING)
+    # — an INFO call here would be silently dropped unless this logger's
+    # level were lowered globally, which would also unmute every OTHER
+    # info-level call in this module. This line fires exactly once per
+    # process startup (not in a loop), so it does not reopen #5977's
+    # closed log-flood gap despite the WARNING level.
+    logger.warning(
+        "startup tty probe: cui=%s stdin_isatty=%s stdout_isatty=%s -> "
+        "is_interactive=%s",
+        getattr(args, "cui", False), stdin_isatty, stdout_isatty, is_interactive,
+    )
     renderer = make_renderer(is_interactive)
     run_async(
         run_remote(
@@ -695,10 +715,12 @@ def _run(args: argparse.Namespace) -> None:
     # the plain renderer there. This single predicate gates BOTH the log redirect
     # and the renderer choice (below) so "inline CUI active ⟺ logging redirected"
     # stays invariant — they must not diverge.
+    stdin_isatty = sys.stdin.isatty()
+    stdout_isatty = sys.stdout.isatty()
     is_interactive = _inline_interactive(
         cui=getattr(args, "cui", False),
-        stdin_isatty=sys.stdin.isatty(),
-        stdout_isatty=sys.stdout.isatty(),
+        stdin_isatty=stdin_isatty,
+        stdout_isatty=stdout_isatty,
     )
     # Route the root logger to a file so library warnings and caught-exception
     # tracebacks (e.g. an LLM APIConnectionError that session.py logs via
@@ -711,6 +733,18 @@ def _run(args: argparse.Namespace) -> None:
     # docstring. (Restores the redirect the Textual TUI had; dropped in the
     # inline-CUI cutover #2195.)
     _setup_interactive_logging(project_root, is_interactive=is_interactive)
+    # #6043 ruling ②: see _run_remote's own copy of this comment for the
+    # full rationale (branch-independent surface, placed AFTER
+    # _setup_interactive_logging so the real RotatingFileHandler is
+    # already installed and this line lands in reyn.log directly.
+    # WARNING level because this module's `logger` inherits root's
+    # basicConfig(level=WARNING) and this fires once per startup, not in
+    # a loop, so it doesn't reopen #5977).
+    logger.warning(
+        "startup tty probe: cui=%s stdin_isatty=%s stdout_isatty=%s -> "
+        "is_interactive=%s",
+        getattr(args, "cui", False), stdin_isatty, stdout_isatty, is_interactive,
+    )
 
     with _startup_stage("config"):
         session_cfg = InvocationContext.from_args(args)
