@@ -21,7 +21,7 @@ own EventLog (#2570: a pipeline driver-session's live step progress).
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -50,9 +50,21 @@ class ChatLifecycleForwarder:
         outbox: asyncio.Queue,
         registry: "Any | None" = None,
         events: "Any | None" = None,
+        compaction_episode_seq: "Callable[[], int] | None" = None,
     ) -> None:
         self.outbox = outbox
         self._registry = registry
+        # #6085 stage 1: read-only access to the OWNING Session's compaction
+        # episode counter (`Session.compaction_episode_seq`) — a bound
+        # method, never a Session reference, so this forwarder stays
+        # decoupled from Session's own shape (same narrow-accessor idiom
+        # `_registry`/`_events` above already use). `None` (a caller with
+        # no session context, e.g. a test) means every marker this forwarder
+        # builds carries no episode id — the consumer's own absorption
+        # check (`app.py`) already treats a missing id as "does not match",
+        # never as "matches anything", so this degrades to always-append,
+        # never to a silent wrong-episode fold.
+        self._compaction_episode_seq = compaction_episode_seq
         # #2708 P3.1 Half-B: this forwarder's OWN session EventLog (the parent/caller
         # audit log). Used by the driver→parent bridge to re-emit a driver-session's
         # ``presented`` event onto the parent's log with ``bridged_from=<driver_sid>``,
@@ -181,6 +193,24 @@ class ChatLifecycleForwarder:
 
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
+    def _compaction_marker_meta(self) -> "dict[str, Any]":
+        """#6085 stage 1: the marker meta every compaction-episode handler
+        below stamps its display frame with — carries the CURRENT episode's
+        own id (:meth:`Session.compaction_episode_seq`, read once, right
+        here, at the moment this frame is built — never re-read later by a
+        consumer deciding whether to fold it). ``None`` when this forwarder
+        was built with no accessor (a caller with no session context) —
+        app.py's own absorption check treats a missing id as "does not
+        match any open row", never as "matches anything", so a marker built
+        this way always lands as its own row rather than risking a silent
+        wrong-episode fold."""
+        return {
+            "compaction_episode_marker": True,
+            "compaction_episode_seq": (
+                self._compaction_episode_seq() if self._compaction_episode_seq else None
+            ),
+        }
+
     def on_compaction_started(self, data: dict) -> None:
         """Surface a ``[⟳ compacting N messages]`` marker when a real
         compaction pass begins (#5633 — owner: "縮小フロー開始開始通知みたいな
@@ -218,7 +248,7 @@ class ChatLifecycleForwarder:
         for BOTH producers, not different-but-each-correct. Degrades to a
         generic marker when absent, never a fabricated count."""
         count = data.get("new_message_count")
-        meta = {"compaction_episode_marker": True}
+        meta = self._compaction_marker_meta()
         if isinstance(count, int) and count > 0:
             self._enqueue(f"[⟳ compacting {count} message{'s' if count != 1 else ''}]", meta=meta)
         else:
@@ -266,7 +296,7 @@ class ChatLifecycleForwarder:
         """
         reason = str(data.get("error") or "unknown error")
         failure_class = data.get("failure_class")
-        meta = {"compaction_episode_marker": True}
+        meta = self._compaction_marker_meta()
         if failure_class == "overflow":
             self._enqueue(f"[⟳ compaction retry: shrinking input after {reason}]", meta=meta)
         else:
@@ -345,7 +375,7 @@ class ChatLifecycleForwarder:
         if data.get("outcome") != "persisted":
             return
         seq = data.get("covers_through_seq")
-        meta = {"compaction_episode_marker": True}
+        meta = self._compaction_marker_meta()
         if isinstance(seq, int) and seq > 0:
             self._enqueue(f"[↑ shrink flow recovered · folded through seq {seq}]", meta=meta)
         else:
@@ -400,7 +430,7 @@ class ChatLifecycleForwarder:
         # own shrink-retry ladder), so this must not scatter either, even
         # though its OWN text is architect's explicitly-unchanged success
         # format (still built exactly as before this PR).
-        self._enqueue(text, meta={"compaction_episode_marker": True})
+        self._enqueue(text, meta=self._compaction_marker_meta())
 
     # ── Router cap / iteration limit ─────────────────────────────────────
     # Two distinct ``limit_denied`` sources:

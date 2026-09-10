@@ -28,14 +28,23 @@ def _make_session(tmp_path: Path):
 
 def test_raw_starts_with_every_field_none(tmp_path):
     """Tier 2: before any compaction_shrink_recovered/llm_request(_error)/
-    recovery_summary_persisted has fired, every cached field reads None —
-    never a fabricated 0. The closed-set comparison is what makes a future
-    FIFTH field a deliberate change rather than a silent drift (it already
-    caught #5578's own ``persisted_covers_through_seq`` being added)."""
+    recovery_summary_persisted has fired, every #5592 observability field
+    reads None — never a fabricated 0. The closed-set comparison is what
+    makes a future FIFTH field a deliberate change rather than a silent
+    drift (it already caught #5578's own ``persisted_covers_through_seq``
+    being added, and #6085's own ``episode_seq`` below).
+
+    ``episode_seq`` (#6085 stage 1) is DELIBERATELY not part of the
+    None-until-observed claim above — it is a monotonic counter, not an
+    observability cache, and ``0`` genuinely means "no episode has ever
+    started on this session", the correct answer here, not a fabrication
+    standing in for "unknown" (see ``Session.compaction_episode_seq``'s
+    own docstring)."""
     session = _make_session(tmp_path)
     raw = session.compaction_progress_raw()
     assert raw == {
         "is_compacting": False,
+        "episode_seq": 0,
         "raw_middle_remaining": None,
         "raw_middle_total": None,
         "upstream_recovery_call_count": None,

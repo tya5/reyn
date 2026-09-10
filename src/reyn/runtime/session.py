@@ -1769,6 +1769,34 @@ class Session:
         # as unknown when they disagree, so a finished episode's numbers never
         # get shown as the next one's progress.
         self._compaction_progress_episode: "int | None" = None
+        # #6085 stage 1: a general-purpose compaction-EPISODE identifier —
+        # NOT the same thing as ``_compaction_progress_episode`` above
+        # (that one is #5719's shrink-retry LADDER episode number,
+        # ``_recovery_episode()``, which reads ``None`` for a plain
+        # CONTROLLER-driven compaction — ``on_compaction_completed``'s own
+        # docstring, lifecycle_forwarder.py, states this explicitly: "a
+        # controller compaction ... runs in no episode"). The owner's own
+        # #6085 report (a plain ``/compact``) is exactly the controller
+        # case, so reusing the ladder-only number would silently NOT cover
+        # the case that was reported. ``is_compacting`` (below) is the ONE
+        # property that already unifies both paths (its own docstring: "the
+        # OR of TWO states"), so its own False->True transition is this
+        # counter's sole trigger.
+        #
+        # Single-increment-point discipline (lead-coder ruling, #6085): only
+        # :meth:`_advance_compaction_episode_seq` ever writes
+        # ``_compaction_episode_seq`` — nothing outside this class re-counts
+        # or re-derives it (the #5350-class hazard: two counters for one
+        # concept drift apart). Every OTHER layer (``lifecycle_forwarder.py``,
+        # ``app.py``) only CARRIES the value this method hands them via
+        # :meth:`compaction_episode_seq` — never re-reads "the current value"
+        # to decide anything at absorption time (that read-the-live-value-
+        # to-decide shape IS the race #6085 found: a marker-tagged frame and
+        # a snapshot-driven settle arrive on two independent channels with no
+        # ordering guarantee between them; a consumer polling "what's current
+        # now" at decision time reproduces exactly that race one level up).
+        self._compaction_episode_active: bool = False
+        self._compaction_episode_seq: int = 0
         self._audit_events.add_subscriber(self._on_compaction_progress_event)
         # #5939 PR-2: arms the memory ladder's own ①->③ escalation judge
         # (see `_compaction_seen_since_backpressure`'s own field
@@ -1806,7 +1834,12 @@ class Session:
         from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
         self._audit_events.add_subscriber(
             ChatLifecycleForwarder(
-                self.outbox, registry=self._registry, events=self._audit_events
+                self.outbox, registry=self._registry, events=self._audit_events,
+                # #6085 stage 1: a bound-method accessor, not `self` — the
+                # forwarder gets read access to ONE number, not this whole
+                # Session (same narrow-accessor idiom as
+                # `register_file_handler_path`/`find_file_handler_path`).
+                compaction_episode_seq=self.compaction_episode_seq,
             )
         )
         # Generic events-log subscriber converting op-emitted events to state_change history entries (#398 v4 emitter family, see session-construction.md#misc-lifecycle-wiring)
@@ -12273,7 +12306,42 @@ class Session:
         if episode is None or episode != self._compaction_progress_episode:
             for key in _IN_FLIGHT_PROGRESS_KEYS:
                 figures[key] = None
-        return {"is_compacting": self.is_compacting, **figures}
+        return {
+            "is_compacting": self.is_compacting,
+            # #6085 stage 1: read via the SAME accessor lifecycle_forwarder.py
+            # uses to stamp its own marker frames — one code path, one
+            # transition-detector, whichever caller happens to read first.
+            "episode_seq": self.compaction_episode_seq(),
+            **figures,
+        }
+
+    def compaction_episode_seq(self) -> int:
+        """#6085 stage 1: this compaction EPISODE's own identifier — see
+        :attr:`_compaction_episode_seq`'s own construction-site comment for
+        why it exists separately from :meth:`_recovery_episode`. Advances
+        (via :meth:`_advance_compaction_episode_seq`) on every call, so
+        BOTH :meth:`compaction_progress_raw` (the client's own snapshot
+        poll) and :class:`~reyn.runtime.lifecycle_forwarder.
+        ChatLifecycleForwarder` (stamping a marker frame at the moment it
+        is built) read the identical, already-current value from the ONE
+        place that increments it — neither one counts independently."""
+        self._advance_compaction_episode_seq()
+        return self._compaction_episode_seq
+
+    def _advance_compaction_episode_seq(self) -> None:
+        """#6085 stage 1: the ONLY place ``_compaction_episode_seq`` is
+        written. Detects a False->True transition of :attr:`is_compacting`
+        (idempotent: calling this any number of times while the SAME
+        episode is still active does nothing past the first call) and
+        bumps the counter exactly once per genuine episode start —
+        regardless of how many separate callers (the snapshot poll, a
+        lifecycle marker stamp) happen to trigger the check, since the
+        transition memory (:attr:`_compaction_episode_active`) lives on
+        this ONE Session instance, not per-caller."""
+        active = self.is_compacting
+        if active and not self._compaction_episode_active:
+            self._compaction_episode_seq += 1
+        self._compaction_episode_active = active
 
     async def _compact_now_for_op(self, *, selection: str = "shortfall") -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
