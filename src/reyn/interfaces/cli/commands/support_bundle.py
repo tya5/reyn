@@ -191,6 +191,7 @@ def _meta(session, since_raw, manifest) -> dict:
             "api_base_set": bool(getattr(_llm, "api_base", "")),
         }
     except Exception as exc:  # never let config-load break the bundle
+        # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- the exception text itself is embedded into the bundle's own returned data (`_unavailable`), not discarded
         config_summary = {"_unavailable": str(exc)}
     return _redact_secrets({
         "reyn_version": reyn_version,

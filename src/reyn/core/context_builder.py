@@ -129,5 +129,6 @@ def byte_safe_prefix(text: str, max_bytes: int) -> str:
         try:
             return truncated.decode("utf-8")
         except UnicodeDecodeError:
+            # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- a bounded (4-iteration) backoff loop; a mid-codepoint cut is expected here by design, not a masked failure, and the loop's own final `return ""` is the documented worst case if every backoff attempt still fails
             truncated = truncated[:-1]
     return ""

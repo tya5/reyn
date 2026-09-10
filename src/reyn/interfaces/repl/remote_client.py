@@ -100,6 +100,7 @@ async def post_control(
             body = resp.json()
             reason = str(body.get("detail") or body.get("error") or body) if isinstance(body, dict) else str(body)
         except Exception:  # noqa: BLE001 — a non-JSON refusal still has a status
+            # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- the refusal is already reported via ControlOutcome.refused(status_code, ...) below regardless of whether this best-effort reason parses
             reason = (resp.text or "").strip() or None
         return ControlOutcome.refused(resp.status_code, reason)
     try:

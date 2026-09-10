@@ -526,6 +526,7 @@ def _compute_args_hash(args: dict) -> str:
     try:
         canonical = json.dumps(args, sort_keys=True, default=str)
     except Exception:  # noqa: BLE001 — fall back to repr for unhashable args
+        # SILENT-EXCEPT-RETURN-OK: internal-hash-fallback -- repr() is itself a valid, if less ideal, canonical form to hash when json.dumps can't serialize the args
         canonical = repr(sorted(args.items()))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
@@ -594,6 +595,7 @@ def _compute_llm_args_hash(
             payload, sort_keys=True, default=str, ensure_ascii=False,
         )
     except Exception:  # noqa: BLE001 — fall back to repr for unhashable values
+        # SILENT-EXCEPT-RETURN-OK: internal-hash-fallback -- repr() is itself a valid, if less ideal, canonical form to hash when json.dumps can't serialize the payload
         canonical = repr(payload)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 

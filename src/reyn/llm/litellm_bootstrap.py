@@ -585,6 +585,7 @@ def ensure_litellm_ready(
                     # own issue comment for the full trace).
                     result = litellm
                 except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
+                    # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- the `finally` block below's own warn-once logger.warning() call fires whenever result stays None, a few lines down in this same function
                     result = None
         finally:
             if result is not None:

@@ -677,6 +677,7 @@ async def _close_stack_after_init_failure(exc: BaseException, stack: "Any") -> B
     try:
         await stack.aclose()
     except BaseException as close_exc:
+        # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- this function's whole purpose is to determine and return the "real" exception; capturing close_exc here IS the reporting, not a swallow
         real_exc = close_exc
     else:
         if isinstance(exc, asyncio.CancelledError):

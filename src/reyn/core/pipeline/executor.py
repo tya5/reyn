@@ -1514,6 +1514,7 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
                     continue
                 return item_idx, result, durable, None
             except Exception as exc:  # noqa: BLE001 - item-failure boundary (on_error policy)
+                # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- the caught exception object itself is retained and returned as the function's own `last_exc` output, not discarded
                 last_exc = exc
         return item_idx, None, False, last_exc
 
@@ -1716,6 +1717,7 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
                     continue
                 return name, result, durable, None
             except Exception as exc:  # noqa: BLE001 - branch-failure boundary (on_error policy)
+                # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- the caught exception object itself is retained and returned as the function's own `last_exc` output, not discarded
                 last_exc = exc
         return name, None, False, last_exc
 

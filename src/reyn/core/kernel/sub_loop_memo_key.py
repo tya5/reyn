@@ -56,5 +56,6 @@ def compute_sub_loop_args_hash(
             payload, sort_keys=True, default=str, ensure_ascii=False,
         )
     except Exception:  # noqa: BLE001 — fallback for unhashable values
+        # SILENT-EXCEPT-RETURN-OK: internal-hash-fallback -- repr() is itself a valid, if less ideal, canonical form to hash when json.dumps can't serialize the payload
         canonical = repr(payload)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
