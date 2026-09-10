@@ -164,38 +164,39 @@ jobs:
         # excluded-injected-tokens fix option). -n auto is xdist; the gate
         # aggregates cross-worker via a shared events file (same mechanism
         # network_gate already uses here) before judging.
-        # REYN_STALL_TRACE_CI=600 (#4986): a session-spanning stack dump if
-        # the pytest process itself does not finish within 600s — 180s of
-        # margin below this step's own `timeout 13m` (780s) kill. Measured
-        # (n=19 post-#6025 green runs, this step's own wall-clock): mean
-        # 538s (~8.97min), max 627s (~10.45min) — the max is ABOVE 600s, so
-        # a healthy (non-hanging) run can occasionally trigger this dump.
-        # OPEN QUESTION, not resolved in this PR: whether 600 itself needs
-        # re-deriving now that the teardown-side 60s×4 wait (#6022/#6025)
-        # is gone and the step's own distribution has shifted — left to
-        # #5994's owner to decide; this PR only corrects the stale "~7-8
-        # min" text to the actual measured numbers above; it does not
-        # change the 600 value itself. Exists
+        # REYN_STALL_TRACE_CI=700 (#4986, re-derived part of #5994 — was
+        # 600): a session-spanning stack dump if the pytest process itself
+        # does not finish within 700s. Measured (n=19 post-#6025 green
+        # runs, this step's own wall-clock): mean 538s (~8.97min), max
+        # 627s (~10.45min). The PRIOR value (600) sat BELOW this measured
+        # max — a healthy (non-hanging) run could occasionally trigger the
+        # dump, exactly the "gate is red, everyone reads red as normal"
+        # failure mode #4986/#5994 exist to prevent. 700 = measured max
+        # (627s) + 73s, and 780s (this step's own `timeout 13m` kill) −
+        # 700 = 80s of margin below that kill — deliberately closer to the
+        # kill side than the midpoint, since 627s is an OBSERVED MAXIMUM,
+        # not a hard upper bound (same reasoning as `13m` over the full
+        # `14.07` derived ceiling above). Exists
         # because neither `--timeout=120` (pytest-timeout) nor pytest's own
         # builtin faulthandler_timeout can ever see a hang in SESSION
         # teardown — both wrap only `pytest_runtest_protocol` per item and
         # cancel their own watchdog the instant the last item's protocol
         # returns (`_pytest/faulthandler.py`'s own source, confirmed, not
         # guessed). See `reyn/dev/testing/stall_dump.py`'s own docstring.
-        # `( sleep 620; ... ) &` (part of #4986/#5909 tool ticket, architect's
+        # `( sleep 720; ... ) &` (part of #4986/#5909 tool ticket, architect's
         # tool ②): a stall dump can only show what its OWN process's threads
         # are doing — whether the pytest CONTROLLER process is even still
         # ALIVE at all is an OS-level fact no Python-side dump can answer
         # from inside itself. This backgrounded watcher asks the OS directly,
-        # once, 20s after `REYN_STALL_TRACE_CI=600`'s own dump would have
+        # once, 20s after `REYN_STALL_TRACE_CI=700`'s own dump would have
         # fired and comfortably before the `timeout 13m` (780s) kill below —
         # so a genuinely still-running controller has already had its stack
         # dumped by the time this fires, and the two diagnostics read in the
         # same causal order the stall-trace file and the per-worker files
         # already do. On a healthy run (mean ~538s / max ~627s measured,
         # n=19 — see the REYN_STALL_TRACE_CI note above for the same
-        # numbers and the open question about 600s) the
-        # `sleep 620` never returns before this step's own foreground command
+        # numbers) the
+        # `sleep 720` never returns before this step's own foreground command
         # exits, so nothing is ever written to `/tmp/hang-ps.log` and the
         # backgrounded subshell is reaped with the step — no added cost on
         # the common path. `pgrep -f "pytest -q -n auto"` re-derives the
@@ -205,20 +206,20 @@ jobs:
         run: |
           set -o pipefail
           (
-            sleep 620
+            sleep 720
             {
-              echo "=== ps -ef @620s ==="
+              echo "=== ps -ef @720s ==="
               ps -ef
-              echo "=== pgrep -a python @620s ==="
+              echo "=== pgrep -a python @720s ==="
               pgrep -a python
-              echo "=== controller fd table @620s (Linux only) ==="
+              echo "=== controller fd table @720s (Linux only) ==="
               for pid in $(pgrep -f "pytest -q -n auto"); do
                 echo "--- pid=$pid ---"
                 ls -l "/proc/$pid/fd" 2>/dev/null || echo "(no /proc/$pid/fd for pid=$pid)"
               done
             } > /tmp/hang-ps.log 2>&1
           ) &
-          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 13m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=700 timeout 13m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
 
       # #4986: surface the stall dump above if (and only if) it fired. The
       # log file is opened (empty) the moment the watchdog is armed —
@@ -263,12 +264,12 @@ jobs:
           fi
           # part of #4986/#5909 tool ticket (architect's tool ②): the OS
           # process snapshot the run step's own backgrounded watcher takes
-          # at 620s — only written on a run that took that long.
-          echo "--- OS process snapshot @620s (only written if the run was still going) ---"
+          # at 720s — only written on a run that took that long.
+          echo "--- OS process snapshot @720s (only written if the run was still going) ---"
           if [ -s /tmp/hang-ps.log ]; then
             cat /tmp/hang-ps.log
           else
-            echo "(no snapshot — the run finished before 620s)"
+            echo "(no snapshot — the run finished before 720s)"
           fi
 
       # #5878 (architect follow-up, #5877 co-vet): the same visibility gap
