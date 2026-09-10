@@ -94,7 +94,7 @@ def _shim_run(
     test). Custom ``PATH`` preserved — the sandbox test needs it."""
     from reyn.security.sandbox.backends.landlock import LandlockBackend
 
-    wrapped = LandlockBackend().wrap_command(argv, policy)
+    wrapped = LandlockBackend().wrap_command(argv, policy, env_path=None)
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         wrapped.argv,

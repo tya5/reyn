@@ -68,16 +68,26 @@ async def probe_argv(
 
     Returns ``None`` immediately, without launching anything, when
     ``backend.probe_binary()`` has nothing to offer (this backend cannot
-    support a probe) or *argv* is empty (nothing to probe)."""
+    support a probe) or *argv* is empty (nothing to probe).
+
+    #6058/#6063: a doctor-only diagnostic with NO operation context to read
+    an ``env_path`` from (named explicitly, per lead-coder's #6063 BLOCKING
+    co-vet, rather than papered over) — it does no separate PATH-based
+    argv0 resolution this value would need to agree with, so a single,
+    local read of ``ambient_path()`` here is the caller's own "read once,
+    thread down explicitly" — not a fallback inside a backend."""
     if not argv:
         return None
     good = backend.probe_binary()
     if good is None:
         return None
-    good_result = await backend.run(good, policy)
+    from reyn.security.sandbox.backend import ambient_path  # noqa: PLC0415
+
+    env_path = ambient_path()
+    good_result = await backend.run(good, policy, env_path=env_path)
     if good_result.returncode != 0:
         return "sandbox_failed"
-    target_result = await backend.run([argv[0]], policy)
+    target_result = await backend.run([argv[0]], policy, env_path=env_path)
     if target_result.returncode == 0:
         return "ok"
     return "target_failed"

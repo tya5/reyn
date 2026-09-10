@@ -23,6 +23,21 @@ ambient_path()`), thread that single value down explicitly as the
 `SandboxBackend.wrap_command`, never through a global both sides
 independently re-consult.
 
+#6063 (lead-coder BLOCKING co-vet, issuecomment-5612883218): #6058's own
+first cut threaded `env_path` down as a parameter but left it OPTIONAL
+(`= None`) on every backend `run()`/`wrap_command()`, with each backend
+falling back to its OWN `ambient_path()` read on omission -- the exact
+#6008 shape (two independent reads that can diverge), reopened via a new
+path (an omitted parameter, invisible to CI, only visible when a caller
+genuinely forgets to thread the value through) instead of the old one (a
+process-lifetime cache). This revision removes that fallback and makes
+`env_path` a REQUIRED keyword-only parameter on every backend's
+`run()`/`wrap_command()` (and on `run_and_classify`) -- an omitted
+argument is now a `TypeError` at the call site, not a silent independent
+re-read inside the backend. `None` remains a legitimate VALUE ("the
+caller read `PATH` and it was genuinely unset"), never a way to ask the
+backend to re-derive it.
+
 Real ``OpContext``/``EventLog``/``Workspace`` + the REAL default sandbox
 backend throughout for the end-to-end witness below -- no mocks (CLAUDE.md
 testing policy). Mirrors ``tests/core/test_5838_stage4_shc_exec.py``'s own
@@ -165,3 +180,70 @@ async def test_a_path_change_during_the_policy_await_no_longer_diverges(
         "the policy await"
     )
     assert "PATH=/usr/bin:/bin\n" not in result["stdout"]
+
+
+def test_wrap_command_omitting_env_path_is_a_type_error_not_a_silent_fallback() -> None:
+    """Tier 2: #6063 BLOCKING co-vet -- omitting `env_path` at a backend
+    `wrap_command()` call site must be a `TypeError` (missing required
+    keyword-only argument), never a silent independent `ambient_path()`
+    read inside the backend.
+
+    This is the direction #6058's own first cut got wrong: `env_path` was
+    threaded as a PARAMETER but stayed OPTIONAL (`= None`) on every
+    backend, so a caller that forgot to pass it fell back to the
+    backend's own uncached read -- the exact #6008 defect (policy's read
+    and exec's read can diverge within one operation), reopened via an
+    omitted argument instead of a process-lifetime cache, and invisible
+    to CI because the fallback always "worked" (just not WITH the value
+    policy saw).
+
+    Strip-falsifier: reintroduce `env_path: "str | None" = None` on
+    `NoopBackend.wrap_command` (restoring the default this test asserts
+    is GONE) and this goes green for the wrong reason -- no `TypeError`
+    would be raised at all.
+    """
+    from reyn.security.sandbox.noop_backend import NoopBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = NoopBackend()
+    with pytest.raises(TypeError, match="env_path"):
+        backend.wrap_command(["echo", "hi"], SandboxPolicy())  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_run_omitting_env_path_is_a_type_error_not_a_silent_fallback() -> None:
+    """Tier 2: #6063 BLOCKING co-vet -- same direction as the
+    `wrap_command()` sibling above, for `SandboxBackend.run()`. Omitting
+    `env_path` must be a `TypeError` at the call site, never a silent
+    independent `ambient_path()` read inside the backend.
+
+    Strip-falsifier: reintroduce `env_path: "str | None" = None` on
+    `NoopBackend.run` and this goes green for the wrong reason -- no
+    `TypeError` would be raised at all (the backend would silently fall
+    back to its own uncached `ambient_path()` read instead)."""
+    from reyn.security.sandbox.noop_backend import NoopBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = NoopBackend()
+    with pytest.raises(TypeError, match="env_path"):
+        await backend.run(["echo", "hi"], SandboxPolicy())  # type: ignore[call-arg]
+
+
+@pytest.mark.asyncio
+async def test_run_and_classify_omitting_env_path_is_a_type_error() -> None:
+    """Tier 2: #6063 BLOCKING co-vet -- `run_and_classify` (the shared
+    resolve/run/classify tail every agent-reachable launch route uses,
+    `sandbox/launcher.py`) must also refuse a missing `env_path` at the
+    type level, the same as the backend methods it forwards to -- it is
+    itself a caller-facing seam where a forgotten `env_path` would
+    otherwise forward `None`-by-omission straight into `backend.run()`.
+
+    Strip-falsifier: reintroduce `env_path: "str | None" = None` on
+    `run_and_classify` and this goes green for the wrong reason."""
+    from reyn.security.sandbox.launcher import run_and_classify
+    from reyn.security.sandbox.noop_backend import NoopBackend
+    from reyn.security.sandbox.policy import SandboxPolicy
+
+    backend = NoopBackend()
+    with pytest.raises(TypeError, match="env_path"):
+        await run_and_classify(backend, ["echo", "hi"], SandboxPolicy())  # type: ignore[call-arg]

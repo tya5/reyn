@@ -139,6 +139,7 @@ async def test_cancel_actually_stops_the_real_process_not_just_the_client(
     canceller = asyncio.create_task(_cancel_once_actually_running())  # keep a reference, avoid GC
     result = await backend.run(
         [sys.executable, "-c", script, str(marker)], policy, cancel_event=cancel_event,
+        env_path=None,
     )
     await canceller
     assert result.cancelled is True, (

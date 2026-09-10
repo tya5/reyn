@@ -261,7 +261,7 @@ class SandboxBackend(Protocol):
         ...
 
     def wrap_command(
-        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None" = None,
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None",
     ) -> WrappedCommand:
         """Return a command-level sandbox wrap of *argv* for a persistent-process
         launch (e.g. a stdio MCP server) that cannot go through the one-shot
@@ -279,17 +279,23 @@ class SandboxBackend(Protocol):
         writing a temp profile file) — it does not itself spawn the wrapped
         process; the caller owns that.
 
-        ``env_path`` (#6058): the ``PATH`` this wrap's own env-fallback should
-        use when *policy*'s own passthrough env doesn't already carry one — a
-        single value the CALLER read once, at ITS OWN operation's entry
-        point, threaded down explicitly. ``None`` (the default) means the
-        caller has no such per-operation value to share (e.g. the MCP stdio
+        ``env_path`` (#6058, REQUIRED — #6063 BLOCKING co-vet): the ``PATH``
+        this wrap's own env-fallback should use when *policy*'s own
+        passthrough env doesn't already carry one — a single value the
+        CALLER read once, at ITS OWN operation's entry point (or, for a
+        caller with no per-operation entry point to read at — the MCP stdio
         launch / CodeAct spawn / ``enforcement_self_test`` call sites, none
         of which separately resolve an argv0 against ``PATH`` elsewhere in
-        the SAME call that this wrap's env would then have to agree with) —
-        the implementation falls back to its own single, uncached read for
-        that one call. See :func:`ambient_path`'s own docstring for why this
-        is a parameter now, not a module-level memo.
+        the SAME call that this wrap's env would then have to agree with —
+        a single LOCAL read at that call site), threaded down explicitly.
+        ``None`` is a legitimate VALUE (the caller read ``PATH`` and it was
+        genuinely unset) — distinct from the parameter being OMITTED, which
+        is now a ``TypeError``, not a silent independent re-read: a second,
+        divergent read of ``ambient_path()`` inside this method is the exact
+        #6008 defect this parameter exists to close, so the implementation
+        MUST NOT fall back to calling :func:`ambient_path` itself. See that
+        function's own docstring for why this is a parameter now, not a
+        module-level memo.
         """
         ...
 
@@ -303,21 +309,24 @@ class SandboxBackend(Protocol):
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
-        env_path: "str | None" = None,
+        env_path: "str | None",
     ) -> SandboxResult:
         """Execute argv under the given policy and return the result.
 
-        ``env_path`` (#6058): same contract as :meth:`wrap_command`'s own
-        ``env_path`` — the caller's single per-operation ``PATH`` read,
-        threaded down rather than re-derived here. ``sandboxed_exec.py``
-        reads it ONCE (``ambient_path()``) and passes the SAME value to both
-        this method and the policy check (``check_exec_plan_policy``'s own
-        ``env_path``) so the binary policy approved and the binary the
-        child's env resolves against are the identical ``PATH`` — never two
-        independent reads of it. ``None`` (every caller with no such value
-        to share, e.g. the shell-hook runner, which does no separate
-        PATH-based argv0 resolution this would need to agree with) falls
-        back to a single, uncached read local to this call.
+        ``env_path`` (#6058, REQUIRED — #6063 BLOCKING co-vet): same contract
+        as :meth:`wrap_command`'s own ``env_path`` — the caller's single
+        per-operation ``PATH`` read, threaded down rather than re-derived
+        here. ``sandboxed_exec.py`` reads it ONCE (``ambient_path()``) and
+        passes the SAME value to both this method and the policy check
+        (``check_exec_plan_policy``'s own ``env_path``) so the binary policy
+        approved and the binary the child's env resolves against are the
+        identical ``PATH`` — never two independent reads of it. A caller
+        with no per-operation value to share (e.g. the shell-hook runner)
+        now reads ``ambient_path()`` itself, explicitly, at its own call
+        site and passes the result — this method no longer falls back to
+        an uncached read of its own: an OMITTED argument is a ``TypeError``,
+        and a second, independent read inside this method is the exact
+        #6008 defect this parameter exists to close.
 
         ``cwd`` is the working directory the command runs in. The OS passes the
         run's ``workspace.base_dir`` (= parity with the legacy ``shell`` op,
