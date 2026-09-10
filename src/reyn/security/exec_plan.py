@@ -162,9 +162,37 @@ allowlist doing the SAME job as before under a new name: for every
 construct the grammar CAN see (``$HOME`` expansion, ``{a,b}`` brace
 expansion via a ``concatenation`` node, ``!`` negation via
 ``negated_command``, a raw newline via the adjacency check above), the
-node-kind allowlist is what actually fires; the leaf-text scan is the
-disclosed exception for the two constructs (glob, tilde) that ``bash``'s
-own grammar structurally cannot distinguish from an ordinary word.
+node-kind allowlist is what actually fires — the leaf-text scan is a
+backstop, not the primary mechanism for most of these 9 characters, and
+which one fires depends on the SHAPE the character appears in, not the
+character alone (measured directly against the installed
+``tree-sitter-bash`` grammar, #6098 BLOCKING review round — see the
+per-character breakdown below; do not assume any one character is
+"handled" by only one of the two mechanisms):
+
+  - ``*`` ``?`` ``[`` ``]`` ``~`` (pathname glob, tilde expansion) —
+    ``bash``'s own grammar has NO node of its own for these; every
+    shape (adjacent to other word text or standing alone) parses to a
+    plain ``word``, so the leaf-text scan is the ONLY mechanism that
+    ever catches them.
+  - ``$`` ``{`` ``}`` ``!`` — when adjacent to other word text (``$HOME``,
+    ``{a,b}``, a leading ``!``), these parse to their OWN node
+    (``simple_expansion``/``expansion``, ``concatenation``,
+    ``negated_command``) and are caught by the node-kind allowlist
+    BEFORE the leaf-text scan ever runs. But a NON-leading ``!``
+    (``echo x!y``), a backslash-escaped ``$``/``{``/``}`` (``echo
+    x\\$y``), or a brace character with no adjacent word text to form a
+    ``concatenation`` with (``echo {`` alone) all parse to a plain
+    ``word``/``string_content`` leaf instead — for THESE shapes, the
+    leaf-text scan is what actually rejects, and it is the only thing
+    that does (a first draft of this doc, and a #6098 review round
+    that measured only the corpus already in this module's own test
+    file, both read these 4 characters as dead weight the node-kind
+    check had already made redundant — false: that conclusion held
+    for every input the existing corpus HAD, not for the characters in
+    general; see ``test_leaf_only_expansion_chars_are_still_rejected``
+    for the corpus gap that closed it and why narrowing this set would
+    have silently re-accepted all 5 of its cases).
 
 :data:`_PUNCTUATION_CHARS`'s own quote-aware operator/redirect-shape
 classification in :func:`_iter_tokens` is UNCHANGED by this stage — its
@@ -229,9 +257,14 @@ bugs — openai/codex#8394, architect's own research on #5987).
   character rule.
 - Any of :data:`_EXPANSION_LEAF_CHARS` (``$ * ? [ ] { } ~ !``) inside a
   leaf ``word``/``string_content``/``raw_string`` node, quoted or not —
-  the disclosed exception: pathname glob (``*``/``?``/``[...]``) and
-  tilde expansion have no grammar node of their own (see the module
-  docstring's own "#5987 stage 2" section for why).
+  glob/tilde (``* ? [ ] ~``) have no grammar node of their own for ANY
+  shape, so the leaf-text scan is their only mechanism; ``$``/``{``/
+  ``}``/``!`` are USUALLY caught earlier by the node-kind allowlist
+  (their own node when adjacent to other word text) but fall through to
+  this same leaf-text scan for a non-leading ``!``, a backslash-escaped
+  ``$``/``{``/``}``, or a standalone brace (see the module docstring's
+  own "#5987 stage 2" section for the full per-character breakdown and
+  why treating these 4 as dead would have been wrong).
 - An UNQUOTED occurrence of one of :data:`_PUNCTUATION_CHARS` that is
   not a supported operator/redirect shape — command substitution
   (backtick), subshell grouping (``(...)``), process substitution
@@ -388,10 +421,18 @@ _HEREDOC_NODE_KINDS = frozenset({
     "heredoc_redirect",
 })
 
-# `!` stays in this set even though a LEADING `!` is already caught
-# structurally (:class:`negated_command` is not in
-# :data:`_ALLOWED_NODE_KINDS`) -- a non-leading `!` (`echo x!y`) has no
-# node of its own either, same reasoning as the glob/tilde characters.
+# `$`/`{`/`}`/`!` stay in this set even though EACH is already caught
+# structurally when adjacent to other word text (`simple_expansion`/
+# `expansion`, `concatenation`, `negated_command` -- none in
+# :data:`_ALLOWED_NODE_KINDS`) -- a non-leading `!` (`echo x!y`), a
+# backslash-escaped `$`/`{`/`}` (`echo x\$y`), or a standalone brace
+# (`echo {`) all parse to a plain `word`/`string_content` leaf instead,
+# same reasoning as the glob/tilde characters (measured directly
+# against tree-sitter-bash, #6098 BLOCKING review round -- see module
+# docstring's own "#5987 stage 2" section for the full breakdown;
+# `test_leaf_only_expansion_chars_are_still_rejected` witnesses all 5
+# shapes so a future "these 4 look dead" reading stops at a red test,
+# not just this comment).
 _EXPANSION_LEAF_CHARS = frozenset("$*?[]{}~!")
 
 # Fail-closed at import time, not just in this module's own test suite
@@ -462,7 +503,8 @@ def _reject_via_node_kind_classification(text: str) -> None:
        :data:`_ALLOWED_NODE_KINDS`, OR any :data:`_LEAF_TEXT_NODE_KINDS`
        leaf whose own text contains one of :data:`_EXPANSION_LEAF_CHARS`
        (the disclosed exception — see :data:`_LEAF_TEXT_NODE_KINDS`'s own
-       comment for why glob/tilde/non-leading-``!`` still need this).
+       comment for why glob/tilde/escaped-``$``/``{``/``}``/non-leading-``!``
+       still need this).
 
     :data:`_PUNCTUATION_CHARS`'s own quote-aware operator/redirect-shape
     checks in :func:`_iter_tokens` still run AFTER this, unchanged — see
@@ -581,7 +623,8 @@ class ExecPlanRejected(Exception):
     node kind outside :data:`_ALLOWED_NODE_KINDS` (including the AST's
     own structural signature for a raw newline), a
     :data:`_EXPANSION_LEAF_CHARS` character this parser cannot resolve
-    safely (glob/tilde/non-leading-``!``), or an unquoted
+    safely (glob/tilde/escaped ``$``/``{``/``}``/non-leading ``!``), or
+    an unquoted
     :data:`_PUNCTUATION_CHARS` occurrence in an unsupported shape, or a
     shell construct this parser cannot safely decompose into
     policy-checkable segments (#5838 段2) — see this module's own

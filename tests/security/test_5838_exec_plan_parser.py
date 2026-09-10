@@ -339,6 +339,40 @@ def test_negation_operator_is_rejected(text: str) -> None:
         parse_exec_plan(text)
 
 
+@pytest.mark.parametrize("text", [
+    "echo x!y",
+    "echo x\\$y",
+    "echo {",
+    "echo x\\{y",
+    "echo x\\}y",
+])
+def test_leaf_only_expansion_chars_are_still_rejected(text: str) -> None:
+    """Tier 1: closes a corpus gap a #6098 BLOCKING review round found —
+    a real-execution co-vet compared this PR against ``origin/main`` and
+    concluded ``$``/``{``/``}``/``!`` in :data:`_EXPANSION_LEAF_CHARS`
+    were unreachable dead weight (every existing case in this file's own
+    69-input corpus closes earlier, via a distinct grammar node kind:
+    ``simple_expansion``/``expansion``/``concatenation``/
+    ``negated_command``). That conclusion held for every input this
+    corpus HAD, not for the character in general: a non-leading ``!``
+    (no ``negated_command``), a backslash-escaped ``$``/``{``/``}``, and
+    a brace character standing alone (no adjacent word text to form a
+    ``concatenation`` with) all parse to a plain ``word``/
+    ``string_content`` leaf — verified directly against the installed
+    ``tree-sitter-bash`` grammar. Narrowing :data:`_EXPANSION_LEAF_CHARS`
+    to just the glob/tilde characters (as the same review round first
+    proposed) would have silently ACCEPTED all 5 of these.
+
+    Only the REJECTION is asserted, not which mechanism catches it — the
+    whole point of #5987 stage 2 is that the node-kind path and the
+    leaf-text path can each independently close a given input, and which
+    one fires for a given shape is an implementation detail this test
+    must not pin (that would make it an algorithm-level pin on internal
+    routing, forbidden by this repo's testing policy)."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(text)
+
+
 def test_an_always_forbidden_character_inside_quotes_is_still_rejected() -> None:
     """Tier 1: this parser's leaf-text scan (:data:`_EXPANSION_LEAF_CHARS`,
     #5987 stage 2) is checked per AST leaf node, quote-position-blind, on
