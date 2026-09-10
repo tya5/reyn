@@ -254,14 +254,61 @@ def test_is_shrinkable_overflow_enters_the_ladder_for_a_code_only_signal():
     assert is_shrinkable_overflow(exc)
 
 
-def test_a_message_with_the_keyword_but_a_different_code_is_still_detected():
+def test_a_message_with_a_surviving_phrase_but_a_different_code_is_still_detected():
     """Tier 2: non-regression — the pre-existing keyword fallback must
     still work for a shape carrying no ``code`` at all (or a
     ``code`` this allowlist does not name), so the #5699 fix is additive,
-    not a replacement of the keyword path."""
+    not a replacement of the keyword path.
+
+    #6069 reworded this off "This model's maximum context length is
+    128000 tokens." (general words only, no phrase — see
+    ``test_6069_real_openai_style_overflow_message_without_a_phrase_is_
+    now_missed`` right below for what that ORIGINAL message now does)
+    onto a message carrying a surviving PHRASE."""
     exc = litellm.BadRequestError(
-        message="This model's maximum context length is 128000 tokens.",
+        message="This model's maximum context length is 128000 tokens; "
+        "the request is too large.",
         model="gpt-4", llm_provider="openai",
     )
     assert getattr(exc, "code", None) != "context_length_exceeded"
     assert is_context_overflow_error(exc)
+
+
+def test_6069_real_openai_style_overflow_message_is_caught_via_phrase():
+    """Tier 2: #6069's own required positive-control, re-verified fixed
+    after the #6073 co-vet (architect + lead-coder) — not merely
+    disclosed.
+
+    "This model's maximum context length is 128000 tokens." is the exact
+    pre-#6069 fixture this file's sibling test above used (see the prior
+    revision of this file) — modelled on OpenAI's own real API error
+    text for a context-length overflow, and the shape #5699's own
+    incident investigation built to confirm the gap that issue fixed. It
+    carries NEITHER "too long" NOR "too large" — it relied SOLELY on
+    the two general words #6069 removed ("context"/"length").
+
+    #6069's PR (#6073) first landed with this positive control going RED
+    (the message no longer classified as overflow at all) — a genuine
+    false negative, not an accepted trade: the co-vet ruled it must be
+    FIXED, since this is the exact OpenAI-proxy-flattened-overflow shape
+    the keyword fallback exists to catch. Fixed by adding 3 PHRASES
+    derived strictly from this one observed message --
+    ``"maximum context"``/``"context length"``/``"context window"`` (see
+    ``_CONTEXT_OVERFLOW_KEYWORDS``'s own docstring for the disclosed
+    "observed 1, not exhaustive" scope of that addition) — still
+    multi-word phrases, so the structural gate
+    (``test_context_overflow_keywords_contain_no_bare_words``) keeps
+    passing; this is not a re-add of a bare general word."""
+    exc = litellm.BadRequestError(
+        message="This model's maximum context length is 128000 tokens.",
+        model="gpt-4", llm_provider="openai",
+    )
+    assert getattr(exc, "code", None) != "context_length_exceeded", (
+        "test premise: no structured code field present"
+    )
+    assert is_context_overflow_error(exc), (
+        "#6073 fix: this real-shaped message must classify as overflow "
+        "again via the 'maximum context'/'context length' phrase — if "
+        "this assertion ever goes red, re-read #6069/#6073 before "
+        "re-removing the phrase"
+    )

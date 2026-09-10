@@ -107,19 +107,39 @@ def test_overflow_ref_text_fallback_mime_type() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_is_context_overflow_error_context_keyword() -> None:
-    """Tier 2: exception message containing 'context' → True."""
-    assert is_context_overflow_error(Exception("context window exceeded")) is True
+def test_is_context_overflow_error_bare_context_word_no_longer_matches() -> None:
+    """Tier 2: #6069 — a message containing ONLY the general word
+    'context' (no surviving phrase, no typed/structured signal) → False.
+
+    This pins the DELIBERATE behaviour change: 'context' used to be in
+    ``_CONTEXT_OVERFLOW_KEYWORDS`` on its own and matched any message
+    containing it, including one with nothing to do with overflow (the
+    real false positive this issue started from: a fixture FILENAME
+    containing "limit"). 'context'/'token'/'length'/'limit' fail the
+    architect's own discriminator (the spelling can appear when the
+    condition is NOT true) and were removed; only multi-word phrases
+    remain.
+
+    #6073 (positive-control follow-up): the fixture below is deliberately
+    "context exceeded", NOT "context window exceeded" — #6073's own fix
+    added the observed phrase "context window" back to
+    ``_CONTEXT_OVERFLOW_KEYWORDS`` (see that constant's own docstring),
+    so a fixture using that exact 2-word spelling would now match via the
+    PHRASE, not the bare word, and stop pinning what this test's name
+    claims. "context exceeded" carries neither "context window" nor
+    "context length" nor "maximum context" — still an isolated bare
+    word."""
+    assert is_context_overflow_error(Exception("context exceeded")) is False
 
 
-def test_is_context_overflow_error_token_keyword() -> None:
-    """Tier 2: exception message containing 'token' → True."""
-    assert is_context_overflow_error(Exception("too many tokens")) is True
+def test_is_context_overflow_error_bare_token_word_no_longer_matches() -> None:
+    """Tier 2: #6069 — same change as above, for 'token'."""
+    assert is_context_overflow_error(Exception("too many tokens")) is False
 
 
-def test_is_context_overflow_error_length_keyword() -> None:
-    """Tier 2: exception message containing 'length' → True."""
-    assert is_context_overflow_error(Exception("max length exceeded")) is True
+def test_is_context_overflow_error_bare_length_word_no_longer_matches() -> None:
+    """Tier 2: #6069 — same change as above, for 'length'."""
+    assert is_context_overflow_error(Exception("max length exceeded")) is False
 
 
 def test_is_context_overflow_error_too_long_keyword() -> None:
@@ -145,8 +165,13 @@ def test_is_context_overflow_error_unrelated_exception() -> None:
 
 
 def test_is_context_overflow_error_case_insensitive() -> None:
-    """Tier 2: keyword match is case-insensitive."""
-    assert is_context_overflow_error(Exception("CONTEXT_LENGTH_EXCEEDED")) is True
+    """Tier 2: keyword match is case-insensitive.
+
+    #6069: reworded off "CONTEXT_LENGTH_EXCEEDED" (general words only,
+    no surviving phrase — would now be False) onto a surviving PHRASE
+    ("too large"), upper-cased, so this still actually exercises case-
+    insensitivity rather than an artifact of the old general-word set."""
+    assert is_context_overflow_error(Exception("INPUT IS TOO LARGE")) is True
 
 
 def test_is_context_overflow_error_recognises_the_real_litellm_type() -> None:
@@ -193,9 +218,10 @@ def test_is_context_overflow_error_type_alone_recovers_when_message_has_no_keywo
             return "the request could not be completed"
 
     exc = _RewordedOverflow(message="irrelevant", model="m", llm_provider="p")
+    from reyn.services.compaction.engine import _CONTEXT_OVERFLOW_KEYWORDS
+
     assert not any(
-        kw in str(exc).lower()
-        for kw in ("context", "token", "length", "limit", "too long", "too large")
+        kw in str(exc).lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS
     ), "test premise: the overridden __str__ must carry no overflow keyword"
     assert isinstance(exc, litellm.ContextWindowExceededError)  # sanity: real subclass
     assert is_context_overflow_error(exc) is True
@@ -215,8 +241,12 @@ def test_is_context_overflow_error_substring_still_catches_a_flattened_type() ->
     case, not dead code the type check already covers."""
     import litellm
 
+    # #6069: reworded onto a surviving PHRASE ("too large") — the
+    # original message ("the context length exceeds the model's limit")
+    # matched only via the now-removed general words "context"/"length"/
+    # "limit" and would no longer match at all.
     exc = litellm.BadRequestError(
-        message="the context length exceeds the model's limit",
+        message="the input is too large for the model's context window",
         model="m", llm_provider="p",
     )
     assert not isinstance(exc, litellm.ContextWindowExceededError), (

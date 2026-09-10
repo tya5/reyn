@@ -6,7 +6,9 @@ Three witnesses, per lead-coder's design (issue #3783 comments):
 
 (a) rescue arm — an exception the OLD keyword predicate did NOT recognise
     (no shared word with "context"/"token"/"length"/"limit"/"too long"/
-    "too large") but which shrinking the input genuinely fixes (the
+    "too large" — the first 4 of those were later removed by #6069, kept
+    here as historical context for what the OLD predicate covered) but
+    which shrinking the input genuinely fixes (the
     motivating live incident: a response cut short by an output cap raises
     a bare ``JSONDecodeError``). Constructed, not reproduced: a small output
     cap + a large input, mirroring the incident's actual mechanism.
@@ -271,13 +273,16 @@ class _AlwaysOverflowRouterLoop:
 
     async def run(self, *, user_text: str, history: list[dict]) -> TokenUsage:
         # The message must match ``is_context_overflow_error``'s keyword
-        # fallback ("context"/"token"/"length"/"limit"/"too long"/"too
-        # large") — the predicate does not special-case ``ContextOverflowError``
-        # by TYPE, only litellm's own ``ContextWindowExceededError``; an
-        # unmatched message here makes ``_run_with_shrink`` re-raise raw
-        # WITHOUT ever entering retry_loop, silently missing this arm's
-        # target code path entirely (caught during test development).
-        raise ContextOverflowError("simulated: context length exceeded")
+        # fallback — #6069 narrowed that fallback to PHRASES only
+        # ("too long"/"too large"; the 4 general words "context"/"token"/
+        # "length"/"limit" were removed), so this message needs a
+        # surviving phrase. The predicate does not special-case
+        # ``ContextOverflowError`` by TYPE, only litellm's own
+        # ``ContextWindowExceededError``; an unmatched message here makes
+        # ``_run_with_shrink`` re-raise raw WITHOUT ever entering
+        # retry_loop, silently missing this arm's target code path
+        # entirely (caught during test development).
+        raise ContextOverflowError("simulated: input too large for this model")
 
 
 @pytest.mark.asyncio

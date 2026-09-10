@@ -1048,8 +1048,61 @@ class ContextOverflowError(Exception):
 #: in — NOT "can shrinking recover from this" (a separate, broader
 #: question #3783 stage 3 addresses; the two must not be merged into one
 #: predicate — see ``is_context_overflow_error``'s own docstring).
+#:
+#: #6069 (architect's own discriminator, revised after withdrawing a first
+#: "provenance" cut — see the issue's own 2nd comment): a partial-string
+#: match is safe ONLY when the spelling can ONLY appear when the condition
+#: is true. The 4 single words this tuple used to also carry — ``context``,
+#: ``token``, ``length``, ``limit`` — are common English words that can
+#: appear in an UNRELATED message for a reason that has nothing to do with
+#: overflow (the real false positive this issue started from:
+#: ``MissingFixture("... safety_limit_no_listener.jsonl ...")`` matched
+#: ``"limit"`` purely because of a fixture FILENAME). Every remaining
+#: element is a multi-word PHRASE — "too long"/"too large" and the ones
+#: added below — which is a materially narrower spelling but NOT an
+#: impossible one to collide with by accident (e.g. a path or filename
+#: that happens to contain the words "context window") — see
+#: ``test_context_overflow_keywords_contain_no_bare_words`` (this module's
+#: own structural gate, scoped to ONLY this one constant) for what is
+#: actually enforced: no single-word (whitespace-free) element, not
+#: "no collision is possible."
+#:
+#: #6069 positive-control (lead-coder's explicit ask, run BEFORE landing
+#: this removal): a real, historical provider overflow message this
+#: keyword set was written to catch — ``"This model's maximum context
+#: length is 128000 tokens."`` (the #5699 owner-incident test's own
+#: non-regression fixture, itself modelled on OpenAI's real API error
+#: text) — contains NEITHER "too long" NOR "too large". It matched ONLY
+#: via the now-removed general words ``"context"``/``"length"``. Found by
+#: the positive control BEFORE this removal landed, and FIXED here (not
+#: merely disclosed — architect/lead-coder co-vet, PR #6073): this is the
+#: OpenAI-proxy-flattened-overflow shape the keyword fallback exists for
+#: in the first place, so losing it silently would have reopened the
+#: exact defect this fallback was written to close. Caught by adding the
+#: 3 phrases below, each containing "context" plus an adjoining word from
+#: that one observed message — still a multi-word PHRASE (passes the
+#: structural gate and the architect's own discriminator), not a re-added
+#: bare general word.
+#:
+#: ``"maximum context"`` / ``"context length"`` / ``"context window"`` —
+#: derived STRICTLY from the one message above, the only real observation
+#: on hand when these were added (#6069 PR #6073 review). This list is
+#: NOT exhaustive: it covers only what has been observed so far. Add a
+#: phrase here only from a newly OBSERVED real overflow message (never
+#: invented/imagined ahead of one — #5987's same corpus discipline:
+#: matching against an imagined corpus only measures agreement with the
+#: imagination).
+#:
+#: This is why stage 2 (the structured ``error.code`` field, #5699) and
+#: stage 1/2 (type/status_code) above are checked FIRST, in STRENGTH
+#: order: the real production shape (an un-flattened provider response)
+#: almost always carries ``code: "context_length_exceeded"`` and is caught
+#: there regardless of what this tuple contains. This tuple is the
+#: fallback of last resort for a message whose STRUCTURE was also
+#: stripped by an intermediate proxy — see this function's own docstring.
 _CONTEXT_OVERFLOW_KEYWORDS = (
-    "context", "token", "length", "limit", "too long", "too large",
+    "too long", "too large",
+    "maximum context", "context length", "context window",
 )
 
 #: #5699 (owner real-machine incident): the OpenAI/litellm structured
@@ -1241,7 +1294,47 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     # below).
     if signal.code in _CONTEXT_OVERFLOW_ERROR_CODES:
         return True
-    return any(kw in signal.message.lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
+    # #6069: the fallback path above (type/status_code/structured code) is
+    # where this is no longer reached for a definitive signal; everything
+    # below this point is deciding from free text alone, which is exactly
+    # the thing this function's own docstring calls "fine as a fallback
+    # ... but must never be the ONLY signal when a stronger one is
+    # available". #6069's own incident (a fixture filename matching
+    # "limit") was silent at this exact line — nothing recorded WHICH
+    # spelling matched or on WHAT exception type, so the next false
+    # positive/negative is diagnosable only by re-deriving it from
+    # scratch. Reported here, at the ONE spot every call site funnels
+    # through, rather than at each of this predicate's own callers.
+    #
+    # #6073 co-vet (architect + lead-coder): ``chat.py``'s shipped default
+    # config sets the ROOT logger to ``WARNING`` (#6045 hit the same trap
+    # today: "info is quiet" actually meant "info is discarded" there) —
+    # an ``INFO`` record here is silently dropped in every shipped run,
+    # so the True-deciding branch (free text ALONE decided a shrink-ladder
+    # entry — a fact that should be visible by default) is ``warning``.
+    # The False branch is left at ``debug``, not raised to the same level:
+    # it fires on EVERY exception that reaches this fallback and matches
+    # nothing (any RETRYABLE/FATAL exception with no typed/status/code
+    # signal funnels through here too), so raising it to ``warning`` would
+    # make it noise that drowns out the one warning that actually matters
+    # — the fix for "too quiet" is narrowing WHEN a level fires, never
+    # lowering the bar below what the shipped config surfaces.
+    matched = [kw for kw in _CONTEXT_OVERFLOW_KEYWORDS if kw in signal.message.lower()]
+    if matched:
+        logger.warning(
+            "is_context_overflow_error: keyword fallback classified overflow=True "
+            "via %r on exception type %s",
+            matched,
+            signal.class_name,
+        )
+        return True
+    logger.debug(
+        "is_context_overflow_error: keyword fallback classified overflow=False "
+        "-- none of %r matched exception type %s",
+        _CONTEXT_OVERFLOW_KEYWORDS,
+        signal.class_name,
+    )
+    return False
 
 
 class LLMFailureClass(enum.Enum):
