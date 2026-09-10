@@ -106,19 +106,38 @@ jobs:
         # permanently legible in the CI log instead of requiring a rerun with
         # extra flags to find out after the fact.
         #
-        # `timeout 12m` (#3670): a GitHub Actions job/step hitting its own
-        # `timeout-minutes` reports conclusion `cancelled`, which every
-        # monitoring query built around `conclusion == "failure"` (the
-        # obvious, common form) silently treats as "not red" — #3670 found
-        # main's audit job cancelled on 4 of 5 consecutive pushes with NO
-        # monitoring trigger ever firing, because "cancelled" isn't
+        # `timeout 13m` (#3670, re-derived #5994): a GitHub Actions job/step
+        # hitting its own `timeout-minutes` reports conclusion `cancelled`,
+        # which every monitoring query built around `conclusion == "failure"`
+        # (the obvious, common form) silently treats as "not red" — #3670
+        # found main's audit job cancelled on 4 of 5 consecutive pushes with
+        # NO monitoring trigger ever firing, because "cancelled" isn't
         # "failure". Self-timing out via the coreutils `timeout` command
         # BEFORE the platform's own job-level kill fires converts a would-be
         # `cancelled` into an ordinary nonzero-exit step `failure` — legible
         # to every `conclusion == "failure"` query without changing what
-        # they query for. `12m` (job budget 15m) leaves ~3m headroom for
-        # checkout/setup/pip-install (which run before this step and also
-        # count against the job's 15m) plus post-job cleanup.
+        # they query for.
+        #
+        # `13m`'s derivation (#5994, replaces the un-derived `12m`): job
+        # budget is `timeout-minutes: 15` (line 36, 900s). Measured overhead
+        # around this step — n=9 green `pytest (Python 3.12)` runs on
+        # origin/main — gave a combined pre+post-pytest overhead (checkout +
+        # setup-python + install-deps + runner-capacity, plus the stall-trace
+        # / memory-ceiling / worker-forensics / upload-artifact / test-
+        # coverage-census steps that run after this one) of max=56s (~0.93
+        # min) across those 9 runs — an OBSERVED MAXIMUM, not a guaranteed
+        # ceiling. `15 − 56/60 ≈ 14.07` min is therefore the derived ceiling
+        # this step could use. **13, not the full 14.07**: 56s is a 9-run
+        # sample max, not a hard bound — if overhead runs longer on a slower
+        # day, budgeting the full 14.07 would let the JOB's own 15m
+        # `timeout-minutes` kill this step instead (a `cancelled` conclusion,
+        # losing all pytest output/results — the exact failure mode #3670
+        # exists to avoid), rather than this step's own `timeout` firing
+        # first and failing gracefully with `/tmp/pytest-output.log` intact.
+        # `13m` leaves ~1.07 min of margin between this step's timeout and
+        # the job's 15-min hard ceiling, so a slower-than-observed overhead
+        # day still gets a clean step-level `failure`, not a silent job-level
+        # `cancelled`.
         # `--durations=25` (#4239): where the 5m23s actually goes has never
         # been measured — "delete unneeded tests to speed CI" is only true if
         # the time is proportional to the count, and a handful of real
@@ -146,8 +165,8 @@ jobs:
         # aggregates cross-worker via a shared events file (same mechanism
         # network_gate already uses here) before judging.
         # REYN_STALL_TRACE_CI=600 (#4986): a session-spanning stack dump if
-        # the pytest process itself does not finish within 600s — 120s of
-        # margin below this step's own `timeout 12m` (720s) kill, comfortably
+        # the pytest process itself does not finish within 600s — 180s of
+        # margin below this step's own `timeout 13m` (780s) kill, comfortably
         # above this suite's own normal completion (~7-8 min measured). Exists
         # because neither `--timeout=120` (pytest-timeout) nor pytest's own
         # builtin faulthandler_timeout can ever see a hang in SESSION
@@ -161,7 +180,7 @@ jobs:
         # ALIVE at all is an OS-level fact no Python-side dump can answer
         # from inside itself. This backgrounded watcher asks the OS directly,
         # once, 20s after `REYN_STALL_TRACE_CI=600`'s own dump would have
-        # fired and comfortably before the `timeout 12m` (720s) kill below —
+        # fired and comfortably before the `timeout 13m` (780s) kill below —
         # so a genuinely still-running controller has already had its stack
         # dumped by the time this fires, and the two diagnostics read in the
         # same causal order the stall-trace file and the per-worker files
@@ -189,7 +208,7 @@ jobs:
               done
             } > /tmp/hang-ps.log 2>&1
           ) &
-          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=600 timeout 13m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
 
       # #4986: surface the stall dump above if (and only if) it fired. The
       # log file is opened (empty) the moment the watchdog is armed —
