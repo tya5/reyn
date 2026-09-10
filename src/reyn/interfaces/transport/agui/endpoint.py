@@ -1470,6 +1470,13 @@ async def agui_submit(request: Request):
         return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
 
     ptype = payload.get("type")
+    # #6083 ⑵-a: each branch below has a declared control-POST timeout
+    # class (does its own await resolve in bounded time, or not) — the
+    # declaration itself lives in ``protocol.py``'s ``LONG_RUNNING_
+    # PAYLOAD_TYPES``/``BOUNDED_PAYLOAD_TYPES`` (a fact both ends of the
+    # wire need, not this module's own implementation detail), NOT here.
+    # A branch added below with no entry on either side there fails CI
+    # (that module's own derivation test AST-walks THIS function).
 
     # Heartbeat fast-path (liveness): a pure in-memory refresh of the surface's
     # keepalive timestamp, deliberately dispatched BEFORE ``registry.exists()``

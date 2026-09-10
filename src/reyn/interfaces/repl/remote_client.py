@@ -24,6 +24,7 @@ import time
 import uuid
 from typing import AsyncIterator
 
+from reyn.interfaces.transport.agui.protocol import LONG_RUNNING_PAYLOAD_TYPES
 from reyn.interfaces.transport.control_outcome import ControlOutcome
 
 logger = logging.getLogger(__name__)
@@ -50,16 +51,56 @@ def _env_float(name: str, default: float) -> float:
 # ``REYN_AGUI_HEARTBEAT_INTERVAL_S``; MUST stay below the server's timeout.
 _HEARTBEAT_INTERVAL = _env_float("REYN_AGUI_HEARTBEAT_INTERVAL_S", 25.0)
 
-#: #5894 (architect ruling ①-1): the read timeout for a CONTROL POST
-#: (submit / cancel / answer / heartbeat) — the one constant, the one place.
-#: The SSE stream keeps ``read=None`` (a live stream legitimately reads
-#: forever); a control request is a bounded round-trip and must not share
-#: the stream's policy. Owner-hit: the server was pinned by CPU-bound LLM
-#: request assembly, the client's control POSTs waited on the SAME
-#: unbounded-read client, and Ctrl-C hung forever. With this, the wait ends
-#: in a typed ``httpx.ReadTimeout`` that ``send`` turns into a
-#: non-delivery (``None``) the TUI can name.
+#: #5894 (architect ruling ①-1): the read timeout for a BOUNDED control
+#: POST (submit / cancel / answer / heartbeat, and every other payload
+#: type :data:`~reyn.interfaces.transport.agui.protocol.BOUNDED_PAYLOAD_
+#: TYPES` names) — the one constant, the one place. The SSE stream keeps
+#: ``read=None`` (a live stream legitimately reads forever); a bounded
+#: control request must not share that policy. Owner-hit: the server was
+#: pinned by CPU-bound LLM request assembly, the client's control POSTs
+#: waited on the SAME unbounded-read client, and Ctrl-C hung forever. With
+#: this, the wait ends in a typed ``httpx.ReadTimeout`` that ``send``
+#: turns into a non-delivery (``None``) the TUI can name.
+#:
+#: #6083 ⑵-a: NOT every control POST is bounded, though — one class
+#: (:data:`~reyn.interfaces.transport.agui.protocol.LONG_RUNNING_
+#: PAYLOAD_TYPES`, currently just ``attach_request``) has a server-side
+#: handler that awaits an operation with genuinely unbounded duration
+#: (a first-attach session load replaying its persisted WAL history).
+#: Applying THIS constant to those reproduces the exact #6083 symptom one
+#: level up — a slow-but-succeeding operation misread as a timed-out
+#: failure. :func:`_read_timeout_for` is the one place that decision is
+#: made; this constant itself is unchanged and still names the bounded
+#: default correctly.
 _CONTROL_TIMEOUT_S = _env_float("REYN_AGUI_CONTROL_TIMEOUT_S", 10.0)
+
+
+def _read_timeout_for(ptype: "object", *, override: "float | None" = None) -> "float | None":
+    """The read timeout :func:`post_control` should use for one payload
+    ``type`` — ``None`` (unbounded, matching the SSE stream's own policy)
+    for :data:`~reyn.interfaces.transport.agui.protocol.LONG_RUNNING_
+    PAYLOAD_TYPES`; :data:`_CONTROL_TIMEOUT_S` (or ``override``, when a
+    caller supplies one — the same seam tests already use to inject T)
+    otherwise.
+
+    Split out as its OWN pure function (testing.md: a test writes no
+    duration; the DECISION is the thing to observe, not a live wait) — it
+    takes no client, opens no socket, and its whole body is one membership
+    check, so a test can assert its return value directly rather than
+    proving "did not time out" by watching a clock.
+
+    Reads the module-level ``LONG_RUNNING_PAYLOAD_TYPES`` name (a plain
+    global lookup, not a fresh re-import each call) — a Python function
+    body resolves a bare name against its OWN module's current globals at
+    CALL time, so reassigning ``remote_client.LONG_RUNNING_PAYLOAD_TYPES``
+    (this module's own bound copy of ``protocol.py``'s set — see the
+    import at the top of this file) is visible here immediately, the same
+    liveness the earlier per-call ``from ... import`` had, without paying
+    for a fresh import on every control POST.
+    """
+    if ptype in LONG_RUNNING_PAYLOAD_TYPES:
+        return None
+    return _CONTROL_TIMEOUT_S if override is None else override
 
 
 async def post_control(
@@ -67,25 +108,29 @@ async def post_control(
     timeout_s: "float | None" = None,
 ) -> "ControlOutcome":
     """POST one client→server control message with the CONTROL timeout
-    policy (#5894 ①-1) and return the TYPED outcome (#5907 ②):
+    policy (#5894 ①-1, #6083 ⑵-a) and return the TYPED outcome (#5907 ②):
     :class:`ControlOutcome` — ``delivered(payload)`` on a 2xx, ``refused``
     on ≥300 (the server's own reason), ``not_delivered`` when the request
     raised (the control read timeout, a connect error …).
 
-    This is the whole policy in one place: ``timeout_s`` (default
-    :data:`_CONTROL_TIMEOUT_S`) bounds the read; the ``client`` passed in
-    keeps its OWN default (``read=None``, the SSE stream's) untouched — one
-    client, two request kinds, two policies. A 2xx whose body is empty /
-    not JSON is still delivered, with a truthy ``{"status": "ok"}`` payload,
-    so every ``if accepted:`` caller keeps the old bool contract — the
-    outcome itself is truthy iff delivered.
+    :func:`_read_timeout_for` decides the read timeout from ``payload``'s
+    own ``type`` (bounded by default, unbounded for the derived long-
+    running class); the ``client`` passed in keeps its OWN default
+    (``read=None``, the SSE stream's) untouched — one client, two request
+    kinds, at most two policies. A 2xx whose body is empty / not JSON is
+    still delivered, with a truthy ``{"status": "ok"}`` payload, so every
+    ``if accepted:`` caller keeps the old bool contract — the outcome
+    itself is truthy iff delivered.
 
-    ``timeout_s`` is a parameter so a test can supply T — it is the subject
-    there, never a wait the test sits out.
+    ``timeout_s`` is a parameter so a test can supply T for a BOUNDED
+    payload type — it is the subject there, never a wait the test sits
+    out; it has no effect on a long-running type, which is always
+    unbounded regardless of what a caller passes (there is no "T" to
+    inject for those — see :func:`_read_timeout_for`).
     """
     import httpx
 
-    read_timeout = _CONTROL_TIMEOUT_S if timeout_s is None else timeout_s
+    read_timeout = _read_timeout_for(payload.get("type"), override=timeout_s)
     try:
         resp = await client.post(
             url, params=params, json=payload,
