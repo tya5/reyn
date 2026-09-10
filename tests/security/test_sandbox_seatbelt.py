@@ -257,7 +257,7 @@ async def test_seatbelt_runs_echo_under_sandbox():
     # #3901 PR-B ④: read_paths was removed (dead since #1199's broad-read
     # realignment — reads are broad by default on Seatbelt too).
     policy = SandboxPolicy(timeout_seconds=10)
-    result = await backend.run(["/bin/echo", "hello"], policy)
+    result = await backend.run(["/bin/echo", "hello"], policy, env_path=None)
     assert result.returncode == 0, f"stderr: {result.stderr!r}"
     assert b"hello" in result.stdout
 
@@ -271,7 +271,7 @@ async def test_seatbelt_timeout_returns_minus_one():
         pytest.skip("sandbox-exec not available on this machine")
 
     policy = SandboxPolicy(timeout_seconds=1)
-    result = await backend.run(["/bin/sleep", "5"], policy)
+    result = await backend.run(["/bin/sleep", "5"], policy, env_path=None)
     assert result.returncode == -1
 
 
@@ -299,7 +299,7 @@ async def test_seatbelt_allows_loopback_bind_but_denies_connect_when_network_fal
         "except PermissionError:\n"
         "    print('CONNECT_DENIED')\n"
     )
-    result = await backend.run([sys.executable, "-c", code], policy)
+    result = await backend.run([sys.executable, "-c", code], policy, env_path=None)
     assert b"BIND_OK" in result.stdout, (
         f"loopback bind must succeed under network=False (#3060); "
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -341,7 +341,7 @@ async def test_seatbelt_allows_socketpair_sendto_but_denies_addressed_sendto_whe
         "except (PermissionError, OSError):\n"
         "    print('ADDRESSED_SENDTO_DENIED')\n"
     )
-    result = await backend.run([sys.executable, "-c", code], policy)
+    result = await backend.run([sys.executable, "-c", code], policy, env_path=None)
     assert b"SOCKETPAIR_OK" in result.stdout, (
         f"connected socketpair send/recv (async self-pipe) must succeed under "
         f"network=False (#3060); stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -383,7 +383,7 @@ async def test_seatbelt_security_command_succeeds_under_default_policy():
         pytest.skip("sandbox-exec not available on this machine")
 
     policy = SandboxPolicy(timeout_seconds=10)
-    result = await backend.run(["security", "list-keychains"], policy)
+    result = await backend.run(["security", "list-keychains"], policy, env_path=None)
     assert result.returncode == 0, (
         f"security list-keychains must succeed under the default policy "
         f"(#4932/#4933); stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -495,8 +495,8 @@ def test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy(
     backend = SeatbeltBackend()
     policy = SandboxPolicy(write_paths=[])
 
-    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy)
-    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy)
+    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy, env_path=None)
+    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy, env_path=None)
 
     path1 = wrapped1.argv[wrapped1.argv.index("-f") + 1]
     path2 = wrapped2.argv[wrapped2.argv.index("-f") + 1]
@@ -535,7 +535,7 @@ def test_seatbelt_cached_profile_is_unlinked_when_the_policy_is_collected():
         # local `policy` binding must be gone the instant this returns for
         # `gc.collect()` below to actually collect it.
         policy = SandboxPolicy(write_paths=[])
-        wrapped = backend.wrap_command(["/bin/echo", "hi"], policy)
+        wrapped = backend.wrap_command(["/bin/echo", "hi"], policy, env_path=None)
         return wrapped.argv[wrapped.argv.index("-f") + 1]
 
     path = _wrap_and_get_path()
@@ -563,7 +563,7 @@ def test_seatbelt_cached_profile_survives_while_the_wrapped_command_is_held_even
     backend = SeatbeltBackend()
     # Deliberately no local binding for the policy — the exact inline shape
     # that exposed the gap.
-    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]))
+    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]), env_path=None)
     path = wrapped.argv[wrapped.argv.index("-f") + 1]
 
     import gc
@@ -594,8 +594,8 @@ def test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe():
     backend = SeatbeltBackend()
     policy = SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())])
 
-    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy)
-    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy)
+    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy, env_path=None)
+    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy, env_path=None)
 
     path1 = wrapped1.argv[wrapped1.argv.index("-f") + 1]
     path2 = wrapped2.argv[wrapped2.argv.index("-f") + 1]
@@ -783,7 +783,7 @@ def test_wrap_command_triggers_the_sweep_before_creating_its_own_pid_dir():
     dead.mkdir(parents=True, exist_ok=True)
 
     backend = SeatbeltBackend()
-    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]))
+    wrapped = backend.wrap_command(["/bin/echo", "hi"], SandboxPolicy(write_paths=[]), env_path=None)
 
     assert not dead.exists()
 
