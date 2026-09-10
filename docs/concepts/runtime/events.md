@@ -101,11 +101,42 @@ reference](../../reference/config/reyn-yaml.md#audit_events-block)):
   `reyn events replay` / support-bundle / dogfood_trace have nothing to
   read for a `discard` run — this is a real trade-off (support-bundle in
   particular is the tool operators use to report bugs), not a free lunch.
+- **`network`** (#4496 PR-4) — sends each event over HTTP to
+  `audit_events.network_endpoint` instead of writing to `.reyn/events`.
+  Same diagnostic trade-off as `discard` above (replay / support-bundle /
+  dogfood_trace have nothing local to read), PLUS its own on-failure
+  policy (`audit_events.on_failure`, owner ruling 2026-09-09):
+  - `discard` (default) — a failed send is dropped. `audit_seq` still
+    increments (stamped before any backend runs), so a receiver seeing
+    neighbouring events sees a skipped number — not silent, even though
+    nothing is written anywhere. The owner's own words (issue #4496,
+    2026-08-13) are why this is the default, not a local guess: "呼び戻
+    しがないと reyn 動けないわけじゃない" (reyn doesn't need a callback
+    to function) — audit delivery is not something a run should halt
+    over.
+  - `spool` (opt-in) — a failed send is buffered on local disk instead
+    (capped by `audit_events.network_spool_max_bytes`). Choosing this
+    means **events that fail delivery ARE being held on local disk**
+    despite having picked `network` — the owner's own framing for why
+    this is opt-in, not the default: an operator who chose `network` to
+    NOT keep events locally must not have that silently reversed.
+  - There is no "stop the run" option — explicitly rejected in the
+    design thread (halting a run over an audit-delivery failure is
+    excessive; `spool` plus its capacity limit already covers the rare
+    case that cannot tolerate losing a record).
+
+  Off-loop by construction: `write()` only enqueues the event onto a
+  bounded in-process queue and returns — the HTTP POST runs on a
+  dedicated background thread, so a slow or unreachable endpoint never
+  blocks `emit()`'s caller. See `NetworkEventBackend`'s own docstring
+  (`src/reyn/core/events/backend.py`) for the exact mechanics, including
+  why the wire shape (one POST per event, JSON body) is this PR's own
+  conservative choice rather than something the issue thread specified.
 
 The backend is called from inside `emit()`, before subscriber dispatch,
 wrapped in its own try/except — never inserted as just another
-subscriber. That ordering is what guarantees a backend failure (or a
-future network backend's connection error) can never silence a
+subscriber. That ordering is what guarantees a backend failure (e.g. the
+`network` backend's own connection error) can never silence a
 subscriber, and a raising subscriber can never stop the backend from
 having already written. See `src/reyn/core/events/backend.py`'s module
 docstring for the full mechanism.

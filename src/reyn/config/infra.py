@@ -533,24 +533,79 @@ class AuditEventsConfig:
     max_age_seconds: int = field(default=24 * 60 * 60, metadata={"axis": Axis.PROJECT})   # 1 day
     cleanup_period_days: int = field(default=30, metadata={"axis": Axis.PROJECT})
     max_disk_usage_percent: float = field(default=10.0, metadata={"axis": Axis.PROJECT})
-    # #4496 PR-2: the WRITE-side backend. `local` (default) preserves
+    # #4496 PR-2/PR-4: the WRITE-side backend. `local` (default) preserves
     # current behavior unchanged — audit-events land under `.reyn/events`
     # exactly as before this field existed. `discard` writes nothing
-    # (sink-null); subscriber delivery (CUI/AG-UI, hooks, OTEL) and the
-    # per-emitter `audit_seq` continuity are UNCHANGED either way — see
+    # (sink-null). `network` (PR-4, owner ruling 2026-09-09) sends each
+    # event over HTTP to `network_endpoint` instead — see `on_failure`
+    # just below for what happens when a send fails. Subscriber delivery
+    # (CUI/AG-UI, hooks, OTEL) and the per-emitter `audit_seq` continuity
+    # are UNCHANGED by ANY of these 3 values — see
     # `reyn.core.events.backend`'s module docstring for the structural
-    # guarantee. `network` is NOT yet a valid value — its on-failure
-    # semantics (discard-and-let-seq-show-it / local spool / halt-the-run)
-    # are still an open owner decision (#4496); an operator who sets it
-    # (or any other string) gets the standard unknown-VALUE-falls-back-
-    # to-default tolerance — see the parser below. `Literal[...]` (not a
-    # bare `str`, per lead-coder review) matches this repo's convention
-    # for a closed, small value set (`retry_backoff` / `chat.mode` /
-    # `render_mode` / `on_oversize` all use it) — `tool_use.scheme` /
-    # `.transport` stay plain `str` because THEIR domain is an open,
-    # pluggable registry a literal type can't enumerate; this field's
-    # domain is closed, so it belongs on the Literal side of that split.
-    backend: Literal["local", "discard"] = field(default="local", metadata={"axis": Axis.PROJECT})
+    # guarantee. An operator who sets an unrecognized string gets the
+    # standard unknown-VALUE-falls-back-to-default tolerance — see the
+    # parser below. `Literal[...]` (not a bare `str`, per lead-coder
+    # review) matches this repo's convention for a closed, small value set
+    # (`retry_backoff` / `chat.mode` / `render_mode` / `on_oversize` all
+    # use it) — `tool_use.scheme` / `.transport` stay plain `str` because
+    # THEIR domain is an open, pluggable registry a literal type can't
+    # enumerate; this field's domain is closed, so it belongs on the
+    # Literal side of that split.
+    backend: Literal["local", "discard", "network"] = field(
+        default="local", metadata={"axis": Axis.PROJECT},
+    )
+    # #4496 PR-4 (owner ruling, 2026-09-09, verbatim in the issue body):
+    # "呼び戻しがないと reyn 動けないわけじゃない" ("reyn doesn't need a
+    # callback to function") — this is why the default is `discard`, not
+    # something this config re-derives. Consulted ONLY when
+    # `backend: network`; meaningless (and ignored) for `local`/`discard`.
+    #
+    # - `discard` (default): a failed network send is dropped — the event
+    #   disappears, with no local copy. `audit_seq` still increments for
+    #   it (stamped by `EventLog.emit` BEFORE any backend runs, #4496
+    #   PR-1) — a receiver that DOES get delivery for neighbouring events
+    #   sees a skipped number, so this is "not silent" per contract 3
+    #   even though nothing lands on disk.
+    # - `spool`: a failed send is buffered locally instead (capped by
+    #   `network_spool_max_bytes` below) — the owner's own framing
+    #   (issue #4496): choosing `network` specifically to NOT keep events
+    #   locally, and then having a failure silently keep them locally
+    #   anyway, would reverse that choice without telling the operator.
+    #   `NetworkEventBackend.declare_gaps()` says plainly, when this is
+    #   active, that events ARE being held on local disk.
+    # A "stop the run" option is deliberately NOT offered — explicitly
+    # rejected in the design thread ("止める…通常過剰"): halting a run
+    # over an audit-delivery failure is excessive, and `spool` + a
+    # capacity limit already covers the rare case that genuinely cannot
+    # tolerate losing a record.
+    on_failure: Literal["discard", "spool"] = field(
+        default="discard", metadata={"axis": Axis.PROJECT},
+    )
+    # #4496 PR-4: the HTTP endpoint `NetworkEventBackend` POSTs each event
+    # to (one POST per event, JSON body — see `reyn.core.events.backend`'s
+    # module docstring for why this shape, not something the issue thread
+    # specified). Empty string (the default) is not a usable endpoint —
+    # the parser below falls `backend` itself back to `local` when
+    # `backend: network` is set with no endpoint configured, same
+    # "malformed config falls back rather than reaching a half-built
+    # backend" discipline every other field in this class already uses.
+    network_endpoint: str = field(default="", metadata={"axis": Axis.PROJECT})
+    # #4496 PR-4: per-POST timeout (CLAUDE.md: never a baseless embedded
+    # constant — this is the operator-adjustable knob). 5 seconds borrows
+    # this module's own `provider_body_max_chars`-family precedent of
+    # picking a plain, generous default absent a measured rate for THIS
+    # specific egress, rather than inventing a tighter number with no
+    # measurement behind it.
+    network_timeout_s: float = field(default=5.0, metadata={"axis": Axis.PROJECT})
+    # #4496 PR-4: caps the LOCAL spool `EventStore` the same way
+    # `max_bytes` caps the local backend's own store (rotation, not
+    # unbounded growth) — the architect's own "b + 容量上限" ("spool +
+    # capacity limit") framing for why `on_failure: spool` does not need
+    # a "stop the run" escape hatch. Same 10MB default as `max_bytes`
+    # above; only consulted when `on_failure: spool`.
+    network_spool_max_bytes: int = field(
+        default=10 * 1024 * 1024, metadata={"axis": Axis.PROJECT},
+    )
     # #4960 (architect ruling C): ``agent_delta`` (one audit-event per
     # streamed content chunk) is coalesced to one durable write-side
     # record per this many fragments, or `agent_delta_coalesce_interval_
@@ -1752,15 +1807,60 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
             disk_percent, defaults.max_disk_usage_percent,
         )
         disk_percent_val = defaults.max_disk_usage_percent
-    # #4496 PR-2: `network` is a declared future value, not yet backed by an
-    # implementation (see AuditEventsConfig.backend's own docstring) — an
-    # operator who sets it (or any other unrecognized string) falls back
+    # #4496 PR-4: an operator who sets an unrecognized string falls back
     # to the default rather than reaching `EventLog` with a value nothing
     # can resolve to a real backend, same "malformed value falls back"
     # discipline every other field in this parser already uses.
     backend_val = raw.get("backend", defaults.backend)
-    if backend_val not in ("local", "discard"):
+    if backend_val not in ("local", "discard", "network"):
         backend_val = defaults.backend
+    # #4496 PR-4: same discipline for `on_failure` (only meaningful under
+    # `backend: network`, but validated unconditionally — an operator's
+    # typo here must not silently resolve to something unrecognized deep
+    # inside `_build_events_backend` either).
+    on_failure_val = raw.get("on_failure", defaults.on_failure)
+    if on_failure_val not in ("discard", "spool"):
+        on_failure_val = defaults.on_failure
+    network_endpoint_val = str(raw.get("network_endpoint", defaults.network_endpoint))
+    # #4496 PR-4: `backend: network` with no usable endpoint configured
+    # cannot build a real `NetworkEventBackend` — fall the WHOLE backend
+    # choice back to `local` rather than let the session-construction
+    # seam (`Session._build_events_backend`) guess at a half-built one.
+    # This is a choice this PR makes explicitly (not specified by the
+    # issue thread) — see `reyn.core.events.backend`'s module docstring.
+    if backend_val == "network" and not network_endpoint_val.strip():
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.backend=network has no network_endpoint "
+            "configured; falling back to %r", defaults.backend,
+        )
+        backend_val = defaults.backend
+    network_timeout_s = raw.get("network_timeout_s", defaults.network_timeout_s)
+    try:
+        network_timeout_s_val = float(network_timeout_s)
+        if network_timeout_s_val <= 0:
+            network_timeout_s_val = defaults.network_timeout_s
+    except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.network_timeout_s=%r is invalid (not a float); using %r",
+            network_timeout_s, defaults.network_timeout_s,
+        )
+        network_timeout_s_val = defaults.network_timeout_s
+    network_spool_max_bytes = raw.get(
+        "network_spool_max_bytes", defaults.network_spool_max_bytes,
+    )
+    try:
+        network_spool_max_bytes_val = int(network_spool_max_bytes)
+        if network_spool_max_bytes_val <= 0:
+            network_spool_max_bytes_val = defaults.network_spool_max_bytes
+    except (TypeError, ValueError):
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_events.network_spool_max_bytes=%r is invalid (not an int); using %r",
+            network_spool_max_bytes, defaults.network_spool_max_bytes,
+        )
+        network_spool_max_bytes_val = defaults.network_spool_max_bytes
     # #4960: same "malformed/non-positive falls back to the measured
     # default" discipline as every other numeric field in this parser —
     # an operator typo must not silently produce "coalesce every 0
@@ -1859,6 +1959,12 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         # field's own docstring for why it is not a reuse of
         # `provider_body_max_chars`).
         tool_result_max_chars=tool_result_max_chars_val,
+        # #4496 PR-4: see this function's own validation above for the
+        # fallback rules each of these 4 follows.
+        on_failure=on_failure_val,
+        network_endpoint=network_endpoint_val,
+        network_timeout_s=network_timeout_s_val,
+        network_spool_max_bytes=network_spool_max_bytes_val,
     )
 
 
