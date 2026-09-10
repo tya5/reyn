@@ -196,6 +196,7 @@ def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
     assert client.stderr_capture is None
 
 
+# EXEMPT: the spawned child imports only pathlib/sys -- it never touches reyn
 def test_initialize_failure_with_real_subprocess_captures_its_actual_stderr() -> None:
     """Tier 2: #4285 — the subject is reyn's own boundary contract with the
     ``mcp`` SDK, NOT the SDK's own redirect implementation.

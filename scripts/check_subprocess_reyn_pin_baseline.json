@@ -31,7 +31,6 @@
   "tests/mcp/test_4686_subscription_visibility.py",
   "tests/mcp/test_5280_mcp_reconnect_failed_event.py",
   "tests/mcp/test_mcp_client.py",
-  "tests/mcp/test_mcp_client_stderr_capture.py",
   "tests/mcp/test_mcp_structured_client_p1.py",
   "tests/mcp/test_mcp_unsandboxed_audit_3821.py",
   "tests/runtime/test_2714_mcp_shutdown_teardown.py",
