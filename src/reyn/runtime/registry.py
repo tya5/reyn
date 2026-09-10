@@ -5960,9 +5960,22 @@ class AgentRegistry:
            architect ruling on why a wrapper DENYLIST is not adopted here
            applies equally to inventing a second list for this check).
 
-        Printed to stderr — the SAME destination and call site #2103 C2's
-        own fail-closed notice already uses here, so this adds no new
-        notification channel."""
+        Routed through ``logging`` at WARNING (lead-coder BLOCKING on
+        PR #6064: a bare ``print(..., file=sys.stderr)`` here would have
+        been the exact class #6043 closed — this function's caller,
+        ``resolved_profile_for``, runs from ``chat._session_factory`` on
+        EVERY session construction, including a spawn/attach AFTER the
+        inline TUI already owns the terminal, and the content-keyed dedup
+        means a differently-narrowed agent's FIRST spawn is exactly when
+        this fires; #2103 C2's own same-spot ``print`` being a precedent
+        is not the same claim as it being safe — a precedent nobody has
+        hit yet is not evidence). ``#6043``/``#6045``'s own established
+        shape: ``reyn.log`` always gets it (the file handler is
+        unconditional now); ``--cui``/non-TTY ALSO gets it on stderr (the
+        existing conditional StreamHandler); the inline TUI's own
+        terminal never does. Deliberately does NOT touch #2103 C2's own
+        ``print`` calls a few lines above in this same function — separate
+        subject, not this PR's scope."""
         from reyn.security.permissions.effective import tool_contextually_denied
 
         if contextual is None:
@@ -5983,15 +5996,13 @@ class AgentRegistry:
             return
         self._tool_axis_binary_limit_warned.add(key)
 
-        import sys
-        print(
+        logger.warning(
             "exec tool-axis restriction is in force, but it can only "
             "check each command's own argv[0]. A wrapper -- env, xargs, "
             "sh -c, timeout, nice -- passes under its own name and runs "
             "its argument unchecked: restricting X does not prevent "
             "env X. Threat-scan patterns and the sandbox's own limits "
-            "still apply. See #6061.",
-            file=sys.stderr,
+            "still apply. See #6061."
         )
 
     def per_session_narrowing(self, name: str, sid: "str | None" = None) -> "dict | None":
