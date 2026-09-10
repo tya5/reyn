@@ -1,6 +1,6 @@
 # ADR-0043: A generic `SecretProvider` seam — new consumers only, and the capability gate that already exists gets wired
 
-**Status**: Proposed (2026-08-19). Do not read `Proposed` as `Accepted`.
+**Status**: Accepted (2026-09-11, lead-coder ruling: https://github.com/tya5/reyn/issues/4903#issuecomment-5626833570). Proposed 2026-08-19.
 **Why this ADR exists**: M3 below — a capability gate that exists as code, is exercised 27 times by tests, and can deny nothing in production. That measurement is the whole basis; it stands on its own and depends on no one's interest.
 **Provenance, not motivation**: the review that produced this ADR (#4890) was started after an owner interest relayed via `reyn-reviewer` — **relayed, never confirmed by the owner to this ADR's author**. That relay is recorded here as history and is *not* a reason for any decision below. An attribution that might be wrong is worse than no attribution, so it is stated as what it is rather than removed.
 **Track**: Architecture — credential lookup, extending ADR-0030 (universal secret handling) and FP-0016 (OAuth lifecycle + scoped store).
