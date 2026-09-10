@@ -11,6 +11,22 @@ duration (CLAUDE.md: "a test writes no duration, in EITHER direction").
 Real ``Session`` + a real, injectable wrapper around ``asyncio.to_thread``
 (never a Mock) that records what it was called with before delegating to
 the real implementation — the call genuinely still executes for real.
+
+lead-coder BLOCKING, PR #6099: this test's own ``monkeypatch.setattr(
+asyncio, "to_thread", ...)`` is a DELIBERATE departure from testing.md's
+"never fake a collaborator when a real instance is cheaply constructible"
+rule — named here, not left for the next reader to rediscover as "wasn't
+this forbidden?" (same shape as PR #6087's own precedent paragraph). ①
+The departure is intentional, not an oversight. ② It is not a fake: the
+wrapper WRAPS the real ``asyncio.to_thread`` and always delegates to it
+(``return await real_to_thread(func, *args, **kwargs)``) — the offload
+genuinely still happens, this only observes what target it was called
+with. ③ The only alternative external observation available here would
+be a measured DURATION (whether the call blocked the event loop for a
+detectable time) — and that is exactly what this SAME testing policy
+forbids in either direction (CLAUDE.md's own floor/ceiling ban). With no
+other externally-drivable STATE this call's own offload produces, this
+wrapper is the only undriven way to witness it.
 """
 from __future__ import annotations
 
