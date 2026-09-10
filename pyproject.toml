@@ -338,6 +338,25 @@ dependencies = [
     "starlette>=1.0,<1.3",
     "uvicorn[standard]>=0.27",
     "websockets>=12",
+    # #5987 stage 1 (lead-coder ruling, issuecomment on #5987): the exec-plan
+    # parser's classification UNIT moves from character-set to syntax-tree
+    # node kind -- the industry-standard unit (Claude Code / Codex both
+    # allowlist AST node types, per architect's competitive research on this
+    # issue). `tree-sitter-bash` won the 2-discriminator ruling (wheel
+    # coverage across reyn's declared platforms x 3.11/3.12; node kinds
+    # machine-derivable from the installed package) over `bashlex` (no
+    # public node-kind manifest) and `Parable` (needs CPython >=3.12,
+    # violates reyn's own `>=3.11` floor). `tree-sitter` is its binding
+    # dependency (the compiled grammar's `language()` capsule needs
+    # `tree_sitter.Language` to query node kinds). THIS STAGE adds the
+    # dependency + a node-kind-derivation capability only -- zero behavior
+    # change to `parse_exec_plan` (see `src/reyn/security/bash_node_kinds.py`
+    # module docstring for why the derivation reads the installed package's
+    # `tree_sitter.Language` API, not a `node-types.json` file -- verified
+    # NOT shipped in the PyPI wheel or sdist, despite being the file the
+    # pre-ruling research fetched from GitHub source to count 184 kinds).
+    "tree-sitter>=0.25",
+    "tree-sitter-bash>=0.25",
 ]
 
 [project.urls]

@@ -105,6 +105,8 @@ IMPORT_NAME_MANIFEST: dict[str, frozenset[str]] = {
     "starlette": frozenset({"starlette"}),
     "uvicorn": frozenset({"uvicorn"}),
     "websockets": frozenset({"websockets"}),
+    "tree-sitter": frozenset({"tree_sitter"}),
+    "tree-sitter-bash": frozenset({"tree_sitter_bash"}),
 }
 
 # A PEP 508 requirement string's name ends at the first of: an extras
