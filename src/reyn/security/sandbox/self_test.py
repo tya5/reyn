@@ -147,9 +147,18 @@ def _attempt_create(
     launch seam (MCP stdio / CodeAct), so a wrap that is broken end-to-end — the
     #2980 shape, where the shim raises before it ever restricts anything — is
     caught here rather than reported as healthy.
+
+    #6058/#6063: ``enforcement_self_test`` has NO operation context to read
+    an ``env_path`` from (named explicitly, per lead-coder's #6063 BLOCKING
+    co-vet, rather than papered over) — it does no separate PATH-based
+    argv0 resolution this value would need to agree with, so a single,
+    local read of ``ambient_path()`` here is the caller's own "read once,
+    thread down explicitly" — not a fallback inside the backend.
     """
+    from .backend import ambient_path
+
     try:
-        wrapped = backend.wrap_command(list(argv), policy)
+        wrapped = backend.wrap_command(list(argv), policy, env_path=ambient_path())
     except Exception as exc:  # noqa: BLE001 — any wrap failure is a probe failure
         return False, f"wrap_command() raised {type(exc).__name__}: {exc}"
 

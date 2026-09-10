@@ -42,6 +42,7 @@ def test_noop_backend_sets_pwd_to_match_the_real_cwd(tmp_path, monkeypatch) -> N
             [sys.executable, "-c", "import os; print(os.environ.get('PWD', ''), end='')"],
             SandboxPolicy(),
             cwd=str(tmp_path),
+            env_path=None,
         )
     )
 
@@ -63,6 +64,7 @@ def test_noop_backend_omits_pwd_override_when_no_cwd_given(tmp_path, monkeypatch
             [sys.executable, "-c", "import os; print(os.environ.get('PWD', ''), end='')"],
             SandboxPolicy(),
             cwd=None,
+            env_path=None,
         )
     )
 

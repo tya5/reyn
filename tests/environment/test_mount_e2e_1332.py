@@ -173,7 +173,7 @@ def test_teardown_removes_container(tmp_path: Path) -> None:
 async def test_security_non_root(mount_container) -> None:
     """Tier 2c: the launched container runs as a non-root user (--user / --cap-drop baseline)."""
     backend, _, _ = mount_container
-    res = await backend.run(["id", "-u"], SandboxPolicy(timeout_seconds=30))
+    res = await backend.run(["id", "-u"], SandboxPolicy(timeout_seconds=30), env_path=None)
     assert res.returncode == 0
     assert res.stdout.strip() != b"0"
 
@@ -190,6 +190,7 @@ async def test_security_network_off(mount_container) -> None:
             "socket.create_connection(('1.1.1.1', 53))",
         ],
         SandboxPolicy(timeout_seconds=30),
+        env_path=None,
     )
     assert res.returncode != 0
 
@@ -201,16 +202,17 @@ async def test_security_readonly_rootfs_with_tmpfs_and_mount(mount_container) ->
     policy = SandboxPolicy(timeout_seconds=30)
 
     # Root filesystem is read-only → a write to / fails.
-    ro = await backend.run(["sh", "-c", "echo x > /rootfile"], policy)
+    ro = await backend.run(["sh", "-c", "echo x > /rootfile"], policy, env_path=None)
     assert ro.returncode != 0
 
     # tmpfs /tmp is writable.
-    tmp = await backend.run(["sh", "-c", "echo x > /tmp/probe"], policy)
+    tmp = await backend.run(["sh", "-c", "echo x > /tmp/probe"], policy, env_path=None)
     assert tmp.returncode == 0
 
     # The rw workspace bind mount is writable.
     ws = await backend.run(
-        ["sh", "-c", f"echo x > {WORKSPACE_DEST_DEFAULT}/probe_rw"], policy
+        ["sh", "-c", f"echo x > {WORKSPACE_DEST_DEFAULT}/probe_rw"], policy,
+        env_path=None,
     )
     assert ws.returncode == 0
 
@@ -253,6 +255,7 @@ async def test_security_deny_subprocess_has_no_effect_in_container(mount_contain
             "print(r.stdout.strip())",
         ],
         policy,
+        env_path=None,
     )
     assert res.returncode == 0
     assert res.stdout.strip() == b"nested-ok"
@@ -291,7 +294,8 @@ async def test_security_env_deny_names_has_no_effect_and_host_env_does_not_leak(
     policy = SandboxPolicy(timeout_seconds=30, env_deny_names=["REYN_4040_HOST_ONLY_PROBE"])
 
     res = await backend.run(
-        ["sh", "-c", "echo \"[$REYN_4040_HOST_ONLY_PROBE]\""], policy
+        ["sh", "-c", "echo \"[$REYN_4040_HOST_ONLY_PROBE]\""], policy,
+        env_path=None,
     )
     assert res.returncode == 0
     # Empty, not "host-side-value" — the host var was never forwarded in, so

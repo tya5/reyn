@@ -325,7 +325,7 @@ async def test_write_workload_grant_write_succeeds() -> None:
             network=False,
             timeout_seconds=10,
         )
-        result = await backend.run(["/bin/sh", "-c", f"echo ok > {target}"], policy)
+        result = await backend.run(["/bin/sh", "-c", f"echo ok > {target}"], policy, env_path=None)
         assert result.returncode == 0, (
             f"a write INSIDE the grant failed: rc={result.returncode}, "
             f"stderr={result.stderr!r}"
@@ -360,7 +360,8 @@ async def test_spawn_workload_permitted_child_process_launches() -> None:
         # run one simple command may exec it in place with no fork at all —
         # see probe_subprocess_enforcement's docstring in self_test.py).
         result = await backend.run(
-            ["/bin/sh", "-c", f"touch {marker} | cat"], policy
+            ["/bin/sh", "-c", f"touch {marker} | cat"], policy,
+            env_path=None,
         )
         assert result.returncode == 0, (
             f"a permitted child process did not launch: rc={result.returncode}, "

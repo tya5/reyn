@@ -746,12 +746,24 @@ async def run_shell_hook(
     try:
         stdin_bytes = json.dumps(event_context, default=str).encode("utf-8")
 
+        from reyn.security.sandbox.backend import ambient_path  # noqa: PLC0415
         from reyn.security.sandbox.denial import (  # noqa: PLC0415
             DENIAL_FORK,
             DENIAL_NETWORK,
             looks_permission_related,
         )
         from reyn.security.sandbox.launcher import run_and_classify  # noqa: PLC0415
+
+        # #6058/#6063: ONE real read, here, at this hook invocation's own
+        # entry point — threaded down explicitly to `backend.run()` via
+        # `run_and_classify`'s own `env_path`, never re-derived inside the
+        # backend. This hook path does no separate PATH-based argv0
+        # resolution elsewhere that this value would need to agree with
+        # (unlike the op path's `check_exec_plan_policy` pairing), but the
+        # READ itself must still happen exactly once, at the caller, now
+        # that `env_path` is a required parameter rather than a value the
+        # backend could independently re-derive on omission.
+        env_path = ambient_path()
 
         launched = await run_and_classify(
             backend,
@@ -760,6 +772,7 @@ async def run_shell_hook(
             stdin=stdin_bytes,
             cwd=cwd,
             hook_process_context=hook_process_context,
+            env_path=env_path,
         )
         result = launched.result
 

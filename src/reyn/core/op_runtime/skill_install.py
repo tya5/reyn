@@ -251,8 +251,16 @@ async def _shallow_clone(git_url: str, dest: Path, ctx: OpContext) -> str | None
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     from reyn.security.sandbox import SandboxPolicy, get_default_backend
+    from reyn.security.sandbox.backend import ambient_path
 
     backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
+    # #6058/#6063: this clone is its own op-scoped operation (no separate
+    # policy-side PATH read elsewhere in the SAME call to agree with, the
+    # way `sandboxed_exec.py`'s own entry-point read does) — still read
+    # ONCE, here, at this function's own entry, and threaded down
+    # explicitly rather than left for `backend.run()` to (no longer can)
+    # fall back to an independent read of its own.
+    env_path = ambient_path()
     policy = SandboxPolicy(
         network=True,
         write_paths=[str(dest.parent)],
@@ -280,6 +288,7 @@ async def _shallow_clone(git_url: str, dest: Path, ctx: OpContext) -> str | None
             ["git", "clone", "--depth", "1", "--", git_url, str(dest)],
             policy,
             cwd=str(dest.parent),
+            env_path=env_path,
         )
     except Exception as exc:  # noqa: BLE001 — surface as a clone error, not a crash
         return f"git clone error: {exc}"

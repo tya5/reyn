@@ -155,7 +155,7 @@ class _PresentButDead:
     def self_test(self) -> str | None:
         return "no deny fired: the probe's write outside write_paths succeeded"
 
-    def wrap_command(self, argv, policy):  # pragma: no cover — never reached
+    def wrap_command(self, argv, policy, *, env_path=None):  # pragma: no cover — never reached
         raise AssertionError("resolution must reject this backend before use")
 
 
@@ -250,9 +250,9 @@ def test_probe_result_is_cached_per_process():
     class _CountingNoop(NoopBackend):
         name = "counting-noop"
 
-        def wrap_command(self, argv, policy):
+        def wrap_command(self, argv, policy, *, env_path=None):
             calls.append(argv[-1])
-            return super().wrap_command(argv, policy)
+            return super().wrap_command(argv, policy, env_path=env_path)
 
     backend = _CountingNoop()
 
@@ -397,9 +397,9 @@ def test_write_axis_alone_does_not_witness_the_subprocess_axis():
     class _SpawnBlindSeatbelt(SeatbeltBackend):
         name = "seatbelt-spawn-blind"
 
-        def wrap_command(self, argv, policy):
+        def wrap_command(self, argv, policy, *, env_path=None):
             return super().wrap_command(
-                argv, dataclasses.replace(policy, deny_subprocess=False)
+                argv, dataclasses.replace(policy, deny_subprocess=False), env_path=env_path
             )
 
     backend = _SpawnBlindSeatbelt()
@@ -455,11 +455,11 @@ class _WholesaleDead(NoopBackend):
 
     name = "wholesale-dead"
 
-    def wrap_command(self, argv, policy):
+    def wrap_command(self, argv, policy, *, env_path=None):
         if not policy.deny_subprocess:
-            return super().wrap_command(argv, policy)
+            return super().wrap_command(argv, policy, env_path=env_path)
         # Refuses the target outright — the "my filter killed /bin/echo" shape.
-        return super().wrap_command(["/bin/sh", "-c", "exit 71"], policy)
+        return super().wrap_command(["/bin/sh", "-c", "exit 71"], policy, env_path=env_path)
 
 
 def test_a_backend_that_refuses_everything_is_not_reported_as_enforcing():
@@ -512,6 +512,7 @@ def test_wholesale_dead_backend_still_passes_the_first_control():
     wrapped = backend.wrap_command(
         ["/bin/sh", "-c", "exit 0"],
         SandboxPolicy(deny_subprocess=policy_denies_spawning),
+        env_path=None,
     )
     assert wrapped.argv == ["/bin/sh", "-c", "exit 0"], (
         f"_WholesaleDead must pass commands through untouched when the policy "
