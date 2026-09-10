@@ -738,6 +738,16 @@ class AgentRegistry:
         """All conversation Sessions across every (name, sid)."""
         return [s for sd in self._sessions.values() for s in sd.values()]
 
+    def all_sessions(self) -> "list[object]":
+        """#5939 PR-2: public wrapper around :meth:`_iter_sessions` — the
+        SAME live-session list, for a caller outside this module (a
+        Session's own process-memory ladder step ④, broadcasting a halt
+        to every co-resident session in this process). Added rather than
+        reaching into ``_iter_sessions`` directly across the module
+        boundary (that method already has 2 in-module callers,
+        `registry.py:2295`/`3896` — this is the first EXTERNAL one)."""
+        return self._iter_sessions()
+
     def _iter_named_sessions(self) -> "list[tuple[str, object]]":
         """(name, Session) for every (name, sid) — for per-agent-name fan-out."""
         return [(name, s) for name, sd in self._sessions.items() for s in sd.values()]

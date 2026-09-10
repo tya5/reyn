@@ -337,7 +337,7 @@ WaitingOn ラベル)は**read-model**であり、ファイルミラーではな�
 durability failure(#2259)でセッションが fail-stop した後は理由(例:
 `"durability_failure"`)。同じ snapshot+delta channel に乗せることで、remote client
 もローカルの TUI status line / plain `--cui` bottom toolbar と同じ proactive な表示を
-得る — halt 自体は既に別の場所(`DurabilityHaltError`)で同期的に enforce されており、
+得る — halt 自体は既に別の場所(`SessionHaltError`)で同期的に enforce されており、
 このフィールドは observability 専用で halt 自体には load-bearing ではない。
 
 `queue` と `turn_active`(#3300 P2a)は、サーバー権威の **sent-queue 状態**を publish する:

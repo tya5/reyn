@@ -577,7 +577,7 @@ the fail-stop reason (e.g. `"durability_failure"`) once the session has
 halted on a persistent durability failure (#2259). Riding this same
 snapshot+delta channel gives a remote client the SAME proactive surface the
 local TUI status line and plain `--cui` bottom toolbar show — the halt is
-already enforced synchronously elsewhere (`DurabilityHaltError`); this field
+already enforced synchronously elsewhere (`SessionHaltError`); this field
 is observability only, never load-bearing for the halt itself.
 
 `queue` and `turn_active` (#3300 P2a) publish the server-authoritative

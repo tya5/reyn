@@ -2,7 +2,7 @@
 
 Triage found ``Session.halted_reason`` (runtime/session.py) had zero consumers:
 the accept-edge (``Session._put_inbox``) already fail-stops synchronously
-(raises ``DurabilityHaltError`` — the pre-existing SAFETY mechanism, untouched
+(raises ``SessionHaltError`` — the pre-existing SAFETY mechanism, untouched
 here), but an operator who is IDLE (not currently submitting anything) had no
 way to learn the session halted until their next interaction. Issue #2280 asks
 for a proactive surface — this module gates that a `session_halted` audit-event
@@ -56,7 +56,7 @@ from reyn.interfaces.transport.frames import EventFrame, Frame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
-from reyn.runtime.session import DurabilityHaltError, Session
+from reyn.runtime.session import Session, SessionHaltError
 from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
 from tests._support.events import settle
@@ -145,7 +145,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
     try:
         await _inject_persistent_durability_failure(log)
 
-        with pytest.raises(DurabilityHaltError):
+        with pytest.raises(SessionHaltError):
             await session._put_inbox("user", {"text": "after disk death"})
         await settle(session)
         (halted_event,) = [e for e in events if e.type == "session_halted"]
@@ -153,7 +153,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
 
         # A second accept-edge submit (durability still dead, the operator's
         # retry) must NOT re-emit: the SAME event object, not a fresh one.
-        with pytest.raises(DurabilityHaltError):
+        with pytest.raises(SessionHaltError):
             await session._put_inbox("user", {"text": "still after disk death"})
         await settle(session)
         (still_only_event,) = [e for e in events if e.type == "session_halted"]

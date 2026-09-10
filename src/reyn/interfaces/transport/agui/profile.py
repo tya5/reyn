@@ -187,7 +187,7 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "run_one_iteration, guarded on halted_reason is None) the FIRST "
         "time the fail-stop latches, on either the accept-edge raise or the "
         "process-edge halt (#2280). Purely observability — the halt itself "
-        "is already enforced synchronously by the DurabilityHaltError raise "
+        "is already enforced synchronously by the SessionHaltError raise "
         "regardless of this event; a surface with no handler consumes-but-"
         "drops it, like agent_delta above. Also rides STATE_SNAPSHOT/"
         "STATE_DELTA as halted_reason (agui/state.py) for a remote client's "

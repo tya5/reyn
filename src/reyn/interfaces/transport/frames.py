@@ -121,7 +121,7 @@ _TURN_AND_ANSWER_EVENTS = frozenset(
         # ``run_one_iteration``) the moment the session's fail-stop latches, so
         # an operator who is idle (not currently submitting an op) learns the
         # halt proactively instead of only on their next interaction's raised
-        # ``DurabilityHaltError``. Carries ``reason`` (e.g.
+        # ``SessionHaltError``. Carries ``reason`` (e.g.
         # ``"durability_failure"``) — see ``Session.halted_reason``.
         "session_halted",
     }

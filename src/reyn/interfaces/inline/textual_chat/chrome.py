@@ -2197,7 +2197,7 @@ def status_line_text(
         # line is the ONE always-visible (never-collapsed) chrome region, so it is
         # the surface an idle operator (not currently submitting anything) will
         # proactively see the halt on, rather than only learning it from the next
-        # op's raised ``DurabilityHaltError``. Purely observability — the halt
+        # op's raised ``SessionHaltError``. Purely observability — the halt
         # itself is already enforced synchronously elsewhere
         # (``_fail_stop_if_durability_dead`` / ``run_one_iteration``); this never
         # gates or delays anything.

@@ -653,17 +653,32 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: about a slash handler reaches through this — it exists so a STATUS READ
 #: MODEL (not a slash command) can surface a per-session sandbox-config
 #: fact, same shape/reasoning as the 123->124 entry above.
-#: Raised 125 -> 126 for #5939 PR-4 (hydration mini-ladder): a NEW public
-#: read-only property, ``history_hydration_stopped_reading_early_unsafe`` --
-#: it cannot be avoided by keeping it private, because
-#: ``CompactionController.force_compact_now`` needs to read this fact from
-#: OUTSIDE ``Session`` (injected as a ``Callable[[], bool]`` constructor
-#: closure, same seam shape as the other cross-object reads already
-#: counted here) to decide whether it is safe to derive ``prev_cover`` at
-#: all. Genuinely unrelated to #3595 S4's slash-handler-encapsulation
-#: concern: no slash handler reaches through this property, same reasoning
-#: as the two entries directly above.
-_PUBLIC_MEMBER_CEILING = 126
+#: 125->126 (#5939 PR-2, lead-coder ruling): ``halt_remedies`` — the
+#: public read of the remedies paired with ``halted_reason`` (see that
+#: property's own sibling docstring). Cannot be added without growing the
+#: public surface: ``_latch_halt``'s own structural fix (remedies
+#: required, no default) is only observable to a caller/operator if the
+#: remedies it stores are actually readable — a private-only field would
+#: make the structural guarantee real internally but invisible to
+#: anything outside ``Session`` (the TUI status line, a future `/halt`
+#: inspection command). Genuinely unrelated to #3595 S4's slash-handler-
+#: encapsulation concern, same reasoning as the 123->124/124->125 entries
+#: above.
+#: Raised 126 -> 127 for #5939 PR-4 (hydration mini-ladder, landed
+#: independently on the same PR-2 base and merged alongside it): a
+#: SECOND new public read-only property, ``history_hydration_stopped_
+#: reading_early_unsafe`` -- it cannot be avoided by keeping it private,
+#: because ``CompactionController.force_compact_now`` needs to read this
+#: fact from OUTSIDE ``Session`` (injected as a ``Callable[[], bool]``
+#: constructor closure, same seam shape as the other cross-object reads
+#: already counted here) to decide whether it is safe to derive
+#: ``prev_cover`` at all. Genuinely unrelated to #3595 S4's slash-
+#: handler-encapsulation concern: no slash handler reaches through this
+#: property, same reasoning as every entry above. (#6041/#6044 each
+#: independently bumped to 126 against a 125 base measured before the
+#: other one landed -- 127 is the recount against BOTH landing on main
+#: together, not "126 because both agreed on 126".)
+_PUBLIC_MEMBER_CEILING = 127
 
 
 def test_session_public_surface_does_not_grow() -> None:
