@@ -109,7 +109,19 @@ jobs:
             echo "::error::main-invariant-sweep is RED for this PR's base commit ${BASE_SHA}"
             echo "${bad}" | jq -r '.[] | "  \(.conclusion): \(.url)"'
             echo "base_red=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            # FAIL, not "report true and exit 0". The output is written
+            # first, so `sweep-on-merge-result` still sees it (that job
+            # guards on `always()` for exactly this reason). A job named
+            # "main sweep mirror" reporting PASS while the thing it
+            # mirrors is red is the same defect this whole workflow
+            # exists to remove: a red nobody is shown. The checks list
+            # is the only place a PR author looks, so the red has to be
+            # THERE, not only inside `verdict`'s log. When this PR
+            # actually repairs the break the two rows disagree on
+            # purpose — "the base is broken (x) and this PR fixes it
+            # (check)" is the true reading, and `verdict` (the required
+            # context) is the one that decides mergeability.
+            exit 1
           fi
           echo "base_red=false" >> "$GITHUB_OUTPUT"
 
@@ -119,7 +131,12 @@ jobs:
     # broken — so a PR that repairs the break can prove it here instead of
     # waiting for an admin to lift branch protection.
     needs: mirror
-    if: needs.mirror.outputs.base_red == 'true'
+    # `always()` because `mirror` FAILS when the base is red (see its own
+    # comment) — without it, GitHub's default `success()` gate would skip
+    # this job in exactly the case it exists for, and the escape hatch
+    # would never run. Still gated on the output, so a mirror that failed
+    # for any OTHER reason does not silently start a full sweep.
+    if: always() && needs.mirror.outputs.base_red == 'true'
     uses: ./.github/workflows/main-invariant-sweep.yml
 
   verdict:
