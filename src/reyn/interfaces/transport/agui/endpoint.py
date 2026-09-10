@@ -1549,7 +1549,7 @@ async def agui_submit(request: Request):
         # string, so nothing on the server side tests a leading ``/``. The name
         # is re-resolved against THIS process's registry — a client on a
         # different build must not be able to name something this one does not
-        # have — and an unknown name answers ``ran: False`` rather than raising.
+        # have.
         #
         # A remote client holds no ``Session``, so eleven of the registered
         # commands (the S4 residue: /model, /cost, /image, …) can only run where
@@ -1557,14 +1557,84 @@ async def agui_submit(request: Request):
         # attach's slash catalog identical to a local one; it rides the same
         # ``authorize_write`` gate above that a turn submit does, which is the
         # gate they already passed when they rode ``user_message``.
+        #
+        # #6083 ⑵-b: this used to AWAIT ``execute_slash_command`` and answer
+        # ``ran`` only once it finished — a slow handler (the reported case:
+        # ``/compact``) then held this POST open past the client's own control
+        # timeout, so a command that was still genuinely running read back as
+        # a false "did not run" (#6083 ⑴ narrowed WHERE that false read came
+        # from; this closes the actual wait). The response now answers
+        # ``accepted`` the instant the command is HANDED OFF to the session's
+        # own background-task funnel (``#4759``'s ``TrackedTaskSet``, already
+        # the established mechanism for exactly this kind of fire-and-forget
+        # session work) — not once it has run. Real completion/failure is not
+        # a new signal: ``session._slash_context()`` already wires
+        # ``SessionBoundTransport(display_sink=self._put_outbox_nowait)``, so
+        # ``execute_slash_command``'s own success/error display (dispatch.py)
+        # already flows through the session's outbox → the SAME SSE broadcast
+        # every other reply rides. No new client-side channel is needed.
+        from reyn.interfaces.slash import REGISTRY
         from reyn.interfaces.slash.dispatch import execute_slash_command
         name = str(payload.get("name", "")).strip()
-        if name:
-            ran = await execute_slash_command(
-                session._slash_context(), name, str(payload.get("args", "")),
+        # Resolved BEFORE deciding to schedule anything — ``execute_slash_
+        # command`` re-checks this same registry itself (harmless, it is a
+        # dict read), but the check has to happen HERE too: an unknown name
+        # (a client on a different build) must answer ``accepted: false``
+        # synchronously, not get scheduled and let the background task's own
+        # ``cmd is None -> return False`` early-out invisibly disappear —
+        # this response is the only signal an unresolved name ever gets.
+        if not name or REGISTRY.get(name) is None:
+            return JSONResponse({"status": "ok", "accepted": False})
+        args = str(payload.get("args", ""))
+
+        async def _run_slash_command_in_background() -> None:
+            # ``execute_slash_command`` already contains its own try/except
+            # around the handler and displays a failure via ``ctx.transport``
+            # (dispatch.py) — that covers "the command itself failed". This
+            # OUTER try/except is defense for anything that could still
+            # escape it (``SlashContext``/``_ErrorWatchingTransport``
+            # construction): a background task's own uncaught exception
+            # would otherwise just become an unretrieved ``asyncio`` task
+            # exception (logged to stderr, never reaching the client) — a
+            # silent drop AFTER the client was already told "accepted" is
+            # exactly the shape #6083 itself exists to close, one layer
+            # further down.
+            try:
+                await execute_slash_command(session._slash_context(), name, args)
+            except Exception:
+                logger.exception(
+                    "slash command /%s failed in its background task", name,
+                )
+                session._put_outbox_nowait(OutboxMessage(
+                    kind="error",
+                    text=f"/{name} failed unexpectedly after being accepted",
+                ))
+
+        coro = _run_slash_command_in_background()
+        try:
+            session._background_tasks.spawn(
+                coro,
+                name=f"slash:{name}",
+                # #6083 ⑵-b, condition ⑵ (lead-coder): a slash handler can
+                # itself append to the WAL (e.g. ``/compact`` recording a
+                # compaction), so this must be drained before
+                # ``await_quiescent``'s rewind reset-record — the same
+                # reasoning tracked_tasks.py's own module docstring gives
+                # for every other WAL-appending producer. See this PR's own
+                # body for what a mid-command reyn crash leaves behind.
+                appends_wal=True,
             )
-            return JSONResponse({"status": "ok", "ran": ran})
-        return JSONResponse({"status": "ok", "ran": False})
+        except Exception:
+            # ``spawn()`` itself failed BEFORE the task could even start —
+            # the one path that must NOT still answer "accepted": nothing
+            # will ever run, so the client learns that NOW, synchronously,
+            # rather than from silence later. ``coro.close()`` is what
+            # keeps this a clean failure rather than ALSO leaking an
+            # unawaited-coroutine warning on top of it.
+            coro.close()
+            logger.exception("failed to schedule slash command /%s", name)
+            return JSONResponse({"status": "ok", "accepted": False})
+        return JSONResponse({"status": "ok", "accepted": True})
     elif ptype == "cancel_inflight":
         cancel_fn = getattr(session, "cancel_inflight", None)
         if callable(cancel_fn):

@@ -483,7 +483,7 @@ async def test_a_client_whose_terminal_already_echoed_does_not_echo_twice(
 
 @pytest.mark.asyncio
 async def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) -> None:
-    """Tier 2: the AG-UI ``slash_command`` arm runs a NAME, and refuses an
+    """Tier 2: the AG-UI ``slash_command`` arm accepts a NAME, and refuses an
     unknown one.
 
     ★ The leg that keeps S5 from being a feature removal. A ``--connect`` client
@@ -495,9 +495,16 @@ async def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) ->
     a re-introduction of it.
 
     The refusal leg is the pair: a name this server's registry does not have
-    answers ``ran: false`` — a client on a different build, not a crash — and it
-    is what proves ``ran: true`` above is reporting a real resolution rather than
-    acking everything.
+    answers ``accepted: false`` — a client on a different build, not a crash —
+    and it is what proves ``accepted: true`` above is reporting a real
+    resolution rather than acking everything.
+
+    #6083 ⑵-b: ``accepted`` (was ``ran``) — the endpoint now hands the command
+    to the session's own background-task funnel and answers the instant it is
+    scheduled, not once it has finished running. This test's own wait for the
+    reply below was ALREADY an unbounded poll on the subscription queue (never
+    a fixed sleep), so it needed no change for that: the response landing
+    before the command's own display line is exactly the behavior under test.
 
     #3793 stage 2: this test is now ``async`` (was a plain ``def`` using the
     SYNC ``TestClient``) — subscribing to ``session.outbox_hub`` requires a
@@ -546,8 +553,8 @@ async def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) ->
             "/agui/chat/operator?token=s3cret",
             json={"type": "slash_command", "name": "help", "args": ""},
         )
-        assert resp.status_code == 200 and resp.json().get("ran") is True, (
-            f"the remote slash arm did not run /help: {resp.status_code} {resp.text}"
+        assert resp.status_code == 200 and resp.json().get("accepted") is True, (
+            f"the remote slash arm did not accept /help: {resp.status_code} {resp.text}"
         )
         # Yield to the event loop so the hub's background drain task (a
         # separate asyncio.Task the request handler's put_nowait doesn't
@@ -571,9 +578,9 @@ async def test_a_remote_client_can_still_run_a_command(tmp_path, monkeypatch) ->
             "/agui/chat/operator?token=s3cret",
             json={"type": "slash_command", "name": "no_such_command", "args": ""},
         )
-        assert unknown.status_code == 200 and unknown.json().get("ran") is False, (
-            "an unresolvable command name did not answer ran:false — the arm is "
-            f"acking without resolving. {unknown.status_code} {unknown.text}"
+        assert unknown.status_code == 200 and unknown.json().get("accepted") is False, (
+            "an unresolvable command name did not answer accepted:false — the "
+            f"arm is acking without resolving. {unknown.status_code} {unknown.text}"
         )
 
 
