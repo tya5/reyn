@@ -495,6 +495,12 @@ class RouterHostAdapter:
         # self._is_turn_cancel_requested; test hosts pass None (= never cancel).
         # run_loop polls via getattr(host, "_is_turn_cancel_requested", None).
         turn_cancel_fn: "Callable[[], bool] | None" = None,
+        # #5851 PR-3: turn-mid memory mini-ladder. Session passes
+        # self._check_turn_mid_memory_ladder; test hosts pass None (= never
+        # checks, byte-identical to before this existed). run_loop polls
+        # via getattr(host, "_check_turn_mid_memory", None), at the SAME
+        # iteration boundary as turn_cancel_fn above, right after it.
+        turn_mid_memory_check_fn: "Callable[[], Awaitable[str | None]] | None" = None,
         # FP-0050 / #1822: content-threat scan + fence config. None (test hosts)
         # → defaults (disabled-safe via the methods' guards).
         threat_scan: Any = None,
@@ -518,6 +524,7 @@ class RouterHostAdapter:
         self._turn_budget_engine_factory = turn_budget_engine_factory
         self._turn_budget_engine: Any = _TURN_BUDGET_ENGINE_UNSET
         self._turn_cancel_fn = turn_cancel_fn  # #1468
+        self._turn_mid_memory_check_fn = turn_mid_memory_check_fn  # #5851 PR-3
         self._session_state_dir_fn = session_state_dir_fn  # #4215①
         self._clock = clock or time.monotonic
         self._agent_name = agent_name
@@ -865,6 +872,19 @@ class RouterHostAdapter:
         when no ``turn_cancel_fn`` was wired (= test hosts / phase sub-hosts).
         """
         return bool(self._turn_cancel_fn and self._turn_cancel_fn())
+
+    async def _check_turn_mid_memory(self) -> "str | None":
+        """#5851 PR-3: forwards to ``Session._check_turn_mid_memory_ladder``.
+
+        Polled by run_loop at the SAME iteration boundary as
+        ``_is_turn_cancel_requested`` above, immediately after it, via
+        ``getattr(host, "_check_turn_mid_memory", None)``. Returns
+        ``None`` (no-op) when no ``turn_mid_memory_check_fn`` was wired
+        (test hosts / phase sub-hosts) — same no-op contract as
+        ``_is_turn_cancel_requested``."""
+        if self._turn_mid_memory_check_fn is None:
+            return None
+        return await self._turn_mid_memory_check_fn()
 
     # --- RouterLoopHost identity attributes ---
 

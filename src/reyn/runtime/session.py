@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from reyn.runtime.process_memory import ProcessMemoryGuard
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
+    from reyn.runtime.services.compaction_controller import ForceCompactResult
     from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
     from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 
@@ -1506,6 +1507,18 @@ class Session:
         # judge only escalates past ① on a turn-end sample taken AFTER
         # this is True, never on elapsed time or a turn count.
         self._compaction_seen_since_backpressure: bool = False
+        # #5851 PR-3: the seq the CURRENT (or most recent) turn started
+        # at -- set at ``_run_router_loop``'s own entry, before ANY of
+        # this turn's own messages are appended. Read by
+        # ``_check_turn_mid_memory_ladder``'s own ①' fold as
+        # ``protect_seq_gte``: every message with ``seq >=`` this value
+        # belongs to the turn currently in flight and must never be
+        # folded out from under the model mid-turn (architect ruling —
+        # head/tail's own token-budget protection cannot be relied on
+        # for this, see ``CompactionController._measure_and_select``'s
+        # own docstring). ``0`` before any turn has ever run — never a
+        # real seq, so it protects nothing (matches "no turn in flight").
+        self._current_turn_start_seq: int = 0
         # #5214: True once run()'s own while-loop has exited and the
         # terminal session_completed audit event has been emitted.
         # run_one_iteration() itself has NO awareness of whether run()
@@ -6711,6 +6724,9 @@ class Session:
             # _is_turn_cancel_requested() forwards to RouterLoopDriver; run_loop
             # checks it via getattr at each iteration boundary.
             turn_cancel_fn=self._is_turn_cancel_requested,
+            # #5851 PR-3: turn-mid memory mini-ladder forwarding — same
+            # shape as turn_cancel_fn immediately above.
+            turn_mid_memory_check_fn=self._check_turn_mid_memory_ladder,
         )
         return router_host
 
@@ -8036,6 +8052,151 @@ class Session:
             except (OSError, ValueError):
                 pass
         os._exit(1)
+
+    async def _compact_now_turn_mid(self, *, protect_seq_gte: int) -> "ForceCompactResult":
+        """#5851 PR-3 step ①' — fold now, from WITHIN the turn currently in
+        flight. Reuses the SAME concrete spill implementation
+        (``RouterLoopDriver._spill_batch_for_retry``) every other
+        ``force_compact_now`` caller uses (``force_compact_now``'s own
+        docstring: "one real implementation, reused, never a second
+        copy") — this is the third caller, not a fourth spill path.
+
+        ``protect_seq_gte`` is ALWAYS ``self._current_turn_start_seq``
+        here (the caller, :meth:`_check_turn_mid_memory_ladder`, is the
+        only real caller) — a separate parameter rather than reading the
+        field directly so a test can drive this method with an explicit
+        seq without needing a full turn in flight.
+
+        ``selection`` is left at its default (``"shortfall"``, the
+        REACTIVE ladder's own #5719 rule) — a memory-pressure fold is a
+        fit-check, the same question the reactive overflow ladder asks,
+        never an operator's explicit "shrink everything" request
+        (``selection="operator"`` is ``/compact`` only, #5888)."""
+        from functools import partial as _partial
+
+        _spill_impl = getattr(self._loop_driver, "_spill_batch_for_retry", None)
+        _spill_fn = (
+            _partial(_spill_impl, chain_id=self._last_turn_chain_id or "turn-mid-memory")
+            if _spill_impl is not None else (lambda _candidates: [])
+        )
+        _history_buffer = getattr(self._loop_driver, "_history_buffer", None)
+        _decompose_for_retry = (
+            _history_buffer.decompose_history_for_retry
+            if _history_buffer is not None else None
+        )
+        return await self._compaction_controller.force_compact_now(
+            spill_fn=_spill_fn,
+            spill_capability_present=_spill_impl is not None,
+            decompose_for_retry=_decompose_for_retry,
+            protect_seq_gte=protect_seq_gte,
+        )
+
+    async def _check_turn_mid_memory_ladder(self) -> "str | None":
+        """#5851 PR-3 — the turn-mid mini-ladder's own judge: ①' fold now
+        (excluding the in-flight turn's own messages) → ②' cache release
+        (PR-1's shared step, the SAME function the steady-state ladder's
+        own ② calls) → ③' stop at THIS iteration boundary → host
+        critical → ④ process exit (reuses :meth:`_memory_exit`).
+
+        Called by ``RouterHostAdapter._check_turn_mid_memory`` — forwarded
+        from ``router_loop.py``'s own iteration-boundary poll,
+        immediately after the existing cancel checkpoint and BEFORE the
+        turn's next LLM call (architect ruling, #5939 issue thread: an
+        earlier candidate position, right after ``tool_returned``, was
+        REJECTED — a round can issue several tool calls, and compacting
+        between the first return and the last risks folding the
+        assistant(tool_calls) message while results for the remaining
+        calls are still in flight, handing the provider an orphaned
+        ``tool_result`` it is expected to reject; #5891's own arc exists
+        to keep every ``tool_call_id`` pair intact, which is exactly what
+        that position would have reopened — see ``router_loop.py``'s own
+        call site for the FULL ordering requirement, including why the
+        cancel checkpoint must be re-read after this method returns).
+
+        Returns a non-``None`` STOP REASON (currently always
+        ``"turn_stopped_memory"``) when the turn must end at this
+        boundary, or ``None`` to continue normally. Never raises for a
+        measurement failure — matches every other stage (a)/(b)
+        mechanism's own never-raise-on-a-missing-reading contract.
+
+        Inert by construction (returns ``None`` having read nothing) when
+        the guard is not configured to enforce — ``guard.read()`` costs
+        ~39µs (measured, ``process_memory_guard``'s own docstring), so an
+        operator who opted in pays exactly ONE extra read per iteration
+        boundary in the healthy path; an operator who did not opt in
+        pays zero (#5851's own acceptance: "enforce: false では反復境界に
+        1行も増えない")."""
+        guard = self._process_memory_guard
+        if not guard.enforce or guard.cap_bytes is None:
+            return None
+        footprint = guard.read()
+        over_cap = footprint is not None and footprint > guard.cap_bytes
+        host_critical = guard.host_critical()
+        if not over_cap and not host_critical:
+            return None
+
+        chain_id = self._last_turn_chain_id
+        remedies = (
+            "/compact -- shrinks resident history now; already-summarized content becomes a "
+            "spill reference instead of being held in memory",
+            "close other sessions running in this process -- process_memory is a "
+            "PROCESS-wide resource, not a per-session one; closing a session other than the "
+            "one that grew only helps if that session, not this one, is the cause",
+            "raise process_memory.max_bytes in reyn.yaml -- an explicit, recorded choice to "
+            "accept a larger footprint",
+            "restart -- reclaims memory the process itself cannot release back to the OS "
+            "(measured: CPython/libmalloc do not always return freed large allocations)",
+        )
+
+        def _exit_now(_footprint: "int | None") -> None:
+            self._latch_halt("process_memory", remedies=remedies)
+            self._memory_exit(footprint=_footprint, remedies=remedies)
+
+        if host_critical and not over_cap:
+            # Host-critical alone (this session's own footprint may be
+            # under ITS cap) still exits immediately -- matches the
+            # steady-state ladder's own OR-condition semantics (#5939
+            # owner ruling: what's protected is the HOST's operability,
+            # not this process's own size alone). No fold/release step
+            # makes sense here -- this session did not cause it.
+            _exit_now(footprint)
+            return None  # unreachable — _memory_exit always os._exit()s
+
+        # ①' fold now, excluding this turn's own in-flight messages.
+        await self._compact_now_turn_mid(protect_seq_gte=self._current_turn_start_seq)
+        footprint = guard.read()
+        over_cap = footprint is not None and footprint > guard.cap_bytes
+        host_critical = guard.host_critical()
+        if not over_cap and not host_critical:
+            return None
+        if host_critical:
+            _exit_now(footprint)
+            return None
+
+        # ②' cache release -- same shared function as the steady-state
+        # ladder's own ② (PR-1, process_memory_release.py).
+        from reyn.runtime.process_memory_release import run_cache_release_and_forensics
+
+        forensics = run_cache_release_and_forensics(guard, self._audit_events, chain_id=chain_id)
+        footprint = forensics.footprint_after
+        over_cap = footprint is not None and footprint > guard.cap_bytes
+        host_critical = guard.host_critical()
+        if not over_cap and not host_critical:
+            return None
+        if host_critical:
+            _exit_now(footprint)
+            return None
+
+        # ③' stop at THIS boundary -- never mid-tool-call ("殺さない" —
+        # not killing: the existing cooperative-cancel exit path
+        # (router_loop.py) closes the turn with history and WAL
+        # consistent, exactly like an operator-initiated cancel, just
+        # under a distinct reason so it is never mistaken for one).
+        self._audit_events.emit(
+            "turn_stopped_memory",
+            chain_id=chain_id, footprint_bytes=footprint, cap_bytes=guard.cap_bytes,
+        )
+        return "turn_stopped_memory"
 
     @property
     def process_memory_guard(self) -> "ProcessMemoryGuard":
@@ -12250,6 +12411,9 @@ class Session:
             # stay unconditional (FP-0037 S1/S2, cheap, orthogonal to A-4).
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
+            # #5851 PR-3: captured HERE, before this turn appends anything
+            # of its own -- see the field's own docstring in __init__.
+            self._current_turn_start_seq = self._next_seq
             with active_turn(chain_id):
                 await self._loop_driver.run_turn(user_text, chain_id)
             _turn_completed = True

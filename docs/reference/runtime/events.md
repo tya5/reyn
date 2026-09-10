@@ -280,6 +280,7 @@ turn_cancelled
 turn_completed
 turn_settled
 turn_started
+turn_stopped_memory
 turn_too_large_truncated
 untrusted_narrowing_engaged
 untrusted_narrowing_lifted
@@ -559,6 +560,7 @@ does not touch) — do not read the rows below as exhaustive coverage of
 | `router_retry_exhausted` | The per-turn router-invocation cap (`check_and_increment_router_cap`) was exceeded. | `user_message` (#4666 ③ opt-in, see above; truncated to 200 chars at the emit site regardless of this flag), `count`, `cap`, `last_reason` |
 | `chat_started`, `chat_stopped` | Chat session lifecycle | — |
 | `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). | `chain_id` |
+| `turn_stopped_memory` | #5851 PR-3 ③' — the turn-mid memory mini-ladder's own terminal step: `Session._check_turn_mid_memory_ladder`, polled at the SAME router-loop iteration boundary as the cancel checkpoint, found the process footprint still over `process_memory.max_bytes` after both ①' (an immediate compaction fold, excluding the in-flight turn's own messages) and ②' (PR-1's shared cache-release step) failed to bring it back under cap — so the turn ends at THIS boundary, never mid-tool-call. Deliberately a DIFFERENT kind from `turn_cancelled`: an operator's own cancel and this safety net must never be conflated (a reader needs to be able to tell "the user stopped it" from "the ladder stopped it"). The exit is otherwise shaped exactly like a cooperative cancel — history and WAL stay consistent, and the next turn starts normally. | `chain_id`, `footprint_bytes`, `cap_bytes` |
 
 ## Session and turn lifecycle
 

@@ -470,9 +470,30 @@ class CompactionController:
         prev_cover: int,
         *,
         selection: str = "shortfall",
+        protect_seq_gte: "int | None" = None,
     ) -> "_SelectionMeasurement":
         """Select compaction candidates: token-budget HEAD/TAIL protect,
         then ``selection`` decides how much of what is left to fold.
+
+        ``protect_seq_gte`` (#5851 PR-3, architect ruling on the turn-mid
+        mini-ladder): excludes every message with ``seq >= protect_seq_
+        gte`` from the candidate set, REGARDLESS of head/tail's own
+        token-budget protection. ``None`` (every existing caller's
+        default) is byte-identical to before this parameter existed.
+
+        This exists because head/tail protection answers a TOKEN-BUDGET
+        question, not a "is this the in-flight turn" one — architect's
+        own words: "tail budget is a token count, not 'this turn'; do
+        not pass because the tail budget will protect it." A verbose
+        in-flight turn (long reasoning + several tool results) can
+        exceed ``tail_budget`` and have its OWN earlier messages become
+        fold candidates while the turn is still running, which would
+        fold the model's own just-written reasoning out from under it
+        mid-turn — the model loses its own immediately-prior context in
+        the SAME turn it wrote it. ``force_compact_now``'s turn-mid
+        caller passes the in-flight turn's own starting ``seq`` here so
+        that boundary is drawn EXPLICITLY rather than left to a budget
+        that was never sized for it.
 
         ``selection="shortfall"`` (default, the REACTIVE ladder) is the
         #5719 rule below — fold only as much as brings the unprotected
@@ -561,6 +582,10 @@ class CompactionController:
             if id(t) not in head_id_set
             and id(t) not in tail_id_set
             and t.seq > prev_cover
+            # #5851 PR-3: the explicit in-flight-turn exclusion — see this
+            # method's own docstring for why head/tail's token-budget
+            # protection cannot be relied on for this.
+            and (protect_seq_gte is None or t.seq < protect_seq_gte)
         ]
         unprotected_tokens = sum(
             estimate_tokens_for_any_turn(t, model, use_chars4=use_chars4) for t in unprotected
@@ -633,6 +658,12 @@ class CompactionController:
         # only ever actually invoked (and its O(history bytes) cost only
         # ever paid) on the ONE pass where fold selected nothing.
         decompose_for_retry: "Callable[[], tuple[list[dict], list[dict], list[dict], dict | None, dict[int, int]]] | None" = None,
+        # #5851 PR-3: forwarded to ``_measure_and_select`` -- see that
+        # method's own docstring. ``None`` (every existing caller's
+        # default) is byte-identical to before this parameter existed;
+        # only ``Session._check_turn_mid_memory_ladder``'s own turn-mid
+        # caller ever passes a real value.
+        protect_seq_gte: "int | None" = None,
     ) -> ForceCompactResult:
         """Synchronous force-trigger — single pass (#1128 PR-c).
 
@@ -780,6 +811,7 @@ class CompactionController:
         measured = await asyncio.to_thread(
             self._measure_and_select,
             eligible_messages, prev_cover, selection=selection,
+            protect_seq_gte=protect_seq_gte,
         )
         candidates = measured.candidates
 
