@@ -10516,7 +10516,15 @@ class Session:
 
         _wrapup_text: str | None = None
         _reason_unavailable = ""
-        history = self._history_buffer.build_history()
+        # #6077 (backlog-watcher finding, not that issue's own root cause --
+        # this call is reached ONLY on router-cap exhaustion, not on #6077's
+        # own steady-state symptom): build_history() re-serialises every
+        # watermark-surviving turn, a cost proportional to session length,
+        # and this was the ONE remaining call site still running it
+        # synchronously on the event loop -- every other build_history()
+        # call on the normal submit path is already offloaded (same idiom,
+        # router_loop_driver.py's own await asyncio.to_thread(...) call).
+        history = await asyncio.to_thread(self._history_buffer.build_history)
         messages: list[dict] = [
             *history,
             *(
