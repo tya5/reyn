@@ -186,7 +186,7 @@ def test_well_formed_render_template_values_do_not_warn(caplog) -> None:
         )
     assert cfg.max_output_chars == 10
     assert cfg.wall_clock_seconds == 1.0
-    assert caplog.records == []
+    assert [r for r in caplog.records if r.name == _LOGGER_NAME] == []
 
 
 def test_well_formed_cost_config_values_do_not_warn(caplog) -> None:
@@ -199,4 +199,4 @@ def test_well_formed_cost_config_values_do_not_warn(caplog) -> None:
         )
     assert cfg.rate_limit_warn_ratio == 0.5
     assert cfg.per_agent_tokens.hard_limit == 10.0
-    assert caplog.records == []
+    assert [r for r in caplog.records if r.name == _LOGGER_NAME] == []

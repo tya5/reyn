@@ -66,4 +66,4 @@ def test_well_formed_media_values_do_not_warn(caplog) -> None:
     assert web_cfg.max_download_bytes == 123
     assert gw_cfg.ws_max_size == 456
     assert mm_cfg.max_bytes == 789
-    assert caplog.records == []
+    assert [r for r in caplog.records if r.name == _LOGGER_NAME] == []

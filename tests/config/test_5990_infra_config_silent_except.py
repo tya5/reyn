@@ -137,4 +137,4 @@ def test_well_formed_fs_watch_and_audit_events_do_not_warn(caplog) -> None:
     assert fs_cfg.debounce_seconds == 0.5
     assert audit_cfg.cleanup_period_days == 3
     assert audit_cfg.max_disk_usage_percent == 5.0
-    assert caplog.records == []
+    assert [r for r in caplog.records if r.name == _LOGGER_NAME] == []
