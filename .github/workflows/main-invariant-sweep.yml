@@ -100,6 +100,32 @@ name: main invariant sweep
 # (#4239) is unchanged and still in force — what changed is only that
 # nothing mechanical asserts it anymore. re-open trigger: a token with
 # `administration: read` becomes available.
+#
+# #6014 (2026-09-10): this workflow had NO `pip install` step at all, and
+# that absence was an UNWRITTEN contract — every gate enumerated here
+# happened to be stdlib-only, so nothing ever needed one. `52344e916`
+# added 3 gates that import `reyn` itself, and every run since failed
+# with `ModuleNotFoundError: No module named 'reyn'` (28 of 28 runs,
+# ~20h, read off each run's own step list). The install step below makes
+# the requirement explicit instead of accidental.
+#
+# Two things that were NOT the cause, recorded because both were asserted
+# before those step lists were opened:
+#   - The other gates did NOT go silent. All 28 failing runs show
+#     success=9 / failure=3 — `if: ${{ !cancelled() }}` on every step
+#     (see the step section below) contained the failure exactly as
+#     #4257 intended. A job-level red does not imply step-level silence,
+#     and the job conclusion alone cannot tell them apart.
+#   - The 3 gates reported NO invariant violation. They never got far
+#     enough to look: all 3 died on their own `import reyn` line. A gate
+#     that never reached its subject says nothing about that subject —
+#     the "green over an empty collection" hazard, wearing red's colour.
+#
+# Rejected, with the reason, so it is not re-proposed: splitting this
+# into a static job and an install-requiring job. Its only stated benefit
+# — "the install-free gates keep reporting when install breaks" — is
+# already delivered by step-level `!cancelled()` above, so the split
+# bought nothing this file did not already have.
 on:
   schedule:
     # GitHub's own scheduler is best-effort under load — "roughly hourly",
@@ -131,9 +157,30 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
+          cache: pip
 
-      # Every step below is stdlib-only (ast / pathlib / sys) — no pip
-      # install needed, same as their per-PR counterparts.
+      # #6014: FIRST, ahead of every gate — deliberately not "just before
+      # the 3 that need it". Nothing enforces step order, so a step
+      # inserted above them later would silently reopen the same hole;
+      # installing at the head closes the class rather than the instance
+      # (lead-coder ruling on #6014).
+      #
+      # `-c ci-constraints.txt` (#5831): the same reproducibility pin
+      # every other job that installs project dependencies uses — see
+      # test.yml's "Install dependencies" step for why.
+      #
+      # Base install, no extras: the 3 gates below import
+      # `reyn.security.permissions.approval_ledger`,
+      # `reyn.hooks.schema_registry` and `reyn.interfaces.repl.read_model`,
+      # all reachable from the base dependency set. Extras would widen
+      # what a resolver failure can take down with no gate asking for it.
+      - name: Install reyn (the gates below that import it need this)
+        run: pip install -e . -c ci-constraints.txt
+
+      # Most steps below are stdlib-only (ast / pathlib / sys), same as
+      # their per-PR counterparts; the last 3 import `reyn` itself and
+      # need the install above. Do not read "no install needed" off the
+      # first nine and drop that step — #6014 is what that costs.
       # Any non-zero exit fails its own step (default `run:` behaviour),
       # which reddens the job overall — a single red gate is enough,
       # #4257's own test-plan requirement ("a red gate you can't fail is a
@@ -185,8 +232,15 @@ jobs:
       # written, but never actually run against the real tree since the
       # day each landed (their own `tests/` coverage only drives the
       # detector against a synthetic `tmp_path` fixture, never the real
-      # tree). All 3 measured rc=0 against main before being added here
-      # (see #6014's own issue body and comment thread).
+      # tree).
+      #
+      # The "all 3 measured rc=0 against main" that justified adding them
+      # was taken in an environment where `reyn` was already importable —
+      # not in this workflow's environment, which had no install at all.
+      # The measurement was true and the conclusion drawn from it was
+      # false: an rc=0 carries the interpreter it was taken on as much as
+      # the tree. The install step above is what makes these 3 lines mean
+      # what they say.
       - name: approval-ledger-import-boundary
         if: ${{ !cancelled() }}
         run: python scripts/check_approval_ledger_import_boundary.py
