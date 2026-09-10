@@ -32,24 +32,35 @@ land.
 
 ## Scope: marker-phrase presence, not correctness — and not full coverage
 
-This gate answers ONE question: does a kind's own `events.md` row contain
-at least one of a small set of firing-condition marker phrases somewhere
-in its text? It does NOT check that the phrase is accurate, does NOT
-check that the row is otherwise complete, and does NOT claim the 97-kind
-"individually documented" population itself is exhaustive or even
-correctly derived here — this script's own row-detection (a markdown
-table row whose FIRST cell contains at least one backtick-quoted token
-that is a real member of `AUDIT_EVENT_KINDS`) is an independent
-re-measurement, expected to be CLOSE to docs-maintainer's own 97/55 count
-but not necessarily identical (same "independently written scanners
-converge approximately" precedent `user_facing_lang_gate.py`'s own module
-docstring states for its own 89-finding baseline).
+This gate answers ONE question per kind: does it have an `events.md` row
+AT ALL, and if so does that row contain at least one of a small set of
+firing-condition marker phrases somewhere in its text? It does NOT check
+that a present phrase is accurate, and does NOT check that a row is
+otherwise complete.
 
-A kind with NO individual `events.md` row at all is OUT OF SCOPE for this
-gate entirely (it is a different, already-known gap — `docs/reference/
-runtime/events.md`'s own module-level completeness, not this gate's
-subject) — this gate only ever flags a row that EXISTS and lacks a
-marker, never an absent row.
+**A kind with NO `events.md` row at all IS in scope, and IS a finding**
+(lead-coder review, #6097: a first draft of this gate treated "no row"
+as out of scope, reasoning it was "a different, already-known gap" — but
+`git grep -rn "events.md" -- scripts` and `git grep -rn "AUDIT_EVENT_KINDS" -- scripts` on main BEFORE
+this gate landed returns nothing: no OTHER gate checks that a new kind
+gets a row at all. Excluding it here would have let a brand-new kind
+land with ZERO documentation while both this gate and every other gate
+stayed green — exactly the gap #6071's own ruling exists to close, the
+single most-wanted case slipping through unchecked). The two finding
+shapes are reported distinctly (`<kind>:no_row` / `<kind>:no_marker`) so
+an operator reading a failure knows which one to fix, but both count the
+same way in the ratchet — grow past baseline, fail the gate.
+
+This gate does NOT claim the resulting per-kind population itself is
+correctly derived from `events.md`'s own markdown beyond what its row
+detection can see (a markdown table row whose FIRST cell contains at
+least one backtick-quoted token that is a real member of
+`AUDIT_EVENT_KINDS`) — the `:no_marker` count in particular is expected
+to be CLOSE to docs-maintainer's own 97/55 count but not necessarily
+identical (same "independently written scanners converge approximately"
+precedent `user_facing_lang_gate.py`'s own module docstring states for
+its own 89-finding baseline). The `:no_row` count is exact by
+construction — it is simply "vocabulary minus what row-detection found".
 
 ## Marker phrases (case-insensitive substring match)
 
@@ -128,23 +139,36 @@ def kind_rows(text: str, vocabulary: "frozenset[str]") -> "dict[str, list[str]]"
 
 
 def measured(root: Path = _ROOT) -> "tuple[set[str], int]":
-    """``(finding_set, documented_kind_count)`` — a finding is a kind with
-    at least one `events.md` row whose text (across every row it
-    appears in) contains NO firing-condition marker phrase.
-    ``documented_kind_count`` is the population this gate actually
-    scanned (the "97" analogue) — the `scanned == 0` fail-closed check in
-    `main` reads this, not a file count (this gate scans ONE file, so a
-    file-count check would never be 0 as long as the file exists at all,
-    the wrong fail-closed signal for this shape of gate)."""
+    """``(finding_set, vocabulary_size)`` over the FULL closed vocabulary
+    (every kind in ``AUDIT_EVENT_KINDS``, not just the ones that already
+    have an `events.md` row — lead-coder review, #6097: excluding a
+    rowless kind would leave the single most-wanted case, a brand-new
+    kind landing with zero documentation, unchecked by this OR any other
+    gate). Two finding shapes, reported distinctly so an operator knows
+    which to fix, both counted the same way by the ratchet:
+
+    - ``"<kind>:no_row"`` — no `events.md` row names this kind at all.
+    - ``"<kind>:no_marker"`` — a row exists, but its text (across every
+      row the kind appears in, if more than one) contains no
+      firing-condition marker phrase.
+
+    ``vocabulary_size`` is the population this gate actually scanned —
+    the `scanned == 0` fail-closed check in `main` reads this, not a
+    file count (this gate scans ONE file against the WHOLE vocabulary, so
+    a file-count check would never legitimately be 0, the wrong
+    fail-closed signal for this shape of gate)."""
     vocabulary = _closed_vocabulary()
     events_doc = root / "docs" / "reference" / "runtime" / "events.md"
     text = events_doc.read_text(encoding="utf-8")
     rows = kind_rows(text, vocabulary)
-    findings = {
-        kind for kind, row_texts in rows.items()
-        if not any(_MARKER_RE.search(t) for t in row_texts)
-    }
-    return findings, len(rows)
+    findings: "set[str]" = set()
+    for kind in vocabulary:
+        row_texts = rows.get(kind)
+        if row_texts is None:
+            findings.add(f"{kind}:no_row")
+        elif not any(_MARKER_RE.search(t) for t in row_texts):
+            findings.add(f"{kind}:no_marker")
+    return findings, len(vocabulary)
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[str]":
@@ -208,9 +232,8 @@ def main(argv: "list[str] | None" = None) -> int:
     if scanned == 0:
         print(
             "audit-event firing-condition gate FAILED: the scan found 0 "
-            "documented event kinds — this is a scanner failure (the row "
-            "regex, or the AUDIT_EVENT_KINDS import, broke), not a clean "
-            "population.",
+            "closed-vocabulary event kinds — this is a scanner failure "
+            "(the AUDIT_EVENT_KINDS import broke), not a clean population.",
             file=sys.stderr,
         )
         return 1
@@ -219,7 +242,7 @@ def main(argv: "list[str] | None" = None) -> int:
         write_baseline(current, _BASELINE_PATH)
         print(
             f"Wrote {len(current)} finding(s) to {_BASELINE_PATH}, "
-            f"{scanned} documented event kind(s) scanned in {_EVENTS_DOC}."
+            f"{scanned} closed-vocabulary event kind(s) checked against {_EVENTS_DOC}."
         )
         return 0
 
@@ -229,23 +252,24 @@ def main(argv: "list[str] | None" = None) -> int:
     if new:
         print("audit-event firing-condition gate FAILED:\n", file=sys.stderr)
         print(
-            f"{len(new)} event kind(s) have a new {_EVENTS_DOC.relative_to(_ROOT)} "
-            f"row with no firing-condition phrase, not in the baseline "
+            f"{len(new)} event kind(s) are newly missing documentation in "
+            f"{_EVENTS_DOC.relative_to(_ROOT)}, not in the baseline "
             f"({_BASELINE_PATH.relative_to(_ROOT)}):",
             file=sys.stderr,
         )
         for f in sorted(new):
             print(f"  {f}", file=sys.stderr)
         print(
-            "\nA row documenting this event kind exists but names no "
-            "firing condition (one of: fires / only when / once per / "
-            "warn-once / emitted once / triggered when / fired when) — "
-            "see scripts/audit_event_firing_condition_gate.py's own "
-            "module docstring for exactly what this does and does not "
-            "catch, and for the ~existing grandfathered findings. Add a "
-            "firing-condition phrase to the row (WHEN the event fires, "
-            "not just its destination/payload). If this is a deliberate, "
-            "reviewed deferral, say so in the PR body and run "
+            "\nA finding suffixed ':no_row' means this event kind has NO "
+            "row in events.md at all -- add one. A finding suffixed "
+            "':no_marker' means a row exists but names no firing condition "
+            "(one of: fires / only when / once per / warn-once / emitted "
+            "once / triggered when / fired when) -- add a phrase naming "
+            "WHEN the event fires, not just its destination/payload. See "
+            "scripts/audit_event_firing_condition_gate.py's own module "
+            "docstring for exactly what this does and does not catch, and "
+            "for the existing grandfathered findings. If this is a "
+            "deliberate, reviewed deferral, say so in the PR body and run "
             "--write-baseline.",
             file=sys.stderr,
         )
@@ -253,9 +277,9 @@ def main(argv: "list[str] | None" = None) -> int:
 
     print(
         f"audit-event firing-condition gate OK: {len(current)} finding(s), "
-        f"all baselined ({scanned} documented event kind(s) scanned). "
-        "Covers only kinds with an existing events.md row — see module "
-        "docstring for scope."
+        f"all baselined ({scanned} closed-vocabulary event kind(s) "
+        "checked). See module docstring for the ':no_row'/':no_marker' "
+        "finding shapes and scope."
     )
     return 0
 

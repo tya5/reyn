@@ -1,11 +1,14 @@
 """Tier 1: `audit_event_firing_condition_gate.py`'s own detector logic
 (#6071).
 
-lead-coder's ruling: this gate flags a closed-vocabulary event kind that
-has an individual `events.md` row but no firing-condition marker phrase
-anywhere in that row's text — never a kind with no row at all (out of
-scope, a different gap), never a correctness check on the phrase's own
-accuracy.
+lead-coder's ruling: this gate flags a closed-vocabulary event kind
+whose `events.md` documentation is either ABSENT (``:no_row``) or
+present but names no firing-condition marker phrase anywhere in its
+text (``:no_marker``) — never a correctness check on a present phrase's
+own accuracy. The ``:no_row`` shape was added after review (#6097): a
+first draft treated a rowless kind as out of scope, which would have let
+a brand-new kind land with ZERO documentation while every gate (this one
+included) stayed green — the single most-wanted case unchecked.
 """
 from __future__ import annotations
 
@@ -43,14 +46,27 @@ def test_a_row_with_only_destination_and_payload_is_flagged():
     assert findings == {"llm_called"}
 
 
-def test_a_kind_with_no_row_at_all_is_out_of_scope():
-    """Tier 1: ruling's explicit scope boundary — a closed-vocabulary
-    kind with NO `events.md` row at all is not counted as a finding (a
-    different, already-known gap, not this gate's subject)."""
-    text = "| `session_started` | Fires once per session. |\n"
-    vocabulary = frozenset({"session_started", "never_documented_kind"})
-    rows = kind_rows(text, vocabulary)
-    assert "never_documented_kind" not in rows
+def test_a_kind_with_no_row_at_all_is_flagged(tmp_path, monkeypatch):
+    """Tier 1: the witness for the reviewed correction (#6097) — a
+    closed-vocabulary kind with NO `events.md` row at all IS a finding,
+    reported as ``:no_row`` — the case no OTHER gate in this repo checks
+    (verified during review: neither "events.md" nor "AUDIT_EVENT_KINDS"
+    appeared anywhere under scripts/ before this gate existed)."""
+    import scripts.audit_event_firing_condition_gate as gate
+
+    events_dir = tmp_path / "docs" / "reference" / "runtime"
+    events_dir.mkdir(parents=True)
+    (events_dir / "events.md").write_text(
+        "| `session_started` | fires once per session |\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        gate, "_closed_vocabulary",
+        lambda: frozenset({"session_started", "never_documented_kind"}),
+    )
+
+    findings, _scanned = gate.measured(tmp_path)
+
+    assert findings == {"never_documented_kind:no_row"}
 
 
 def test_a_grouped_row_documents_every_kind_it_names():
@@ -81,11 +97,15 @@ def test_a_kind_documented_in_two_rows_is_not_flagged_if_either_names_a_marker()
     )
 
 
-def test_measured_returns_the_scanned_count_as_documented_kinds_not_file_count(tmp_path, monkeypatch):
-    """Tier 2: `measured`'s own `scanned` return is the DOCUMENTED-KIND
-    count (the "97" analogue), not a file count — this gate scans exactly
-    one file, so a file-count `scanned` would never legitimately read 0
-    and the fail-closed check in `main` would be dead code."""
+def test_measured_returns_the_scanned_count_as_the_full_vocabulary_size(tmp_path, monkeypatch):
+    """Tier 2: `measured`'s own `scanned` return is the FULL
+    closed-vocabulary size (every kind checked, documented or not), not a
+    file count and not merely the documented subset — this gate scans
+    exactly one file against the WHOLE vocabulary, so a file-count
+    `scanned` would never legitimately read 0 and the fail-closed check
+    in `main` would be dead code. Also pins the two distinct finding
+    shapes together: `:no_marker` for a row with no firing phrase,
+    `:no_row` for a kind with no row at all."""
     import scripts.audit_event_firing_condition_gate as gate
 
     events_doc = tmp_path / "docs" / "reference" / "runtime"
@@ -96,13 +116,14 @@ def test_measured_returns_the_scanned_count_as_documented_kinds_not_file_count(t
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        gate, "_closed_vocabulary", lambda: frozenset({"session_started", "llm_called"}),
+        gate, "_closed_vocabulary",
+        lambda: frozenset({"session_started", "llm_called", "rowless_kind"}),
     )
 
     findings, scanned = gate.measured(tmp_path)
 
-    assert scanned == 2
-    assert findings == {"llm_called"}
+    assert scanned == 3
+    assert findings == {"llm_called:no_marker", "rowless_kind:no_row"}
 
 
 def test_new_findings_flags_a_finding_absent_from_baseline():

@@ -15,6 +15,7 @@ name: audit-event firing-condition gate
 on:
   pull_request:
     paths:
+      - "pyproject.toml"
       - "docs/reference/runtime/events.md"
       - "src/reyn/core/events/event_schema.py"
       - "scripts/audit_event_firing_condition_gate.py"
@@ -37,9 +38,18 @@ jobs:
         with:
           python-version: "3.11"
 
-      # scripts/audit_event_firing_condition_gate.py is stdlib-only
-      # (argparse / json / re / pathlib), plus one import of reyn's own
-      # event_schema module -- no pip install needed.
+      # scripts/audit_event_firing_condition_gate.py imports
+      # reyn.core.events.event_schema (to derive the closed vocabulary
+      # from the real, installed source, per lead-coder condition 1 --
+      # never hand-maintained), and that module transitively needs
+      # pydantic (a core dep) -- an editable install of the project
+      # itself is required, unlike a stdlib-only gate script (same shape
+      # as bash-node-kind-count-ratchet.yml, #6091: this gate's own first
+      # CI run caught the missing install itself, fail-closed, rather
+      # than silently reporting 0 findings).
+      - name: Install reyn (core deps only)
+        run: pip install -e . -c ci-constraints.txt
+
       - name: Check no new undocumented-firing-condition event kind
         run: |
           python scripts/audit_event_firing_condition_gate.py
