@@ -255,6 +255,122 @@ def test_existing_file_handler_readers_still_find_the_rotating_handler(
         root.setLevel(saved_level)
 
 
+# ── #6043: reyn.log installs regardless of is_interactive ──────────────────
+
+
+def test_the_file_handler_installs_even_when_not_interactive(tmp_path) -> None:
+    """Tier 2: #6043 — lead-coder's own root-cause ruling: "not
+    interactive" and "don't keep a record" are different facts. A
+    `--cui`/non-TTY run (`is_interactive=False`) must still get the
+    `RotatingFileHandler` on root — CI / a non-TTY run is exactly when a
+    durable record is MOST needed, nobody is watching the terminal live.
+
+    Strip-falsifier (verified by hand: `is_interactive=False` reverted
+    to making this function a no-op, the pre-#6043 shape): this test
+    goes red — no `.reyn/logs/reyn.log` file, no `RotatingFileHandler`
+    on root."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_interactive_logging(tmp_path, is_interactive=False)
+        log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
+        targets = [getattr(h, "baseFilename", None) for h in root.handlers]
+
+        assert str(log_file) in targets, (
+            "#6043 REGRESSION: is_interactive=False must still install "
+            "the reyn.log RotatingFileHandler"
+        )
+
+        logging.getLogger("reyn.canary").warning("not-interactive-marker-91fa")
+        for h in root.handlers:
+            h.flush()
+        assert "not-interactive-marker-91fa" in log_file.read_text()
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_a_non_interactive_run_also_still_prints_to_stderr(tmp_path, capsys) -> None:
+    """Tier 2: #6043 — the ONE behaviour this module's own comments ever
+    actually justified ("--cui / non-TTY keep logging on stderr —
+    debuggable / pipeable") must be PRESERVED, not silently dropped
+    while fixing the missing-file-record half. `is_interactive=False`
+    must ALSO print to stderr, not just to the file.
+
+    Strip-falsifier (verified by hand: the `if not is_interactive:
+    handlers.append(...)` branch removed): this test goes red — the
+    marker reaches the file but never stderr."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_interactive_logging(tmp_path, is_interactive=False)
+        logging.getLogger("reyn.canary").warning("stderr-preserved-marker-c410")
+        for h in root.handlers:
+            h.flush()
+
+        captured = capsys.readouterr()
+        assert "stderr-preserved-marker-c410" in captured.err, (
+            "#6043 REGRESSION: is_interactive=False must still ALSO print "
+            "to stderr (the pre-existing debuggable/pipeable behaviour) — "
+            f"got {captured.err!r}"
+        )
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_the_interactive_path_still_never_prints_to_stderr(tmp_path, capsys) -> None:
+    """Tier 2: falsification contrast — `is_interactive=True` (the
+    default, matching every OTHER test in this file) must NOT gain a
+    stderr handler; #6043's own bug was exactly a stray stderr write
+    corrupting the live region. Non-regression guard for the fix above."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_interactive_logging(tmp_path)
+        logging.getLogger("reyn.canary").warning("interactive-no-stderr-marker")
+        for h in root.handlers:
+            h.flush()
+
+        captured = capsys.readouterr()
+        assert "interactive-no-stderr-marker" not in captured.err, (
+            "#6043 REGRESSION: the interactive path must never print to "
+            f"stderr — got {captured.err!r}"
+        )
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
+def test_apply_logs_config_still_refines_the_non_interactive_handler(tmp_path) -> None:
+    """Tier 2: #6043 — `_apply_logs_config` is no longer gated on
+    `is_interactive` at its own call site (chat.py); confirm it still
+    finds and refines the handler `is_interactive=False` installed —
+    the real config values must reach the non-interactive path too, not
+    only the interactive one."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_interactive_logging(tmp_path, is_interactive=False)
+        _apply_logs_config(LogsConfig(max_bytes=4096, backup_count=1))
+
+        from logging.handlers import RotatingFileHandler
+
+        rotating = [h for h in root.handlers if isinstance(h, RotatingFileHandler)]
+        assert rotating and rotating[0].maxBytes == 4096, (
+            f"#6043 REGRESSION: expected exactly one RotatingFileHandler "
+            f"with the refined max_bytes — got {rotating!r}"
+        )
+        assert rotating[0].backupCount == 1
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+
 # ── #5989 symptom 3: a pre-handler-install record is not lost ──────────────
 
 

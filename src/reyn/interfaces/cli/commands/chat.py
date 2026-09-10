@@ -326,16 +326,41 @@ def _renderer_is_interactive(*, is_interactive: bool, render_mode: str) -> bool:
     return is_interactive and render_mode != "plain"
 
 
-def _setup_interactive_logging(project_root: Path) -> None:
-    """Route root-logger output to .reyn/logs/reyn.log for the interactive CUI.
+def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = True) -> None:
+    """Route root-logger output to .reyn/logs/reyn.log — ALWAYS, regardless
+    of *is_interactive*. Called once, before load_project_context (which
+    may emit WARNING records), so the file handler is in place before the
+    first log call.
 
-    The inline CUI owns the terminal; a log record reaching a StreamHandler
-    (stderr) would print into the live chat region — at best noise (litellm
-    warnings), at worst an alarming full traceback from a caught error. Sending
-    logs to a file keeps the UI clean while preserving them for debugging. Called
-    once, before load_project_context (which may emit WARNING records), so the
-    file handler is in place before the first log call THIS FUNCTION'S OWN
-    caller can control.
+    #6043 (owner-hit — a raw ``logging`` line corrupting the interactive
+    CUI's screen, between the sent-queue and the input box; lead-coder's
+    own root-cause question, answered by re-reading this function's own
+    prior docstring): this function used to hold TWO separate facts as
+    ONE decision, both gated by the SAME ``is_interactive`` check —
+    "whether to write to ``reyn.log`` at all" and "whether to ALSO print
+    to the terminal." Only ONE of those two facts actually depends on
+    whether the inline CUI owns the terminal:
+
+    - **Suppressing terminal output** DOES depend on ``is_interactive`` —
+      the inline CUI owns the terminal; a log record reaching a
+      StreamHandler(stderr) would print into the live chat region — at
+      best noise (litellm warnings), at worst an alarming full traceback
+      from a caught error.
+    - **Writing to ``reyn.log``** does NOT — "not interactive" and "don't
+      keep a record" are different facts, and CI / a non-TTY run is
+      exactly when a record is MOST needed (nobody is watching the
+      terminal live). The only reasoning this function's own comments
+      ever gave for the previous all-or-nothing gate was the FIRST fact
+      ("--cui / non-TTY keep logging on stderr (debuggable / pipeable)")
+      — a real reason to keep stderr as A destination, never a stated
+      reason to make it the ONLY one.
+
+    Now: the file handler installs unconditionally. When *is_interactive*
+    is ``False`` (``--cui`` / non-TTY), a second handler ALSO prints to
+    stderr — preserving the one behaviour this module's own comments
+    actually justified (debuggable/pipeable) — while ``reyn.log`` gets
+    the record either way. When *is_interactive* is ``True``, ``reyn.log``
+    is the ONLY destination, exactly as before.
 
     #5989 symptom 3: this is not the true start of the process, though —
     anything logged between interpreter startup and this call (argument
@@ -344,7 +369,8 @@ def _setup_interactive_logging(project_root: Path) -> None:
     limited buffer (:mod:`reyn.runtime.early_log_buffer`) as its own very
     first statement specifically to catch that earlier window; this
     function replays whatever it collected into the real handler below,
-    right after installing it — see that module's own docstring for the
+    right after installing it (unconditionally too, for the same reason
+    as the file handler itself) — see that module's own docstring for the
     full design and why a plain "buffer forever" primitive was not
     enough on its own.
 
@@ -365,10 +391,16 @@ def _setup_interactive_logging(project_root: Path) -> None:
     described. This closes that declared-vs-implemented gap — it does not
     change WHERE any warning's root cause lives (#4365 tracks a real
     litellm client-cleanup gap this does NOT fix, only reroutes the
-    resulting warning's ink). Scoped to the same ``is_interactive`` guard
-    as the rest of this function — both of this module's two call sites
-    are gated by it, so an embedder or non-interactive run never has its
-    own warnings redirected.
+    resulting warning's ink).
+
+    #6043: this call now ALWAYS runs (the function itself is no longer
+    gated by ``is_interactive`` at either call site) — so a bare
+    ``warnings.warn`` is captured into ``reyn.log`` on every invocation,
+    not only the interactive one. This history paragraph used to say the
+    opposite ("scoped to the same is_interactive guard ... an embedder
+    or non-interactive run never has its own warnings redirected") —
+    that was true of the OLD all-or-nothing gate, not of this fixed
+    version; kept here as history, not restated as the current claim.
 
     #5873 (owner-hit — "放置してるだけで reyn.log 肥大化してシステム止まら
     ないようにしてね"): the handler is now a ``RotatingFileHandler``, not a
@@ -422,17 +454,28 @@ def _setup_interactive_logging(project_root: Path) -> None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
     )
+    handlers: "list[logging.Handler]" = [handler]
+    if not is_interactive:
+        # #6043: the ONE behaviour this function's own comments actually
+        # justified ("--cui / non-TTY keep logging on stderr — debuggable
+        # / pipeable") — preserved, but no longer as the reason reyn.log
+        # goes unwritten. The interactive path (is_interactive=True)
+        # deliberately does NOT get this handler: the inline CUI owns the
+        # terminal, and a record reaching stderr there is #6043's own bug.
+        handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.WARNING,
-        handlers=[handler],
-        # #5989: NOT "no prior logging setup" any more — early_log_buffer.
-        # install() (called at the very top of cli.main()) already
-        # attached a bounded buffer + a stderr mirror to the root logger.
-        # force=True is still correct: it replaces BOTH with this real
-        # file handler, which is exactly what the interactive CUI wants
-        # going forward (no more stderr echo of WARNING+ records once the
-        # live region owns the terminal) — the buffer's own PAST records
-        # are recovered separately below, not lost by this wipe.
+        handlers=handlers,
+        # Safe unconditionally: this function now always runs as the
+        # first thing that could configure logging (both call sites
+        # dropped their own `if is_interactive:` gate) — there is no
+        # prior setup for `force=True` to ever actually be overriding,
+        # EXCEPT early_log_buffer.install() (called at the very top of
+        # cli.main()), which already attached its own bounded buffer to
+        # the root logger. force=True replaces that buffer with the
+        # real handler(s) built above, which is exactly what's wanted —
+        # the buffer's own PAST records are recovered separately below,
+        # not lost by this wipe.
         force=True,
     )
     logging.captureWarnings(True)
@@ -459,10 +502,13 @@ def _apply_logs_config(logs_cfg: "LogsConfig") -> None:
     a handler-identity change synchronization gap other readers rely on
     (see ``_setup_interactive_logging``'s own docstring on why the class
     itself, ``RotatingFileHandler`` — a ``logging.FileHandler`` subclass —
-    stays fixed regardless of config). A no-op when the interactive log
-    redirect was never installed (no ``RotatingFileHandler`` on the root
-    logger — e.g. ``--cui``/non-TTY runs, which never call
-    ``_setup_interactive_logging`` at all)."""
+    stays fixed regardless of config). #6043: ``_setup_interactive_logging``
+    now always installs the handler (both call sites dropped their own
+    ``is_interactive`` gate on calling it) — this function's own former
+    "no-op when the redirect was never installed (--cui/non-TTY runs)"
+    case no longer exists; the loop below still finds nothing to do only
+    if some OTHER caller ever removed the handler entirely, not because
+    of ``--cui``/non-TTY specifically."""
     from logging.handlers import RotatingFileHandler
 
     for handler in logging.root.handlers:
@@ -521,11 +567,36 @@ def _run_remote(
         stdin_isatty=stdin_isatty,
         stdout_isatty=stdout_isatty,
     )
-    # The inline CUI owns the terminal; route library warnings / tracebacks to a
-    # log file so they don't corrupt the live region (same rationale as local).
-    if is_interactive:
-        from reyn.config import _find_project_root
-        _setup_interactive_logging(_find_project_root(Path.cwd()) or Path.cwd())
+    # #6043: always installs the reyn.log handler now — only the ALSO-
+    # print-to-stderr half depends on is_interactive (the inline CUI
+    # owns the terminal; route library warnings / tracebacks to a log
+    # file so they don't corrupt the live region — same rationale as
+    # local, but no longer the reason a non-interactive run goes
+    # unlogged).
+    from reyn.config import _find_project_root
+    _setup_interactive_logging(
+        _find_project_root(Path.cwd()) or Path.cwd(), is_interactive=is_interactive,
+    )
+    # #6043 ruling ②: the 3 individual booleans feeding is_interactive are
+    # otherwise only screen-visible (the AND collapses them) — record them
+    # on a branch-independent surface (reyn.log) so an owner-reported
+    # "TUI looks live but is_interactive came out False" report is
+    # diagnosable without reproducing it live. Placed AFTER
+    # _setup_interactive_logging (immediately above) so the real
+    # RotatingFileHandler is already installed and this line lands in
+    # reyn.log directly, regardless of is_interactive.
+    # level=WARNING, not INFO: this module's `logger` has no explicit
+    # level of its own, so it inherits root's basicConfig(level=WARNING)
+    # — an INFO call here would be silently dropped unless this logger's
+    # level were lowered globally, which would also unmute every OTHER
+    # info-level call in this module. This line fires exactly once per
+    # process startup (not in a loop), so it does not reopen #5977's
+    # closed log-flood gap despite the WARNING level.
+    logger.warning(
+        "startup tty probe: cui=%s stdin_isatty=%s stdout_isatty=%s -> "
+        "is_interactive=%s",
+        getattr(args, "cui", False), stdin_isatty, stdout_isatty, is_interactive,
+    )
     renderer = make_renderer(is_interactive)
     run_async(
         run_remote(
@@ -644,28 +715,46 @@ def _run(args: argparse.Namespace) -> None:
     # the plain renderer there. This single predicate gates BOTH the log redirect
     # and the renderer choice (below) so "inline CUI active ⟺ logging redirected"
     # stays invariant — they must not diverge.
+    stdin_isatty = sys.stdin.isatty()
+    stdout_isatty = sys.stdout.isatty()
     is_interactive = _inline_interactive(
         cui=getattr(args, "cui", False),
-        stdin_isatty=sys.stdin.isatty(),
-        stdout_isatty=sys.stdout.isatty(),
+        stdin_isatty=stdin_isatty,
+        stdout_isatty=stdout_isatty,
     )
     # Route the root logger to a file so library warnings and caught-exception
     # tracebacks (e.g. an LLM APIConnectionError that session.py logs via
     # logger.exception) don't leak into — and corrupt/alarm — the chat UI.
-    # --cui / non-TTY keep logging on stderr (debuggable / pipeable). (Restores
-    # the redirect the Textual TUI had; dropped in the inline-CUI cutover #2195.)
-    if is_interactive:
-        _setup_interactive_logging(project_root)
+    # #6043: this now ALSO runs for --cui / non-TTY — "not interactive" and
+    # "don't keep a record" are different facts, and CI / a non-TTY run is
+    # exactly when a record is most needed (nobody is watching the terminal
+    # live). Only the ALSO-print-to-stderr half (debuggable/pipeable) stays
+    # conditional on is_interactive — see _setup_interactive_logging's own
+    # docstring. (Restores the redirect the Textual TUI had; dropped in the
+    # inline-CUI cutover #2195.)
+    _setup_interactive_logging(project_root, is_interactive=is_interactive)
+    # #6043 ruling ②: see _run_remote's own copy of this comment for the
+    # full rationale (branch-independent surface, placed AFTER
+    # _setup_interactive_logging so the real RotatingFileHandler is
+    # already installed and this line lands in reyn.log directly.
+    # WARNING level because this module's `logger` inherits root's
+    # basicConfig(level=WARNING) and this fires once per startup, not in
+    # a loop, so it doesn't reopen #5977).
+    logger.warning(
+        "startup tty probe: cui=%s stdin_isatty=%s stdout_isatty=%s -> "
+        "is_interactive=%s",
+        getattr(args, "cui", False), stdin_isatty, stdout_isatty, is_interactive,
+    )
 
     with _startup_stage("config"):
         session_cfg = InvocationContext.from_args(args)
     # #5873: now that the real reyn.yaml `logs:` config is known, refine
     # the RotatingFileHandler _setup_interactive_logging installed above
     # (with hardcoded defaults) to the operator's own configured
-    # max_bytes/backup_count. A no-op when the log redirect was never
-    # installed (--cui / non-TTY runs).
-    if is_interactive:
-        _apply_logs_config(session_cfg.config.logs)
+    # max_bytes/backup_count. #6043: no longer gated on is_interactive —
+    # the handler is ALWAYS installed now, so this refinement always has
+    # something real to refine.
+    _apply_logs_config(session_cfg.config.logs)
     # #3905: no per-surface startup credential check here (never was, since
     # #2708 P3.2b moved it onto the single LLM funnel) — and #3905 removed
     # that funnel-level pre-check too (an unnecessary hardcode, owner ruling).
