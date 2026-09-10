@@ -3677,6 +3677,11 @@ class RouterLoop:
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):
+            logger.warning(
+                "tool call %r arguments were not valid JSON (%r); "
+                "treating as no arguments",
+                raw_name, tc.get("function", {}).get("arguments"),
+            )
             args = {}
 
         if name not in self._catalog:

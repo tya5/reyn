@@ -169,6 +169,14 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
             try:
                 resolved_backend = get_default_backend(SandboxConfig(backend=backend_name))
             except ValueError:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "router_state.sandbox_backend=%r is not a known "
+                    "sandbox backend name; this op_context's own "
+                    "early-resolved backend stays unset (a later "
+                    "resolution seam may still pick one)",
+                    backend_name,
+                )
                 resolved_backend = None
 
     # Use op_context_factory if provided, else minimal synthesis.

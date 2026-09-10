@@ -1,6 +1,7 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
 
+import logging
 import re
 import sys
 import time
@@ -11,6 +12,8 @@ from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 from reyn.interfaces import palette
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.outbox import OutboxMessage
+
+_log = logging.getLogger(__name__)
 
 
 def _meta_prefix(meta: dict) -> str:
@@ -614,6 +617,10 @@ def summarize_tool_result(tool, result) -> str:
     try:
         summary = _summarize_result(tool, result)
     except Exception:
+        _log.warning(
+            "summarizing tool %r's own result failed; falling back to a "
+            "short repr", tool, exc_info=True,
+        )
         summary = _short(result, 80)
     return get_neutralizer("terminal").neutralize(summary)[0]
 

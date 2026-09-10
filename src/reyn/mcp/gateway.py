@@ -56,6 +56,12 @@ def resolve_call_timeout(config: dict) -> "float | None":
         try:
             timeout = float(ct)
         except (TypeError, ValueError):
+            import logging
+            logging.getLogger(__name__).warning(
+                "mcp server call_timeout_seconds=%r is invalid (not a "
+                "number); using the default %r",
+                ct, _DEFAULT_MCP_CALL_TIMEOUT_SECONDS,
+            )
             timeout = _DEFAULT_MCP_CALL_TIMEOUT_SECONDS
     if timeout is not None and timeout <= 0:
         return None

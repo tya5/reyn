@@ -30,6 +30,7 @@ present that drops the search tool → guaranteed ``Execute`` exit). ``execute``
 from __future__ import annotations
 
 import json
+import logging
 
 from reyn.prompt.retrieval import SEARCH_SP_NON_TERMINAL, SEARCH_SP_TERMINAL
 from reyn.tools.encoders import encoder_for_transport
@@ -53,6 +54,7 @@ from reyn.tools.schemes._retrieval_exposure import retrieval_sp_facts
 from reyn.tools.transport import Transport
 
 _SEARCH_TOOL_NAME = "search_actions"
+_log = logging.getLogger(__name__)
 
 
 def _search_sp(*, terminal: bool) -> str:
@@ -226,6 +228,11 @@ class RetrievalScheme:
                 try:
                     args = json.loads(tc["function"].get("arguments", "{}"))
                 except (json.JSONDecodeError, KeyError, TypeError):
+                    _log.warning(
+                        "search_actions tool call arguments were not valid "
+                        "JSON (%r); treating as no arguments",
+                        tc.get("function", {}).get("arguments"),
+                    )
                     args = {}
                 return RePresent(refinement={"query": args.get("query", "")})
         return Execute(actions=ops.resolve(llm_response, tool_catalog))

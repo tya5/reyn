@@ -13,6 +13,7 @@ never reaches an always-loaded module.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import TYPE_CHECKING, Callable
 
@@ -46,6 +47,8 @@ from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 from .gutter import _is_retrieval_tool
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -387,6 +390,11 @@ def _result_detail_lines(msg: "OutboxMessage") -> "list[str]":
     try:
         text = json.dumps(result, ensure_ascii=False, indent=2)
     except Exception:
+        _log.warning(
+            "a tool result of type %s was not JSON-serializable; "
+            "falling back to its own str()", type(result).__name__,
+            exc_info=True,
+        )
         text = str(result)
     return text.splitlines() or [text]
 
