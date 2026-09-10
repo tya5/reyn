@@ -86,26 +86,46 @@ def _is_unlink_call(node: ast.AST) -> bool:
     )
 
 
-def find_violations(path: Path) -> "list[tuple[int, str]]":
-    """`(lineno, enclosing_function_name)` for every `.unlink(...)` call
-    site in *path* whose nearest enclosing function/method is NOT
-    `_SOLE_CALLER_METHOD` (module-level top, if any, reports as `"<module>"`)."""
+def find_calls(path: Path) -> "tuple[list[tuple[int, str]], list[int]]":
+    """`(violations, sanctioned_linenos)` for every `.unlink(...)` call
+    site in *path* — *violations* are `(lineno, enclosing_function_name)`
+    pairs whose nearest enclosing function/method is NOT
+    `_SOLE_CALLER_METHOD` (module-level top, if any, reports as
+    `"<module>"`); *sanctioned_linenos* are the call sites that ARE
+    inside it.
+
+    #6050 BLOCKING (lead-coder review): an earlier version of this gate
+    returned violations ONLY — if `_SOLE_CALLER_METHOD` itself were
+    renamed or deleted, every remaining `.unlink()` call (there would be
+    none) trivially satisfies "not inside a DIFFERENT function named
+    `_unlink_tracked`", so `violations` comes back empty and the gate
+    would claim "OK: _unlink_tracked is the only caller" — true of an
+    EMPTY set, false of the invariant this gate exists to state. Callers
+    now also check *sanctioned_linenos* is non-empty (the same
+    zero-population fail-closed shape `check_faulthandler_timer_api_
+    single_caller.py`'s own `if not by_file: return 1` already
+    established, and the exact property this gate's own PR review
+    flagged as "the class of bug #6050 itself fixes, now in gate form")."""
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
     violations: "list[tuple[int, str]]" = []
+    sanctioned: "list[int]" = []
 
     def walk(node: ast.AST, enclosing: str) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 walk(child, child.name)
                 continue
-            if _is_unlink_call(child) and enclosing != _SOLE_CALLER_METHOD:
+            if _is_unlink_call(child):
                 assert isinstance(child, ast.Call)  # narrowed by _is_unlink_call
-                violations.append((child.lineno, enclosing))
+                if enclosing == _SOLE_CALLER_METHOD:
+                    sanctioned.append(child.lineno)
+                else:
+                    violations.append((child.lineno, enclosing))
             walk(child, enclosing)
 
     walk(tree, "<module>")
-    return sorted(violations)
+    return sorted(violations), sorted(sanctioned)
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -113,12 +133,26 @@ def main(argv: "list[str] | None" = None) -> int:
 
     target = _ROOT / _TARGET
     try:
-        violations = find_violations(target)
+        violations, sanctioned = find_calls(target)
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         print(
             f"media-store-unlink-single-caller gate FAILED: could not scan "
             f"{_TARGET} ({exc}). Fails CLOSED on a scan error rather than "
             "silently under-counting.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not sanctioned:
+        print(
+            f"media-store-unlink-single-caller gate FAILED: found 0 "
+            f".unlink() call(s) inside {_SOLE_CALLER_METHOD}() -- expected "
+            "at least 1. Either the sanctioned caller itself was renamed "
+            "or removed (update this gate's _SOLE_CALLER_METHOD "
+            "deliberately) or the scan itself is broken -- in neither case "
+            "is 'no caller found anywhere' the same claim as 'the one "
+            "sanctioned caller is the only one', so this fails closed "
+            "rather than reporting a vacuous OK.",
             file=sys.stderr,
         )
         return 1
@@ -148,7 +182,8 @@ def main(argv: "list[str] | None" = None) -> int:
 
     print(
         f"media-store-unlink-single-caller gate OK: {_SOLE_CALLER_METHOD} is "
-        f"the only caller of .unlink() in {_TARGET}."
+        f"the only caller of .unlink() in {_TARGET} "
+        f"({len(sanctioned)} call site(s), as expected)."
     )
     return 0
 
