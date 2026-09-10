@@ -43,6 +43,7 @@ async def test_run_and_classify_returns_a_normal_result_with_no_denial():
     policy = SandboxPolicy(deny_subprocess=False)
     launched = await run_and_classify(
         backend, [sys.executable, "-c", "print('ok')"], policy,
+        env_path=None,
     )
     assert launched.result.returncode == 0
     assert launched.denial_class is None
@@ -71,6 +72,6 @@ async def test_run_and_classify_classifies_a_real_fork_denial_signature():
         "sys.stderr.write('pyenv: fork: Operation not permitted\\n'); "
         "sys.exit(1)"
     )
-    launched = await run_and_classify(backend, [sys.executable, "-c", script], policy)
+    launched = await run_and_classify(backend, [sys.executable, "-c", script], policy, env_path=None)
     assert launched.result.returncode == 1
     assert launched.denial_class == DENIAL_FORK

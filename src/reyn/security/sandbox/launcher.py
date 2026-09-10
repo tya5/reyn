@@ -90,10 +90,20 @@ async def run_and_classify(
     cancel_event: "asyncio.Event | None" = None,
     hook_process_context: "HookProcessContext | None" = None,
     sink: "Callable[[int, bytes], None] | None" = None,
+    env_path: "str | None",
 ) -> LaunchResult:
     """Run *argv* under *policy* on the already-resolved *backend*, classify
     the result. The shared tail every agent-reachable launch route already
     does identically, after :func:`resolve_backend`.
+
+    ``env_path`` (#6058, REQUIRED — #6063 BLOCKING co-vet): forwarded
+    verbatim to ``backend.run()`` — the caller's own single, per-operation
+    ambient-``PATH`` read (see
+    :func:`~reyn.security.sandbox.backend.ambient_path`'s own docstring),
+    never re-derived here. Every caller now reads its own ``env_path``
+    explicitly at its own entry point and passes the result (``None`` is a
+    legitimate VALUE — "PATH is genuinely unset" — not a way to ask this
+    function, or ``backend.run()``, to fall back to an independent read).
 
     ``cancel_event`` is passed straight through to ``backend.run()`` — not
     every backend accepts meaningful cancellation the same way; Docker's
@@ -118,7 +128,7 @@ async def run_and_classify(
     #4733 (byte-identical)."""
     result = await backend.run(
         argv, policy, cwd=cwd, stdin=stdin, cancel_event=cancel_event,
-        hook_process_context=hook_process_context, sink=sink,
+        hook_process_context=hook_process_context, sink=sink, env_path=env_path,
     )
     denial_class = classify_denial(result.returncode, result.stderr)
     return LaunchResult(result=result, denial_class=denial_class)

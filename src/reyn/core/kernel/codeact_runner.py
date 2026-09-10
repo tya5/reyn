@@ -435,8 +435,17 @@ class CodeActRunner:
             ), None
         policy = SandboxPolicy(**policy_dict)
 
+        # #6058/#6063: a CodeAct spawn has NO operation context to read an
+        # `env_path` from (named explicitly, per lead-coder's #6063
+        # BLOCKING co-vet, rather than papered over) — it does no separate
+        # PATH-based argv0 resolution this value would need to agree with,
+        # so a single, local read of `ambient_path()` here is the caller's
+        # own "read once, thread down explicitly" — not a fallback inside
+        # the backend.
+        from reyn.security.sandbox.backend import ambient_path  # noqa: PLC0415
+
         try:
-            wrapped = sandbox_backend.wrap_command(base_argv, policy)
+            wrapped = sandbox_backend.wrap_command(base_argv, policy, env_path=ambient_path())
         except Exception as exc:  # noqa: BLE001 — fail-closed on any wrap failure
             return None, None, f"CodeAct: sandbox_backend.wrap_command failed: {exc}", None
 

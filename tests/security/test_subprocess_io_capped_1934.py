@@ -143,7 +143,8 @@ async def test_backend_bounds_huge_output_end_to_end():
     backend = NoopBackend()
     policy = SandboxPolicy(max_output_bytes=_CAP, timeout_seconds=10)
     result = await backend.run(
-        [PY, "-c", "import sys;sys.stdout.write('x'*5_000_000)"], policy
+        [PY, "-c", "import sys;sys.stdout.write('x'*5_000_000)"], policy,
+        env_path=None,
     )
     out_len = len(result.stdout)
     assert out_len <= _CAP
