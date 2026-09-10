@@ -260,6 +260,23 @@ async def maybe_dispatch_slash(
                     # existing SSE broadcast, the same channel compaction's
                     # own lifecycle markers already use).
                     prefix = f"/{name}: no confirmation received"
+                # #6085 stage 2 (lead-coder ruling): this line deliberately
+                # carries NO ``compaction_episode_marker`` meta, even when
+                # ``name == "compact"`` — unlike this session's compaction
+                # markers do NOT run through the shared derivation
+                # mechanism, folding this into the same open flow entry.
+                # This code is entirely CLIENT-side (the #3595 S5 boundary:
+                # a client interprets, ``Session`` never interprets a
+                # string, so nothing here ever touches ``Session`` or its
+                # episode-seq counter) — a marker with no real seq would
+                # be inert under app.py's seq-equality absorption check,
+                # and threading the seq back across the control-response
+                # wire just to fold THIS one line was judged not worth
+                # crossing that boundary for. #6100 (⑵-b) is expected to
+                # make this branch fire far less often for `/compact`
+                # specifically, but that is not assumed here — this stays
+                # its own, unabsorbed line regardless of whether it still
+                # fires.
                 _display(transport, "error", prefix)
         else:
             ctx = SlashContext(transport=transport, session=None)
