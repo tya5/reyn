@@ -228,6 +228,12 @@ bugs — openai/codex#8394, architect's own research on #5987).
   and not part of a node kind outside :data:`_ALLOWED_NODE_KINDS`
   (e.g. ``- _ . / , : = + @ % #``) — literal to both ``tree-sitter-bash``
   and ``sh`` in every position, quoted or not.
+- A standalone integer argument (``sleep 5``, ``tail -n 100``,
+  ``kill -9 1234``) — ``tree-sitter-bash`` parses this as its own
+  ``number`` node, not ``word`` (#6108: a real regression where every
+  one of these was rejected until ``number`` was added to
+  :data:`_ALLOWED_NODE_KINDS`, derived from real commands already in
+  this repo — see :data:`_ALLOWED_NODE_KINDS`'s own comment).
 - ``shlex``-quoted words — single/double quotes, backslash escapes;
   the SAME primitive #5837's own (now-superseded) ``tokenize_exec_
   cmdline`` used for the no-shell argv form. Quoting DOES let a word
@@ -375,6 +381,34 @@ _REDIRECT_OPS_DOUBLE = frozenset({">>"})
 # actual output both here (module import time, fail closed if a future
 # tree-sitter-bash bump ever drops/renames one) and by this module's own
 # test suite (never a hand-typed string trusted on faith).
+#
+# #6108 (regression, lead-coder's ruling) added "number": the original 12
+# kinds were ALSO hand-picked/imagined, not derived, and #6098 shipped a
+# real over-rejection bug because of it -- a standalone integer argument
+# (`sleep 5`, `tail -n 100`, `git log -5`, `kill -9 1234`) parses to its
+# OWN `number` node in tree-sitter-bash, not `word`, so every one of
+# those real, benign commands was rejected outright. The fix DERIVES the
+# widened population from real commands already in this repo
+# (`.github/workflows/**` `run:` lines, `docs/**` shell code blocks,
+# `scripts/**` subprocess calls that build a shell command line) parsed
+# through this same `tree-sitter-bash` machinery -- see
+# `tests/security/test_6108_exec_plan_allowlist_corpus.py` for the full
+# derivation and the corpus itself. "number" is the ONLY kind that
+# derivation added here: every OTHER node kind the corpus surfaced
+# (`command_substitution`, `subshell`, `process_substitution`,
+# `simple_expansion`/`expansion`/`special_variable_name`/`variable_name`/
+# `regex` (`$`-expansion family), `concatenation` (brace-expansion
+# mechanism), `variable_assignment`/`declaration_command`/`array`
+# (leading-assignment-adjacent), `herestring_redirect`, `file_descriptor`
+# (disclosed fd-numbered-redirect narrowing), `test_command`/
+# `unary_expression`) was deliberately NOT added -- each one either IS
+# one of #5987's 4 closed bypass shapes' own structural signature, is one
+# of the other constructs #5987 stage 2's own docstring names as
+# meant-to-stay-rejected (command substitution, subshell, process
+# substitution, heredoc), or was too thin/noise-derived in the corpus to
+# trust (a single occurrence pulled from doc usage-syntax text, not a
+# real invocation) -- see that test file's own module docstring for the
+# per-kind reasoning, not repeated here to avoid two copies drifting.
 _ALLOWED_NODE_KINDS = frozenset({
     "program",
     "command",
@@ -388,6 +422,7 @@ _ALLOWED_NODE_KINDS = frozenset({
     "redirected_statement",
     "file_redirect",
     "comment",
+    "number",
 })
 
 # Top-level (``program``-child) node kinds this parser treats as "one
