@@ -21,17 +21,23 @@ _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "unfiltered_caplog_60
 
 
 def test_every_dangerous_shape_is_flagged():
-    """Tier 1: the false-accept-side witness -- each of the 4 dangerous
-    consumption shapes (equality-with-literal-empty, len() comparison,
-    tuple/sequence unpacking, unfiltered any()/all()) is caught, one per
-    function in the fixture."""
+    """Tier 1: the false-accept-side witness -- each of the dangerous
+    consumption contexts this gate's inverted (allowlist-safe) classifier
+    must catch is caught, one per function in the fixture. Includes the
+    bare-truthiness shape (`assert not caplog.records`) disclosed as
+    out-of-scope under the prior enumerated-dangerous classifier and
+    folded in by the inversion, per
+    https://github.com/tya5/reyn/pull/6040#issuecomment-5611043646."""
     violations = find_violations(_FIXTURES / "dangerous.py")
     shapes = {shape for _, shape in violations}
     expected_shapes = {
-        "equality with literal",
+        "comparison",
         "len() comparison",
         "tuple/sequence unpacking",
         "unfiltered any()",
+        "truthiness",
+        "indexing",
+        "bare iteration",
     }
     missing = expected_shapes - shapes
     assert not missing, (
@@ -44,8 +50,9 @@ def test_every_safe_shape_is_not_flagged():
     """Tier 1: the false-reject-side witness, required alongside the test
     above -- a subject-specific/filtered consumption (message-content
     membership, logger-name-filtered equality/any(), .text containment, a
-    two-stage derived-variable filter, and a level-only filter that never
-    reaches a dangerous shape at all) must NOT be flagged."""
+    two-stage derived-variable filter, and a level-only filter whose FINAL
+    consumption is a subject-specific containment check) must NOT be
+    flagged."""
     violations = find_violations(_FIXTURES / "safe.py")
     assert violations == [], (
         f"gate over-flagged subject-specific/never-consumed caplog usage: "

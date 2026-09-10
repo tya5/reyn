@@ -32,11 +32,11 @@ def test_two_stage_derived_membership(caplog):
     assert not any("z" in m for m in messages)
 
 
-def test_level_only_filter_never_reaches_a_dangerous_shape(caplog):
-    """A level-only filter (no subject check) that is only ever
-    truthy-tested or indexed -- never compared/len()'d/unpacked -- must
-    not be flagged either (it never reaches a dangerous consumption
-    shape at all)."""
+def test_level_only_filter_then_subject_filtered_membership(caplog):
+    """A level-only filter (no subject check in the filter itself) that
+    is THEN consumed through a subject-specific containment check must
+    not be flagged -- the containment check is what makes the final
+    consumption safe, independent of whether the intermediate `warnings`
+    derivation was itself subject-filtered."""
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings
-    assert "x" in warnings[0].getMessage()
+    assert any("x" in r.getMessage() for r in warnings)

@@ -243,7 +243,10 @@ def test_warning_log_emitted_once_with_options(
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.router_loop"):
         _build_once(tmp_path, monkeypatch, provider)
 
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "reyn.runtime.router_loop"
+    ]
     assert warnings, "expected at least one WARNING log on build failure"
     text = " ".join(r.getMessage() for r in warnings).lower()
     # All three options mentioned.
