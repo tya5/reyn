@@ -9,10 +9,19 @@ owner (real-machine, 2026-09-02/03): "スピナーになってないね"／"進�
 entry or group にして" — this file replaces its own prior generation
 (``CompactionProgressRow``, a standalone chrome ``Static`` sibling of
 ``MenuBar``, REMOVED by this same PR) with tests against the flowview entry
-that took its place: one ``Entry[OutboxMessage]``, created once, its
-``meta`` updated in place while running (never re-created), spinning via
-the SAME live-indicator convention a RUNNING tool-call row already uses,
-and settled to a terminal ``EntryState`` exactly once.
+that took its place: one ``Entry[OutboxMessage]`` PER EPISODE, its ``meta``
+updated in place while running (never re-created WHILE the SAME episode is
+still open), spinning via the SAME live-indicator convention a RUNNING
+tool-call row already uses, and settled to a terminal ``EntryState``
+exactly once per episode.
+
+#6085 stage 1: the entry is no longer discarded the instant it settles —
+kept addressable (see ``_settle_compaction_progress``'s own docstring) so
+a marker-tagged display frame for the SAME episode that arrives late can
+still fold into it, gated on ``compaction_episode_seq`` identity rather
+than "is some entry open" alone (a genuinely NEW episode's own entry
+creation is what actually retires the old reference — see
+``_ensure_compaction_progress_entry``'s own updated idempotency guard).
 
 Real ``Session``/``AgentRegistry``/``EventLog`` throughout. Driving via a
 direct ``session._audit_events.emit(...)`` call for
@@ -369,7 +378,15 @@ async def test_compaction_episode_marker_frame_absorbs_into_the_open_entry(
     """Tier 2: #5588 — a lifecycle_forwarder marker tagged
     ``compaction_episode_marker`` (on_compaction_started/completed/failed)
     is absorbed into the single open episode entry rather than appended
-    as its own conv-pane row, TUI-locally, while an entry is open."""
+    as its own conv-pane row, TUI-locally, while an entry is open.
+
+    #6085 stage 1: the marker now also carries ``compaction_episode_seq``
+    (read off the SAME real ``Session`` the open entry was itself stamped
+    from — the identical value ``lifecycle_forwarder.py``'s own
+    ``_compaction_marker_meta()`` would read at this same moment) —
+    absorption is gated on that id matching, not merely "some entry is
+    open" (see the sibling ``..._mismatched_episode_seq_does_not_absorb``
+    test for the deny side of THAT check)."""
     from reyn.runtime.outbox import OutboxMessage
 
     app, session, reg = await _make_app_with_real_session(tmp_path)
@@ -385,7 +402,10 @@ async def test_compaction_episode_marker_frame_absorbs_into_the_open_entry(
         before = list(app.conversation.entries)
         result = app._ingest_frame(OutboxMessage(
             kind="system", text="[⟳ compacting 3 turns]",
-            meta={"compaction_episode_marker": True},
+            meta={
+                "compaction_episode_marker": True,
+                "compaction_episode_seq": session._read_compaction_episode_seq(),
+            },
         ))
         after = list(app.conversation.entries)
 
@@ -421,3 +441,182 @@ async def test_compaction_episode_marker_frame_appends_normally_with_no_open_ent
 
         assert result is not None, "no open entry to absorb into -- must append"
         assert len(after) == len(before) + 1
+
+
+@pytest.mark.asyncio
+async def test_a_late_marker_still_absorbs_into_an_already_settled_entry(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #6085 stage 1 — the strip-falsified regression.
+
+    Reproduces the race REPORTED in #6085 exactly: the row settles (its
+    OWN channel, a polled status snapshot going ``is_compacting=False``)
+    BEFORE a marker-tagged display frame for the SAME episode (a SEPARATE
+    channel) arrives. Under the OLD ``self._compaction_progress_entry is
+    not None`` guard the settle already popped the reference to ``None``,
+    so this exact sequence made the late marker fall through and appear
+    as its own stray row — the owner's own reported "4 independent
+    lines". Confirmed live before this fix landed (issue #6085's own
+    comment thread); strip-falsified again here by hand (reverting
+    ``_settle_compaction_progress``'s no-longer-nulling end and
+    ``_ingest_frame``'s episode-seq check both independently reproduce
+    the stray row)."""
+    from textual_flowview import EntryState
+
+    from reyn.runtime.outbox import OutboxMessage
+
+    app, session, reg = await _make_app_with_real_session(tmp_path)
+    session._compaction_controller._compacting = True
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+        entry = _open_compaction_entry(app)
+        assert entry is not None
+        episode_seq = entry.item.meta.get("compaction_episode_seq")
+
+        # The race: settle FIRST (is_compacting flips False on THIS
+        # session's own snapshot), THEN the marker frame for the SAME
+        # episode arrives.
+        session._compaction_controller._compacting = False
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+        assert entry.state is not EntryState.RUNNING, "expected the row to have settled"
+
+        before = list(app.conversation.entries)
+        result = app._ingest_frame(OutboxMessage(
+            kind="system", text="[↑ 1746 messages compacted]",
+            meta={
+                "compaction_episode_marker": True,
+                "compaction_episode_seq": episode_seq,
+            },
+        ))
+        after = list(app.conversation.entries)
+
+        assert result is None, (
+            "the late marker was NOT absorbed -- it created a new entry, "
+            "reproducing the exact #6085 symptom this fix closes"
+        )
+        assert len(after) == len(before), (
+            f"expected the late marker to fold into the settled row (no new "
+            f"row) -- root count grew {len(before)} -> {len(after)}"
+        )
+        # Non-vacuity: absorption here means "prevented from becoming a
+        # second row" (the row's own body is meta-driven, per
+        # ``_ensure_compaction_progress_entry``'s own comment — a marker
+        # frame's TEXT was never folded into it even before #6085, only
+        # its EXISTENCE as a duplicate row was), so the real proof this
+        # assertion needs is the PAIRED deny-side test just below
+        # (``test_a_marker_for_a_different_episode_does_not_absorb``):
+        # the identical setup, a mismatched id, DOES append. Together the
+        # two prove the id check is load-bearing, not a green that would
+        # hold with no check at all.
+
+
+@pytest.mark.asyncio
+async def test_a_marker_for_a_different_episode_does_not_absorb(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #6085 stage 1 deny side — lead-coder ruling: a MISMATCHED
+    episode id must fall through and append as its own row, never silently
+    fold into the wrong (already-settled) entry and never be dropped.
+    "見えて間違う方が良い" (a visible stray row an operator can question
+    beats a wrong fold nobody can see happened at all)."""
+    from reyn.runtime.outbox import OutboxMessage
+
+    app, session, reg = await _make_app_with_real_session(tmp_path)
+    session._compaction_controller._compacting = True
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+        entry = _open_compaction_entry(app)
+        assert entry is not None
+        real_seq = entry.item.meta.get("compaction_episode_seq")
+
+        session._compaction_controller._compacting = False
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+
+        before = list(app.conversation.entries)
+        result = app._ingest_frame(OutboxMessage(
+            kind="system", text="[✗ compaction failed: stale episode]",
+            meta={
+                "compaction_episode_marker": True,
+                # Deliberately NOT real_seq -- a stale/different episode's
+                # own id.
+                "compaction_episode_seq": (real_seq or 0) + 999,
+            },
+        ))
+        after = list(app.conversation.entries)
+
+        assert result is not None, (
+            "a mismatched episode id was absorbed -- silently folded into "
+            "the WRONG row, exactly the failure mode lead-coder's ruling "
+            "asked this NOT to have"
+        )
+        assert len(after) == len(before) + 1
+        assert result.item.text == "[✗ compaction failed: stale episode]", (
+            "the mismatched marker's own text should land on the NEW row "
+            "it appended as, not be lost"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_new_episode_after_settle_gets_its_own_fresh_entry(
+    tmp_path: Path,
+) -> None:
+    """Tier 2b: #6085 stage 1 — keeping the settled entry addressable (for
+    the late-marker fold above) must not also block a genuinely NEW
+    episode from getting its own row. ``_ensure_compaction_progress_
+    entry``'s own idempotency guard now keys on ``entry.state is RUNNING``,
+    not "is a reference held" -- a settled entry does not count."""
+    from textual_flowview import EntryState
+
+    app, session, reg = await _make_app_with_real_session(tmp_path)
+    session._compaction_controller._compacting = True
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+        first = _open_compaction_entry(app)
+        assert first is not None
+        first_seq = first.item.meta.get("compaction_episode_seq")
+
+        session._compaction_controller._compacting = False
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+        assert first.state is not EntryState.RUNNING
+
+        # A second, genuinely new episode starts.
+        session._compaction_controller._compacting = True
+        app._read_model.snap = _snapshot_for_session(reg, session)
+        app._refresh_compaction_progress()
+        await pilot.pause()
+
+        from reyn.interfaces.inline.textual_chat._meta_keys import COMPACTION_PROGRESS_KEY
+
+        progress_entries = [
+            e for e in app.conversation.entries
+            if e.item.meta.get(COMPACTION_PROGRESS_KEY) is not None
+        ]
+        new_entries = [e for e in progress_entries if e is not first]
+        assert new_entries, (
+            "expected a fresh row for the new episode alongside the "
+            "settled old one, but no new progress entry was created"
+        )
+        assert first in progress_entries, (
+            "the old, settled entry must still be present, not replaced"
+        )
+        second = new_entries[0]
+        assert second.state is EntryState.RUNNING
+        assert second.item.meta.get("compaction_episode_seq") != first_seq
