@@ -34,8 +34,16 @@ policy check and the actual argv0 resolution — #5991 BLOCKING ③'s own
 point carried forward into this stage: the binary policy approved and
 the binary that runs must come from the identical PATH/cwd.
 
-Not yet wired: `cmd` is not exposed on the LLM `exec` tool schema or the
-pipeline `tool:` step (段6, a separate later stage).
+#5838 段6: `cmd` is now exposed on the LLM `exec` tool schema AND the
+pipeline `tool:` step — the SAME schema feeds both (`tools/exec.py`'s own
+`_EXEC_PARAMETERS`; the pipeline `tool:` step validates against it too via
+`dispatch_tool`'s own arg-schema check, never a second exposure). The
+exactly-one-of-argv/cmd XOR is enforced as a TOOL ERROR in `tools/exec.py`'s
+`_handle` (never a JSON Schema `oneOf`/`anyOf`, and never a raw `KeyError`);
+`cmd` has no `collect="async"` leg in this stage (a deliberate scope
+boundary — `_handle` rejects that combination with a tool error instead of
+silently dropping it or reaching a `KeyError` in `run_exec_async`, which has
+no `cmd` parameter).
 
 #5838 段5 (lead-coder ruling): `sandboxed_exec_started`/`_completed` now
 carry a `plan` field — a list of `{"argv0": <original>, "resolved":

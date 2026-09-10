@@ -40,7 +40,15 @@ exec_ = ToolDescription(
         "Execute a command in a sandboxed environment (FP-0017). The sandbox "
         "policy (filesystem scope) is the OPERATOR's, resolved by the OS — "
         "it is not chosen here. "
+        "Give EXACTLY ONE of argv / cmd — giving both or neither is a tool "
+        "error. "
         "argv: command and arguments (argv[0] is the executable). "
+        "cmd: a shell command line (e.g. pipes/redirects/chains) — parsed "
+        "for policy, then run via the sandbox's shell with the string "
+        "unchanged; an unparseable construct (e.g. $(...), backticks, "
+        "globs, heredocs) is rejected with a reason, never silently run. "
+        "cmd is SYNCHRONOUS ONLY — combining it with collect=\"async\" is a "
+        "tool error; use argv for a background run. "
         "timeout: optional — extends the wall-clock timeout past its "
         "operator-configured default, up to the operator's own configured "
         "maximum; a request above that maximum is rejected, and the "
@@ -55,7 +63,15 @@ exec_ = ToolDescription(
         "サンドボックス環境内でコマンドを実行する（FP-0017）。サンドボックス"
         "ポリシー（ファイルシステムスコープ）はオペレーターのものとして OS "
         "が解決する（ここで選択するものではない）。"
+        "argv と cmd のどちらか一方だけを指定すること — 両方または"
+        "どちらも指定しないとツールエラーになる。"
         "argv: コマンドと引数（argv[0] が実行ファイル）。"
+        "cmd: シェルのコマンド行（パイプ／リダイレクト／連結など）— ポリシー"
+        "判定のために解析した後、元の文字列のままサンドボックス内のシェルで"
+        "実行する。解析できない構文（$(...)・バッククォート・glob・heredoc "
+        "など）は理由付きで拒否され、無言で実行されることはない。"
+        "cmd は同期実行専用 — collect=\"async\" との併用はツールエラーに"
+        "なる。バックグラウンド実行には argv を使うこと。"
         "timeout: 任意 — オペレーター設定の既定タイムアウトを、オペレーター"
         "自身が設定した上限まで延長できる。上限を超える要求は拒否され、"
         "拒否時に実際の上限値が示される。それ以上必要な場合はバックグラウン"
@@ -102,6 +118,31 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         "argv": ParamDescription(
             text="Command and arguments; argv[0] is the executable.",
             ja="コマンドと引数。argv[0] が実行ファイル。",
+        ),
+        # #5838 段6: XOR with argv (exactly one of the two must be given —
+        # enforced as a tool error by `_handle`, never a JSON Schema
+        # oneOf/anyOf — see exec.py's own comment for why). cmd-mode is
+        # sync-only: combined with collect="async" it is also a tool
+        # error (run_exec_async has no cmd parameter, #5838 段6 scope).
+        "cmd": ParamDescription(
+            text=(
+                "A shell command line (pipes/redirects/chains), XOR argv. "
+                "Parsed for policy, then the ORIGINAL string is run via "
+                "the sandbox's shell unchanged. An unparseable construct "
+                "($(...), backticks, globs, heredocs, and other "
+                "unsupported shell syntax) is rejected with a reason, "
+                "never silently run. Sync-only — not usable with "
+                "collect=\"async\" (use argv there instead)."
+            ),
+            ja=(
+                "シェルのコマンド行（パイプ／リダイレクト／連結など）、"
+                "argv との XOR。ポリシー判定のために解析した後、元の文字列"
+                "のままサンドボックス内のシェルで実行する。解析できない構文"
+                "（$(...)・バッククォート・glob・heredoc など、サポート対象"
+                "外のシェル構文）は理由付きで拒否され、無言で実行されること"
+                "はない。同期実行専用 — collect=\"async\" では使えない"
+                "（その場合は argv を使うこと）。"
+            ),
         ),
         "timeout": ParamDescription(
             text=(

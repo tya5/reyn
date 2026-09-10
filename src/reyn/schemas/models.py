@@ -361,10 +361,12 @@ class SandboxedExecIROp(BaseModel):
     # `security/exec_plan.py`'s own module docstring for the full
     # rationale). `None` (the default) is byte-identical to before this
     # field existed — every existing caller passes `argv`, unaffected.
-    # NOT YET exposed on the LLM `exec` tool or the pipeline `tool:` step
-    # schema (段6, a separate later stage) — this field exists at the op
-    # level only, reachable so far by a caller that constructs the op
-    # directly.
+    # #5838 段6: now exposed on the LLM `exec` tool schema AND the pipeline
+    # `tool:` step (the SAME schema feeds both — `tools/exec.py`'s
+    # `_EXEC_PARAMETERS`; see that module's own docstring). The exactly-
+    # one-of-argv/cmd XOR below is re-checked here as DEFENSE IN DEPTH —
+    # the FIRST check is `tools/exec.py`'s `_handle`, a tool error rather
+    # than a raw `KeyError`/this validator's `ValueError` reaching the LLM.
     kind: Literal["sandboxed_exec"]
     # #5838 段4: default changed from required to `[]` (via Field(default_
     # factory=list), never a bare mutable `[]` literal) so a `cmd`-mode

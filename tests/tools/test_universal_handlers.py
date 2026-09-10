@@ -808,16 +808,34 @@ def test_exec_describe_action_returns_exec_schema() -> None:
 
     End-to-end: describe_action resolves the routing target via the
     registry and returns its description + input_schema.
+
+    #5838 段6: `argv` is no longer JSON-Schema-`required` here -- `cmd` is
+    now a valid alternative, and the exactly-one-of-argv/cmd invariant
+    moved to a tool-error check in `EXEC._handle` (architect ruling,
+    `tools/exec.py`'s own module docstring), never a JSON Schema
+    `oneOf`/`anyOf`. This test's OWN claim is no longer "argv is required"
+    -- it is that `describe_action` surfaces the SAME schema `tools/
+    exec.py` defines (both `argv` and `cmd` present, neither in
+    `required`), the end-to-end path `tests/tools/
+    test_5838_stage6_exec_tool_cmd_schema.py`'s own schema-sanity test
+    witnesses directly against `EXEC.parameters` -- this test witnesses it
+    reaches the SAME place through `describe_action`'s registry lookup,
+    not a second copy.
     """
     result = _run(DESCRIBE_ACTION.handler(
         {"action_name": "exec"}, _make_ctx(),
     ))
     assert result["action_name"] == "exec"
-    # argv is a required field in the exec schema
     props = result["input_schema"].get("properties", {})
     assert "argv" in props
+    assert "cmd" in props
+    # neither argv nor cmd is JSON-Schema-required any more -- the
+    # exactly-one-of invariant is enforced as a tool error in
+    # EXEC._handle, not expressible as "required" (no such "exactly one
+    # of A, B" shape in JSON Schema).
     required = result["input_schema"].get("required", [])
-    assert "argv" in required
+    assert "argv" not in required
+    assert "cmd" not in required
 
 
 def test_list_actions_all_categories_exec_discloses_no_isolation_by_default() -> None:
