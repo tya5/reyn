@@ -346,8 +346,8 @@ class ChatLifecycleForwarder:
         """
         terminal = data.get("terminal")
         text = {
-            "mid_floor": "1つのやり取りが単独で大きすぎます",
-            "room_floor": "最新のメッセージだけで窓に入りません",
+            "mid_floor": "A single exchange is too large on its own",
+            "room_floor": "The most recent messages alone don't fit in the window",
         }.get(str(terminal))
         if text is not None:
             self._enqueue(f"[✗ shrink flow failed: {text}]")

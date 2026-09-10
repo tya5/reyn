@@ -141,7 +141,7 @@ def compaction_progress_lines(snap: CompactionProgressSnapshot) -> "list[str]":
     if not snap.is_compacting:
         return []
 
-    lines = ["⟳ 文脈を縮めています（自動で終わります）"]
+    lines = ["⟳ Compacting context (will finish automatically)"]
 
     if snap.waiting_for is not None:
         # #5588: "応答待ち" (waiting) vs "進捗なし" (no progress) are
@@ -151,34 +151,34 @@ def compaction_progress_lines(snap: CompactionProgressSnapshot) -> "list[str]":
         # call). A genuinely-stalled state (no call in flight AND no
         # forward motion) has no producer signal yet and is correctly
         # rendered as line 2 simply absent, never guessed at.
-        target = {"summary": "要約", "main_call": "本文"}.get(snap.waiting_for, snap.waiting_for)
+        target = {"summary": "summary", "main_call": "main body"}.get(snap.waiting_for, snap.waiting_for)
         elapsed = ""
         if snap.waiting_elapsed_s is not None:
-            elapsed = f" {int(snap.waiting_elapsed_s)}秒"
-        lines.append(f"  {target}の応答を待っています{elapsed}")
+            elapsed = f" {int(snap.waiting_elapsed_s)}s"
+        lines.append(f"  Waiting for {target}'s response{elapsed}")
 
     rung_parts = []
     if snap.spill_done is not None and snap.spill_total is not None:
-        call_suffix = "" if snap.call_count is None else f"  呼び出し {snap.call_count}"
-        rung_parts.append(f"① 退避 {snap.spill_done}/{snap.spill_total}{call_suffix}")
+        call_suffix = "" if snap.call_count is None else f"  calls {snap.call_count}"
+        rung_parts.append(f"① spill {snap.spill_done}/{snap.spill_total}{call_suffix}")
     if snap.slice_len is not None:
-        rung_parts.append(f"② 分割 {snap.slice_len}")
+        rung_parts.append(f"② slice {snap.slice_len}")
     if snap.head_available is not None or snap.tail_available is not None:
         avail = []
         if snap.head_available:
             avail.append("head")
         if snap.tail_available:
             avail.append("tail")
-        rung_parts.append(f"③ 補充 {'/'.join(avail) if avail else '—'}")
+        rung_parts.append(f"③ refill {'/'.join(avail) if avail else '—'}")
     if snap.budget_halvings_done is not None and snap.budget_halvings_max is not None:
-        rung_parts.append(f"④ 予算 {snap.budget_halvings_done}/{snap.budget_halvings_max}")
+        rung_parts.append(f"④ budget {snap.budget_halvings_done}/{snap.budget_halvings_max}")
 
     if rung_parts:
         line3 = "  " + "  ".join(rung_parts)
         if snap.lap is not None:
-            line3 += f"  · 周回 {snap.lap}"
+            line3 += f"  · lap {snap.lap}"
         if snap.active_rung is not None and snap.active_rung in _RUNG_LABELS:
-            line3 += f"     ← 今 {_RUNG_LABELS[snap.active_rung]}"
+            line3 += f"     ← now {_RUNG_LABELS[snap.active_rung]}"
         lines.append(line3)
 
     return lines
@@ -202,39 +202,39 @@ def compaction_progress_entry_lines(
     ``snap`` itself.
     """
     lines = (
-        ["⟳ 文脈を縮めています（自動で終わります）"] if snap.is_compacting
-        else ["文脈を縮めました" if terminal_text is None else "✗ 文脈を縮められませんでした"]
+        ["⟳ Compacting context (will finish automatically)"] if snap.is_compacting
+        else ["Context compacted" if terminal_text is None else "✗ Could not compact context"]
     )
 
     if snap.waiting_for is not None:
-        target = {"summary": "要約", "main_call": "本文"}.get(snap.waiting_for, snap.waiting_for)
+        target = {"summary": "summary", "main_call": "main body"}.get(snap.waiting_for, snap.waiting_for)
         elapsed = ""
         if snap.waiting_elapsed_s is not None:
-            elapsed = f" {int(snap.waiting_elapsed_s)}秒"
-        lines.append(f"  {target}の応答を待っています{elapsed}")
+            elapsed = f" {int(snap.waiting_elapsed_s)}s"
+        lines.append(f"  Waiting for {target}'s response{elapsed}")
 
     rung_parts = []
     if snap.spill_done is not None and snap.spill_total is not None:
-        call_suffix = "" if snap.call_count is None else f"  呼び出し {snap.call_count}"
-        rung_parts.append(f"① 退避 {snap.spill_done}/{snap.spill_total}{call_suffix}")
+        call_suffix = "" if snap.call_count is None else f"  calls {snap.call_count}"
+        rung_parts.append(f"① spill {snap.spill_done}/{snap.spill_total}{call_suffix}")
     if snap.slice_len is not None:
-        rung_parts.append(f"② 分割 {snap.slice_len}")
+        rung_parts.append(f"② slice {snap.slice_len}")
     if snap.head_available is not None or snap.tail_available is not None:
         avail = []
         if snap.head_available:
             avail.append("head")
         if snap.tail_available:
             avail.append("tail")
-        rung_parts.append(f"③ 補充 {'/'.join(avail) if avail else '—'}")
+        rung_parts.append(f"③ refill {'/'.join(avail) if avail else '—'}")
     if snap.budget_halvings_done is not None and snap.budget_halvings_max is not None:
-        rung_parts.append(f"④ 予算 {snap.budget_halvings_done}/{snap.budget_halvings_max}")
+        rung_parts.append(f"④ budget {snap.budget_halvings_done}/{snap.budget_halvings_max}")
 
     if rung_parts:
         line3 = "  " + "  ".join(rung_parts)
         if snap.lap is not None:
-            line3 += f"  · 周回 {snap.lap}"
+            line3 += f"  · lap {snap.lap}"
         if snap.active_rung is not None and snap.active_rung in _RUNG_LABELS:
-            line3 += f"     ← 今 {_RUNG_LABELS[snap.active_rung]}"
+            line3 += f"     ← now {_RUNG_LABELS[snap.active_rung]}"
         lines.append(line3)
 
     if terminal_text is not None:
@@ -256,6 +256,6 @@ def compaction_failure_text(terminal: "RetryLoopTerminal") -> str:
     from reyn.services.compaction.engine import RetryLoopTerminal as _T
 
     return {
-        _T.MID_FLOOR: "1つのやり取りが単独で大きすぎます",
-        _T.ROOM_FLOOR: "最新のメッセージだけで窓に入りません",
+        _T.MID_FLOOR: "A single exchange is too large on its own",
+        _T.ROOM_FLOOR: "The most recent messages alone don't fit in the window",
     }[terminal]

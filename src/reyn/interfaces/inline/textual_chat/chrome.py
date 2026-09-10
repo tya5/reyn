@@ -1209,7 +1209,7 @@ def task_pane_entries(
         # EMPTY pane and a NOT-REPORTED pane must render as visibly
         # different things, the same distinction #5009's whole pass
         # exists to keep askable.
-        return [DrawerRow(label="実行中の task はありません", command=None).as_entry()]
+        return [DrawerRow(label="No tasks currently running", command=None).as_entry()]
     rows = []
     for task in tasks:
         target = task.get("target") or "?"

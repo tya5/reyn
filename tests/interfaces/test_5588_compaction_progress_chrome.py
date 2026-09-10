@@ -329,7 +329,7 @@ async def test_entry_settles_error_with_the_real_retry_loop_terminal_text(
 
         assert _open_compaction_entry(app) is entry, "the settled row stays in the flow"
         assert entry.state is EntryState.ERROR
-        assert entry.item.meta.get("terminal_text") == "1つのやり取りが単独で大きすぎます"
+        assert entry.item.meta.get("terminal_text") == "A single exchange is too large on its own"
 
 
 @pytest.mark.asyncio
