@@ -1,0 +1,43 @@
+name: user-facing-lang gate
+
+# #6084: ratchets a NEW undecided-language (Japanese) literal landing
+# directly at a confirmed user-facing-text sink call site under
+# src/reyn/interfaces/ -- see scripts/user_facing_lang_gate.py's own module
+# docstring for the exact sinks covered and lead-coder's ruling on scope
+# (sink-derivable range only, never full-population coverage; the ~89
+# already-existing kana-bearing strings this repo carries are a SEPARATE,
+# wider count -- this gate's own baseline, scripts/
+# user_facing_lang_gate_baseline.json, is narrower by design).
+#
+# `paths: src/reyn/interfaces/**` matches this gate's own v1 scope exactly
+# -- same reasoning as silent-except-ratchet-gate.yml's identical path
+# scoping.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/interfaces/**"
+      - "scripts/user_facing_lang_gate.py"
+      - "scripts/user_facing_lang_gate_baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  user-facing-lang-gate:
+    name: user-facing-lang gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/user_facing_lang_gate.py is stdlib-only (ast / json /
+      # pathlib). No pip install needed.
+      - name: Check no new undecided-language literal at a confirmed sink
+        run: |
+          python scripts/user_facing_lang_gate.py
