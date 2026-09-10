@@ -266,17 +266,43 @@ def findings(path: Path, display: "str | None" = None) -> "list[str]":
     return out
 
 
-def measured(root: Path = _ROOT) -> "tuple[set[str], int]":
-    """`(finding_set, scanned_file_count)`. A file that fails to parse is
-    NOT caught here — it propagates to `main`, same fail-closed contract
-    `silent_except_ratchet.py` documents (this scan's own under-count would
-    be the exact defect this gate exists to prevent, one layer up)."""
+def sink_call_count(path: Path) -> int:
+    """Count of ``(sink call, registered arg position)`` matches in *path*
+    whose argument is PRESENT — regardless of whether it turns out to be a
+    literal, or contains kana. #6084 hole ⑷ (lead-coder): a gate that
+    prints only "0 findings" lets a reader believe no user-facing sink
+    exists anywhere in scope — the true claim is narrower ("no sink CALL
+    this gate can see carries kana"). This count names how many sink
+    calls the scan actually looked at, so the output can say which."""
+    text = path.read_text(encoding="utf-8")
+    tree = ast.parse(text, filename=str(path))
+    count = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_target_name(node)
+        if name is None or name not in _SINK_SPECS:
+            continue
+        for spec in _SINK_SPECS[name]:
+            if _extract_arg(node, spec) is not None:
+                count += 1
+    return count
+
+
+def measured(root: Path = _ROOT) -> "tuple[set[str], int, int]":
+    """`(finding_set, scanned_file_count, sink_call_count)`. A file that
+    fails to parse is NOT caught here — it propagates to `main`, same
+    fail-closed contract `silent_except_ratchet.py` documents (this scan's
+    own under-count would be the exact defect this gate exists to
+    prevent, one layer up)."""
     files = _iter_scan_files(root)
     all_findings: "set[str]" = set()
+    total_sink_calls = 0
     for path in files:
         rel = str(path.relative_to(root))
         all_findings.update(findings(path, display=rel))
-    return (all_findings, len(files))
+        total_sink_calls += sink_call_count(path)
+    return (all_findings, len(files), total_sink_calls)
 
 
 def load_baseline(path: Path = _BASELINE_PATH) -> "set[str]":
@@ -315,7 +341,7 @@ def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        current, scanned = measured(_ROOT)
+        current, scanned, sink_calls = measured(_ROOT)
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         print(
             f"user-facing-lang gate FAILED: could not scan the population "
@@ -339,7 +365,8 @@ def main(argv: "list[str] | None" = None) -> int:
         write_baseline(current, _BASELINE_PATH)
         print(
             f"Wrote {len(current)} user-facing-lang finding(s) to "
-            f"{_BASELINE_PATH}, {scanned} file(s) scanned under {_SCOPE}/."
+            f"{_BASELINE_PATH} — scanned {scanned} file(s) under {_SCOPE}/, "
+            f"{sink_calls} sink call site(s)."
         )
         return 0
 
@@ -372,10 +399,12 @@ def main(argv: "list[str] | None" = None) -> int:
         return 1
 
     print(
-        f"user-facing-lang gate OK: {len(current)} finding(s), all "
-        f"baselined ({scanned} file(s) scanned under {_SCOPE}/). Covers "
-        "only the confirmed sink list at a direct-literal call site — see "
-        "module docstring for scope."
+        f"user-facing-lang gate OK: scanned {sink_calls} sink call site(s) "
+        f"across {scanned} file(s) under {_SCOPE}/, {len(current)} "
+        f"finding(s) (all baselined). This is NOT \"no user-facing kana "
+        f"anywhere\" — it is \"none of the {sink_calls} sink calls this "
+        "gate can see, in this scope, carry one\"; see module docstring "
+        "for exactly which sinks/scope that is."
     )
     return 0
 

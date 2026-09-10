@@ -21,6 +21,7 @@ from scripts.user_facing_lang_gate import (
     findings,
     load_baseline,
     new_findings,
+    sink_call_count,
     write_baseline,
 )
 from tests._support.paths import REPO_ROOT
@@ -114,9 +115,32 @@ def test_the_real_scan_against_the_current_tree_matches_the_baseline() -> None:
     from scripts.user_facing_lang_gate import _BASELINE_PATH, measured
 
     baseline = load_baseline(_BASELINE_PATH)
-    current, scanned = measured(REPO_ROOT)
+    current, scanned, sink_calls = measured(REPO_ROOT)
     assert scanned > 0, "the scan found 0 files — a scanner failure, not a clean population"
+    assert sink_calls > 0, "the scan found 0 sink calls — a scanner failure, not a clean population"
     assert new_findings(current, baseline) == set()
+
+
+def test_sink_call_count_counts_calls_seen_not_just_findings() -> None:
+    """Tier 1: #6084 hole ⑷ — `sink_call_count` must count a sink call it
+    LOOKED AT even when the argument turns out to be indirection (never a
+    literal, so it produces zero findings) — this is what lets the gate's
+    own output distinguish "scanned N sink calls, 0 carry kana" from "0
+    sink calls exist in scope", the exact conflation hole ⑷ closes.
+    `indirect_not_flagged.py` has 2 sink calls (`OutboxMessage`, `reply`),
+    both argument-present, neither literal — 0 findings, but the count
+    here must still be 2, not 0."""
+    fixture = _FIXTURES / "indirect_not_flagged.py"
+    assert findings(fixture) == [], "sanity: this fixture must still produce 0 findings"
+    assert sink_call_count(fixture) == 2
+
+
+def test_sink_call_count_matches_the_direct_literal_fixtures_own_3_sinks() -> None:
+    """Tier 1: accept side — `has_sink_literals.py`'s own docstring claims
+    exactly 3 flagged sink call sites; `sink_call_count` must agree
+    (every one of them is also an argument-present sink call)."""
+    fixture = _FIXTURES / "has_sink_literals.py"
+    assert sink_call_count(fixture) == len(findings(fixture)) == 3
 
 
 def test_a_new_uncommitted_finding_would_be_caught() -> None:
