@@ -324,6 +324,7 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
             for e in entries.values()
         ]
     except Exception:
+        # SILENT-EXCEPT-RETURN-OK: low-stakes-display-value -- documented above: same degrade-to-None convention as the RouterLoop original, a catalog enumeration field, not the operation itself
         rag_sources = None
 
     return RouterCallerState(

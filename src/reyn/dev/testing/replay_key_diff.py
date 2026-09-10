@@ -40,6 +40,7 @@ def _digest(value: Any) -> str:
     try:
         payload = json.dumps(value, sort_keys=True, ensure_ascii=False, default=repr)
     except Exception:  # noqa: BLE001 — a fingerprint must never be the failure
+        # SILENT-EXCEPT-RETURN-OK: internal-hash-fallback -- repr() is itself a valid, if less ideal, canonical form to hash when the payload can't be serialized normally
         payload = repr(value)
     return hashlib.sha256(payload.encode()).hexdigest()[:_DIGEST_CHARS]
 

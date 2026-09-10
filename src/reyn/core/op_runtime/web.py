@@ -190,6 +190,7 @@ def _generate_web_fetch_preview(
             parser.feed(raw_html)
             html_preview = parser.result()
         except Exception:
+            # SILENT-EXCEPT-RETURN-OK: external-content-caller-cannot-act -- parsing untrusted fetched HTML; no operator action exists for a malformed page beyond degrading the preview to empty fields
             html_preview = {
                 "title": "", "outline": [],
                 "first_paragraph": "", "link_count": 0,

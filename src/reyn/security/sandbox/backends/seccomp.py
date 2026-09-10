@@ -415,6 +415,7 @@ def is_available() -> bool:
         import pyseccomp  # noqa: F401
         _AVAILABLE = True
     except ImportError:
+        # SILENT-EXCEPT-RETURN-OK: expected-import-error -- pyseccomp is a Linux-only optional dependency; its absence is the expected signal, not a failure
         _AVAILABLE = False
 
     return _AVAILABLE

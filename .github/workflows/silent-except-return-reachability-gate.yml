@@ -1,0 +1,47 @@
+name: silent-except-return-reachability
+
+# #5990 stage 2-2: reject any `except` block under src/reyn/** whose body is
+# assign-only (no log, no raise, nothing but an assignment) AND whose bound
+# name reaches this function's own `return` -- an unexpected exception
+# silently becoming fabricated output data. A DIFFERENT axis from
+# `silent-except-ratchet-gate.yml`'s own (that one asks "does the handler
+# report anything", scoped to src/reyn/interfaces/ only; this one asks "does
+# the fabricated value reach a caller", scoped to src/reyn/** and with no
+# exception-type restriction) -- see
+# scripts/check_silent_except_return_reachability.py's own module docstring
+# for the full design and why the two gates stay independent.
+#
+# Population = every violation-side site MINUS every site carrying a valid
+# `# SILENT-EXCEPT-RETURN-OK: <category> -- <reason>` marker (lead-coder's
+# explicit rejection of both a numeric baseline and a hand-maintained
+# allowlist for this gate) -- no baseline file, nothing to grandfather.
+#
+# `paths: src/reyn/**` matches this gate's own scope exactly -- a change
+# outside that tree cannot add or remove a site this script counts.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/**"
+
+permissions:
+  contents: read
+
+jobs:
+  silent-except-return-reachability:
+    name: silent-except-return-reachability
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_silent_except_return_reachability.py is stdlib-only
+      # (ast / re / subprocess / pathlib). No pip install needed.
+      - name: Check every violation-side site under src/reyn/ carries a marker
+        run: |
+          python scripts/check_silent_except_return_reachability.py

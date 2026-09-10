@@ -148,6 +148,7 @@ def _response_dict(resp: Any) -> dict:
     try:
         body = raw.decode("utf-8")
     except UnicodeDecodeError:
+        # SILENT-EXCEPT-RETURN-OK: external-content-caller-cannot-act -- decoding an untrusted HTTP response body; no operator action exists for a malformed byte sequence beyond a replace-decode
         body = raw.decode("utf-8", errors="replace")
     status = getattr(resp, "status", None) or resp.getcode()
     return {"status": int(status), "body": body, "headers": headers}

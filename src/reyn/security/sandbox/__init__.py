@@ -310,10 +310,12 @@ def select_backend(
     try:
         from .backends.seatbelt import SeatbeltBackend  # type: ignore[import]
     except ImportError:
+        # SILENT-EXCEPT-RETURN-OK: expected-import-error -- SeatbeltBackend is macOS-only; its absence on any other platform is the expected signal, not a failure
         SeatbeltBackend = None  # type: ignore[misc,assignment]
     try:
         from .backends.landlock import LandlockBackend  # type: ignore[import]
     except ImportError:
+        # SILENT-EXCEPT-RETURN-OK: expected-import-error -- LandlockBackend is Linux-only; its absence on any other platform is the expected signal, not a failure
         LandlockBackend = None  # type: ignore[misc,assignment]
 
     backend_name = "auto" if config is None else config.backend

@@ -12420,10 +12420,12 @@ class Session:
         try:
             window_tokens = int(self.raw_context_window().get("window", 0) or 0)
         except Exception:  # noqa: BLE001 — a display number, never the operation
+            # SILENT-EXCEPT-RETURN-OK: low-stakes-display-value -- documented above: a display number, never the operation, not worth failing a compaction over
             window_tokens = 0
         try:
             window_used_tokens = int(getattr(self.last_call_usage, "prompt_tokens", 0) or 0)
         except Exception:  # noqa: BLE001
+            # SILENT-EXCEPT-RETURN-OK: low-stakes-display-value -- same display-number rationale as window_tokens above, the SAME comment block covers both
             window_used_tokens = 0
 
         # Chat middle-compression: the conversational turns newly covered by the

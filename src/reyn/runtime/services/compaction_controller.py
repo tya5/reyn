@@ -913,6 +913,7 @@ class CompactionController:
             # `failed` below carries the ONE bit of fact the caller
             # actually needs (an attempt genuinely failed) without
             # propagating the exception object itself.
+            # SILENT-EXCEPT-RETURN-OK: reported-elsewhere -- compaction_failed is already emitted at the failure's own origin (see the comment above)
             failed = True
         finally:
             self._compacting = False
