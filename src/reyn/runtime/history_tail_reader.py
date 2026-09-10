@@ -186,6 +186,78 @@ def read_history_tail(
     return collected
 
 
+def read_history_tail_with_byte_budget(
+    path: Path, *, min_lines: int = 200, max_bytes: int, chunk_size: int = 65536,
+) -> "tuple[list[str], bool]":
+    """#5939 PR-4 — the SAME backward-from-EOF read :func:`read_history_tail`
+    performs, with ONE additional stop condition: cumulative bytes across
+    the collected lines reaching *max_bytes*. Returns ``(lines,
+    truncated_unsafe)`` — the same ``(lines, bool)`` shape
+    :func:`read_history_after` already establishes in this module, not a
+    new return convention.
+
+    A SEPARATE function, not a parameter added to :func:`read_history_tail`
+    itself: that function's line-count-only stop condition is a documented
+    invariant every one of its OTHER callers (``registry.py``'s GC-boundary
+    lookup) depends on; this function exists specifically for the ONE
+    caller (hydration) that needs the weaker guarantee a byte cap implies,
+    so the invariant is never silently weakened for callers that never
+    asked for it.
+
+    ``lines`` is real, usable content regardless of ``truncated_unsafe`` —
+    a byte-budget early stop does not make the messages already collected
+    any less real; a caller populating resident history from them (e.g.
+    ``Session._load_history_body``) should still use them.
+
+    ``truncated_unsafe`` is True when the read stopped (byte budget
+    crossed) BEFORE a summary message was ever found — the watermark-
+    completeness invariant does not hold for this read in that case.
+    Stopping AFTER a summary IS already found is the SAME safe shape
+    ``read_history_tail`` itself allows (the summary is found; only the
+    scrollback floor beyond it was cut short) — ``truncated_unsafe`` is
+    False then. See ``Session._history_load_truncated_unsafe``'s own
+    docstring for the ONE consumer this flag exists for (compaction
+    candidate selection), and why every OTHER caller (populating resident
+    history for display/context) is unaffected.
+
+    ⚠️ Cannot prevent a SINGLE oversized line from spiking memory during
+    ITS OWN read: :func:`_iter_raw_lines_reverse` accumulates a full line
+    into a buffer before yielding it AT ALL — this function's own
+    cumulative-bytes check only ever runs AFTER a line has already been
+    read in full, so it bounds the SUM across many lines, never the cost
+    of reading any one line by itself. Tracked as a disclosed, separate
+    gap — issue #6042 (observer: lead-coder), not silently covered by
+    this function's own ``max_bytes`` parameter."""
+    collected: "list[str]" = []
+    seen_summary = False
+    cumulative_bytes = 0
+    truncated_unsafe = False
+    try:
+        for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+            collected.append(line)
+            cumulative_bytes += len(line.encode("utf-8"))
+            if not seen_summary:
+                try:
+                    if json.loads(line).get("role") == "summary":
+                        seen_summary = True
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            if len(collected) >= min_lines and seen_summary:
+                break
+            if cumulative_bytes >= max_bytes:
+                # #5939 PR-4: stop READING further lines regardless of
+                # whether min_lines/seen_summary are satisfied yet — the
+                # whole point of a byte budget is to cap memory even
+                # when the line-count condition alone would keep going.
+                truncated_unsafe = not seen_summary
+                break
+    except FileNotFoundError:
+        return [], False
+
+    collected.reverse()
+    return collected, truncated_unsafe
+
+
 # #4477: named so `router_history_buffer._check_compaction_batch_within_
 # budget` (the 4th resource/budget-role comparison instance, #4381 PR-1's
 # own class) can compare against the SAME value this function actually
