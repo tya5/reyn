@@ -336,6 +336,18 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # most once per PROCESS (``ProcessMemoryGuard.claim_unavailable_
     # announcement``), never a fabricated ``bytes`` value.
     "process_footprint_unavailable": frozenset({"platform"}),
+    # process_memory_forensics (#5939 / #5851 stage (b) PR-1): ladder step
+    # ② (cache release) reports what it dropped and whether footprint
+    # moved -- the "RAM消費要因の候補を数値と共に" owner requirement,
+    # assembled as a byproduct of ② itself rather than a separate walk.
+    # ``dropped`` is a list of {name, entries_before, entries_after}.
+    # ``host``/``top_history_rows`` ride as ``None`` in this stage --
+    # see process_memory_release.py's own module docstring for which
+    # later PR fills them in; the KEYS are present now so a reader never
+    # has to special-case an older event shape once they land.
+    "process_memory_forensics": frozenset(
+        {"footprint_before", "footprint_after", "metric", "dropped", "host", "top_history_rows"}
+    ),
     # process_memory_breakdown (#5959, owner-hit): the in-process answer to
     # "who is holding this" -- a vmmap/region read (#5957) cannot tell an
     # allocator-held free region from a live Python reference; this walks
@@ -605,6 +617,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "presented",
     "process_footprint",
     "process_footprint_unavailable",
+    "process_memory_forensics",
     "process_marker_reaped",
     "process_memory_breakdown",
     "project_context_changed",

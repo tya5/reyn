@@ -148,6 +148,21 @@ def _load_table(project_root: Path) -> "list[dict]":
     return entries
 
 
+def table_cache_clear() -> int:
+    """Public write: drop every cached (path -> parsed ref-table) entry,
+    returning how many were dropped. #5939 ladder step ② (process-memory
+    cache release) calls this rather than reaching into ``_TABLE_CACHE``
+    directly — the dict stays private to this module.
+
+    Safe to drop unconditionally: every entry is a pure re-derivation of
+    the on-disk ref-table file (:func:`_load_table` re-reads and re-caches
+    on the next call, keyed by the file's own ``(mtime_ns, size)`` identity
+    — nothing here is durable state that a drop could lose)."""
+    count = len(_TABLE_CACHE)
+    _TABLE_CACHE.clear()
+    return count
+
+
 def mint_ref(project_root: Path, agent_name: str, path: "str | Path") -> str:
     """Return the ref for *path* under *agent_name*'s scope.
 
