@@ -56,6 +56,7 @@ ephemeral-attachment content policy is Phase 3 per the FP-0057 design doc
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from reyn.core.cancellable import Cancelled, race_cancellable
@@ -65,6 +66,8 @@ from reyn.security.secret_redaction import redact_secrets
 
 from . import register
 from .context import OpContext
+
+_log = logging.getLogger(__name__)
 
 
 def _resolve_provider():
@@ -86,6 +89,11 @@ def _resolve_provider():
             from reyn.config import load_config
             cfg = load_config().embedding
         except Exception:
+            _log.warning(
+                "reyn.yaml could not be loaded while resolving the "
+                "embedding config; falling back to the litellm provider's "
+                "own defaults", exc_info=True,
+            )
             cfg = None
         return get_provider(name, config=cfg or {})
     return get_provider(name, config={})

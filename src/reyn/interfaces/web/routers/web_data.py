@@ -24,12 +24,15 @@ read from disk and passed through opaquely.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
 
 from reyn.interfaces.web.deps import get_project_root, get_registry
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["web"])
 
@@ -203,6 +206,10 @@ async def web_data(
         registry = get_registry()
         agents = _build_agents(registry)
     except Exception:
+        _log.warning(
+            "AGENTS could not be built for /web/data (registry not ready "
+            "or a build failure); returning an empty list", exc_info=True,
+        )
         agents = []
 
     library = _build_library(project_root)

@@ -5962,6 +5962,10 @@ class Session:
                 # "SR5b: silently ignored" branch.
                 audit_events.add_subscriber(otel_exporter, kinds=HANDLED_EVENT_TYPES)
         except Exception:  # noqa: BLE001 — OTEL attach must never break session init
+            logger.warning(
+                "observability.otel export could not be attached; the "
+                "session continues without it", exc_info=True,
+            )
             otel_exporter = None
         return _AuditEventBundle(
             event_store=event_store,
@@ -6370,6 +6374,13 @@ class Session:
                 # dependency / malformed config), fall through to "no index"
                 # so the rest of the session continues without
                 # search_actions rather than refusing to start.
+                logger.warning(
+                    "embedding.index.actions is enabled but the "
+                    "action-embedding provider/index could not be built "
+                    "(missing dependency or malformed embedding config); "
+                    "search_actions stays unavailable this session",
+                    exc_info=True,
+                )
                 embedding_provider = None
                 action_embedding_index = None
                 embedding_model_class = None

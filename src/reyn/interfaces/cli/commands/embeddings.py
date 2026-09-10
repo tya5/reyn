@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ from typing import Any
 from reyn.config import load_config
 from reyn.data.index.backend import cache_dir_for_source
 from reyn.tools.action_index import DEFAULT_ACTION_SOURCE
+
+_log = logging.getLogger(__name__)
 
 # ── data shape ────────────────────────────────────────────────────────────────
 
@@ -132,6 +135,12 @@ def _read_index_state(index_dir: Path) -> tuple[int, str]:
         finally:
             con.close()
     except (sqlite3.DatabaseError, OSError):
+        _log.warning(
+            "the action-index cache at %s exists but could not be read "
+            "(corrupted or an OS-level read failure) -- reporting 0 "
+            "indexed actions, which may understate the real count",
+            db_path, exc_info=True,
+        )
         n = 0
     try:
         import datetime as _dt
@@ -141,6 +150,11 @@ def _read_index_state(index_dir: Path) -> tuple[int, str]:
         )
         last_built = ts.replace(microsecond=0).isoformat()
     except OSError:
+        _log.warning(
+            "the action-index cache at %s exists but its mtime could not "
+            "be read -- reporting '(never)', which may not be accurate",
+            db_path, exc_info=True,
+        )
         last_built = "(never)"
     return n, last_built
 
