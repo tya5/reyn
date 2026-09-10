@@ -1,6 +1,24 @@
 #!/usr/bin/env python3
 """#6084 — a ratchet over user-facing-text sink call sites carrying an
-undecided (Japanese-literal) string, under `src/reyn/interfaces/`.
+undecided (Japanese-literal) string, under `src/reyn/`.
+
+## Scope widened from `src/reyn/interfaces/` to `src/reyn/` (hole ⑶)
+
+#6104's CI caught a real user-facing duplicate OUTSIDE the original
+`src/reyn/interfaces/` scope (`src/reyn/runtime/lifecycle_forwarder.py`,
+fixed by #6106/#6114) — this gate's own "0 findings" never saw it, because
+the file was never in `_iter_scan_files`'s population at all, not because
+its content had no kana. lead-coder's own #6084 hole ⑶ measurement
+(e2e-coder, `#6084` issue thread comment): the correct discriminator for
+this gate was ALWAYS "does a literal reach one of `_SINK_SPECS`'s sink
+calls", never "which directory is it in" — a `path`-only scope restriction
+was an accident of the gate's own first draft, not a deliberate boundary.
+Widening the scanned PATH to all of `src/reyn/` does not loosen the
+discriminator (`_SINK_SPECS` is unchanged) — it only lets that SAME
+discriminator see more of the tree. `scripts/`/`docs/`/`tests/` remain
+OUT of scope — `tests/` in particular carries this gate's own fixture
+files, which exist specifically to contain unflagged/flagged literals for
+the test suite and must never feed the real baseline.
 
 ## What this gate is, precisely — read lead-coder's ruling on #6084 first
 
@@ -122,7 +140,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_PATH = _ROOT / "scripts" / "user_facing_lang_gate_baseline.json"
-_SCOPE = "src/reyn/interfaces"
+_SCOPE = "src/reyn"
 
 # Kana (hiragana + katakana) only — see module docstring's "Detection
 # basis" section for why this deliberately does not widen to CJK
@@ -144,7 +162,7 @@ _SINK_SPECS: "dict[str, list[tuple[str, object]]]" = {
 
 
 def _iter_scan_files(root: Path = _ROOT) -> "list[Path]":
-    """Every tracked `.py` file under `src/reyn/interfaces/` — same
+    """Every tracked `.py` file under `_SCOPE` (`src/reyn/`) — same
     population source (`git ls-files`) `silent_except_ratchet.py` uses,
     for the same reason: no hand-maintained exclusion list."""
     proc = subprocess.run(
