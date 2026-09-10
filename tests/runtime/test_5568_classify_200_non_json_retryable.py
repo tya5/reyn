@@ -67,23 +67,28 @@ from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
 
 # A real-shaped SSE body carrying an ``error`` frame whose own text
-# happens to contain an overflow-suggestive keyword ("context window") —
-# deliberately NOT an overflow-keyword-free body: this is what makes the
-# strip-falsify meaningful. Without this fix, `classify_llm_failure`
-# falls through to OVERFLOW, and `is_context_overflow_error`'s own
-# keyword fallback (`_CONTEXT_OVERFLOW_KEYWORDS` includes "context") then
+# happens to contain an overflow-suggestive keyword — deliberately NOT an
+# overflow-keyword-free body: this is what makes the strip-falsify
+# meaningful. Without this fix, `classify_llm_failure` falls through to
+# OVERFLOW, and `is_context_overflow_error`'s own keyword fallback then
 # matches THIS text, so the misclassification actually reproduces — a
 # keyword-free SSE body would pass this test's own assertions even
 # WITHOUT the fix (confirmed directly: reverting the fix and rerunning
 # with a keyword-free body stayed green — the exact false-negative this
 # body avoids).
+#
+# #6069: reworded off "Your input exceeds the context window" (matched
+# only via the now-removed general word "context") onto a surviving
+# PHRASE ("too large") — `_CONTEXT_OVERFLOW_KEYWORDS` no longer contains
+# any single-word general term, so the strip-falsify premise above needs
+# a phrase to still hold.
 _SSE_BODY = (
     'data: {"type": "response.created", '
     '"response": {"status": "in_progress", "output": []}}\n\n'
     'data: {"type": "response.in_progress", '
     '"response": {"status": "in_progress", "output": []}}\n\n'
     'data: {"type": "error", '
-    '"error": {"message": "Your input exceeds the context window"}}\n\n'
+    '"error": {"message": "Your input is too large for this model"}}\n\n'
 )
 
 

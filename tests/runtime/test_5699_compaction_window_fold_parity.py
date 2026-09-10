@@ -254,14 +254,60 @@ def test_is_shrinkable_overflow_enters_the_ladder_for_a_code_only_signal():
     assert is_shrinkable_overflow(exc)
 
 
-def test_a_message_with_the_keyword_but_a_different_code_is_still_detected():
+def test_a_message_with_a_surviving_phrase_but_a_different_code_is_still_detected():
     """Tier 2: non-regression — the pre-existing keyword fallback must
     still work for a shape carrying no ``code`` at all (or a
     ``code`` this allowlist does not name), so the #5699 fix is additive,
-    not a replacement of the keyword path."""
+    not a replacement of the keyword path.
+
+    #6069 reworded this off "This model's maximum context length is
+    128000 tokens." (general words only, no phrase — see
+    ``test_6069_real_openai_style_overflow_message_without_a_phrase_is_
+    now_missed`` right below for what that ORIGINAL message now does)
+    onto a message carrying a surviving PHRASE."""
     exc = litellm.BadRequestError(
-        message="This model's maximum context length is 128000 tokens.",
+        message="This model's maximum context length is 128000 tokens; "
+        "the request is too large.",
         model="gpt-4", llm_provider="openai",
     )
     assert getattr(exc, "code", None) != "context_length_exceeded"
     assert is_context_overflow_error(exc)
+
+
+def test_6069_real_openai_style_overflow_message_without_a_phrase_is_now_missed():
+    """Tier 2: #6069's own required positive-control finding, pinned as a
+    test rather than only asserted in the PR body.
+
+    "This model's maximum context length is 128000 tokens." is the exact
+    pre-#6069 fixture this file's sibling test above used (see git
+    history) — modelled on OpenAI's own real API error text for a
+    context-length overflow, and the shape #5699's own incident
+    investigation built to confirm the gap that issue fixed. It carries
+    NEITHER "too long" NOR "too large" — it relied SOLELY on the two
+    general words #6069 removed ("context"/"length").
+
+    This is the literal case the issue's "positive control" step asked
+    to check BEFORE finalizing the word removal: verify real/historical
+    overflow text still classifies True. It does not. This is a genuine,
+    disclosed false-negative trade, not a bug introduced by accident —
+    see the PR body and ``_CONTEXT_OVERFLOW_KEYWORDS``'s own docstring
+    for why it is accepted anyway: a REAL, un-flattened provider response
+    for this exact message carries a structured ``error.code:
+    "context_length_exceeded"`` field (caught by the stage checked BEFORE
+    this one, #5699) — this keyword tuple is the fallback of last resort
+    for when BOTH the type AND the structured code have been stripped by
+    an intermediate proxy, a narrower situation than "any provider
+    message lacking a phrase"."""
+    exc = litellm.BadRequestError(
+        message="This model's maximum context length is 128000 tokens.",
+        model="gpt-4", llm_provider="openai",
+    )
+    assert getattr(exc, "code", None) != "context_length_exceeded", (
+        "test premise: no structured code field present"
+    )
+    assert not is_context_overflow_error(exc), (
+        "disclosed #6069 finding: this real-shaped message no longer "
+        "classifies as overflow once the general words are removed — "
+        "if this assertion ever flips back to True-required, re-read the "
+        "#6069 issue and PR body before 'fixing' it"
+    )

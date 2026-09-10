@@ -13,8 +13,9 @@ ONLY quota (``is_quota_exhausted_error``) first; arm② excluded nothing at
 all. Neither excluded a FATAL exception (a plain ``AttributeError``/
 ``TypeError``/``KeyError`` in reyn's own glue code) or a RETRYABLE one
 (5xx/timeout/connection failure) whose ``str()`` happened to contain an
-overflow keyword ("context"/"token"/"length"/"limit"/"too long"/"too
-large") — both classes got misdiagnosed as overflow and entered the
+overflow keyword (at the time: "context"/"token"/"length"/"limit"/"too
+long"/"too large" — #6069 later removed the 4 general words, keeping
+only the phrases) — both classes got misdiagnosed as overflow and entered the
 shrink ladder, burning real LLM calls chasing a cause no amount of
 shrinking can fix (#3783's own owner ruling — the defect class #5543
 created ``classify_llm_failure`` to close, left open on these two arms).
@@ -71,10 +72,13 @@ from tests._support.events import collect_events, settle
 def test_arm1_fatal_exception_does_not_enter_shrink_ladder(monkeypatch) -> None:
     """Tier 2: #5577 accept — arm① (``_run_with_shrink``'s outer except).
 
-    A FATAL-shaped exception (``AttributeError`` whose message contains
-    "token" — the exact shape #5568's own incident produced) on the VERY
-    FIRST LLM call must not enter the shrink ladder: exactly one LLM call,
-    no ``router_context_overflow_detected`` event, the session survives.
+    A FATAL-shaped exception (``AttributeError`` whose message contains a
+    surviving ``_CONTEXT_OVERFLOW_KEYWORDS`` PHRASE — #6069 reworded this
+    off the general word "token", removed from that constant, onto "too
+    large" so the premise "even though the message WOULD otherwise match
+    the keyword fallback" still holds) on the VERY FIRST LLM call must not
+    enter the shrink ladder: exactly one LLM call, no
+    ``router_context_overflow_detected`` event, the session survives.
     """
     session = make_session(agent_name="arm1_fatal_test")
     collected = collect_events(session)
@@ -84,7 +88,7 @@ def test_arm1_fatal_exception_does_not_enter_shrink_ladder(monkeypatch) -> None:
     async def _fake_call_llm_tools(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        raise AttributeError("'NoneType' object has no attribute 'token'")
+        raise AttributeError("'NoneType' object has no attribute 'foo' (input too large)")
 
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools,
@@ -102,7 +106,8 @@ def test_arm1_fatal_exception_does_not_enter_shrink_ladder(monkeypatch) -> None:
     kinds = [e.type for e in collected]
     assert "router_context_overflow_detected" not in kinds, (
         "a FATAL exception (AttributeError) must never be classified as "
-        "context overflow, even though its message contains 'token'"
+        "context overflow, even though its message contains a surviving "
+        "overflow phrase ('too large')"
     )
     terminated = [e for e in collected if e.type == "router_loop_terminated_by_exception"]
     assert terminated, "the exception must reach the generic catch-all's own P6 instrument"
@@ -118,7 +123,7 @@ def test_arm1_genuine_overflow_still_shrinks(monkeypatch) -> None:
     collected = collect_events(session)
 
     async def _fake_call_llm_tools(*args, **kwargs):
-        raise RuntimeError("maximum context length exceeded")
+        raise RuntimeError("the request is too large for this model's context")
 
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools,
@@ -158,7 +163,7 @@ def test_arm2_fatal_exception_on_a_retry_stops_the_ladder(monkeypatch) -> None:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            raise RuntimeError("maximum context length exceeded")
+            raise RuntimeError("the request is too large for this model's context")
         raise AttributeError("'NoneType' object has no attribute 'token'")
 
     monkeypatch.setattr(

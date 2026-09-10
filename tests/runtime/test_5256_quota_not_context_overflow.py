@@ -141,13 +141,18 @@ def test_a_genuine_context_overflow_still_shrinks_unaffected(monkeypatch) -> Non
     class _PlainOverflowError(Exception):
         pass
 
-    exc = _PlainOverflowError("maximum context length exceeded")
+    # #6069: ``_CONTEXT_OVERFLOW_KEYWORDS`` no longer contains the general
+    # word "context"/"length" (see that constant's own docstring) — this
+    # message now needs a remaining PHRASE to still match the keyword
+    # fallback, the same non-vacuity property this test has always
+    # wanted ("a real overflow still shrinks").
+    exc = _PlainOverflowError("the request is too large for this model")
     assert is_quota_exhausted_error(exc) is False
     assert is_context_overflow_error(exc) is True
 
     # #5329 (architect review): this assertion used to pin the OPPOSITE
     # value (True) — documenting a genuine misdiagnosis: the quota
-    # exception's own message ("The usage limit has been reached") DOES
+    # exception's own message ("The usage limit has been reached") DID
     # match is_context_overflow_error's own "limit" keyword fallback, so
     # any call site reaching this predicate WITHOUT its own quota guard
     # first (unlike #5256's outer _run_with_shrink gate, which always
@@ -158,19 +163,36 @@ def test_a_genuine_context_overflow_still_shrinks_unaffected(monkeypatch) -> Non
     # remember its own guard — this now asserts the FIXED value.
 
     # #5329 (architect review, 2nd finding — vacuity): the `is False`
-    # assertion below is green for TWO possible reasons — (a) the new
-    # quota check fired (intended) or (b) someone silently removed
-    # "limit" from _CONTEXT_OVERFLOW_KEYWORDS, making the keyword
-    # fallback a no-op regardless of quota — exactly the class of thing
-    # the ORIGINAL (pre-#5329) comment on this test named as its own
-    # reason to exist. This positive control uses the SAME "limit" text
-    # on a NON-quota exception (no .body) — it must still match True. With
-    # that pinned, the class of exceptions here differs ONLY in .body, so
-    # the `is False` below can only be attributed to the quota check.
-    class _PlainLimitMessageError(Exception):
-        pass
+    # assertion below must be green for ONLY ONE reason — the quota check
+    # firing — not because the message also happens to carry no keyword.
+    # #6069 retired the original form of this control (it used the word
+    # "limit", one of the 4 general words #6069 removed from
+    # ``_CONTEXT_OVERFLOW_KEYWORDS``; with "limit" gone, that exact text
+    # would classify False regardless of the quota guard, making the
+    # control vacuous). Re-built here with a message that carries a
+    # SURVIVING phrase ("too large") plus a quota-shaped ``.body`` — if
+    # the quota guard were ever removed, this would flip to True via the
+    # keyword fallback, same as before; if #6069's phrase instead got
+    # silently stripped too, this would already be covered by
+    # ``test_context_overflow_keywords_contain_no_bare_words`` flagging
+    # the constant directly, not by this test going silently vacuous.
+    class _QuotaErrorWithOverflowPhrase(Exception):
+        """A quota exhaustion (same ``.body`` shape ``is_quota_exhausted_
+        error`` keys on) whose free-text message ALSO carries a surviving
+        overflow phrase — the non-vacuity positive control's shape."""
 
-    assert is_context_overflow_error(
-        _PlainLimitMessageError("The usage limit has been reached"),
-    ) is True
+        def __init__(self) -> None:
+            super().__init__("The request is too large; usage limit reached")
+            self.body = {"type": "usage_limit_reached"}
+
+    positive_control = _QuotaErrorWithOverflowPhrase()
+    assert "too large" in str(positive_control).lower(), (
+        "test premise: the quota-shaped exception's own message must still "
+        "carry a surviving _CONTEXT_OVERFLOW_KEYWORDS phrase"
+    )
+    assert is_context_overflow_error(_PlainOverflowError(str(positive_control))) is True, (
+        "sanity: the SAME text, off a non-quota exception, must still match "
+        "the keyword fallback"
+    )
+    assert is_context_overflow_error(positive_control) is False
     assert is_context_overflow_error(_QuotaExhaustedError()) is False
