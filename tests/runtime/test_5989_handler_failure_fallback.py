@@ -13,13 +13,20 @@ handleError records the failure to a SEPARATE file, independent of
 whichever handler (possibly this very instance) just broke.
 
 A real logging.Logger + a real FailureFallbackRotatingFileHandler
-throughout -- no MagicMock. The "broken handler" is produced by swapping
-the handler's own `.stream` for a real, write-raising file-like object
-(not a mock of the handler itself) -- the SAME technique #5989's own
-strip-falsified issue-thread reproduction used, mirroring CPython's actual
-StreamHandler.emit() -> handleError() call sequence rather than
-monkeypatching emit() itself (which would bypass handleError entirely and
-prove nothing about it).
+throughout -- no MagicMock, no hand-rolled stream stand-in either
+(CLAUDE.md: "never fake a collaborator when a real instance is cheaply
+constructible" — a real broken file IS cheap here). "Broken" is produced
+by re-opening the handler's OWN real log file in READ mode and swapping
+that in as `.stream` — a genuinely unwritable real file object, not a
+mock of one. Verified directly (both interpreters this repo's own CI runs,
+3.11.15 and 3.12.7) that this raises `io.UnsupportedOperation` — a real
+`OSError` subclass — from `StreamHandler.emit()`'s own `stream.write(...)`
+call, landing in `handleError` exactly like production would; a v1 of
+this file used a hand-rolled stub instead, which on 3.11's
+`RotatingFileHandler` path raised `AttributeError` (missing `.seek`)
+before ever reaching `write()` — passing for the wrong reason entirely
+(lead-coder BLOCKING, PR #6088: "test は『実装が OSError を捕まえた』では
+なく『stub に属性が無かった』を記録しています").
 """
 from __future__ import annotations
 
@@ -32,28 +39,28 @@ from reyn.runtime.logging_failure_fallback import (
 )
 
 
-class _BreakableStream:
-    """A real, minimal file-like object whose `write` raises on demand —
-    not a mock of the handler under test, just its underlying stream."""
-
-    def __init__(self) -> None:
-        self.broken = False
-        self.written: "list[str]" = []
-
-    def write(self, s: str) -> int:
-        if self.broken:
-            raise OSError("simulated stream failure")
-        self.written.append(s)
-        return len(s)
-
-    def flush(self) -> None:
+def _break(handler: FailureFallbackRotatingFileHandler) -> None:
+    """Swap the handler's `.stream` for the SAME file, reopened read-only —
+    a real, genuinely unwritable file object. `write()` on it raises
+    `io.UnsupportedOperation` (confirmed an `OSError` subclass, and
+    confirmed identical on 3.11/3.12 — see module docstring)."""
+    try:
+        handler.stream.close()
+    except Exception:
         pass
+    handler.stream = open(handler.baseFilename, "r")
 
-    def tell(self) -> int:
-        # RotatingFileHandler.shouldRollover() calls this BEFORE emit()'s
-        # own write -- a real stream always answers it; only write() is
-        # what this test wants to fail.
-        return 0
+
+def _heal(handler: FailureFallbackRotatingFileHandler) -> None:
+    """Reopen the SAME file in append mode — a real, writable stream
+    again, mirroring the handler's own normal `_open()` shape (append,
+    not truncate: a healed handler must not silently lose what a prior
+    healthy write already wrote)."""
+    try:
+        handler.stream.close()
+    except Exception:
+        pass
+    handler.stream = open(handler.baseFilename, "a")
 
 
 def _make_handler(tmp_path: Path) -> "tuple[FailureFallbackRotatingFileHandler, logging.Logger, Path]":
@@ -77,9 +84,7 @@ def test_a_broken_handler_still_leaves_a_durable_failure_record(tmp_path: Path) 
     handler, logger, fallback_path = _make_handler(tmp_path)
     assert not fallback_path.exists()
 
-    stream = _BreakableStream()
-    handler.stream = stream
-    stream.broken = True
+    _break(handler)
     logger.warning("first failure: %s", "payload-one")
 
     assert fallback_path.exists(), (
@@ -88,7 +93,7 @@ def test_a_broken_handler_still_leaves_a_durable_failure_record(tmp_path: Path) 
     )
     content = fallback_path.read_text()
     assert "payload-one" in content
-    assert "OSError" in content
+    assert "UnsupportedOperation" in content
 
 
 def test_no_false_kill_a_healthy_handler_writes_no_fallback(tmp_path: Path) -> None:
@@ -110,9 +115,7 @@ def test_repeated_identical_failure_collapses_to_one_episode(tmp_path: Path) -> 
     bytes twice" — a real accumulation-bounding claim needs the write
     COUNT, not just the end state."""
     handler, logger, fallback_path = _make_handler(tmp_path)
-    stream = _BreakableStream()
-    handler.stream = stream
-    stream.broken = True
+    _break(handler)
 
     reset_calls = {"count": 0}
     orig_reset = None
@@ -144,9 +147,7 @@ def test_a_genuinely_new_failure_after_a_repeat_is_still_recorded(tmp_path: Path
     DIFFERENT failure (new exception content) after an identical-repeat
     streak is still written."""
     handler, logger, fallback_path = _make_handler(tmp_path)
-    stream = _BreakableStream()
-    handler.stream = stream
-    stream.broken = True
+    _break(handler)
 
     logger.warning("failure A")
     logger.warning("failure A")  # collapsed, per the test above
@@ -168,17 +169,16 @@ def test_recovery_then_a_new_failure_is_recorded_as_a_fresh_episode(tmp_path: Pa
     record, matching LoopTripwire's own "episode ends at recovery, not
     at session end" rule."""
     handler, logger, fallback_path = _make_handler(tmp_path)
-    stream = _BreakableStream()
-    handler.stream = stream
 
-    stream.broken = True
+    _break(handler)
     logger.warning("same text")
-    first_mtime = fallback_path.stat().st_mtime_ns
+    first_content = fallback_path.read_text()
+    assert "same text" in first_content
 
-    stream.broken = False
+    _heal(handler)
     logger.warning("a healthy record in between")
 
-    stream.broken = True
+    _break(handler)
     logger.warning("same text")
 
     # The handler's own last-recorded-text memory is reset only by a
@@ -188,7 +188,12 @@ def test_recovery_then_a_new_failure_is_recorded_as_a_fresh_episode(tmp_path: Pa
     # test pins rather than hides: the gate keys on TEXT identity, not
     # on episode boundaries the handler cannot itself observe (recovery
     # is invisible to handleError, which is only ever called on failure).
-    assert fallback_path.stat().st_mtime_ns == first_mtime, (
+    # Observed via CONTENT, not mtime (lead-coder BLOCKING, PR #6088: an
+    # mtime identity pin records the TEST'S OWN filesystem-timestamp
+    # resolution, an environment property, not reyn's own behaviour --
+    # the CONTENT staying byte-identical is what "no re-write happened"
+    # actually means).
+    assert fallback_path.read_text() == first_content, (
         "disclosed limit: this handler's episode gate keys on failure-text "
         "identity only, not on a genuine recovery boundary — a byte-"
         "identical failure recurring after a healthy interval still "
