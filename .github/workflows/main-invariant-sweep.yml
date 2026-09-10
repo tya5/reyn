@@ -140,6 +140,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch: {}
+  # #6014 charter Q1: callable from `main-sweep-mirror.yml`. That workflow
+  # runs this SAME job against a PR's merge result, and ONLY when main's own
+  # sweep for that PR's base commit was red — the escape hatch that keeps a
+  # required mirror from deadlocking the very PR that fixes the break (a
+  # plain "required status" has no such hatch: the fixing PR is blocked by
+  # the red it is fixing). `workflow_call` rather than a second copy of the
+  # step list, deliberately: a copy is a hand-maintained population and goes
+  # stale the first time a gate is added here and not there.
+  workflow_call: {}
 
 permissions:
   contents: read
