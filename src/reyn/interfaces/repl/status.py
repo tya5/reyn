@@ -330,6 +330,23 @@ def _config_derived_fields(session, config) -> dict:
     return result
 
 
+def config_derived_cache_clear() -> int:
+    """Public write: drop every cached (session -> derived config fields)
+    entry, returning how many were dropped. #5939 ladder step ② (process-
+    memory cache release) calls this rather than reaching into
+    ``_CONFIG_DERIVED_CACHE`` directly — the ``WeakKeyDictionary`` stays
+    private to this module.
+
+    Safe to drop unconditionally: every entry is a pure re-derivation of
+    a session's own live ``config`` object (:func:`_config_derived_fields`
+    recomputes and re-caches on the next call) — the session still holds
+    its own real reference to ``config`` regardless of this cache, so
+    nothing durable is lost."""
+    count = len(_CONFIG_DERIVED_CACHE)
+    _CONFIG_DERIVED_CACHE.clear()
+    return count
+
+
 def _session_visibility_items(session) -> "list[dict] | None":
     """Read visibility state from the session (#2285 backend seam).
 

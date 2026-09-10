@@ -219,3 +219,14 @@ def _cache_size_for_tests() -> int:
     """Test hook: current entry count, for asserting eviction actually ran."""
     with _LOCK:
         return len(_CACHE)
+
+
+def _outstanding_checkout_count_for_tests(backend_name: str, policy: SandboxPolicy) -> int:
+    """Test hook: the live-checkout count for ``(backend_name, policy)`` —
+    0 if never checked out or already fully released. #5939 PR-1's own
+    witness (that :func:`~reyn.runtime.process_memory_release.
+    release_reconstructable_caches` never touches this module) reads
+    this snapshot-style function rather than ``_CACHE``/``_REFCOUNT``
+    directly, per this repo's own testing policy on private state."""
+    with _LOCK:
+        return _REFCOUNT.get((backend_name, id(policy)), 0)

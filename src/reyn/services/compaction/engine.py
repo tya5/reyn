@@ -191,6 +191,26 @@ def token_cache_size() -> int:
     snapshot()-style-read guidance; the OrderedDict itself stays private)."""
     return len(_token_cache)
 
+
+def token_cache_clear() -> int:
+    """Public write: drop every cached (model, text) -> token-count entry,
+    returning how many were dropped. #5939 ladder step ② (process-memory
+    cache release) calls this rather than reaching into ``_token_cache``
+    directly — the OrderedDict stays private to this module, same
+    boundary ``token_cache_size()`` already draws.
+
+    Every entry here is a pure re-derivation of already-durable state
+    (the model + the message text, both still on the session) — see the
+    module comment above ``_token_cache`` for why that makes it safe to
+    drop, and for the non-zero cost of doing so (the NEXT turn's token
+    estimate recomputes cold, measured ~470x slower on a ~3000-message
+    history — #2937's own reason this cache exists at all). A caller on
+    the memory ladder accepts that cost deliberately; this function does
+    not hide it."""
+    count = len(_token_cache)
+    _token_cache.clear()
+    return count
+
 # Fixed token cost used for image parts when litellm cannot count them.
 _IMAGE_FIXED_TOKEN_COST = 1024
 
