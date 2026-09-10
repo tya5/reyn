@@ -46,6 +46,7 @@ the tree I am measuring" is not something a test may assume.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import faulthandler
 import importlib.util
@@ -465,6 +466,47 @@ _LITELLM_ISOLATED_ATTRS = (
 )
 
 
+def _close_cached_litellm_clients_before_flush(litellm) -> None:
+    """#6034: close every client `litellm.in_memory_llm_clients_cache`
+    is currently holding, before `_isolate_litellm_process_globals`
+    below drops the cache's own references to them.
+
+    Uses litellm's own official close routine — the SAME one
+    `reyn.llm.llm._close_litellm_async_clients` calls in production
+    (`litellm.llms.custom_httpx.async_client_cleanup.
+    close_litellm_async_clients`) — never a hand-rolled dispatch on the
+    cached object's own shape. That routine's 3-branch dispatch is
+    known to miss a bare `AsyncOpenAI`-shaped client (#4365, a
+    confirmed UPSTREAM gap, owner ruling: reyn does not grow a branch
+    of its own to cover litellm's own cache-key shapes — see #4365's
+    own "does reyn's code grow when the third party's case count
+    grows?" test) — this call closes everything litellm's own routine
+    already knows how to close, and best-effort no-ops on the rest,
+    same as production.
+
+    A throwaway `asyncio.run()`: this sync fixture runs OUTSIDE any
+    test-owned event loop (pytest-asyncio only starts one once the
+    test's own coroutine begins, and this fixture requests no
+    dependency on it) — guarded by `RuntimeError` anyway rather than
+    assumed, since a cleanup helper must never be the reason a test
+    fails.
+    """
+    close_all = getattr(
+        getattr(litellm.llms.custom_httpx, "async_client_cleanup", None),
+        "close_litellm_async_clients",
+        None,
+    )
+    if close_all is None:
+        return
+    try:
+        asyncio.run(close_all())
+    except RuntimeError:
+        # A loop is already running here after all (unexpected under the
+        # reasoning above) — best-effort only, never break the test over
+        # cleanup that failed to even get a loop to run on.
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _isolate_litellm_process_globals() -> Iterator[None]:
     """Isolate litellm's process-global mutable state around every test
@@ -515,8 +557,23 @@ def _isolate_litellm_process_globals() -> Iterator[None]:
     # side of this fixture that resets going IN, because "no test has
     # cached anything yet" is what a clean run looks like, not a value to
     # snapshot-and-restore.
+    #
+    # #6034: `cache.flush_cache()` alone only clears the dict's KEYS —
+    # it never closes the cached clients' own underlying async HTTP
+    # session. A prior test's real litellm call left a still-open
+    # `aiohttp.ClientSession`/httpx client behind; dropping the only
+    # reference to it here orphans that session into garbage collection
+    # at some LATER, unrelated point (measured: `asyncio`'s own
+    # "Unclosed client session" finalizer warning landing in a
+    # completely different test's `caplog` window under `-n auto`, #6033).
+    # Close everything BEFORE flushing, via litellm's own official
+    # cleanup routine (the same one `llm.py::_close_litellm_async_clients`
+    # calls in production) — never reach into a cached client and close
+    # it by hand; that would make reyn own litellm's own client-shape
+    # dispatch, the thing #4365 explicitly ruled against.
     cache = getattr(litellm, "in_memory_llm_clients_cache", None)
     if cache is not None:
+        _close_cached_litellm_clients_before_flush(litellm)
         cache.flush_cache()
 
     # AFTER: every attribute in _LITELLM_ISOLATED_ATTRS restored to its
