@@ -279,15 +279,19 @@ def test_variable_glob_or_home_expansion_is_rejected(text: str) -> None:
     literal text this parser sees (measured: a redirect-target
     permission check would see the literal string ``"$HOME/out.txt"``,
     never the real expanded path; a threat scan over ``rm *.txt`` would
-    see the literal glob, never the files it actually matches). Closed
-    by :data:`_ALWAYS_FORBIDDEN_CHARS` — ``shlex`` tokenizes these THE
-    SAME regardless of quoting, so there is no signal to recover intent
-    from, unlike :data:`_PUNCTUATION_CHARS`'s own quote-aware group.
+    see the literal glob, never the files it actually matches). ``$``
+    closes structurally now (#5987 stage 2 — a ``simple_expansion``/
+    ``expansion``/``concatenation`` node outside
+    :data:`_ALLOWED_NODE_KINDS`); glob/``~`` close via the disclosed
+    leaf-text exception, :data:`_EXPANSION_LEAF_CHARS` — quoting doesn't
+    change what either sees, unlike :data:`_PUNCTUATION_CHARS`'s own
+    quote-aware group.
 
-    Strip witness: dropping these characters from
-    ``_ALWAYS_FORBIDDEN_CHARS`` makes each case parse successfully with
-    the literal expansion syntax as a plain argv/path token instead of
-    raising — verified directly, restored after."""
+    Strip witness: removing ``simple_expansion``/``expansion`` from the
+    disallowed-kinds check and dropping ``*``/``?``/``[``/``]``/``~``
+    from :data:`_EXPANSION_LEAF_CHARS` makes each case parse
+    successfully with the literal expansion syntax as a plain argv/path
+    token instead of raising — verified directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
 
@@ -302,12 +306,13 @@ def test_brace_expansion_is_rejected(text: str) -> None:
     even in POSIX mode, so ``cp file{1,2} /tmp/`` parses to ONE argv
     token (``"file{1,2}"``) while the real shell operates on TWO files
     — the same "cannot predict what this resolves to" class as ``$``/
-    glob/``~``, closed the same way (``{``/``}`` are both in
-    :data:`_ALWAYS_FORBIDDEN_CHARS`).
+    glob/``~``. Closes structurally now (#5987 stage 2) — ``{``/``}``
+    adjacent to other word text produce a ``concatenation`` node, which
+    is outside :data:`_ALLOWED_NODE_KINDS`.
 
-    Strip witness: dropping ``{``/``}`` from ``_ALWAYS_FORBIDDEN_CHARS``
-    makes both of these parse successfully with the literal brace
-    syntax instead of raising — verified directly, restored after."""
+    Strip witness: allowlisting ``concatenation`` makes both of these
+    parse successfully with the literal brace syntax instead of raising
+    — verified directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
 
@@ -323,23 +328,27 @@ def test_negation_operator_is_rejected(text: str) -> None:
     NEGATION operator (``! false; echo $?`` -> ``0``), never a command
     name, but this parser (pre-fix) read ``argv[0]='!'`` and let the
     real command after it (``rm -rf /tmp/x``) ride along unseen by any
-    future policy. ``!`` is in :data:`_ALWAYS_FORBIDDEN_CHARS` — no
-    per-construct check was ever added for it specifically.
+    future policy. Closes structurally now (#5987 stage 2) — a leading
+    ``!`` parses to a ``negated_command`` node, outside
+    :data:`_ALLOWED_NODE_KINDS`.
 
-    Strip witness: dropping ``!`` from ``_ALWAYS_FORBIDDEN_CHARS`` makes
-    each of these parse successfully with ``'!'`` as a literal argv
-    token instead of raising — verified directly, restored after."""
+    Strip witness: allowlisting ``negated_command`` makes each of these
+    parse successfully with ``'!'`` as a literal argv token instead of
+    raising — verified directly, restored after."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan(text)
 
 
 def test_an_always_forbidden_character_inside_quotes_is_still_rejected() -> None:
-    """Tier 1: :data:`_ALWAYS_FORBIDDEN_CHARS` is checked per-token,
-    quote-position-blind, on purpose — ``shlex`` tokenizes ``'$HOME'``
-    and ``$HOME`` identically (``$`` is not in ``_PUNCTUATION_CHARS``),
-    so there is no signal this parser could use to trust the quoting
-    even if it wanted to (module docstring's own "Denylist -> two-tier
-    allowlist" section, the `curl "...?b=1"` example)."""
+    """Tier 1: this parser's leaf-text scan (:data:`_EXPANSION_LEAF_CHARS`,
+    #5987 stage 2) is checked per AST leaf node, quote-position-blind, on
+    purpose — ``tree-sitter-bash`` parses ``'$HOME'`` as a literal
+    ``raw_string`` (single quotes suppress expansion, correctly, unlike
+    double quotes), but this parser still scans that leaf's own text and
+    rejects the ``$`` it finds there, so there is no signal this parser
+    could use to trust the quoting even if it wanted to (module
+    docstring's own "#5987 stage 2" section, the `curl "...?b=1"`
+    example)."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan("echo '$HOME'")
 
@@ -364,8 +373,8 @@ def test_a_punctuation_char_becomes_literal_only_when_quoted() -> None:
 
 def test_a_non_punctuation_forbidden_char_stays_rejected_even_quoted() -> None:
     """Tier 1: the sibling contrast to the test above — for
-    :data:`_ALWAYS_FORBIDDEN_CHARS` (unlike :data:`_PUNCTUATION_CHARS`),
-    quoting changes NOTHING ``shlex`` can see, so
+    :data:`_EXPANSION_LEAF_CHARS` (unlike :data:`_PUNCTUATION_CHARS`),
+    quoting changes NOTHING this parser's leaf-text scan can see, so
     ``curl "http://x/a?b=1"`` and ``curl http://x/a?b=1`` must BOTH
     reject — architect's own explicit acceptance of this loss (module
     docstring's own "If your command gets rejected" section)."""
@@ -375,31 +384,33 @@ def test_a_non_punctuation_forbidden_char_stays_rejected_even_quoted() -> None:
         parse_exec_plan("curl http://x/a?b=1")
 
 
-def test_every_always_forbidden_character_is_individually_rejected() -> None:
-    """Tier 1: a direct, positive-population test of
-    :data:`_ALWAYS_FORBIDDEN_CHARS` itself — every character it lists
-    must actually cause a rejection on its own, not merely "happen to
-    be caught by some other check." Catches an accidentally-narrowed set
-    (a typo dropping a character) as surely as one that widened."""
-    from reyn.security.exec_plan import _ALWAYS_FORBIDDEN_CHARS
-
-    assert _ALWAYS_FORBIDDEN_CHARS, (
-        "sanity: an empty set here would make the loop below vacuously "
-        "pass without checking anything"
-    )
-    for char in sorted(_ALWAYS_FORBIDDEN_CHARS):
-        with pytest.raises(ExecPlanRejected):
-            parse_exec_plan(f"echo x{char}y")
+@pytest.mark.parametrize("char", sorted("$*?[]{}~!"))
+def test_every_expansion_shaped_character_is_individually_rejected(char: str) -> None:
+    """Tier 1: #5987 stage 2 — was a direct population test of the now-
+    removed ``_ALWAYS_FORBIDDEN_CHARS`` private constant; rewritten to a
+    literal population instead of importing private state, per this
+    repo's testing policy. Every one of these characters — the same set
+    the old character allowlist enumerated — must still cause a
+    rejection on its own when embedded in an otherwise-ordinary word,
+    whether the constraint reaches it structurally (the node-kind
+    allowlist, e.g. ``$``/``{``/``}``/``[``/``]`` via a ``concatenation``
+    node) or via the disclosed leaf-text exception for glob/tilde/``!``
+    (module docstring's own "#5987 stage 2" section) — the SAME
+    rejection outcome, whichever path catches it. Catches an
+    accidentally-narrowed set (a typo dropping a character) as surely as
+    one that widened."""
+    with pytest.raises(ExecPlanRejected):
+        parse_exec_plan(f"echo x{char}y")
 
 
 def test_a_stray_closing_brace_alone_is_rejected() -> None:
-    """Tier 1: ``}`` is a member of :data:`_ALWAYS_FORBIDDEN_CHARS`
-    (unlike the earlier denylist, which only checked the OPENING brace)
-    — a stray ``}`` alone (``echo a}b``) is not a real brace-expansion
-    pattern and carries no divergence risk on its own, but the two-tier
-    check has no per-construct carve-out mechanism for it. architect's
-    own explicit acceptance of this exact over-rejection: a safe-side
-    false positive."""
+    """Tier 1: a stray ``}`` alone (``echo a}b``) is not a real
+    brace-expansion pattern and carries no divergence risk on its own,
+    but ``tree-sitter-bash`` still parses ``a}b`` as a ``concatenation``
+    node (outside :data:`_ALLOWED_NODE_KINDS`) same as it would for a
+    real ``{a,b}`` pair — this parser has no per-construct carve-out
+    mechanism for it. architect's own explicit acceptance of this exact
+    over-rejection: a safe-side false positive."""
     with pytest.raises(ExecPlanRejected):
         parse_exec_plan("echo a}b")
 

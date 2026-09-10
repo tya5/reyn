@@ -78,65 +78,134 @@ reasons, not one blanket allowlist:
    per TOKEN, quote-aware: an unquoted occurrence becomes its own
    operator token (checked for a SUPPORTED shape below); a quoted one
    stays inside a word, accepted as literal text.
-2. :data:`_ALWAYS_FORBIDDEN_CHARS` (`$ * ? [ ] { } ~ !`) — ``shlex``
-   tokenizes these THE SAME WAY whether quoted or not, so there is no
-   recoverable signal; every occurrence is rejected, quoted or not (see
-   :func:`_reject_always_forbidden_characters`).
+2. (HISTORICAL — see "#5987 stage 2" below for the CURRENT mechanism)
+   a module-level ``_ALWAYS_FORBIDDEN_CHARS`` set (`$ * ? [ ] { } ~ !`)
+   used to be checked per ``shlex`` token, quote-blind, because
+   ``shlex`` tokenizes these THE SAME WAY whether quoted or not, so
+   there was no recoverable signal. #5987 stage 2 replaced that
+   per-token check with a node-kind allowlist walked over a real
+   ``tree-sitter-bash`` parse; only the residual, structurally
+   undetectable slice (glob/tilde — :data:`_EXPANSION_LEAF_CHARS`)
+   still works this way, now scanning AST leaf nodes rather than
+   ``shlex`` tokens.
 
-Only ONE check still runs against the RAW string before any tokenizing
-(:func:`_reject_raw_newline`) — a literal newline, which never reaches
-a per-token check at all: ``shlex`` folds it into ordinary whitespace
-before producing a token.
+(HISTORICAL) A raw-newline check used to run against the RAW string
+before any tokenizing, because ``shlex`` folds a newline into ordinary
+whitespace and a per-token check would never see it. #5987 stage 2
+replaced this with a structural check over the AST (see below) — the
+grammar's own parse tree shows a raw newline as two adjacent statement
+nodes with nothing joining them, a signal ``shlex`` itself cannot
+produce.
 
-## This is an approximation, not the industry's own unit (owner
-directive "調べて" — architect's follow-up research, #5987)
+## #5987 stage 2 — the classification UNIT is now a real grammar's node
+kind, not a character count (owner directive "調べて" — architect's
+research; lead-coder's staging ruling, issuecomment-5618328297)
 
-A CHARACTER allowlist is not what competitors do. Claude Code / Codex
-parse a real grammar (a tree-sitter AST) and allowlist NODE TYPES;
-OpenClaw allowlists a resolved path + argument pattern over its own
-execution plan. Both escalate what they cannot resolve (heredoc,
-expansion) TO THE OPERATOR rather than refusing outright — architect's
-own competitive research already recorded "人に回す" (hand it to a
-human) for exactly this case, and this module does not do that (段3's
-job, not this one — see :class:`ExecPlanRejected`'s own docstring). All
-4 bypasses this module closes (a newline, `!`, `$`/glob/`~`, brace)
-would show up structurally in a real AST — a separator node, a
-negation node, an expansion node — not as a character to notice by
-counting.
+This section used to say a CHARACTER allowlist is not what competitors
+do, and that ``shlex`` has no grammar to allowlist nodes OF, so
+counting characters was the only mechanism available. **That is no
+longer true.** #5987 stage 1 (:mod:`reyn.security.bash_node_kinds`)
+built :func:`~reyn.security.bash_node_kinds.derive_bash_node_kind_names`
+— the real, current set of ``tree-sitter-bash`` grammar node-kind names,
+machine-derived from the INSTALLED package at call time, never a
+hand-typed list. Stage 2 (this change) wires that population into
+classification: :func:`parse_exec_plan` now parses *text* with
+``tree-sitter-bash`` first (:func:`_reject_via_node_kind_classification`)
+and walks the resulting syntax tree, rejecting outright if the tree has
+a parse error, if the top-level statements are adjacent with no
+supported separator between them (the AST's own structural signature
+for a raw newline — ``shlex`` folds a newline into whitespace and would
+never see it; the real grammar's parser simply produces two sibling
+statement nodes with nothing joining them, distinguishable from an
+explicit ``;`` because that token itself still appears as a sibling),
+or if ANY named node in the tree is not one of :data:`_ALLOWED_NODE_KINDS`
+— the same unit Claude Code and Codex both use (architect's competitive
+research). Every one of :data:`_ALLOWED_NODE_KINDS` is verified (by
+this module's own test suite) to be a member of
+:func:`~reyn.security.bash_node_kinds.derive_bash_node_kind_names`'s
+real, current output — never a hand-typed string that might not exist
+in the installed grammar.
 
-This module makes NO claim of completeness. Those 4 were each found by
-real-machine MEASUREMENT (a live `sh -c` run compared against this
-parser's own output), one probing pass at a time — there is no evidence
-the enumeration in :data:`_ALWAYS_FORBIDDEN_CHARS`/
-:data:`_PUNCTUATION_CHARS` is a copy of the true population of
-characters/constructs a real shell treats specially, only that these 4
-are covered. A 5th is not ruled out by anything this module's own
-source can verify (see the module docstring's own denylist/allowlist
-history above for why that is a structural limit of counting
-characters, not a bug in THIS enumeration specifically).
+This closes a REAL gap the character approach could not: bash's own
+grammar has node kinds for command substitution (`` `...` ``/``$(...)``),
+subshell grouping (``(...)``), process substitution (``<(...)``/``>(...)``),
+heredocs, leading environment-assignment prefixes
+(``variable_assignment``), and — critically — shell CONTROL STRUCTURES
+(``if``/``for``/``while``/``case``/function definitions). The old
+character-only approach had no way to see an ``if``/``for`` statement at
+all (none of its characters were individually forbidden) and would
+silently have accepted one as an ordinary chain of argv segments; the
+node-kind allowlist rejects every one of these by construction (they
+are not in :data:`_ALLOWED_NODE_KINDS`), fail-closed on an UNKNOWN kind
+exactly as it does on a KNOWN-dangerous one (gap D, unchanged — see
+:class:`ExecPlanRejected`'s own docstring: unknown constructs are
+REJECTED, never escalated to an operator prompt, in this stage).
 
-``shlex`` has no grammar to allowlist nodes OF, so counting characters
-was the only mechanism available here, not a considered design choice
-matching the field's own unit. #5987 tracks re-evaluating the parser
-itself (measured against real ``bash`` on one corpus, not "because it's
-the standard" — the two obvious alternatives each have their own
-measured failure modes: ``bashlex`` breaks on heredoc/arrays/arithmetic,
-``tree-sitter-bash`` has carried real bugs in Codex's own use of it).
-This module's own character-level approach stays as-is until that
-lands.
+**What did NOT move to the node-kind unit, and why.** ``bash``'s own
+grammar — mirrored faithfully by ``tree-sitter-bash`` — does not give
+pathname glob expansion (``*``/``?``/``[...]``) or tilde expansion
+(``~``) their own syntax node at all when they appear as an ordinary
+word character: both are resolved by the shell's EXECUTION engine after
+parsing, not by its parser, so ``rm *.txt`` and ``rm foo.txt`` produce
+structurally IDENTICAL trees (both: a single ``word`` node). No grammar
+node kind exists for this module to allowlist or reject — the
+"structural signal" this design otherwise relies on genuinely is not
+there. :func:`_reject_via_node_kind_classification` therefore also scans
+the TEXT of the tree's own leaf nodes (``word``/``string_content``/
+``raw_string`` — i.e. only nodes the grammar has already validated as
+one of :data:`_ALLOWED_NODE_KINDS`) for :data:`_EXPANSION_LEAF_CHARS`
+(``$*?[]{}~!``) and rejects a hit the same way regardless of quoting —
+the same conservative, quote-blind judgement the old
+:data:`_ALWAYS_FORBIDDEN_CHARS` check made, relocated onto the AST's own
+leaf nodes instead of raw ``shlex`` tokens. This is not a character
+allowlist doing the SAME job as before under a new name: for every
+construct the grammar CAN see (``$HOME`` expansion, ``{a,b}`` brace
+expansion via a ``concatenation`` node, ``!`` negation via
+``negated_command``, a raw newline via the adjacency check above), the
+node-kind allowlist is what actually fires; the leaf-text scan is the
+disclosed exception for the two constructs (glob, tilde) that ``bash``'s
+own grammar structurally cannot distinguish from an ordinary word.
+
+:data:`_PUNCTUATION_CHARS`'s own quote-aware operator/redirect-shape
+classification in :func:`_iter_tokens` is UNCHANGED by this stage — its
+job is now building the :data:`ExecPlan`'s segments/chain-ops/redirects
+from text the node-kind gate has ALREADY approved, not deciding
+acceptability; its own supported-shape checks (a bare ``&``, an
+unrecognised punctuation run, a quoted token that is string-identical to
+an operator) still run and still reject, now as a redundant backstop —
+every shape they reject is independently rejected by the node-kind gate
+too (subshell/command-substitution/heredoc/process-substitution nodes,
+or the explicit bare-``&`` check in the top-level adjacency walk),
+except the quoted-operator-shape check (``grep '|' file``), which stays
+the ONE mechanism for that specific case — a real, safe tree (the AST
+correctly parses it as one command with a literal ``|`` argument) that
+this parser still refuses out of the same "cannot verify, will not
+guess" judgement as before; #5987 does not ask this stage to touch it.
+
+This module still makes NO claim of completeness — see
+:class:`ExecPlanRejected`'s own docstring and this stage's PR body for
+the explicit "does not mean 0 bypasses" disclosure. Switching the
+classification unit does not remove the fundamental limitation both
+``tree-sitter``-based competitors and this module share: an expansion
+target that cannot be resolved statically (this module refuses it; some
+competitors escalate it to an operator instead, gap D, still unruled
+here) is a real, on-going risk surface a different parser does not make
+disappear (Codex's own tree-sitter-based classifier has carried real
+bugs — openai/codex#8394, architect's own research on #5987).
 
 ## What this parser accepts
 
 - Ordinary word characters — letters, digits, and punctuation neither
-  :data:`_PUNCTUATION_CHARS` nor :data:`_ALWAYS_FORBIDDEN_CHARS` claims
-  (e.g. ``- _ . / , : = + @ % #``) — literal to both ``shlex`` and
-  ``sh`` in every position, quoted or not.
+  :data:`_PUNCTUATION_CHARS` nor :data:`_EXPANSION_LEAF_CHARS` claims,
+  and not part of a node kind outside :data:`_ALLOWED_NODE_KINDS`
+  (e.g. ``- _ . / , : = + @ % #``) — literal to both ``tree-sitter-bash``
+  and ``sh`` in every position, quoted or not.
 - ``shlex``-quoted words — single/double quotes, backslash escapes;
   the SAME primitive #5837's own (now-superseded) ``tokenize_exec_
   cmdline`` used for the no-shell argv form. Quoting DOES let a word
   contain one of :data:`_PUNCTUATION_CHARS`'s own characters as literal
   text (``"print(1)"``) — it does NOT rescue a character from
-  :data:`_ALWAYS_FORBIDDEN_CHARS` (see the section above for why those
+  :data:`_EXPANSION_LEAF_CHARS` (see the section above for why those
   two groups are treated differently).
 - Chain operators: ``|`` (pipe), ``&&`` (AND), ``||`` (OR), ``;``
   (sequence).
@@ -148,9 +217,21 @@ lands.
 
 ## What this parser rejects
 
-- A literal newline anywhere in the input (:func:`_reject_raw_newline`).
-- Any of :data:`_ALWAYS_FORBIDDEN_CHARS`, quoted or not
-  (:func:`_reject_always_forbidden_characters`).
+- A literal newline anywhere in the input — detected structurally now
+  (the AST's own adjacent-statements-with-no-separator shape), not by
+  scanning *text* for ``\\n`` (:func:`_reject_via_node_kind_classification`).
+- Any node kind :func:`parse_exec_plan` does not recognise
+  (:data:`_ALLOWED_NODE_KINDS`) — command substitution, subshell
+  grouping, process substitution, heredoc, a leading environment
+  assignment, negation, brace expansion, and any shell control structure
+  (``if``/``for``/``while``/``case``/a function definition) all fall out
+  of this one check now, structurally, rather than needing their own
+  character rule.
+- Any of :data:`_EXPANSION_LEAF_CHARS` (``$ * ? [ ] { } ~ !``) inside a
+  leaf ``word``/``string_content``/``raw_string`` node, quoted or not —
+  the disclosed exception: pathname glob (``*``/``?``/``[...]``) and
+  tilde expansion have no grammar node of their own (see the module
+  docstring's own "#5987 stage 2" section for why).
 - An UNQUOTED occurrence of one of :data:`_PUNCTUATION_CHARS` that is
   not a supported operator/redirect shape — command substitution
   (backtick), subshell grouping (``(...)``), process substitution
@@ -186,7 +267,8 @@ competitive summary): every competitor's shape is "refuse, don't guess."
 ## If your command gets rejected
 
 This parser accepts a narrower set of commands than a real shell does
-— a real, benign command using one of :data:`_ALWAYS_FORBIDDEN_CHARS`
+— a real, benign command using a node kind outside
+:data:`_ALLOWED_NODE_KINDS` or one of :data:`_EXPANSION_LEAF_CHARS`
 (a literal ``$``, a glob, brace expansion, home-directory ``~``, a
 literal ``!``) is refused rather than guessed at, quoted or not — for
 example ``curl "http://x/a?b=1"`` cannot be accepted here: ``?`` is not
@@ -208,6 +290,11 @@ import shlex
 from dataclasses import dataclass
 from typing import cast
 
+import tree_sitter
+import tree_sitter_bash
+
+from reyn.security.bash_node_kinds import derive_bash_node_kind_names
+
 # #5838 BLOCKING (architect's SECOND ruling, issuecomment-5578535394 --
 # a self-correction of the first allowlist, issuecomment-5578494687):
 # the raw-string-wide allowlist over-rejected. Real-machine measurement
@@ -228,7 +315,8 @@ from typing import cast
 # IDENTICALLY either way (`?` is not in punctuation_chars) -- for THAT
 # class of character, quoting changes nothing shlex can see, so this
 # parser genuinely cannot recover intent and rejects unconditionally,
-# quoted or not (see `_ALWAYS_FORBIDDEN_CHARS` below).
+# quoted or not (HISTORICAL -- see `_EXPANSION_LEAF_CHARS` and
+# `_ALLOWED_NODE_KINDS` below, #5987 stage 2, for the CURRENT mechanism).
 _PUNCTUATION_CHARS = "();<>|&`"
 
 # Single-character operator tokens this parser accepts standalone.
@@ -245,54 +333,222 @@ _REDIRECT_OPS_SINGLE = frozenset({">", "<"})
 _CHAIN_OPS_DOUBLE = frozenset({"&&", "||"})
 _REDIRECT_OPS_DOUBLE = frozenset({">>"})
 
-# #5838 BLOCKING (architect's second ruling, same comment as above): a
-# character shlex does NOT distinguish by quoting -- `$` (variable
-# expansion), `*`/`?`/`[`/`]` (glob), `{`/`}` (brace expansion, macOS
-# `/bin/sh` expands `{a,b}` even in POSIX mode), `~` (home-directory
-# expansion), `!` (negation operator -- `! ls` reads as negation to a
-# real shell, never a command name). None of these are in
-# `_PUNCTUATION_CHARS`, so `shlex` tokenizes a quoted and an unquoted
-# occurrence THE SAME WAY (unlike `( ) | & ; < >`, above) -- there is no
-# recoverable signal to tell "the caller quoted this deliberately" from
-# "this is about to expand," so every occurrence is rejected, quoted or
-# not (`curl "...?b=1"` cannot be saved this way -- architect's own
-# explicit acceptance of that loss, see the module docstring's own
-# "If your command gets rejected" section for the escape hatch).
-_ALWAYS_FORBIDDEN_CHARS = frozenset("$*?[]{}~!")
+# #5987 stage 2 (lead-coder's ruling, issuecomment-5618328297): the
+# classification UNIT for "which shell constructs are safe to accept" --
+# module docstring's own "#5987 stage 2" section has the full reasoning.
+# Every kind below is a real, currently-existing tree-sitter-bash grammar
+# node-kind name -- verified against
+# :func:`~reyn.security.bash_node_kinds.derive_bash_node_kind_names`'s
+# actual output both here (module import time, fail closed if a future
+# tree-sitter-bash bump ever drops/renames one) and by this module's own
+# test suite (never a hand-typed string trusted on faith).
+_ALLOWED_NODE_KINDS = frozenset({
+    "program",
+    "command",
+    "command_name",
+    "word",
+    "string",
+    "string_content",
+    "raw_string",
+    "pipeline",
+    "list",
+    "redirected_statement",
+    "file_redirect",
+    "comment",
+})
+
+# Top-level (``program``-child) node kinds this parser treats as "one
+# real statement" for the newline-adjacency check below -- every one of
+# these is itself already gated by :data:`_ALLOWED_NODE_KINDS` (nothing
+# else reaches this set).
+_STATEMENT_NODE_KINDS = frozenset({"command", "list", "pipeline", "redirected_statement"})
+
+# The three LEAF node kinds -- allowed by :data:`_ALLOWED_NODE_KINDS` --
+# whose own TEXT this module still scans for
+# :data:`_EXPANSION_LEAF_CHARS`. See module docstring's own "#5987 stage
+# 2" section: pathname glob (`*`/`?`/`[...]`) and tilde (`~`) expansion
+# have no grammar node of their own in tree-sitter-bash (they are
+# resolved by the shell's execution engine, not its parser), so a
+# structurally-identical tree cannot distinguish `rm *.txt` from `rm
+# foo.txt` -- this is the one place this module still reads characters,
+# not tokens, and it runs over AST leaves the grammar has ALREADY
+# validated as one of :data:`_ALLOWED_NODE_KINDS`, never over raw shlex
+# tokens.
+_LEAF_TEXT_NODE_KINDS = frozenset({"word", "string_content", "raw_string"})
+
+# Deliberately NOT in _ALLOWED_NODE_KINDS -- kept as their own named set
+# only so :func:`_reject_via_node_kind_classification` can give heredoc
+# its OWN, more specific rejection reason (matching this module's
+# pre-#5987 behaviour) rather than the generic "unsupported node kind"
+# message every other disallowed kind gets.
+_HEREDOC_NODE_KINDS = frozenset({
+    "heredoc_start",
+    "heredoc_body",
+    "heredoc_end",
+    "heredoc_redirect",
+})
+
+# `!` stays in this set even though a LEADING `!` is already caught
+# structurally (:class:`negated_command` is not in
+# :data:`_ALLOWED_NODE_KINDS`) -- a non-leading `!` (`echo x!y`) has no
+# node of its own either, same reasoning as the glob/tilde characters.
+_EXPANSION_LEAF_CHARS = frozenset("$*?[]{}~!")
+
+# Fail-closed at import time, not just in this module's own test suite
+# (lead-coder's stage-1 instruction applied here too): if a future
+# tree-sitter-bash release ever renames or drops one of
+# :data:`_ALLOWED_NODE_KINDS`, this module refuses to import rather than
+# silently allowlisting a node kind that no longer exists (which would
+# be inert, not unsafe, but a stale allowlist is exactly the kind of
+# thing that must be visible, not silent).
+_missing_allowed_kinds = _ALLOWED_NODE_KINDS - derive_bash_node_kind_names()
+if _missing_allowed_kinds:
+    raise RuntimeError(
+        "reyn.security.exec_plan._ALLOWED_NODE_KINDS names node kind(s) "
+        f"{sorted(_missing_allowed_kinds)!r} that the INSTALLED "
+        "tree-sitter-bash grammar does not have -- refusing to import "
+        "with a stale allowlist rather than silently checking against "
+        "kinds that can never actually appear"
+    )
+del _missing_allowed_kinds
 
 
-def _reject_always_forbidden_characters(token: str) -> None:
-    """Raises :class:`ExecPlanRejected` if *token* contains any
-    character from :data:`_ALWAYS_FORBIDDEN_CHARS` — see that constant's
-    own module-level comment for why these, specifically, are rejected
-    regardless of quoting (unlike the operator characters in
-    :data:`_PUNCTUATION_CHARS`, which ARE quote-aware)."""
-    hit = _ALWAYS_FORBIDDEN_CHARS.intersection(token)
-    if hit:
+def _load_bash_parser() -> "tree_sitter.Parser":
+    """Builds a fresh :class:`tree_sitter.Parser` for the installed
+    ``tree-sitter-bash`` grammar -- the same grammar-loading primitive
+    :mod:`reyn.security.bash_node_kinds` uses to derive node-kind names,
+    used here to actually PARSE *text* rather than enumerate the
+    grammar's symbol table."""
+    language = tree_sitter.Language(tree_sitter_bash.language())
+    return tree_sitter.Parser(language)
+
+
+def _walk_nodes(node: "tree_sitter.Node") -> "list[tree_sitter.Node]":
+    """Returns every node in the subtree rooted at *node*, itself
+    included, in a stable pre-order (parent before children) --
+    :func:`_reject_via_node_kind_classification` uses this to check
+    every node in the tree against :data:`_ALLOWED_NODE_KINDS`, not just
+    the top level."""
+    out = [node]
+    for child in node.children:
+        out.extend(_walk_nodes(child))
+    return out
+
+
+def _reject_via_node_kind_classification(text: str) -> None:
+    """Raises :class:`ExecPlanRejected` if *text*, parsed as
+    ``tree-sitter-bash``, contains any construct this parser does not
+    recognise as safe -- the #5987 stage 2 classification UNIT (module
+    docstring's own "#5987 stage 2" section has the full reasoning).
+    Runs BEFORE :func:`_iter_tokens` in :func:`parse_exec_plan` — the
+    real accept/reject decision now happens here, against the AST, not
+    against ``shlex`` tokens.
+
+    Three checks, in order:
+
+    1. A PARSE ERROR anywhere in the tree (``tree.root_node.has_error``)
+       — an unterminated quote, a stray/doubled operator, an incomplete
+       redirect, and similar malformed shapes all surface as a parse
+       error rather than needing their own rule.
+    2. Two top-level statements (:data:`_STATEMENT_NODE_KINDS`) directly
+       adjacent with no supported separator between them — the AST's own
+       structural signature for a raw newline (``shlex`` folds a newline
+       into whitespace and would never see it; a real grammar's parser
+       produces two sibling statement nodes with nothing joining them,
+       distinguishable from an explicit ``;``, which still appears as
+       its own sibling token) — or any other unsupported top-level
+       token (a bare ``&``, a stray ``;;``, ...).
+    3. Any node in the tree — at any depth — whose kind is not in
+       :data:`_ALLOWED_NODE_KINDS`, OR any :data:`_LEAF_TEXT_NODE_KINDS`
+       leaf whose own text contains one of :data:`_EXPANSION_LEAF_CHARS`
+       (the disclosed exception — see :data:`_LEAF_TEXT_NODE_KINDS`'s own
+       comment for why glob/tilde/non-leading-``!`` still need this).
+
+    :data:`_PUNCTUATION_CHARS`'s own quote-aware operator/redirect-shape
+    checks in :func:`_iter_tokens` still run AFTER this, unchanged — see
+    module docstring's own "#5987 stage 2" section for why (a redundant
+    backstop for most shapes; the sole remaining primary mechanism for
+    the quoted-operator-shape case, ``grep '|' file``)."""
+    parser = _load_bash_parser()
+    tree = parser.parse(text.encode("utf-8", errors="surrogateescape"))
+    root = tree.root_node
+    if root.has_error:
+        # A heredoc gets its own, more specific reason (matching this
+        # module's pre-#5987 behaviour) -- tree-sitter-bash still
+        # produces a `heredoc_start` node inside the ERROR subtree for
+        # an incomplete heredoc (this parser never accepts one complete
+        # either, its body is arbitrary multi-line content no
+        # segment-level check was designed to scan), so this is
+        # detectable even though the tree as a whole has a parse error.
+        if any(node.type == "heredoc_start" for node in _walk_nodes(root)):
+            raise ExecPlanRejected(
+                "heredoc (\"<<\") is not supported here — this parser "
+                "only decomposes a command line into policy-checkable "
+                "segments, and a heredoc's body is arbitrary multi-line "
+                "content no segment-level check was designed to scan."
+            )
         raise ExecPlanRejected(
-            f"character(s) not supported here (token: {token!r}, "
-            f"character(s): {sorted(hit)!r}) — this parser cannot predict "
-            "what these resolve to at execution time, quoted or not (see "
-            "the module's own docstring, \"If your command gets "
-            "rejected,\" for what to do next)"
+            "could not parse this as a supported shell construct "
+            "(tree-sitter-bash reported a parse error) — see the "
+            "module's own docstring, \"If your command gets rejected,\" "
+            "for what to do next"
         )
 
+    for node in _walk_nodes(root):
+        if node.is_named and node.type not in _ALLOWED_NODE_KINDS:
+            if node.type in _HEREDOC_NODE_KINDS:
+                raise ExecPlanRejected(
+                    "heredoc (\"<<\") is not supported here — this "
+                    "parser only decomposes a command line into "
+                    "policy-checkable segments, and a heredoc's body is "
+                    "arbitrary multi-line content no segment-level check "
+                    "was designed to scan."
+                )
+            raise ExecPlanRejected(
+                f"shell construct not supported here (grammar node "
+                f"kind: {node.type!r}, text: "
+                f"{text[node.start_byte:node.end_byte]!r}) — this "
+                "parser only recognises a fixed, allowlisted set of "
+                "tree-sitter-bash node kinds (see the module's own "
+                "docstring, \"If your command gets rejected,\" for what "
+                "to do next)"
+            )
+        if node.type in _LEAF_TEXT_NODE_KINDS:
+            leaf_text = text[node.start_byte : node.end_byte]
+            hit = _EXPANSION_LEAF_CHARS.intersection(leaf_text)
+            if hit:
+                raise ExecPlanRejected(
+                    f"character(s) not supported here (text: "
+                    f"{leaf_text!r}, character(s): {sorted(hit)!r}) — "
+                    "this parser cannot predict what these resolve to "
+                    "at execution time, quoted or not (see the module's "
+                    "own docstring, \"If your command gets rejected,\" "
+                    "for what to do next)"
+                )
 
-def _reject_raw_newline(text: str) -> None:
-    """Raises :class:`ExecPlanRejected` if *text* contains a literal
-    newline — the ONE check this parser still runs against the RAW
-    string, before any tokenizing (module docstring's own newline
-    section): ``shlex`` folds a newline into ordinary whitespace, so it
-    never reaches a per-token check like
-    :func:`_reject_always_forbidden_characters` at all."""
-    if "\n" in text or "\r" in text:
-        raise ExecPlanRejected(
-            "a newline is not supported here — shlex folds it into "
-            "ordinary whitespace, but a real shell treats it as a "
-            "command separator; this parser cannot tell a newline "
-            "inside quotes from one that would start a second, "
-            "unreviewed command, and refuses to guess"
-        )
+    prev_was_statement = False
+    for child in root.children:
+        if child.is_named and child.type in _STATEMENT_NODE_KINDS:
+            if prev_was_statement:
+                raise ExecPlanRejected(
+                    "two commands with no supported separator between "
+                    "them — this parser cannot tell whether the "
+                    "original text had a newline (a real shell treats "
+                    "that as a command separator) or some other "
+                    "unreviewed join, and refuses to guess"
+                )
+            prev_was_statement = True
+        elif child.type == ";":
+            prev_was_statement = False
+        elif child.is_named and child.type == "comment":
+            pass
+        else:
+            raise ExecPlanRejected(
+                f"unsupported shell construct at the top level (token: "
+                f"{child.type!r}) — this parser only supports "
+                "pipes/chains (| && || ;) and redirects (> >> <), see "
+                "the module docstring for the full rejection list"
+            )
 
 
 # #5838 BLOCKING: `FOO=bar rm -rf /tmp/x` -- a leading `NAME=value`
@@ -321,13 +577,16 @@ def _looks_like_leading_assignment(token: str) -> bool:
 
 
 class ExecPlanRejected(Exception):
-    """Raised by :func:`parse_exec_plan` when *text* contains a
-    character it cannot resolve safely (:data:`_ALWAYS_FORBIDDEN_CHARS`,
-    a raw newline, or an unquoted :data:`_PUNCTUATION_CHARS` occurrence
-    in an unsupported shape), or a shell construct this parser cannot
-    safely decompose into policy-checkable segments (#5838 段2) — see
-    this module's own docstring, "What this parser rejects" and
-    "Denylist -> two-tier allowlist," for the reasoning.
+    """Raised by :func:`parse_exec_plan` when *text* contains a grammar
+    node kind outside :data:`_ALLOWED_NODE_KINDS` (including the AST's
+    own structural signature for a raw newline), a
+    :data:`_EXPANSION_LEAF_CHARS` character this parser cannot resolve
+    safely (glob/tilde/non-leading-``!``), or an unquoted
+    :data:`_PUNCTUATION_CHARS` occurrence in an unsupported shape, or a
+    shell construct this parser cannot safely decompose into
+    policy-checkable segments (#5838 段2) — see this module's own
+    docstring, "What this parser rejects" and "#5987 stage 2," for the
+    reasoning.
 
     This is a v1 narrowing, disclosed, not a claim of covering every
     legitimate shell command: a real, benign command using a character
@@ -417,11 +676,14 @@ def _iter_tokens(text: str) -> "list[tuple[str, bool]]":
     literal text, per the quoting, or — if some future construct this
     parser does not yet know about defeats the quote — as the operator
     it resembles) and refuses to guess. NOT the same situation
-    :func:`_reject_always_forbidden_characters` handles — those
-    characters are rejected because ``shlex`` gives NO quoting signal at
-    all; this one exists because ``shlex`` gives a signal
-    (:data:`_PUNCTUATION_CHARS`) that this specific case cannot fully
-    trust either.
+    :func:`_reject_via_node_kind_classification` handles — this one
+    exists because ``shlex`` gives a signal (:data:`_PUNCTUATION_CHARS`)
+    that this specific case cannot fully trust; the AST-based gate
+    already ran and ACCEPTED this same text (``tree-sitter-bash``
+    correctly parses ``grep '|' file`` as one command with a literal
+    ``|`` argument, no ambiguity) — this check stays the one remaining
+    PRIMARY mechanism for this specific shape, not a backstop (module
+    docstring's own "#5987 stage 2" section).
 
     Raises :class:`ExecPlanRejected` for an unterminated quote (``shlex``
     itself raises ``ValueError``) or for a quoted operator-shaped token
@@ -475,19 +737,21 @@ def parse_exec_plan(text: str) -> "ExecPlan":
     ruling: "実行は... 元の文字列を渡す" — see this module's docstring
     for why).
 
-    The FIRST check (module docstring's own "Denylist -> two-tier
-    allowlist" section) is :func:`_reject_raw_newline`, run against
-    *text* BEFORE any tokenizing: ``shlex`` folds a newline into
-    ordinary whitespace, so a per-token check would never see it —
-    ``"ls\\nrm -rf /tmp/x"`` would otherwise parse as ONE segment whose
-    ``argv[0]`` is the ordinary, almost-certainly-allowed ``"ls"``,
-    while a real shell runs the newline as a command SEPARATOR, running
-    ``rm -rf /tmp/x`` as a second command policy never saw at all.
-    Every other rejection (:func:`_reject_always_forbidden_characters`,
-    the leading-assignment check, an unsupported operator shape) runs
-    per TOKEN, once tokenizing has happened — see the module docstring
-    for why these two checks are not merged into one."""
-    _reject_raw_newline(text)
+    The FIRST check (module docstring's own "#5987 stage 2" section) is
+    :func:`_reject_via_node_kind_classification`, run against the WHOLE
+    of *text*, parsed as ``tree-sitter-bash``, BEFORE any ``shlex``
+    tokenizing: this is where a node kind outside
+    :data:`_ALLOWED_NODE_KINDS`, a :data:`_EXPANSION_LEAF_CHARS`
+    character, or the AST's own structural signature for a raw newline
+    (``"ls\\nrm -rf /tmp/x"`` — two adjacent top-level statement nodes
+    with nothing joining them) gets rejected. Everything after that call
+    runs on text this gate has ALREADY approved — the leading-assignment
+    check and :data:`_PUNCTUATION_CHARS`'s own supported-operator-shape
+    checks still run per TOKEN, once ``shlex`` tokenizing has happened,
+    as a second, narrower pass building the actual :data:`ExecPlan`
+    (module docstring's own "#5987 stage 2" section for why these are
+    not merged into one)."""
+    _reject_via_node_kind_classification(text)
     tokens = _iter_tokens(text)
     if not tokens:
         raise ExecPlanRejected("no command given")
@@ -516,7 +780,11 @@ def parse_exec_plan(text: str) -> "ExecPlan":
                     f"parser (token: {token!r}) — put every argument before "
                     "the redirect"
                 )
-            _reject_always_forbidden_characters(token)
+            # _reject_via_node_kind_classification already rejected every
+            # _EXPANSION_LEAF_CHARS occurrence in *text* (and every node
+            # kind outside _ALLOWED_NODE_KINDS) before this loop ever
+            # ran -- token can only reach here already having passed
+            # that gate.
             if not current_argv and _looks_like_leading_assignment(token):
                 raise ExecPlanRejected(
                     f"a leading NAME=value environment assignment is not "
@@ -542,7 +810,8 @@ def parse_exec_plan(text: str) -> "ExecPlan":
             nxt = tokens[i + 1] if i + 1 < len(tokens) else None
             if nxt is None or nxt[1]:
                 raise ExecPlanRejected(f"redirect {token!r} has no target path")
-            _reject_always_forbidden_characters(nxt[0])
+            # Same note as above -- nxt[0] already passed
+            # _reject_via_node_kind_classification's leaf-text scan.
             plan.append(ExecRedirect(op=token, path=nxt[0]))
             redirect_closed_segment = True
             i += 2
