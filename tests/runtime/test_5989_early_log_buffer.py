@@ -116,12 +116,19 @@ def test_replay_clears_the_buffer_so_a_second_replay_is_a_no_op() -> None:
         _restore_logging_state(saved)
 
 
-def test_the_buffer_never_grows_past_its_own_capacity() -> None:
+def test_the_buffer_never_grows_past_its_own_capacity_and_keeps_the_earliest(
+) -> None:
     """Tier 2: six-questions #5 — MORE records than `capacity` are emitted
-    with NO target ever attached; the buffer must stay capped (oldest
-    dropped), not grow without bound (the real gap in stdlib's own
-    `MemoryHandler` without a target — module docstring, verified by
-    reading cpython's source)."""
+    with NO target ever attached; the buffer must stay capped, not grow
+    without bound (the real gap in stdlib's own `MemoryHandler` without a
+    target — module docstring, verified by reading cpython's source).
+
+    Which end survives matters, not just "some 3 survive" (module
+    docstring's own "which end drops" section, lead-coder review): this
+    buffer exists to save the EARLIEST record (the one closest to
+    process start, the actual motivating case) — dropping from the
+    front on overflow would recreate that exact loss. Pinned here: the
+    3 SURVIVORS are markers 0/1/2 (the earliest), not 7/8/9."""
     saved = _save_logging_state()
     try:
         buffer = early_log_buffer.install(capacity=3)
@@ -131,16 +138,89 @@ def test_the_buffer_never_grows_past_its_own_capacity() -> None:
 
         # The exact-contents check below also pins the count (exactly 3
         # survivors) -- six-questions #5's own answer, "capped at
-        # capacity, oldest dropped," is what this asserts, not a bare
-        # size.
-        kept = [r.getMessage() for r in buffer.buffer]
-        assert kept == ["marker-7", "marker-8", "marker-9"], (
-            f"#5989 REGRESSION: buffer must stay capped at capacity=3, "
-            f"oldest dropped — expected exactly the 3 most recent "
-            f"markers, got {kept!r}"
+        # capacity, EARLIEST kept, rest counted as dropped," is what
+        # this asserts, not a bare size.
+        kept = buffer.kept_messages
+        assert kept == ("marker-0", "marker-1", "marker-2"), (
+            f"#5989 REGRESSION: buffer must keep the EARLIEST capacity=3 "
+            f"records (the motivating case — see module docstring's "
+            f"'which end drops' section), not the most recent — "
+            f"got {kept!r}"
+        )
+        assert buffer.dropped_count == 7, (
+            f"#5989 REGRESSION: the 7 refused records (10 emitted - "
+            f"capacity 3) must be COUNTED, not silently discarded with "
+            f"no trace — got {buffer.dropped_count}"
         )
     finally:
         _restore_logging_state(saved)
+
+
+def test_replay_reports_how_many_early_records_were_dropped() -> None:
+    """Tier 2: lead-coder review — a dropped count that never reaches
+    `reyn.log` leaves a reader unable to tell "0 lost" from "N lost"
+    (the durable, cross-session surface — #5977's own measured
+    incident — not the stderr mirror, which only this ONE process's own
+    terminal sees). `replay_into` must emit ONE synthetic record stating
+    the exact count, after the real buffered records.
+
+    Strip-falsifier (verified by hand: the `if self._dropped:` branch in
+    `replay_into` removed): this test goes red — no record mentioning
+    the drop count reaches the target at all."""
+    saved = _save_logging_state()
+    captured: "list[str]" = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    try:
+        buffer = early_log_buffer.install(capacity=2)
+        logger = logging.getLogger("reyn.canary")
+        for i in range(5):
+            logger.warning("marker-%d", i)
+
+        buffer.replay_into(_RecordingHandler())
+    finally:
+        _restore_logging_state(saved)
+
+    # Exact-contents equality (not a bare len()) pins BOTH the count and
+    # the order: the 2 kept records, then exactly one drop-count record
+    # naming the real count (3 refused: 5 emitted - capacity 2) -- a
+    # missing, duplicated, or miscounted drop record all fail this.
+    assert captured == [
+        "marker-0", "marker-1",
+        "3 early log record(s) were dropped before the interactive CUI's "
+        "own log file existed (buffer capacity=2 exceeded)",
+    ], (
+        f"#5989 REGRESSION: expected the 2 kept records plus exactly 1 "
+        f"drop-count record naming the real count — got {captured!r}"
+    )
+
+
+def test_replay_with_nothing_dropped_reports_nothing_extra() -> None:
+    """Tier 2: falsification contrast for the test above — when NOTHING
+    was dropped, `replay_into` must not emit a spurious drop-count
+    record (a reader must be able to trust its ABSENCE as "0 lost", not
+    have to parse "0 record(s) dropped" every time)."""
+    saved = _save_logging_state()
+    captured: "list[str]" = []
+
+    class _RecordingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    try:
+        buffer = early_log_buffer.install(capacity=10)
+        logging.getLogger("reyn.canary").warning("only-marker")
+        buffer.replay_into(_RecordingHandler())
+    finally:
+        _restore_logging_state(saved)
+
+    assert captured == ["only-marker"], (
+        f"#5989 REGRESSION: replay_into must not emit a drop-count "
+        f"record when nothing was dropped — got {captured!r}"
+    )
 
 
 def test_a_bare_warnings_warn_before_a_target_attaches_also_replays(
