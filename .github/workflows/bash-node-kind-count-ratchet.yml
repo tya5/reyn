@@ -1,0 +1,50 @@
+name: bash-node-kind-count ratchet
+
+# #5987 stage 1: ratchets the COUNT of tree-sitter-bash grammar node-kind
+# names scripts/bash_node_kind_count_ratchet.py derives from the INSTALLED
+# tree-sitter-bash package -- a red means either the dependency was bumped
+# (update the committed baseline, scripts/bash_node_kind_count_baseline.json,
+# in the SAME PR as the bump) or src/reyn/security/bash_node_kinds.py's own
+# derivation logic broke. See that script's own module docstring for the
+# full design. Landed (#6086) without ever being wired into a workflow --
+# scripts/check_ci_role_declared.py (#6014) caught the gap.
+#
+# `paths` matches everything that can move this gate's own inputs: the
+# dependency declaration, the derivation module, the script itself, and its
+# committed baseline.
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "src/reyn/security/bash_node_kinds.py"
+      - "scripts/bash_node_kind_count_ratchet.py"
+      - "scripts/bash_node_kind_count_baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  bash-node-kind-count-ratchet:
+    name: bash-node-kind-count ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/bash_node_kind_count_ratchet.py imports
+      # reyn.security.bash_node_kinds, which needs the real installed
+      # tree-sitter/tree-sitter-bash packages (core deps) -- an editable
+      # install of the project itself is required, unlike most gate
+      # scripts here which are stdlib-only.
+      - name: Install reyn (core deps only)
+        run: pip install -e . -c ci-constraints.txt
+
+      - name: Check the bash-node-kind-count ratchet
+        run: |
+          python scripts/bash_node_kind_count_ratchet.py
