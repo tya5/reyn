@@ -174,8 +174,48 @@ jobs:
       # `reyn.hooks.schema_registry` and `reyn.interfaces.repl.read_model`,
       # all reachable from the base dependency set. Extras would widen
       # what a resolver failure can take down with no gate asking for it.
+      #
+      # `timeout 8m` (#3670's idiom, #6014's reason): this is the first
+      # step in this file that can HANG — `textual-flowview` is a
+      # `git+https` dependency, so a clone can stall indefinitely, and pip
+      # resolution can backtrack. Installing at the head (above) is what
+      # makes that matter: a hang here burns the job's own
+      # `timeout-minutes: 10`, and a job killed by `timeout-minutes`
+      # reports `cancelled`, not `failure` — which makes
+      # `if: ${{ !cancelled() }}` on every gate below FALSE and skips all
+      # twelve. That is strictly worse than a red gate: a red one is
+      # legible, a skipped one says nothing at all. `timeout` turns the
+      # same hang into an ordinary non-zero step exit (124), so the job
+      # is never `cancelled` and every gate below still runs and reports.
+      #
+      # Where 8m comes from — derived, not picked:
+      #   budget                                              600s
+      #   - everything else, worst case within the 28 red runs -32s
+      #       (sum of each step's own observed maximum, which is
+      #        pessimistic on purpose: no single run was that slow —
+      #        the worst OBSERVED whole-job total was 24s)
+      #   - the 3 gates below actually doing their work            -5s
+      #       (they died on `import reyn` in all 28 of those runs, so
+      #        their real cost is absent from the measurement above;
+      #        0.15-0.36s each measured locally, 5s is CI headroom)
+      #   - margin                                              -83s
+      #   = 480s = 8m
+      #
+      # The margin exists because an observed maximum is not an upper
+      # bound: 28 runs sample ONE tree state, the API reports step
+      # durations at 1-second granularity, and a loaded runner is slower
+      # than any of them. 8m is also ~3x a cold install of this
+      # dependency set, so it fires on a hang and never on a slow-but-
+      # working one.
+      #
+      # `cache: pip` above makes the two cases differ a lot: a WARM run
+      # reinstalls from cached wheels, a COLD one (first run after this
+      # file, `pyproject.toml` or `ci-constraints.txt` changes, or after
+      # the cache expires) downloads and builds everything AND clones
+      # `textual-flowview` over the network. 8m is sized for the cold
+      # case — do not re-derive it from a warm run's duration.
       - name: Install reyn (the gates below that import it need this)
-        run: pip install -e . -c ci-constraints.txt
+        run: timeout 8m pip install -e . -c ci-constraints.txt
 
       # Most steps below are stdlib-only (ast / pathlib / sys), same as
       # their per-PR counterparts; the last 3 import `reyn` itself and
