@@ -1,9 +1,8 @@
-"""Tier 1: #4496 PR-2 — `audit_events.backend` config parsing.
+"""Tier 1: #4496 PR-2/PR-4 — `audit_events.backend` config parsing.
 
 `local` (default, preserves pre-PR-2 behavior unchanged) / `discard`
-(sink-null, wired). `network` is a declared-future, not-yet-implemented
-value (see `AuditEventsConfig.backend`'s own docstring for why) — an
-operator who sets it, or any other unrecognized string, gets the standard
+(sink-null, wired) / `network` (PR-4, wired — requires `network_endpoint`,
+see below). An operator who sets an unrecognized string gets the standard
 malformed-value-falls-back-to-default discipline this parser already uses
 for its other fields (#4479 precedent), not a raise and not a silent
 accept of a string nothing can resolve to a real backend.
@@ -32,12 +31,31 @@ def test_discard_parses_through():
     assert cfg.backend == "discard"
 
 
-def test_network_falls_back_to_default_not_accepted_verbatim():
-    """Tier 1: `network` is declared in the docstring as a future value but
-    has no backend implementation behind it yet (#4496's open on-failure-
-    semantics decision) — falls back to `local` rather than reaching
-    `Session._build_events_backend` with a value it can't resolve."""
+def test_network_with_endpoint_parses_through():
+    """Tier 1: #4496 PR-4 — `network` is now a real, wired value, AS LONG
+    AS an endpoint is configured alongside it (see the no-endpoint test
+    below for the fallback that protects `_build_events_backend` from
+    reaching a half-built backend)."""
+    cfg = _build_audit_events_config(
+        {"backend": "network", "network_endpoint": "http://example.invalid/events"},
+    )
+    assert cfg.backend == "network"
+    assert cfg.network_endpoint == "http://example.invalid/events"
+
+
+def test_network_without_endpoint_falls_back_to_default():
+    """Tier 1: #4496 PR-4's own documented choice (not specified by the
+    issue thread) — `backend: network` with no usable endpoint configured
+    cannot build a real `NetworkEventBackend`, so the WHOLE backend
+    selection falls back to `local` rather than reaching
+    `Session._build_events_backend` with a value it can't resolve. This
+    premise REPLACES the pre-PR-4 test of the same shape (`network` used
+    to have no implementation at all, so ANY value of it fell back) — now
+    only the no-endpoint case does."""
     cfg = _build_audit_events_config({"backend": "network"})
+    assert cfg.backend == "local"
+
+    cfg = _build_audit_events_config({"backend": "network", "network_endpoint": "   "})
     assert cfg.backend == "local"
 
 

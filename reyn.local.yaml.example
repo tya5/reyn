@@ -727,7 +727,7 @@
 #   max_age_seconds: 86400           # 1 day
 #   cleanup_period_days: 30          # 0 = never auto-delete by age
 #   max_disk_usage_percent: 10       # 0 = never auto-delete by size
-#   backend: local                   # local | discard
+#   backend: local                   # local | discard | network (#4496 PR-4)
 #   agent_delta_coalesce_fragments: 100     # durable write every N streamed chunks
 #   agent_delta_coalesce_interval_ms: 2000  # or every T ms, whichever first
 #   agent_delta_include_text: false         # keep the reply's own content in the durable record?
@@ -736,6 +736,20 @@
 #   provider_body_include_text: false       # keep a provider's own error-response body/text? (lattice-meet, see above)
 #   provider_body_max_chars: 4000           # cap on the kept provider_body/provider_response, when shown
 #   tool_result_max_chars: 4000             # cap on a kept tool return value (unconditional, no opt-in)
+#   # The 4 fields below are only consulted when backend: network (#4496 PR-4).
+#   # What goes out: the SAME event object `local` would have written to disk,
+#   # unmodified -- no redaction applied or removed for this path, and no
+#   # scheme is enforced (a plain http:// endpoint sends that payload,
+#   # including any opted-in content above, in clear text). See the
+#   # network_endpoint row in docs/reference/config/reyn-yaml.md for the
+#   # full picture.
+#   on_failure: discard               # discard | spool -- what happens if a POST to network_endpoint fails.
+#                                      # discard (default): drop it, audit_seq still increments (not silent).
+#                                      # spool: buffer the failed event on LOCAL disk instead (see below) --
+#                                      # choosing this means events ARE held locally despite picking network.
+#   network_endpoint: ""              # the HTTP endpoint NetworkEventBackend POSTs each event to; "" = unset (falls back to local)
+#   network_timeout_s: 5.0            # per-POST timeout
+#   network_spool_max_bytes: 10485760 # caps the local spool when on_failure: spool (10 MB)
 
 
 # -----------------------------------------------------------------------------
