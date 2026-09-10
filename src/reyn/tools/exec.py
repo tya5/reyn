@@ -3,12 +3,25 @@
 Router-callable capability that exposes the FP-0017
 ``sandboxed_exec`` op_runtime handler via the universal catalog
 (``exec`` qualified name). #3226 Phase 3: the tool itself was
-renamed ``sandboxed_exec`` -> ``exec`` (the surviving argv-only exec
-primitive, collapsed to the owner-directed name); the op_runtime layer
+renamed ``sandboxed_exec`` -> ``exec`` (the surviving exec primitive,
+collapsed to the owner-directed name); the op_runtime layer
 (``SandboxedExecIROp``, ``OP_KIND_MODEL_MAP["sandboxed_exec"]``, the
 ``sandboxed_exec_started``/``_completed``/``_cancelled`` audit-events)
 is UNCHANGED — only the tool/qualified name + the ``permissions.exec``
 key moved.
+
+#5838 段6: the LLM-facing schema (``_EXEC_PARAMETERS``) now exposes a
+second, mutually-exclusive request shape alongside ``argv`` — ``cmd``
+(a shell command-line string, parsed for POLICY via
+``security.exec_plan``/``security.exec_plan_policy`` and then run via
+the sandbox's shell with the string UNCHANGED, never a reconstruction
+from the parsed plan; see ``core/op_runtime/sandboxed_exec.py``'s own
+module docstring for the full owner-ruling rationale). Exactly one of
+argv/cmd is enforced as a TOOL ERROR by ``_handle`` below (never a
+JSON Schema ``oneOf``/``anyOf``, and never a raw ``KeyError``) —
+``argv`` stays the primary, unchanged path for every existing caller;
+``cmd`` has no ``collect="async"`` leg in this stage (a deliberate
+scope boundary, not an oversight — see ``_handle``'s own comment).
 
 #4932 (owner ruling, 2026-08-19): the ``exec`` category is ALWAYS visible
 to the LLM — it is no longer hidden when no real sandbox backend is
@@ -68,6 +81,22 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             "items": {"type": "string"},
             "description": _execution_descriptions.PARAMS["exec"]["argv"].text,
         },
+        # #5838 段6: exactly one of argv / cmd must be given. NOT expressed
+        # via JSON Schema oneOf/anyOf (architect ruling, #5838 issue
+        # thread) — a oneOf/anyOf XOR is not guaranteed to be enforced by
+        # every LLM-facing schema consumer, and a missed enforcement would
+        # fall straight back into the KeyError this stage exists to
+        # prevent. The XOR check lives in `_handle` below instead,
+        # returning a tool error (never an exception) that names which
+        # parameter to use. `SandboxedExecIROp`'s own model_validator
+        # re-checks the SAME invariant at the op level (defense in depth —
+        # it is only reached once `_handle` has already read args["argv"]/
+        # args["cmd"] without a KeyError, so it can never be the FIRST
+        # thing to catch a violation coming from this tool).
+        "cmd": {
+            "type": "string",
+            "description": _execution_descriptions.PARAMS["exec"]["cmd"].text,
+        },
         "timeout": {
             # lead-coder review (#4179): "integer", not "number" — a
             # sub-second override has no meaning here, so the schema
@@ -104,7 +133,12 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             "description": _execution_descriptions.PARAMS["exec"]["collect"].text,
         },
     },
-    "required": ["argv"],
+    # #5838 段6: `argv` is no longer required here — `cmd` alone is a
+    # valid call now too. The XOR itself is enforced in `_handle`, not
+    # expressible as `required` (there is no "exactly one of A, B"
+    # `required` shape in JSON Schema) — see the `cmd` property comment
+    # above for why this stays a tool error, not a schema-level oneOf.
+    "required": [],
 }
 
 
@@ -248,6 +282,52 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     stays ``sandboxed_exec`` (#3226 Phase 3 renamed only the tool/
     qualified-name surface, not the Control IR op).
     """
+    # #5838 段6: exactly one of argv / cmd, checked HERE (before either
+    # branch below reads args["argv"] directly) -- relaxing the schema's
+    # `required` to let `cmd` alone through (this tool's own `_EXEC_
+    # PARAMETERS` comment) means a `cmd`-only call reaches this function
+    # with no "argv" key at all, and a bare `args["argv"]` read below
+    # would be a raw KeyError -- an exception the LLM cannot act on,
+    # never reaching `SandboxedExecIROp`'s own XOR `model_validator` (that
+    # validator is reached only once an op has ALREADY been constructed,
+    # i.e. only after a bare `args["argv"]` read has already either
+    # succeeded or raised). `bool(argv)` mirrors the op's own validator
+    # exactly (`argv=[]` -- the schema has no "omitted" for an array type
+    # -- is treated as "not given", same as `SandboxedExecIROp._exactly_
+    # one_of_argv_or_cmd`), so this check and that one never disagree.
+    given_argv = bool(args.get("argv"))
+    given_cmd = args.get("cmd") is not None
+    if given_argv == given_cmd:  # both or neither
+        return {
+            "kind": "sandboxed_exec",
+            "status": "error",
+            "error": (
+                "exec requires exactly one of argv / cmd — "
+                f"{'both were given' if given_argv else 'neither was given'}. "
+                "Use argv (a list of command + arguments) for the plain "
+                "form, or cmd (a shell command-line string, e.g. pipes/"
+                "redirects) for shell syntax — not both, not neither."
+            ),
+        }
+
+    # #5838 段6: `cmd` has no async leg -- `run_exec_async` (session_api.
+    # py) has signature `argv: list[str]`, no `cmd` parameter, a
+    # deliberate scope boundary (not an oversight; wiring `cmd` through
+    # the async path is explicitly OUT OF SCOPE for this stage -- file a
+    # separate stage if/when it's wanted). Rejecting here, before the
+    # collect="async" branch below ever reads `args["argv"]`, turns what
+    # would otherwise be a raw KeyError into a tool error the LLM can act
+    # on.
+    if given_cmd and args.get("collect") == "async":
+        return {
+            "kind": "sandboxed_exec",
+            "status": "error",
+            "error": (
+                "cmd is sync-only; use argv for async execution "
+                '(collect="async" has no cmd support in this release).'
+            ),
+        }
+
     # #4733: collect="async" dispatches to RouterCallerState.
     # sandboxed_exec_async_fn (bound by RouterLoop, mirrors run_prompt's own
     # collect="async" branch in run_prompt.py) instead of building an
@@ -271,18 +351,24 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     from reyn.core.op_runtime.sandboxed_exec import handle as handle_sandboxed_exec
     from reyn.schemas.models import SandboxedExecIROp
 
-    # #1339 / sandbox-model completion: the LLM supplies argv (+ optional
-    # timeout, #3903①). The op's other policy fields keep their defaults
-    # here — the effective sandbox policy is operator-or-default, resolved
-    # onto the OpContext (ctx.default_sandbox_policy), which the op_runtime
-    # handler applies over the op fields. The LLM cannot set fs scope via
-    # this tool — timeout (#3903①) and network (#5825①) are the two axes
-    # it CAN request, both bounded by a real gate (see op_runtime/
+    # #1339 / sandbox-model completion: the LLM supplies argv OR cmd (#5838
+    # 段6, checked exactly-one above) + optional timeout (#3903①). The
+    # op's other policy fields keep their defaults here — the effective
+    # sandbox policy is operator-or-default, resolved onto the OpContext
+    # (ctx.default_sandbox_policy), which the op_runtime handler applies
+    # over the op fields. The LLM cannot set fs scope via this tool —
+    # timeout (#3903①) and network (#5825①) are the two axes it CAN
+    # request, both bounded by a real gate (see op_runtime/
     # sandboxed_exec.py for timeout's ceiling check and its own #5825 ①
-    # seam for network's ask-or-deny).
+    # seam for network's ask-or-deny). `argv=args.get("argv") or []`: the
+    # op's own default is `[]` (Field(default_factory=list)) for a
+    # cmd-only call — passing the schema's omitted value through as `[]`
+    # rather than `None` matches that default exactly, never reaching the
+    # op's `_exactly_one_of_argv_or_cmd` validator with a mismatched shape.
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
-        argv=args["argv"],
+        argv=args.get("argv") or [],
+        cmd=args.get("cmd"),
         timeout_seconds=args.get("timeout"),
         network=bool(args.get("network", False)),
     )
