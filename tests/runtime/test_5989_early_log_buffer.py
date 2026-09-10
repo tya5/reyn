@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import warnings
 
+import pytest
+
 from reyn.runtime import early_log_buffer
 
 
@@ -261,12 +263,17 @@ def test_a_bare_warnings_warn_before_a_target_attaches_also_replays(
         _restore_logging_state(saved)
 
 
-def test_with_no_target_ever_attached_stderr_visibility_is_unchanged() -> None:
-    """Tier 2: the "handler never attaches" path (--cui / non-TTY, or an
-    early crash) — the stderr mirror `install()` also attaches must keep
-    showing WARNING+ records, matching what `logging.lastResort` already
-    did before this module existed. Regression guard for the
-    non-interactive path, not just "the buffer doesn't grow.\""""
+def test_with_no_target_ever_attached_the_exit_fallback_reaches_stderr() -> None:
+    """Tier 2: #6043 — the "handler never attaches" path (--cui / non-TTY,
+    or an early crash) must not lose buffered records forever; the
+    `atexit` fallback (`_flush_to_stderr_at_exit`, called here directly
+    rather than by actually exiting the process — the real trigger is
+    `atexit`, this drives the SAME function) delivers them to stderr.
+
+    NOT live visibility (module docstring's own "A real regression"
+    section — that was #6043's own bug): this is deferred to the
+    fallback running, matching production's own `atexit`-triggered
+    timing, not `install()` time."""
     import io
     import sys
 
@@ -275,17 +282,67 @@ def test_with_no_target_ever_attached_stderr_visibility_is_unchanged() -> None:
     real_stderr = sys.stderr
     try:
         sys.stderr = fake_stderr
-        early_log_buffer.install()
-        logging.getLogger("reyn.canary").warning("stderr-mirror-marker")
-        for h in logging.getLogger().handlers:
-            h.flush()
+        buffer = early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("stderr-fallback-marker")
 
-        assert "stderr-mirror-marker" in fake_stderr.getvalue(), (
-            "#5989 REGRESSION: with no target ever attached, a WARNING "
-            "must still reach stderr (the same visibility "
-            "logging.lastResort already provided) — got "
+        assert "stderr-fallback-marker" not in fake_stderr.getvalue(), (
+            "test setup sanity: a WARNING must NOT reach stderr live "
+            "(the #6043 bug this module no longer has) -- only at the "
+            "exit-fallback below"
+        )
+
+        early_log_buffer._flush_to_stderr_at_exit(buffer)
+
+        assert "stderr-fallback-marker" in fake_stderr.getvalue(), (
+            "#5989 REGRESSION: with no target ever attached, the exit-time "
+            "fallback must still deliver a WARNING to stderr — got "
             f"{fake_stderr.getvalue()!r}"
         )
     finally:
         sys.stderr = real_stderr
+        _restore_logging_state(saved)
+
+
+def test_the_exit_fallback_never_constructs_a_handler_once_already_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #6043 — `_flush_to_stderr_at_exit`'s own `if buffer.
+    replayed: return` guard, witnessed directly (NOT via stderr content —
+    disclosed, not hidden: `replay_into` is independently idempotent on
+    an already-empty buffer, so a version of this test asserting merely
+    "stderr stays empty" would pass even with the guard deleted, since
+    the empty buffer alone already produces no output either way — that
+    shape was caught writing this test and is NOT what is asserted
+    below). Witnessed instead: whether `_flush_to_stderr_at_exit` even
+    CONSTRUCTS a `logging.StreamHandler` at all — spied via monkeypatch
+    (the real class still runs; only the call is recorded, same "wrap
+    the real thing" shape this file's other tests already use).
+
+    Strip-falsifier (verified by hand: the `if buffer.replayed: return`
+    guard removed): this test goes red — a `StreamHandler` gets
+    constructed even though nothing was buffered to replay."""
+    saved = _save_logging_state()
+    constructed: "list[object]" = []
+    real_stream_handler = logging.StreamHandler
+
+    def spy_stream_handler(*args, **kwargs):  # type: ignore[no-untyped-def]
+        handler = real_stream_handler(*args, **kwargs)
+        constructed.append(handler)
+        return handler
+
+    try:
+        buffer = early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("already-replayed-marker")
+        buffer.replay_into(logging.NullHandler())
+        assert buffer.replayed is True
+
+        monkeypatch.setattr(logging, "StreamHandler", spy_stream_handler)
+        early_log_buffer._flush_to_stderr_at_exit(buffer)
+
+        assert constructed == [], (
+            f"#6043 REGRESSION: _flush_to_stderr_at_exit constructed a "
+            f"StreamHandler even though replay_into() already ran — "
+            f"got {constructed!r}"
+        )
+    finally:
         _restore_logging_state(saved)

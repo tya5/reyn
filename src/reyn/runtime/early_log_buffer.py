@@ -84,15 +84,39 @@ this ONE process's own terminal).
   it once, in order, followed by the dropped-count record if any were
   refused, then the buffer is cleared and never buffers again — see
   :meth:`_BoundedEarlyBuffer.replay_into`.
-- **No target ever attaches** (``--cui``/non-TTY, or an early crash): the
-  buffer just sits at its cap, refusing further records, for the rest of
-  the process's life — bounded memory, no behavioural change to anything
-  else. The mirrored ``StreamHandler(sys.stderr)`` installed alongside it
-  (see :func:`install`) keeps stderr visibility IDENTICAL to what
-  ``logging.lastResort`` already provided before this change (same level,
-  same destination) — this module only makes that fallback explicit
-  early enough to also feed the buffer; it does not add or remove a
-  second copy of anything a non-interactive run already showed.
+- **No target ever attaches** (``--cui``/non-TTY, which never installs
+  ANY file handler by design; or an early crash before
+  ``_setup_interactive_logging`` runs): an :mod:`atexit` hook (armed by
+  :func:`install`) dumps whatever is still buffered straight to stderr,
+  ONCE, at process exit — see :func:`_flush_to_stderr_at_exit`.
+
+## A real regression, caught by owner review, and its fix (#6043)
+
+The first version of this module installed a SECOND stderr handler
+(``mirror``) unconditionally alongside the buffer, reasoning it "matches
+``logging.lastResort``'s own level/destination, so it doesn't change
+current visibility." That reasoning does not hold, and it broke the
+interactive CUI on a real machine (owner report, #6043 — "reyn.log に
+残せば良いのにわざわざ stderr 使ってるの？", a raw ``logging`` line
+appearing between the sent-queue and the input box):
+
+- ``logging.lastResort`` only fires when a logger's effective handler
+  chain is EMPTY — the moment ANY handler attaches to root (the buffer
+  itself, with no mirror at all), ``lastResort`` already stops firing on
+  its own. The mirror did not "keep the same destination active"; it
+  added a SECOND, unconditional one that fires on every single record,
+  not only when nothing else would have caught it.
+- The buffer's own purpose was "replay into ``reyn.log`` later" — once
+  that replay lands, writing the SAME records to stderr too is not
+  preserving prior behaviour, it is duplicating output, live, for the
+  entire time the interactive TUI owns the terminal (every WARNING+
+  record from then on, not just the pre-handler window this module
+  exists to cover).
+
+Fixed: no mirror handler at all. The ONLY path records ever reach stderr
+through THIS module is the exit-time fallback above, and only when
+:meth:`_BoundedEarlyBuffer.replay_into` never ran at all — the interactive
+path (where ``replay_into`` DOES run) never sees it.
 
 ``logging.captureWarnings(True)`` is armed in the SAME early window (not
 only later, inside ``_setup_interactive_logging`` as before) — a bare
@@ -128,6 +152,7 @@ measured, not worth measuring.
 """
 from __future__ import annotations
 
+import atexit
 import logging
 import sys
 
@@ -150,6 +175,11 @@ class _BoundedEarlyBuffer(logging.Handler):
         self._capacity = capacity
         self._records: "list[logging.LogRecord]" = []
         self._dropped = 0
+        #: True once :meth:`replay_into` has run at least once — the
+        #: exit-time fallback (:func:`_flush_to_stderr_at_exit`) checks
+        #: this to stay a no-op on the interactive path, where a real
+        #: replay already happened.
+        self.replayed = False
 
     @property
     def kept_messages(self) -> "tuple[str, ...]":
@@ -207,6 +237,7 @@ class _BoundedEarlyBuffer(logging.Handler):
                 target.handle(dropped_record)
             self._records.clear()
             self._dropped = 0
+            self.replayed = True
         finally:
             self.release()
 
@@ -214,11 +245,29 @@ class _BoundedEarlyBuffer(logging.Handler):
 _installed: "_BoundedEarlyBuffer | None" = None
 
 
+def _flush_to_stderr_at_exit(buffer: _BoundedEarlyBuffer) -> None:
+    """#6043: the ``atexit`` fallback for the ONE real path where
+    :meth:`_BoundedEarlyBuffer.replay_into` never runs — ``--cui``/
+    non-TTY invocations (which never call ``chat._setup_interactive_
+    logging`` at all, by design) and an early crash before that call.
+    A no-op if ``replay_into`` already ran (the interactive path) —
+    checked first, so this never duplicates output there."""
+    if buffer.replayed:
+        return
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    buffer.replay_into(stderr_handler)
+
+
 def install(capacity: int = _DEFAULT_CAPACITY) -> _BoundedEarlyBuffer:
-    """Install the bounded early buffer (plus a stderr mirror matching
-    ``logging.lastResort``'s own level/destination) on the root logger, as
-    early in process startup as this can be called. Idempotent — a second
-    call returns the SAME instance already installed, never double-installs.
+    """Install the bounded early buffer on the root logger, as early in
+    process startup as this can be called. Idempotent — a second call
+    returns the SAME instance already installed, never double-installs.
+
+    #6043: NO stderr mirror handler — see this module's own "A real
+    regression" section for why one existed here before and why it was
+    wrong. The only path buffered records reach stderr through this
+    module is :func:`_flush_to_stderr_at_exit`, armed below, which only
+    acts if :meth:`_BoundedEarlyBuffer.replay_into` never ran.
 
     Call this as the very first statement of ``reyn``'s own CLI entry
     point (:func:`reyn.interfaces.cli.main`) — before anything else that
@@ -227,14 +276,12 @@ def install(capacity: int = _DEFAULT_CAPACITY) -> _BoundedEarlyBuffer:
     if _installed is not None:
         return _installed
     root = logging.getLogger()
-    mirror = logging.StreamHandler(sys.stderr)
-    mirror.setLevel(logging.WARNING)
-    root.addHandler(mirror)
     buffer = _BoundedEarlyBuffer(capacity)
     buffer.setLevel(logging.WARNING)
     root.addHandler(buffer)
     logging.captureWarnings(True)
     _installed = buffer
+    atexit.register(_flush_to_stderr_at_exit, buffer)
     return buffer
 
 
@@ -246,8 +293,19 @@ def get_installed() -> "_BoundedEarlyBuffer | None":
 
 
 def _reset_for_tests() -> None:
-    """Test-only: clears the module-level singleton so a test can call
-    :func:`install` again as if starting fresh. Never called from
-    production code."""
+    """Test-only: clears the module-level singleton AND unregisters the
+    ``atexit`` fallback :func:`install` armed, so a test can call
+    :func:`install` again as if starting fresh. Without the ``atexit.
+    unregister`` call, every test that calls :func:`install` would leave
+    its own fallback registered — accumulating for the rest of the
+    pytest process's life, each one referencing a stale buffer instance,
+    all firing (harmlessly, but pointlessly) at the real pytest process's
+    own exit. ``atexit.unregister`` matches by the callable itself
+    (:func:`_flush_to_stderr_at_exit`), not by the *buffer* argument it
+    was registered with, so this removes every pending registration this
+    module has ever made in THIS process, not only the most recent one —
+    correct here since a test-only reset should leave none behind at
+    all. Never called from production code."""
     global _installed
+    atexit.unregister(_flush_to_stderr_at_exit)
     _installed = None
