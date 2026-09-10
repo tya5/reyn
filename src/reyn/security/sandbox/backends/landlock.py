@@ -429,7 +429,9 @@ class LandlockBackend:
         vacuously."""
         return True
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None" = None,
+    ) -> WrappedCommand:
         """Prepend the ``landlock_exec`` re-exec shim to *argv* for a
         persistent-process launch (e.g. a stdio MCP server, #1344 follow-up E).
         Landlock has no CLI wrapper, so the shim (a re-exec-and-restrict-self
@@ -446,7 +448,9 @@ class LandlockBackend:
         executable, shim_argv = build_landlock_exec_argv(policy, argv[0], list(argv[1:]))
         env = resolve_passthrough_env(policy)
         if "PATH" not in env:
-            path = ambient_path()  # #6008: memoized, one real read per process
+            # #6058: the caller's own per-operation read, when supplied —
+            # see `backend.py`'s own `ambient_path()` docstring.
+            path = env_path if env_path is not None else ambient_path()
             if path is not None:
                 env["PATH"] = path
         return WrappedCommand(argv=[executable, *shim_argv], env=env, cleanup=None)
@@ -461,6 +465,7 @@ class LandlockBackend:
         cancel_event: asyncio.Event | None = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None" = None,
     ) -> SandboxResult:
         """Execute argv under Landlock isolation and return the result.
 
@@ -487,7 +492,9 @@ class LandlockBackend:
         # resolve_passthrough_env chokepoint.
         env = resolve_passthrough_env(policy)
         if "PATH" not in env:
-            path = ambient_path()  # #6008: memoized, one real read per process
+            # #6058: the caller's own per-operation read, when supplied —
+            # see `backend.py`'s own `ambient_path()` docstring.
+            path = env_path if env_path is not None else ambient_path()
             if path is not None:
                 env["PATH"] = path
         # #4204 bucket E: see NoopBackend.run's matching comment — a direct

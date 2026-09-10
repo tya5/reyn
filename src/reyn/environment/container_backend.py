@@ -619,7 +619,9 @@ class DockerEnvironmentBackend:
         registry-derived census for the structural fix)."""
         return True
 
-    def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
+    def wrap_command(
+        self, argv: list[str], policy: SandboxPolicy, *, env_path: "str | None" = None,
+    ) -> WrappedCommand:
         """Prepend a ``docker exec`` invocation to *argv* for a PERSISTENT-process
         launch (e.g. a stdio MCP server, #2620) inside the SAME container
         ``run()`` execs into. Mirrors ``run()``'s login-shell + argv-faithful
@@ -644,7 +646,14 @@ class DockerEnvironmentBackend:
         neither ``_sync_runner`` nor ``_async_runner`` passes ``env=`` at
         all, i.e. full host inherit for the CLI call itself. Returning that
         SAME choice here keeps ``wrap_command()`` and ``run()`` consistent
-        with each other rather than inventing a THIRD, novel policy."""
+        with each other rather than inventing a THIRD, novel policy.
+
+        ``env_path`` (#6058): accepted for Protocol conformance (every
+        caller of :meth:`SandboxBackend.wrap_command` now passes it
+        uniformly) but UNUSED here — see the ``env`` discussion just above:
+        this class returns the full host env unconditionally, never a
+        filtered/PATH-fallback build, so there is no ``PATH``-fallback
+        branch for a per-operation value to feed."""
         wrapped_argv = [
             self.docker_bin, "exec", "-i",
             "-w", self.repo_dir, self.container,
@@ -657,8 +666,14 @@ class DockerEnvironmentBackend:
         cwd: str | None = None, cancel_event: "asyncio.Event | None" = None,
         hook_process_context: "HookProcessContext | None" = None,
         sink: "Callable[[int, bytes], None] | None" = None,
+        env_path: "str | None" = None,
     ) -> SandboxResult:
         """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
+
+        ``env_path`` (#6058): accepted for Protocol conformance, UNUSED —
+        see :meth:`wrap_command`'s own docstring (same reasoning: this
+        class's own runners pass no ``env=`` at all, full host inherit, so
+        there is no PATH-fallback branch here either).
 
         The files are already in ``repo_dir`` (the agent edited them via the FS
         methods above), so there is nothing to sync in. Honors
