@@ -29,6 +29,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # #5989 symptom 3: buffer WARNING+ records (and warnings.warn calls)
+    # from the very first statement of this function — the interactive
+    # CUI's own log-file redirect (chat._setup_interactive_logging) does
+    # not install until partway through startup, and a record emitted
+    # before that has no handler to reach; see early_log_buffer.py's own
+    # module docstring for the full design. Must run before anything else
+    # in this function that could log, including tracemalloc arming below.
+    from reyn.runtime.early_log_buffer import install as _install_early_log_buffer  # noqa: PLC0415
+
+    _install_early_log_buffer()
     # #5959 stage ③: arm tracemalloc (opt-in, REYN_MEMORY_TRACE) FIRST,
     # before anything else in this function runs — tracemalloc only
     # attributes allocations that happen AFTER it starts, so arming it any

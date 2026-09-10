@@ -362,6 +362,18 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
     the record either way. When *is_interactive* is ``True``, ``reyn.log``
     is the ONLY destination, exactly as before.
 
+    #5989 symptom 3: this is not the true start of the process, though —
+    anything logged between interpreter startup and this call (argument
+    parsing, process registration, the import tree) has no handler to
+    reach yet. ``reyn.interfaces.cli.main`` installs a bounded, capacity-
+    limited buffer (:mod:`reyn.runtime.early_log_buffer`) as its own very
+    first statement specifically to catch that earlier window; this
+    function replays whatever it collected into the real handler below,
+    right after installing it (unconditionally too, for the same reason
+    as the file handler itself) — see that module's own docstring for the
+    full design and why a plain "buffer forever" primitive was not
+    enough on its own.
+
     Deliberately does NOT import litellm (perf: ``import litellm`` costs
     ~1.5s and this runs on the startup path, before the input box renders).
     litellm's own log routing + ``suppress_debug_info`` is applied lazily at
@@ -419,7 +431,16 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
     from logging.handlers import RotatingFileHandler
 
     from reyn.config.chat import LogsConfig
-    from reyn.runtime import stall_trace
+    from reyn.runtime import early_log_buffer, stall_trace
+
+    # #5989 symptom 3: grab the early buffer BEFORE force=True below wipes
+    # it off the root logger — the module-level singleton survives being
+    # detached (it is a plain Python object reference, not tied to being
+    # attached), so this still works even though `force=True` removes it
+    # from `root.handlers`. `None` when this process never went through
+    # `reyn.interfaces.cli.main` (e.g. a test calling this function
+    # directly) — nothing to replay in that case.
+    early_buffer = early_log_buffer.get_installed()
 
     defaults = LogsConfig()
     log_dir = project_root / ".reyn" / "logs"
@@ -448,10 +469,18 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
         # Safe unconditionally: this function now always runs as the
         # first thing that could configure logging (both call sites
         # dropped their own `if is_interactive:` gate) — there is no
-        # prior setup for `force=True` to ever actually be overriding.
+        # prior setup for `force=True` to ever actually be overriding,
+        # EXCEPT early_log_buffer.install() (called at the very top of
+        # cli.main()), which already attached its own bounded buffer to
+        # the root logger. force=True replaces that buffer with the
+        # real handler(s) built above, which is exactly what's wanted —
+        # the buffer's own PAST records are recovered separately below,
+        # not lost by this wipe.
         force=True,
     )
     logging.captureWarnings(True)
+    if early_buffer is not None:
+        early_buffer.replay_into(handler)
     # #5873 follow-up (architect, #5877 re-co-vet): declare the path
     # directly rather than making stall_trace.find_file_handler_path()
     # re-derive it by scanning root-logger handlers for one whose path

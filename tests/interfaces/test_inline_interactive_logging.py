@@ -369,3 +369,68 @@ def test_apply_logs_config_still_refines_the_non_interactive_handler(tmp_path) -
         logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
+
+
+# ── #5989 symptom 3: a pre-handler-install record is not lost ──────────────
+
+
+def test_a_warning_before_setup_replays_into_the_real_file_once_installed(
+    tmp_path,
+) -> None:
+    """Tier 2: #5989 symptom 3 — a WARNING emitted BEFORE
+    `_setup_interactive_logging` runs (the true early-startup window,
+    everything from interpreter init through `reyn.interfaces.cli.main`'s
+    own argument parsing/process registration) must still land in
+    reyn.log once the real handler installs, via the early buffer
+    `cli.main()` arms as its own first statement.
+
+    Strip-falsifier (verified by hand: the `early_buffer.replay_into(
+    handler)` call removed from `_setup_interactive_logging`): this test
+    goes red — the early marker never appears in the file, only records
+    logged AFTER setup do."""
+    from reyn.runtime import early_log_buffer
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        early_log_buffer.install()
+        logging.getLogger("reyn.canary").warning("pre-setup-marker-71dc")
+
+        _setup_interactive_logging(tmp_path)
+        log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
+
+        for h in root.handlers:
+            h.flush()
+
+        assert "pre-setup-marker-71dc" in log_file.read_text(), (
+            "#5989 REGRESSION: a WARNING logged before "
+            "_setup_interactive_logging ran did not replay into the real "
+            "file handler once it installed"
+        )
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+        early_log_buffer._reset_for_tests()
+
+
+def test_setup_interactive_logging_works_with_no_early_buffer_installed(
+    tmp_path,
+) -> None:
+    """Tier 2: falsification contrast — a process that never went through
+    `reyn.interfaces.cli.main` (this function called directly, matching
+    how every OTHER test in this file already drives it) must not error
+    just because `early_log_buffer.get_installed()` returns `None`."""
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    try:
+        _setup_interactive_logging(tmp_path)
+        log_file = tmp_path / ".reyn" / "logs" / "reyn.log"
+        logging.getLogger("reyn.canary").warning("no-early-buffer-marker")
+        for h in root.handlers:
+            h.flush()
+        assert "no-early-buffer-marker" in log_file.read_text()
+    finally:
+        logging.captureWarnings(False)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
