@@ -1,6 +1,6 @@
 # FP-0069: A permission posture dial — aligning reyn with the industry shape
 
-**Status**: ruled (owner 2026-09-06, three verbatim rulings in §10) — §2 the dial, §5 opt-in declaration, §6.1 `bounded`'s boundary (network outside it: declared → silent, undeclared → **ask**), and `reviewed` (not now) are all decided. What remains is implementation, tracked on [#5825](https://github.com/tya5/reyn/issues/5825) (the network-ask seam design) and the FP's own acceptance (§8). **2026-09-10, lead-coder ruling**: the §2 dial itself (`permissions.mode` as a new config key) will not be built — 3 of its 4 values are already expressible through knobs shipped independently of this proposal, making a dial a second source of truth for the same posture; see <https://github.com/tya5/reyn/issues/5825#issuecomment-5621926863>.
+**Status**: ruled (owner 2026-09-06, three verbatim rulings in §10) — §2 the dial, §5 opt-in declaration, §6.1 `bounded`'s boundary (network outside it: declared → silent, undeclared → **ask**), and `reviewed` (not now) are all decided. What remains is implementation, tracked on [#5825](https://github.com/tya5/reyn/issues/5825) (the network-ask seam design) and the FP's own acceptance (§8).
 **Proposed**: 2026-09-06
 **Author**: architect session
 **Track**: owner request 2026-09-06 —「reyn のパーミッションシステム仕様を業界標準に寄せたい」／「できるだけ寄せる案を作成できる？」
