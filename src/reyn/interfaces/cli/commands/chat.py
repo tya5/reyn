@@ -428,10 +428,12 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
     (``isinstance(handler, logging.FileHandler)`` — ``litellm_bootstrap.py``,
     ``stall_trace.py``) are unaffected either way.
     """
-    from logging.handlers import RotatingFileHandler
-
     from reyn.config.chat import LogsConfig
     from reyn.runtime import early_log_buffer, stall_trace
+    from reyn.runtime.logging_failure_fallback import (
+        FailureFallbackRotatingFileHandler,
+        handler_failure_dump_path,
+    )
 
     # #5989 symptom 3: grab the early buffer BEFORE force=True below wipes
     # it off the root logger — the module-level singleton survives being
@@ -446,11 +448,21 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
     log_dir = project_root / ".reyn" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "reyn.log"
-    handler = RotatingFileHandler(
+    # #5989 ⑵: a drop-in RotatingFileHandler subclass whose handleError
+    # ALSO records the failure to an INDEPENDENT destination (never THIS
+    # handler's own, broken one) -- see logging_failure_fallback.py's
+    # own module docstring for why re-logging through the failing
+    # handler itself (or through `logging` at all, risking the SAME
+    # handler via propagation) cannot durably record its own failure.
+    # Every existing structural reader (isinstance(handler, logging.
+    # FileHandler) in litellm_bootstrap.py/stall_trace.py) is unaffected
+    # -- this class still IS one.
+    handler = FailureFallbackRotatingFileHandler(
         str(log_path),
         maxBytes=defaults.max_bytes,
         backupCount=defaults.backup_count,
     )
+    handler.set_fallback_path(handler_failure_dump_path(str(log_path)))
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
     )
