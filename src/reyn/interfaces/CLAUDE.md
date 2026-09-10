@@ -1,3 +1,9 @@
+## User-facing string language (#6084)
+
+`scripts/user_facing_lang_gate.py` blocks a NEW undecided-language literal
+at a confirmed sink call site — it does not cover the full population; see
+its own module docstring for scope.
+
 # TUI colour policy — rules for `src/reyn/interfaces/`
 
 Name the MEANING; the active Textual theme renders it. Never pick a colour

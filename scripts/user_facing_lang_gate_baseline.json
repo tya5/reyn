@@ -1,0 +1,14 @@
+[
+  "src/reyn/interfaces/cli/commands/web.py:109:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:120:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:17:add_parser",
+  "src/reyn/interfaces/cli/commands/web.py:22:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:28:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:35:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:46:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:51:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:59:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:72:add_argument",
+  "src/reyn/interfaces/cli/commands/web.py:92:add_argument",
+  "src/reyn/interfaces/inline/textual_chat/chrome.py:1212:DrawerRow"
+]
