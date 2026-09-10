@@ -325,6 +325,24 @@ class ChatLifecycleForwarder:
         RUNTIME-layer, so importing it here would invert the dependency
         direction (same reasoning this module's own ``_compact_token_
         count`` docstring already gives for not importing ``gutter.py``).
+
+        ★ #6085 stage 2 (lead-coder ruling): this frame deliberately
+        carries NO ``compaction_episode_marker`` meta, unlike its 3
+        siblings above (``on_compaction_started``/``on_compaction_
+        failed``/``on_compaction_completed``) and ``on_recovery_summary_
+        persisted`` below. This is the ONE unrecoverable end-of-episode
+        signal — the shrink-retry ladder is exhausted, nothing else is
+        coming for this episode. Folding it into the same open flow entry
+        the way the other markers fold would make a genuine, terminal
+        failure disappear into a settled progress row instead of standing
+        on its own line — the repair (fewer separate lines) would destroy
+        the evidence (the ladder failed) it exists to report. Enforced by
+        ``test_router_context_overflow_unrecovered_without_terminal_
+        degrades_gracefully`` (tests/runtime/test_chat_lifecycle_
+        forwarder.py) — a DECIDING test (#6085's own original ask was to
+        mark all 3 remaining lines; this one line was found to be
+        deliberately exempt from #5588's original design, not an
+        oversight #5588 left behind).
         """
         terminal = data.get("terminal")
         text = {
@@ -349,7 +367,16 @@ class ChatLifecycleForwarder:
         compaction quality silently.
         """
         reason = str(data.get("error") or "unknown error")
-        self._enqueue(f"[✗ summary re-compress failed: {reason}]")
+        # #6085 stage 2: this fires DURING an active compaction episode (a
+        # T2 re-compression pass inside compact()'s own summarisation
+        # step) — same episode as on_compaction_started's own open row, so
+        # it belongs there rather than as a stray line. Previously
+        # unmarked: this was one of #6085's 2 markerless lifecycle_
+        # forwarder lines.
+        self._enqueue(
+            f"[✗ summary re-compress failed: {reason}]",
+            meta=self._compaction_marker_meta(),
+        )
 
     def on_recovery_summary_persisted(self, data: dict) -> None:
         """#5885 (architect ruling 3): the LADDER path's completion marker.

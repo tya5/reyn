@@ -687,7 +687,19 @@ def test_router_context_overflow_unrecovered_names_room_floor() -> None:
 def test_router_context_overflow_unrecovered_without_terminal_degrades_gracefully() -> None:
     """Tier 2: a plain ContextOverflowError (no ladder-terminal distinction
     at all — never fabricated) still emits a marker, generic rather than
-    naming an impossibility it was never told."""
+    naming an impossibility it was never told.
+
+    ★ #6085 stage 2 (lead-coder ruling, confirmed against #6085's own
+    original "mark every remaining markerless line" ask): this line stays
+    deliberately UNMARKED. It is the ONE unrecoverable end-of-episode
+    signal (the shrink-retry ladder is exhausted, nothing more is coming
+    for this episode) — folding it into the same open flow entry the
+    other compaction markers fold into would make a genuine, terminal
+    failure disappear into a settled progress row instead of standing on
+    its own line. See :meth:`ChatLifecycleForwarder.on_router_context_
+    overflow_unrecovered`'s own docstring for the full reasoning; this
+    assertion is what keeps that reasoning enforced, not just stated.
+    """
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(
