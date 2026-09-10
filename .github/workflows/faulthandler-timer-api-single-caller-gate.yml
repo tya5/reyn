@@ -1,0 +1,47 @@
+name: faulthandler timer API single-caller gate
+
+# Regression-prevention gate for #5978: the set of modules calling
+# faulthandler's timer API (faulthandler.dump_traceback_later(...) /
+# faulthandler.cancel_dump_traceback_later()) must be exactly
+# {src/reyn/runtime/stall_trace.py}. This gate is ALREADY GREEN -- it is a
+# ratchet against a future SECOND caller appearing, not a cleanup. See
+# scripts/check_faulthandler_timer_api_single_caller.py's own module
+# docstring for the full design and the #5978 issue-thread scope
+# narrowing that led to this exact gate shape.
+#
+# `paths: src/**` matches this gate's own scan scope exactly -- this
+# gate's population lives entirely under src/, so a change outside that
+# tree cannot add or remove a faulthandler-timer-API call site this
+# script counts.
+on:
+  pull_request:
+    paths:
+      - "src/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+
+permissions:
+  contents: read
+
+jobs:
+  faulthandler-timer-api-single-caller:
+    name: faulthandler timer API single-caller gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_faulthandler_timer_api_single_caller.py is
+      # stdlib-only (ast / subprocess / pathlib). No pip install needed.
+      - name: Check faulthandler timer API has a single caller
+        run: |
+          python scripts/check_faulthandler_timer_api_single_caller.py
