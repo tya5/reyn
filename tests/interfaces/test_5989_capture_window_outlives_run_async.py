@@ -25,6 +25,26 @@ STATE at two fixed control-flow points instead: right when
 run_textual_chat's own post-run_async teardown (`_disarm_stall_trace`)
 runs, and right after run_textual_chat itself has fully returned. Neither
 waits.
+
+lead-coder BLOCKING, PR #6087: this test's `monkeypatch.setattr(...)` on
+`TextualChatApp.run_async` and on `reyn.runtime.stall_trace`'s own
+functions is a DELIBERATE departure from testing.md's "never fake a
+collaborator when a real instance is cheaply constructible" rule -- named
+here, not left for the next reader to rediscover as "wasn't this
+forbidden?" ① the departure is intentional, not an oversight; ② it rests
+on the SAME policy's own carve-out, "cheap to construct is not the same
+as drivable": a real `TextualChatApp` IS cheap to construct, but a real
+Textual boot through `run_async()` does not RETURN control back to this
+test on any signal this test can drive -- it runs the app's own event
+loop until something inside that loop (a `/quit`, a crash) ends it, and
+nothing external can reach in and end it deterministically without a
+timing-dependent hack (the exact CLAUDE.md floor/ceiling ban this file's
+own paragraph above already invokes for a different reason); ③ with no
+externally-drivable "return now" signal, there is no undriven way to
+observe run_textual_chat's own control flow AROUND a real boot at all --
+patching the ONE seam (`run_async` itself) that both IS the boundary
+under test and has no other drive mechanism is the seam this test needs,
+not a shortcut around a drivable one.
 """
 from __future__ import annotations
 
