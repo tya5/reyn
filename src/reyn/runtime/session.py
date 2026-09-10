@@ -8227,16 +8227,23 @@ class Session:
         FAILED persistently — the agent stops accepting operations rather than accept one whose
         durable record will never land.
 
-        #5939 PR-2: ALSO raises for ANY other already-latched halt reason
-        (``self._halted_reason is not None``, checked FIRST) — not just
-        durability. Before PR-2, this accept-edge only ever checked
-        ``state_log.durability_failed`` directly, so a NEW halt reason
-        (``process_memory``, latched by :meth:`_check_memory_ladder`) would
-        set ``_halted_reason`` and emit ``session_halted`` (the
-        observability half) while never actually stopping the next
-        ``_put_inbox`` call — a halt that announces itself but does not
-        halt. Generalizing this one check closes that for every future
-        reason too, not just this PR's own.
+        #5939 PR-2 review (lead-coder, caught by a real test failure —
+        #5214's own MessageBus tests): this ACCEPT-edge stays
+        DURABILITY-SPECIFIC on purpose, unlike the PROCESS-edge (see
+        ``run_one_iteration``'s own generalized check). Durability is the
+        ONE reason a message must not even be ACCEPTED — accepting it
+        means "this will eventually be durably recorded", which is false
+        when durability itself is dead. Every OTHER halt reason
+        (``shutdown_requested``, ``cancelled``, ``process_memory``)
+        leaves durability perfectly healthy — a late message is safely
+        QUEUED (never lost, WAL-durable), it simply never gets
+        PROCESSED, because the PROCESS-edge already stopped the loop
+        from pumping anything further. #5214's own design deliberately
+        keeps "queued but unprocessed" distinguishable from "rejected
+        outright" — ``MessageBus.request`` is what discloses the stuck,
+        accepted-but-never-pumped message (a WARNING, not silent), and a
+        blanket accept-edge raise here would have collapsed that
+        distinction for every reason but durability.
 
         #2280: the FIRST time durability itself latches, also emit a
         ``session_halted`` audit-event (via :meth:`_latch_halt`, guarded
@@ -8248,11 +8255,6 @@ class Session:
         an operator surface (TUI status line / plain bottom toolbar) can
         proactively show the reason instead of only learning it from the
         exception text on the operator's own next interaction."""
-        if self._halted_reason is not None:
-            raise SessionHaltError(
-                f"agent '{self.agent_name}' halted ({self._halted_reason}): the agent stopped "
-                "accepting operations — see Session.halt_remedies for how to continue"
-            )
         if self._state_log is not None and self._state_log.durability_failed:
             self._latch_halt(
                 "durability_failure",
@@ -8760,7 +8762,22 @@ class Session:
         ``run_one_iteration`` receives ``ride_alongs`` for 4a contract
         compatibility but no longer re-stages them.
         """
-        # #2259 PR-3 / #2280: fail-stop PROCESS-edge — see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal (`_halted_reason`).
+        # #5939 PR-2 review (lead-coder, caught by #5214's own MessageBus
+        # test suite): the PROCESS-edge -- unlike the ACCEPT-edge above --
+        # IS generalized to ANY already-latched halt reason, checked
+        # FIRST. This is where "process_memory" (latched by
+        # `_check_memory_ladder` at a PRIOR turn's own end, from OUTSIDE
+        # this method) actually gets its teeth: without this, the flag
+        # would be set and `session_halted` announced, but `run()`'s own
+        # `while await self.run_one_iteration():` loop would keep
+        # pumping the NEXT inbox item regardless -- a halt that
+        # announces itself but does not halt. `durability_failure` (the
+        # pre-existing reason) is now reached through this SAME generic
+        # branch instead of its own separate check -- byte-identical
+        # behavior (still latches via `_latch_halt`, still returns
+        # False), just no longer a special case.
+        if self._halted_reason is not None:
+            return False
         if self._state_log is not None and self._state_log.durability_failed:
             self._latch_halt(
                 "durability_failure",

@@ -110,22 +110,50 @@ def test_latch_halt_first_reason_wins(tmp_path: Path):
 # ── accept-edge: ANY halt reason blocks further ops, not just durability ──
 
 
-def test_accept_edge_raises_for_a_non_durability_halt_reason(tmp_path: Path):
-    """Tier 2: the accept-edge generalization this PR makes -- before it,
-    ``_fail_stop_if_durability_dead`` checked ONLY
-    ``state_log.durability_failed``, so latching ANY other reason set
-    ``halted_reason``/emitted ``session_halted`` (the announcement) while
-    never actually stopping the next op (the halt itself). A halt that
-    announces but does not halt is the exact defect this closes.
-
-    Strip: revert the accept-edge's own leading ``if self._halted_reason
-    is not None: raise ...`` back to durability-only — this goes RED
-    (no raise for a non-durability reason, performed during review)."""
+def test_accept_edge_stays_durability_specific_for_a_non_durability_reason(
+    tmp_path: Path,
+):
+    """Tier 2: corrected design (lead-coder review, caught by #5214's own
+    MessageBus test suite going red): the ACCEPT-edge
+    (``_fail_stop_if_durability_dead``) does NOT raise for a
+    non-durability reason -- an earlier version of this PR generalized
+    it to raise for ANY latched reason, which broke #5214's own
+    established contract (a message submitted after ``shutdown_
+    requested``/``cancelled`` must still be safely QUEUED, durability
+    being perfectly healthy for those reasons -- it simply never gets
+    PROCESSED, because the PROCESS-edge, not the accept-edge, is what
+    actually stops the loop). See ``_fail_stop_if_durability_dead``'s
+    own docstring for the full reasoning."""
     s = _session(tmp_path)
     s._latch_halt("process_memory", remedies=("restart",))
 
-    with pytest.raises(SessionHaltError):
-        s._fail_stop_if_durability_dead()
+    s._fail_stop_if_durability_dead()  # must NOT raise
+
+
+def test_process_edge_returns_false_for_any_already_latched_halt_reason(
+    tmp_path: Path,
+):
+    """Tier 2: this is where a non-durability halt reason (e.g.
+    ``process_memory``) actually gets its teeth -- ``run_one_iteration``
+    (the PROCESS-edge, polled by ``run()``'s own ``while await self.
+    run_one_iteration():`` loop) returns False for ANY already-latched
+    reason, checked first, causing the loop to exit and ``run_completed``
+    to become True. Without this, a halt announced via `_latch_halt`
+    alone would never actually stop further inbox items from being
+    pumped.
+
+    Strip: revert the process-edge's own leading ``if self._halted_
+    reason is not None: return False`` -- this goes RED (a real inbox
+    item gets processed despite the latched halt, performed during
+    review)."""
+    import asyncio
+
+    s = _session(tmp_path)
+    s._latch_halt("process_memory", remedies=("restart",))
+
+    result = asyncio.run(s.run_one_iteration())
+
+    assert result is False
 
 
 @pytest.mark.asyncio
