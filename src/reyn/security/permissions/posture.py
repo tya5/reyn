@@ -1,28 +1,19 @@
-"""FP-0069 §2 — the permission posture dial (#5825 stage 1).
+"""FP-0069 §2 — the permission posture dial (#5825).
 
 ``permissions.mode`` in ``reyn.yaml`` (overridable in ``reyn.local.yaml``,
 and at runtime), named by DISPOSITION — what an actor may do — not by
 rank. Owner-ratified 2026-09-06 (the proposal's own §10 records the three
 verbatim rulings): ``docs/deep-dives/proposals/0069-permission-posture-dial.md``.
 
-**Stage 1 scope, deliberately narrow** (lead-coder dispatch, #5825): the
-config key, the 3 values this stage accepts, their total order, and the
-"remove ``unbounded`` by config" seam. Wiring a mode's VALUE into actual
-enforcement (a capability denied by a restrict layer staying denied in
-every mode; ``bounded``'s own boundary replacing the prompt) is later
-stages' work, not this module's.
-
-**``bounded`` is a 4th value the doc already names (§2) but this stage
-does NOT accept** — it "Requires §6" (the doc's own table, verbatim): a
-``sandboxed_exec``-owned restrictive policy that does not exist yet
-(#5825 stage 2). Accepting the STRING today without the boundary behind
-it would ship a name that does not protect what it claims to — the exact
-"declared, never reached" shape #5849/#5862 already closed elsewhere in
-this same file's sibling registry. :func:`parse_permission_mode` refuses
-it with a message naming stage 2, rather than silently aliasing it to
-``ask`` — an alias would be worse than refusing: a config author who
-wrote ``bounded`` believing it meant a real boundary would read `ask`'s
-behavior as satisfying that belief.
+**Stage 1** (lead-coder dispatch, #5825): the config key, its (then) 3
+values, their total order, and the "remove ``unbounded`` by config"
+seam. **Stage 2** (#5825, architect design + lead-coder dispatch) adds
+the 4th value, ``bounded`` — doc §6/§6.1/§8. This module still owns only
+the VALUE VOCABULARY and its order; the session-level judgment of
+whether ``bounded``'s own boundary is actually enforced (and the
+downgrade to ``ask`` when it is not — see :mod:`reyn.runtime.session`'s
+``resolved_permission_mode``) lives OUTSIDE this module, which has no
+I/O and cannot answer that question itself.
 """
 from __future__ import annotations
 
@@ -33,23 +24,26 @@ logger = logging.getLogger(__name__)
 
 
 class PermissionMode(str, enum.Enum):
-    """The 3 values #5825 stage 1 accepts (doc §2's own 4, minus
-    ``bounded`` — see module docstring). String-valued so a raw config
-    string compares equal to a member directly (``raw == PermissionMode.ASK``),
+    """The 4 values doc §2 names. String-valued so a raw config string
+    compares equal to a member directly (``raw == PermissionMode.ASK``),
     the same convenience :class:`~reyn.config_axis.Axis` already uses."""
 
     READ_ONLY = "read_only"
     ASK = "ask"
+    BOUNDED = "bounded"
     UNBOUNDED = "unbounded"
 
 
 #: Strict-to-permissive, total (doc §2: "Ordering is total and strict-to-
 #: permissive, so 'at least as strict as X' is expressible") — the single
 #: source both :func:`rank` and any future comparison read, never a second
-#: hand-written order that could drift from this one.
+#: hand-written order that could drift from this one. ``bounded`` sits
+#: between ``ask`` and ``unbounded`` (doc §2's own table order) — #5825
+#: stage 2 added it here.
 PERMISSION_MODE_ORDER: "tuple[PermissionMode, ...]" = (
     PermissionMode.READ_ONLY,
     PermissionMode.ASK,
+    PermissionMode.BOUNDED,
     PermissionMode.UNBOUNDED,
 )
 
@@ -60,45 +54,20 @@ PERMISSION_MODE_ORDER: "tuple[PermissionMode, ...]" = (
 #: key at all resolves to exactly what an unconfigured project already did.
 DEFAULT_PERMISSION_MODE: PermissionMode = PermissionMode.ASK
 
-#: The doc's own 4th value, named explicitly here (not just absent from
-#: :class:`PermissionMode`) so :func:`parse_permission_mode` can give it a
-#: distinct, honest error rather than folding it into the generic
-#: "unrecognized value" message a genuine typo gets.
-_BOUNDED_NOT_YET_IMPLEMENTED = "bounded"
-
 
 class PermissionModeError(ValueError):
-    """A ``permissions.mode`` value this stage cannot honor. Base class for
-    both the generic-unrecognized and the ``bounded``-specific case below,
-    so a caller that only wants "refuse startup, log the reason" can catch
-    this one type and still get the more specific message in ``str(exc)``."""
-
-
-class BoundedModeNotImplementedError(PermissionModeError):
-    """``mode: bounded`` was configured — a real, doc-named value (§2),
-    just not one this stage accepts (see module docstring). Distinct from
-    :class:`PermissionModeError`'s generic case so a caller wanting to
-    special-case "not yet, not a typo" can — e.g. pointing an operator at
-    the tracking issue instead of `reyn config fields`."""
+    """A ``permissions.mode`` value that matches no :class:`PermissionMode`
+    member — a typo, or a value that never existed at all."""
 
 
 def parse_permission_mode(raw: str) -> PermissionMode:
     """Parse *raw* (a ``permissions.mode`` config value) into a
-    :class:`PermissionMode`.
-
-    Raises :class:`BoundedModeNotImplementedError` for ``"bounded"``
-    specifically (never silently aliased to :data:`PermissionMode.ASK` —
-    see module docstring for why an alias would be worse than a refusal),
-    and the base :class:`PermissionModeError` for any other value that
-    matches none of the 3 stage-1 members (a typo, or a value that never
-    existed)."""
-    if raw == _BOUNDED_NOT_YET_IMPLEMENTED:
-        raise BoundedModeNotImplementedError(
-            "permissions.mode: 'bounded' is not yet implemented (#5825 "
-            "stage 2 — it requires a sandboxed_exec-owned restrictive "
-            "policy that does not exist yet). Use 'read_only', 'ask', or "
-            "'unbounded' for now."
-        )
+    :class:`PermissionMode`, or raise :class:`PermissionModeError` naming
+    the valid set. #5825 stage 2: ``bounded`` is a real, ordinary member
+    now — parsing it here says only "this is a recognized VALUE"; whether
+    its own boundary is actually enforced this session is a SEPARATE,
+    session-level judgment this function does not make (see
+    :mod:`reyn.runtime.session`'s ``resolved_permission_mode``)."""
     try:
         return PermissionMode(raw)
     except ValueError:
@@ -145,14 +114,14 @@ def resolve_permission_mode(
     ``_setup_interactive_logging`` only adds a ``StreamHandler`` when
     ``not is_interactive`` (CLAUDE.md's own 2nd of 3 questions: "is this
     visible with the shipped config?" — here, no). Surfacing this
-    downgrade on-screen (the posture surface doc §8 also names for
-    `bounded`'s own degraded-enforcement case) is a LATER stage's
-    responsibility, not this function's — this module only guarantees the
-    fallback is DURABLY RECORDED, not that an operator watching the
-    screen sees it in the moment. A genuinely unrecognized value (a typo,
-    or `bounded`) still raises — unlike a disabled-but-otherwise-valid
-    `unbounded`, there is no safe value to substitute for a value that
-    was never a real mode at all."""
+    downgrade on-screen is Session.permission_mode_downgrade_reason's job
+    (#5825 stage 2 — the same Ctx-pane row `bounded`'s own network-
+    enforcement downgrade now uses), not this function's — this module
+    only guarantees the fallback is DURABLY RECORDED, not that an
+    operator watching the screen sees it in the moment. A genuinely
+    unrecognized value (a typo — `bounded` is a real member now) still
+    raises — there is no safe value to substitute for one that was never
+    a real mode at all."""
     mode = (
         DEFAULT_PERMISSION_MODE if raw is None else parse_permission_mode(raw)
     )
@@ -165,3 +134,26 @@ def resolve_permission_mode(
         )
         return DEFAULT_PERMISSION_MODE
     return mode
+
+
+def sandbox_mode_for_permission_mode(
+    configured_sandbox_mode: str, permission_mode: PermissionMode,
+) -> str:
+    """#5825 stage 2 (doc §6, lead-coder dispatch: "新しい preset を作らない
+    こと ... sandbox.mode: strict の defaults を選ぶだけ"): ``bounded``
+    SELECTS the existing ``sandbox.mode: strict`` preset
+    (``_SANDBOX_STRICT_MODE_DEFAULTS`` — closed network, denied
+    subprocess, empty env allowlist) — no new preset is built. Every
+    OTHER :class:`PermissionMode` leaves *configured_sandbox_mode*
+    untouched.
+
+    This is a SELECTION only, not the enforcement-gap judgment (whether
+    the selected preset's network deny can actually be honored by the
+    resolved backend) — that is
+    ``reyn.runtime.session.Session.network_enforcement_gap``'s job, which
+    calls THIS same function so the value it checks and the value the
+    real exec path uses can never diverge (see that property's own
+    docstring)."""
+    if permission_mode is PermissionMode.BOUNDED:
+        return "strict"
+    return configured_sandbox_mode

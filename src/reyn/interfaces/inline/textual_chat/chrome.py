@@ -1812,6 +1812,7 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
         ),
         _memory_line(snap),
         _network_posture_line(snap),
+        _permission_mode_line(snap),
     ]
 
 
@@ -1892,6 +1893,36 @@ def _network_posture_line(snap: dict) -> str:
     if gap is None:
         return "network      enforced"
     return f"network      NOT enforced — {gap}"
+
+
+def _permission_mode_line(snap: dict) -> str:
+    """#5825 stage 2 (architect: "the surface is already in place for the
+    network axis alone — mode's own downgrade was the missing half").
+    Same three-state discipline as ``_network_posture_line`` right above
+    (that docstring's own reasoning applies identically: the key absent
+    from ``snap`` entirely vs. present-and-matching vs.
+    present-and-downgraded must never collapse into each other):
+
+    - the key absent from ``snap`` entirely (an older remote server that
+      predates this field, or ``ctx_pane_lines`` called with no snapshot
+      at all) -> "not reported on this connection".
+    - ``permission_mode`` == ``permission_mode_configured`` (or the
+      configured key is simply absent — an even older server that sent
+      only the resolved value) -> just the resolved mode, no arrow.
+    - the two differ -> ``configured → resolved (reason)`` — covers BOTH
+      #5825 downgrade paths on this ONE row: ``bounded`` -> ``ask``
+      (this stage, network unenforceable) and ``unbounded`` -> ``ask``
+      (stage 1's own ``disable_unbounded_mode`` lock, previously visible
+      only in ``reyn.log``).
+    """
+    if "permission_mode" not in snap:
+        return "mode         not reported on this connection"
+    resolved = snap.get("permission_mode")
+    configured = snap.get("permission_mode_configured", resolved)
+    reason = snap.get("permission_mode_downgrade_reason")
+    if configured != resolved and reason is not None:
+        return f"mode         {configured} → {resolved} ({reason})"
+    return f"mode         {resolved}"
 
 
 def _folded_line(progress_raw: "dict | None") -> str:

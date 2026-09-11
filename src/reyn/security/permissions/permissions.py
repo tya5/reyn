@@ -54,6 +54,7 @@ from reyn.user_intervention import (
 
 if TYPE_CHECKING:
     from reyn.security.permissions.file_scope import FileScopes
+    from reyn.security.permissions.posture import PermissionMode
     from reyn.security.sandbox.policy import SandboxPolicy
 
 logger = logging.getLogger(__name__)
@@ -777,6 +778,50 @@ class PermissionResolver:
         from reyn.security.permissions.file_scope import resolve_file_scopes
 
         return resolve_file_scopes(self._config, zone_root=self._file_zone_root)
+
+    def configured_permission_mode(self) -> "PermissionMode":
+        """#5825: this resolver's own ``permissions.mode`` AS WRITTEN —
+        parsed via ``posture.py``'s own vocabulary, defaulted when unset,
+        but BEFORE either downgrade (the stage-1 ``unbounded``-disabled
+        lock AND the stage-2 ``bounded``-network-enforcement gap — see
+        :meth:`resolved_permission_mode`, which applies both on top of
+        this method's own return).
+
+        The reason this is NOT ``resolve_permission_mode``'s own return
+        (which already folds the lock in): the Ctx-pane row this method
+        ultimately feeds shows ``configured → resolved (reason)`` — if
+        ``configured`` already absorbed the lock's own downgrade, a
+        locked ``unbounded`` session would show identical values on both
+        sides of the arrow, hiding the exact fact architect asked stage 2
+        to surface ("段 1 の弱点が無料で消えます — unbounded が lock で
+        ask に落ちた件も、同じ 1 行に出ます").
+
+        The ONE place any caller should read ``permissions.mode`` from —
+        never re-parse ``self._config`` directly, so two call sites can
+        never disagree about what was written."""
+        from reyn.security.permissions.posture import (
+            DEFAULT_PERMISSION_MODE,
+            parse_permission_mode,
+        )
+
+        raw = self._config.get(KEY_MODE)
+        return DEFAULT_PERMISSION_MODE if raw is None else parse_permission_mode(raw)
+
+    def resolved_permission_mode(self) -> "PermissionMode":
+        """#5825 stage 1's own ``resolve_permission_mode`` — the config-
+        level EFFECTIVE mode with the ``unbounded``-disabled-by-lock
+        downgrade already applied (a config-load-time fact this
+        resolver's own ``self._config`` fully carries). Does NOT include
+        the stage-2 ``bounded``-network-enforcement downgrade, which
+        needs a live backend/policy read this class has no access to —
+        see :attr:`reyn.runtime.session.Session.resolved_permission_mode`,
+        which layers that check on top of THIS method's own return."""
+        from reyn.security.permissions.posture import resolve_permission_mode
+
+        return resolve_permission_mode(
+            self._config.get(KEY_MODE),
+            unbounded_disabled=bool(self._config.get(KEY_DISABLE_UNBOUNDED_MODE)),
+        )
 
     def advertised_file_permissions(self) -> dict | None:
         """``{"read": [paths], "write": [paths]}`` for the router tool catalog

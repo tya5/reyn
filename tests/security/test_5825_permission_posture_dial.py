@@ -1,13 +1,16 @@
-"""Tier 1: Contract — the FP-0069 §2 permission posture dial's stage-1
-surface (#5825 stage 1): ``reyn.security.permissions.posture``'s parsing,
-total ordering, and the ``permissions.disable_unbounded_mode`` sticky-OR
-merge in ``reyn.config.loader._merge``.
+"""Tier 1: Contract — the FP-0069 §2 permission posture dial's config/
+parsing/ordering surface (#5825 stages 1+2):
+``reyn.security.permissions.posture``'s parsing, total ordering, and the
+``permissions.disable_unbounded_mode`` sticky-OR merge in
+``reyn.config.loader._merge``.
 
-Scope, matching #5825 stage 1's own dispatch: the config KEY, the 3
-values this stage accepts, their order, and the "remove unbounded by
-config" seam. Wiring a mode's value into actual enforcement (a denied
-capability staying denied in every mode; ``bounded``'s own boundary) is a
-later stage's own test file, not this one's.
+Scope: the config KEY, its 4 values (``bounded`` added #5825 stage 2),
+their order, and the "remove unbounded by config" seam. Wiring a mode's
+value into LIVE enforcement (a denied capability staying denied in every
+mode; ``bounded``'s own boundary selection + network-enforcement
+downgrade) lives in ``tests/runtime/test_5825_stage2_bounded_mode.py`` —
+this file stays the pure-vocabulary/config-merge layer both that file and
+the enforcement layer build on.
 """
 from __future__ import annotations
 
@@ -24,13 +27,13 @@ from reyn.security.permissions.permissions import (
 from reyn.security.permissions.posture import (
     DEFAULT_PERMISSION_MODE,
     PERMISSION_MODE_ORDER,
-    BoundedModeNotImplementedError,
     PermissionMode,
     PermissionModeError,
     is_at_least_as_strict,
     parse_permission_mode,
     rank,
     resolve_permission_mode,
+    sandbox_mode_for_permission_mode,
 )
 
 # ── parse_permission_mode ────────────────────────────────────────────────
@@ -41,45 +44,25 @@ from reyn.security.permissions.posture import (
     [
         ("read_only", PermissionMode.READ_ONLY),
         ("ask", PermissionMode.ASK),
+        ("bounded", PermissionMode.BOUNDED),
         ("unbounded", PermissionMode.UNBOUNDED),
     ],
 )
-def test_parse_permission_mode_accepts_all_3_stage_1_values(
+def test_parse_permission_mode_accepts_all_4_values(
     raw: str, expected: PermissionMode,
 ) -> None:
-    """Tier 1: the 3 values #5825 stage 1 dispatches ("read_only / ask /
-    unbounded の3値") each parse to their own distinct member."""
+    """Tier 1: #5825 stage 2 -- `bounded` is now a real, ordinary member
+    (doc §2's own 4th value), parsed the SAME way as the other 3 -- see
+    the module docstring for why its own enforcement-gap judgment is
+    deliberately NOT this function's job."""
     assert parse_permission_mode(raw) is expected
-
-
-def test_bounded_is_refused_not_silently_aliased_to_ask() -> None:
-    """Tier 1: `bounded` is a REAL doc-named value (§2) this stage
-    explicitly does not accept (§6 requires a boundary that does not
-    exist yet, #5825 stage 2) — the dispatch's own explicit prohibition:
-    "ask の別名として黙って受けるのは禁止". Must raise, never return
-    PermissionMode.ASK."""
-    with pytest.raises(BoundedModeNotImplementedError) as exc_info:
-        parse_permission_mode("bounded")
-    # #5825 stage 2 must be named in the message -- an operator hitting
-    # this needs to know WHERE the real answer lives, not just that
-    # "bounded" failed.
-    assert "#5825" in str(exc_info.value)
-    assert "stage 2" in str(exc_info.value)
-
-
-def test_bounded_not_implemented_error_is_a_permission_mode_error() -> None:
-    """Tier 1: a caller catching the general PermissionModeError (e.g. to
-    refuse startup with one message) still catches the bounded-specific
-    case -- BoundedModeNotImplementedError subclasses it."""
-    assert issubclass(BoundedModeNotImplementedError, PermissionModeError)
 
 
 @pytest.mark.parametrize("raw", ["yolo", "", "READ_ONLY", "Ask", "strict"])
 def test_an_unrecognized_value_raises_the_generic_error(raw: str) -> None:
     """Tier 1: a typo or a value that never existed at all gets the
-    generic error, distinct from `bounded`'s own specific one -- and the
-    message names the valid set so `reyn config validate`'s own output
-    is self-sufficient.
+    generic error -- and the message names the valid set so `reyn config
+    validate`'s own output is self-sufficient.
 
     Disclosed (six questions ④): the loop below would stay green over an
     EMPTY PERMISSION_MODE_ORDER too -- that vacuous case is killed by
@@ -87,7 +70,6 @@ def test_an_unrecognized_value_raises_the_generic_error(raw: str) -> None:
     invariant, not by a guard duplicated in this test."""
     with pytest.raises(PermissionModeError) as exc_info:
         parse_permission_mode(raw)
-    assert not isinstance(exc_info.value, BoundedModeNotImplementedError)
     for mode in PERMISSION_MODE_ORDER:
         assert mode.value in str(exc_info.value)
 
@@ -104,10 +86,11 @@ def test_permission_mode_order_covers_every_enum_member() -> None:
     it (e.g. stage 2 adding `bounded` to the enum and forgetting to
     extend this tuple).
 
-    Deliberately does NOT pin the COUNT (3 today) — only that the two
-    collections' MEMBERSHIP matches, so stage 2 adding a real 4th value
-    to both together stays green; only a genuine update-miss (one
-    changed, the other not) goes red."""
+    Deliberately does NOT pin the COUNT (4 today, #5825 stage 2's
+    `bounded` added) — only that the two collections' MEMBERSHIP matches,
+    so a future stage adding a real 5th value to both together stays
+    green; only a genuine update-miss (one changed, the other not) goes
+    red."""
     assert set(PERMISSION_MODE_ORDER) == set(PermissionMode)
     assert len(PERMISSION_MODE_ORDER) == len(set(PermissionMode))
 
@@ -116,7 +99,7 @@ def test_the_order_is_total_every_pair_has_one_answer() -> None:
     """Tier 1: doc §2's own acceptance line — "Ordering is total and
     strict-to-permissive, so 'at least as strict as X' is expressible."
     Exhaustive over every pair PERMISSION_MODE_ORDER actually holds
-    (3x3 = 9 today, NOT a number this test itself pins), not a sample:
+    (4x4 = 16 today, NOT a number this test itself pins), not a sample:
     for every (a, b), "a at least as strict as b" and "b at least as
     strict as a" must never BOTH be false (a total order has an answer
     for every pair), and for a != b must never both be true (a total
@@ -138,12 +121,19 @@ def test_the_order_is_total_every_pair_has_one_answer() -> None:
 def test_read_only_is_the_strictest_and_unbounded_the_most_permissive() -> None:
     """Tier 1: the concrete order the doc's table lists, pinned directly
     (not inferred from the total-ordering test above, which only proves
-    A total order exists -- this proves it is THIS one)."""
-    assert rank(PermissionMode.READ_ONLY) < rank(PermissionMode.ASK) < rank(
-        PermissionMode.UNBOUNDED
+    A total order exists -- this proves it is THIS one). #5825 stage 2:
+    `bounded` sits strictly between `ask` and `unbounded` (doc §2's own
+    table order)."""
+    assert (
+        rank(PermissionMode.READ_ONLY)
+        < rank(PermissionMode.ASK)
+        < rank(PermissionMode.BOUNDED)
+        < rank(PermissionMode.UNBOUNDED)
     )
     assert is_at_least_as_strict(PermissionMode.READ_ONLY, PermissionMode.UNBOUNDED)
     assert not is_at_least_as_strict(PermissionMode.UNBOUNDED, PermissionMode.READ_ONLY)
+    assert is_at_least_as_strict(PermissionMode.ASK, PermissionMode.BOUNDED)
+    assert not is_at_least_as_strict(PermissionMode.UNBOUNDED, PermissionMode.BOUNDED)
 
 
 def test_a_mode_is_at_least_as_strict_as_itself() -> None:
@@ -199,8 +189,21 @@ def test_a_genuinely_invalid_mode_still_raises_even_with_the_lock_off() -> None:
     raises regardless of the lock's state."""
     with pytest.raises(PermissionModeError):
         resolve_permission_mode("yolo", unbounded_disabled=False)
-    with pytest.raises(BoundedModeNotImplementedError):
-        resolve_permission_mode("bounded", unbounded_disabled=True)
+
+
+def test_bounded_resolves_normally_through_resolve_permission_mode() -> None:
+    """Tier 1: #5825 stage 2 -- `resolve_permission_mode` has no special
+    case for `bounded` at all; it parses and passes through exactly like
+    any other member (the `unbounded_disabled` lock only ever touches
+    `unbounded`, never `bounded` -- a SEPARATE downgrade path, decided at
+    the session level, not here -- see
+    tests/runtime/test_5825_stage2_bounded_mode.py)."""
+    assert resolve_permission_mode(
+        "bounded", unbounded_disabled=False,
+    ) is PermissionMode.BOUNDED
+    assert resolve_permission_mode(
+        "bounded", unbounded_disabled=True,
+    ) is PermissionMode.BOUNDED
 
 
 # ── config-key recognition ───────────────────────────────────────────────
@@ -345,3 +348,30 @@ def test_other_permissions_keys_keep_ordinary_last_tier_wins_merge() -> None:
     merged = _merge(merged, {"permissions": {"mode": "ask"}}, tier_label="user_global")
     merged = _merge(merged, {"permissions": {"mode": "unbounded"}}, tier_label="project_local")
     assert merged["permissions"]["mode"] == "unbounded"
+
+
+# ── sandbox_mode_for_permission_mode ─────────────────────────────────────
+
+
+def test_bounded_selects_strict_regardless_of_configured_sandbox_mode() -> None:
+    """Tier 1: #5825 stage 2 (doc §6, lead-coder dispatch: "新しい preset
+    を作らないこと ... sandbox.mode: strict の defaults を選ぶだけ") --
+    `bounded` overrides whatever `sandbox.mode` itself says, selecting
+    "strict" unconditionally. No new preset: this IS the existing
+    `sandbox.mode: strict` value, just selected by a different config
+    key."""
+    assert sandbox_mode_for_permission_mode("compat", PermissionMode.BOUNDED) == "strict"
+    assert sandbox_mode_for_permission_mode("strict", PermissionMode.BOUNDED) == "strict"
+
+
+@pytest.mark.parametrize(
+    "mode", [PermissionMode.READ_ONLY, PermissionMode.ASK, PermissionMode.UNBOUNDED],
+)
+def test_every_other_mode_leaves_configured_sandbox_mode_untouched(
+    mode: PermissionMode,
+) -> None:
+    """Tier 1: deny side -- the override is scoped to `bounded` alone;
+    every other permission mode passes `sandbox.mode` through unchanged,
+    in both directions (compat stays compat, strict stays strict)."""
+    assert sandbox_mode_for_permission_mode("compat", mode) == "compat"
+    assert sandbox_mode_for_permission_mode("strict", mode) == "strict"

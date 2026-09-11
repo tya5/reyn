@@ -252,6 +252,18 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
     # dict a test built.
     if "network_posture_gap" in snap:
         out["network_posture_gap"] = snap["network_posture_gap"]
+    # #5825 stage 2: same "project through only when the server actually
+    # sent it" discipline as `network_posture_gap` right above — an
+    # unconditional `.get()` would fabricate "ask" (the safest-looking
+    # value) for both a pre-STATE_SNAPSHOT window and an older server
+    # that predates these fields, hiding the pane's genuine "not reported
+    # on this connection" state behind a value nobody actually sent.
+    if "permission_mode" in snap:
+        out["permission_mode"] = snap["permission_mode"]
+    if "permission_mode_configured" in snap:
+        out["permission_mode_configured"] = snap["permission_mode_configured"]
+    if "permission_mode_downgrade_reason" in snap:
+        out["permission_mode_downgrade_reason"] = snap["permission_mode_downgrade_reason"]
     return out
 
 

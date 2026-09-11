@@ -853,6 +853,20 @@ def _snapshot_for_session(registry, s, config=None):
         # reason the boundary is not real (`Session.network_enforcement_
         # gap`'s own docstring has the full 3-state contract).
         "network_posture_gap": s.network_enforcement_gap,
+        # #5825 stage 2 (architect: "the surface is already in place for
+        # the network axis alone — mode's own downgrade was the missing
+        # half"). `permission_mode` is the EFFECTIVE (post-downgrade)
+        # mode; `permission_mode_configured` is what was actually written
+        # (the two rows above only ever DIFFER when a downgrade fired —
+        # `permission_mode_downgrade_reason` names why, `None` when they
+        # match). Together these cover BOTH #5825 downgrade paths on one
+        # Ctx-pane row: `bounded` -> `ask` (this stage, network
+        # unenforceable) and `unbounded` -> `ask` (stage 1's own
+        # disable_unbounded_mode lock, previously visible only in
+        # reyn.log).
+        "permission_mode": s.resolved_permission_mode.value,
+        "permission_mode_configured": s.configured_permission_mode.value,
+        "permission_mode_downgrade_reason": s.permission_mode_downgrade_reason,
         # #5654: this session's own currently-RUNNING tasks (attached
         # session only, owner scope decision — no cross-session listing).
         # Derived from Session.chains the SAME way list_tasks does
