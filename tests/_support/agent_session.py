@@ -21,6 +21,7 @@ Session still reads directly in a couple of spots (``_build_retrieval_bundle``,
 """
 from __future__ import annotations
 
+import tempfile
 from typing import Any
 
 from reyn.runtime.agent import Agent
@@ -52,7 +53,9 @@ _AGENT_FIELD_FROM_KWARG = {
 }
 
 
-def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
+def make_session(
+    *, role: str | None = None, isolate_child_temp_dir: bool = True, **kwargs: Any,
+) -> Session:
     """Build a ``Session`` via an explicit ``Agent`` (identity SSoT).
 
     Accepts every kwarg the pre-migration flat ``Session(...)`` call sites
@@ -75,9 +78,27 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
     dropped by a future edit. ``Agent.agent_name`` itself has no default, so
     omitting it now raises ``TypeError`` immediately instead of falling back
     to a fixed literal.)
-    """
+
+    ``isolate_child_temp_dir`` (#6151): DEFAULT True — injects a fresh,
+    per-call ``child_temp_dir`` (Session's own #6151 override param)
+    UNLESS the caller already passed one explicitly. Root cause: this
+    helper's own defaults are `agent_name` (no default, but MANY call
+    sites literally pass ``"alpha"``) + `session_id` (defaults to
+    ``"main"``, a value many OTHER tests assert on directly — see
+    ``tests/core/test_registry_list_rewind_points_1f.py`` et al, so that
+    default itself must NOT change). Combined, those two produce the
+    SAME real filesystem path, ``<tempdir>/reyn/alpha/main``, for every
+    test that doesn't override either — #6151 measured `-n auto` workers
+    colliding on that ONE shared directory (create/delete/permission
+    races). Isolating the TEMP DIR (not `session_id`, which many tests
+    depend on) removes the sharing without touching either load-bearing
+    default. Pass ``isolate_child_temp_dir=False`` (or an explicit
+    ``child_temp_dir=``) when a test's own subject IS this formula
+    itself — see ``tests/runtime/test_5184_session_temp_lifetime.py``."""
     if role is not None:
         kwargs.setdefault("agent_role", role)
+    if isolate_child_temp_dir and "child_temp_dir" not in kwargs:
+        kwargs["child_temp_dir"] = tempfile.mkdtemp(prefix="reyn-test-child-")
 
     agent_field_kwargs = {
         agent_field: kwargs.pop(kwarg_name)
