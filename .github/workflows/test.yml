@@ -219,7 +219,12 @@ jobs:
               done
             } > /tmp/hang-ps.log 2>&1
           ) &
-          REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=700 timeout 13m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+          # PYTHONWARNDEFAULTENCODING=1 (#6132): arms PEP 597's EncodingWarning
+          # in this process AND every xdist worker it spawns (env is
+          # inherited) — tests/conftest.py escalates it to an error for
+          # reyn.*'s own call sites only. The flag is latched at interpreter
+          # startup, so it must be set here, not toggled from conftest.py.
+          PYTHONWARNDEFAULTENCODING=1 REYN_REPLAY_UNCONSUMED_CHECK=1 REYN_STALL_TRACE_CI=700 timeout 13m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
 
       # #4986: surface the stall dump above if (and only if) it fired. The
       # log file is opened (empty) the moment the watchdog is armed —

@@ -108,6 +108,20 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+# ── #6132: EncodingWarning (PEP 597) is escalated via pyproject.toml, NOT
+# here — see [tool.pytest.ini_options]'s own `filterwarnings` entry and its
+# comment for the mechanism and the root cause. A module-level
+# `warnings.filterwarnings()` call at THIS file's import time was tried
+# first and measured NOT to work: pytest enters a fresh `catch_warnings()`
+# + `simplefilter("always")` around every test item's own execution, which
+# discards any filter installed at collection/import time before a single
+# test body runs — reproduced directly as "1 passed, 1 warning" (no error)
+# against a known-bad reyn.* call. `[tool.pytest.ini_options].
+# filterwarnings` is pytest's OWN mechanism for this exact problem: it is
+# re-applied fresh per item, so it is what actually protects the real
+# suite (verified both directions: a reyn.* site fails, a third-party site
+# stays a non-fatal warning).
+
 # ── FP-0058 P2: A2A/MCP opt-in for pre-existing protocol tests ──────────────
 #
 # A2A and MCP are now secure-default OFF (``reyn.interfaces.web.surfaces`` —

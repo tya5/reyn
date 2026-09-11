@@ -524,6 +524,18 @@ sample_line = "reyn.gateway.sample_line:register_router"
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 pythonpath = ["src"]
+# #6132: pytest resets the warnings filter state per test ITEM (enters its
+# own catch_warnings() + simplefilter("always") around every item), so a
+# plain module-level warnings.filterwarnings() call at conftest.py IMPORT
+# time (this repo's first attempt) never survives to reach a real test's
+# execution -- measured directly: the exact escalation this entry provides
+# reproduced as "1 passed, 1 warning" (no error) without it. This
+# ini_options key is pytest's OWN filterwarnings mechanism, applied fresh
+# per item, so it is what actually protects the real suite. The SAME
+# pattern is hand-copied into tests/dev/test_6132_encoding_default_gate.py's
+# own _INSTALL_FILTER (its 3 subprocess-script scenarios run outside
+# pytest entirely, so they cannot read this entry) -- keep both in sync.
+filterwarnings = ["error::EncodingWarning:reyn(\\..*)?$"]
 # dogfood/fixtures/ ships failing-test workspaces consumed by
 # dogfood/scripts/ runners on isolated tmp copies. They MUST NOT
 # be collected by the project's main pytest suite — the placeholder
@@ -595,7 +607,29 @@ exclude = [
 # target as a guideline rather than a hard rule, since wrapping
 # Reyn's narrative comments and skill scripts often hurts
 # readability more than it helps.
-select = ["F", "I"]
+#
+# #6132: PLW1514 (unspecified-encoding, ruff's preview-only Pylint port)
+# is the static complement to this file's own [tool.pytest.ini_options].
+# filterwarnings entry (the runtime EncodingWarning gate) -- the runtime
+# gate only sees a call a test path actually reaches;
+# PLW1514 sees every literal call site regardless of coverage. Neither
+# alone is sufficient -- measured one-by-one against the 11 confirmed
+# #6132 sites (each site's own encoding= stripped in isolation, ruff run,
+# restored): PLW1514 catches exactly the 5 bare `open()`/`Path.open()`/
+# `.write_text()` calls, and misses the other 6 -- the 1 *FileHandler
+# construction (chat.py's own root cause; it does not model FileHandler's
+# encoding=None -> locale.getpreferredencoding() default), all 4
+# `.read_text()` calls, and the 1 `os.fdopen()` call.
+#
+# explicit-preview-rules = true: `preview = true` alone also activates
+# PREVIEW BEHAVIOR of already-selected stable rules (F, I here) -- unpinned
+# ruff, so an upstream preview-behavior change to either could turn main
+# red with no PR of ours in between. This flag scopes preview mode to
+# EXPLICITLY preview-only rules (PLW1514) only -- F/I keep their stable
+# behavior. Verified: PLW1514 still fires with this flag set.
+preview = true
+explicit-preview-rules = true
+select = ["F", "I", "PLW1514"]
 ignore = [
     # F811: local imports inside functions for clarity (e.g. lazy
     # imports of optional deps) trigger this.
@@ -673,6 +707,19 @@ ignore = [
 # below don't have this failure mode because the directory NAME is the
 # anchor, not a wildcard.
 [tool.ruff.lint.per-file-ignores]
+
+# #6132: PLW1514 (unspecified-encoding) is scoped to src/ only -- the
+# issue's own population and this PR's own fix are both src/-scoped;
+# every other top-level tree with .py files has a much larger,
+# separately-owned population (measured: tests/ 56, scripts/ +
+# dogfood/scripts/ + docs/ 25) that is out of scope for this ticket.
+# ruff per-file-ignores only ADDS ignores (no positive "select here
+# only" mechanism), so each non-src/ tree with a finding is listed
+# explicitly rather than attempted as a single inverse glob.
+"tests/**" = ["PLW1514"]
+"scripts/**" = ["PLW1514"]
+"dogfood/**" = ["PLW1514"]
+"docs/**" = ["PLW1514"]
 
 # #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
 # (ratchet)" job), not a blocking full-adoption gate — the tree currently

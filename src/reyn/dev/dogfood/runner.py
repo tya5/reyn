@@ -181,7 +181,9 @@ def _ensure_dir(path: Path) -> Path:
 
 
 def _write_json(path: Path, data: object) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8",
+    )
 
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
@@ -467,7 +469,7 @@ def load_run_result_from_storage(run_dir: Path) -> RunResult:
     if not summary_path.exists():
         raise FileNotFoundError(f"No summary.json found in {run_dir}")
 
-    summary = json.loads(summary_path.read_text())
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     run_id = summary["run_id"]
     set_name = summary["set_name"]
@@ -481,13 +483,13 @@ def load_run_result_from_storage(run_dir: Path) -> RunResult:
     scenarios_dir = run_dir / "scenarios"
     if scenarios_dir.exists():
         for output_path in sorted(scenarios_dir.glob("*/output.json")):
-            data = json.loads(output_path.read_text())
+            data = json.loads(output_path.read_text(encoding="utf-8"))
 
             # Load events
             events_path = output_path.parent / "events.jsonl"
             events: list[dict] = []
             if events_path.exists():
-                for line in events_path.read_text().splitlines():
+                for line in events_path.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
                     if line:
                         events.append(json.loads(line))

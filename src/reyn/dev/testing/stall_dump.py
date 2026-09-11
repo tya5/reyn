@@ -182,9 +182,11 @@ def pytest_configure(config: "pytest.Config") -> None:
         workerid = _worker_id(config)
         if workerid is None:
             return
-        _dump_file = open(worker_log_path(workerid), "a", buffering=1)  # noqa: SIM115 — see module docstring
+        _dump_file = open(  # noqa: SIM115 — see module docstring
+            worker_log_path(workerid), "a", buffering=1, encoding="utf-8",
+        )
         arm(worker_seconds_from(seconds), file=_dump_file)
         return
 
-    _dump_file = open(LOG_PATH, "a", buffering=1)  # noqa: SIM115 — see module docstring
+    _dump_file = open(LOG_PATH, "a", buffering=1, encoding="utf-8")  # noqa: SIM115 — see module docstring
     arm(seconds, file=_dump_file)

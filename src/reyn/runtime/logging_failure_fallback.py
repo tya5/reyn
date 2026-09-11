@@ -101,9 +101,21 @@ class FailureFallbackRotatingFileHandler(logging.handlers.RotatingFileHandler):
     before this subclass's wrapper's except clause could run) or
     double-handle it. `handleError` is the ONE correct override point —
     it is what the base class already calls, unconditionally, on every
-    emit failure."""
+    emit failure.
+
+    #6132: `encoding=` defaults to `"utf-8"` here, in the CLASS, not left
+    to each construction site to remember — `logging.FileHandler`'s own
+    `encoding=None` default opens via `locale.getpreferredencoding(False)`
+    (cp932 on Japanese Windows), and this class exists SOLELY to back
+    `reyn.log`, whose every reader already assumes utf-8
+    (`read_text(encoding="utf-8")` throughout tests/scripts) — inheriting
+    a locale-dependent default here is itself the defect, not something
+    each caller should have to override. `kwargs.setdefault` (not an
+    unconditional overwrite) so an explicit `encoding=` a caller passes
+    still wins."""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
+        kwargs.setdefault("encoding", "utf-8")
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
         self._fallback_snapshot: "DiagnosticSnapshot | None" = None
         self._fallback_path: "str | None" = None

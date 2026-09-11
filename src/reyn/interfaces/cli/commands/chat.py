@@ -461,6 +461,15 @@ def _setup_interactive_logging(project_root: Path, *, is_interactive: bool = Tru
         str(log_path),
         maxBytes=defaults.max_bytes,
         backupCount=defaults.backup_count,
+        # #6132: FileHandler with encoding=None opens via
+        # locale.getpreferredencoding(False) -- cp932 on Japanese Windows.
+        # reyn.log's own readers all assume utf-8 (read_text(encoding=
+        # "utf-8") throughout tests/scripts); only the writer was
+        # locale-dependent. A non-ASCII log record (an em dash, #6132's
+        # own trigger) then raised UnicodeEncodeError from emit(), and
+        # stdlib's handleError wrote the traceback straight to raw
+        # sys.stderr, breaking the Textual screen it does not own.
+        encoding="utf-8",
     )
     handler.set_fallback_path(handler_failure_dump_path(str(log_path)))
     handler.setFormatter(

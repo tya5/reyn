@@ -75,7 +75,7 @@ def detect_repo_from_git() -> str | None:
     try:
         r = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=2.0,
+            capture_output=True, text=True, encoding="utf-8", timeout=2.0,
         )
         if r.returncode != 0:
             return None
