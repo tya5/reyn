@@ -172,8 +172,11 @@ async def run_sandboxed_exec(
     # `check_exec_plan_policy`'s own RETURN VALUE in cmd-mode, never by
     # calling `resolve_real_executable` a second time here -- see that
     # function's own docstring for why a second resolution is the exact
-    # bug class this closes.
-    plan_field: "list[dict[str, str]] | None" = None
+    # bug class this closes. #6061: each entry may ALSO carry an
+    # `unwrap_chain` (a `list[str]`) alongside the existing `argv0`/
+    # `resolved` `str` values -- see `check_exec_plan_policy`'s own
+    # docstring for exactly when.
+    plan_field: "list[dict[str, str | list[str]]] | None" = None
 
     if cmd_text is not None:
         from reyn.security.exec_plan import ExecPlanRejected, parse_exec_plan
