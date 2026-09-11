@@ -967,6 +967,17 @@ def _resolve_raw_output(ev: dict, state_dir: "Path | None") -> "str | None":
         return None
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        # #3024: the guard runs HERE, after src/ is on sys.path, not at
+        # module top -- lead-coder BLOCKING (PR #6138): this is this
+        # module's ONLY reyn import, reached lazily and only for a
+        # raw_output_ref dereference, so a module-top guard would reject
+        # every OTHER invocation that never needs reyn at all, on top of
+        # firing before this line's own path insert ever runs. SystemExit
+        # (raised on a real mismatch) is not an Exception subclass, so
+        # the `except Exception` below does not swallow it.
+        from verify_env_identity import guard_bare_script_or_exit
+        guard_bare_script_or_exit()
+
         from reyn.services.offload import read_offloaded
         content, found = read_offloaded(str(state_dir / ref), base_dir=state_dir)
         return content if found else None

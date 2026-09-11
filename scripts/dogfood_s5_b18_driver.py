@@ -34,6 +34,22 @@ SCRIPTS_DIR = WORKTREE / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(WORKTREE / "src"))
 
+# #3024: verify the in-process `reyn` this bare-python script is about
+# to import (module-level or lazily, anywhere below) resolves THIS
+# checkout, not whichever tree the ambient venv's editable install
+# happens to point at. Exits loudly (never a silent wrong-tree run) on
+# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
+# docstring. Population + presence are enforced mechanically by
+# check_scripts_import_identity_guard.py, so this call cannot be dropped
+# without the gate catching it. Positioned AFTER the sys.path.insert
+# calls above -- lead-coder BLOCKING (PR #6138): this script
+# self-bootstraps WORKTREE/src onto sys.path when reyn is not installed,
+# so a guard positioned BEFORE those inserts would see find_spec('reyn')
+# is None on a normal run.
+from verify_env_identity import guard_bare_script_or_exit
+
+guard_bare_script_or_exit()
+
 from dogfood_rag_helper import (
     make_chunks_for_seed,
     register_fake_embedding_provider,

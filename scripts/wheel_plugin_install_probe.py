@@ -53,6 +53,11 @@ CI: gate
 """
 from __future__ import annotations
 
+# #3024: NO guard_bare_script_or_exit() here, deliberately -- see this
+# module's own docstring: run INSIDE a throwaway venv that has ONLY the
+# built wheel installed, so `import reyn` here MUST resolve site-packages,
+# never `<root>/src`. Named as a reasoned exception in
+# check_scripts_import_identity_guard.py's own EXEMPT_SCRIPTS table.
 import asyncio
 import os
 import subprocess

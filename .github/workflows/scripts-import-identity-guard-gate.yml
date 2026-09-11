@@ -1,0 +1,42 @@
+name: scripts import-identity guard gate
+
+# #3024: every bare-python scripts/*.py file that imports reyn (module-
+# level or lazily, anywhere in the file) must call
+# verify_env_identity.guard_bare_script_or_exit() before any code path
+# can reach that import, or be named -- with a reason -- in
+# scripts/check_scripts_import_identity_guard.py's own EXEMPT_SCRIPTS
+# table. See that script's own module docstring for the full origin: a
+# bare python invocation has none of pytest's own pythonpath=["src"]
+# protection (root conftest.py's #3233 guard), so "pytest is green" was
+# never evidence a bare-python gate script measured the right checkout.
+#
+# `paths: scripts/**` -- this gate scans EVERY scripts/*.py file each
+# run (its own population is derived, not enumerated), so any script
+# addition/edit can move its own verdict.
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+
+permissions:
+  contents: read
+
+jobs:
+  scripts-import-identity-guard-gate:
+    name: scripts import-identity guard gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_scripts_import_identity_guard.py is stdlib-only
+      # (ast / subprocess / pathlib). No pip install needed.
+      - name: Check every reyn-importing script is guarded or reasoned-exempt
+        run: |
+          python scripts/check_scripts_import_identity_guard.py

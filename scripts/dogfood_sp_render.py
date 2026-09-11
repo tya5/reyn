@@ -36,6 +36,7 @@ CI: manual -- run by hand as a dogfooding render/dev utility
 """
 from __future__ import annotations
 
+# #3024: verify the in-process `reyn` this bare-python script is about
 import argparse
 import re
 import sys
@@ -44,6 +45,21 @@ from pathlib import Path
 # Ensure src/ is importable when run from the repo root.
 _REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+# #3024: verify the in-process `reyn` this bare-python script is about
+# to import (module-level or lazily, anywhere below) resolves THIS
+# checkout, not whichever tree the ambient venv's editable install
+# happens to point at. Exits loudly (never a silent wrong-tree run) on
+# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
+# docstring. Population + presence are enforced mechanically by
+# check_scripts_import_identity_guard.py, so this call cannot be dropped
+# without the gate catching it. Positioned AFTER the sys.path.insert
+# above -- lead-coder BLOCKING (PR #6138): this script self-bootstraps
+# src/ onto sys.path when reyn is not installed, so a guard positioned
+# BEFORE that insert would see find_spec('reyn') is None on a normal run.
+from verify_env_identity import guard_bare_script_or_exit
+
+guard_bare_script_or_exit()
 
 from reyn.runtime.router_system_prompt import build_system_prompt  # noqa: E402
 
