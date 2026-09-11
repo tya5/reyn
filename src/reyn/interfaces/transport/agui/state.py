@@ -422,12 +422,21 @@ class RemoteQueueView:
         This state — a queued item present in :attr:`items` while its own
         ``turn_started`` carries ``seq <= self._last_seq`` — is REAL: this
         very ``WARNING`` branch exists to name it (pre-existing on
-        ``main``, #5989 ③ — this PR did not add it), and it matches the
-        owner's real #5989 symptom (a sent-queue item stuck forever, never
-        promoted, since ``turn_started`` is a once-per-turn edge the
-        server never resends — a rejected item would have no OTHER delta
-        that will ever promote it). **The server-side PATH that produces
-        this state is UNIDENTIFIED as of this PR** (an earlier draft of
+        ``main``, #5989 ③ — #6123 did not add it), and it matches the
+        owner's real #5989 symptom (a sent-queue item stuck for the life
+        of this attached view, never promoted, since ``turn_started`` is a
+        per-DISPATCH edge the server never re-sends — a rejected item has
+        no OTHER delta that will ever promote it. Not "forever": a
+        re-attach clears it, because :meth:`apply_snapshot` REPLACES
+        :attr:`items` wholesale rather than merging into it, so the stuck
+        row survives exactly as long as this connection does. And
+        "per-dispatch" is not "per operator turn" — a mid-turn injection
+        fires its own ``turn_started``
+        (``Session._commit_mid_turn_injection``, which "rides inside the
+        ALREADY-running turn's lifecycle"); what this branch relies on is
+        only that no SECOND one ever arrives for the same rejected
+        dispatch). **The server-side PATH that produces this state is
+        UNIDENTIFIED as of #6123** (an earlier draft of
         this docstring named ``apply_snapshot``'s unconditional
         ``_last_seq`` assignment as the cause via a specific
         generated-before/delivered-after reconnect-snapshot scenario; that
