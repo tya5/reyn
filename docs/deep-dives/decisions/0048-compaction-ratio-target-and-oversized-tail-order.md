@@ -1,6 +1,6 @@
 # ADR-0048 (#5890) — a compaction ratio target is a recovery-time goal, not an invariant; an oversized tail turn spills before it folds
 
-**Status**: **PROPOSED**. Owner design session, [#5890](https://github.com/tya5/reyn/issues/5890) (verbatim quotes below); lead-coder ruling on the two invariant-scope decisions. Raising to **ACCEPTED** is the owner's own act, not taken here.
+**Status**: **ACCEPTED** (owner ruling, 2026-09-12, verbatim「ADR-0048 accepted にしていいよ」; raised from PROPOSED — see below). Owner design session, [#5890](https://github.com/tya5/reyn/issues/5890) (verbatim quotes below); lead-coder ruling on the two invariant-scope decisions.
 **Builds on**: [ADR-0044](0044-overflow-recovery-ladder.md) — the ladder this ADR's decisions apply inside. Nothing in 0044 is superseded.
 **Track**: #5890.
 
