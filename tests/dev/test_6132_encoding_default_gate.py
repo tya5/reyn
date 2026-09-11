@@ -64,11 +64,12 @@ def _run(
     )
 
 
-# The SAME filter tests/conftest.py installs (kept in sync by hand — the two
-# copies are documented at both ends: conftest.py's own comment names this
-# file, and this docstring below points back). One line, so interpolating it
-# into an indented triple-quoted script below never fights textwrap.dedent
-# over inconsistent per-line indentation.
+# The SAME filter pyproject.toml's [tool.pytest.ini_options].filterwarnings
+# entry expresses for the real suite (kept in sync by hand -- both copies
+# are documented at each end: pyproject.toml's own comment names this
+# file, and this docstring below points back). One line, so interpolating
+# it into an indented triple-quoted script below never fights
+# textwrap.dedent over inconsistent per-line indentation.
 _INSTALL_FILTER = (
     'import warnings; warnings.filterwarnings('
     '"error", category=EncodingWarning, module=r"reyn(\\..*)?$")'
@@ -82,8 +83,9 @@ def test_a_reyn_open_without_encoding_raises_when_the_gate_is_armed(
     actually CATCHES a real #6132-shaped omission. ``encoding_gate_probe``
     (``reyn.dev.testing``) exists ONLY to give this test a genuine
     ``reyn.*``-namespaced call site (the filter is scoped by the warning's
-    attributed module, not by this test file's own — see conftest.py's own
-    comment for why a call from this file would not be caught)."""
+    attributed module, not by this test file's own — see pyproject.toml's
+    own `filterwarnings` comment for why a call from this file would not
+    be caught)."""
     script = f"""
         {_INSTALL_FILTER}
         from reyn.dev.testing.encoding_gate_probe import open_without_encoding_for_gate_test
@@ -103,7 +105,7 @@ def test_the_same_open_is_silent_without_the_flag(
     """Tier 2: deny side — proves the flag itself is load-bearing, not just
     the filter. Without ``PYTHONWARNDEFAULTENCODING=1``, CPython never
     produces an ``EncodingWarning`` at all (the flag is latched at
-    interpreter startup, per conftest.py's own comment) — the SAME
+    interpreter startup, per pyproject.toml's own comment) — the SAME
     unencoded open above must complete silently here. If this scenario
     ever raised, the positive test above would be meaningless (every
     process would fail regardless of the flag)."""
