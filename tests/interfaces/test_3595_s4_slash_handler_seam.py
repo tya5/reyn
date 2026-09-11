@@ -678,7 +678,14 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: independently bumped to 126 against a 125 base measured before the
 #: other one landed -- 127 is the recount against BOTH landing on main
 #: together, not "126 because both agreed on 126".)
-_PUBLIC_MEMBER_CEILING = 127
+#: #5825 stage 2 adds 3 more: ``configured_permission_mode`` /
+#: ``resolved_permission_mode`` / ``permission_mode_downgrade_reason``.
+#: Genuinely unrelated to #3595 S4's slash-handler-encapsulation concern:
+#: all 3 exist for ``status.py``'s read-model to expose the posture Ctx-pane
+#: row (project_status's ``permission_mode``/``permission_mode_configured``/
+#: ``permission_mode_downgrade_reason`` keys) -- no slash handler reaches
+#: through any of them.
+_PUBLIC_MEMBER_CEILING = 130
 
 
 def test_session_public_surface_does_not_grow() -> None:
