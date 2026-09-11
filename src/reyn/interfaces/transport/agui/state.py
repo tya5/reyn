@@ -421,7 +421,8 @@ class RemoteQueueView:
 
         This state — a queued item present in :attr:`items` while its own
         ``turn_started`` carries ``seq <= self._last_seq`` — is REAL: this
-        very ``WARNING`` branch exists to name it, and it matches the
+        very ``WARNING`` branch exists to name it (pre-existing on
+        ``main``, #5989 ③ — this PR did not add it), and it matches the
         owner's real #5989 symptom (a sent-queue item stuck forever, never
         promoted, since ``turn_started`` is a once-per-turn edge the
         server never resends — a rejected item would have no OTHER delta
@@ -430,10 +431,20 @@ class RemoteQueueView:
         this docstring named ``apply_snapshot``'s unconditional
         ``_last_seq`` assignment as the cause via a specific
         generated-before/delivered-after reconnect-snapshot scenario; that
-        scenario's ``apply_inbox_cancel`` counterpart was checked against
-        ``SnapshotJournal.cancel_inbox``'s prune-then-emit ordering during
-        PR #6123 review and withdrawn as unproducible by the server —
-        do not re-derive or re-assert it from this docstring).
+        scenario was withdrawn during PR #6123 review as unproducible by
+        the server — checked not only against its ``apply_inbox_cancel``
+        counterpart but against ``turn_started``'s OWN emission ordering:
+        both dispatch paths prune before stamping the delta's own seq, the
+        SAME prune-then-bump ordering ``SnapshotJournal.cancel_inbox`` has.
+        ``Session._commit_mid_turn_injection``'s ``await self._journal.
+        consume_inbox(msg_id=msg_id)`` is immediately followed by
+        ``self._audit_events.emit("turn_started", ..., seq=self.
+        _bump_queue_seq())``; ``InboxArbiter.drain_to_wake``'s own
+        ``await self._journal.consume_inbox(msg_id=msg_id_nb)`` is
+        followed, with no await in between, by the caller's own
+        ``turn_started`` emit once ``drain_to_wake`` returns. Do not
+        re-derive or re-assert the withdrawn scenario from this
+        docstring).
 
         ``stuck`` non-empty is itself the proof this delta was never
         actually applied (an already-applied item would already be gone),
