@@ -90,6 +90,23 @@ def test_an_unrecognized_value_raises_the_generic_error(raw: str) -> None:
 # ── total ordering ───────────────────────────────────────────────────────
 
 
+def test_permission_mode_order_covers_every_enum_member() -> None:
+    """Tier 1: lead-coder BLOCKING — PERMISSION_MODE_ORDER is a hand-
+    maintained tuple, separate from the PermissionMode enum it orders;
+    nothing makes them drift together automatically. rank()'s own
+    .index() means a member present in the enum but MISSING from the
+    tuple raises ValueError in production the first time anything ranks
+    it (e.g. stage 2 adding `bounded` to the enum and forgetting to
+    extend this tuple).
+
+    Deliberately does NOT pin the COUNT (3 today) — only that the two
+    collections' MEMBERSHIP matches, so stage 2 adding a real 4th value
+    to both together stays green; only a genuine update-miss (one
+    changed, the other not) goes red."""
+    assert set(PERMISSION_MODE_ORDER) == set(PermissionMode)
+    assert len(PERMISSION_MODE_ORDER) == len(set(PermissionMode))
+
+
 def test_the_order_is_total_every_pair_has_one_answer() -> None:
     """Tier 1: doc §2's own acceptance line — "Ordering is total and
     strict-to-permissive, so 'at least as strict as X' is expressible."
