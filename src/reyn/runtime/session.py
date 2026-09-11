@@ -8567,16 +8567,23 @@ class Session:
         otherwise it runs unsandboxed under Noop).
 
         Memoized on the ``_sandbox_config`` OBJECT's identity AND
-        :attr:`configured_permission_mode` (#5825 stage 2 — ``bounded``
+        :attr:`_permission_mode_after_lock` (#5825 stage 2 — ``bounded``
         changes the EFFECTIVE sandbox mode this gap resolves under, via
-        ``sandbox_mode_for_permission_mode``, and ``permissions.mode``
-        can hot-reload independently of ``sandbox_config``'s own object
-        identity), not on a clock: a hot-reload re-assigns that object,
-        so a changed config is a different object and recomputes, while a
-        per-frame read of an unchanged one costs a dict lookup. The first
-        computation can run a
-        real self-test probe (measured ~100 ms cold, ~47 µs warm), which is
-        not something a render path should pay repeatedly."""
+        ``sandbox_mode_for_permission_mode``). ``permissions.mode`` itself
+        does **not** hot-reload today (#2073's own OUT-set — ``reyn.yaml``'s
+        security/permission/sandbox/budget keys — is restart-only; the
+        file-split IS the write-gate boundary, owner-confirmed #2073). This
+        extra key is a defence for a write path that does not exist yet,
+        not a fix for one that does: keying on `_permission_mode_after_lock`
+        too costs nothing today (identical `sandbox_config` identity means
+        an identical mode, so the added comparison is a no-op) and means a
+        FUTURE runtime write to `permissions.mode` — should one ever land —
+        cannot silently serve a stale gap across it. Not on a clock: a
+        config change re-assigns the `_sandbox_config` object, so a changed
+        config is a different object and recomputes, while a per-frame read
+        of an unchanged one costs a dict lookup. The first computation can
+        run a real self-test probe (measured ~100 ms cold, ~47 µs warm),
+        which is not something a render path should pay repeatedly."""
         from reyn.security.permissions.posture import sandbox_mode_for_permission_mode
         from reyn.security.sandbox import select_backend
         from reyn.security.sandbox.policy import (
@@ -8587,12 +8594,13 @@ class Session:
         )
 
         sandbox_config = self._sandbox_config
-        # #5825 stage 2: the cache key must ALSO cover permissions.mode —
-        # `bounded` changes the effective sandbox mode this gap resolves
-        # under (see `effective_sandbox_mode` below), and permissions
-        # config can hot-reload independently of `sandbox_config`'s own
-        # object identity. Keying on `sandbox_config is` alone would
-        # silently serve a stale gap across such a reload.
+        # #5825 stage 2: the cache key must ALSO cover the permission mode
+        # (after the stage-1 lock) — `bounded` changes the effective
+        # sandbox mode this gap resolves under (see `effective_sandbox_mode`
+        # below). `permissions.mode` does NOT hot-reload today (#2073's
+        # restart-only OUT-set); this is a defence for a write path that
+        # does not exist yet, not a response to one that does — see this
+        # property's own docstring.
         permission_mode = self._permission_mode_after_lock
         cached = getattr(self, "_network_gap_cache", None)
         if cached is not None and cached[0] is sandbox_config and cached[2] == permission_mode:
