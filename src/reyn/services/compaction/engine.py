@@ -16,8 +16,11 @@ Key design decisions:
   session SP — the main session pool does NOT include T_comp_SP).
 - ``trim_head`` / ``trim_tail`` operate purely on token budget, no turn count
   cap (Axis 3).
-- A single turn that alone exceeds the token cap is truncated with an
-  explicit event emit ``turn_too_large_truncated`` (Axis 7).
+- A single turn that alone exceeds the token cap is kept WHOLE, never
+  split or truncated (#2289 keep-whole, Axis 7), with an explicit event
+  emit ``turn_kept_whole_over_budget`` (#6154 — renamed from ``turn_too_
+  large_truncated``, which had named the opposite of this since its
+  very first commit; see ``_emit_over_budget_group``'s own docstring).
 - ``estimate_tokens_for_turn`` is multimodal-aware: str content uses
   litellm.token_counter; list[dict] content passes the parts list directly
   or sums per-part text + fixed cost per image (Axis 6).
@@ -1961,12 +1964,17 @@ def _group_tool_cycles(turns: list) -> "list[list]":
 def _emit_over_budget_group(events, group: list, budget: int, group_tokens: int, kind: str) -> None:
     """A single group alone exceeds ``budget`` and is KEPT WHOLE (never split → no result loss).
 
-    A tool cycle emits ``tool_cycle_kept_whole_over_budget`` (NOT a truncation — the whole cycle
-    survives, over budget). A non-cycle singleton keeps the existing Axis-7 ``turn_too_large_
-    truncated`` (the single turn is included whole; content kept). NOTE (#1909): a tool cycle that
-    exceeds the MODEL's HARD context limit (not merely this compaction budget) cannot be fixed by
-    keep-whole — it would overflow at the provider. That is a tool-RESULT-size problem for op-level
-    result truncation / context-narrowing (#1909), out of scope for this trim."""
+    A tool cycle emits ``tool_cycle_kept_whole_over_budget``; a non-cycle singleton emits
+    ``turn_kept_whole_over_budget`` (#6154 — renamed from ``turn_too_large_truncated``, a name
+    that had claimed the OPPOSITE of what this branch has always done since its very first commit
+    (75e7233c0): ``kept.append(t)`` — the whole turn, never a truncated slice. Nothing has ever
+    changed behaviour here; only the name lied, from before this file's first line — `git log -S`
+    on every ancestor name found no commit where a real truncation ever became keep-whole. The old
+    name misread 3 people over its lifetime (the #2289 PR's own writer, architect, and lead-coder),
+    each independently — a real, not merely theoretical, misreading cost). NOTE (#1909): a tool
+    cycle that exceeds the MODEL's HARD context limit (not merely this compaction budget) cannot be
+    fixed by keep-whole — it would overflow at the provider. That is a tool-RESULT-size problem for
+    op-level result truncation / context-narrowing (#1909), out of scope for this trim."""
     if events is None:
         return
     head = group[0]
@@ -1977,9 +1985,14 @@ def _emit_over_budget_group(events, group: list, budget: int, group_tokens: int,
             turn_seq=seq, group_tokens=group_tokens, budget=budget, budget_kind=kind,
         )
     else:
+        # #6154: field names aligned with the sibling emit above (was
+        # original_tokens=/kept_tokens=, the SAME "described a truncation
+        # that never happened" shape the kind name itself had — kept_tokens
+        # reported `budget`, not what was actually kept, which is the whole
+        # `group_tokens`).
         events.emit(
-            "turn_too_large_truncated",
-            turn_seq=seq, original_tokens=group_tokens, kept_tokens=budget, budget_kind=kind,
+            "turn_kept_whole_over_budget",
+            turn_seq=seq, group_tokens=group_tokens, budget=budget, budget_kind=kind,
         )
 
 
