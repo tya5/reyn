@@ -180,6 +180,48 @@ Recorded here (not filed as a separate follow-up — architect's own
 choice) for the future reader who reaches for "measured low enough"
 as a reason to add one anyway: that reason was never the load-bearing
 one, even before this PR: the SAME fact holds regardless of volume.
+
+## #6061 (lead-coder ruling, #6061 issue thread) — the tool axis now
+unwraps a WRAPPER binary (``env`` / ``xargs`` / ``sh -c`` / ``timeout`` /
+``nice`` / ``command`` — ``exec_wrappers.py``'s own curated table) rather
+than checking only ``argv[0]``. Before this: ``env ls`` checked ``env``
+against the tool-axis narrowing and never looked at ``ls`` — an operator
+who restricted ``ls`` read their own restriction as enforced when it was
+not (architect's own framing: "worse than no defence — without one,
+people take a different precaution; believing one is active, they do
+not"). :func:`_check_segment` now applies the SAME
+``tool_contextually_denied`` check to EVERY name in the chain (``env
+FOO=1 sh -c 'rm x'`` checks ``env``, ``sh``, AND ``rm``) — never strips
+the wrapper and checks only the inside, which would defeat an operator
+who denied the WRAPPER's own name.
+
+**Restriction-inert by construction, not by convention**: the whole walk
+is gated on a tool-axis restriction actually being configured
+(``contextual.tool_allow is not None or contextual.tool_deny`` — see
+:func:`_check_segment`'s own comment). An unrestricted session never
+enters the loop this adds, so ``resolve_real_executable`` is never called
+an extra time and no new denial path exists for the common (unrestricted)
+case — this is the "既定は変えません" ruling's own implementation, not
+merely its documentation.
+
+**Fails closed, never open, on the two ways a chain cannot be verified**:
+a wrapper whose own argv shape ``exec_wrappers.py`` cannot safely unwrap
+(some flag combination outside that module's own extraction rule), and a
+chain deeper than :data:`_MAX_UNWRAP_DEPTH` (8, matching OpenAI Codex's
+own limit for the identical recursion — architect's competitive
+research). Both raise :class:`PermissionError` and emit
+``exec_tool_axis_denied`` with the chain walked so far in
+``unwrap_chain`` — silently treating either as "nothing more to check"
+would approve exactly the class of command this PR exists to catch.
+
+**Threat scan and sandbox are UNCHANGED** — this PR's own scope, per
+architect's own charter-lens table (#6061 issue thread): the threat scan
+already sees a segment's FULL joined argv text (``env rm -rf /`` already
+matches a ``rm -rf`` pattern regardless of wrapper-awareness) and the
+sandbox already bounds effects rather than names. Only the tool axis's
+own promise — "these are the binaries that can run" — was narrower than
+its own wording implied; this PR brings the implementation up to that
+wording for the ONE axis it was ever false for.
 """
 from __future__ import annotations
 
@@ -187,6 +229,7 @@ import os
 from typing import TYPE_CHECKING
 
 from reyn.security.exec_plan import ExecRedirect, ExecSegment
+from reyn.security.exec_wrappers import extract_inner_argv, is_registered_wrapper
 from reyn.security.permissions.effective import (
     contextual_deny_message,
     gate_effective_tool_name,
@@ -198,10 +241,18 @@ if TYPE_CHECKING:
     from reyn.core.op_runtime.context import OpContext
     from reyn.security.exec_plan import ExecPlan
 
+# #6061: the max number of wrapper hops the tool axis will unwrap before
+# refusing outright (fail-closed) — matches OpenAI Codex's own depth limit
+# for the identical `sudo <cmd>`-style recursion (architect's competitive
+# research, #6061 issue thread). Only ever consulted when a tool-axis
+# restriction is actually active (see ``_check_segment``) — an unrestricted
+# session never reaches the loop this bounds at all.
+_MAX_UNWRAP_DEPTH = 8
+
 
 async def check_exec_plan_policy(
     plan: "ExecPlan", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
-) -> "list[dict[str, str]]":
+) -> "list[dict[str, str | list[str]]]":
     """Apply 段3 policy to every item of *plan* — see this module's own
     docstring for exactly what each item type is checked against. Raises
     :class:`PermissionError` on the FIRST denial encountered, in plan
@@ -230,6 +281,17 @@ async def check_exec_plan_policy(
     ``ExecChainOp``/``ExecRedirect`` entries contribute nothing to this
     list (they have no argv[0] of their own).
 
+    #6061: an entry ALSO carries ``"unwrap_chain": [<name>, ...]`` when —
+    and ONLY when — a tool-axis restriction is active AND this segment's
+    own resolved binary is a registered wrapper (``exec_wrappers.py``)
+    that this policy walked through to reach the binary that actually
+    runs (``env ls`` records ``["env", "ls"]``). Absent entirely for an
+    unrestricted session or a segment that resolves to an ordinary,
+    non-wrapping binary — never an empty list, never a single-element
+    list duplicating ``resolved`` — so a caller reading this field for
+    the first time can tell "no chain was walked" from "a chain of
+    length 1" without a sentinel value.
+
     *env_path*/*cwd* are the ``PATH``/working-directory the eventual
     sandboxed run will actually see — BOTH REQUIRED, keyword-only, no
     internal fallback (#5991 BLOCKING ③, this module's own docstring):
@@ -244,11 +306,16 @@ async def check_exec_plan_policy(
     Never executes anything, never re-parses *plan* — a pure policy
     check over an already-parsed :data:`~reyn.security.exec_plan.
     ExecPlan`."""
-    resolved_argv0: "list[dict[str, str]]" = []
+    resolved_argv0: "list[dict[str, str | list[str]]]" = []
     for item in plan:
         if isinstance(item, ExecSegment):
-            resolved = await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
-            resolved_argv0.append({"argv0": item.argv[0] if item.argv else "", "resolved": resolved})
+            resolved, unwrap_chain = await _check_segment(item, ctx, env_path=env_path, cwd=cwd)
+            entry: "dict[str, str | list[str]]" = {
+                "argv0": item.argv[0] if item.argv else "", "resolved": resolved,
+            }
+            if unwrap_chain is not None:
+                entry["unwrap_chain"] = unwrap_chain
+            resolved_argv0.append(entry)
         elif isinstance(item, ExecRedirect):
             await _check_redirect(item, ctx)
         # ExecChainOp carries no policy-relevant data of its own — the
@@ -258,19 +325,30 @@ async def check_exec_plan_policy(
 
 async def _check_segment(
     segment: "ExecSegment", ctx: "OpContext", *, env_path: "str | None", cwd: "str | None"
-) -> str:
+) -> "tuple[str, list[str] | None]":
     """Tool-axis + threat-scan check for one segment — see this module's
-    own docstring, "What gets checked", point 1/2. Returns the RESOLVED
+    own docstring, "What gets checked", point 1/2. Returns ``(resolved,
+    unwrap_chain)`` — ``resolved`` is the OUTER segment's own resolved
     ``argv[0]`` (#5838 段5 — see :func:`check_exec_plan_policy`'s own
     docstring for why this is returned rather than re-derived by a
-    caller)."""
+    caller), unchanged in shape from before #6061. ``unwrap_chain`` is
+    ``None`` unless a tool-axis restriction was active AND this segment's
+    own resolved binary was a registered wrapper — see :func:`check_exec_
+    plan_policy`'s own docstring for the exact contract.
+
+    #6061: a tool-axis restriction, when active, is applied to every name
+    in the wrapper chain (``env FOO=1 sh -c 'rm x'`` checks ``env``,
+    ``sh``, AND ``rm`` — never just ``env``), never the FIRST name alone
+    — see ``exec_wrappers.py``'s own module docstring for why a wrapper
+    is unwrapped rather than stripped (stripping would defeat an operator
+    who denied the wrapper NAME itself, e.g. ``env``)."""
     if not segment.argv:
         # Unreachable via parse_exec_plan (an empty segment is rejected at
         # parse time — exec_plan.py's own _flush_segment), kept as a
         # defensive no-op rather than an IndexError for any other future
         # ExecPlan producer. "" (not None) keeps the return type a plain
         # str, matching every reachable path.
-        return ""
+        return "", None
 
     # #2820 part A (the SAME resolution sandboxed_exec.py's own
     # argv0_resolved already performs): strip a version-manager shim
@@ -283,29 +361,114 @@ async def _check_segment(
     argv0_resolved = resolve_real_executable(segment.argv[0], env_path=env_path, cwd=cwd)
     resolved_name = os.path.basename(argv0_resolved)
 
-    effective = gate_effective_tool_name(resolved_name, None)
     contextual = getattr(ctx, "contextual_permission", None)
-    if effective is not None and tool_contextually_denied(contextual, effective):
-        message = contextual_deny_message("command", effective, contextual)
-        # #6016 ①: the SAME denial the threat axis already records
-        # (exec_threat_match/_blocked) but the tool axis never did — a
-        # reader had only `tool_failed.message`, an English sentence, to
-        # learn WHICH binary was denied. Fields, not prose: the denied
-        # binary is recoverable without parsing `message`. Deliberately
-        # does NOT have an "allowed" sibling event -- see this module's
-        # own docstring, "#6016 ①", for why (architect's structural
-        # reason, not merely "not measured yet"): the tool axis has no
-        # "did not run" state to distinguish (unlike threat_scan), and
-        # the allowed side is already recorded by 段5's own `plan` field.
-        ctx.events.emit(
-            "exec_tool_axis_denied",
-            argv0=segment.argv[0], resolved=argv0_resolved,
-            effective_name=effective, reason=message,
-        )
-        raise PermissionError(message)
+    # #6061: the wrapper-chain walk is a no-op, structurally, unless a
+    # tool-axis restriction is actually configured — `tool_allow`/
+    # `tool_deny` both at their unconfigured defaults means
+    # `tool_contextually_denied` already returns False for EVERY name, so
+    # walking further would only spend `resolve_real_executable` calls
+    # for a result that can never change. This is the "既定は変えません"
+    # guarantee's own implementation, not merely documented intent —
+    # `test_wrapper_chain_never_walked_when_no_restriction_is_configured`
+    # is the strip-falsify witness for this exact guard.
+    restriction_active = contextual is not None and (
+        contextual.tool_allow is not None or contextual.tool_deny
+    )
+
+    if not restriction_active:
+        await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
+        return argv0_resolved, None
+
+    chain_names = [resolved_name]
+    current_argv = segment.argv
+    current_resolved_name = resolved_name
+    current_argv0_resolved = argv0_resolved
+    depth = 0
+    while True:
+        effective = gate_effective_tool_name(current_resolved_name, None)
+        if effective is not None and tool_contextually_denied(contextual, effective):
+            message = contextual_deny_message("command", effective, contextual)
+            # #6016 ①: the SAME denial the threat axis already records
+            # (exec_threat_match/_blocked) but the tool axis never did — a
+            # reader had only `tool_failed.message`, an English sentence, to
+            # learn WHICH binary was denied. Fields, not prose: the denied
+            # binary is recoverable without parsing `message`. Deliberately
+            # does NOT have an "allowed" sibling event -- see this module's
+            # own docstring, "#6016 ①", for why (architect's structural
+            # reason, not merely "not measured yet"): the tool axis has no
+            # "did not run" state to distinguish (unlike threat_scan), and
+            # the allowed side is already recorded by 段5's own `plan` field.
+            #
+            # #6061: `unwrap_chain` names every name walked to reach this
+            # one (`["env", "ls"]` when `env ls` was denied on `ls`) — the
+            # audit-trail half of this PR's own charter Lens 7 obligation
+            # ("this check is the result of unwrapping N layers").
+            ctx.events.emit(
+                "exec_tool_axis_denied",
+                argv0=segment.argv[0], resolved=current_argv0_resolved,
+                effective_name=effective, reason=message,
+                unwrap_chain=list(chain_names),
+            )
+            raise PermissionError(message)
+
+        if not is_registered_wrapper(current_resolved_name):
+            break  # a terminal (non-wrapping) binary — nothing more to unwrap
+
+        depth += 1
+        if depth > _MAX_UNWRAP_DEPTH:
+            # #6061: fail CLOSED — a wrapper chain this deep cannot be
+            # verified within the bound this policy is willing to walk
+            # (matches Codex's own depth-8 limit, architect's competitive
+            # research). Only reachable when restriction_active, so an
+            # unrestricted session can never hit this.
+            reason = (
+                f"wrapper chain exceeded the {_MAX_UNWRAP_DEPTH}-hop unwrap "
+                f"limit starting from {chain_names[0]!r} — refusing rather "
+                "than approving a chain this policy could not fully verify"
+            )
+            ctx.events.emit(
+                "exec_tool_axis_denied",
+                argv0=segment.argv[0], resolved=current_argv0_resolved,
+                effective_name=current_resolved_name, reason=reason,
+                unwrap_chain=list(chain_names),
+            )
+            raise PermissionError(reason)
+
+        inner_argv = extract_inner_argv(current_resolved_name, current_argv)
+        if inner_argv is None:
+            # #6061: `current_resolved_name` IS a registered wrapper, but
+            # this invocation's own flag/arg shape is one
+            # `exec_wrappers.py`'s own extraction rule refuses (see that
+            # module's own docstring, "What 'cannot extract' means") — a
+            # restriction is active, so silently treating this as "nothing
+            # more to check" would let exactly the class of command this
+            # PR exists to catch through unexamined. Fail closed.
+            reason = (
+                f"{current_resolved_name!r} wraps its argument in a form "
+                "this policy cannot verify (see exec_wrappers.py's own "
+                f"{current_resolved_name!r} entry for the forms it does "
+                "and does not cover) — refusing rather than approving a "
+                "wrapper this policy could not see through"
+            )
+            ctx.events.emit(
+                "exec_tool_axis_denied",
+                argv0=segment.argv[0], resolved=current_argv0_resolved,
+                effective_name=current_resolved_name, reason=reason,
+                unwrap_chain=list(chain_names),
+            )
+            raise PermissionError(reason)
+
+        if not inner_argv:
+            break  # the wrapper consumed every argument — nothing left to check
+
+        current_argv = inner_argv
+        current_argv0_resolved = resolve_real_executable(inner_argv[0], env_path=env_path, cwd=cwd)
+        current_resolved_name = os.path.basename(current_argv0_resolved)
+        chain_names.append(current_resolved_name)
 
     await _run_threat_scan(ctx, " ".join(segment.argv), subject=list(segment.argv))
-    return argv0_resolved
+    unwrap_chain = chain_names if len(chain_names) > 1 else None
+    return argv0_resolved, unwrap_chain
 
 
 async def _run_threat_scan(ctx: "OpContext", text: str, *, subject: "list[str]") -> None:
