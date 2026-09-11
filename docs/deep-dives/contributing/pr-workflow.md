@@ -328,6 +328,20 @@ These rules then keep multi-session work coherent:
    carries that fact instead (`scripts/check_open_blocking_checkboxes.py`'s
    `_resolves_via_body`, #5919's census).
 
+   **Never write `BLOCKING` or `BLOCKING-CLEARED` in a comment's FIRST
+   non-empty line unless it IS the marker.** The gate reads that line and
+   only that line: a first line that names either word but does not parse
+   as the marker regex is RED (Condition C in
+   `scripts/check_open_blocking_checkboxes.py`, #5522 — a third failure
+   mode added after a real `**BLOCKING (head `9862413f0`)**` whose
+   backticks broke the regex and left the gate silent for 12 minutes).
+   Prose like "no blocking points here" trips it just as a malformed
+   marker does, and the script's own log still prints `OK` while the run
+   fails. **From the second line on, both words are free.** Two sessions
+   using this gate daily hit it without knowing the condition existed
+   (2026-08-29 lead-coder, 2026-09-11 architect), which is why it is
+   written here rather than left in the script.
+
    **A moved head lapses every live marker at once.** The gate asks each
    marker to name the PR's CURRENT head, so a `BLOCKING-CLEARED` or
    `TESTS-READ` posted against an earlier head silently stops counting —
