@@ -1469,40 +1469,51 @@ def _build_chat_config(raw: object) -> ChatConfig:
     # component_weights and auto-compaction is window-relative (no turn-count
     # limit, no 30K-absolute background trigger). Warn on all four removed keys
     # so operators clean up their YAML symmetrically.
+    #
+    # #6143: `warnings.warn(..., DeprecationWarning)` is SILENT here — a
+    # non-``__main__`` module (every ``src/reyn/*`` module) gets Python's
+    # default "ignore" filter for DeprecationWarning, and neither
+    # `logging.captureWarnings` (only redirects `showwarning`, does not
+    # change the filter) nor pyproject's `filterwarnings` (pytest-only)
+    # changes that for a real run. This notice is meant for the operator
+    # (it names a reyn.yaml key to remove), so it needs `logger.warning`
+    # or stronger — same shape as the hooks.yaml token warning in
+    # `config/loader.py`.
     _removed_compaction_keys = (
         "head_size", "tail_size", "trigger_total_tokens", "min_compact_batch",
     )
     if any(k in compaction_raw for k in _removed_compaction_keys):
-        import warnings
-        warnings.warn(
+        import logging
+        logging.getLogger(__name__).warning(
             "chat.compaction.head_size/tail_size/trigger_total_tokens/"
             "min_compact_batch are deprecated and ignored — removed in #1128. "
             "head/tail sizing is now token-budget via component_weights, and "
-            "auto-compaction is window-relative. Remove these keys.",
-            DeprecationWarning, stacklevel=2,
+            "auto-compaction is window-relative. Remove these keys."
         )
     # #5629: accept the old name for one version while warning operators to
-    # migrate to the precise fold-persistence name.
+    # migrate to the precise fold-persistence name. #6143: promoted from a
+    # silent-by-default `warnings.warn` to `logger.warning` — see the note
+    # above this function's first such conversion.
     if "recovery_policy" in compaction_raw:
-        import warnings
-        warnings.warn(
+        import logging
+        logging.getLogger(__name__).warning(
             "chat.compaction.recovery_policy is deprecated; use "
-            "fold_persist_policy instead.",
-            DeprecationWarning, stacklevel=2,
+            "fold_persist_policy instead."
         )
     # #5623: max_shrink_iterations is orphaned since #5531 PR-3 — unlike the
     # four keys above, the field itself is NOT removed yet (kept parsing for
     # ONE version, see the field's own comment on CompactionConfig), only
     # its value validation is dropped. Warn once so an operator who
     # explicitly set it learns it has no effect, without breaking their load.
+    # #6143: promoted from a silent-by-default `warnings.warn` — see the
+    # note above this function's first such conversion.
     if "max_shrink_iterations" in compaction_raw:
-        import warnings
-        warnings.warn(
+        import logging
+        logging.getLogger(__name__).warning(
             "chat.compaction.max_shrink_iterations is retired since #5531 "
             "and has no effect — retry_loop's own iteration cap was "
             "replaced by a proven termination measure, and nothing reads "
-            "this field any more. Remove it from reyn.yaml.",
-            DeprecationWarning, stacklevel=2,
+            "this field any more. Remove it from reyn.yaml."
         )
     section_raw = compaction_raw.get("section_token_caps") or {}
     if not isinstance(section_raw, dict):
@@ -1784,14 +1795,19 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
     # ``safety.on_limit`` 3-mode policy (clean-break, no shim). Warn an
     # operator who still sets the removed key so they migrate to
     # ``safety.on_limit.mode`` — safety config, so a silent drop is worse.
+    # #6143: promoted from a silent-by-default `warnings.warn` (a
+    # non-``__main__`` module's DeprecationWarning is ignored by Python's
+    # default filter, and neither `logging.captureWarnings` nor pyproject's
+    # pytest-only `filterwarnings` changes that in a real run) — safety
+    # config, so it needs `logger.warning` or stronger to actually reach
+    # the operator.
     if "ask_on_exceed" in raw:
-        import warnings
-        warnings.warn(
+        import logging
+        logging.getLogger(__name__).warning(
             "cost.*.ask_on_exceed is deprecated and ignored — removed in #1877. "
             "The cap exceed flow is now driven by "
             "safety.on_limit.mode (interactive / auto_extend / unattended). "
-            "Remove this key; set safety.on_limit.mode instead.",
-            DeprecationWarning, stacklevel=2,
+            "Remove this key; set safety.on_limit.mode instead."
         )
     # #4522: ``extension_calls`` removed — its only real, tested implementation
     # was the `per_chain_skill_calls` dimension (#1877/#1879's
@@ -1801,15 +1817,15 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
     # every CostLimitConfig (daily_tokens/per_agent_tokens/etc.) shares this
     # one dataclass — none of THOSE dimensions ever had a working consumer
     # for it (CostLimitConfig's own docstring has the full trace). Same
-    # deprecation shape as ``ask_on_exceed`` above.
+    # deprecation shape as ``ask_on_exceed`` above. #6143: promoted from a
+    # silent-by-default `warnings.warn` for the same reason.
     if "extension_calls" in raw:
-        import warnings
-        warnings.warn(
+        import logging
+        logging.getLogger(__name__).warning(
             "cost.*.extension_calls is deprecated and ignored — removed in "
             "#4522. Its only real implementation (the per_chain_skill_calls "
             "budget-extension flow) was removed in #2448; it was never wired "
-            "for any other cost dimension. Remove this key.",
-            DeprecationWarning, stacklevel=2,
+            "for any other cost dimension. Remove this key."
         )
     return CostLimitConfig(
         hard_limit=hard,

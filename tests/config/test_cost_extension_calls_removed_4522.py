@@ -11,27 +11,31 @@ only because every `CostLimitConfig` (`daily_tokens`/`per_agent_tokens`/
 etc.) shares one dataclass — none of THOSE dimensions ever had a working
 consumer of their own. Declared, parsed, never read — CLAUDE.md's
 testing-policy six-questions ③ names this exact class (#3850).
+
+#6143: the notice was `warnings.warn(..., DeprecationWarning)` -- SILENT
+outside `__main__` under Python's own default filter (never reaches a
+real operator from `src/reyn/**`), so it was promoted to
+`logger.warning`; this file's own witness tests read `caplog` instead of
+`warnings.catch_warnings` for the same reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 
 from reyn.config.chat import _build_cost_limit
 from reyn.runtime.budget.budget import CostLimitConfig
 
 
-def test_extension_calls_key_emits_a_deprecation_warning():
+def test_extension_calls_key_emits_a_deprecation_warning(caplog):
     """Tier 1: an operator who still sets `extension_calls` gets a
-    DeprecationWarning naming #4522 and #2448 — safety/budget config, so
-    a silent drop (matching `ask_on_exceed`'s own precedent) is worse
-    than staying silent."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    warning naming #4522 and #2448 — safety/budget config, so a silent
+    drop (matching `ask_on_exceed`'s own precedent) is worse than staying
+    silent."""
+    with caplog.at_level(logging.WARNING):
         _build_cost_limit({"hard_limit": 10.0, "extension_calls": 5})
-    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("extension_calls" in str(w.message) for w in deprecation), (
-        f"expected a DeprecationWarning naming extension_calls, got: "
-        f"{[str(w.message) for w in caught]}"
+    assert any("extension_calls" in r.message for r in caplog.records), (
+        f"expected a warning naming extension_calls, got: "
+        f"{[r.message for r in caplog.records]}"
     )
 
 
@@ -51,14 +55,12 @@ def test_hard_limit_and_warn_ratio_still_parse_unaffected():
     assert cfg.warn_ratio == 0.5
 
 
-def test_no_extension_calls_key_emits_no_warning():
+def test_no_extension_calls_key_emits_no_warning(caplog):
     """Tier 1: accept-side — a config that never mentions extension_calls
     (the common, correct case going forward) triggers no warning at all."""
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         _build_cost_limit({"hard_limit": 10.0})
-    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert not any("extension_calls" in str(w.message) for w in deprecation)
+    assert not any("extension_calls" in r.message for r in caplog.records)
 
 
 def test_cost_limit_config_dataclass_has_no_extension_calls_field():

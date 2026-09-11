@@ -81,35 +81,32 @@ def test_legacy_bool_keys_do_not_expand_to_http_get_or_secret_write():
     Phase 3 introduced a compat-shim expansion (`mcp_install: true` →
     http.get [registry host]) so existing skills kept working. Phase 5
     removed both the bool axis AND the shim. Legacy keys parse with a
-    DeprecationWarning but contribute nothing to the decl.
+    deprecation notice (`logger.warning` since #6143 -- was
+    `warnings.warn(..., DeprecationWarning)`, silent outside `__main__`)
+    but contribute nothing to the decl.
     """
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        for axis in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
-            decl = PermissionDecl.from_dict({axis: True})
-            assert decl.http_get == [], f"{axis} must not expand to http_get post-Phase-5"
-            assert decl.secret_write == [], f"{axis} must not expand to secret_write"
+    for axis in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
+        decl = PermissionDecl.from_dict({axis: True})
+        assert decl.http_get == [], f"{axis} must not expand to http_get post-Phase-5"
+        assert decl.secret_write == [], f"{axis} must not expand to secret_write"
 
 
 # ── PermissionResolver gates ──────────────────────────────────────────────────
 
 
 def test_require_http_get_raises_for_undeclared_host(tmp_path):
-    """Tier 2: require_http_get raises with DeprecationWarning fallback for undeclared hosts.
+    """Tier 2: require_http_get raises with a deprecation-notice fallback
+    for undeclared hosts.
 
     #571 Phase 7: with no http.get declaration at all, the resolver
-    emits a DeprecationWarning and falls back to the legacy
-    ``web.fetch`` prompt. Without a bus, it raises with a clear
-    "not declared" message.
+    emits a deprecation notice (`logger.warning` since #6143) and falls
+    back to the legacy ``web.fetch`` prompt. Without a bus, it raises
+    with a clear "not declared" message.
     """
-    import warnings
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        with pytest.raises(PermissionError, match="example.com"):
-            asyncio.run(resolver.require_http_get(decl, "example.com"))
+    with pytest.raises(PermissionError, match="example.com"):
+        asyncio.run(resolver.require_http_get(decl, "example.com"))
 
 
 def test_require_http_get_passes_for_declared_host(tmp_path):
@@ -194,26 +191,52 @@ def test_require_http_get_wildcard_without_bus_raises(tmp_path):
         asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
 
 
-def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path):
-    """Tier 2: no http.get declaration → DeprecationWarning + legacy compat path."""
-    import warnings
+def test_require_http_get_no_decl_names_the_missing_declaration_in_the_real_prompt(
+    tmp_path, caplog,
+):
+    """Tier 2: no http.get declaration → the REAL approval prompt (the
+    surface an operator is already looking at) names the missing
+    declaration -- not a separate `logger.warning` alongside it.
+
+    #6143 co-vet round 2 (lead-coder): a `logger.warning` here was wrong
+    even with correct wording, because this path already falls straight
+    into a real, operator-visible prompt on every call -- a log line
+    right before it duplicates the same notice on a second, noisier
+    channel ("cried wolf every time", moved from silent to noisy, not
+    fixed). The declare-to-stop-being-asked note now lives IN the prompt
+    text itself, captured here via the bus (the real consumer of
+    `UserIntervention.prompt`), and `caplog` stays a DENY witness: this
+    path must emit no log record at all."""
+    import logging
 
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 
+    captured: "list[UserIntervention]" = []
+
     class _AlwaysBus(InterventionBus):
         async def request(self, iv: UserIntervention) -> InterventionAnswer:
+            captured.append(iv)
             return InterventionAnswer(choice_id="always")
 
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl()  # no http.get declared at all
     bus = _AlwaysBus()
 
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
-    deprecation_warnings = [w for w in recorded if issubclass(w.category, DeprecationWarning)]
-    assert deprecation_warnings, "missing http.get declaration must emit a DeprecationWarning"
-    assert "http.get" in str(deprecation_warnings[0].message)
+
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("http.get" in r.message for r in caplog.records), (
+        "no separate log line should fire alongside the real prompt below"
+    )
+    (iv,) = captured  # exactly one prompt -- unpacking itself raises otherwise
+    assert "http.get" in iv.prompt, (
+        f"the real prompt text must name the missing declaration, got: "
+        f"{iv.prompt!r}"
+    )
 
 
 def test_require_http_get_legacy_web_fetch_allow_pre_approves(tmp_path):

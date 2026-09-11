@@ -413,16 +413,22 @@ class PermissionDecl:
         # themselves are no longer consulted — actors must declare the
         # equivalent file.write / http.get / secret.write entries
         # explicitly.
+        #
+        # #6143: this was `warnings.warn(..., DeprecationWarning)`, which is
+        # SILENT for a non-``__main__`` module (every `src/reyn/*` module) —
+        # Python's default filter ignores DeprecationWarning there, and
+        # neither `logging.captureWarnings` (only redirects `showwarning`)
+        # nor pyproject's pytest-only `filterwarnings` changes that in a
+        # real run. This is a *permission-config* migration prompt, so it
+        # needs `logger.warning` or stronger to actually reach the operator.
         for legacy_key in cls._LEGACY_BOOL_AXIS_KEYS:
             if d.get(legacy_key):
-                import warnings
-                warnings.warn(
-                    f"permissions.{legacy_key}: <bool> is removed in the "
-                    f"#571 collapse arc (Phase 5). Replace it with the "
-                    f"explicit list axes: file.write / http.get / secret.write. "
-                    f"See docs/concepts/runtime/permission-model.md → Collapse arc.",
-                    DeprecationWarning,
-                    stacklevel=3,
+                logger.warning(
+                    "permissions.%s: <bool> is removed in the #571 collapse "
+                    "arc (Phase 5). Replace it with the explicit list axes: "
+                    "file.write / http.get / secret.write. See "
+                    "docs/concepts/runtime/permission-model.md → Collapse arc.",
+                    legacy_key,
                 )
         return cls(
             mcp=_normalize_paths(d.get(KEY_MCP)),
@@ -1931,9 +1937,18 @@ class PermissionResolver:
           the prompt fires here at the actual host gate. Same
           ``<actor>/http.get/<host>`` persistence; ALWAYS / NEVER
           choices apply per-host.
-        - **No declaration**: legacy ``web.fetch`` compat fallback
-          (deprecation-warned). Will become a hard error in a future
-          release.
+        - **No declaration**: legacy ``web.fetch`` compat fallback — a
+          real approval prompt fires on EVERY call, its own text naming
+          the missing declaration (#6143 co-vet round 2: no SEPARATE
+          `logger.warning` alongside it — that would duplicate the same
+          notice on a second channel right before the operator sees the
+          prompt itself, "cried wolf every time" moved from silent to
+          noisy, not fixed). NOT "will become a hard error in a future
+          release" — #5825's own ruling 1 (revised, owner-accepted §5)
+          settled that a declaration is opt-in, so nothing here
+          escalates over time; declaring ``http.get`` explicitly only
+          turns the repeat prompt into a standing grant, it does not
+          avert a future failure.
 
         Backward-compat:
 
@@ -2084,20 +2099,20 @@ class PermissionResolver:
 
         # No declaration at all — legacy ``web_fetch`` compat path
         # for the segmented migration window. Actors that previously
-        # relied on the Tier-1 default-allow behaviour still work
-        # while we wait for them to declare ``http.get`` explicitly.
-        import warnings
-        warnings.warn(
-            f"HTTP access to host {host!r} from actor {actor!r} "
-            f"without an http.get declaration. This will become a hard "
-            f"error in a future release. Add to reyn.yaml permissions:\n"
-            f"  permissions:\n"
-            f"    http.get:\n"
-            f"      - host: '*'   # LLM-driven host selection\n"
-            f"or list specific hosts.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        # relied on the Tier-1 default-allow behaviour still work: this
+        # prompts (or raises with no bus) EVERY time, below — declaring
+        # ``http.get`` explicitly is what turns the repeat prompt into a
+        # standing grant, never a deadline the operator must beat.
+        #
+        # #6143 co-vet round 2 (lead-coder): a `logger.warning` here was
+        # STILL wrong, even with the wording fixed — this branch already
+        # falls straight into a REAL, operator-visible prompt below
+        # (`Allow fetching from {host!r}?`, on the surface the operator is
+        # already looking at); a log line firing on EVERY call, right
+        # before that prompt, is a duplicate notice on a NEW channel — the
+        # "cried wolf every time" shape, just moved from silent to noisy.
+        # "declaring it stops the repeat ask" belongs IN the prompt text
+        # itself (one line, below), not as a second, separate emission.
         if bus is None:
             raise PermissionError(
                 f"HTTP access to host {host!r} not declared and no "
@@ -2136,7 +2151,11 @@ class PermissionResolver:
             f"{actor}/http.get/{host}",
             f"web fetch from host: {host!r} (legacy compat, no http.get declaration)",
             bus,
-            user_prompt=f"Allow fetching from {host!r}?",
+            user_prompt=(
+                f"Allow fetching from {host!r}? (no http.get declaration for "
+                f"this host -- add one under reyn.yaml's permissions.http.get "
+                f"to stop being asked)"
+            ),
             agent_name=agent_name,
         )
         if not approved:
