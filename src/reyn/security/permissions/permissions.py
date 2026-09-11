@@ -1943,8 +1943,42 @@ class PermissionResolver:
         ):
             return
         # Legacy session/saved ``web.fetch`` approval still authorises
-        # every host while the deprecation window is open.
+        # every host — #6140 ②(lead-coder BLOCKING, PR #6141): this
+        # branch's OWN legacy-http.get path stops WRITING new grants
+        # here as of #6140's fix (below) — but ``require_web_fetch``
+        # (a SEPARATE method/tool, deliberately untouched by #6140 —
+        # lead-coder's own 2nd BLOCKING on this PR) still writes under
+        # this SAME bare `KEY_WEB_FETCH` key whenever an operator
+        # answers ALWAYS to a `web_fetch` tool prompt. This read cannot
+        # tell that grant apart from an http.get-axis one — reading a
+        # web_fetch-tool consent as blanket http.get authorization for
+        # ANY host is a real, CURRENTLY reachable conflation, not just
+        # pre-#6140 residue. Narrowing this read's own scope is tracked
+        # at #6142 together with the pre-#6140-residue removal (the
+        # concrete removal condition — never a bare, dateless window).
+        # Dropping the read outright today would turn a working non-
+        # interactive run into a hard `PermissionError` for anyone
+        # holding either shape of grant.
         if self._saved.get(KEY_WEB_FETCH) or self._session.get(KEY_WEB_FETCH):
+            # #6140/#6141 BLOCKING ⓑ (lead-coder, measured): a bare
+            # `warnings.warn(DeprecationWarning, ...)` NEVER reaches an
+            # operator in production — Python's own default filter is
+            # `('ignore', None, DeprecationWarning, None, 0)` for any
+            # module that is not `__main__`, and `permissions.py` never
+            # is. pytest's own `filterwarnings` config is what made the
+            # warning visible in THIS module's own test, not anything
+            # true of a real run. `logger.warning` bypasses the warnings
+            # filter system entirely and always reaches `reyn.log`.
+            logger.warning(
+                "HTTP access to host %r authorised by a LEGACY blanket "
+                "'web.fetch' approval — it covers EVERY host, not just "
+                "this one, and cannot be narrowed (its own key carries "
+                "no host). To end it: remove the 'web.fetch' entry "
+                "from this project's approvals.yaml; each host will "
+                "then be asked about individually and recorded "
+                "per-host going forward. Tracked for removal at #6142.",
+                host,
+            )
             return
 
         # #1199 S3.1b-2c-2: the host-MEMBERSHIP decision (specific OR wildcard)
@@ -2015,11 +2049,41 @@ class PermissionResolver:
                 f"HTTP access to host {host!r} not declared and no "
                 f"interactive bus available for legacy compat prompt."
             )
+        # #6140 fix: index by `<actor>/http.get/<host>` — the SAME key
+        # shape the DECLARED per-host path above already writes/reads
+        # (`_is_host_approved_for`'s own key) — never the bare
+        # `KEY_WEB_FETCH` constant this call used before. Before this
+        # fix, ONE "Allow fetching from {host!r}?" answer on THIS
+        # undeclared path recorded under `KEY_WEB_FETCH` — a key that
+        # carries no host at all — so it silently authorised EVERY
+        # future host via the `:1947` bare-key short-circuit above,
+        # including hosts a DIFFERENT wildcard declaration would
+        # otherwise have prompted for individually (the code's own prior
+        # comment named this "shared across all hosts" as deliberate
+        # compat, not a bug — architect's #6140 finding: it is a real
+        # consent defect, the prompt asks about ONE host but the record
+        # covers all of them). Per-host indexing makes the SAME prompt
+        # wording true again: it now grants exactly the host asked
+        # about, and nothing wider — the next undeclared host is asked
+        # again, and a declared wildcard actor's own per-host prompt is
+        # no longer skipped by a grant THIS path (require_http_get's
+        # own legacy fallback) made earlier for another actor. This fix
+        # does NOT close every way a bare `KEY_WEB_FETCH` grant can
+        # still be created — `require_web_fetch` (a separate method,
+        # deliberately untouched here) still writes under that same
+        # bare key; see the `:1947`-area read's own comment above for
+        # why that residual reach, and its removal, are tracked at
+        # #6142 rather than folded into this fix.
+        # `agent_name=agent_name` (below): matches the DECLARED per-host
+        # path's own call a few lines up — the SAME agent dimension
+        # `_scope_covers_agent` needs to check/record a saved grant
+        # against, now that this path shares that path's key shape.
         approved = await self._approve(
-            KEY_WEB_FETCH,  # legacy key — shared across all hosts during the compat window
-            f"web fetch from host: {host!r} (legacy compat)",
+            f"{actor}/http.get/{host}",
+            f"web fetch from host: {host!r} (legacy compat, no http.get declaration)",
             bus,
             user_prompt=f"Allow fetching from {host!r}?",
+            agent_name=agent_name,
         )
         if not approved:
             raise PermissionError(
