@@ -83,18 +83,6 @@ CI: gate
 """
 from __future__ import annotations
 
-# #3024: verify the in-process `reyn` this bare-python script is about
-# to import (module-level or lazily, anywhere below) resolves THIS
-# checkout, not whichever tree the ambient venv's editable install
-# happens to point at. Exits loudly (never a silent wrong-tree run) on
-# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
-# docstring. Population + presence are enforced mechanically by
-# check_scripts_import_identity_guard.py, so this call cannot be dropped
-# without the gate catching it.
-from verify_env_identity import guard_bare_script_or_exit
-
-guard_bare_script_or_exit()
-
 import argparse
 import json
 import re
@@ -124,6 +112,16 @@ def _closed_vocabulary() -> "frozenset[str]":
     (`event_schema.AUDIT_EVENT_KINDS`), never hand-maintained (lead-coder
     condition 1)."""
     sys.path.insert(0, str(_ROOT / "src"))
+    # #3024: the guard runs HERE, after src/ is on sys.path, not at module
+    # top -- lead-coder BLOCKING (PR #6138): this script's whole point is
+    # working without reyn installed (self-bootstraps via the path insert
+    # right above), so a guard positioned BEFORE that insert would see
+    # `find_spec('reyn') is None` on a perfectly normal run and reject it.
+    # `import reyn` only ever happens after this line, so this is the
+    # first point where checking is both possible and correct.
+    from verify_env_identity import guard_bare_script_or_exit
+    guard_bare_script_or_exit()
+
     from reyn.core.events.event_schema import AUDIT_EVENT_KINDS
     return frozenset(AUDIT_EVENT_KINDS)
 

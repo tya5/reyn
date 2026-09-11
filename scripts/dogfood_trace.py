@@ -20,18 +20,6 @@ CI: manual -- run by hand as the LLM-trace analysis entry point, per CLAUDE.md's
 """
 from __future__ import annotations
 
-# #3024: verify the in-process `reyn` this bare-python script is about
-# to import (module-level or lazily, anywhere below) resolves THIS
-# checkout, not whichever tree the ambient venv's editable install
-# happens to point at. Exits loudly (never a silent wrong-tree run) on
-# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
-# docstring. Population + presence are enforced mechanically by
-# check_scripts_import_identity_guard.py, so this call cannot be dropped
-# without the gate catching it.
-from verify_env_identity import guard_bare_script_or_exit
-
-guard_bare_script_or_exit()
-
 import argparse
 import json
 import sys
@@ -979,6 +967,17 @@ def _resolve_raw_output(ev: dict, state_dir: "Path | None") -> "str | None":
         return None
     try:
         sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        # #3024: the guard runs HERE, after src/ is on sys.path, not at
+        # module top -- lead-coder BLOCKING (PR #6138): this is this
+        # module's ONLY reyn import, reached lazily and only for a
+        # raw_output_ref dereference, so a module-top guard would reject
+        # every OTHER invocation that never needs reyn at all, on top of
+        # firing before this line's own path insert ever runs. SystemExit
+        # (raised on a real mismatch) is not an Exception subclass, so
+        # the `except Exception` below does not swallow it.
+        from verify_env_identity import guard_bare_script_or_exit
+        guard_bare_script_or_exit()
+
         from reyn.services.offload import read_offloaded
         content, found = read_offloaded(str(state_dir / ref), base_dir=state_dir)
         return content if found else None

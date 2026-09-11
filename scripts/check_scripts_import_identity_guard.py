@@ -92,6 +92,12 @@ EXEMPT_SCRIPTS: "dict[str, str]" = {
         "Same wheel-only-venv shape as wheel_parity_probe.py -- `reyn` "
         "MUST resolve site-packages here, never a dev checkout's src/."
     ),
+    "s8_b18_driver.py": (
+        "Hardcodes MAIN_SANDBOX = a DIFFERENT checkout entirely "
+        "(~/Workspace/junk/claude_sandbox/sandbox_2), never this repo's "
+        "own src/ -- the guard's own contract is false for this script "
+        "by design."
+    ),
 }
 
 
@@ -141,19 +147,75 @@ def calls_guard(path: Path) -> bool:
     return False
 
 
-def measured(root: Path = _ROOT) -> "tuple[list[str], list[str], int]":
-    """`(missing, stale_exemptions, scanned)` — *missing* names population
-    members with no guard call and no exemption entry; *stale_exemptions*
-    names `EXEMPT_SCRIPTS` entries whose file no longer imports `reyn` at
-    all (the exemption's own reasoning no longer applies — a genuine
-    finding, not a false pass: an exemption for a script that has stopped
-    needing one is itself drift). A file that fails to parse propagates
-    the `SyntaxError` — fail-closed, same contract every AST-based gate in
-    this repo shares (a silent under-count here is the exact defect this
-    gate exists to prevent, one layer up)."""
+def guard_precedes_own_path_bootstrap(path: Path) -> "int | None":
+    """#3024 BLOCKING (lead-coder, PR #6138): the line number of a
+    `sys.path.insert(...)` call that comes AFTER a `guard_bare_script_or_
+    exit()` call in the SAME enclosing scope (module body, or the same
+    function/async-function body) — the exact false-reject class found in
+    review: several scripts self-bootstrap `src/` onto `sys.path` when
+    `reyn` is not installed, so a guard positioned BEFORE that insert sees
+    `find_spec('reyn') is None` on a perfectly normal run and rejects it.
+    Returns `None` when no such ordering violation exists in *path* (the
+    guard is either absent — a separate finding, `missing` — or correctly
+    positioned after every same-scope `sys.path.insert`).
+
+    Scoped per-function deliberately: a `sys.path.insert` inside a
+    DIFFERENT function than the guard call (e.g. a helper called only
+    later, well after the guard already ran at module top) is not the
+    same hazard — the guard's own `find_spec` check already happened
+    against the FINAL, settled `sys.path` state for the module-level
+    case; only same-scope ordering can put the check before the mutation
+    it depends on."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    scope_of: "dict[int, ast.AST]" = {}
+    def _walk_scopes(node: ast.AST, scope: ast.AST) -> None:
+        scope_of[id(node)] = scope
+        for child in ast.iter_child_nodes(node):
+            child_scope = child if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else scope
+            _walk_scopes(child, child_scope)
+    _walk_scopes(tree, tree)
+
+    guard_calls: "list[tuple[int, ast.AST | None]]" = []
+    insert_calls: "list[tuple[int, ast.AST | None]]" = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else (fn.id if isinstance(fn, ast.Name) else None)
+        if name == "guard_bare_script_or_exit":
+            guard_calls.append((node.lineno, scope_of.get(id(node))))
+        elif name == "insert" and isinstance(fn, ast.Attribute):
+            src = ast.get_source_segment(path.read_text(encoding="utf-8"), fn.value) or ""
+            if src.endswith("path") or src.endswith(".path"):
+                insert_calls.append((node.lineno, scope_of.get(id(node))))
+
+    for guard_line, guard_scope in guard_calls:
+        for insert_line, insert_scope in insert_calls:
+            if insert_scope is guard_scope and insert_line > guard_line:
+                return insert_line
+    return None
+
+
+def measured(root: Path = _ROOT) -> "tuple[list[str], list[str], list[tuple[str, int]], int]":
+    """`(missing, stale_exemptions, ordering_violations, scanned)` —
+    *missing* names population members with no guard call and no
+    exemption entry; *stale_exemptions* names `EXEMPT_SCRIPTS` entries
+    whose file no longer imports `reyn` at all (the exemption's own
+    reasoning no longer applies — a genuine finding, not a false pass: an
+    exemption for a script that has stopped needing one is itself drift);
+    *ordering_violations* is `(filename, sys.path.insert lineno)` for a
+    guard call positioned BEFORE a same-scope `sys.path.insert` — see
+    `guard_precedes_own_path_bootstrap`'s own docstring for why this is a
+    real accept-side finding (a false reject), not a style nit. A file
+    that fails to parse propagates the `SyntaxError` — fail-closed, same
+    contract every AST-based gate in this repo shares (a silent
+    under-count here is the exact defect this gate exists to prevent,
+    one layer up)."""
     files = _iter_scan_files(root)
     by_name = {f.name: f for f in files}
     missing: "list[str]" = []
+    ordering_violations: "list[tuple[str, int]]" = []
     for f in files:
         if f.name == "verify_env_identity.py" or f.name == Path(__file__).name:
             continue  # the guard's own implementation, and this gate itself -- never import reyn
@@ -163,18 +225,22 @@ def measured(root: Path = _ROOT) -> "tuple[list[str], list[str], int]":
             continue
         if not calls_guard(f):
             missing.append(f.name)
+            continue
+        bad_line = guard_precedes_own_path_bootstrap(f)
+        if bad_line is not None:
+            ordering_violations.append((f.name, bad_line))
 
     stale_exemptions = [
         name for name in EXEMPT_SCRIPTS
         if name in by_name and not imports_reyn(by_name[name])
     ]
-    return (missing, stale_exemptions, len(files))
+    return (missing, stale_exemptions, ordering_violations, len(files))
 
 
 def main(argv: "list[str] | None" = None) -> int:
     del argv
     try:
-        missing, stale_exemptions, scanned = measured(_ROOT)
+        missing, stale_exemptions, ordering_violations, scanned = measured(_ROOT)
     except (OSError, UnicodeDecodeError, SyntaxError) as exc:
         print(
             f"check_scripts_import_identity_guard FAILED: could not scan the "
@@ -225,6 +291,26 @@ def main(argv: "list[str] | None" = None) -> int:
             print(f"  {name}", file=sys.stderr)
         print(
             "\nRemove the stale entry from EXEMPT_SCRIPTS.",
+            file=sys.stderr,
+        )
+    if ordering_violations:
+        ok = False
+        print(
+            f"check_scripts_import_identity_guard FAILED: "
+            f"{len(ordering_violations)} script(s) call "
+            "`guard_bare_script_or_exit()` BEFORE a same-scope "
+            "`sys.path.insert(...)` -- a FALSE REJECT: the script "
+            "self-bootstraps its own tree onto sys.path, so the guard "
+            "(positioned first) sees `find_spec('reyn') is None` on a "
+            "normal run and exits before the bootstrap ever runs "
+            "(#3024, lead-coder BLOCKING on PR #6138):",
+            file=sys.stderr,
+        )
+        for name, line in sorted(ordering_violations):
+            print(f"  {name} (sys.path.insert at line {line})", file=sys.stderr)
+        print(
+            "\nMove the guard_bare_script_or_exit() call to AFTER the "
+            "sys.path.insert(...) call(s) in the same scope.",
             file=sys.stderr,
         )
 

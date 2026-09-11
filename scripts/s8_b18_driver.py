@@ -20,18 +20,13 @@ CI: manual -- run by hand as a batch-18 dogfood driver against a local A2A serve
 """
 from __future__ import annotations
 
-# #3024: verify the in-process `reyn` this bare-python script is about
-# to import (module-level or lazily, anywhere below) resolves THIS
-# checkout, not whichever tree the ambient venv's editable install
-# happens to point at. Exits loudly (never a silent wrong-tree run) on
-# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
-# docstring. Population + presence are enforced mechanically by
-# check_scripts_import_identity_guard.py, so this call cannot be dropped
-# without the gate catching it.
-from verify_env_identity import guard_bare_script_or_exit
-
-guard_bare_script_or_exit()
-
+# #3024: NO guard_bare_script_or_exit() here, deliberately -- MAIN_SANDBOX
+# below is a HARDCODED path to a DIFFERENT checkout entirely
+# (~/Workspace/junk/claude_sandbox/sandbox_2), never this repo's own
+# src/ -- the guard's own contract ("reyn resolves under THIS repo's
+# src/") is false for this script by design. Named as a reasoned
+# exception in check_scripts_import_identity_guard.py's own
+# EXEMPT_SCRIPTS table.
 import asyncio
 import json
 import shutil

@@ -132,11 +132,12 @@ def test_measured_flags_an_unguarded_reyn_importing_script(tmp_path: Path) -> No
     (scripts / "guarded_gate.py").write_text(_GUARDED)
     _git_init_scripts(root)
 
-    missing, stale, scanned = module.measured(root)
+    missing, stale, ordering, scanned = module.measured(root)
 
     assert scanned == 3
     assert missing == ["unguarded_gate.py"]
     assert stale == []
+    assert ordering == []
 
 
 def test_measured_respects_the_exempt_scripts_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,10 +154,11 @@ def test_measured_respects_the_exempt_scripts_table(tmp_path: Path, monkeypatch:
         module, "EXEMPT_SCRIPTS", {"deliberately_cross_tree.py": "reasoned exception, test-only"},
     )
 
-    missing, stale, scanned = module.measured(root)
+    missing, stale, ordering, scanned = module.measured(root)
 
     assert missing == []
     assert stale == []
+    assert ordering == []
 
 
 def test_measured_flags_a_stale_exemption(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,10 +176,71 @@ def test_measured_flags_a_stale_exemption(tmp_path: Path, monkeypatch: pytest.Mo
         module, "EXEMPT_SCRIPTS", {"no_longer_reyn.py": "used to import reyn, no longer does"},
     )
 
-    missing, stale, scanned = module.measured(root)
+    missing, stale, ordering, scanned = module.measured(root)
 
     assert missing == []
     assert stale == ["no_longer_reyn.py"]
+    assert ordering == []
+
+
+_ORDERING_VIOLATION = (
+    "import sys\n"
+    "from verify_env_identity import guard_bare_script_or_exit\n"
+    "guard_bare_script_or_exit()\n"
+    "sys.path.insert(0, '/some/src')\n"
+    "import reyn\n"
+)
+_ORDERING_CORRECT = (
+    "import sys\n"
+    "sys.path.insert(0, '/some/src')\n"
+    "from verify_env_identity import guard_bare_script_or_exit\n"
+    "guard_bare_script_or_exit()\n"
+    "import reyn\n"
+)
+
+
+def test_guard_precedes_own_path_bootstrap_flags_the_false_reject_shape(tmp_path: Path) -> None:
+    """Tier 1: accept -- #3024 BLOCKING (lead-coder, PR #6138): a guard
+    call positioned BEFORE a same-scope `sys.path.insert` is a real
+    accept-side finding (a script that self-bootstraps its own tree
+    would wrongly reject a normal, uninstalled-reyn run). This is the
+    exact shape `audit_event_firing_condition_gate.py` /
+    `mcp_conformance.py` / 6 others had before the fix."""
+    module = _load()
+    f = tmp_path / "a.py"
+    f.write_text(_ORDERING_VIOLATION)
+    assert module.guard_precedes_own_path_bootstrap(f) == 4
+
+
+def test_guard_precedes_own_path_bootstrap_clean_when_guard_is_last(tmp_path: Path) -> None:
+    """Tier 1: deny (negative control) -- the FIXED shape: `sys.path.
+    insert` first, guard after."""
+    module = _load()
+    f = tmp_path / "a.py"
+    f.write_text(_ORDERING_CORRECT)
+    assert module.guard_precedes_own_path_bootstrap(f) is None
+
+
+def test_measured_flags_an_ordering_violation(tmp_path: Path) -> None:
+    """Tier 2: integration -- driven through `measured()`, not just the
+    unit function in isolation.
+
+    FALSIFY (performed during review, file Edit only): reverted
+    `scripts/spike_preflight.py`'s own guard to BEFORE its
+    `sys.path.insert` -- `check_scripts_import_identity_guard.py`
+    reported it by name; reverted, confirmed green again."""
+    module = _load()
+    root = tmp_path / "checkout"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "verify_env_identity.py").write_text("# stand-in\n")
+    (scripts / "misordered_gate.py").write_text(_ORDERING_VIOLATION)
+    _git_init_scripts(root)
+
+    missing, stale, ordering, scanned = module.measured(root)
+
+    assert missing == []
+    assert ordering == [("misordered_gate.py", 4)]
 
 
 def test_the_real_scan_against_the_current_tree_has_no_missing_or_stale() -> None:
@@ -187,7 +250,8 @@ def test_the_real_scan_against_the_current_tree_has_no_missing_or_stale() -> Non
     from tests._support.paths import REPO_ROOT
 
     module = _load()
-    missing, stale, scanned = module.measured(REPO_ROOT)
+    missing, stale, ordering, scanned = module.measured(REPO_ROOT)
     assert scanned > 0, "the scan found 0 files -- a scanner failure, not a clean population"
     assert missing == []
     assert stale == []
+    assert ordering == []
