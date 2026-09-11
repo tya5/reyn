@@ -421,10 +421,14 @@ def test_remote_queue_view_apply_inbox_cancel_recovers_a_stuck_item():
     matching ``inbox_cancel`` for ``m2`` carries ``seq <= _last_seq`` — is
     REAL: :meth:`apply_inbox_cancel`'s own ``WARNING`` branch in
     ``state.py`` exists to name exactly this condition (pre-existing on
-    ``main``, #5989 ③ — this PR did not add that branch), and it is the
+    ``main``, #5989 ③ — #6123 did not add that branch), and it is the
     condition behind the owner's own real #5989 symptom (a sent-queue item
-    stuck forever). This test exercises the SAME predicate branch
-    :class:`RemoteQueueView` itself already treats as reachable.
+    stuck for the life of this attached view, not "forever" — #6130:
+    :meth:`apply_snapshot` REPLACES :attr:`items` wholesale rather than
+    merging into it, so a re-attach clears a stuck row; the row survives
+    exactly as long as this connection does). This test exercises the
+    SAME predicate branch :class:`RemoteQueueView` itself already treats
+    as reachable.
 
     ## The server-side path is explicitly UNIDENTIFIED — do not infer one
     Two proposed reproductions were each checked and separately excluded —
@@ -449,7 +453,7 @@ def test_remote_queue_view_apply_inbox_cancel_recovers_a_stuck_item():
 
     Neither exclusion is a demonstrated path to the state under test —
     the server-side path that produces this state remains UNIDENTIFIED as
-    of this PR. Do not read the ``apply_snapshot`` call below as a claim
+    of #6123. Do not read the ``apply_snapshot`` call below as a claim
     that it is one, and do not supply a third unverified path in its
     place."""
     view = RemoteQueueView()
@@ -461,7 +465,7 @@ def test_remote_queue_view_apply_inbox_cancel_recovers_a_stuck_item():
     recovered = view.apply_inbox_cancel(msg_id="m2", seq=2)
 
     assert recovered is True, "m2's cancel must be applied, not dropped"
-    assert view.queue() == [], "m2 must not stay queued forever"
+    assert view.queue() == [], "m2 must not stay queued for the life of this attached view"
 
 
 @pytest.mark.asyncio
