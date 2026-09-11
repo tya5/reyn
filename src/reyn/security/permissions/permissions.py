@@ -1955,10 +1955,11 @@ class PermissionResolver:
         - ``web.fetch: deny`` config overrides any wildcard permission.
         - ``web.fetch: allow`` config pre-approves any host without
           prompting (= equivalent to selecting ALWAYS for all hosts).
-        - The legacy ``web.fetch`` session/saved approval still
-          authorises any UNDECLARED host (#6142: narrowed — it can no
-          longer short-circuit a DECLARED http.get host, specific or
-          wildcard, which always reaches its own per-host prompt now).
+        - The legacy ``web.fetch`` session/saved approval NO LONGER
+          authorises any host (#6146 — removed the last of the bare-key
+          reach; #6142 had already narrowed it off the DECLARED axis).
+          Every undeclared host now always prompts (or raises, with no
+          bus) regardless of any bare ``web.fetch`` grant on disk.
 
         ``bus`` is required when the wildcard path or the
         legacy-fallback path needs to prompt; sync contexts (=
@@ -2013,40 +2014,20 @@ class PermissionResolver:
             host, actor, "http.get", agent_name=agent_name,
         ):
             return
-        # #6142 (lead-coder BLOCKING, PR #6141 round-2, filed #6142, fixed
-        # here): the bare `KEY_WEB_FETCH` legacy-compat check used to sit
-        # HERE, before the declared-membership routing below, so ANY
-        # grant under that ambiguous key — including one `require_web_
-        # fetch` (a SEPARATE tool/method, deliberately untouched — `web.
-        # fetch` is the CORRECT key for its own axis) writes whenever an
-        # operator answers ALWAYS to a `web_fetch` tool prompt — silently
-        # authorised even a DECLARED http.get host, bypassing that host's
-        # own unambiguous per-host prompt. `KEY_WEB_FETCH` carries no
-        # axis marker at all, so the read cannot tell those grant shapes
-        # apart by inspecting the grant itself — narrowing had to work by
-        # restricting WHERE this ambiguous key is even consulted, not by
-        # teaching the read to recognise a distinction the key itself
-        # does not encode. Moved into the "no declaration at all" branch
-        # below, the ONLY place this key's original, unambiguous meaning
-        # ("http.get axis, no declaration, treat like legacy default-
-        # allow") ever applied — a DECLARED decl (specific or wildcard)
-        # now always reaches its own per-host prompt, never short-
-        # circuited by this ambiguous key.
-        #
-        # Population impact (architect, #6142 co-vet — record this for
-        # whoever closes #6146): an operator who BOTH (a) holds a bare
-        # `web.fetch` grant (either shape) AND (b) has a DECLARED
-        # `http.get` entry for a host they have not yet approved
-        # per-host now sees a NEW interactive prompt for that host —
-        # one this narrowing itself introduces, since the declared path
-        # never reaches the bare-key read (or its `logger.warning`)
-        # any more. That population gets no notice explaining WHY the
-        # prompt reappeared — the warning only fires on the undeclared
-        # path, which this population's declared host never takes.
-        # #6146 removing the undeclared-axis reach too would change
-        # this SAME population's experience a second time; whoever
-        # closes it should account for that, not assume this fix
-        # already covers the full transition.
+        # History (#6140 -> #6141 -> #6142 -> #6146): the bare
+        # `KEY_WEB_FETCH` legacy-compat check used to sit HERE, before
+        # the declared-membership routing below, so ANY grant under that
+        # ambiguous key — including one `require_web_fetch` (a SEPARATE
+        # tool/method, deliberately untouched — `web.fetch` is the
+        # CORRECT key for its own axis) writes whenever an operator
+        # answers ALWAYS to a `web_fetch` tool prompt — silently
+        # authorised even a DECLARED http.get host, bypassing that
+        # host's own unambiguous per-host prompt. #6142 narrowed it to
+        # fire only in the "no declaration at all" branch below (a
+        # DECLARED decl, specific or wildcard, now always reaches its
+        # own per-host prompt, never short-circuited by this key).
+        # #6146 (below) removed the check ENTIRELY — the undeclared
+        # axis it used to cover now also always prompts.
 
         # #1199 S3.1b-2c-2: the host-MEMBERSHIP decision (specific OR wildcard)
         # routes through the unified model (NETWORK_HOST axis) — pure decl
@@ -2112,46 +2093,52 @@ class PermissionResolver:
         # "declaring it stops the repeat ask" belongs IN the prompt text
         # itself (one line, below), not as a second, separate emission.
         #
-        # #6142: the bare-key legacy short-circuit lives HERE, and only
-        # here — the one place its original, unambiguous meaning applies
-        # ("http.get axis, no declaration, default-allow via a prior
-        # blanket answer"). It still covers two shapes that share this
-        # exact key with no way to tell them apart: (1) a pre-#6140
-        # grant already on disk (this path no longer writes that shape
-        # itself — #6141) and (2) an ALWAYS answer to the SEPARATE
-        # `web_fetch` tool prompt (`require_web_fetch`, deliberately
-        # untouched — `web.fetch` is the correct key for ITS OWN axis).
-        # Dropping this read outright would turn a working non-
-        # interactive run into a hard `PermissionError` for anyone
-        # holding either shape of grant; narrowing it to fire ONLY when
-        # there is no declared http.get membership (this branch) is what
-        # closes the #6142 defect — a DECLARED host (specific or
-        # wildcard) can no longer be silently covered by either shape,
-        # because that path now never reaches this check. `logger.
-        # warning` (not `warnings.warn`) — #6140/#6141 BLOCKING ⓑ
-        # (lead-coder, measured): a bare `DeprecationWarning` never
-        # reaches an operator in production (Python's default filter
-        # ignores it outside `__main__`); `logger.warning` always
-        # reaches `reyn.log`. This IS the operator's only notice for
-        # this branch (unlike the real interactive prompt just below,
-        # which covers the "no declaration" case on its own per #6143 —
-        # here execution returns immediately, no prompt ever runs, so
-        # there is no second channel to duplicate).
-        if self._saved.get(KEY_WEB_FETCH) or self._session.get(KEY_WEB_FETCH):
-            logger.warning(
-                "HTTP access to host %r authorised by a LEGACY blanket "
-                "'web.fetch' approval (either a pre-#6140 grant, or an "
-                "ALWAYS answer to the separate web_fetch tool prompt) "
-                "— it covers every UNDECLARED host, not just this one, "
-                "and cannot be narrowed further (its own key carries no "
-                "host). A DECLARED http.get host is never covered by "
-                "this grant. To end it: remove the 'web.fetch' entry "
-                "from this project's approvals.yaml; each host will "
-                "then be asked about individually and recorded "
-                "per-host going forward. Tracked for removal at #6146.",
-                host,
-            )
-            return
+        # #6146 (lead-coder dispatch, closes the arc #6140 -> #6141 -> #6142
+        # -> #6146 started): the bare-`KEY_WEB_FETCH` legacy short-circuit
+        # that used to live HERE is now REMOVED, not merely narrowed. It
+        # covered two shapes with no way to tell them apart: (1) a
+        # pre-#6140 grant already on disk and (2) an ALWAYS answer to the
+        # SEPARATE `web_fetch` tool prompt (`require_web_fetch`,
+        # deliberately untouched — `web.fetch` is the correct key for
+        # ITS OWN axis). #6142 narrowed its reach to only the undeclared
+        # axis (a DECLARED host was already protected); #6146's own
+        # closing condition — #6150 landed first, making `web_fetch.py`'s
+        # own fallback reject "resolver present, bus absent" instead of
+        # silently degrading — means an operator who genuinely still
+        # needs non-interactive undeclared-http.get access now has a
+        # real, supported path (declare `http.get` explicitly) instead
+        # of an implicit one this ambiguous key used to paper over.
+        # Every undeclared-host call now ALWAYS reaches the real prompt
+        # path below — never silently authorised by either grant shape
+        # again. Two distinct routes end in `PermissionError`, and
+        # they are NOT the same branch (architect co-vet, #6146 BLOCKING
+        # — do not conflate them when next touching this):
+        #   - `bus is None` (the `if bus is None:` check just below) —
+        #     reachable ONLY through the narrow fallback #6150 already
+        #     guards (`web_fetch.py`'s own OpContext synthesis refuses
+        #     "resolver present, bus absent" outright before ever
+        #     reaching here).
+        #   - A REAL session's bus is NEVER `None` — a no-listener
+        #     session resolves to `AuditOnlyInterventionBridge`'s own
+        #     typed, reason'd refusal bus instead (`session.py`'s
+        #     `_make_router_intervention_bus` docstring: "NO listener ->
+        #     a typed, reason'd REFUSAL ... NEVER a stamped bus"). That
+        #     refusal makes `_approve()` below return `False`, and THIS
+        #     is the route an actual non-interactive real session takes
+        #     to `PermissionError("... denied.")` — not the `bus is
+        #     None` branch.
+        #
+        # Population impact (record for anyone auditing this change):
+        # an operator who holds a bare `web.fetch` grant (either shape)
+        # AND has a DECLARED `http.get` entry already got a NEW prompt
+        # for that declared host at #6142/#6148 (silently — no notice
+        # explained why). This removal is that SAME population's SECOND
+        # experience change: their remaining UNDECLARED hosts now also
+        # prompt (or refuse/deny, non-interactively, via whichever route
+        # above applies) instead of being silently covered. Declaring
+        # `http.get` explicitly (a standing per-host grant) is the
+        # supported way to keep such a run non-interactive going
+        # forward.
 
         if bus is None:
             raise PermissionError(
@@ -2180,11 +2167,12 @@ class PermissionResolver:
         # does NOT close every way a bare `KEY_WEB_FETCH` grant can
         # still be created — `require_web_fetch` (a separate method,
         # deliberately untouched here) still writes under that same
-        # bare key. #6142 (fixed above, in this same branch) narrowed
-        # WHERE that ambiguous key is read so it can never cover a
-        # DECLARED host any more; it still covers an UNDECLARED one
-        # like this call — removing that residual reach entirely is
-        # tracked at #6146, not folded into either fix.
+        # bare key. #6142 narrowed WHERE that ambiguous key was read so
+        # it could never cover a DECLARED host; #6146 (above, in this
+        # same branch) removed the read of it ENTIRELY, so this call —
+        # the only remaining path that ever reads it — never does
+        # either. `require_web_fetch`'s own grant is now write-only:
+        # nothing in `require_http_get` consults it any more.
         # `agent_name=agent_name` (below): matches the DECLARED per-host
         # path's own call a few lines up — the SAME agent dimension
         # `_scope_covers_agent` needs to check/record a saved grant
