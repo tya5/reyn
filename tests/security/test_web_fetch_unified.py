@@ -391,3 +391,72 @@ def test_router_invoke_action_web_fetch_allow_no_deny_proceeds(
     assert result.get("kind") == "web_fetch"
     # The deny path would have raised before getting a dict back.
 
+
+# ── #6146: the fallback OpContext synthesis has no bus to offer ──────────
+
+
+def test_fallback_synthesis_refuses_a_resolver_with_no_router_state(tmp_path: Path) -> None:
+    """Tier 2: #6146 co-vet finding (lead-coder) -- ``web_fetch._handle``'s
+    fallback branch (no ``router_state`` at all) unconditionally builds its
+    own ``OpContext`` with ``intervention_bus=None`` (``ToolContext`` has no
+    such field to thread through). Combined with a REAL
+    ``permission_resolver``, that used to run every permission gate with no
+    bus available -- the module's own docstring claimed a `RuntimeError`
+    elsewhere caught this, but that `RuntimeError` only guards the
+    multimodal/binary-media branch (~111 lines later, image responses
+    only), never `require_http_get` itself. The fallback now refuses the
+    combination up front instead."""
+    from reyn.security.permissions.permissions import PermissionResolver
+    from reyn.tools.types import ToolContext
+
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=True)
+    tool_ctx = ToolContext(
+        events=None, permission_resolver=resolver, workspace=None,
+        caller_kind="operator", router_state=None,
+    )
+
+    with pytest.raises(RuntimeError, match="intervention_bus"):
+        asyncio.run(WEB_FETCH.handler({"url": "http://127.0.0.1:1/x"}, tool_ctx))
+
+
+def test_fallback_synthesis_refuses_a_resolver_with_a_factory_less_router_state(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: deny-side companion -- a `router_state` object THAT EXISTS
+    but carries no `op_context_factory` (every field on `RouterCallerState`
+    is individually optional, so a caller can construct one without it)
+    still falls into the SAME fallback branch (`rs.op_context_factory is
+    None`), so the same guard must fire -- not only the "router_state is
+    None entirely" shape the sibling test above covers."""
+    from reyn.security.permissions.permissions import PermissionResolver
+    from reyn.tools.types import RouterCallerState, ToolContext
+
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=True)
+    rs = RouterCallerState()  # op_context_factory left at its own None default
+    tool_ctx = ToolContext(
+        events=None, permission_resolver=resolver, workspace=None,
+        caller_kind="router", router_state=rs,
+    )
+
+    with pytest.raises(RuntimeError, match="intervention_bus"):
+        asyncio.run(WEB_FETCH.handler({"url": "http://127.0.0.1:1/x"}, tool_ctx))
+
+
+def test_fallback_synthesis_with_no_resolver_at_all_is_unaffected() -> None:
+    """Tier 2: deny side -- the guard is scoped to a PRESENT
+    `permission_resolver`; a caller with none (the shape #6146's own
+    guard must not break -- narrow test sites that genuinely don't
+    exercise permission gating) still reaches the real fetch attempt,
+    proving the new raise did not become unconditional."""
+    from reyn.core.events.events import EventLog
+    from reyn.tools.types import ToolContext
+
+    tool_ctx = ToolContext(
+        events=EventLog(), permission_resolver=None, workspace=None,
+        caller_kind="operator", router_state=None,
+    )
+
+    result = asyncio.run(WEB_FETCH.handler({"url": "http://127.0.0.1:1/never-listens"}, tool_ctx))
+    assert isinstance(result, dict)
+    assert result.get("kind") == "web_fetch"
+
