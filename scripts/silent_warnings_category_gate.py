@@ -82,14 +82,16 @@ promoted to `logger.warning`; the 7th, `permissions.py`'s legacy
 `http.get` compat notice, was deleted outright in #6144's own co-vet
 round 2 -- it duplicated a REAL, already-firing approval prompt on a
 second, noisier channel). Widening the axis in the SAME PR newly
-surfaces 18 pre-existing sites (all `UserWarning`, or the default
+surfaced 18 pre-existing sites (all `UserWarning`, or the default
 omitted category) that #6143's own dispatch never covered and #6144's
-own review never audited message-by-message -- see #6145, the tracking
-issue for promoting each with the SAME wording rigor #6144's own
-`:2069` mistake demanded (changing the channel without checking the
-wording is a NEW bug, not a fix). Those 18 are DISCLOSED table entries
-referencing #6145, not silently declared "legitimate" -- lead-coder's
-own framing above says none of them currently are.
+own review never audited message-by-message -- tracked by #6145.
+#6145 individually audited each of the 18 (file:line, reason -- see
+that PR's own body for the full table) and promoted all 18 to
+`logger.warning`, the SAME wording rigor #6144's own `:2069` mistake
+demanded (changing the channel without checking the wording is a NEW
+bug, not a fix). `_EXCEPTION_TABLE` is empty again as of #6145
+landing -- there is currently no site under `src/reyn/**` this gate
+considers a legitimate raw `warnings.warn`.
 
 ## Deliberately narrow call-site / template resolution (disclosed, not solved)
 
@@ -105,9 +107,9 @@ participates in the 3-part key (so it can still be exempted, keyed on
 different such call landing on the same line, which is the same
 disclosed gap `suspected_time_dependence_ratchet.py` (#4846) and
 `silent_except_ratchet.py` (#5990) already carry for a syntax-only AST
-gate -- no real site in the current 18-entry population has this shape
-(verified: `_message_template` returns non-empty text for all 18, see
-the exception table below).
+gate -- the table is empty as of #6145 (see below), so this gap is
+currently unexercised by any real site; it stays disclosed for
+whichever future entry lands first.
 
 CI: gate
 """
@@ -129,39 +131,24 @@ _SCOPE = "src/reyn"
 #: does not force a table-entry churn unrelated to this gate's purpose.
 _TEMPLATE_LEN = 40
 
-# #6145 tracks promoting each of these 18 pre-existing sites (all
-# UserWarning, or the default omitted category) with the SAME
-# message-content audit #6144's own `:2069` round taught is required --
-# a channel change alone is not a fix if the wording is wrong. DISCLOSED
-# debt, not a claim these are fine as-is (lead-coder's own framing: the
-# only legitimate raw `warnings.warn` reader is a `-W`-flagged library
-# consumer, which none of these are).
+# #6145: the 18 pre-existing sites this table used to carry as disclosed,
+# unaudited debt (see #6144's own final commit for that table) were each
+# individually audited -- 18/18 classified "A: should reach the operator"
+# and promoted to `logger.warning` (see #6145's own PR body for the
+# file:line / reason table). None were classified "B: raw warnings.warn
+# is the right tool" or "C: delete -- a real duplicate exists elsewhere"
+# (lead-coder's own framing at the time this table was 18-strong: none of
+# these 18 were library-consumer-only surfaces to begin with). Population
+# is 0 as of #6145 landing -- back to a TABLE, not a ratchet, exactly the
+# state #6144 left it in immediately after promoting its own 7 (see
+# module docstring's "What this gate checks").
 #
-# The 3rd element of each key is that call's own message TEMPLATE (see
-# `_message_template`'s own docstring) -- a future, unaudited
-# `warnings.warn` landing on one of these exact line numbers does NOT
-# inherit the exemption unless its message also happens to share this
-# same ~40-char prefix (#6144 co-vet round 3).
-_EXCEPTION_TABLE: "dict[tuple[str, int, str], str]" = {
-    ("src/reyn/config/chat.py", 1451, "chat.stream_repaint_min_interval={} is n"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 150, "Could not read OAuth token store at {}: "): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 159, "OAuth token store at {} is not valid JSO"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 167, "OAuth token store at {} must be a JSON o"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 196, "OAuth token {} is not an object; ignorin"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 205, "OAuth token {} is malformed ({}); ignori"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/oauth.py", 250, "{} is readable by group/others (mode {})"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 47, "{} is readable by group/others (mode {})"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 56, "Could not chmod {} to 600: {}"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 79, "secrets.env line {}: no '=' found, skipp"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 88, "secrets.env line {}: empty key, skipping"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 133, "Could not read {}: {}"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/loader.py", 143, "Unexpected error parsing {}: {}"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/security/secrets/interpolation.py", 37, "Config references undefined environment "): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/plugins/tokens.py", 310, "{} left reyn token(s) {} unresolved -- r"): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/mcp/client.py", 2523, "MCP stdio server {} runs UNSANDBOXED (sa"): "#6145 -- pre-#6143, omitted category (defaults to UserWarning), not yet audited",
-    ("src/reyn/hooks/composer.py", 634, "composers {}: durable pending state was "): "#6145 -- pre-#6143 UserWarning, not yet audited",
-    ("src/reyn/hooks/composer.py", 838, "composers[{}]: op=deadline with durable="): "#6145 -- pre-#6143 UserWarning, not yet audited",
-}
+# The 3rd element of a future entry's key would be that call's own
+# message TEMPLATE (see `_message_template`'s own docstring) -- a new,
+# unaudited `warnings.warn` landing on an old exempted site's line number
+# would NOT inherit that exemption unless its message also happens to
+# share the same ~40-char prefix (#6144 co-vet round 3).
+_EXCEPTION_TABLE: "dict[tuple[str, int, str], str]" = {}
 
 
 def _iter_scan_files(root: Path = _ROOT) -> "list[Path]":

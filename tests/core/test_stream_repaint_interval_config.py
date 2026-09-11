@@ -10,13 +10,19 @@ Test shape mirrors `test_4840_chat_theme_config.py`, including the
 `load_config` round-trip and ITS falsification pair: exercising
 `_build_chat_config` alone proves the parser reads the key, not that the
 real entrypoint surfaces it (the gap #4899 found on a sibling field).
+
+#6145 A: the rejection notice was `warnings.warn(..., UserWarning)` --
+SILENT outside `__main__` under Python's own default filter, and never
+reached the operator's screen even when visible (`stderr: False /
+reyn.log: True`, architect's measurement). Promoted to `logger.warning`;
+this file's own warning-witness tests below read `caplog` instead of
+`pytest.warns`/`warnings.catch_warnings` for the same reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 from pathlib import Path
 
-import pytest
 import yaml
 
 from reyn.config.chat import ChatConfig, _build_chat_config
@@ -111,25 +117,32 @@ def test_absent_from_yaml_keeps_the_default_through_load_config(
     assert cfg.chat.stream_repaint_min_interval == 1 / 30
 
 
-def test_a_rejected_value_is_announced_not_silently_substituted() -> None:
+def test_a_rejected_value_is_announced_not_silently_substituted(caplog) -> None:
     """Tier 1: an operator who typed 0 and one who never wrote the key must
     not read back the same running config with nothing said. The fallback
     keeps the session up; the warning is what makes it distinguishable."""
-    with pytest.warns(UserWarning, match="stream_repaint_min_interval"):
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"stream_repaint_min_interval": 0})
-    with pytest.warns(UserWarning, match="stream_repaint_min_interval"):
+    assert any("stream_repaint_min_interval" in r.message for r in caplog.records)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"stream_repaint_min_interval": "fast"})
+    assert any("stream_repaint_min_interval" in r.message for r in caplog.records)
 
 
-def test_an_accepted_value_and_an_absent_key_are_both_silent() -> None:
+def test_an_accepted_value_and_an_absent_key_are_both_silent(caplog) -> None:
     """Tier 1: falsification pair — the warning fires on the rejection, not
     on every parse. Without this the assertion above would still pass if the
     parser warned unconditionally."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with caplog.at_level(logging.WARNING):
         assert _build_chat_config(
             {"stream_repaint_min_interval": 0.2},
         ).stream_repaint_min_interval == 0.2
         assert _build_chat_config(
             {"render_mode": "plain"},
         ).stream_repaint_min_interval == 1 / 30
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("stream_repaint_min_interval" in r.message for r in caplog.records)

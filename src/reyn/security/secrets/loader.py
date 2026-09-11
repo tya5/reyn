@@ -7,19 +7,22 @@ any knowledge of the dotenv file.
 Policy
 ------
 * File absent  → OK, silently skip.
-* Parse error  → :class:`UserWarning` emitted per bad line; skip that line.
+* Parse error  → ``logger.warning`` per bad line (#6145 — promoted from a
+  silent-by-default ``warnings.warn``); skip that line.
 * chmod 600 enforce → if the file is world-readable (mode & 0o004 != 0),
-  emit a warning and ``chmod 600`` automatically.
+  emit a ``logger.warning`` and ``chmod 600`` automatically.
 * Existing env NOT overridden → ``os.environ.setdefault()`` semantics:
   values already in ``os.environ`` (from the shell or earlier loaders)
   take priority over ``secrets.env``.
 """
 from __future__ import annotations
 
+import logging
 import os
 import stat
-import warnings
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 _SECRETS_FILE = Path.home() / ".reyn" / "secrets.env"
 
@@ -44,20 +47,22 @@ def _enforce_permissions(path: Path) -> None:
     except OSError:
         return
     if mode & stat.S_IROTH or mode & stat.S_IRGRP:
-        warnings.warn(
-            f"{path} is readable by group/others (mode {oct(mode & 0o777)}); "
-            "auto-fixing to 600. Review access controls on this machine.",
-            UserWarning,
-            stacklevel=3,
+        # #6145 A (both branches below): was `warnings.warn(..., UserWarning)`
+        # — silent outside `__main__` under Python's own default filter,
+        # and even the visible category never reached the operator's
+        # screen (`stderr: False / reyn.log: True`, architect's
+        # measurement). A group/world-readable secrets file is a real
+        # exposure on this machine; the operator needs this in the log,
+        # not swallowed by the default warnings filter.
+        _log.warning(
+            "%s is readable by group/others (mode %s); auto-fixing to "
+            "600. Review access controls on this machine.",
+            path, oct(mode & 0o777),
         )
         try:
             path.chmod(0o600)
         except OSError as exc:
-            warnings.warn(
-                f"Could not chmod {path} to 600: {exc}",
-                UserWarning,
-                stacklevel=3,
-            )
+            _log.warning("Could not chmod %s to 600: %s", path, exc)
 
 
 def _parse_dotenv(text: str) -> list[tuple[str, str]]:
@@ -76,19 +81,23 @@ def _parse_dotenv(text: str) -> list[tuple[str, str]]:
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            warnings.warn(
-                f"secrets.env line {lineno}: no '=' found, skipping: {raw_line!r}",
-                UserWarning,
-                stacklevel=4,
+            # #6145 A (both branches below): same promotion as
+            # `_enforce_permissions` above — an operator debugging a
+            # secret that "didn't load" needs the exact line and reason
+            # in the log, which `warnings.warn` never reliably delivered
+            # (silent outside `__main__`, and never reached the screen
+            # even when the category was visible).
+            _log.warning(
+                "secrets.env line %d: no '=' found, skipping: %r",
+                lineno, raw_line,
             )
             continue
         key, _, raw_val = line.partition("=")
         key = key.strip()
         if not key:
-            warnings.warn(
-                f"secrets.env line {lineno}: empty key, skipping: {raw_line!r}",
-                UserWarning,
-                stacklevel=4,
+            _log.warning(
+                "secrets.env line %d: empty key, skipping: %r",
+                lineno, raw_line,
             )
             continue
         # Strip inline comments on unquoted values
@@ -130,21 +139,16 @@ def load_secrets_to_environ(path: Path | None = None) -> None:
     try:
         text = secrets_path.read_text(encoding="utf-8")
     except OSError as exc:
-        warnings.warn(
-            f"Could not read {secrets_path}: {exc}",
-            UserWarning,
-            stacklevel=2,
-        )
+        # #6145 A (both branches below): same promotion as the parse
+        # errors above — a startup secrets load that silently produces
+        # zero secrets needs this reason in the log.
+        _log.warning("Could not read %s: %s", secrets_path, exc)
         return
 
     try:
         pairs = _parse_dotenv(text)
     except Exception as exc:  # pragma: no cover — belt-and-suspenders
-        warnings.warn(
-            f"Unexpected error parsing {secrets_path}: {exc}",
-            UserWarning,
-            stacklevel=2,
-        )
+        _log.warning("Unexpected error parsing %s: %s", secrets_path, exc)
         return
 
     for key, value in pairs:
