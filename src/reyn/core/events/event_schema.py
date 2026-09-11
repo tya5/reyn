@@ -315,14 +315,24 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # turn_completed: emitted in Session._run_router_loop() immediately after
     #   RouterLoopDriver.run_turn() returns — the router loop has reached a
     #   terminal condition (the turn's response is complete). One emit per
-    #   turn, independent of routing path. This is the hook point for
+    #   `_run_router_loop` CALL, independent of routing path — #5989: NOT
+    #   "once per user turn". `_run_router_loop` is the single seam every
+    #   turn KIND (user / hook / agent_request / pipeline_result, its own
+    #   docstring) funnels through, and it is re-entered once per such
+    #   kind's own arrival — a mid-turn hook injection, a settled peer
+    #   task delivering its reply, or an agent_request from another agent
+    #   each start a NEW call here, so what an operator experiences as
+    #   ONE exchange can legitimately reach this point, and dispatch the
+    #   turn_end hook below, more than once. This is the hook point for
     #   the turn_end lifecycle hook (slice 5b). chain_id matches the turn's
     #   chain_id for cross-agent tracing.
     "turn_completed": frozenset({"chain_id"}),
     # process_footprint (#5851 stage (a)): a live process-memory reading —
     # ``Session.load_history()``'s own finally (once, at startup, every
     # ``load_history()`` caller) and ``_run_router_loop``'s finally (once
-    # per turn, next to the turn_end dispatch). ``metric`` MUST ride with
+    # per `_run_router_loop` call — #5989, see ``turn_completed``'s own
+    # entry above for why this is not the same as "once per user turn" —
+    # next to the turn_end dispatch). ``metric`` MUST ride with
     # every ``bytes`` value (verification-hazards' own root: "an
     # observation does not name its own referent") — darwin's
     # ``phys_footprint`` and linux's ``rss`` are not comparable numbers.
