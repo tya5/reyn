@@ -316,6 +316,12 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
     generation_store, journal = build_recovery(
         agent.agent_name, snapshot_path, state_log, "main",
     )
+    # #6151: this duplicate's own `agent_name="default"` + hardcoded
+    # `"main"` session_id above is the SAME shared-temp-dir shape
+    # `tests/_support/session.py::make_session` isolates by default —
+    # give this direct construction its own isolated child_temp_dir too.
+    import tempfile
+
     with synthetic_t_max(1_000_000):
         return Session(
             agent=agent,
@@ -330,6 +336,7 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
             capability_scope=CapabilityScope(
                 available_skills=entries, skill_collisions=collisions or {},
             ),
+            child_temp_dir=tempfile.mkdtemp(prefix="reyn-test-child-"),
         )
 
 

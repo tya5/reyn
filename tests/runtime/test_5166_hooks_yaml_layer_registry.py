@@ -22,6 +22,7 @@ Real ``Session`` (via ``tests._support.agent_session.make_session``) + real
 files on disk — no mocks."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -117,10 +118,16 @@ def test_a_non_reyn_token_passes_through_in_every_registered_layer(
 
 @pytest.mark.parametrize("key", _KEYS)
 def test_an_unresolved_reyn_token_refuses_the_layer_everywhere(
-    tmp_path, monkeypatch, key,
+    tmp_path, monkeypatch, key, caplog,
 ) -> None:
     """Tier 2: fail-close applies uniformly too — not just resolution.
-    Same registry walk, the OTHER half of "same字面, same意味"."""
+    Same registry walk, the OTHER half of "same字面, same意味".
+
+    #6145 A: the refusal notice was `warnings.warn(..., UserWarning)` --
+    SILENT outside `__main__` under Python's own default filter, and
+    never reached the operator's screen even when visible (`stderr:
+    False / reyn.log: True`, architect's measurement). Promoted to
+    `logger.warning`, read here via `caplog`."""
     project = tmp_path / "proj"
     project.mkdir()
     session = _make_session_in(project, monkeypatch, tmp_path)
@@ -134,8 +141,10 @@ def test_an_unresolved_reyn_token_refuses_the_layer_everywhere(
     )
     for label, path in session._hooks_yaml_layers():
         _write_yaml(path, body)
-        with pytest.warns(UserWarning, match="REYN_SKILL_DIR"):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
             entries = session._read_hooks_yaml_layer_key(path, key)
+        assert any("REYN_SKILL_DIR" in r.message for r in caplog.records)
         assert entries == [], (
             f"{label}/{key}: an unresolved reyn token must refuse the whole "
             f"layer, not load a wrong/empty value — got {entries!r}"

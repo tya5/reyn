@@ -123,7 +123,6 @@ import asyncio
 import contextlib
 import logging
 import time
-import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Protocol
@@ -631,13 +630,20 @@ def build_composers(
     symptom is a dead-man monitor that never fires."""
     undurable = [d.name for d in definitions if d.durable and durable_store is None]
     if undurable:
-        warnings.warn(
-            f"composers {undurable}: durable pending state was requested but no durable "
-            "store is available in this context — their armed state falls back to "
-            "InMemoryPendingStore and will be silently lost on a process crash "
-            "(a deadline composer configured this way will not fire after a restart).",
-            UserWarning,
-            stacklevel=2,
+        # #6145 A: was `warnings.warn(..., UserWarning)` — silent outside
+        # `__main__` under Python's own default filter, and never reached
+        # the operator's screen even when visible (`stderr: False /
+        # reyn.log: True`, architect's measurement). This is a
+        # crash-recovery-band notice (CLAUDE.md's never-a-silent-dead-man-
+        # switch rule) — the log an operator checks when a deadline
+        # composer didn't fire after a restart needs this.
+        _log.warning(
+            "composers %s: durable pending state was requested but no "
+            "durable store is available in this context — their armed "
+            "state falls back to InMemoryPendingStore and will be "
+            "silently lost on a process crash (a deadline composer "
+            "configured this way will not fire after a restart).",
+            undurable,
         )
     return [
         Composer(
@@ -832,17 +838,21 @@ def _parse_one(raw: object, index: int) -> ComposerDef:
     if op is ComposerOp.DEADLINE and not durable:
         # CLAUDE.md's recovery discipline: never ship a SILENT dead-man switch.
         # Since #3180 the default is durable, so reaching here means the
-        # operator explicitly opted out — warn loudly at load time (existing
-        # `warnings.warn` mechanism — see reyn.security.secrets.loader/
-        # interpolation for the same UserWarning idiom; no new mechanism).
-        warnings.warn(
-            f"composers[{name}]: op=deadline with durable=false uses InMemoryPendingStore, "
-            "which is crash-non-durable by design — a process crash silently drops this "
-            "dead-man monitor's armed state with no reconstruction, and whatever it was "
-            "watching is likely inside the same crash. Remove `durable: false` to get the "
-            "crash-durable store (the default for this op since #3180).",
-            UserWarning,
-            stacklevel=3,
+        # operator explicitly opted out — warn loudly at load time. #6145 A:
+        # this used to be `warnings.warn(..., UserWarning)` — silent
+        # outside `__main__` under Python's own default filter, and never
+        # reached the operator's screen even when visible (`stderr:
+        # False / reyn.log: True`, architect's measurement) — promoted to
+        # `logger.warning` so it actually reaches `reyn.log`.
+        _log.warning(
+            "composers[%s]: op=deadline with durable=false uses "
+            "InMemoryPendingStore, which is crash-non-durable by design "
+            "— a process crash silently drops this dead-man monitor's "
+            "armed state with no reconstruction, and whatever it was "
+            "watching is likely inside the same crash. Remove `durable: "
+            "false` to get the crash-durable store (the default for "
+            "this op since #3180).",
+            name,
         )
     return ComposerDef(
         name=name, op=op, inputs=inputs, emit_kind=emit_kind,

@@ -1,0 +1,47 @@
+name: session-child-temp-dir-isolation gate
+
+# #6151: reject any direct `Session(...)` construction in tests/ (outside
+# the two sanctioned helpers, tests/_support/agent_session.py and
+# tests/_support/session.py, which are this fix's own home) that omits
+# child_temp_dir= -- such a construction resolves Session._child_temp_dir
+# to a REAL, SHARED filesystem path (<tempdir>/reyn/<agent_name>/
+# <session_id>), the exact shape #6151 measured colliding across
+# `pytest -n auto` worker processes in CI. See
+# scripts/check_session_child_temp_dir_isolation.py's module docstring
+# for the full design rationale.
+#
+# No diff/base-ref needed -- a whole-tree scan against a baseline of zero,
+# same shape as bare-tests-import-reference-gate.yml /
+# no-core-dep-importorskip-gate.yml. A shallow checkout is enough.
+#
+# Two independent triggers: tests/** (a new/changed direct Session(...)
+# construction) and this gate script's own path (an edit to the gate
+# itself should re-run it).
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - "scripts/check_session_child_temp_dir_isolation.py"
+
+permissions:
+  contents: read
+
+jobs:
+  session-child-temp-dir-isolation:
+    name: session-child-temp-dir-isolation gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_session_child_temp_dir_isolation.py is stdlib-only
+      # (ast / pathlib / sys). No pip install needed.
+      - name: Check no direct Session(...) construction omits child_temp_dir=
+        run: |
+          python scripts/check_session_child_temp_dir_isolation.py

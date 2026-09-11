@@ -287,7 +287,7 @@ side-effect を実行する surface を強制力の強い順に:
 | Web Permissions API | feature ごとに query | per-permission prompt | Origin-scoped（= per-domain capability）| Browser sandbox |
 | Anthropic Claude Code | Tool list（Bash / Edit / Read / Write）| デフォルトでは無、 sandbox-mode で opt-in | Tool 名（path scope なし）| Seatbelt（sandbox-mode）または trust |
 | MCP servers | server side で tool list 公開 | server がオーナーシップ | per-tool、 server 定義 | プロセス境界 |
-| **Reyn** | `permissions:` ブロック（list 軸主体、 bool は `shell` のみ）| startup_guard + first-use interactive | per-path / per-host / per-server（resource scope）| safe-mode は AST + `reyn.api.safe.*` honor system / `sandboxed_exec` のみ kernel |
+| **Reyn** | `permissions:` ブロック（list 軸主体、 bool は `shell` のみ）、[FP-0069](../../deep-dives/proposals/0069-permission-posture-dial.md) §5（owner 2026-09-06 承認）以降 `read_only` 以外では optional | 実使用時点の interactive prompt、startup 時ではない（#5825 段 3: 以前の draft が名指した `startup_guard` は `src/` に実在しない、`git grep -n startup_guard -- src/` は 0 件 — 機構は各行が述べる per-`require_*`-gate の JIT prompt と同一） | per-path / per-host / per-server（resource scope）| safe-mode は AST + `reyn.api.safe.*` honor system / `sandboxed_exec` のみ kernel |
 
 Reyn は iOS / Android の 「capability + first-use prompt」 主流から 2 軸で乖離する:
 
@@ -312,9 +312,9 @@ Phase 1–4 の間、 bool 形式（= `mcp_install: true`）は compat shim と�
 
 Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて alignment を仕上げる:
 
-- **Specific declared host**（`http.get: [{host: "api.github.com"}]`）— `startup_guard` が `<skill, host>` ごとに 1 回 operator に prompt し、 結果を approvals.jsonl に `<skill>/http.get/<host>` で persist。 runtime は silent。 default zone 外 path に対する `file.write` と同 pattern。
-- **Wildcard**（`http.get: [{host: "*"}]` または `["*"]`）— host が write-time に不明（= LLM が runtime に決める、 例: `web_search` 結果 URL を `web_fetch` で follow）なので、 prompt は `require_http_get` 内の実 host gate で fire。 persistence key も同形 `<skill>/http.get/<host>`、 ALWAYS / NEVER は per-host で効く。
-- **宣言なし** — legacy `web.fetch` compat path + `DeprecationWarning`、 segmented migration window 期間中。 Tier-1 default-allow に依存していた既存ワークフローはそのまま動く。
+- **Specific declared host**（`http.get: [{host: "api.github.com"}]`）— runtime prompt が `<actor, host>` ごとに 1 回、実使用時点で fire し（startup 時ではない — #5825 段 3: `src/` に startup 時 prompt pass は存在しない）、結果を `.reyn/approvals.jsonl` に `<actor>/http.get/<host>` で persist。以後の run は silent。 default zone 外 path に対する `file.write` と同 pattern。
+- **Wildcard**（`http.get: [{host: "*"}]` または `["*"]`）— host が write-time に不明（= LLM が runtime に決める、 例: `web_search` 結果 URL を `web_fetch` で follow）なので、 prompt は `require_http_get` 内の実 host gate で fire。 persistence key も同形 `<actor>/http.get/<host>`、 ALWAYS / NEVER は per-host で効く。
+- **宣言なし** — [FP-0069](../../deep-dives/proposals/0069-permission-posture-dial.md) §5（owner 2026-09-06 承認）: 宣言は `read_only` 以外では **optional**、終了日のある deprecation window ではない。legacy `web.fetch` compat path は operator に実 prompt（`Allow fetching from <host>?`）を毎回 1 回出し、宣言済みパスと同じ `<actor>/http.get/<host>` key で per-host に persist する（#6140/#6141 が compat path 自身の旧 all-hosts-一括 grant という別の consent defect を修正済）— 本節が以前 書いていた「`DeprecationWarning` の先に将来 hard error」ではない。あの warning 自体 Python の既定 filter 下で silent であり（#6143/#6144 で修正）、「hard error」の予告も ratify されたことは無かった — §5 は逆に決着した。
 
 `web_fetch` op handler は legacy `require_web_fetch` でなく `require_http_get` 経由化、 chat router の PermissionDecl は `http.get: [{host: "*"}]` 宣言で LLM-driven fetch を wildcard branch に流す。 `reyn.api.safe.http` subprocess path は preprocessor で wildcard entry を strip — sync subprocess は prompt 不可なので wildcard host fetch は `web_fetch` op route 必須。
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -390,19 +391,29 @@ async def test_concurrent_calls_serialise_to_one_refresh(oauth_store_path: Path)
 # ── 8. Store-file resilience ───────────────────────────────────────────────
 
 
-def test_load_handles_malformed_json(oauth_store_path: Path) -> None:
-    """Tier 2: corrupt JSON → warning + empty result (not crash)."""
+def test_load_handles_malformed_json(oauth_store_path: Path, caplog) -> None:
+    """Tier 2: corrupt JSON → warning + empty result (not crash).
+
+    #6145 A: was `pytest.warns(UserWarning, ...)` -- that emission is
+    SILENT outside `__main__` under Python's own default filter (never
+    reached the operator from `src/reyn/**`), so it was promoted to
+    `logger.warning`; read here via `caplog`."""
     oauth_store_path.parent.mkdir(parents=True, exist_ok=True)
     oauth_store_path.write_text("{ not json")
-    with pytest.warns(UserWarning, match="not valid JSON"):
+    with caplog.at_level(logging.WARNING):
         result = load_oauth_token("anything")
+    assert any("not valid JSON" in r.message for r in caplog.records)
     assert result is None
 
 
-def test_load_handles_object_with_missing_fields(oauth_store_path: Path) -> None:
-    """Tier 2: malformed token entry → warning + None for that key."""
+def test_load_handles_object_with_missing_fields(oauth_store_path: Path, caplog) -> None:
+    """Tier 2: malformed token entry → warning + None for that key.
+
+    #6145 A: was `pytest.warns(UserWarning, ...)` -- promoted to
+    `logger.warning` for the same reason as the test above."""
     oauth_store_path.parent.mkdir(parents=True, exist_ok=True)
     oauth_store_path.write_text(json.dumps({"github": {"access_token": "x"}}))
-    with pytest.warns(UserWarning, match="malformed"):
+    with caplog.at_level(logging.WARNING):
         result = load_oauth_token("github")
+    assert any("malformed" in r.message for r in caplog.records)
     assert result is None

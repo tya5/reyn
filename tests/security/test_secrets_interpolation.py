@@ -3,17 +3,24 @@
 Pins the contract for ``expand_env()``:
 
   - Single string: ${VAR} is replaced by os.environ value
-  - Undefined VAR: expands to "" with UserWarning
+  - Undefined VAR: expands to "" with a warning
   - $$ escape: expands to literal "$"
   - Non-string scalars (int, bool, None): pass through unchanged
   - Nested dict: all string values at any depth are resolved
   - List: all string items are resolved recursively
   - Mixed nesting (dict of lists, list of dicts): correct resolution
   - mcp_client.expand_env re-export is backward-compatible
+
+#6145 A: the undefined-var notice was `warnings.warn(..., UserWarning)` --
+SILENT outside `__main__` under Python's own default filter, and never
+reached the operator's screen even when visible (`stderr: False /
+reyn.log: True`, architect's measurement). Promoted to `logger.warning`;
+the witness test below reads `caplog` instead of `warnings.catch_warnings`
+for the same reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 
 from reyn.security.secrets.interpolation import expand_env
 
@@ -32,17 +39,16 @@ def test_expand_multiple_vars_in_one_string(monkeypatch):
     assert expand_env("${REYN_A}-${REYN_B}") == "foo-bar"
 
 
-def test_undefined_var_expands_to_empty_with_warning(monkeypatch):
-    """Tier 2: undefined ${VAR} expands to '' and emits UserWarning (no crash)."""
+def test_undefined_var_expands_to_empty_with_warning(monkeypatch, caplog):
+    """Tier 2: undefined ${VAR} expands to '' and emits a warning (no crash)."""
     monkeypatch.delenv("REYN_UNDEFINED_XYZ", raising=False)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         result = expand_env("before_${REYN_UNDEFINED_XYZ}_after")
 
     assert result == "before__after"
     assert any(
-        "REYN_UNDEFINED_XYZ" in str(w.message) for w in caught
+        "REYN_UNDEFINED_XYZ" in r.message for r in caplog.records
     ), "Expected a warning mentioning the undefined variable"
 
 

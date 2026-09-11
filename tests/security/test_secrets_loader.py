@@ -5,15 +5,22 @@ Pins the following invariants for ``reyn.security.secrets.loader.load_secrets_to
   - File absent: gracefully returns without error
   - File present: values are injected into os.environ
   - No override: pre-existing env vars are NOT overwritten
-  - Parse errors: bad lines emit UserWarning and are skipped; loader continues
+  - Parse errors: bad lines emit a warning and are skipped; loader continues
   - chmod 600 enforce: world-readable file triggers warning and auto-fix
   - Comments and blank lines are ignored
   - Quoted values have quotes stripped
+
+#6145 A: the parse-error and chmod notices were `warnings.warn(...,
+UserWarning)` -- SILENT outside `__main__` under Python's own default
+filter, and never reached the operator's screen even when visible
+(`stderr: False / reyn.log: True`, architect's measurement). Promoted to
+`logger.warning`; this file's own warning-witness tests below read
+`caplog` instead of `warnings.catch_warnings` for the same reason.
 """
 from __future__ import annotations
 
+import logging
 import os
-import warnings
 from pathlib import Path
 
 from reyn.security.secrets.loader import load_secrets_to_environ
@@ -75,24 +82,57 @@ def test_comments_and_blanks_ignored(tmp_path, monkeypatch):
     assert os.environ.get("REYN_TEST_REAL") == "yes"
 
 
-def test_parse_error_skipped_with_warning(tmp_path, monkeypatch):
-    """Tier 2: lines without '=' emit a UserWarning and are skipped; parsing continues."""
+def test_parse_error_skipped_with_warning(tmp_path, monkeypatch, caplog):
+    """Tier 2: lines without '=' emit a warning and are skipped; parsing continues."""
     secrets = tmp_path / "secrets.env"
     _write_secrets(secrets, "NOT_A_VALID_LINE\nREYN_TEST_GOOD=ok\n")
 
     monkeypatch.delenv("REYN_TEST_GOOD", raising=False)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         load_secrets_to_environ(path=secrets)
 
     # At least one warning was emitted for the bad line
-    assert any("no '='" in str(w.message) or "skipping" in str(w.message) for w in caught)
+    assert any("no '='" in r.message or "skipping" in r.message for r in caplog.records)
     # Good line still loaded
     assert os.environ.get("REYN_TEST_GOOD") == "ok"
 
 
-def test_chmod_warning_on_world_readable(tmp_path, monkeypatch):
+def test_parse_error_warning_does_not_leak_the_raw_line(tmp_path, monkeypatch, caplog):
+    """Tier 2: #6149 BLOCKING (security) — a malformed secrets.env line
+    (missing '=', or an empty key such as `=SECRET_TOKEN_VALUE`) MUST NOT
+    have its raw text echoed into `reyn.log`. Before this fix the two
+    warnings below both formatted `%r, raw_line` — logging the line
+    VERBATIM, which for the `no '='` case is exactly a bare token/secret
+    pasted on its own line, and for the empty-key case is `=<value>`, the
+    value itself. The operator needs the line NUMBER and the REASON, not
+    the secret. Positive witness (not just "doesn't crash"): assert the
+    literal marker text used for both malformed lines below is ABSENT
+    from every captured record's message."""
+    secrets = tmp_path / "secrets.env"
+    _write_secrets(
+        secrets,
+        "SENTINEL_BARE_SECRET_TOKEN_XYZ\n"
+        "=SENTINEL_EMPTY_KEY_SECRET_ABC\n"
+        "REYN_TEST_GOOD=ok\n",
+    )
+    monkeypatch.delenv("REYN_TEST_GOOD", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        load_secrets_to_environ(path=secrets)
+
+    # Both malformed lines were caught (line-number-and-reason still present).
+    assert any("no '='" in r.message for r in caplog.records)
+    assert any("empty key" in r.message for r in caplog.records)
+    # Neither secret sentinel reached the log, in any record.
+    joined = "\n".join(r.message for r in caplog.records)
+    assert "SENTINEL_BARE_SECRET_TOKEN_XYZ" not in joined
+    assert "SENTINEL_EMPTY_KEY_SECRET_ABC" not in joined
+    # Good line still loaded.
+    assert os.environ.get("REYN_TEST_GOOD") == "ok"
+
+
+def test_chmod_warning_on_world_readable(tmp_path, monkeypatch, caplog):
     """Tier 2: world-readable secrets.env emits a warning and is auto-chmod'd to 600."""
     secrets = tmp_path / "secrets.env"
     _write_secrets(secrets, "REYN_TEST_WR=value\n")
@@ -101,12 +141,11 @@ def test_chmod_warning_on_world_readable(tmp_path, monkeypatch):
 
     monkeypatch.delenv("REYN_TEST_WR", raising=False)
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         load_secrets_to_environ(path=secrets)
 
     # A warning about permissions was emitted
-    assert any("600" in str(w.message) or "readable" in str(w.message) for w in caught)
+    assert any("600" in r.message or "readable" in r.message for r in caplog.records)
     # File was auto-fixed to 600
     mode = secrets.stat().st_mode & 0o777
     assert mode == 0o600

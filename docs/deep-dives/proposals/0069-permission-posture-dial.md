@@ -58,7 +58,9 @@ Restated as a floor: **`unbounded` does not reach them either.** Hermes's hardli
 
 Layer 2 (`permissions:` in `reyn.yaml`) has **no analogue in any of the four**; all gate at the moment of use. This is the main source of "reyn is heavy", and it is **ceremony-by-default, not security-by-default**: removing it leaves the just-in-time gate untouched, so almost no enforcement is lost.
 
-**Proposal:** the declaration becomes **required only in `read_only` and `ask`-with-`strict_declaration`**, and optional elsewhere. What it buys — a permission inventory readable before anything runs — is preserved as a posture you can choose rather than the only path.
+**Proposal:** the declaration becomes **required only in `read_only`**, and optional elsewhere. What it buys — a permission inventory readable before anything runs — is preserved as a posture you can choose rather than the only path.
+
+**Corrected 2026-09-11 (#5825 stage 3, lead-coder ruling 3):** an earlier draft of this line conditioned the requirement on `read_only` and "`ask`-with-`strict_declaration`" — a modifier §2's own dial never defines (4 values, no per-mode modifiers). The owner's 2026-09-06 ruling (§10) accepted "declaration is opt-in"; it never ratified a `strict_declaration` knob, which was this document's own citation error, not a decision anyone made. Reopen condition, stated so it stays a decision rather than silent drift: if someone later wants "catch every actor with an undeclared capability" as an enforced property, that is a **gate** (`scripts/`, CI-checked), not a new dial value — see §5's own "what reyn keeps" framing for why a dial value and a gate answer different questions.
 
 ⚠️ **This is a behaviour change and it is UX-visible.** It needs the owner's ruling, not this document's.
 

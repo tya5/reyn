@@ -1447,14 +1447,22 @@ def _build_chat_config(raw: object) -> ChatConfig:
         # running config back, so "my setting did nothing" is indistinguishable
         # from "I never set it". Same shape as the hooks.yaml token warning in
         # `loader.py` — refuse the value, say so, keep the session running.
-        import warnings
-        warnings.warn(
-            f"chat.stream_repaint_min_interval={_repaint_rejected!r} is not a "
-            f"positive number of seconds -- using the default {_repaint_default!r}. "
-            "0 or negative would repaint on every delta, which is the "
-            "pre-measurement behaviour this budget exists to avoid.",
-            UserWarning,
-            stacklevel=2,
+        #
+        # #6145 A: was `warnings.warn(..., UserWarning)` — SILENT for a
+        # non-``__main__`` module (every `src/reyn/*` module) under Python's
+        # own default filter, and even where the category IS visible
+        # (`UserWarning`), architect's own measurement is `stderr: False /
+        # reyn.log: True` — it never reached the operator's screen either
+        # way. This is a `chat.*` config-rejection notice, the exact shape
+        # #6143/#6144 already promoted for this same function's four
+        # sibling rejections above — same promotion here.
+        import logging
+        logging.getLogger(__name__).warning(
+            "chat.stream_repaint_min_interval=%r is not a positive number "
+            "of seconds -- using the default %r. 0 or negative would "
+            "repaint on every delta, which is the pre-measurement "
+            "behaviour this budget exists to avoid.",
+            _repaint_rejected, _repaint_default,
         )
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):

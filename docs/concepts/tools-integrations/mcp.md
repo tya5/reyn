@@ -257,7 +257,7 @@ MCP operations are gated at two points:
 
 Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the collapse arc — install gating now flows through:
 
-- `file.write` on `.reyn/config/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per workflow+path; runtime is silent after approval.
+- `file.write` on `.reyn/config/mcp.yaml` (= the canonical mutation target). The interactive prompt fires once per workflow+path, at the point of actual use (not at startup — #5825 stage 3: no startup-time prompt pass exists in `src/`); runtime is silent after approval.
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
 - `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
 

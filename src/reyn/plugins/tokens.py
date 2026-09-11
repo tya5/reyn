@@ -53,10 +53,13 @@ baked into a durable copy" discipline this module already documents for
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Matches ${VAR_NAME} — word chars only, mirrors interpolation.py's _ENV_VAR_RE
 # shape so both layers share the same token *syntax*, not the same *vocabulary*.
@@ -305,15 +308,18 @@ def expand_yaml_tokens_or_refuse(
     expanded = expand_with_map(obj, token_map)
     unresolved = find_unresolved_reyn_tokens(expanded)
     if unresolved:
-        import warnings
-
-        warnings.warn(
-            f"{source} left reyn token(s) {sorted(set(unresolved))} "
-            "unresolved -- refusing to use this content (this is reyn's "
-            "own bug -- it could not supply a value it owns -- not a "
-            "config choice to honor).",
-            UserWarning,
-            stacklevel=2,
+        # #6145 A: was `warnings.warn(..., UserWarning)` — silent outside
+        # `__main__` under Python's own default filter, and never reached
+        # the operator's screen even when visible (`stderr: False /
+        # reyn.log: True`, architect's measurement). This is a whole
+        # config layer being REFUSED (returns None) -- the operator needs
+        # the reason in the log, not only the downstream symptom of a
+        # face silently missing content.
+        _log.warning(
+            "%s left reyn token(s) %s unresolved -- refusing to use this "
+            "content (this is reyn's own bug -- it could not supply a "
+            "value it owns -- not a config choice to honor).",
+            source, sorted(set(unresolved)),
         )
         return None
     return expanded

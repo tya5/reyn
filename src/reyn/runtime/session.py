@@ -1078,6 +1078,19 @@ class Session:
         non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
         # Conversation session id WAL entries are recorded under, default "main" (FP-0043 Stage 5)
         session_id: str = "main",
+        # #6151: optional override for the session-owned child-process
+        # scratch dir (#5184's own `_child_temp_dir`). None -> the
+        # existing formula, `<tempdir>/reyn/<agent_name>/<session_id>`,
+        # UNCHANGED for every production caller and any test that wants
+        # to verify that formula itself (test_5184_session_temp_lifetime.
+        # py). Tests use this the same way they use `snapshot_path` above
+        # to redirect I/O to a tmp_path without touching private
+        # attributes — `make_session()` injects a fresh, isolated one by
+        # default (see its own `isolate_child_temp_dir` param) precisely
+        # so MANY tests sharing the same `agent_name`/`session_id`
+        # default ("alpha"/"main") never collide on this ONE real
+        # filesystem path under parallel xdist workers (#6151).
+        child_temp_dir: "str | Path | None" = None,
         # Injectable execution driver seam; None -> default RouterLoopDriver construction
         loop_driver: "ExecutionDriver | None" = None,
         # Pre-built PipelineRegistry from the session factory; None -> empty registry (#2575)
@@ -1440,8 +1453,12 @@ class Session:
         # so sandbox write grants never widen recovery-core permissions. The
         # directory is created lazily by the first child launch; construction
         # alone must not leave an artifact that only run() can clean up.
+        # #6151: `child_temp_dir=` (constructor param, above) overrides the
+        # formula below when given — the default (None) formula is BYTE-
+        # IDENTICAL to before this param existed.
         self._child_temp_dir = (
-            Path(tempfile.gettempdir()) / "reyn" / self._agent.agent_name / session_id
+            Path(child_temp_dir) if child_temp_dir is not None
+            else Path(tempfile.gettempdir()) / "reyn" / self._agent.agent_name / session_id
         )
         # #3705: pass the resolved state root through so an explicitly-
         # supplied workspace_state_dir isn't silently ignored (only used

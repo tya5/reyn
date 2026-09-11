@@ -34,11 +34,9 @@ and the retargeted env test below close that gap — both falsify-verified
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
-import warnings
 from pathlib import Path
-
-import pytest
 
 from reyn.mcp.client import MCPClient
 from reyn.security.sandbox.backends.landlock import LandlockBackend
@@ -151,37 +149,40 @@ def test_seatbelt_wrap_subprocess_opt_in_explicit(monkeypatch):
     client.close_stderr_capture()
 
 
-def test_landlock_wrap_uses_reexec_shim(monkeypatch):
+def test_landlock_wrap_uses_reexec_shim(monkeypatch, caplog):
     """Tier 2: under Landlock (#1344 follow-up E), wrap_command wraps the command
     as the reyn.security.sandbox.landlock_exec re-exec shim (python -m ... --policy
     ... -- cmd args) — the COMMAND-level analog of the Seatbelt wrap (no
-    UNSANDBOXED warn — this is a routed, enforced wrap, not a bypass)."""
+    UNSANDBOXED warn — this is a routed, enforced wrap, not a bypass).
+
+    #6145 A: the UNSANDBOXED notice was `warnings.warn(...)` (category
+    omitted) -- promoted to `logger.warning`, read here via `caplog`."""
     _patch_backend(monkeypatch, LandlockBackend())
     client = _stdio_client()
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # any UNSANDBOXED warn would fail here
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert not any("UNSANDBOXED" in r.message for r in caplog.records)
     assert cmd == sys.executable
     assert args[:2] == ["-m", "reyn.security.sandbox.landlock_exec"]
     sep = args.index("--")
     assert args[sep + 1:] == ["my-mcp", "--flag"]  # original command preserved
 
 
-def test_noop_backend_wraps_argv_unchanged_through_abstraction(monkeypatch):
+def test_noop_backend_wraps_argv_unchanged_through_abstraction(monkeypatch, caplog):
     """Tier 2: #2620 — NoopBackend PASSES THROUGH argv unchanged, but the call
     still routed through backend.wrap_command() (never a raw bypass). No
-    UserWarning is raised — Noop is the owner-acceptable no-enforcement
+    UNSANDBOXED warning is raised — Noop is the owner-acceptable no-enforcement
     outcome, not an error condition to surface as a warning."""
     _patch_backend(monkeypatch, NoopBackend())
     client = _stdio_client()
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert not any("UNSANDBOXED" in r.message for r in caplog.records)
     assert cmd == "my-mcp"
     assert args == ["--flag"]  # unchanged — passthrough, but via wrap_command
 
 
-def test_backend_probe_failure_falls_back_with_warning(monkeypatch):
+def test_backend_probe_failure_falls_back_with_warning(monkeypatch, caplog):
     """Tier 2: only a genuine backend-resolution FAILURE (not a normal Noop
     outcome) falls back to an unwrapped launch — and that fallback is always
     loudly warned, never silent."""
@@ -191,8 +192,9 @@ def test_backend_probe_failure_falls_back_with_warning(monkeypatch):
 
     monkeypatch.setattr("reyn.security.sandbox.get_default_backend", _boom)
     client = _stdio_client()
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert any("UNSANDBOXED" in r.message for r in caplog.records)
     assert cmd == "my-mcp"
     assert args == ["--flag"]
 

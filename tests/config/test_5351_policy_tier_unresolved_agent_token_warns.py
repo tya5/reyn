@@ -29,12 +29,18 @@ Real ``load_config`` + a real ``reyn.yaml`` on disk — no mocks. Witness
 is the real content (``cfg.mcp["servers"]`` genuinely absent), not just
 "a warning fired" (lead-coder's own standing correction on this exact
 family of finding, #5801: "witness は「warning が出ない」ではなく「中身が
-system prompt に入る」で")."""
+system prompt に入る」で").
+
+#6145 A: the refusal notice was `warnings.warn(..., UserWarning)` --
+SILENT outside `__main__` under Python's own default filter, and never
+reached the operator's screen even when visible (`stderr: False /
+reyn.log: True`, architect's measurement). Promoted to `logger.warning`;
+the tests below read `caplog` instead of `pytest.warns`/
+`warnings.catch_warnings` for the same reason.
+"""
 from __future__ import annotations
 
-import warnings
-
-import pytest
+import logging
 
 from reyn.config.loader import load_config
 
@@ -42,11 +48,11 @@ from reyn.config.loader import load_config
 # on ANY unresolved reyn token this face's map doesn't cover, not just
 # REYN_AGENT_NAME specifically (the vocabulary lives in the token_map,
 # not in a second hand-written check here -- #5801 req③).
-_REFUSAL_WARNING_MATCH = r"left reyn token\(s\).*unresolved -- refusing"
+_REFUSAL_WARNING_SUBSTRING = "unresolved -- refusing"
 
 
 def test_unresolved_reyn_agent_name_fails_closed_even_after_export(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: the file is refused even when the operator has already
     "fixed" the pre-existing expand_env warning by exporting
@@ -65,9 +71,10 @@ def test_unresolved_reyn_agent_name_fails_closed_even_after_export(
         encoding="utf-8",
     )
 
-    with pytest.warns(UserWarning, match=_REFUSAL_WARNING_MATCH):
+    with caplog.at_level(logging.WARNING):
         cfg = load_config(tmp_path)
 
+    assert any(_REFUSAL_WARNING_SUBSTRING in r.message for r in caplog.records)
     # Real-content witness (not just "a warning fired"): the whole
     # reyn.yaml layer -- including the otherwise-valid `myserver` entry
     # -- never made it into the merged config.
@@ -77,7 +84,7 @@ def test_unresolved_reyn_agent_name_fails_closed_even_after_export(
     )
 
 
-def test_unresolved_reyn_agent_name_fails_closed_without_export(tmp_path) -> None:
+def test_unresolved_reyn_agent_name_fails_closed_without_export(tmp_path, caplog) -> None:
     """Tier 2: without any export, the same refusal fires -- #5801's rule
     does not distinguish "operator tried to fix it" from "never tried";
     both are reyn's own bug (it could not supply a value it owns), not
@@ -93,15 +100,16 @@ def test_unresolved_reyn_agent_name_fails_closed_without_export(tmp_path) -> Non
         encoding="utf-8",
     )
 
-    with pytest.warns(UserWarning, match=_REFUSAL_WARNING_MATCH):
+    with caplog.at_level(logging.WARNING):
         cfg = load_config(tmp_path)
 
+    assert any(_REFUSAL_WARNING_SUBSTRING in r.message for r in caplog.records)
     assert not cfg.mcp.get("servers"), (
         f"got {cfg.mcp.get('servers')!r}"
     )
 
 
-def test_a_resolvable_reyn_project_dir_does_not_fail_closed(tmp_path) -> None:
+def test_a_resolvable_reyn_project_dir_does_not_fail_closed(tmp_path, caplog) -> None:
     """Tier 2: the accept-side witness -- a real, resolvable
     ${REYN_PROJECT_DIR} in the same load point must NOT trip the
     refusal warning, and its real, expanded value must land in the
@@ -117,17 +125,15 @@ def test_a_resolvable_reyn_project_dir_does_not_fail_closed(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         cfg = load_config(tmp_path)
 
     refusals = [
-        w for w in caught
-        if issubclass(w.category, UserWarning) and "unresolved -- refusing" in str(w.message)
+        r for r in caplog.records if _REFUSAL_WARNING_SUBSTRING in r.message
     ]
     assert not refusals, (
         f"a fully-resolved ${{REYN_PROJECT_DIR}} must not be refused -- "
-        f"got {[str(w.message) for w in refusals]}"
+        f"got {[r.message for r in refusals]}"
     )
     env = cfg.mcp["servers"]["myserver"]["env"]
     assert env["PROJECT_TAG"] == str(tmp_path.resolve())
