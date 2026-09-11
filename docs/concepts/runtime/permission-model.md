@@ -115,7 +115,9 @@ permissions:
 
 This grants project-wide pre-approval for the local environment without affecting
 committed `reyn.yaml` or production users.  Interactive TTY runs elsewhere still see
-startup_guard prompts as documented.
+the same first-use prompt described above — at the point of actual use, never at
+startup (#5825 stage 3 investigation: no startup-time prompt pass exists in `src/`;
+see the note under [Industry comparison](#industry-comparison)).
 
 ## Why actor-scoped keys
 
@@ -429,7 +431,7 @@ it explicitly.
 | OpenClaw | No declaration; `tools.exec.mode` (`deny`/`allowlist`/`ask`/`auto`/`full`) | Allowlist miss → human, or auto-reviewer in `auto` | Binary-path or command-name glob + optional argv regex; approvals bind argv + cwd | Container + host floor; effective policy is the stricter of tool policy and approvals |
 | Hermes Agent | No declaration; `approvals.mode` (`smart`/`manual`/`off`) + sandbox backend | Dangerous-command check on the `local` backend only; `smart` asks an auxiliary LLM first | Command pattern only — **no per-path or per-tool scope** | Container backends are the boundary (checks skipped there); unoverridable hardline blocklist |
 | MCP servers | Server-side tool list exposed to client | Server owns its boundary | Per-tool, server-defined | Process boundary |
-| **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`) | startup_guard + interactive on first use | per-path / per-host / per-server (resource scope) | AST + `reyn.api.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
+| **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`), and — since [FP-0069](../../deep-dives/proposals/0069-permission-posture-dial.md) §5 (owner-accepted 2026-09-06) — optional outside `read_only` | interactive prompt at the point of first use, not at startup (#5825 stage 3: `startup_guard` named in an earlier draft of this table does not exist in `src/`, `git grep -n startup_guard -- src/` is 0 hits — the mechanism is the same per-`require_*`-gate JIT prompt every row above describes for itself) | per-path / per-host / per-server (resource scope) | AST + `reyn.api.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
 
 A per-system breakdown of the four coding agents above — their mode dials, what persists, and where Reyn sits — is in
 [research/competitive/permission-modes.md](../../deep-dives/research/competitive/permission-modes.md) (measured 2026-09-06).
@@ -460,9 +462,9 @@ During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compa
 
 Phase 7 finishes the alignment by giving the `http.get` axis the same prompt model as `file.write`:
 
-- **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.jsonl under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
-- **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
-- **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing workflows that relied on Tier-1 default-allow keep working.
+- **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — the runtime prompt fires once per `<actor, host>`, at the point of actual use (not at startup — #5825 stage 3: no startup-time prompt pass exists in `src/`), and persists the decision to `.reyn/approvals.jsonl` under `<actor>/http.get/<host>`. A subsequent run is then silent. Mirrors `file.write` for paths outside the default zone.
+- **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<actor>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
+- **No declaration** — [FP-0069](../../deep-dives/proposals/0069-permission-posture-dial.md) §5 (owner-accepted 2026-09-06): the declaration is **optional outside `read_only`**, not a deprecation window with an end date. The legacy `web.fetch` compat path prompts the operator (`Allow fetching from <host>?`), one real prompt every call, indexed per-host under the SAME `<actor>/http.get/<host>` key the declared paths above use (#6140/#6141 fixed the compat path's own prior all-hosts-at-once grant, a separate consent defect) — not a `DeprecationWarning` heading toward a hard error in a future release, which this section previously said and #6143/#6144 corrected (that warning was itself silent under Python's own default filter, and the "hard error" it promised was never ratified — §5 settled the opposite).
 
 The `web_fetch` op handler routes through `require_http_get` instead of the legacy `require_web_fetch`; the chat router's PermissionDecl declares `http.get: [{host: "*"}]` so LLM-driven fetches go through the wildcard branch. The `reyn.api.safe.http` subprocess path strips wildcard entries at the preprocessor — sync subprocesses can't prompt, so wildcard-host fetches must go through the async `web_fetch` op route.
 
