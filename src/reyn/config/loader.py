@@ -630,11 +630,23 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
                 # parse-failure branch above).
                 import logging
 
+                # lead-coder BLOCKING (co-vet re-check): the "did you
+                # mean" hint below is only SAFE to offer for a string
+                # value (a plausible `permissions.mode` dial-name typo,
+                # e.g. `permissions: ask`). A non-string non-dict value
+                # (e.g. `permissions: 3`) would suggest `{mode: 3}` —
+                # YAML-valid, but `parse_permission_mode(3)` itself
+                # raises, turning a WARNING an operator follows into a
+                # startup failure. Never advise a fix that is itself broken.
+                hint = (
+                    f" Did you mean 'permissions: {{mode: {val!r}}}'?"
+                    if isinstance(val, str) else ""
+                )
                 logging.getLogger(__name__).warning(
                     "config: 'permissions:' override is not a mapping "
                     "(got %r) — ignoring this tier's permissions override "
-                    "entirely. Did you mean 'permissions: {mode: %r}'?",
-                    val, val,
+                    "entirely.%s",
+                    val, hint,
                 )
                 merged_dict = dict(existing)
             if existing_lock:

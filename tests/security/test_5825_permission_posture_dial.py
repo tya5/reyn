@@ -275,6 +275,28 @@ def test_disable_unbounded_mode_survives_a_later_tier_writing_a_non_dict_string(
     assert any("permissions" in r.message for r in caplog.records), (
         "a malformed permissions: override must warn, not fail silently"
     )
+    assert any("Did you mean" in r.message for r in caplog.records), (
+        "a string override IS a plausible mode-value typo -- the hint should fire"
+    )
+
+
+def test_a_non_string_malformed_override_gets_no_broken_advice(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 1: lead-coder BLOCKING (co-vet re-check) -- the "Did you mean
+    'permissions: {mode: ...}'?" hint is only SAFE for a string value (a
+    plausible dial-name typo). A non-string, non-dict value (e.g.
+    `permissions: 3`) would suggest `{mode: 3}` -- YAML-valid, but
+    `parse_permission_mode(3)` itself raises, turning a WARNING an
+    operator follows into a startup failure. Never advise a fix that is
+    itself broken."""
+    caplog.set_level("WARNING")
+    _merge({}, {"permissions": 3})
+    assert any("permissions" in r.message for r in caplog.records)
+    assert not any("Did you mean" in r.message for r in caplog.records), (
+        "a non-string override must not get mode-value advice -- the "
+        "suggested fix would itself fail to parse"
+    )
 
 
 def test_disable_unbounded_mode_survives_a_later_tier_writing_a_non_dict_list() -> None:
@@ -286,6 +308,23 @@ def test_disable_unbounded_mode_survives_a_later_tier_writing_a_non_dict_list() 
     merged = _merge(merged, {"permissions": ["ask"]}, tier_label="project_local")
     assert merged["permissions"]["disable_unbounded_mode"] is True
     assert isinstance(merged["permissions"], dict)
+
+
+def test_a_malformed_override_preserves_an_unrelated_prior_grant_too() -> None:
+    """Tier 1: lead-coder BLOCKING (co-vet re-check) -- the fix's own
+    behavior change is broader than the lock: a malformed
+    `permissions:` override now preserves EVERY prior tier's grant, not
+    just `disable_unbounded_mode` (the OLD code wholesale-replaced the
+    dict with `{}`, losing everything). Only the lock has its own
+    dedicated test above; without this one, a future change that goes
+    back to "wipe to {} on malformed input" would leave
+    disable_unbounded_mode's own tests green (nothing else was ever
+    locked) while silently discarding every OTHER prior grant -- pin the
+    broader claim directly, not just its one security-critical instance."""
+    merged: dict = {}
+    merged = _merge(merged, {"permissions": {"network": "deny"}}, tier_label="user_global")
+    merged = _merge(merged, {"permissions": "ask"}, tier_label="project_local")
+    assert merged["permissions"]["network"] == "deny"
 
 
 def test_disable_unbounded_mode_off_by_default_stays_off_through_ordinary_merges() -> None:
