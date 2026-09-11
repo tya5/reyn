@@ -331,6 +331,17 @@ class RemoteQueueView:
     delta stream: no duplicate (a replayed delta's ``seq`` was already
     applied), no resurrection-after-dispatch (the above), no loss (a delta
     whose ``seq`` IS new is always applied).
+
+    Two narrow, deliberate exceptions to "the gate discards a rejected
+    delta": :meth:`apply_user_submitted`'s ``is_own_pending`` (an identity-
+    confirmed echo for the caller's own still-pending submission) and
+    :meth:`apply_turn_started`/:meth:`apply_inbox_cancel`'s ``stuck``
+    (#5989 — a rejected delta whose matching item is STILL present in
+    :attr:`items`, proving it was never actually applied, and which has no
+    other delta that will ever arrive to apply it). Both apply the delta
+    (mutate :attr:`items`) without regressing :attr:`_last_seq` backward —
+    the ordering guarantee this docstring describes above is about OTHER
+    items, and stays intact for them either way.
     """
 
     items: dict = field(default_factory=dict)  # msg_id -> {msg_id, chain_id, text}
@@ -390,7 +401,7 @@ class RemoteQueueView:
     def apply_turn_started(self, *, chain_id: "str | None", seq: int) -> bool:
         """Apply a dispatch delta (removes the queued item matching
         ``chain_id``, if any); returns False (no-op) if the seq gate rejects
-        it as already reflected.
+        it AND no matching item is stuck (see the ``stuck`` exception below).
 
         #5989 ③ (lead-coder review, self-correction on the earlier "the log
         was empty so nothing failed" reading — this class had zero
@@ -401,27 +412,51 @@ class RemoteQueueView:
         here is EXPECTED (a genuine replay — this exact dispatch was
         already applied, and its matching queued item is already gone) when
         no item with this ``chain_id`` remains in :attr:`items` — logged at
-        ``DEBUG``. It is SUSPICIOUS (the item this delta would have
-        promoted/removed is still sitting here, un-promoted — exactly the
-        shape of a wrongly-rejected delta, not a correctly-rejected one)
-        when a matching item DOES remain — logged at ``WARNING``. No new
-        state: both branches only ever READ :attr:`items`, the same
-        collection the gate already owns."""
-        if seq <= self._last_seq:
-            stuck = [item for item in self.items.values() if item.get("chain_id") == chain_id]
-            log = logger.warning if stuck else logger.debug
-            log(
+        ``DEBUG``.
+
+        #5989 ④ (architect design, lead-coder ruling — the recovery half
+        ③ only observed): when a matching item DOES remain (``stuck``
+        non-empty), this is no longer merely SUSPICIOUS, it is the proven
+        defect ③ found and never closed — architect's own root cause:
+        :meth:`apply_snapshot` is the only ``_last_seq`` writer that
+        ASSIGNS rather than advances, so a ``turn_started`` generated
+        BEFORE a snapshot but delivered after it reads ``seq <=
+        self._last_seq`` and is rejected — and ``turn_started`` is a
+        once-per-turn edge the server never resends, so a rejected item
+        has no OTHER delta that will ever promote it; it would sit in
+        :attr:`items` forever. ``stuck`` non-empty is itself the proof
+        this delta was never actually applied (an already-applied item
+        would already be gone), so applying it here can never create a
+        double-promote — the SAME exception shape
+        :meth:`apply_user_submitted`'s own ``is_own_pending`` already
+        uses: apply the delta (remove the stuck item(s)), but do not
+        regress :attr:`_last_seq` backward — the ordering guarantee every
+        OTHER item's own gate relies on is untouched, because this delta
+        is being honored for IDENTITY (a specific stuck item), not for
+        ORDER. Still logged at ``WARNING`` — the rejection itself is still
+        the anomaly worth knowing about, only the outcome changed from
+        "logged and dropped" to "logged and recovered"."""
+        stuck = [item for item in self.items.values() if item.get("chain_id") == chain_id]
+        if seq <= self._last_seq and not stuck:
+            logger.debug(
                 "RemoteQueueView: seq-gate rejected turn_started (chain_id=%r, seq=%r, "
-                "baseline=%r) — %s",
+                "baseline=%r) — already reflected, no matching item remains",
                 chain_id, seq, self._last_seq,
-                "a matching queued item is STILL present (unpromoted)" if stuck
-                else "already reflected, no matching item remains",
             )
             return False
+        if seq <= self._last_seq:
+            logger.warning(
+                "RemoteQueueView: seq-gate rejected turn_started (chain_id=%r, seq=%r, "
+                "baseline=%r) — a matching queued item is STILL present (unpromoted); "
+                "applying it anyway (#5989 stuck-item exception) without advancing "
+                "the seq gate",
+                chain_id, seq, self._last_seq,
+            )
         for msg_id, item in list(self.items.items()):
             if item.get("chain_id") == chain_id:
                 del self.items[msg_id]
-        self._last_seq = seq
+        if seq > self._last_seq:
+            self._last_seq = seq
         return True
 
     def apply_inbox_cancel(self, *, msg_id: str, seq: int) -> bool:
@@ -429,31 +464,41 @@ class RemoteQueueView:
         queued item BY ITS OWN msg_id (unlike ``apply_turn_started``, which
         matches by ``chain_id``: a cancel targets one specific queued item,
         never a whole chain). Returns ``False`` (no-op) if the seq gate
-        rejects it as already reflected by a prior snapshot/delta — same
-        order-race protocol as ``apply_user_submitted``/``apply_turn_started``
-        (design-pass pin D): exclusive with a ``turn_started`` for the same
-        item (the server guarantees only one of the two ever fires,
-        issue #3300 owner addendum §6a), so no double-removal ambiguity.
+        rejects it AND the targeted item is not stuck (see :meth:`apply_
+        turn_started`'s own ``stuck`` exception, applied here the same way)
+        — same order-race protocol as ``apply_user_submitted``/
+        ``apply_turn_started`` (design-pass pin D): exclusive with a
+        ``turn_started`` for the same item (the server guarantees only one
+        of the two ever fires, issue #3300 owner addendum §6a), so no
+        double-removal ambiguity.
 
-        #5989 ③: same discriminator as :meth:`apply_turn_started` — EXPECTED
-        (``DEBUG``) when ``msg_id`` is already absent from :attr:`items`
-        (already removed, a genuine replay of a cancel already applied);
-        SUSPICIOUS (``WARNING``) when it is still present (the row this
-        cancel targets never left the queue — the operator who cancelled it
-        would see it sitting there regardless)."""
-        if seq <= self._last_seq:
-            stuck = msg_id in self.items
-            log = logger.warning if stuck else logger.debug
-            log(
+        #5989 ③/④: same discriminator and same recovery as :meth:`apply_
+        turn_started` — EXPECTED (``DEBUG``) when ``msg_id`` is already
+        absent from :attr:`items` (already removed, a genuine replay of a
+        cancel already applied); when it is still present (``stuck``), this
+        cancel is applied anyway (the item removed) without regressing
+        :attr:`_last_seq` — the same "``stuck`` non-empty proves this delta
+        was never actually applied" reasoning :meth:`apply_turn_started`'s
+        own docstring gives in full."""
+        stuck = msg_id in self.items
+        if seq <= self._last_seq and not stuck:
+            logger.debug(
                 "RemoteQueueView: seq-gate rejected inbox_cancel (msg_id=%r, seq=%r, "
-                "baseline=%r) — %s",
+                "baseline=%r) — already reflected, item already absent",
                 msg_id, seq, self._last_seq,
-                "the targeted item is STILL present (uncancelled)" if stuck
-                else "already reflected, item already absent",
             )
             return False
+        if seq <= self._last_seq:
+            logger.warning(
+                "RemoteQueueView: seq-gate rejected inbox_cancel (msg_id=%r, seq=%r, "
+                "baseline=%r) — the targeted item is STILL present (uncancelled); "
+                "applying it anyway (#5989 stuck-item exception) without advancing "
+                "the seq gate",
+                msg_id, seq, self._last_seq,
+            )
         self.items.pop(msg_id, None)
-        self._last_seq = seq
+        if seq > self._last_seq:
+            self._last_seq = seq
         return True
 
     def apply_turn_active(self, turn_active: bool) -> None:
