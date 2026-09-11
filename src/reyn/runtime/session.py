@@ -8509,7 +8509,7 @@ class Session:
     def _permission_mode_after_lock(self) -> "PermissionMode":
         """#5825 stage 2 internal helper: the unbounded-lock-resolved
         permission mode (:meth:`~reyn.security.permissions.permissions.
-        PermissionResolver.resolved_permission_mode`), BEFORE the
+        PermissionResolver.permission_mode_after_lock`), BEFORE the
         bounded-network-enforcement downgrade :attr:`resolved_permission_mode`
         layers on top. Shared by :attr:`network_enforcement_gap` (which
         needs this value to pick the effective sandbox mode) and by
@@ -8519,7 +8519,7 @@ class Session:
 
         if self._perm is None:
             return DEFAULT_PERMISSION_MODE
-        return self._perm.resolved_permission_mode()
+        return self._perm.permission_mode_after_lock()
 
     @property
     def network_enforcement_gap(self) -> "str | None":
@@ -8692,9 +8692,15 @@ class Session:
         (:attr:`network_enforcement_gap` is not ``None``). Doc §6's own
         framing: ``bounded`` is a TRADE, not a strictness notch — the
         prompt is removed BECAUSE the boundary replaces it; if there is
-        no boundary, the trade is void and the prompt comes back. Every
-        other mode passes through :attr:`configured_permission_mode`
-        unchanged.
+        no boundary, the trade is void. Every other mode passes through
+        :attr:`configured_permission_mode` unchanged.
+
+        **Stage 2 is DISPLAY-ONLY.** This property's only reader today is
+        the ``project_status``/Ctx-pane row (``status.py``'s
+        ``permission_mode`` key) — no prompt-issuing consumer reads it
+        yet, so "the trade is void" does not yet mean "the prompt comes
+        back" in this stage; that consumer is stage 3's own scope. Do not
+        read this property's ``ask`` return as proof a prompt will fire.
 
         Derived from :attr:`network_enforcement_gap` — the SAME 2 pure
         functions (``launcher.resolve_backend`` + ``policy.
@@ -8705,7 +8711,7 @@ class Session:
         sticky-OR lesson, applied here in reverse: one source, many
         readers). Layers on top of the stage-1 ``unbounded``-lock downgrade
         (:meth:`~reyn.security.permissions.permissions.PermissionResolver.
-        resolved_permission_mode`, read via :attr:`_permission_mode_after_lock`)
+        permission_mode_after_lock`, read via :attr:`_permission_mode_after_lock`)
         — the two downgrades apply in sequence, never independently, so a
         locked-``unbounded`` session that also asked for ``bounded`` is
         impossible by construction (the lock only ever fires on

@@ -218,7 +218,7 @@ def build_router_op_context(
             temp_source="session",
             mode=sandbox_mode_for_permission_mode(
                 sandbox_config.mode if sandbox_config is not None else "compat",
-                permission_resolver.resolved_permission_mode()
+                permission_resolver.permission_mode_after_lock()
                 if permission_resolver is not None else DEFAULT_PERMISSION_MODE,
             ),
         ),

@@ -109,7 +109,14 @@ def test_resolved_permission_mode_downgrades_to_ask_when_unenforceable(tmp_path)
     nothing, #4039's own declaration) -- resolved_permission_mode must
     read `ask`, not `bounded` recorded against a boundary that is not
     real (doc §6's own prohibition: "the boundary replaces the prompt";
-    with no boundary, the prompt must come back)."""
+    with no boundary, the trade is void).
+
+    Stage 2 is DISPLAY-ONLY: this property's only reader today is the
+    project_status/Ctx-pane row (status.py's `permission_mode` key) --
+    no prompt-issuing consumer reads it yet, so this test asserts the
+    judgment (`ask` is the correct effective value), not that a prompt
+    actually fires. Wiring a prompt-issuing consumer to this value is
+    stage 3's own, not-yet-built scope."""
     session = _bounded_session(tmp_path)
 
     assert session.resolved_permission_mode is PermissionMode.ASK

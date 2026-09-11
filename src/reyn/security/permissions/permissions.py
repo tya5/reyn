@@ -784,8 +784,9 @@ class PermissionResolver:
         parsed via ``posture.py``'s own vocabulary, defaulted when unset,
         but BEFORE either downgrade (the stage-1 ``unbounded``-disabled
         lock AND the stage-2 ``bounded``-network-enforcement gap — see
-        :meth:`resolved_permission_mode`, which applies both on top of
-        this method's own return).
+        :meth:`permission_mode_after_lock`, which applies the lock (only),
+        and :attr:`reyn.runtime.session.Session.resolved_permission_mode`,
+        which applies both on top of this method's own return).
 
         The reason this is NOT ``resolve_permission_mode``'s own return
         (which already folds the lock in): the Ctx-pane row this method
@@ -807,15 +808,23 @@ class PermissionResolver:
         raw = self._config.get(KEY_MODE)
         return DEFAULT_PERMISSION_MODE if raw is None else parse_permission_mode(raw)
 
-    def resolved_permission_mode(self) -> "PermissionMode":
+    def permission_mode_after_lock(self) -> "PermissionMode":
         """#5825 stage 1's own ``resolve_permission_mode`` — the config-
-        level EFFECTIVE mode with the ``unbounded``-disabled-by-lock
-        downgrade already applied (a config-load-time fact this
-        resolver's own ``self._config`` fully carries). Does NOT include
-        the stage-2 ``bounded``-network-enforcement downgrade, which
-        needs a live backend/policy read this class has no access to —
-        see :attr:`reyn.runtime.session.Session.resolved_permission_mode`,
-        which layers that check on top of THIS method's own return."""
+        level mode with ONLY the ``unbounded``-disabled-by-lock downgrade
+        already applied (a config-load-time fact this resolver's own
+        ``self._config`` fully carries). Deliberately NOT named
+        ``resolved_permission_mode``: that name reads as "the fully
+        resolved, safe-to-gate-a-prompt-on value", and it is not — it
+        does NOT include the stage-2 ``bounded``-network-enforcement
+        downgrade, which needs a live backend/policy read this class has
+        no access to (a stage-3 caller that reached for a same-named
+        method here instead of :attr:`reyn.runtime.session.Session.
+        resolved_permission_mode` — which layers that check on top of
+        THIS method's own return — would suppress a prompt in exactly
+        the unenforceable-boundary case the downgrade exists to catch,
+        and nothing would go red). Named to match
+        :attr:`reyn.runtime.session.Session._permission_mode_after_lock`,
+        the one caller inside ``Session`` that reads this method."""
         from reyn.security.permissions.posture import resolve_permission_mode
 
         return resolve_permission_mode(
