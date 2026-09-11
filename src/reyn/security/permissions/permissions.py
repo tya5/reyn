@@ -560,6 +560,22 @@ KEY_MEDIA_OVERSIZE = "media.oversize"
 #: has a REAL reader as of this PR: `require_network` (below), called
 #: from `op_runtime/sandboxed_exec.py`'s own seam.
 KEY_NETWORK = "network"
+#: FP-0069 §2 stage 1 (#5825): the posture dial itself — see
+#: :mod:`reyn.security.permissions.posture` for the value vocabulary
+#: (`read_only`/`ask`/`unbounded`; `bounded` deliberately not yet
+#: accepted, #5825 stage 2) and the parsing/ordering it owns. This
+#: registry only recognizes the KEY NAME; `posture.py` owns validating
+#: the VALUE.
+KEY_MODE = "mode"
+#: FP-0069 §2/§8 (#5825 stage 1): the "removable by config" half of
+#: `unbounded` (doc §8: "Removing unbounded by config is possible, and a
+#: session cannot re-enable it") — same shape as Claude Code's
+#: `disableBypassPermissionsMode` (a managed-precedence key, confirmed
+#: NOT in the SDK's own irreversible-exceptions list — architect's
+#: primary-source read, #5825 issue thread). See `posture.py`'s
+#: `resolve_permission_mode` for the merge semantics (sticky true, once
+#: any config tier sets it — never re-enabled by a LATER-merged tier).
+KEY_DISABLE_UNBOUNDED_MODE = "disable_unbounded_mode"
 #: The composite flat-string pre-approval key prefix (see the docstring
 #: above for why the fallback split cannot resolve a nested
 #: ``http.get: {host: ...}`` shape, so this flat form is the one that
@@ -586,6 +602,7 @@ PERMISSIONS_EXACT_CONFIG_KEYS: frozenset[str] = frozenset({
     KEY_MCP, KEY_FILE_READ, KEY_FILE_WRITE, KEY_HTTP_GET, KEY_SECRET_WRITE,
     KEY_ENV_EXPAND, KEY_SUBPROCESS, KEY_ENV, KEY_PYTHON,
     KEY_WEB_FETCH, KEY_MEDIA_OVERSIZE, KEY_NETWORK,
+    KEY_MODE, KEY_DISABLE_UNBOUNDED_MODE,
 }) | frozenset(
     # Legacy bool axes (#571 collapse arc Phase 5) — recognized here so
     # their OWN DeprecationWarning fires (from_dict's own loop over this

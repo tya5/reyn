@@ -596,8 +596,62 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
         # doesn't change shape while the operator migrates. The LIVE
         # location is `llm.models`, handled in the `key == "llm"` branch
         # below.
-        if key in ("models", "permissions") and isinstance(val, dict):
+        if key == "models" and isinstance(val, dict):
             result[key] = {**result.get(key, {}), **val}
+        elif key == "permissions":
+            # #5825 stage 1 (FP-0069 §8) security co-vet (architect
+            # finding A, reproduced independently by lead-coder):
+            # `disable_unbounded_mode` must be derived from the FOLD
+            # across tiers ("did ANY tier ever set it true"), never from
+            # an ACCUMULATOR a later tier's own override can destroy.
+            # This branch fires for EVERY `permissions:` override
+            # regardless of shape — unlike the OLD version (nested inside
+            # `isinstance(val, dict)`, alongside "models"), which let a
+            # non-dict override (`permissions: "ask"` — a plausible typo
+            # now that stage 1 nests `mode` under this SAME key, instead
+            # of `permissions: {mode: "ask"}`) fall through to this
+            # function's generic `result[key] = val` tail, replacing the
+            # WHOLE dict — lock included — with the malformed value.
+            # Silently: downstream `_as_config_dict` defaults a non-dict
+            # `permissions:` to `{}` with only a WARNING, never a raise,
+            # so reyn still starts, lock gone, with nobody told.
+            existing = result.get("permissions", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            existing_lock = bool(existing.get("disable_unbounded_mode"))
+            if isinstance(val, dict):
+                merged_dict = {**existing, **val}
+            else:
+                # A malformed override contributes NOTHING to the
+                # permissions dict (the prior tiers' own grants/lock are
+                # kept as-is) rather than wholesale-replacing it — loud,
+                # not silent (a WARNING, matching this file's own style
+                # for every other malformed-shape case, e.g. `_load_yaml`'s
+                # parse-failure branch above).
+                import logging
+
+                # lead-coder BLOCKING (co-vet re-check): the "did you
+                # mean" hint below is only SAFE to offer for a string
+                # value (a plausible `permissions.mode` dial-name typo,
+                # e.g. `permissions: ask`). A non-string non-dict value
+                # (e.g. `permissions: 3`) would suggest `{mode: 3}` —
+                # YAML-valid, but `parse_permission_mode(3)` itself
+                # raises, turning a WARNING an operator follows into a
+                # startup failure. Never advise a fix that is itself broken.
+                hint = (
+                    f" Did you mean 'permissions: {{mode: {val!r}}}'?"
+                    if isinstance(val, str) else ""
+                )
+                logging.getLogger(__name__).warning(
+                    "config: 'permissions:' override is not a mapping "
+                    "(got %r) — ignoring this tier's permissions override "
+                    "entirely.%s",
+                    val, hint,
+                )
+                merged_dict = dict(existing)
+            if existing_lock:
+                merged_dict["disable_unbounded_mode"] = True
+            result["permissions"] = merged_dict
         elif key == "mcp" and isinstance(val, dict):
             existing = result.get("mcp", {})
             existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
