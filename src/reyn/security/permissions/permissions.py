@@ -1938,13 +1938,17 @@ class PermissionResolver:
           ``<actor>/http.get/<host>`` persistence; ALWAYS / NEVER
           choices apply per-host.
         - **No declaration**: legacy ``web.fetch`` compat fallback — a
-          one-time approval prompt fires on EVERY call (deprecation-
-          warned via ``logger.warning``, #6143). #6143 co-vet: NOT "will
-          become a hard error in a future release" — #5825's own ruling
-          1 (revised, owner-accepted §5) settled that a declaration is
-          opt-in, so nothing here escalates over time; declaring
-          ``http.get`` explicitly only turns the repeat prompt into a
-          standing grant, it does not avert a future failure.
+          real approval prompt fires on EVERY call, its own text naming
+          the missing declaration (#6143 co-vet round 2: no SEPARATE
+          `logger.warning` alongside it — that would duplicate the same
+          notice on a second channel right before the operator sees the
+          prompt itself, "cried wolf every time" moved from silent to
+          noisy, not fixed). NOT "will become a hard error in a future
+          release" — #5825's own ruling 1 (revised, owner-accepted §5)
+          settled that a declaration is opt-in, so nothing here
+          escalates over time; declaring ``http.get`` explicitly only
+          turns the repeat prompt into a standing grant, it does not
+          avert a future failure.
 
         Backward-compat:
 
@@ -2066,32 +2070,15 @@ class PermissionResolver:
         # ``http.get`` explicitly is what turns the repeat prompt into a
         # standing grant, never a deadline the operator must beat.
         #
-        # #6143: this was `warnings.warn(..., DeprecationWarning)`, which is
-        # SILENT here — same reason as the legacy-bool-axis warning above
-        # (default filter ignores DeprecationWarning outside ``__main__``,
-        # and neither `captureWarnings` nor pytest's `filterwarnings` fixes
-        # that in a real run) — promoted to `logger.warning`.
-        #
-        # #6143 co-vet (lead-coder): promoting the CHANNEL was not enough —
-        # the WORDING ("This will become a hard error in a future
-        # release") is false and, now that it actually reaches an
-        # operator, actively misleading: #5825's own ruling 1 (revised,
-        # owner-accepted §5) settled that a declaration is opt-in, so
-        # "declare it or it breaks later" is a conclusion this codebase
-        # does not reach. Rewritten to describe what happens NOW (a
-        # one-time approval prompt every call, below), not a threatened
-        # future this code never enforces.
-        logger.warning(
-            "HTTP access to host %r from actor %r has no http.get "
-            "declaration -- prompting for one-time approval (legacy "
-            "compat path). To grant it permanently instead, declare it "
-            "under reyn.yaml's permissions.http.get:\n"
-            "  permissions:\n"
-            "    http.get:\n"
-            "      - host: '*'   # LLM-driven host selection\n"
-            "or list specific hosts.",
-            host, actor,
-        )
+        # #6143 co-vet round 2 (lead-coder): a `logger.warning` here was
+        # STILL wrong, even with the wording fixed — this branch already
+        # falls straight into a REAL, operator-visible prompt below
+        # (`Allow fetching from {host!r}?`, on the surface the operator is
+        # already looking at); a log line firing on EVERY call, right
+        # before that prompt, is a duplicate notice on a NEW channel — the
+        # "cried wolf every time" shape, just moved from silent to noisy.
+        # "declaring it stops the repeat ask" belongs IN the prompt text
+        # itself (one line, below), not as a second, separate emission.
         if bus is None:
             raise PermissionError(
                 f"HTTP access to host {host!r} not declared and no "
@@ -2101,7 +2088,11 @@ class PermissionResolver:
             KEY_WEB_FETCH,  # legacy key — shared across all hosts during the compat window
             f"web fetch from host: {host!r} (legacy compat)",
             bus,
-            user_prompt=f"Allow fetching from {host!r}?",
+            user_prompt=(
+                f"Allow fetching from {host!r}? (no http.get declaration for "
+                f"this host -- add one under reyn.yaml's permissions.http.get "
+                f"to stop being asked)"
+            ),
         )
         if not approved:
             raise PermissionError(

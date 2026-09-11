@@ -115,7 +115,11 @@ def test_omitting_max_shrink_iterations_is_silent(caplog) -> None:
     unconditionally would also pass the test above."""
     with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"body_token_cap": 5000}})
-    assert caplog.records == []
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("max_shrink_iterations" in r.message for r in caplog.records)
 
 
 def test_max_shrink_iterations_in_reyn_yaml_warns_at_real_load(

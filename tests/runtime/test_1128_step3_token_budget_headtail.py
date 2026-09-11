@@ -106,7 +106,11 @@ def test_clean_config_no_warning(caplog) -> None:
 
     with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"body_token_cap": 1500}})
-    assert caplog.records == []
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("deprecated and ignored" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

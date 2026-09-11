@@ -1,5 +1,5 @@
 """Tier 1/2: `silent_warnings_category_gate.py`'s own detector logic
-(#6143).
+(#6143/#6144).
 
 lead-coder's own review point (same lesson #5990's ratchet test drew): a
 strip-falsify that only reverts the DETECTOR's category-matching logic
@@ -11,6 +11,18 @@ below is that witness: it runs real subprocesses with Python's OWN
 default filters (no `-W` flag, no `simplefilter("always")`, no
 pytest-injected filter) -- a test that adds `simplefilter("always")`
 itself measures its own filter, not production's.
+
+#6144 co-vet round 2 (lead-coder): the gate's v1 axis (silent-by-default
+categories only) was itself trivially defeated -- swap
+`DeprecationWarning` -> `UserWarning` in any one call site and the gate
+goes green with the operator's actual visibility unchanged (architect's
+own measurement: `UserWarning` reaches `reyn.log`, never an interactive
+operator's screen). v2's population is EVERY `warnings.warn(...)` call
+under `src/reyn/**`, category-blind -- the tests below were updated to
+match (`test_a_user_warning_or_omitted_category_is_never_counted`
+inverted into `test_every_warnings_warn_call_is_counted_regardless_of_
+category`, and the shipped-table tests now check the 18
+`#6145`-tracked pre-existing entries rather than an empty table).
 """
 # EXEMPT: the sys.executable spawns below run entry.py/entry_direct_warn.py,
 # throwaway fixture modules under production_filter_witness/ that only call
@@ -73,16 +85,20 @@ def test_keyword_category_form_is_recognised():
     )
 
 
-def test_a_user_warning_or_omitted_category_is_never_counted():
-    """Tier 1: the false-reject-side witness, required alongside the test
-    above so a detector that flags every `warnings.warn` call
-    unconditionally (which would ALSO pass the silent-categories test)
-    cannot pass this suite. `loud_categories.py`'s two `warnings.warn`
-    calls (explicit UserWarning, omitted category) are both visible under
-    the stock default filter and must not be flagged; its
-    `logger.warning` call is not even a `warnings.warn` call."""
+def test_every_warnings_warn_call_is_counted_regardless_of_category():
+    """Tier 1: v2's own axis (#6144 co-vet round 2) -- EVERY
+    `warnings.warn(...)` call counts, category-blind, so a call site
+    cannot dodge the gate by swapping to `UserWarning` or omitting the
+    category. `loud_categories.py`'s two `warnings.warn` calls (explicit
+    UserWarning, omitted category) must BOTH be counted; its
+    `logger.warning` call is not even a `warnings.warn` call and must
+    not be (the false-reject-side witness, required alongside this test
+    so a detector that counts every CALL in the file, not just
+    `warnings.warn` ones, cannot also pass)."""
     sites = silent_category_sites(_FIXTURES / "loud_categories.py", root=_FIXTURES)
-    assert sites == []
+    # exactly 2 sites -- unpacking itself raises if the count is off
+    (_site_a, _site_b) = sites
+    assert sorted(category for _, _, category in sites) == ["UserWarning", "UserWarning"]
 
 
 # ── the exception-table arithmetic ───────────────────────────────────────
@@ -103,14 +119,25 @@ def test_a_site_matching_a_table_entry_is_explained():
     assert unexplained(sites, table={("some/file.py", 10): "reviewed, dev-only"}) == []
 
 
-def test_the_shipped_exception_table_is_empty():
-    """Tier 2: #6143's own claim -- every known silent-by-default site
-    was promoted to `logger.warning` in the SAME PR that added this
-    gate, so nothing needs grandfathering. A future PR that adds a table
-    entry does so deliberately; this test only pins today's starting
-    point so a silent, undiscussed table addition would show as a diff
-    here."""
-    assert _EXCEPTION_TABLE == {}
+def test_the_shipped_exception_table_matches_the_real_measured_population():
+    """Tier 1: #6143 fixed and DELETED all 7 originally-flagged sites (6
+    promoted to `logger.warning`, the 7th -- `permissions.py`'s legacy
+    `http.get` compat notice -- deleted outright in #6144's co-vet round
+    2, since it duplicated an already-firing real prompt). Widening the
+    axis to category-blind (#6144 co-vet round 2) newly surfaces
+    pre-existing sites this PR's own dispatch never covered -- this test
+    pins BEHAVIOR, not a bare count: the table's own keys must equal
+    EXACTLY the real tree's measured population (neither a stale entry
+    for a site that no longer exists, nor a gap), and every reason must
+    reference #6145, the tracking issue for auditing and promoting them
+    -- never a bare "fine as-is", which #6144's own review already ruled
+    none of these currently are."""
+    measured_keys = {(relpath, lineno) for relpath, lineno, _ in measured(REPO_ROOT)}
+    assert set(_EXCEPTION_TABLE) == measured_keys, (
+        f"table declares {set(_EXCEPTION_TABLE) - measured_keys} that no "
+        f"longer exist, and is missing {measured_keys - set(_EXCEPTION_TABLE)}"
+    )
+    assert all("#6145" in reason for reason in _EXCEPTION_TABLE.values()), _EXCEPTION_TABLE
 
 
 def test_the_real_scan_against_the_current_tree_has_nothing_unexplained() -> None:
@@ -120,9 +147,9 @@ def test_the_real_scan_against_the_current_tree_has_nothing_unexplained() -> Non
     -shaped tree-scan test."""
     sites = measured(REPO_ROOT)
     assert unexplained(sites) == [], (
-        "a warnings.warn(...) call under src/reyn/ uses a silent-by-"
-        "default category with no _EXCEPTION_TABLE entry -- promote it "
-        "to logger.warning or add a reasoned table entry"
+        "a warnings.warn(...) call under src/reyn/ has no "
+        "_EXCEPTION_TABLE entry -- promote it to logger.warning or add "
+        "a reasoned table entry"
     )
 
 

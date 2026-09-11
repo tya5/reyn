@@ -191,18 +191,31 @@ def test_require_http_get_wildcard_without_bus_raises(tmp_path):
         asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
 
 
-def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path, caplog):
-    """Tier 2: no http.get declaration → deprecation notice + legacy
-    compat path. Was `warnings.catch_warnings`/`DeprecationWarning`
-    before #6143 -- that emission is SILENT outside `__main__` under
-    Python's own default filter, so it never reached a real operator;
-    promoted to `logger.warning`, read here via `caplog`."""
+def test_require_http_get_no_decl_names_the_missing_declaration_in_the_real_prompt(
+    tmp_path, caplog,
+):
+    """Tier 2: no http.get declaration → the REAL approval prompt (the
+    surface an operator is already looking at) names the missing
+    declaration -- not a separate `logger.warning` alongside it.
+
+    #6143 co-vet round 2 (lead-coder): a `logger.warning` here was wrong
+    even with correct wording, because this path already falls straight
+    into a real, operator-visible prompt on every call -- a log line
+    right before it duplicates the same notice on a second, noisier
+    channel ("cried wolf every time", moved from silent to noisy, not
+    fixed). The declare-to-stop-being-asked note now lives IN the prompt
+    text itself, captured here via the bus (the real consumer of
+    `UserIntervention.prompt`), and `caplog` stays a DENY witness: this
+    path must emit no log record at all."""
     import logging
 
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 
+    captured: "list[UserIntervention]" = []
+
     class _AlwaysBus(InterventionBus):
         async def request(self, iv: UserIntervention) -> InterventionAnswer:
+            captured.append(iv)
             return InterventionAnswer(choice_id="always")
 
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
@@ -211,8 +224,19 @@ def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path, caplog):
 
     with caplog.at_level(logging.WARNING):
         asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
-    assert caplog.records, "missing http.get declaration must emit a warning"
-    assert "http.get" in caplog.records[0].message
+
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("http.get" in r.message for r in caplog.records), (
+        "no separate log line should fire alongside the real prompt below"
+    )
+    (iv,) = captured  # exactly one prompt -- unpacking itself raises otherwise
+    assert "http.get" in iv.prompt, (
+        f"the real prompt text must name the missing declaration, got: "
+        f"{iv.prompt!r}"
+    )
 
 
 def test_require_http_get_legacy_web_fetch_allow_pre_approves(tmp_path):

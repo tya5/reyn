@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""#6143 -- a `src/reyn/**` population gate over `warnings.warn(..., category)`
-call sites whose category Python IGNORES by default outside `__main__`.
+"""#6143/#6144 -- a `src/reyn/**` population gate over EVERY
+`warnings.warn(...)` call site, category-blind.
 
 ## Why this exists
 
@@ -13,47 +13,65 @@ call sites whose category Python IGNORES by default outside `__main__`.
     ('ignore',  None, ImportWarning, None, 0)
     ('ignore',  None, ResourceWarning, None, 0)
 
-Every module under `src/reyn/` is NOT `__main__`, so a `warnings.warn(...,
-DeprecationWarning)` (or PendingDeprecationWarning / ImportWarning /
-ResourceWarning) fired from `src/reyn/**` reaches nobody in a real run --
-`logging.captureWarnings(True)` only redirects `showwarning`, it does not
-change the filter that decides whether `showwarning` is ever called at
-all, and `pyproject.toml`'s `[tool.pytest.ini_options] filterwarnings` is
-pytest-only. The same shape was hit 3 times in one night (#6132, #6137,
-and #6141 -- the last one nearly landed with lead-coder's own requested
-fix silently swallowed, caught only by co-vet measuring a real process).
-AST-derived census on `origin/main` before this issue's own fix: 7 sites
-(`config/chat.py` x5, `security/permissions/permissions.py` x2) -- all 7
-were promoted to `logger.warning` in the same PR that added this gate.
+Every module under `src/reyn/` is NOT `__main__`, so
+DeprecationWarning/PendingDeprecationWarning/ImportWarning/
+ResourceWarning fired from `src/reyn/**` reaches nobody in a real run.
+The same shape was hit 3 times in one night (#6132, #6137, #6141).
+
+## v1 -> v2: the category axis was itself a false floor (#6144 co-vet round 2)
+
+This gate's FIRST revision only flagged the 4 silent-by-default
+categories above. lead-coder's own review caught the gap: swapping
+`DeprecationWarning` -> `UserWarning` in any one of those call sites
+turns the gate green with the operator's actual visibility unchanged by
+one bit. `UserWarning` is not "loud" in the sense that matters here --
+architect's own real measurement: `stderr: False / reyn.log: True`. It
+reaches `reyn.log` (unlike a silent-by-default category, which reaches
+NOTHING), but never an interactive operator's screen directly. Neither
+is genuinely "the operator sees this."
+
+The axis this gate checks is therefore CATEGORY-BLIND: every
+`warnings.warn(...)` call under `src/reyn/**`, regardless of category,
+is population. lead-coder's own framing: "the only legitimate reader of
+a raw `warnings.warn` is a library consumer who adds their own `-W`
+flag" -- `src/reyn/` is reyn's own application code, not a library
+surface reyn's own operators consult with `-W`, so a raw `warnings.warn`
+call here is presumptively the wrong tool for reaching an operator,
+independent of which category it names.
 
 ## What this gate checks
 
-For every `warnings.warn(...)` call under `src/reyn/**`, if the category
-argument (positional arg 2, or a `category=` keyword) is a bare name (or
-attribute) matching one of the silent-by-default set below, the call site
-must appear in this script's own `_EXCEPTION_TABLE` with a reason -- or
-the gate is RED. There is no other escape hatch (no comment-based
-suppression): a genuinely developer-only warning stays reviewed, in one
-place, not decided ad hoc at each call site.
+Every `warnings.warn(...)` call under `src/reyn/**` must appear in this
+script's own `_EXCEPTION_TABLE` with a reason -- or the gate is RED.
+There is no other escape hatch (no comment-based suppression): a
+genuinely developer-only warning (there IS a legitimate reader --
+someone importing `reyn` as a library and running their own process
+under `-W`) stays reviewed, in one place, not decided ad hoc at each
+call site.
 
 This is a TABLE, not a ratchet (contrast `silent_except_ratchet.py`,
-#5990): the measured population is 0 as of this gate landing (every known
-site was fixed in the same PR), so there is nothing to grandfather. A
-future PR that adds a new silent-by-default `warnings.warn` either
-promotes it to `logger.warning` (or a stronger surface, e.g. a
-`project_status`/Ctx-pane field -- see #6139) or adds a table entry with
-a one-line reason, in the SAME PR.
+#5990). #6143 fixed and DELETED all 7 originally-flagged sites (6
+promoted to `logger.warning`; the 7th, `permissions.py`'s legacy
+`http.get` compat notice, was deleted outright in #6144's own co-vet
+round 2 -- it duplicated a REAL, already-firing approval prompt on a
+second, noisier channel). Widening the axis in the SAME PR newly
+surfaces 18 pre-existing sites (all `UserWarning`, or the default
+omitted category) that #6143's own dispatch never covered and #6144's
+own review never audited message-by-message -- see #6145, the tracking
+issue for promoting each with the SAME wording rigor #6144's own
+`:2069` mistake demanded (changing the channel without checking the
+wording is a NEW bug, not a fix). Those 18 are DISCLOSED table entries
+referencing #6145, not silently declared "legitimate" -- lead-coder's
+own framing above says none of them currently are.
 
-## Deliberately narrow category resolution (disclosed, not solved)
+## Deliberately narrow call-site resolution (disclosed, not solved)
 
-Category resolution only recognises a literal `ast.Name` or the `.attr`
-of an `ast.Attribute` (e.g. `warnings.DeprecationWarning` -- unusual but
-legal) -- it does not evaluate expressions, resolve imports, or follow a
-variable holding a category class. A call site that passes a silent
-category through an indirection this script cannot see is a FALSE
-REJECT never flagged -- the same "suspected, not confirmed" posture
-`suspected_time_dependence_ratchet.py` (#4846) and `silent_except_
-ratchet.py` (#5990) both already carry for a syntax-only AST gate.
+Detection matches `warnings.warn(...)` / `warn(...)` (a bare imported
+name) syntactically via `ast.walk` -- no dataflow, no alias tracking of
+a renamed import (`import warnings as w; w.warn(...)` would not match).
+The same "suspected, not confirmed" posture `suspected_time_dependence_
+ratchet.py` (#4846) and `silent_except_ratchet.py` (#5990) already carry
+for a syntax-only AST gate.
 
 CI: gate
 """
@@ -68,22 +86,33 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 _SCOPE = "src/reyn"
 
-# Silent-by-default OUTSIDE __main__ -- see module docstring's own
-# `warnings.filters` measurement. NOT UserWarning (Python's own default
-# category when none is given) -- that one IS shown (once per call site)
-# under the stock filter, so a bare `warnings.warn("...")` or an explicit
-# `UserWarning` is out of this gate's population on purpose.
-_SILENT_BY_DEFAULT_CATEGORIES = frozenset({
-    "DeprecationWarning", "PendingDeprecationWarning", "ImportWarning", "ResourceWarning",
-})
-
-# Explicit, reviewed exceptions: {(relpath, lineno): "why this call site
-# stays a raw warnings.warn in a silent-by-default category"}. Empty
-# today -- #6143 converted every known site to `logger.warning`. Add an
-# entry ONLY in the same PR that introduces the call site it covers; the
-# reason lives HERE (machine-checked), not in a code comment (which is
-# not).
-_EXCEPTION_TABLE: "dict[tuple[str, int], str]" = {}
+# #6145 tracks promoting each of these 18 pre-existing sites (all
+# UserWarning, or the default omitted category) with the SAME
+# message-content audit #6144's own `:2069` round taught is required --
+# a channel change alone is not a fix if the wording is wrong. DISCLOSED
+# debt, not a claim these are fine as-is (lead-coder's own framing: the
+# only legitimate raw `warnings.warn` reader is a `-W`-flagged library
+# consumer, which none of these are).
+_EXCEPTION_TABLE: "dict[tuple[str, int], str]" = {
+    ("src/reyn/config/chat.py", 1451): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 150): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 159): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 167): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 196): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 205): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/oauth.py", 250): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 47): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 56): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 79): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 88): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 133): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/loader.py", 143): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/security/secrets/interpolation.py", 37): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/plugins/tokens.py", 310): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/mcp/client.py", 2523): "#6145 -- pre-#6143, omitted category (defaults to UserWarning), not yet audited",
+    ("src/reyn/hooks/composer.py", 634): "#6145 -- pre-#6143 UserWarning, not yet audited",
+    ("src/reyn/hooks/composer.py", 838): "#6145 -- pre-#6143 UserWarning, not yet audited",
+}
 
 
 def _iter_scan_files(root: Path = _ROOT) -> "list[Path]":
@@ -111,9 +140,10 @@ def _is_warnings_warn_call(call: ast.Call) -> bool:
 def _warn_category_name(call: ast.Call) -> "str | None":
     """The literal category name a `warnings.warn(...)` call passes --
     positional arg 2, or a `category=` keyword. `None` when omitted (the
-    default category is UserWarning, not silent) or when the value is not
-    a bare `Name`/`Attribute` this script can read statically (see module
-    docstring's disclosed false-reject)."""
+    implicit default is `UserWarning`) or when the value is not a bare
+    `Name`/`Attribute` this script can read statically. Retained for the
+    reported category label only -- v2's own population no longer
+    filters by this value (see module docstring, "v1 -> v2")."""
     node: "ast.expr | None"
     if len(call.args) >= 2:
         node = call.args[1]
@@ -127,17 +157,19 @@ def _warn_category_name(call: ast.Call) -> "str | None":
 
 
 def silent_category_sites(path: Path, root: Path = _ROOT) -> "list[tuple[str, int, str]]":
-    """`[(relpath, lineno, category)]` for every `warnings.warn(...)` call
-    in *path* whose category is one of `_SILENT_BY_DEFAULT_CATEGORIES`."""
+    """`[(relpath, lineno, category)]` for EVERY `warnings.warn(...)`
+    call in *path*, category-blind (v2, #6144 co-vet round 2 -- see
+    module docstring's "v1 -> v2"). `category` in the returned tuple is
+    `"UserWarning"` when omitted or unresolved, purely for the report
+    label -- it is never used to decide membership."""
     text = path.read_text(encoding="utf-8")
     tree = ast.parse(text, filename=str(path))
     relpath = str(path.relative_to(root))
     out: "list[tuple[str, int, str]]" = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and _is_warnings_warn_call(node):
-            category = _warn_category_name(node)
-            if category in _SILENT_BY_DEFAULT_CATEGORIES:
-                out.append((relpath, node.lineno, category))
+            category = _warn_category_name(node) or "UserWarning"
+            out.append((relpath, node.lineno, category))
     return out
 
 
@@ -155,7 +187,7 @@ def unexplained(
     """Sites with no matching exception-table entry -- what makes the
     gate red. *table* defaults to the module's own `_EXCEPTION_TABLE`;
     overridable so tests can exercise the arithmetic against a table that
-    is not the (currently empty) shipped one."""
+    is not the shipped one."""
     active_table = _EXCEPTION_TABLE if table is None else table
     return [s for s in sites if (s[0], s[1]) not in active_table]
 
@@ -172,11 +204,9 @@ def main(argv: "list[str] | None" = None) -> int:
     if bad:
         print(
             f"silent-warnings-category gate: {len(bad)} warnings.warn(...) "
-            "call(s) under src/reyn/ use a category Python ignores by "
-            "default outside __main__ (DeprecationWarning / "
-            "PendingDeprecationWarning / ImportWarning / ResourceWarning), "
-            "with no entry in scripts/silent_warnings_category_gate.py's "
-            "own _EXCEPTION_TABLE:\n",
+            "call(s) under src/reyn/ (any category) have no entry in "
+            "scripts/silent_warnings_category_gate.py's own "
+            "_EXCEPTION_TABLE:\n",
             file=sys.stderr,
         )
         for relpath, lineno, category in bad:
@@ -184,15 +214,16 @@ def main(argv: "list[str] | None" = None) -> int:
         print(
             "\nEither promote this call to logger.warning (or a stronger "
             "surface an operator actually sees) in the same PR, or add "
-            '(relpath, lineno): "<why this stays silent>" to '
-            "_EXCEPTION_TABLE in this same PR. See #6143.",
+            '(relpath, lineno): "<why this stays a raw warnings.warn, '
+            'tracked how>" to _EXCEPTION_TABLE in this same PR. See '
+            "#6143/#6144/#6145.",
             file=sys.stderr,
         )
         return 1
 
     print(
-        f"silent-warnings-category gate OK: {len(sites)} silent-by-default "
-        "category site(s), all in the exception table."
+        f"silent-warnings-category gate OK: {len(sites)} warnings.warn(...) "
+        "site(s), all in the exception table."
     )
     return 0
 
