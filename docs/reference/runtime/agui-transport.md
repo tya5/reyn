@@ -494,7 +494,9 @@ POST per key repeat.
 The shrink-flow (compaction) progress state rides the wire too (#5885,
 owner-hit on web/connect: "スピナーもなく進捗も不明 … 完了通知もなく").
 `project_status` carries `compaction_progress_raw` — the plain dict
-`Session.compaction_progress_raw()` builds (`is_compacting`, the #5592
+`Session.compaction_progress_raw()` builds (`is_compacting`, `episode_seq`
+(#6085 — this compaction episode's own identifier, the same value
+`ChatLifecycleForwarder` reads to stamp its own marker frames), the #5592
 spill figures, `persisted_covers_through_seq`) — the same route
 `halted_reason` / `process_footprint_*` take, and the remote read model
 reports it (`compaction_progress_reported=True`), so a remote Textual client
