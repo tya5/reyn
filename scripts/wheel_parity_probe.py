@@ -28,6 +28,12 @@ CI: gate
 """
 from __future__ import annotations
 
+# #3024: NO guard_bare_script_or_exit() here, deliberately -- see this
+# module's own docstring: `import reyn` here MUST resolve the WHEEL
+# install (site-packages), never `<root>/src` -- the entire point of
+# this probe is verifying that fact, and the guard's own contract is
+# exactly the opposite assertion. Named as a reasoned exception in
+# check_scripts_import_identity_guard.py's own EXEMPT_SCRIPTS table.
 import os
 import sys
 from pathlib import Path

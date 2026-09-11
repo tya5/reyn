@@ -142,3 +142,95 @@ def test_every_registered_check_is_reachable_through_verify(tmp_path: Path) -> N
         # Each selector must dispatch and return findings (possibly none) rather
         # than silently doing nothing.
         assert isinstance(module.verify(root, only=(name,)), list)
+
+
+# ── guard_bare_script_or_exit (#3024, tonight's follow-up) ──────────────
+
+
+def test_guard_exits_nonzero_when_the_spec_resolves_outside_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: accept -- a `find_spec('reyn')` origin OUTSIDE `<root>/src`
+    makes the guard print a rendered Finding to stderr and exit(1), the
+    same shape `conftest.py`'s own `pytest_exit` uses for the in-process
+    guard.
+
+    FALSIFY: the whole point of this function is that a bare script
+    calling it would otherwise proceed to `import reyn` from the WRONG
+    tree silently -- a guard that returns instead of exiting would let
+    exactly that happen."""
+    module = _load()
+    root = tmp_path / "this_checkout"
+    other = tmp_path / "other_checkout" / "src" / "reyn" / "__init__.py"
+    other.parent.mkdir(parents=True)
+    other.write_text("")
+
+    class _FakeSpec:
+        origin = str(other)
+
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: _FakeSpec())
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.guard_bare_script_or_exit(root)
+    assert exc_info.value.code == 1
+
+
+def test_guard_returns_normally_when_the_spec_resolves_under_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: deny (negative control) -- a `find_spec('reyn')` origin
+    UNDER `<root>/src` returns normally, no `SystemExit`."""
+    module = _load()
+    root = tmp_path / "this_checkout"
+    reyn_file = root / "src" / "reyn" / "__init__.py"
+    reyn_file.parent.mkdir(parents=True)
+    reyn_file.write_text("")
+
+    class _FakeSpec:
+        origin = str(reyn_file)
+
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: _FakeSpec())
+
+    module.guard_bare_script_or_exit(root)  # must not raise
+
+
+def test_guard_exits_nonzero_when_reyn_is_not_importable_at_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1: deny -- `find_spec` returning `None` (an un-installed
+    environment) is reported as a distinct remedy ("install reyn"), never
+    silently treated as clean."""
+    module = _load()
+    root = tmp_path / "this_checkout"
+    monkeypatch.setattr(module.importlib.util, "find_spec", lambda name: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.guard_bare_script_or_exit(root)
+    assert exc_info.value.code == 1
+
+
+def test_guard_never_imports_reyn_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 1: the load-bearing property this module's own docstring
+    claims for every check ("It never imports reyn") extended to this
+    function -- `find_spec` is called, `import reyn`/`__import__("reyn")`
+    is not. Falsified by making `find_spec` itself raise if asked for
+    anything BUT 'reyn' (a stand-in that would catch an accidental
+    `import reyn` triggering `find_spec` for one of reyn's OWN internal
+    submodule imports) -- this stays green only because no import of
+    `reyn` (which would recursively resolve its submodules) ever
+    happens."""
+    module = _load()
+    calls: "list[str]" = []
+
+    def _recording_find_spec(name: str):
+        calls.append(name)
+        if name != "reyn":
+            raise AssertionError(f"unexpected find_spec({name!r}) -- reyn was imported")
+        return None  # "not importable" -- exits before touching sys.modules
+
+    monkeypatch.setattr(module.importlib.util, "find_spec", _recording_find_spec)
+
+    with pytest.raises(SystemExit):
+        module.guard_bare_script_or_exit(Path("/nonexistent"))
+
+    assert calls == ["reyn"]

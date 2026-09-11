@@ -17,6 +17,14 @@ CI: manual -- run by hand as a #2187 dogfood A/B session driver
 """
 from __future__ import annotations
 
+# #3024: NO guard_bare_script_or_exit() here, deliberately -- see this
+# module's own docstring, "A/B by codebase on the import path". This
+# harness's whole purpose is to run the SAME driver against two DIFFERENT
+# checkouts (the #2187 arm and a `baseline` arm at a different
+# PYTHONPATH) and diff the outcome -- a script whose job is comparing two
+# trees cannot also assert it is only ever pointed at one. Named as a
+# reasoned exception in check_scripts_import_identity_guard.py's own
+# EXEMPT_SCRIPTS table, not silently absent from that gate's population.
 import argparse
 import asyncio
 import json

@@ -396,6 +396,57 @@ def check_in_process_tree(reyn_file: Path, root: Path) -> Finding | None:
     )
 
 
+def guard_bare_script_or_exit(root: "Path | None" = None) -> None:
+    """#3024 — the bare-python-script complement to `check_in_process_tree`.
+
+    Call this ONCE, near the very top of a `scripts/*.py` script's own body —
+    before control flow reaches ANY of that script's own `import reyn`
+    statements, module-level or lazy — and it never returns abnormally: a
+    mismatch prints a rendered `Finding` to stderr and calls `sys.exit(1)`,
+    the same "exit, don't return a value a caller could ignore" shape
+    `conftest.py`'s own `pytest_configure` uses (`pytest.exit`).
+
+    Unlike `check_in_process_tree` (which takes an ALREADY-imported
+    `reyn.__file__` from a caller that necessarily imported it — root
+    `conftest.py`'s own situation, since pytest needs `reyn` regardless),
+    this function stays reyn-free THE SAME WAY `check_tree_identity`'s
+    out-of-process probes do: `importlib.util.find_spec('reyn')` resolves
+    where an `import reyn` WOULD land, without executing `reyn/__init__.py` —
+    so calling this before a script's own (possibly deeply-nested, lazy)
+    `import reyn` costs nothing extra and cannot itself be the thing that
+    imports the wrong tree.
+
+    This is why a single call at a script's own entry point covers every
+    `import reyn` in that file regardless of where each one lives: `find_spec`
+    answers "what will `import reyn` resolve to in THIS process, right now"
+    once, and Python's own `sys.path` resolution does not change mid-process
+    — the answer this call gets is the SAME answer every later `import reyn`
+    in the same script would get, whether that import is at module level or
+    three functions deep behind a CLI flag.
+
+    ``root`` defaults to this file's own repo root (``scripts/../``, the same
+    convention `main()`'s own ``--root`` default uses) — a caller only
+    overrides it in a test."""
+    root = (root or Path(__file__).resolve().parent.parent).resolve()
+    spec = importlib.util.find_spec("reyn")
+    if spec is None or spec.origin is None:
+        print(
+            "env-identity (bare-script, #3024): `reyn` is not importable in "
+            f"this environment at all.\n"
+            f"    interpreter: {sys.executable}\n"
+            f"    This is NOT evidence that reyn is broken — it is an "
+            f"un-installed environment.\n"
+            f"    remedy: install reyn into {sys.prefix} "
+            f"(`pip install -e '.[dev]'` run FROM {root}).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    finding = check_in_process_tree(Path(spec.origin), root)
+    if finding is not None:
+        print(f"env-identity (bare-script, #3024):\n{finding.render()}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _pinned_git_dependency(root: Path, package: str) -> tuple[str, str] | None:
     """Derive ``(url, commit)`` for ``package`` from its own ``git+<url>@<sha>``
     entry in ``pyproject.toml``'s ``[project.dependencies]`` — never hardcoded,

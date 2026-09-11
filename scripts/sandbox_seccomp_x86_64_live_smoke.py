@@ -42,6 +42,18 @@ CI: gate
 """
 from __future__ import annotations
 
+# #3024: verify the in-process `reyn` this bare-python script is about
+# to import (module-level or lazily, anywhere below) resolves THIS
+# checkout, not whichever tree the ambient venv's editable install
+# happens to point at. Exits loudly (never a silent wrong-tree run) on
+# a mismatch -- see verify_env_identity.py's own guard_bare_script_or_exit
+# docstring. Population + presence are enforced mechanically by
+# check_scripts_import_identity_guard.py, so this call cannot be dropped
+# without the gate catching it.
+from verify_env_identity import guard_bare_script_or_exit
+
+guard_bare_script_or_exit()
+
 import os
 import platform
 import subprocess
