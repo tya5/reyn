@@ -12857,10 +12857,14 @@ class Session:
                     )
                 finally:
                     # #5851 stage (a), observation point ④ ("turn 終端"): 1
-                    # emit per turn, unconditionally (#5248's own
-                    # nested-finally discipline — a turn_end hook that
-                    # raised still reaches this, same as it must not skip
-                    # the hot_reloader step right after it).
+                    # emit per `_run_router_loop` call, unconditionally
+                    # (#5248's own nested-finally discipline — a turn_end
+                    # hook that raised still reaches this, same as it must
+                    # not skip the hot_reloader step right after it). #5989:
+                    # NOT "once per user turn" — see event_schema.py's own
+                    # `turn_completed` entry for why a single operator
+                    # exchange can legitimately re-enter `_run_router_loop`,
+                    # and this finally with it, more than once.
                     _footprint = self._emit_process_footprint(chain_id=chain_id)
                     # #5939 PR-2: the steady-state memory ladder's own
                     # judge reads the SAME sample the emit above just
