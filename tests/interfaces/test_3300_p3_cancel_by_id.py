@@ -428,17 +428,20 @@ def test_remote_queue_view_apply_inbox_cancel_recovers_a_stuck_item():
     ## The server-side path is explicitly UNIDENTIFIED — do not infer one
     Two proposed reproductions (an out-of-order pair of DELTAS, then an
     ``apply_snapshot(queue=[m2], queue_seq=3)`` "reconnect snapshot taken
-    after m2's own cancel was generated") were each checked against
-    ``SnapshotJournal.cancel_inbox`` (``snapshot_journal.py``) and both
-    conflict with it: ``cancel_inbox`` synchronously prunes the SAME
-    snapshot collection a subsequent snapshot's own ``queue``/``queue_seq``
-    are read from (``consume_inbox``'s sibling, same file, lines ~203-224),
-    so a snapshot can never simultaneously (a) still list ``m2`` in
-    ``queue`` and (b) carry a ``queue_seq`` already past ``m2``'s own
-    cancel — the two proposed shapes are mutually exclusive with the
-    server's own prune-then-snapshot ordering. The server-side path that
-    produces this state is UNIDENTIFIED as of this PR; do not read the
-    ``apply_snapshot`` call below as a claim that it is."""
+    after m2's own cancel was generated") were each checked against the
+    real ordering and both conflict with it. The correct exclusivity is:
+    ``Session.cancel_queued`` prunes via ``SnapshotJournal.cancel_inbox``
+    (``self._snapshot.inbox = [m for m in self._snapshot.inbox if
+    m.get("id") != msg_id]``) BEFORE it stamps the delta's own ``seq``
+    (``seq=self._bump_queue_seq()``) — prune always precedes the seq
+    bump for ``m2``'s own cancel, so no real snapshot can simultaneously
+    (a) still list ``m2`` in ``queue`` and (b) reflect a ``queue_seq``
+    that already accounts for ``m2``'s own cancel. This rules out BOTH
+    proposed shapes; it is an explanation of the EXCLUSIVITY, not a
+    demonstrated path to the state under test — the server-side path
+    that produces this state remains UNIDENTIFIED as of this PR. Do not
+    read the ``apply_snapshot`` call below as a claim that it is one,
+    and do not supply a third unverified path in its place."""
     view = RemoteQueueView()
     view.apply_snapshot(
         queue=[{"msg_id": "m2", "chain_id": "c2", "text": "bye"}],

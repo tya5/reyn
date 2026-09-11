@@ -417,25 +417,36 @@ class RemoteQueueView:
         #5989 ④ (architect design, lead-coder ruling — the recovery half
         ③ only observed): when a matching item DOES remain (``stuck``
         non-empty), this is no longer merely SUSPICIOUS, it is the proven
-        defect ③ found and never closed — architect's own root cause:
-        :meth:`apply_snapshot` is the only ``_last_seq`` writer that
-        ASSIGNS rather than advances, so a ``turn_started`` generated
-        BEFORE a snapshot but delivered after it reads ``seq <=
-        self._last_seq`` and is rejected — and ``turn_started`` is a
-        once-per-turn edge the server never resends, so a rejected item
-        has no OTHER delta that will ever promote it; it would sit in
-        :attr:`items` forever. ``stuck`` non-empty is itself the proof
-        this delta was never actually applied (an already-applied item
-        would already be gone), so applying it here can never create a
-        double-promote — the SAME exception shape
-        :meth:`apply_user_submitted`'s own ``is_own_pending`` already
-        uses: apply the delta (remove the stuck item(s)), but do not
-        regress :attr:`_last_seq` backward — the ordering guarantee every
-        OTHER item's own gate relies on is untouched, because this delta
-        is being honored for IDENTITY (a specific stuck item), not for
-        ORDER. Still logged at ``WARNING`` — the rejection itself is still
-        the anomaly worth knowing about, only the outcome changed from
-        "logged and dropped" to "logged and recovered"."""
+        defect ③ found and never closed.
+
+        This state — a queued item present in :attr:`items` while its own
+        ``turn_started`` carries ``seq <= self._last_seq`` — is REAL: this
+        very ``WARNING`` branch exists to name it, and it matches the
+        owner's real #5989 symptom (a sent-queue item stuck forever, never
+        promoted, since ``turn_started`` is a once-per-turn edge the
+        server never resends — a rejected item would have no OTHER delta
+        that will ever promote it). **The server-side PATH that produces
+        this state is UNIDENTIFIED as of this PR** (an earlier draft of
+        this docstring named ``apply_snapshot``'s unconditional
+        ``_last_seq`` assignment as the cause via a specific
+        generated-before/delivered-after reconnect-snapshot scenario; that
+        scenario's ``apply_inbox_cancel`` counterpart was checked against
+        ``SnapshotJournal.cancel_inbox``'s prune-then-emit ordering during
+        PR #6123 review and withdrawn as unproducible by the server —
+        do not re-derive or re-assert it from this docstring).
+
+        ``stuck`` non-empty is itself the proof this delta was never
+        actually applied (an already-applied item would already be gone),
+        so applying it here can never create a double-promote — the SAME
+        exception shape :meth:`apply_user_submitted`'s own
+        ``is_own_pending`` already uses: apply the delta (remove the stuck
+        item(s)), but do not regress :attr:`_last_seq` backward — the
+        ordering guarantee every OTHER item's own gate relies on is
+        untouched, because this delta is being honored for IDENTITY (a
+        specific stuck item), not for ORDER. Still logged at ``WARNING``
+        — the rejection itself is still the anomaly worth knowing about,
+        only the outcome changed from "logged and dropped" to "logged and
+        recovered"."""
         stuck = [item for item in self.items.values() if item.get("chain_id") == chain_id]
         if seq <= self._last_seq and not stuck:
             logger.debug(
