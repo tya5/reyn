@@ -32,6 +32,8 @@ bare `.reyn/` files) are never canonical/recovery-core under any root.
 """
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from reyn.security.permissions.permissions import (
@@ -136,13 +138,20 @@ def test_explicit_file_write_no_canonical_implicit():
         assert canonical not in paths
 
 
-def test_legacy_bool_keys_emit_deprecation_warning():
-    """Tier 2: legacy bool-axis keys parse as no-ops but emit DeprecationWarning."""
+def test_legacy_bool_keys_emit_deprecation_warning(caplog):
+    """Tier 2: legacy bool-axis keys parse as no-ops but emit a
+    deprecation notice. Was `pytest.warns(DeprecationWarning, ...)`
+    before #6143 -- that emission is SILENT outside `__main__` under
+    Python's own default filter, so it never reached a real operator's
+    permissions.yaml migration; promoted to `logger.warning`, read here
+    via `caplog`."""
     for legacy_key in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
-        with pytest.warns(DeprecationWarning, match=legacy_key):
+        with caplog.at_level(logging.WARNING):
             decl = PermissionDecl.from_dict({legacy_key: True})
+        assert any(legacy_key in r.message for r in caplog.records), legacy_key
         # The legacy attribute is gone; the value contributed nothing to the decl.
         assert not hasattr(decl, legacy_key)
+        caplog.clear()
 
 
 def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_path, monkeypatch):

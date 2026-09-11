@@ -1,6 +1,8 @@
 """Tier 1: #5296 recovery-policy configuration contract."""
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from reyn.config.chat import CompactionConfig, _build_chat_config
@@ -18,10 +20,14 @@ def test_fold_persist_policy_parses_never_and_next_turn() -> None:
         assert cfg.compaction.fold_persist_policy == policy
 
 
-def test_recovery_policy_alias_warns_and_preserves_value() -> None:
-    """Tier 1: the old key warns once while retaining its value."""
-    with pytest.warns(DeprecationWarning, match="recovery_policy"):
+def test_recovery_policy_alias_warns_and_preserves_value(caplog) -> None:
+    """Tier 1: the old key warns once while retaining its value. Was
+    `pytest.warns(DeprecationWarning, ...)` before #6143 -- that emission
+    is SILENT outside `__main__` under Python's own default filter, so
+    the notice is now `logger.warning`, read here via `caplog`."""
+    with caplog.at_level(logging.WARNING):
         cfg = _build_chat_config({"compaction": {"recovery_policy": "never"}})
+    assert any("recovery_policy" in r.message for r in caplog.records)
     assert cfg.compaction.fold_persist_policy == "never"
 
 

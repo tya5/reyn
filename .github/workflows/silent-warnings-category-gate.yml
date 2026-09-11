@@ -1,0 +1,39 @@
+name: silent-warnings-category gate
+
+# #6143: reject any `warnings.warn(...)` under src/reyn/** whose category
+# is one Python ignores by default outside __main__ (DeprecationWarning /
+# PendingDeprecationWarning / ImportWarning / ResourceWarning) unless it
+# has a reviewed, reasoned entry in scripts/silent_warnings_category_gate.py's
+# own _EXCEPTION_TABLE. Population is 0 as of this gate landing (the 7
+# known sites were promoted to logger.warning in the same PR) -- a table,
+# not a ratchet: see the script's own module docstring for why.
+#
+# `paths: src/reyn/**` matches this gate's own scope exactly -- a change
+# outside that tree cannot add or remove a site this script counts.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/**"
+
+permissions:
+  contents: read
+
+jobs:
+  silent-warnings-category-gate:
+    name: silent-warnings-category gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/silent_warnings_category_gate.py is stdlib-only (ast /
+      # subprocess / pathlib / argparse). No pip install needed.
+      - name: Check no silent-by-default warnings.warn site under src/reyn/
+        run: |
+          python scripts/silent_warnings_category_gate.py

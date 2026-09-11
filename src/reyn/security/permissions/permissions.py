@@ -413,16 +413,22 @@ class PermissionDecl:
         # themselves are no longer consulted — actors must declare the
         # equivalent file.write / http.get / secret.write entries
         # explicitly.
+        #
+        # #6143: this was `warnings.warn(..., DeprecationWarning)`, which is
+        # SILENT for a non-``__main__`` module (every `src/reyn/*` module) —
+        # Python's default filter ignores DeprecationWarning there, and
+        # neither `logging.captureWarnings` (only redirects `showwarning`)
+        # nor pyproject's pytest-only `filterwarnings` changes that in a
+        # real run. This is a *permission-config* migration prompt, so it
+        # needs `logger.warning` or stronger to actually reach the operator.
         for legacy_key in cls._LEGACY_BOOL_AXIS_KEYS:
             if d.get(legacy_key):
-                import warnings
-                warnings.warn(
-                    f"permissions.{legacy_key}: <bool> is removed in the "
-                    f"#571 collapse arc (Phase 5). Replace it with the "
-                    f"explicit list axes: file.write / http.get / secret.write. "
-                    f"See docs/concepts/runtime/permission-model.md → Collapse arc.",
-                    DeprecationWarning,
-                    stacklevel=3,
+                logger.warning(
+                    "permissions.%s: <bool> is removed in the #571 collapse "
+                    "arc (Phase 5). Replace it with the explicit list axes: "
+                    "file.write / http.get / secret.write. See "
+                    "docs/concepts/runtime/permission-model.md → Collapse arc.",
+                    legacy_key,
                 )
         return cls(
             mcp=_normalize_paths(d.get(KEY_MCP)),
@@ -2052,17 +2058,23 @@ class PermissionResolver:
         # for the segmented migration window. Actors that previously
         # relied on the Tier-1 default-allow behaviour still work
         # while we wait for them to declare ``http.get`` explicitly.
-        import warnings
-        warnings.warn(
-            f"HTTP access to host {host!r} from actor {actor!r} "
-            f"without an http.get declaration. This will become a hard "
-            f"error in a future release. Add to reyn.yaml permissions:\n"
-            f"  permissions:\n"
-            f"    http.get:\n"
-            f"      - host: '*'   # LLM-driven host selection\n"
-            f"or list specific hosts.",
-            DeprecationWarning,
-            stacklevel=2,
+        #
+        # #6143: this was `warnings.warn(..., DeprecationWarning)`, which is
+        # SILENT here — same reason as the legacy-bool-axis warning above
+        # (default filter ignores DeprecationWarning outside ``__main__``,
+        # and neither `captureWarnings` nor pytest's `filterwarnings` fixes
+        # that in a real run). This notice tells an operator their config
+        # is about to start failing hard, so it needs `logger.warning` or
+        # stronger.
+        logger.warning(
+            "HTTP access to host %r from actor %r without an http.get "
+            "declaration. This will become a hard error in a future "
+            "release. Add to reyn.yaml permissions:\n"
+            "  permissions:\n"
+            "    http.get:\n"
+            "      - host: '*'   # LLM-driven host selection\n"
+            "or list specific hosts.",
+            host, actor,
         )
         if bus is None:
             raise PermissionError(

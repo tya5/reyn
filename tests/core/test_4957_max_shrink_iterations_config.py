@@ -23,19 +23,25 @@ driver_call`) was removed for the same reason.
 #5623: retirement, kept for ONE version. The field still parses (this
 file's parse tests below are unchanged in shape) but its `>= 1` validation
 is GONE — a retired key must not reject a config — and setting it now
-emits a `DeprecationWarning` once at load, mirroring
+emits a `logger.warning` once at load, mirroring
 `test_stream_repaint_interval_config.py`'s own Tier 1/2 shape for a
 sibling `chat.*` rejection warning (unit-level via `_build_chat_config`,
 then a real `load_config()` round trip). Removing the field/schema itself,
 and registering the key in `check_retired_config_keys_denylist.py`'s
 denylist, is a disclosed, separate follow-up.
+
+#6143: the notice was `warnings.warn(..., DeprecationWarning)` -- SILENT
+outside `__main__` under Python's own default filter (`src/reyn/**` is
+never `__main__`), so it never reached a real operator. Promoted to
+`logger.warning`; this file's own warning-witness tests below were
+updated from `pytest.warns` to `caplog` at WARNING level for the same
+reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 from pathlib import Path
 
-import pytest
 import yaml
 
 from reyn.config.chat import CompactionConfig, _build_chat_config
@@ -89,27 +95,31 @@ def test_max_shrink_iterations_below_1_no_longer_raises() -> None:
     assert CompactionConfig(max_shrink_iterations=-1).max_shrink_iterations == -1
 
 
-def test_setting_max_shrink_iterations_warns_it_is_retired() -> None:
-    """Tier 1: #5623 — explicitly setting the key emits a `DeprecationWarning`
+def test_setting_max_shrink_iterations_warns_it_is_retired(caplog) -> None:
+    """Tier 1: #5623 — explicitly setting the key emits a `logger.warning`
     naming the field and #5531, the real warning/log surface
     `_build_chat_config`'s sibling deprecations already use (`ask_on_exceed`,
     `extension_calls`, the #1128 removed-compaction-keys group) — no
-    MagicMock/patch, this is the real `warnings` call the parser makes."""
-    with pytest.warns(DeprecationWarning, match="max_shrink_iterations"):
+    MagicMock/patch, this is the real `logging` call the parser makes.
+    `warnings.warn` reached here before #6143 — that emission is SILENT
+    outside `__main__` under Python's own default filter, so this test now
+    reads the real, operator-visible surface instead."""
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"max_shrink_iterations": 3}})
+    assert any("max_shrink_iterations" in r.message for r in caplog.records)
 
 
-def test_omitting_max_shrink_iterations_is_silent() -> None:
+def test_omitting_max_shrink_iterations_is_silent(caplog) -> None:
     """Tier 1: deny sibling — the warning fires on the key's PRESENCE, not
     on every compaction parse. Without this pair, a parser that warned
     unconditionally would also pass the test above."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"body_token_cap": 5000}})
+    assert caplog.records == []
 
 
 def test_max_shrink_iterations_in_reyn_yaml_warns_at_real_load(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: #5623 — a real `reyn.yaml` on disk, loaded through
     `load_config()` (not just `_build_chat_config` in isolation — the same
@@ -123,14 +133,15 @@ def test_max_shrink_iterations_in_reyn_yaml_warns_at_real_load(
         {"chat": {"compaction": {"max_shrink_iterations": 3}}},
     )
 
-    with pytest.warns(DeprecationWarning, match="max_shrink_iterations"):
+    with caplog.at_level(logging.WARNING):
         cfg = load_config(tmp_path)
 
+    assert any("max_shrink_iterations" in r.message for r in caplog.records)
     assert cfg.chat.compaction.max_shrink_iterations == 3
 
 
 def test_absent_from_reyn_yaml_emits_no_retirement_warning_at_real_load(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: deny sibling for the real-load test above — a `reyn.yaml`
     that never sets the retired key loads through the same real
@@ -142,9 +153,8 @@ def test_absent_from_reyn_yaml_emits_no_retirement_warning_at_real_load(
         {"chat": {"compaction": {"body_token_cap": 5000}}},
     )
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         cfg = load_config(tmp_path)
 
     assert cfg.chat.compaction.max_shrink_iterations == 8
-    assert not any("max_shrink_iterations" in str(w.message) for w in caught)
+    assert not any("max_shrink_iterations" in r.message for r in caplog.records)

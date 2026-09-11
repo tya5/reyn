@@ -2,8 +2,12 @@
 
 Two tests pin the new behaviours introduced in #1128 step 3:
 
-1. Deprecation warning: loading a YAML config with ``chat.compaction.head_size``
-   or ``chat.compaction.tail_size`` emits a ``DeprecationWarning``.
+1. Deprecation notice: loading a YAML config with ``chat.compaction.head_size``
+   or ``chat.compaction.tail_size`` emits a ``logger.warning`` (was
+   ``warnings.warn(..., DeprecationWarning)`` before #6143 — SILENT
+   outside ``__main__`` under Python's own default filter, so it never
+   reached a real operator; the warning-witness tests below read
+   ``caplog`` instead of ``pytest.warns`` for the same reason).
 
 2. The window-utilization case for ``build_history``: a small chat (total
    tokens well under any real trigger) returns ALL turns raw, no
@@ -22,7 +26,7 @@ Policy compliance:
 """
 from __future__ import annotations
 
-import warnings
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,9 +45,9 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_head_size_tail_size_emit_deprecation_warning() -> None:
+def test_head_size_tail_size_emit_deprecation_warning(caplog) -> None:
     """Tier 2: loading a YAML config with ``chat.compaction.head_size`` or
-    ``chat.compaction.tail_size`` emits a ``DeprecationWarning``.
+    ``chat.compaction.tail_size`` emits a ``logger.warning``.
 
     Uses the real ``_build_chat_config`` loader path — no mocks.  The old
     keys are silently ignored (head/tail sizing is now controlled by
@@ -52,7 +56,7 @@ def test_head_size_tail_size_emit_deprecation_warning() -> None:
     from reyn.config import _build_chat_config  # noqa: PLC0415
 
     # Both keys present — must emit the warning.
-    with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+    with caplog.at_level(logging.WARNING):
         cfg = _build_chat_config({
             "compaction": {
                 "head_size": 6,
@@ -60,6 +64,7 @@ def test_head_size_tail_size_emit_deprecation_warning() -> None:
                 "body_token_cap": 1500,
             }
         })
+    assert any("deprecated and ignored" in r.message for r in caplog.records)
 
     # The resulting CompactionConfig must NOT have head_size/tail_size fields.
     import dataclasses
@@ -72,34 +77,36 @@ def test_head_size_tail_size_emit_deprecation_warning() -> None:
     )
 
 
-def test_head_size_only_also_warns() -> None:
+def test_head_size_only_also_warns(caplog) -> None:
     """Tier 2: ``head_size`` alone (without ``tail_size``) also emits the deprecation."""
     from reyn.config import _build_chat_config  # noqa: PLC0415
 
-    with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"head_size": 12}})
+    assert any("deprecated and ignored" in r.message for r in caplog.records)
 
 
 @pytest.mark.parametrize("removed_key", ["trigger_total_tokens", "min_compact_batch"])
-def test_axis1_config_keys_also_warn(removed_key) -> None:
+def test_axis1_config_keys_also_warn(removed_key, caplog) -> None:
     """Tier 2: #1128 PR-a — the axis-1 config keys ``trigger_total_tokens`` and
     ``min_compact_batch`` are removed too, so they warn symmetrically with
     ``head_size``/``tail_size`` (all four are operator-facing chat.compaction
     keys; none should silently ignore)."""
     from reyn.config import _build_chat_config  # noqa: PLC0415
 
-    with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {removed_key: 2000}})
+    assert any("deprecated and ignored" in r.message for r in caplog.records)
 
 
-def test_clean_config_no_warning() -> None:
-    """Tier 2: a config without ``head_size``/``tail_size`` emits no DeprecationWarning."""
+def test_clean_config_no_warning(caplog) -> None:
+    """Tier 2: a config without ``head_size``/``tail_size`` emits no
+    deprecation notice."""
     from reyn.config import _build_chat_config  # noqa: PLC0415
 
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        # Must not raise — no deprecated key present.
+    with caplog.at_level(logging.WARNING):
         _build_chat_config({"compaction": {"body_token_cap": 1500}})
+    assert caplog.records == []
 
 
 # ---------------------------------------------------------------------------

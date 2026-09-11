@@ -81,35 +81,32 @@ def test_legacy_bool_keys_do_not_expand_to_http_get_or_secret_write():
     Phase 3 introduced a compat-shim expansion (`mcp_install: true` →
     http.get [registry host]) so existing skills kept working. Phase 5
     removed both the bool axis AND the shim. Legacy keys parse with a
-    DeprecationWarning but contribute nothing to the decl.
+    deprecation notice (`logger.warning` since #6143 -- was
+    `warnings.warn(..., DeprecationWarning)`, silent outside `__main__`)
+    but contribute nothing to the decl.
     """
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        for axis in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
-            decl = PermissionDecl.from_dict({axis: True})
-            assert decl.http_get == [], f"{axis} must not expand to http_get post-Phase-5"
-            assert decl.secret_write == [], f"{axis} must not expand to secret_write"
+    for axis in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
+        decl = PermissionDecl.from_dict({axis: True})
+        assert decl.http_get == [], f"{axis} must not expand to http_get post-Phase-5"
+        assert decl.secret_write == [], f"{axis} must not expand to secret_write"
 
 
 # ── PermissionResolver gates ──────────────────────────────────────────────────
 
 
 def test_require_http_get_raises_for_undeclared_host(tmp_path):
-    """Tier 2: require_http_get raises with DeprecationWarning fallback for undeclared hosts.
+    """Tier 2: require_http_get raises with a deprecation-notice fallback
+    for undeclared hosts.
 
     #571 Phase 7: with no http.get declaration at all, the resolver
-    emits a DeprecationWarning and falls back to the legacy
-    ``web.fetch`` prompt. Without a bus, it raises with a clear
-    "not declared" message.
+    emits a deprecation notice (`logger.warning` since #6143) and falls
+    back to the legacy ``web.fetch`` prompt. Without a bus, it raises
+    with a clear "not declared" message.
     """
-    import warnings
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        with pytest.raises(PermissionError, match="example.com"):
-            asyncio.run(resolver.require_http_get(decl, "example.com"))
+    with pytest.raises(PermissionError, match="example.com"):
+        asyncio.run(resolver.require_http_get(decl, "example.com"))
 
 
 def test_require_http_get_passes_for_declared_host(tmp_path):
@@ -194,9 +191,13 @@ def test_require_http_get_wildcard_without_bus_raises(tmp_path):
         asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
 
 
-def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path):
-    """Tier 2: no http.get declaration → DeprecationWarning + legacy compat path."""
-    import warnings
+def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path, caplog):
+    """Tier 2: no http.get declaration → deprecation notice + legacy
+    compat path. Was `warnings.catch_warnings`/`DeprecationWarning`
+    before #6143 -- that emission is SILENT outside `__main__` under
+    Python's own default filter, so it never reached a real operator;
+    promoted to `logger.warning`, read here via `caplog`."""
+    import logging
 
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 
@@ -208,12 +209,10 @@ def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path):
     decl = PermissionDecl()  # no http.get declared at all
     bus = _AlwaysBus()
 
-    with warnings.catch_warnings(record=True) as recorded:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
-    deprecation_warnings = [w for w in recorded if issubclass(w.category, DeprecationWarning)]
-    assert deprecation_warnings, "missing http.get declaration must emit a DeprecationWarning"
-    assert "http.get" in str(deprecation_warnings[0].message)
+    assert caplog.records, "missing http.get declaration must emit a warning"
+    assert "http.get" in caplog.records[0].message
 
 
 def test_require_http_get_legacy_web_fetch_allow_pre_approves(tmp_path):
