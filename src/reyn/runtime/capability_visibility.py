@@ -127,6 +127,24 @@ class _VisibilityProbeOps:
         from reyn.tools import universal_catalog
         from reyn.tools.types import RouterCallerState, ToolContext
 
+        # #6146 co-vet (lead-coder): this ``RouterCallerState`` carries no
+        # ``op_context_factory`` (schema introspection only — ``universal_
+        # catalog.catalog_entries`` below never calls a tool's own
+        # ``.handler(...)``, so no ``_handle`` ever needs one here). Safe
+        # ONLY because ``permission_resolver=None`` — but read what that
+        # guard actually checks before trusting it: web_fetch.py's own
+        # fallback-synthesis guard (#6146) fires on ONE condition,
+        # ``permission_resolver is not None``. It catches a future change
+        # that threads a REAL resolver into this ToolContext while a
+        # handler invocation stays absent-or-present either way. It does
+        # **NOT** catch the other direction: adding a real ``.handler(...)``
+        # call on this same path while ``permission_resolver`` stays
+        # ``None`` runs with NO permission gate at all, silently — the
+        # guard never fires, because its one condition was never true.
+        # If you add a handler invocation here, wire a real
+        # ``permission_resolver`` (and an ``op_context_factory``) at the
+        # SAME time — do not rely on this comment or the guard to catch
+        # the omission for you.
         tool_ctx = ToolContext(
             events=None,
             permission_resolver=None,

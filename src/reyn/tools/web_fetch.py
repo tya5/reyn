@@ -52,9 +52,23 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         ``web.fetch: deny`` actually raise on the router-invoked
         path (#53 fix).
       Fallback — minimal synthesis from ToolContext fields. Used by
-        narrow test sites that don't exercise permission gating. ``intervention_bus=None`` is acceptable
-        here because the fallback path doesn't have a session bus to
-        reuse anyway.
+        narrow test sites that don't exercise permission gating.
+        ``ToolContext`` has no ``intervention_bus`` field at all, so
+        this fallback's own ``legacy_ctx`` is unconditionally built
+        with ``intervention_bus=None`` (the ``OpContext`` field's own
+        default). #6146 co-vet finding (lead-coder, 2026-09-11): an
+        EARLIER version of this docstring claimed that combination was
+        safe because "the handler will raise the explicit RuntimeError
+        above if a PermissionResolver is also present" — that claim
+        was FALSE. The only such `RuntimeError` in
+        ``op_runtime/web.py`` guards the multimodal/binary-media branch
+        alone (fires only for an image response, ~111 lines below the
+        real gate) — it never runs for ``require_http_get`` itself, so
+        a resolver-present + bus-less fallback call reached that gate
+        with no protection at all. Fixed below: this fallback now
+        raises its OWN ``RuntimeError`` up front whenever
+        ``ctx.permission_resolver`` is present, rather than relying on
+        a guard elsewhere that never covered this path.
     """
     # Lazy import to avoid circular dependency at registry-init time.
     from reyn.core.op_runtime.context import OpContext
@@ -72,10 +86,26 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         legacy_ctx = rs.op_context_factory()
     else:
         # Narrow test sites + future surfaces without a router factory.
-        # ``intervention_bus=None`` is acceptable only because the
-        # fallback path doesn't have any bus to reuse anyway; the
-        # handler will raise the explicit RuntimeError above if a
-        # PermissionResolver is also present.
+        # #6146 co-vet: ``ToolContext`` has no ``intervention_bus`` field,
+        # so this branch's own ``legacy_ctx`` is unconditionally built
+        # with ``intervention_bus=None`` below. A present
+        # ``permission_resolver`` would then reach ``require_http_get``
+        # (and every other gate) with no bus to prompt on — silently
+        # falling back to the "no bus" behaviour (deny for anything not
+        # already approved) instead of the interactive gate a real
+        # PermissionResolver implies. Refuse the combination outright
+        # rather than let it run degraded: a caller that has a real
+        # resolver belongs on the ``op_context_factory`` path above, not
+        # this narrow one.
+        if ctx.permission_resolver is not None:
+            raise RuntimeError(
+                "web_fetch's fallback OpContext synthesis has no "
+                "intervention_bus to offer (ToolContext carries none), but "
+                "ctx.permission_resolver is set -- this combination would "
+                "silently run every permission gate with no bus available. "
+                "Route this call through ctx.router_state.op_context_factory() "
+                "instead, which carries a real InterventionBus."
+            )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
