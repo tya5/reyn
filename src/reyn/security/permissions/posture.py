@@ -139,11 +139,20 @@ def resolve_permission_mode(
     A configured ``unbounded`` while disabled does NOT raise — a locked-
     down fleet's config should not crash an operator's session; it falls
     back to :data:`DEFAULT_PERMISSION_MODE` (the safe, byte-identical-to-
-    today value) with a WARNING naming what was refused and why, so the
-    drift is visible rather than silent (CLAUDE.md band: observability).
-    A genuinely unrecognized value (a typo, or `bounded`) still raises —
-    unlike a disabled-but-otherwise-valid `unbounded`, there is no safe
-    value to substitute for a value that was never a real mode at all."""
+    today value) with a WARNING naming what was refused and why. That
+    WARNING reaches ``reyn.log`` unconditionally, but NOT the operator's
+    own screen in the shipped interactive configuration — ``chat.py``'s
+    ``_setup_interactive_logging`` only adds a ``StreamHandler`` when
+    ``not is_interactive`` (CLAUDE.md's own 2nd of 3 questions: "is this
+    visible with the shipped config?" — here, no). Surfacing this
+    downgrade on-screen (the posture surface doc §8 also names for
+    `bounded`'s own degraded-enforcement case) is a LATER stage's
+    responsibility, not this function's — this module only guarantees the
+    fallback is DURABLY RECORDED, not that an operator watching the
+    screen sees it in the moment. A genuinely unrecognized value (a typo,
+    or `bounded`) still raises — unlike a disabled-but-otherwise-valid
+    `unbounded`, there is no safe value to substitute for a value that
+    was never a real mode at all."""
     mode = (
         DEFAULT_PERMISSION_MODE if raw is None else parse_permission_mode(raw)
     )
