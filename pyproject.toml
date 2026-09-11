@@ -607,7 +607,15 @@ exclude = [
 # construction (chat.py's own root cause; it does not model FileHandler's
 # encoding=None -> locale.getpreferredencoding() default), all 4
 # `.read_text()` calls, and the 1 `os.fdopen()` call.
+#
+# explicit-preview-rules = true: `preview = true` alone also activates
+# PREVIEW BEHAVIOR of already-selected stable rules (F, I here) -- unpinned
+# ruff, so an upstream preview-behavior change to either could turn main
+# red with no PR of ours in between. This flag scopes preview mode to
+# EXPLICITLY preview-only rules (PLW1514) only -- F/I keep their stable
+# behavior. Verified: PLW1514 still fires with this flag set.
 preview = true
+explicit-preview-rules = true
 select = ["F", "I", "PLW1514"]
 ignore = [
     # F811: local imports inside functions for clarity (e.g. lazy
