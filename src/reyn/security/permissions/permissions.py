@@ -2032,6 +2032,21 @@ class PermissionResolver:
         # allow") ever applied — a DECLARED decl (specific or wildcard)
         # now always reaches its own per-host prompt, never short-
         # circuited by this ambiguous key.
+        #
+        # Population impact (architect, #6142 co-vet — record this for
+        # whoever closes #6146): an operator who BOTH (a) holds a bare
+        # `web.fetch` grant (either shape) AND (b) has a DECLARED
+        # `http.get` entry for a host they have not yet approved
+        # per-host now sees a NEW interactive prompt for that host —
+        # one this narrowing itself introduces, since the declared path
+        # never reaches the bare-key read (or its `logger.warning`)
+        # any more. That population gets no notice explaining WHY the
+        # prompt reappeared — the warning only fires on the undeclared
+        # path, which this population's declared host never takes.
+        # #6146 removing the undeclared-axis reach too would change
+        # this SAME population's experience a second time; whoever
+        # closes it should account for that, not assume this fix
+        # already covers the full transition.
 
         # #1199 S3.1b-2c-2: the host-MEMBERSHIP decision (specific OR wildcard)
         # routes through the unified model (NETWORK_HOST axis) — pure decl
