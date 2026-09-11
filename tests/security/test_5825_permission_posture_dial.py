@@ -79,7 +79,12 @@ def test_an_unrecognized_value_raises_the_generic_error(raw: str) -> None:
     """Tier 1: a typo or a value that never existed at all gets the
     generic error, distinct from `bounded`'s own specific one -- and the
     message names the valid set so `reyn config validate`'s own output
-    is self-sufficient."""
+    is self-sufficient.
+
+    Disclosed (six questions ④): the loop below would stay green over an
+    EMPTY PERMISSION_MODE_ORDER too -- that vacuous case is killed by
+    test_permission_mode_order_covers_every_enum_member's own membership
+    invariant, not by a guard duplicated in this test."""
     with pytest.raises(PermissionModeError) as exc_info:
         parse_permission_mode(raw)
     assert not isinstance(exc_info.value, BoundedModeNotImplementedError)
@@ -110,11 +115,18 @@ def test_permission_mode_order_covers_every_enum_member() -> None:
 def test_the_order_is_total_every_pair_has_one_answer() -> None:
     """Tier 1: doc §2's own acceptance line — "Ordering is total and
     strict-to-permissive, so 'at least as strict as X' is expressible."
-    Exhaustive over all 9 pairs (3x3), not a sample: for every (a, b),
-    "a at least as strict as b" and "b at least as strict as a" must
-    never BOTH be false (a total order has an answer for every pair),
-    and for a != b must never both be true (a total order is antisymmetric
-    once equality is excluded)."""
+    Exhaustive over every pair PERMISSION_MODE_ORDER actually holds
+    (3x3 = 9 today, NOT a number this test itself pins), not a sample:
+    for every (a, b), "a at least as strict as b" and "b at least as
+    strict as a" must never BOTH be false (a total order has an answer
+    for every pair), and for a != b must never both be true (a total
+    order is antisymmetric once equality is excluded).
+
+    Disclosed (six questions ④): itertools.product over an EMPTY
+    PERMISSION_MODE_ORDER iterates zero times and this loop's body never
+    runs — that vacuous case is killed by
+    test_permission_mode_order_covers_every_enum_member's own membership
+    invariant, not by a guard duplicated here."""
     for a, b in itertools.product(PERMISSION_MODE_ORDER, repeat=2):
         a_vs_b = is_at_least_as_strict(a, b)
         b_vs_a = is_at_least_as_strict(b, a)
@@ -137,7 +149,12 @@ def test_read_only_is_the_strictest_and_unbounded_the_most_permissive() -> None:
 def test_a_mode_is_at_least_as_strict_as_itself() -> None:
     """Tier 1: reflexivity -- "at least as strict as" must include equal,
     per the phrase's own ordinary meaning (a floor of `ask` is satisfied
-    BY `ask`, not only by something stricter)."""
+    BY `ask`, not only by something stricter).
+
+    Disclosed (six questions ④): same vacuity risk as the two tests
+    above -- an empty PERMISSION_MODE_ORDER would pass this loop too,
+    and is killed by the same sibling membership invariant, not by a
+    guard duplicated here."""
     for mode in PERMISSION_MODE_ORDER:
         assert is_at_least_as_strict(mode, mode)
 
@@ -230,6 +247,45 @@ def test_disable_unbounded_mode_survives_an_explicit_later_false() -> None:
     merged = _merge(merged, {"permissions": {"disable_unbounded_mode": False}}, tier_label="project")
     merged = _merge(merged, {"permissions": {"disable_unbounded_mode": False}}, tier_label="project_local")
     assert merged["permissions"]["disable_unbounded_mode"] is True
+
+
+def test_disable_unbounded_mode_survives_a_later_tier_writing_a_non_dict_string(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 1: #5825 stage 1 security co-vet (architect finding A,
+    reproduced independently by lead-coder) -- the ORIGINAL bug this test
+    guards: `permissions: "ask"` (a plausible typo now that stage 1
+    nests `mode` UNDER this same `permissions:` key, instead of the
+    correct `permissions: {mode: "ask"}`) used to fall through to
+    `_merge`'s generic `result[key] = val` tail, replacing the WHOLE
+    permissions dict -- lock included -- with the string, SILENTLY
+    (downstream `_as_config_dict` defaults a non-dict `permissions:` to
+    `{}` with only a WARNING, never a raise, so reyn still started with
+    the lock gone and nobody told). The lock must survive; the malformed
+    override itself must be loudly ignored, not silently applied as a
+    mode or anything else."""
+    caplog.set_level("WARNING")
+    merged: dict = {}
+    merged = _merge(merged, {"permissions": {"disable_unbounded_mode": True}}, tier_label="user_global")
+    merged = _merge(merged, {"permissions": "ask"}, tier_label="project_local")
+    assert merged["permissions"]["disable_unbounded_mode"] is True
+    assert isinstance(merged["permissions"], dict), (
+        "a non-dict override must not replace the permissions dict wholesale"
+    )
+    assert any("permissions" in r.message for r in caplog.records), (
+        "a malformed permissions: override must warn, not fail silently"
+    )
+
+
+def test_disable_unbounded_mode_survives_a_later_tier_writing_a_non_dict_list() -> None:
+    """Tier 1: the SAME class of malformed override as the string case
+    above, a different non-dict shape -- proves the fix is "any non-dict
+    value", not a string-specific special case."""
+    merged: dict = {}
+    merged = _merge(merged, {"permissions": {"disable_unbounded_mode": True}}, tier_label="user_global")
+    merged = _merge(merged, {"permissions": ["ask"]}, tier_label="project_local")
+    assert merged["permissions"]["disable_unbounded_mode"] is True
+    assert isinstance(merged["permissions"], dict)
 
 
 def test_disable_unbounded_mode_off_by_default_stays_off_through_ordinary_merges() -> None:
