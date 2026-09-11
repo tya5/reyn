@@ -69,7 +69,7 @@ class A2AWebhookRegistry:
         data = {"webhooks": self._webhooks, "notified": sorted(self._notified)}
         fd, tmp = tempfile.mkstemp(dir=str(self._persist_path.parent), suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f)
             os.replace(tmp, str(self._persist_path))
         except Exception:
@@ -79,7 +79,7 @@ class A2AWebhookRegistry:
 
     def _restore_from(self, path: "Path") -> None:
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             return
         self._webhooks = dict(data.get("webhooks") or {})

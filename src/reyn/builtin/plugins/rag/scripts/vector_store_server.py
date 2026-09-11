@@ -147,7 +147,7 @@ def _describe_open_failure(db_path: str) -> str | None:
     path = Path(db_path)
     existed = path.exists()
     try:
-        with open(path, "a"):
+        with open(path, "a", encoding="utf-8"):
             pass
     except OSError as exc:
         return str(exc)

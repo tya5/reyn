@@ -104,7 +104,7 @@ def _watch(limit_mb: int) -> None:
             # process, which is the property the whole 2026-08-09 investigation
             # was missing: every runaway was gone before anyone could name it.
             try:
-                with open(LOG_PATH, "a") as fh:
+                with open(LOG_PATH, "a", encoding="utf-8") as fh:
                     fh.write(message)
             except OSError:
                 pass
