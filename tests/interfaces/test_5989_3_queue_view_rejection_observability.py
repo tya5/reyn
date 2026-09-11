@@ -23,6 +23,16 @@ NOT flood the operational log at WARNING.
 Real ``RemoteQueueView`` throughout, seeded via its own public
 ``apply_snapshot`` (never a private ``_last_seq`` poke) — no mocks, this
 class has no collaborator to fake.
+
+#5989 ④ (later, architect design + lead-coder ruling): observability alone
+did not close the defect — the WARNING-worthy case (``stuck`` non-empty)
+is now ALSO applied via a stuck-item exception (the same shape ``apply_
+user_submitted``'s own ``is_own_pending`` already uses), so the two
+"still queued" tests below assert ``applied is True`` / item REMOVED, not
+``False`` / still present, as they did before ④. See ``test_5989_4_queue_
+view_stuck_item_recovery.py`` for the recovery claim itself, framed as
+its own subject ("does not get stuck"), not as a side effect of a
+logging test.
 """
 from __future__ import annotations
 
@@ -47,7 +57,15 @@ def test_turn_started_rejection_of_a_still_queued_item_warns(
 ) -> None:
     """Tier 1: a ``turn_started`` delta rejected by the seq-gate while its
     own target item is STILL sitting in ``items``, unpromoted — the shape a
-    WRONG rejection leaves behind. Must warn.
+    WRONG rejection leaves behind. Must still warn (the rejection itself
+    stays worth knowing about).
+
+    #5989 ④ (lead-coder ruling, architect design): the WARNING is no
+    longer the end of the story — see ``test_5989_4_queue_view_stuck_item_
+    recovery.py`` for the recovery half (this delta is now APPLIED via the
+    ``stuck`` exception, so ``applied`` reads ``True`` and ``m1`` is
+    REMOVED here, not left behind — the opposite of what this test
+    asserted before ④ landed).
 
     Strip-falsifier (verified by hand: the ``stuck`` check replaced with a
     constant ``False``, so this branch is unconditionally logged at
@@ -61,8 +79,8 @@ def test_turn_started_rejection_of_a_still_queued_item_warns(
 
     applied = view.apply_turn_started(chain_id="c1", seq=3)  # stale: 3 <= 5
 
-    assert applied is False
-    assert "m1" in view.items, "the item must still be there — this IS the property under test"
+    assert applied is True, "#5989 ④: the stuck-item exception now applies this delta"
+    assert "m1" not in view.items, "#5989 ④: the stuck item is now recovered, not left behind"
     assert _levels(caplog) == ["WARNING"], (
         f"#5989 REGRESSION: a turn_started rejection whose target item is "
         f"still queued must warn — got {_levels(caplog)!r}"
@@ -115,8 +133,10 @@ def test_inbox_cancel_rejection_of_a_still_queued_item_warns(
 
     applied = view.apply_inbox_cancel(msg_id="m1", seq=3)  # stale: 3 <= 5
 
-    assert applied is False
-    assert "m1" in view.items
+    # #5989 ④: applied and removed via the stuck exception — see
+    # test_5989_4_queue_view_stuck_item_recovery.py for the recovery claim.
+    assert applied is True
+    assert "m1" not in view.items
     assert _levels(caplog) == ["WARNING"], (
         f"#5989 REGRESSION: an inbox_cancel rejection whose target item is "
         f"still queued must warn — got {_levels(caplog)!r}"

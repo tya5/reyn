@@ -8,19 +8,23 @@ rewind picker / sent-queue / input — shared with the sibling #3299 arc, see
 ``app.py``'s :meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.compose`).
 
 The "upward conveyor" lifecycle (the owner-ratified sent-queue exit contract,
-#3300 issue §6a) — this widget renders all THREE exits:
+#3300 issue §6a) — this widget renders ONE entrance and TWO exits (#5989 ④:
+a prior revision of this docstring read "THREE exits", which listed the
+entrance as if it were a third exit — that miscount let a reviewer read "the
+exits are sufficient" when a genuine gap existed; see :mod:`~reyn.interfaces.
+transport.agui.state`'s ``RemoteQueueView`` for the fix):
 
-- ``user_submitted`` → :meth:`show_item` — a submitted message first appears
-  HERE (dim, queued), not immediately as a flow entry. This REPLACES P1 C's
-  "render the echo directly as a flow entry": for an idle server the
-  promotion below follows almost instantly; for a busy/queued submission the
-  item stays visible here until dispatch.
-- ``turn_started`` → :meth:`remove_item` — the PROMOTE exit: the app removes
+- ``user_submitted`` → :meth:`show_item` — the ENTRANCE: a submitted message
+  first appears HERE (dim, queued), not immediately as a flow entry. This
+  REPLACES P1 C's "render the echo directly as a flow entry": for an idle
+  server the promotion below follows almost instantly; for a busy/queued
+  submission the item stays visible here until dispatch.
+- ``turn_started`` → :meth:`remove_item` — exit 1, the PROMOTE exit: the app removes
   the item from this widget and appends it as a flow entry (the user line) in
   the SAME step (see ``app.py``'s ``_pump_frames`` — the removal here and the
   flow-entry append are driven from one delta so there is never a frame where
   the item is both queued and already in the flow, or neither).
-- ``inbox_cancel`` → :meth:`remove_item` — the REMOVE exit (#3300 Y-client):
+- ``inbox_cancel`` → :meth:`remove_item` — exit 2, the REMOVE exit (#3300 Y-client):
   driven by the server-authoritative delta, never by a local "cancel
   succeeded" return value (``app.py``'s ``_handle_inbox_cancel_event``). The
   canceller ADDITIONALLY restores the text into the composer — that half is
@@ -31,8 +35,8 @@ seq-gated merge (the P2a order-race protocol, reused as-is — see the app
 module docstring); this widget is a pure renderer of whatever the app tells it
 to show/remove, keyed by ``msg_id``.
 
-**A fourth, LOCAL entry (#4409)**: before any of the three server-driven
-exits above can fire, ``app.py``'s ``on_composer_submitted`` calls
+**A second, LOCAL entrance (#4409)**: before the server-driven entrance/exits
+above can fire, ``app.py``'s ``on_composer_submitted`` calls
 :meth:`show_item` with ``sending=True`` and a LOCALLY-generated id,
 synchronously with clearing the composer — closing the gap the owner
 reported ("input box から消えると同時に... 消えること多い"): between a
