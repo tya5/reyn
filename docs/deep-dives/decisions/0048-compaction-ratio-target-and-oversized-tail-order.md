@@ -14,20 +14,31 @@ This ADR does not decide the open half of #5890 — how many rungs a fold-ratio 
 
 ### 1. The ratio expectation
 
-The operator's expectation for a compaction outcome: each of `head`/`body`/`tail` ends up **at or below** its configured weight ratio. An exact match to the ratio is not expected — owner has already stated a precise 1:1 match is impossible.
+Owner, verbatim:
+
+> 私なら head/body/tail それぞれが config で指定された比率以下になることを目指すかな
+
+> ユーザが compaction に求めるのは config で設定した比率になることでしょ
+
+> 比率ぴったりに一致させることは不可能なので、どこまで許容するかを決める必要あるのかもね
+
+The operator's expectation for a compaction outcome: each of `head`/`body`/`tail` ends up **at or below** its configured weight ratio. An exact match to the ratio is not expected — owner states it directly above.
 
 ### 2. Ordering for an oversized single tail turn
 
-When `tail` is dominated by one oversized turn, the order is:
+Owner, verbatim:
 
-1. **Spill it, to shrink it.**
-2. **If it is still too large after spilling, move it into `mid` so `compact()` can fold it.**
+> tail が巨大な 1turn なのであれば spill して縮小、それでも大きいなら mid に移して compact が期待だよね。ただし、以前問題になった、mid/tail 間の相互移動の無限ループが解消できないと成立しないね。
 
-Spill is tried first, before a move into `mid`, for this specific case.
+When `tail` is dominated by one oversized turn, the order is: spill it to shrink it; if it is still too large after spilling, move it into `mid` so `compact()` can fold it. **Owner attaches this as a condition on the SAME sentence, not a separate note**: this ordering only holds if the mid/tail mutual-move infinite loop (a previously-known problem) is resolved — the ordering is not stated as unconditionally safe.
 
 ### 3. Over-shrinking is rejected
 
-The ratio expectation (decision 1) does not license over-shrinking. The fastest way to satisfy "at or below the ratio" is to discard everything — that implementation is explicitly rejected. A compaction outcome that meets decision 1 by emptying a compartment further than the ratio requires is not an acceptable way to reach it.
+Owner, verbatim:
+
+> 以前過剰縮小という問題もあったので、そうならないようにも気をつけるんだよ
+
+The ratio expectation (decision 1) does not license over-shrinking — owner's own reason is a real prior incident (over-shrinking has happened before), not a hypothetical.
 
 ### 4. The ratio expectation is a recovery-time goal, not an always-true invariant
 
