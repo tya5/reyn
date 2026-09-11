@@ -29,7 +29,6 @@ import json
 import logging
 import os
 import stat
-import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -144,31 +143,31 @@ def _read_store(path: Path) -> dict[str, dict[str, Any]]:
     """Load the JSON map; missing file → empty dict."""
     if not path.exists():
         return {}
+    # #6145 A (all 3 branches below): was `warnings.warn(..., UserWarning)`
+    # — silent outside `__main__` under Python's own default filter, and
+    # even the visible category never reached the operator's screen
+    # (`stderr: False / reyn.log: True`, architect's measurement). An
+    # operator whose OAuth store is unreadable/corrupt sees only a
+    # generic downstream `KeyError`/re-auth prompt with no explanation of
+    # WHY — this is the diagnostic that says why, so it goes to the log
+    # an operator debugging that failure actually reads.
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
-        warnings.warn(
-            f"Could not read OAuth token store at {path}: {exc}",
-            UserWarning,
-            stacklevel=3,
-        )
+        _log.warning("Could not read OAuth token store at %s: %s", path, exc)
         return {}
     try:
         data = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as exc:
-        warnings.warn(
-            f"OAuth token store at {path} is not valid JSON ({exc}); "
-            "ignoring and continuing with an empty store.",
-            UserWarning,
-            stacklevel=3,
+        _log.warning(
+            "OAuth token store at %s is not valid JSON (%s); ignoring and "
+            "continuing with an empty store.", path, exc,
         )
         return {}
     if not isinstance(data, dict):
-        warnings.warn(
-            f"OAuth token store at {path} must be a JSON object, "
-            f"got {type(data).__name__}; ignoring.",
-            UserWarning,
-            stacklevel=3,
+        _log.warning(
+            "OAuth token store at %s must be a JSON object, got %s; "
+            "ignoring.", path, type(data).__name__,
         )
         return {}
     return data
@@ -193,20 +192,16 @@ def load_oauth_token(key: str, *, path: Path | None = None) -> OAuthToken | None
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        warnings.warn(
-            f"OAuth token {key!r} is not an object; ignoring.",
-            UserWarning,
-            stacklevel=2,
-        )
+        # #6145 A: same reasoning as `_read_store` above — the caller's
+        # `KeyError`/re-auth path never carries WHY the stored entry was
+        # unusable, so this stays a real diagnostic, now on a channel the
+        # operator's own log actually receives.
+        _log.warning("OAuth token %r is not an object; ignoring.", key)
         return None
     try:
         return OAuthToken.from_dict(raw)
     except (KeyError, ValueError) as exc:
-        warnings.warn(
-            f"OAuth token {key!r} is malformed ({exc}); ignoring.",
-            UserWarning,
-            stacklevel=2,
-        )
+        _log.warning("OAuth token %r is malformed (%s); ignoring.", key, exc)
         return None
 
 
@@ -247,11 +242,16 @@ def _check_permissions(path: Path) -> None:
     except OSError:
         return
     if mode & stat.S_IROTH or mode & stat.S_IRGRP:
-        warnings.warn(
-            f"{path} is readable by group/others (mode {oct(mode & 0o777)}); "
-            "auto-fixing to 600. Review access controls on this machine.",
-            UserWarning,
-            stacklevel=3,
+        # #6145 A: a group/world-readable credential store is a real
+        # security exposure on this machine (same class as
+        # `security/secrets/loader.py`'s own secrets.env chmod notice,
+        # promoted alongside this one) — an operator reviewing access
+        # controls needs this in the log, not silently swallowed by the
+        # default warnings filter.
+        _log.warning(
+            "%s is readable by group/others (mode %s); auto-fixing to "
+            "600. Review access controls on this machine.",
+            path, oct(mode & 0o777),
         )
         try:
             path.chmod(0o600)

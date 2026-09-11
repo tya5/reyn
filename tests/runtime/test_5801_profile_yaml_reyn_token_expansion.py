@@ -23,6 +23,7 @@ Real ``AgentRegistry``/``Session`` construction throughout -- no mocks.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -113,7 +114,7 @@ def test_base_dir_reyn_project_dir_token_also_expands(tmp_path: Path) -> None:
     assert "${REYN_PROJECT_DIR}" not in (profile.base_dir or "")
 
 
-def test_context_path_unresolved_reyn_token_fails_closed(tmp_path: Path) -> None:
+def test_context_path_unresolved_reyn_token_fails_closed(tmp_path: Path, caplog) -> None:
     """Tier 2: #5801 req② -- an unresolved reyn token in profile.yaml is
     reyn's own bug (it could not supply a value it owns), not an
     operator config choice to silently honor as a literal path. Uses
@@ -121,7 +122,13 @@ def test_context_path_unresolved_reyn_token_fails_closed(tmp_path: Path) -> None
     that profile.yaml's own map does not carry (only
     REYN_PROJECT_DIR/REYN_AGENT_NAME are this face's map, #5801 req③) --
     so this is a genuine "reyn cannot resolve this here" case, not a
-    typo'd unrelated ${VAR}."""
+    typo'd unrelated ${VAR}.
+
+    #6145 A: the refusal notice was `warnings.warn(..., UserWarning)` --
+    SILENT outside `__main__` under Python's own default filter, and
+    never reached the operator's screen even when visible (`stderr:
+    False / reyn.log: True`, architect's measurement). Promoted to
+    `logger.warning`, read here via `caplog`."""
     project_root = tmp_path / "project"
     agent_dir = project_root / ".reyn" / "agents" / "coder-brown"
     agent_dir.mkdir(parents=True)
@@ -133,8 +140,12 @@ def test_context_path_unresolved_reyn_token_fails_closed(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    with pytest.warns(UserWarning, match=r"left reyn token\(s\).*unresolved -- refusing"):
+    with caplog.at_level(logging.WARNING):
         profile = AgentProfile.load(agent_dir)
+    assert any(
+        "left reyn token" in r.message and "unresolved -- refusing" in r.message
+        for r in caplog.records
+    )
 
     # Real-content witness: refusal degrades the WHOLE file's contribution
     # (context_path falls back to its own None default), not a half-

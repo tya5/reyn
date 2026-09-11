@@ -21,8 +21,13 @@ operator's screen). v2's population is EVERY `warnings.warn(...)` call
 under `src/reyn/**`, category-blind -- the tests below were updated to
 match (`test_a_user_warning_or_omitted_category_is_never_counted`
 inverted into `test_every_warnings_warn_call_is_counted_regardless_of_
-category`, and the shipped-table tests now check the 18
-`#6145`-tracked pre-existing entries rather than an empty table).
+category`). Widening the axis newly surfaced 18 pre-existing sites,
+tracked and disclosed in `_EXCEPTION_TABLE` under #6145 at the time;
+#6145 individually audited and promoted all 18 to `logger.warning`
+(see that PR's own body for the file:line table), so
+`_EXCEPTION_TABLE` is empty again -- `test_the_shipped_exception_
+table_matches_the_real_measured_population` below now pins an EMPTY
+table against an EMPTY measured population, not a 18-entry one.
 
 #6144 co-vet round 3 (lead-coder): v2's `(relpath, lineno)` key was
 ITSELF gameable -- not by an author dodging the gate, but by an
@@ -153,14 +158,19 @@ def test_the_shipped_exception_table_matches_the_real_measured_population():
     promoted to `logger.warning`, the 7th -- `permissions.py`'s legacy
     `http.get` compat notice -- deleted outright in #6144's co-vet round
     2, since it duplicated an already-firing real prompt). Widening the
-    axis to category-blind (#6144 co-vet round 2) newly surfaces
-    pre-existing sites this PR's own dispatch never covered -- this test
-    pins BEHAVIOR, not a bare count: the table's own keys must equal
-    EXACTLY the real tree's measured population (neither a stale entry
-    for a site that no longer exists, nor a gap), and every reason must
-    reference #6145, the tracking issue for auditing and promoting them
-    -- never a bare "fine as-is", which #6144's own review already ruled
-    none of these currently are."""
+    axis to category-blind (#6144 co-vet round 2) newly surfaced 18
+    pre-existing sites #6144's own dispatch never covered, tracked in
+    `_EXCEPTION_TABLE` under #6145 at the time -- #6145 then
+    individually audited and promoted all 18 to `logger.warning`
+    (never "B: legitimate as-is" or "C: delete", see that PR's own
+    body), so `_EXCEPTION_TABLE` is empty again. This test pins
+    BEHAVIOR, not a bare count: the table's own keys must equal EXACTLY
+    the real tree's measured population (neither a stale entry for a
+    site that no longer exists, nor a gap) -- currently the empty set
+    on both sides. The `#6145` marker check below is a disclosed no-op
+    while the table is empty (Tier-4 hazard: an assert over an empty
+    collection wears green's colour); it starts biting again the
+    moment a future entry is added."""
     measured_keys = {
         (relpath, lineno, template) for relpath, lineno, _, template in measured(REPO_ROOT)
     }
@@ -168,7 +178,10 @@ def test_the_shipped_exception_table_matches_the_real_measured_population():
         f"table declares {set(_EXCEPTION_TABLE) - measured_keys} that no "
         f"longer exist, and is missing {measured_keys - set(_EXCEPTION_TABLE)}"
     )
-    assert all("#6145" in reason for reason in _EXCEPTION_TABLE.values()), _EXCEPTION_TABLE
+    assert _EXCEPTION_TABLE == {}, (
+        "a table entry was added without updating this test's own "
+        f"docstring (which currently asserts the table is empty): {_EXCEPTION_TABLE}"
+    )
 
 
 def test_the_real_scan_against_the_current_tree_has_nothing_unexplained() -> None:

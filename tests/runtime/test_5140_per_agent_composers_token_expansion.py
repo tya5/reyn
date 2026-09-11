@@ -34,8 +34,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
-
 from tests._support.agent_session import make_session
 
 _AGENT = "coder-smith"
@@ -83,7 +81,7 @@ def test_reyn_agent_name_resolves_to_the_real_agent_name_in_composers(
 
 
 def test_an_unresolved_reyn_token_refuses_to_load_the_composers_layer(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: acceptance ② — a reyn-owned token this loader does NOT supply
     a value for (``${REYN_SKILL_DIR}`` — a location token with no meaning for
@@ -91,11 +89,14 @@ def test_an_unresolved_reyn_token_refuses_to_load_the_composers_layer(
     silently register a composer with an empty/wrong value, and must surface
     why.
 
-    #5166: the surfacing mechanism is now ``warnings.warn`` (the shared
+    #5166: the surfacing mechanism was ``warnings.warn`` (the shared
     ``read_and_expand_hooks_yaml`` primitive every hooks.yaml-shaped layer
     goes through, matching ``config/loader.py``'s own established
-    convention), not ``logger.warning`` — this session-local reader used to
-    warn via the stdlib logger before the #5166 consolidation."""
+    convention). #6145 A: that ``warnings.warn`` was SILENT outside
+    ``__main__`` under Python's own default filter, and never reached the
+    operator's screen even when visible (``stderr: False / reyn.log: True``,
+    architect's measurement) — promoted to ``logger.warning``, read here via
+    ``caplog``."""
     project = tmp_path / "proj"
     _write_per_agent_hooks(
         project,
@@ -107,8 +108,9 @@ def test_an_unresolved_reyn_token_refuses_to_load_the_composers_layer(
     )
     session = _make_session_in(project, monkeypatch, tmp_path)
 
-    with pytest.warns(UserWarning, match="REYN_SKILL_DIR"):
+    with caplog.at_level(logging.WARNING):
         composers = session._read_per_agent_composers()
+    assert any("REYN_SKILL_DIR" in r.message for r in caplog.records)
 
     assert composers == [], (
         "an unresolved reyn-owned token must refuse the WHOLE composers "

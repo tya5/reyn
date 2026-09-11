@@ -9,6 +9,14 @@ later reader could find — while the method's own docstring asserted the launch
 was "never silently unsandboxed". The prose claimed an audit trail the mechanism
 did not have.
 
+#6145 A: that framing was itself wrong about WHO "watching stderr" reached —
+architect's own measurement showed the omitted-category (defaults to
+``UserWarning``) emission never reached stderr under the stock filter either
+(``stderr: False / reyn.log: True``), so the warning alone never reached
+ANYONE watching a live process. Promoted to ``logger.warning`` — the tests
+below read ``caplog`` instead of ``pytest.warns``/``warnings.catch_warnings``
+for the same reason; the audit-event half (below) is unchanged.
+
 What is pinned here:
 
   - the fallback emits ``sandbox_policy_not_applied`` (an EXISTING kind, shared
@@ -33,10 +41,8 @@ event tests).
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
-import warnings
-
-import pytest
 
 from reyn.mcp.client import MCPClient
 from reyn.mcp.connection_service import MCPConnectionService
@@ -57,7 +63,7 @@ def _not_applied(events: list) -> list[dict]:
     return [d for et, d in events if et == "sandbox_policy_not_applied"]
 
 
-def test_unsandboxed_fallback_emits_audit_event(monkeypatch):
+def test_unsandboxed_fallback_emits_audit_event(monkeypatch, caplog):
     """Tier 2: the fallback emits ``sandbox_policy_not_applied`` naming the
     server, the command and the failure — the trace the warning alone did not
     leave."""
@@ -69,8 +75,9 @@ def test_unsandboxed_fallback_emits_audit_event(monkeypatch):
         emit_event=lambda et, **d: events.append((et, d)),
     )
 
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert any("UNSANDBOXED" in r.message for r in caplog.records)
 
     assert (cmd, args) == ("my-mcp", ["--flag"])  # still launches, unwrapped
     emitted = _not_applied(events)
@@ -87,7 +94,7 @@ def test_unsandboxed_fallback_emits_audit_event(monkeypatch):
     assert "backend probe exploded" in payload["reason"]
 
 
-def test_scope_field_distinguishes_this_producer_from_the_hook_one(monkeypatch):
+def test_scope_field_distinguishes_this_producer_from_the_hook_one(monkeypatch, caplog):
     """Tier 2: the kind has two producers with different payloads. This one is
     identified by a field it HAS (``scope``), and carries no ``policy_field`` —
     the hook producer's per-axis key, which is meaningless here because the whole
@@ -99,26 +106,28 @@ def test_scope_field_distinguishes_this_producer_from_the_hook_one(monkeypatch):
         server_name="srv-a",
         emit_event=lambda et, **d: events.append((et, d)),
     )
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+    with caplog.at_level(logging.WARNING):
         client._sandbox_wrap_stdio("my-mcp", [])
+    assert any("UNSANDBOXED" in r.message for r in caplog.records)
 
     payload = _not_applied(events)[0]
     assert "policy_field" not in payload
 
 
-def test_missing_sink_still_warns_and_does_not_raise(monkeypatch):
+def test_missing_sink_still_warns_and_does_not_raise(monkeypatch, caplog):
     """Tier 2: no sink is a supported construction (the ephemeral pool path), not
     a degraded one — the warning still fires and the launch still proceeds."""
     monkeypatch.setattr("reyn.security.sandbox.get_default_backend", _boom)
     client = MCPClient({"type": "stdio", "command": "my-mcp", "args": ["--flag"]})
 
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert any("UNSANDBOXED" in r.message for r in caplog.records)
 
     assert (cmd, args) == ("my-mcp", ["--flag"])
 
 
-def test_a_failing_sink_does_not_block_the_launch(monkeypatch):
+def test_a_failing_sink_does_not_block_the_launch(monkeypatch, caplog):
     """Tier 2: telemetry is best-effort — a sink that raises must not turn a
     degraded-but-working launch into a dead one."""
     monkeypatch.setattr("reyn.security.sandbox.get_default_backend", _boom)
@@ -127,8 +136,9 @@ def test_a_failing_sink_does_not_block_the_launch(monkeypatch):
         raise RuntimeError("sink is down")
 
     client = MCPClient({"type": "stdio", "command": "my-mcp"}, emit_event=_bad_sink)
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
+    with caplog.at_level(logging.WARNING):
         cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    assert any("UNSANDBOXED" in r.message for r in caplog.records)
     assert (cmd, args) == ("my-mcp", [])
 
 
@@ -143,9 +153,7 @@ def test_connection_service_delivers_the_event_to_its_sink(monkeypatch):
 
     async def _run_it():
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")  # asserted directly above
-                await service.get("echo", _stdio_cfg())
+            await service.get("echo", _stdio_cfg())
         finally:
             await service.aclose()
 

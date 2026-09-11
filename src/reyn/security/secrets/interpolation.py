@@ -7,7 +7,8 @@ so the resolver logic lives in exactly one place.
 Resolution rules
 ----------------
 * ``${VAR}``   → ``os.environ.get("VAR", "")``.  If the variable is not
-  set a :class:`UserWarning` is emitted and the token expands to ``""``.
+  set a ``logger.warning`` is emitted (#6145 — promoted from a
+  silent-by-default ``warnings.warn``) and the token expands to ``""``.
 * ``$$``       → literal ``"$"`` (escape sequence for configs that need a
   literal dollar sign in values without triggering expansion).
 * Any other ``$...`` is passed through unchanged.
@@ -16,10 +17,12 @@ Resolution rules
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
-import warnings
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Matches ${VAR_NAME} — word chars only (letters, digits, _).
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
@@ -34,10 +37,15 @@ def _expand_str(value: str) -> str:
         name = m.group(1)
         result = os.environ.get(name)
         if result is None:
-            warnings.warn(
-                f"Config references undefined environment variable: ${{{name}}}",
-                UserWarning,
-                stacklevel=4,
+            # #6145 A: was `warnings.warn(..., UserWarning)` — silent
+            # outside `__main__` under Python's own default filter, and
+            # never reached the operator's screen even when visible
+            # (`stderr: False / reyn.log: True`, architect's
+            # measurement). An operator whose config silently expands to
+            # `""` needs this in the log to find the typo.
+            _log.warning(
+                "Config references undefined environment variable: ${%s}",
+                name,
             )
             return ""
         return result

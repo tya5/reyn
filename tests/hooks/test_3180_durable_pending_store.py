@@ -5,10 +5,17 @@ The truncate-falsify recovery gate lives in its own file
 (``test_3180_composer_pending_truncate_falsify.py``); this file covers the
 store's own contract (round-trip fidelity, loud-not-silent failure legs,
 stale-composer pruning) and the per-composer routing decision.
+
+#6145 A: both ``durable:``-flag notices below were `warnings.warn(...,
+UserWarning)` -- SILENT outside `__main__` under Python's own default
+filter, and never reached the operator's screen even when visible
+(`stderr: False / reyn.log: True`, architect's measurement). Promoted to
+`logger.warning`; the two tests below read `caplog` instead of
+`pytest.warns`/`warnings.catch_warnings` for the same reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 
 import pytest
 
@@ -138,21 +145,27 @@ def test_retain_composers_drops_records_of_removed_composers(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_deadline_is_durable_by_default_and_warns_only_when_opted_out():
+def test_deadline_is_durable_by_default_and_warns_only_when_opted_out(caplog):
     """Tier 1: ``op=deadline`` parses to ``durable=True`` with no warning (the
     #3180 default), while an explicit ``durable: false`` keeps the load-time
-    UserWarning that CLAUDE.md's never-a-silent-dead-man-switch rule requires.
+    warning that CLAUDE.md's never-a-silent-dead-man-switch rule requires.
 
     The warning moved from "always" to "only on opt-out" — its trigger is now
     the operator's choice, not the absence of an implementation."""
     raw = {"name": "j", "op": "deadline", "on": "a", "until": {"on": "b"}, "ttl": 60}
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # any UserWarning here fails the test
+    with caplog.at_level(logging.WARNING):
         (durable_def,) = load_composers([raw])
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("crash-non-durable" in r.message for r in caplog.records)
     assert durable_def.durable is True
 
-    with pytest.warns(UserWarning, match="crash-non-durable"):
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
         (opted_out,) = load_composers([{**raw, "durable": False}])
+    assert any("crash-non-durable" in r.message for r in caplog.records)
     assert opted_out.durable is False
 
 
@@ -203,13 +216,16 @@ def test_only_durable_composers_write_to_the_durable_store(tmp_path):
     assert reloaded.keys("noisy") == []
 
 
-def test_durable_composer_without_a_store_warns_instead_of_downgrading_silently(tmp_path):
+def test_durable_composer_without_a_store_warns_instead_of_downgrading_silently(
+    tmp_path, caplog,
+):
     """Tier 2: constructing a durable composer in a context that has no durable
     store (a session with no per-session state dir) falls back to in-memory —
     but says so. A silent downgrade's only symptom is a dead-man monitor that
     never fires after a restart, which is indistinguishable from "nothing went
     wrong"."""
-    with pytest.warns(UserWarning, match="no durable store"):
+    with caplog.at_level(logging.WARNING):
         (composer,) = build_composers([_deadline_def()], bus=HookBus(), durable_store=None)
+    assert any("no durable store" in r.message for r in caplog.records)
     composer.handle_event(HookEvent(kind="orch:job_started", payload={"job_id": "j1"}))
     assert not (tmp_path / STORE_FILENAME).exists()

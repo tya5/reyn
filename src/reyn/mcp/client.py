@@ -288,7 +288,6 @@ import os
 import signal
 import sys
 import tempfile
-import warnings
 from collections.abc import Callable
 from typing import Any, NoReturn
 
@@ -2468,17 +2467,27 @@ class MCPClient:
 
         A failure while resolving/probing the backend itself (not a normal
         outcome — defensive only) falls back to an unwrapped launch WITH a
-        loud warning AND a ``sandbox_policy_not_applied`` audit-event (#3821),
-        so the fallback is legible after the fact and not only to whoever was
-        watching stderr at the time.
+        ``logger.warning`` AND a ``sandbox_policy_not_applied`` audit-event
+        (#3821), so the fallback is legible after the fact even where no
+        audit sink was wired. #6145 A: this was `warnings.warn(...)`
+        (category omitted, defaults to ``UserWarning``) — architect's own
+        measurement showed that category NEVER reaches stderr under the
+        stock filter (`stderr: False / reyn.log: True`), so the original
+        "not only to whoever was watching stderr" framing was never
+        actually true; `logger.warning` at least reliably reaches
+        ``reyn.log`` on every path, which the raw `warnings.warn` did not
+        (silent outside `__main__`).
 
         The audit-event needs a sink, and only the held-connection path
         (:class:`~reyn.mcp.connection_service.MCPConnectionService`) has one.
         Constructed WITHOUT ``emit_event`` — the ephemeral
         :class:`~reyn.mcp.pool.MCPClientPool` path, and direct callers — the
         fallback is WARNING-only, exactly as it was before #3821. So "never
-        silently unsandboxed" is true of the warning on every path, and of the
-        audit trail only where a sink was wired.
+        silently unsandboxed" is true of the warning on every path (reaching
+        ``reyn.log``, not the interactive screen — see #6145's own PR body
+        for why on-screen Ctx-pane surfacing of this event is a disclosed,
+        separate follow-up, not bundled into this channel promotion), and
+        of the audit trail only where a sink was wired.
 
         #3848: ``wrapped.env`` (the allowlisted env ``wrap_command()``
         computes, #3850) is deliberately NOT carried into the launch here —
@@ -2520,10 +2529,12 @@ class MCPClient:
                 argv, self._build_mcp_sandbox_policy(), env_path=ambient_path()
             )
         except Exception as exc:  # noqa: BLE001 — a backend probe/wrap must not block a launch
-            warnings.warn(
-                f"MCP stdio server {command!r} runs UNSANDBOXED "
-                f"(sandbox backend probe/wrap failed: {exc}).",
-                stacklevel=2,
+            # #6145 A — see this method's own docstring for why this is a
+            # channel promotion only (logger.warning), not an on-screen
+            # Ctx-pane surface: that would be a new, separate feature.
+            logger.warning(
+                "MCP stdio server %r runs UNSANDBOXED (sandbox backend "
+                "probe/wrap failed: %s).", command, exc,
             )
             if self._emit_event is not None:
                 try:

@@ -27,10 +27,17 @@ healthy path" test: here, a healthy config with reyn's own tokens correctly
 supplied never trips it).
 
 Real ``load_per_agent_hooks`` + real files on disk — no mocks.
+
+#6145 A: the refusal notice was `warnings.warn(..., UserWarning)` --
+SILENT outside `__main__` under Python's own default filter, and never
+reached the operator's screen even when visible (`stderr: False /
+reyn.log: True`, architect's measurement). Promoted to `logger.warning`;
+the tests below read `caplog` instead of `warnings.catch_warnings` for
+the same reason.
 """
 from __future__ import annotations
 
-import warnings
+import logging
 from pathlib import Path
 
 from reyn.config.loader import load_per_agent_hooks
@@ -61,7 +68,7 @@ def test_reyn_agent_name_resolves_to_the_real_agent_name(tmp_path: Path) -> None
 
 
 def test_an_unresolved_reyn_token_refuses_to_load_the_hooks_layer(
-    tmp_path: Path,
+    tmp_path: Path, caplog,
 ) -> None:
     """Tier 2: acceptance ② — a reyn-owned token this loader does NOT supply
     a value for (simulated here via a token this map never populates,
@@ -76,8 +83,7 @@ def test_an_unresolved_reyn_token_refuses_to_load_the_hooks_layer(
         "      message: ${REYN_SKILL_DIR}/note.txt\n"
         "      wake: true\n",
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         hooks = load_per_agent_hooks(tmp_path, _AGENT)
 
     assert hooks == [], (
@@ -85,12 +91,11 @@ def test_an_unresolved_reyn_token_refuses_to_load_the_hooks_layer(
         "not load a hook with a wrong/empty value"
     )
     assert any(
-        "REYN_SKILL_DIR" in str(w.message) and issubclass(w.category, UserWarning)
-        for w in caught
+        "REYN_SKILL_DIR" in r.message for r in caplog.records
     ), "the refusal must surface a reason, not fail silently"
 
 
-def test_a_non_reyn_token_is_left_untouched_and_still_loads(tmp_path: Path) -> None:
+def test_a_non_reyn_token_is_left_untouched_and_still_loads(tmp_path: Path, caplog) -> None:
     """Tier 2: acceptance ③ — a NON-reyn ``${FOO}`` (e.g. an env var meant
     for a spawned child process to resolve) must load exactly as before:
     left untouched, no fail-close. Without this, #5152's own retracted
@@ -104,19 +109,22 @@ def test_a_non_reyn_token_is_left_untouched_and_still_loads(tmp_path: Path) -> N
         "      command: echo ${SOME_CHILD_PROCESS_VAR}\n"
         "      wake: true\n",
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         hooks = load_per_agent_hooks(tmp_path, _AGENT)
 
     assert hooks, "a non-reyn token must not cause the hooks layer to be refused"
     assert hooks[0]["exec"]["command"] == "echo ${SOME_CHILD_PROCESS_VAR}"
-    assert not any(
-        issubclass(w.category, UserWarning) for w in caught
-    ), "a non-reyn token must not trip the fail-close or warn at all"
+    # #6144 unfiltered-caplog-consumption gate: filtered to the subject
+    # (never a bare `caplog.records == []`) -- under `-n auto` an
+    # unrelated test's record on a different logger can land in the same
+    # capture window.
+    assert not any("unresolved -- refusing" in r.message for r in caplog.records), (
+        "a non-reyn token must not trip the fail-close or warn at all"
+    )
 
 
 def test_no_undefined_env_var_warning_fires_on_a_healthy_reyn_token(
-    tmp_path: Path,
+    tmp_path: Path, caplog,
 ) -> None:
     """Tier 2: acceptance ④ — the OLD `warnings.warn("Config references
     undefined environment variable…")` (expand_env's own, fired on every
@@ -131,10 +139,9 @@ def test_no_undefined_env_var_warning_fires_on_a_healthy_reyn_token(
         "      message: broker://inbox/${REYN_AGENT_NAME}\n"
         "      wake: true\n",
     )
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    with caplog.at_level(logging.WARNING):
         load_per_agent_hooks(tmp_path, _AGENT)
 
     assert not any(
-        "undefined environment variable" in str(w.message) for w in caught
+        "undefined environment variable" in r.message for r in caplog.records
     )
