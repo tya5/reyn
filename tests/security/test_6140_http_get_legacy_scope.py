@@ -10,21 +10,28 @@ Real ``PermissionResolver`` + a real interactive-choice ``InterventionBus``
 throughout (the ``_ChoiceBus`` shape ``test_5052_approval_scope_dimension.
 py`` / ``test_5236_permission_approval_granted_audit_event.py`` already
 establish) — no mocks. Each of the 3 issue-body acceptance criteria gets
-its own test, plus two lead-coder BLOCKING rounds on PR #6141:
+its own test, plus two lead-coder BLOCKING rounds on PR #6141 and the
+follow-up #6142 fix:
 
 - Round 1 (#6140's own ② — "the window names no end"): the bare-key READ
   that survives for a PRE-#6140 persisted grant must be VISIBLE and name
-  its own concrete removal condition (#6142), never a dateless
-  "deprecation window" repeated silently.
+  its own concrete removal condition, never a dateless "deprecation
+  window" repeated silently.
 - Round 2, finding B (measured): a bare ``warnings.warn(...,
   DeprecationWarning)`` never reaches a real operator (Python's own
   default filter ignores ``DeprecationWarning`` outside ``__main__``) —
   the fix uses ``logger.warning`` instead, asserted here via ``caplog``.
 - Round 2, finding A (measured, ``permissions.py:2634`` on
   ``origin/main``): ``require_web_fetch`` — a separate method/tool,
-  deliberately untouched by this PR — still writes a NEW grant under
-  the same bare ``KEY_WEB_FETCH`` key, which ``require_http_get``'s own
-  surviving read then honors for ANY host. Documented, not fixed, here.
+  deliberately untouched — still writes a NEW grant under the same bare
+  ``KEY_WEB_FETCH`` key, which ``require_http_get``'s own surviving read
+  then honors for ANY host, DECLARED or not. Filed as #6142.
+- #6142 (this same PR, narrowing fix): the bare-key read is scoped to
+  fire ONLY in the "no declaration at all" branch — a DECLARED http.get
+  host (specific or wildcard) can no longer be silently covered by
+  either shape of bare-key grant, closing finding A for the declared
+  axis. The undeclared axis keeps both shapes covered by design (same
+  as round 1's pre-#6140-residue case) — full removal tracked at #6146.
 """
 from __future__ import annotations
 
@@ -232,28 +239,31 @@ def test_a_pre_6140_blanket_grant_still_authorises_but_now_logs_with_an_end(
     matching = [r for r in caplog.records if "any.example.com" in r.getMessage()]
     assert matching, f"expected a warning naming the legacy grant, got {caplog.records!r}"
     message = matching[0].getMessage()
-    assert "6142" in message, f"expected the removal-condition issue number in the log: {message!r}"
+    assert "6146" in message, f"expected the removal-condition issue number in the log: {message!r}"
     assert "approvals.yaml" in message, f"expected how-to-end instructions in the log: {message!r}"
 
 
-# ── finding A (lead-coder BLOCKING #2, measured): require_web_fetch can
-#      still CREATE a new bare-key grant require_http_get then reads ──
+# ── #6142 (lead-coder BLOCKING round 2, measured, PR #6141): require_web_
+#      fetch's ALWAYS creates a bare-key grant that require_http_get then
+#      reads for an unrelated host. Narrowed (not removed) here: still
+#      covers an UNDECLARED host (deliberate, same as the test above);
+#      no longer covers a DECLARED one (the fix's own acceptance test). ──
 
 
-def test_a_web_fetch_tool_approval_is_read_by_require_http_get_for_any_host(
+def test_a_web_fetch_always_grant_still_covers_an_undeclared_host_by_design(
     tmp_path: Path,
 ) -> None:
-    """Tier 2: accept -- documents (does NOT claim to close) a real,
-    CURRENTLY-reachable conflation lead-coder's own review measured:
-    ``require_web_fetch`` (a separate tool/method, deliberately
-    untouched by this fix) still writes under the bare ``KEY_WEB_FETCH``
-    key when an operator answers ALWAYS to a `web_fetch` tool prompt.
-    ``require_http_get``'s own ``:1947`` read cannot distinguish that
-    grant from an http.get-axis one, so a web_fetch-tool consent is
-    read as blanket http.get authorization for ANY host -- not merely
-    pre-#6140 residue. Narrowing this read's own scope is tracked at
-    #6142, same as the pre-#6140-residue removal -- NOT fixed by this
-    PR (require_web_fetch is out of #6140's own scope)."""
+    """Tier 2: accept -- documents the DELIBERATELY-RETAINED half of the
+    #6142 narrowing: ``require_web_fetch`` (a separate tool/method,
+    deliberately untouched) still writes under the bare ``KEY_WEB_FETCH``
+    key when an operator answers ALWAYS to a `web_fetch` tool prompt, and
+    ``require_http_get``'s own undeclared-host compat branch still reads
+    it -- the SAME accepted-by-design behavior as the pre-#6140-residue
+    case above (``KEY_WEB_FETCH`` carries no axis marker, so the read
+    cannot tell a web_fetch-tool consent apart from a legacy http.get
+    grant; narrowing works by restricting WHERE the key is read, not by
+    inspecting the grant). Full removal (both holders) is tracked at
+    #6146, not fixed by #6142."""
     bus_fetch = _ChoiceBus("always")
     resolver_a = _resolver(tmp_path)
     asyncio.run(resolver_a.require_web_fetch("https://example.com/page", bus_fetch))
@@ -267,6 +277,43 @@ def test_a_web_fetch_tool_approval_is_read_by_require_http_get_for_any_host(
         )
     )
     assert bus_http_get.requests == [], (
-        "the web_fetch-tool grant was read as http.get authorization for an "
-        "unrelated host -- the conflation this test documents, tracked at #6142"
+        "an UNDECLARED host must still be covered by a web_fetch-tool ALWAYS "
+        "grant -- this is the retained half of #6142's narrowing, not a "
+        "regression; full removal is tracked at #6146"
+    )
+
+
+def test_a_web_fetch_always_grant_does_not_short_circuit_a_declared_wildcard_host(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: accept -- #6142's own acceptance criterion (lead-coder):
+    an ALWAYS answer to the ``web_fetch`` tool must NOT silently cover a
+    DECLARED wildcard ``http.get`` host any more -- that host must still
+    reach its own per-host prompt, exactly as if no ``web.fetch`` grant
+    existed at all. This is the actual defect #6142 closes (the sibling
+    test above documents what #6142 deliberately does NOT close).
+
+    FALSIFY: reverting the fix (checking the bare ``KEY_WEB_FETCH`` key
+    before the declared-membership routing, as the code did pre-#6142)
+    makes this go red -- ``bus_c.requests == []``, because the bare-key
+    short-circuit would find the web_fetch-tool grant before the
+    declared per-host prompt ever runs."""
+    bus_fetch = _ChoiceBus("always")
+    resolver_a = _resolver(tmp_path)
+    asyncio.run(resolver_a.require_web_fetch("https://example.com/page", bus_fetch))
+    assert bus_fetch.requests
+
+    bus_c = _ChoiceBus("no")
+    resolver_c = _resolver(tmp_path)
+    wildcard_decl = PermissionDecl(http_get=[{"host": "*"}])
+    with pytest.raises(PermissionError, match="denied"):
+        asyncio.run(
+            resolver_c.require_http_get(
+                wildcard_decl, "c.example.com", bus_c, _ACTOR,
+            )
+        )
+    assert bus_c.requests, (
+        "the declared-wildcard host C must still be prompted per-host -- an "
+        "empty list means the web_fetch-tool ALWAYS grant short-circuited "
+        "it (the #6142 defect)."
     )
