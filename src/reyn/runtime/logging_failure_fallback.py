@@ -128,12 +128,30 @@ class FailureFallbackRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802 - stdlib override name
         """#5989 ⑵: record this failure to the independent fallback
         destination, episode-gated (see module docstring), then defer to
-        the base class for the REST of stdlib's own behaviour (the
-        `sys.stderr` write #5989 PR1's own `capture_stray_output`
-        widening already keeps off the real terminal during a TUI
-        session — this method does not need to, and does not,
-        short-circuit that base behaviour; the two fixes are independent
-        layers, and neither assumes the other is present)."""
+        the base class for stdlib's own `sys.stderr` write — UNLESS
+        `sys.stderr` is currently `self.stream` (#6134): the SAME
+        redirect window `litellm_bootstrap.py` opens around the litellm
+        import (`redirect_stderr(handler.stream)`, to keep a chatty
+        import's own stray output off the real terminal — #5989 PR1's
+        `capture_stray_output` widening handles every OTHER window, but
+        cannot see this one, since inside it `sys.stderr` genuinely IS
+        the log stream, not a capture proxy) makes `self.stream` and
+        `sys.stderr` the SAME object precisely while THIS handler is
+        failing. Calling the base class's `handleError` there would write
+        `--- Logging error ---` + a traceback into the very file whose
+        `emit()` just failed — the exact shape this file's own module
+        docstring forbids ("must NOT depend on the very handler that is
+        failing"), and no less broken for going through `sys.stderr`
+        instead of `self` directly. The discriminator is observable, not
+        intentional: `is` identity between the two objects, checked
+        fresh on every failure (never cached — the redirect window opens
+        and closes around one import, so the identity is only true
+        inside it). The fallback write above has ALREADY happened by
+        this point regardless of which branch runs below, so skipping
+        the base call here loses nothing — three real destinations exist
+        (the real terminal, `capture_stray_output`'s capture buffer, and
+        this handler's own failing stream), and this guard is what keeps
+        the third from ever being written to."""
         try:
             self._record_fallback(record)
         except Exception:
@@ -142,7 +160,8 @@ class FailureFallbackRotatingFileHandler(logging.handlers.RotatingFileHandler):
             # matching every OTHER diagnostic writer in this codebase
             # (write_record, StallDumpArm's own callers).
             pass
-        super().handleError(record)
+        if sys.stderr is not self.stream:
+            super().handleError(record)
 
     def _record_fallback(self, record: logging.LogRecord) -> None:
         if not self._fallback_path:
