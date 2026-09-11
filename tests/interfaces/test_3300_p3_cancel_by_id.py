@@ -408,10 +408,38 @@ def test_remote_queue_view_apply_inbox_cancel_removes_by_msg_id():
     assert removed is True
     assert [i["msg_id"] for i in view.queue()] == ["m2"]
 
-    # stale/duplicate cancel delta (seq not strictly greater) is a no-op.
-    stale = view.apply_inbox_cancel(msg_id="m2", seq=2)
-    assert stale is False
-    assert [i["msg_id"] for i in view.queue()] == ["m2"]
+
+def test_remote_queue_view_apply_inbox_cancel_recovers_a_delta_delayed_past_a_snapshot():
+    """Tier 1: #5989 ④ (lead-coder review, BLOCKING on PR #6123, then
+    resolved with architect — https://github.com/tya5/reyn/issues/5989):
+    the OLD version of this test used ``m1``'s cancel (seq=3) to reach
+    ``_last_seq == 3`` and then replayed ``m2``'s OWN already-consumed
+    seq (2) against it, naming that a "stale/duplicate" that must no-op —
+    but a single monotonic seq counter, one event loop, same session,
+    never actually produces two DIFFERENT deltas racing out of order that
+    way; that arrangement was not a real protocol state.
+
+    The REAL state this predicate answers for is reached only via a
+    ``snapshot`` whose own ``queue_seq`` already supersedes ``m2``'s own
+    (real, seq=2) cancel — e.g. a reconnect snapshot taken after some
+    LATER event (queue_seq=3), while ``m2``'s own cancel, generated
+    BEFORE that snapshot, is still in flight and arrives after it. Same
+    root cause :meth:`apply_turn_started`'s own ``stuck`` exception exists
+    for (#5989 ③/④): ``apply_snapshot`` is the only ``_last_seq`` writer
+    that ASSIGNS rather than advances, and ``inbox_cancel`` is a one-shot,
+    per-msg_id edge the server never resends — so a rejected cancel of
+    this shape has no OTHER delta that will ever remove ``m2``; it would
+    stay queued forever. The fix applies it instead."""
+    view = RemoteQueueView()
+    view.apply_snapshot(
+        queue=[{"msg_id": "m2", "chain_id": "c2", "text": "bye"}],
+        turn_active=False, queue_seq=3,
+    )
+
+    recovered = view.apply_inbox_cancel(msg_id="m2", seq=2)
+
+    assert recovered is True, "m2's own delayed cancel must be applied, not dropped"
+    assert view.queue() == [], "m2 must not stay queued forever"
 
 
 @pytest.mark.asyncio
