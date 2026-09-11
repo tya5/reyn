@@ -22,6 +22,10 @@ def test_constructing_a_session_does_not_create_child_temp_dir(tmp_path: Path) -
         session_id=session_id,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / ".reyn" / "agents" / "test-agent" / "state" / "snapshot.json",
+        # #6151: this test's own subject IS the production child_temp_dir
+        # FORMULA (asserted against `temp_dir` above) — opt out of
+        # make_session's default per-call isolation so it stays exposed.
+        isolate_child_temp_dir=False,
     )
 
     assert not temp_dir.exists()

@@ -7,6 +7,7 @@ compaction tests — no unittest.mock).
 from __future__ import annotations
 
 import contextlib
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,6 +80,7 @@ def make_session(
     state_log: StateLog | None = None,
     snapshot_path: Path | None = None,
     resolver: ModelResolver | None = None,
+    isolate_child_temp_dir: bool = True,
 ) -> Session:
     """Create a Session whose compaction engine uses a synthetic T_max.
 
@@ -108,6 +110,17 @@ def make_session(
     ``test_skill_invoke_3100.py`` did. Making them explicit optional
     overrides removes that duplication incentive without changing behaviour
     for the 15 existing call sites, none of which pass any of the three.)
+
+    ``isolate_child_temp_dir`` (#6151): DEFAULT True. This helper's own
+    default ``agent_name="default"`` PLUS its ``build_recovery(...)`` call
+    below hardcoding ``"main"`` (not even parameterizable through this
+    signature) means every call site that omits ``agent`` resolves to the
+    SAME real filesystem ``Session._child_temp_dir`` —
+    ``<tempdir>/reyn/default/main`` — a second instance of the SAME defect
+    class ``tests/_support/agent_session.py::make_session`` fixes (#6151):
+    unrelated tests in different `-n auto` workers collided on that one
+    shared directory. Pass ``isolate_child_temp_dir=False`` only if a
+    test's own subject is the raw, unoverridden formula itself.
     """
     if agent is None:
         # Agent is the sole identity SSoT (#3133 Priority-0 step-2 removed
@@ -153,6 +166,12 @@ def make_session(
     # test: the lazy build stays lazy, genuinely exercised, wherever it
     # happens to fire.
     monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
+    # #6151: see this function's own docstring -- isolates the shared
+    # `<tempdir>/reyn/default/main` formula by default, same escape hatch
+    # (`isolate_child_temp_dir=False`) as agent_session.py's make_session.
+    child_temp_dir = (
+        tempfile.mkdtemp(prefix="reyn-test-child-") if isolate_child_temp_dir else None
+    )
     return Session(
         agent=agent,
         generation_store=generation_store,
@@ -164,6 +183,7 @@ def make_session(
         snapshot_path=snapshot_path,
         resolver=resolver or TEST_MODEL_RESOLVER,
         reactivity=ReactivityConfig(),
+        child_temp_dir=child_temp_dir,
     )
 
 
