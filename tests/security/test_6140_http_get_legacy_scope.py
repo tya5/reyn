@@ -189,14 +189,21 @@ def test_the_legacy_grant_is_indexed_per_host_not_under_the_bare_key(
 def test_a_pre_6140_blanket_grant_no_longer_authorises_an_undeclared_host(
     tmp_path: Path,
 ) -> None:
-    """Tier 2: accept -- #6146's own acceptance criterion ⑴: a NON-
-    INTERACTIVE run (``bus=None``) that relied on a pre-#6140 blanket
-    ``web.fetch`` approval to cover an undeclared host now gets a hard
-    ``PermissionError``, not silent success. A real pre-#6140-shaped
-    ledger entry (the bare key, no host) is written directly here --
-    the fixed code path can no longer produce this shape at all -- to
-    reproduce exactly what an operator's already-existing
-    approvals.yaml looks like.
+    """Tier 2: accept -- one branch of #6146's own acceptance criterion
+    ⑴: witnesses, via ``bus=None`` (the narrow fallback route #6150
+    already guards -- NOT a real session's own non-interactive path),
+    that the removed bare-key read is genuinely gone -- the shortest
+    possible witness that ``PermissionError`` is now reached at all.
+    A REAL session's non-interactive route (no listener -> bus IS
+    present -> ``AuditOnlyInterventionBridge``'s own typed refusal ->
+    ``_approve()`` returns ``False`` -> ``PermissionError("... denied.")``)
+    is OUTSIDE what this test covers -- the sibling test below,
+    ``..._no_longer_short_circuits_the_interactive_prompt`` (a real
+    bus, ``bus.requests`` non-empty), is the live-route witness. A real
+    pre-#6140-shaped ledger entry (the bare key, no host) is written
+    directly here -- the fixed code path can no longer produce this
+    shape at all -- to reproduce exactly what an operator's already-
+    existing approvals.yaml looks like.
 
     FALSIFY: restoring the removed bare-key short-circuit (checking
     ``self._saved.get(KEY_WEB_FETCH)`` and returning early) makes this
@@ -239,11 +246,16 @@ def test_a_web_fetch_always_grant_no_longer_covers_an_undeclared_host(
     tmp_path: Path,
 ) -> None:
     """Tier 2: accept -- #6146's own acceptance criterion ⑴, the SECOND
-    holder shape: a NON-INTERACTIVE run that relied on an ALWAYS answer
-    to the SEPARATE ``web_fetch`` tool prompt (``require_web_fetch``,
-    deliberately untouched -- ``web.fetch`` is the correct key for ITS
-    OWN axis) to implicitly cover an undeclared ``http.get`` host now
-    also gets a hard ``PermissionError``.
+    holder shape: witnesses, via ``bus=None`` (the narrow fallback
+    route #6150 already guards -- NOT a real session's own non-
+    interactive path, see the sibling test above for that distinction),
+    that an ALWAYS answer to the SEPARATE ``web_fetch`` tool prompt
+    (``require_web_fetch``, deliberately untouched -- ``web.fetch`` is
+    the correct key for ITS OWN axis) no longer implicitly covers an
+    undeclared ``http.get`` host -- ``PermissionError`` is reached at
+    all, where it used to return silently. A real session's own non-
+    interactive route (bus present -> refusal -> ``_approve()`` False)
+    is outside what this test covers.
 
     FALSIFY: restoring the removed bare-key short-circuit makes this go
     red -- no ``PermissionError`` is raised."""
