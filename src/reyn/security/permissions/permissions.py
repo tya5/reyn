@@ -1937,9 +1937,14 @@ class PermissionResolver:
           the prompt fires here at the actual host gate. Same
           ``<actor>/http.get/<host>`` persistence; ALWAYS / NEVER
           choices apply per-host.
-        - **No declaration**: legacy ``web.fetch`` compat fallback
-          (deprecation-warned). Will become a hard error in a future
-          release.
+        - **No declaration**: legacy ``web.fetch`` compat fallback — a
+          one-time approval prompt fires on EVERY call (deprecation-
+          warned via ``logger.warning``, #6143). #6143 co-vet: NOT "will
+          become a hard error in a future release" — #5825's own ruling
+          1 (revised, owner-accepted §5) settled that a declaration is
+          opt-in, so nothing here escalates over time; declaring
+          ``http.get`` explicitly only turns the repeat prompt into a
+          standing grant, it does not avert a future failure.
 
         Backward-compat:
 
@@ -2056,20 +2061,31 @@ class PermissionResolver:
 
         # No declaration at all — legacy ``web_fetch`` compat path
         # for the segmented migration window. Actors that previously
-        # relied on the Tier-1 default-allow behaviour still work
-        # while we wait for them to declare ``http.get`` explicitly.
+        # relied on the Tier-1 default-allow behaviour still work: this
+        # prompts (or raises with no bus) EVERY time, below — declaring
+        # ``http.get`` explicitly is what turns the repeat prompt into a
+        # standing grant, never a deadline the operator must beat.
         #
         # #6143: this was `warnings.warn(..., DeprecationWarning)`, which is
         # SILENT here — same reason as the legacy-bool-axis warning above
         # (default filter ignores DeprecationWarning outside ``__main__``,
         # and neither `captureWarnings` nor pytest's `filterwarnings` fixes
-        # that in a real run). This notice tells an operator their config
-        # is about to start failing hard, so it needs `logger.warning` or
-        # stronger.
+        # that in a real run) — promoted to `logger.warning`.
+        #
+        # #6143 co-vet (lead-coder): promoting the CHANNEL was not enough —
+        # the WORDING ("This will become a hard error in a future
+        # release") is false and, now that it actually reaches an
+        # operator, actively misleading: #5825's own ruling 1 (revised,
+        # owner-accepted §5) settled that a declaration is opt-in, so
+        # "declare it or it breaks later" is a conclusion this codebase
+        # does not reach. Rewritten to describe what happens NOW (a
+        # one-time approval prompt every call, below), not a threatened
+        # future this code never enforces.
         logger.warning(
-            "HTTP access to host %r from actor %r without an http.get "
-            "declaration. This will become a hard error in a future "
-            "release. Add to reyn.yaml permissions:\n"
+            "HTTP access to host %r from actor %r has no http.get "
+            "declaration -- prompting for one-time approval (legacy "
+            "compat path). To grant it permanently instead, declare it "
+            "under reyn.yaml's permissions.http.get:\n"
             "  permissions:\n"
             "    http.get:\n"
             "      - host: '*'   # LLM-driven host selection\n"
