@@ -31,6 +31,7 @@ before ever reaching `write()` — passing for the wrong reason entirely
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from reyn.runtime.logging_failure_fallback import (
@@ -210,3 +211,63 @@ def test_stays_a_real_file_handler_for_structural_readers(tmp_path: Path) -> Non
     — this subclass must still satisfy that, unchanged."""
     handler, _logger, _fallback_path = _make_handler(tmp_path)
     assert isinstance(handler, logging.FileHandler)
+
+
+def test_sys_stderr_pointed_at_the_failing_handlers_own_stream_leaves_the_log_byte_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #6134 — inside `litellm_bootstrap.py`'s own
+    `redirect_stderr(handler.stream)` window (opened around the litellm
+    import, `capture_stray_output`'s widening does not cover this window
+    because `sys.stderr` genuinely IS the log stream there, not a capture
+    proxy), `sys.stderr` and this handler's OWN stream are the SAME
+    object. A record that fails to FORMAT (the stream itself stays open
+    and writable throughout — #6132's own UnicodeEncodeError shape, not a
+    broken stream) must not let `logging.Handler.handleError`'s base
+    `sys.stderr.write('--- Logging error ---\\n' + traceback)` leak
+    straight into `reyn.log`'s own bytes — the exact form this file's own
+    module docstring forbids ("must NOT depend on the very handler that
+    is failing").
+
+    `"%d" % "not-a-number"` (bad old-style formatting) is used rather than
+    `_break`'s read-only-reopen: that shape makes `.write()` itself raise
+    before touching the file, which would pass even without #6134's guard
+    for the WRONG reason (nothing ever reached the stream to begin with).
+    Here the stream stays genuinely writable the entire time — only
+    `record.getMessage()` fails — so a leaked banner would actually land
+    real bytes in the file if the guard were absent.
+
+    Strip-falsify (verified by hand, file-internal Edit only, reverted):
+    removing the `if sys.stderr is not self.stream:` guard in
+    `handleError` makes this test fail — the log file gains the
+    `--- Logging error ---` banner's own bytes."""
+    handler, logger, fallback_path = _make_handler(tmp_path)
+    assert not fallback_path.exists()
+
+    reyn_log = Path(handler.baseFilename)
+    logger.warning("a healthy line, written normally")
+    before = reyn_log.read_bytes()
+
+    real_stderr = sys.stderr
+    sys.stderr = handler.stream  # the exact litellm_bootstrap.py redirect window
+    try:
+        logger.warning("%d", "not-a-number")  # getMessage() raises TypeError; stream stays writable
+    finally:
+        sys.stderr = real_stderr
+    handler.stream.flush()  # a leaked write sits in the TextIOWrapper's own
+    # buffer until flushed -- production eventually flushes on any later
+    # successful emit() (StreamHandler.emit() always ends with self.flush()),
+    # so an unflushed leak here would still surface later; flushing now
+    # makes the assertion decisive without depending on a SECOND log call.
+
+    after = reyn_log.read_bytes()
+    assert after == before, (
+        "the failing handler's own log file gained bytes -- handleError's "
+        "base-class sys.stderr write leaked its traceback banner into the "
+        "very file it is supposed to protect"
+    )
+    assert fallback_path.exists(), (
+        "the fallback record must still fire even though the base "
+        "handleError call was skipped -- _record_fallback runs first, "
+        "unconditionally, regardless of the sys.stderr guard below it"
+    )
