@@ -32,6 +32,8 @@ Owner, verbatim:
 
 When `tail` is dominated by one oversized turn, the order is: spill it to shrink it; if it is still too large after spilling, move it into `mid` so `compact()` can fold it. **Owner attaches this as a condition on the SAME sentence, not a separate note**: this ordering only holds if the mid/tail mutual-move infinite loop (a previously-known problem) is resolved — the ordering is not stated as unconditionally safe.
 
+ADR-0044 already excludes this loop by making `mid` a sink (its own wording: "moving a turn out of `mid` without folding it is not a recovery step") — the condition owner attached appears already met by that decision, not by anything this ADR adds.
+
 ### 3. Over-shrinking is rejected
 
 Owner, verbatim:
