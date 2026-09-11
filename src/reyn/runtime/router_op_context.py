@@ -106,6 +106,10 @@ def build_router_op_context(
     from reyn.core.op_runtime.context import OpContext
     from reyn.data.workspace.workspace import Workspace
     from reyn.security.permissions.permissions import PermissionDecl
+    from reyn.security.permissions.posture import (
+        DEFAULT_PERMISSION_MODE,
+        sandbox_mode_for_permission_mode,
+    )
     from reyn.security.sandbox.policy import resolve_sandbox_policy
 
     file_perms = file_permissions or {}
@@ -199,12 +203,24 @@ def build_router_op_context(
         # explicit decision (nothing to read strict FROM), not a silent
         # fallback: this ternary is the ONE place that decision is made, not
         # a repeat of the callee's old default.
+        # #5825 stage 2: `permissions.mode: bounded` SELECTS the
+        # sandbox.mode: strict preset (see `sandbox_mode_for_permission_
+        # mode`'s own docstring — no new preset, "chose, not built"). This
+        # is the REAL enforcement path; `Session.network_enforcement_gap`
+        # resolves the SAME function against the SAME configured mode
+        # (never a second, independently-computed decision) so the Ctx
+        # pane's own gap report and this call's actual policy can never
+        # diverge.
         default_sandbox_policy=resolve_sandbox_policy(
             sandbox_policy,
             write_paths=[str(workspace.base_dir)],
             temp_dir=child_temp_dir_fn() if child_temp_dir_fn is not None else child_temp_dir,
             temp_source="session",
-            mode=sandbox_config.mode if sandbox_config is not None else "compat",
+            mode=sandbox_mode_for_permission_mode(
+                sandbox_config.mode if sandbox_config is not None else "compat",
+                permission_resolver.permission_mode_after_lock()
+                if permission_resolver is not None else DEFAULT_PERMISSION_MODE,
+            ),
         ),
         cancel_event=cancel_event,
         ephemeral=ephemeral,

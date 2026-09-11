@@ -1220,6 +1220,15 @@ def project_remote_snapshot(values: "dict | None") -> dict:
     # (agui/state.py's own project_status).
     if "network_posture_gap" in v:
         out["network_posture_gap"] = v["network_posture_gap"]
+    # #5825 stage 2: same "copied through only when the server sent it"
+    # discipline as network_posture_gap right above — see agui/state.py's
+    # own project_status for the mirrored producing-side comment.
+    if "permission_mode" in v:
+        out["permission_mode"] = v["permission_mode"]
+    if "permission_mode_configured" in v:
+        out["permission_mode_configured"] = v["permission_mode_configured"]
+    if "permission_mode_downgrade_reason" in v:
+        out["permission_mode_downgrade_reason"] = v["permission_mode_downgrade_reason"]
     return out
 
 

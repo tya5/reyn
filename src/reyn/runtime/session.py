@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from reyn.runtime.services.compaction_controller import ForceCompactResult
     from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
     from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
+    from reyn.security.permissions.posture import PermissionMode
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
@@ -8505,6 +8506,22 @@ class Session:
         return self._process_memory_guard
 
     @property
+    def _permission_mode_after_lock(self) -> "PermissionMode":
+        """#5825 stage 2 internal helper: the unbounded-lock-resolved
+        permission mode (:meth:`~reyn.security.permissions.permissions.
+        PermissionResolver.permission_mode_after_lock`), BEFORE the
+        bounded-network-enforcement downgrade :attr:`resolved_permission_mode`
+        layers on top. Shared by :attr:`network_enforcement_gap` (which
+        needs this value to pick the effective sandbox mode) and by
+        :attr:`resolved_permission_mode` itself, so the two can never
+        independently diverge on what "after the stage-1 lock" means."""
+        from reyn.security.permissions.posture import DEFAULT_PERMISSION_MODE
+
+        if self._perm is None:
+            return DEFAULT_PERMISSION_MODE
+        return self._perm.permission_mode_after_lock()
+
+    @property
     def network_enforcement_gap(self) -> "str | None":
         """#5825 item 8 (architect design, 2026-09-06): whether THIS
         session's resolved sandbox boundary can actually enforce a closed
@@ -8549,12 +8566,25 @@ class Session:
         which differs by that same knob (``error`` refuses the exec;
         otherwise it runs unsandboxed under Noop).
 
-        Memoized on the ``_sandbox_config`` OBJECT's identity, not on a
-        clock: a hot-reload re-assigns that object, so a changed config is
-        a different object and recomputes, while a per-frame read of an
-        unchanged one costs a dict lookup. The first computation can run a
-        real self-test probe (measured ~100 ms cold, ~47 µs warm), which is
-        not something a render path should pay repeatedly."""
+        Memoized on the ``_sandbox_config`` OBJECT's identity AND
+        :attr:`_permission_mode_after_lock` (#5825 stage 2 — ``bounded``
+        changes the EFFECTIVE sandbox mode this gap resolves under, via
+        ``sandbox_mode_for_permission_mode``). ``permissions.mode`` itself
+        does **not** hot-reload today (#2073's own OUT-set — ``reyn.yaml``'s
+        security/permission/sandbox/budget keys — is restart-only; the
+        file-split IS the write-gate boundary, owner-confirmed #2073). This
+        extra key is a defence for a write path that does not exist yet,
+        not a fix for one that does: keying on `_permission_mode_after_lock`
+        too costs nothing today (identical `sandbox_config` identity means
+        an identical mode, so the added comparison is a no-op) and means a
+        FUTURE runtime write to `permissions.mode` — should one ever land —
+        cannot silently serve a stale gap across it. Not on a clock: a
+        config change re-assigns the `_sandbox_config` object, so a changed
+        config is a different object and recomputes, while a per-frame read
+        of an unchanged one costs a dict lookup. The first computation can
+        run a real self-test probe (measured ~100 ms cold, ~47 µs warm),
+        which is not something a render path should pay repeatedly."""
+        from reyn.security.permissions.posture import sandbox_mode_for_permission_mode
         from reyn.security.sandbox import select_backend
         from reyn.security.sandbox.policy import (
             SandboxPolicy,
@@ -8564,8 +8594,16 @@ class Session:
         )
 
         sandbox_config = self._sandbox_config
+        # #5825 stage 2: the cache key must ALSO cover the permission mode
+        # (after the stage-1 lock) — `bounded` changes the effective
+        # sandbox mode this gap resolves under (see `effective_sandbox_mode`
+        # below). `permissions.mode` does NOT hot-reload today (#2073's
+        # restart-only OUT-set); this is a defence for a write path that
+        # does not exist yet, not a response to one that does — see this
+        # property's own docstring.
+        permission_mode = self._permission_mode_after_lock
         cached = getattr(self, "_network_gap_cache", None)
-        if cached is not None and cached[0] is sandbox_config:
+        if cached is not None and cached[0] is sandbox_config and cached[2] == permission_mode:
             return cached[1]
 
         injected = self._sandbox_backend
@@ -8577,10 +8615,20 @@ class Session:
         else:
             backend, unavailable = select_backend(sandbox_config)
 
+        # #5825 stage 2: `bounded` SELECTS the sandbox.mode: strict preset
+        # (see `sandbox_mode_for_permission_mode`'s own docstring) — this
+        # gap check must resolve the policy under the SAME effective mode
+        # the real exec path (router_op_context.py) will actually use, or
+        # a `bounded` session's own gap would silently read as "compat"
+        # here while the real path enforces "strict" (or the reverse).
+        effective_sandbox_mode = sandbox_mode_for_permission_mode(
+            sandbox_config.mode if sandbox_config is not None else "compat",
+            permission_mode,
+        )
         policy = SandboxPolicy(**resolve_sandbox_policy(
             sandbox_config.policy if sandbox_config is not None else None,
             temp_source="session",
-            mode=sandbox_config.mode if sandbox_config is not None else "compat",
+            mode=effective_sandbox_mode,
         ))
 
         gap: "str | None"
@@ -8610,8 +8658,104 @@ class Session:
         else:
             gap = None
 
-        self._network_gap_cache = (sandbox_config, gap)
+        self._network_gap_cache = (sandbox_config, gap, permission_mode)
         return gap
+
+    @property
+    def configured_permission_mode(self) -> "PermissionMode":
+        """#5825 stage 2: this session's own ``permissions.mode``, exactly
+        as WRITTEN — the RAW parsed value, with NEITHER the stage-1
+        ``unbounded``-lock downgrade NOR the stage-2 ``bounded``-network-
+        enforcement downgrade applied (see :meth:`~reyn.security.
+        permissions.permissions.PermissionResolver.configured_permission_mode`'s
+        own docstring). Deliberately pre-lock: :attr:`resolved_permission_mode`
+        needs a raw-vs-effective PAIR to make either downgrade visible at
+        all on this same surface — if this property already absorbed the
+        lock, the unbounded-lock downgrade would be invisible here (both
+        sides would read ``ask``). A thin, unconditional pass-through to
+        the resolver — ``ask`` (the same
+        :data:`~reyn.security.permissions.posture.DEFAULT_PERMISSION_MODE`
+        stage 1 already uses) when this session has no
+        ``PermissionResolver`` at all (a bare/test session)."""
+        from reyn.security.permissions.posture import DEFAULT_PERMISSION_MODE
+
+        if self._perm is None:
+            return DEFAULT_PERMISSION_MODE
+        return self._perm.configured_permission_mode()
+
+    @property
+    def resolved_permission_mode(self) -> "PermissionMode":
+        """#5825 stage 2 (architect ruling): the EFFECTIVE
+        ``permissions.mode`` for this session — ``bounded``'s own
+        configured value, downgraded to ``ask`` when the resolved
+        sandbox boundary cannot actually enforce network
+        (:attr:`network_enforcement_gap` is not ``None``). Doc §6's own
+        framing: ``bounded`` is a TRADE, not a strictness notch — the
+        prompt is removed BECAUSE the boundary replaces it; if there is
+        no boundary, the trade is void. Every other mode passes through
+        :attr:`configured_permission_mode` unchanged.
+
+        **Stage 2 is DISPLAY-ONLY.** This property's only reader today is
+        the ``project_status``/Ctx-pane row (``status.py``'s
+        ``permission_mode`` key) — no prompt-issuing consumer reads it
+        yet, so "the trade is void" does not yet mean "the prompt comes
+        back" in this stage; that consumer is stage 3's own scope. Do not
+        read this property's ``ask`` return as proof a prompt will fire.
+
+        Derived from :attr:`network_enforcement_gap` — the SAME 2 pure
+        functions (``launcher.resolve_backend`` + ``policy.
+        resolve_sandbox_policy``) that property itself reads, never a
+        second, independently-computed check (architect's own deny-side
+        acceptance criterion: two judgment paths would let the Ctx pane
+        and the real enforcement decision diverge — #5825 stage 1's own
+        sticky-OR lesson, applied here in reverse: one source, many
+        readers). Layers on top of the stage-1 ``unbounded``-lock downgrade
+        (:meth:`~reyn.security.permissions.permissions.PermissionResolver.
+        permission_mode_after_lock`, read via :attr:`_permission_mode_after_lock`)
+        — the two downgrades apply in sequence, never independently, so a
+        locked-``unbounded`` session that also asked for ``bounded`` is
+        impossible by construction (the lock only ever fires on
+        ``unbounded`` itself)."""
+        from reyn.security.permissions.posture import PermissionMode
+
+        locked = self._permission_mode_after_lock
+        if locked is PermissionMode.BOUNDED and self.network_enforcement_gap is not None:
+            return PermissionMode.ASK
+        return locked
+
+    @property
+    def permission_mode_downgrade_reason(self) -> "str | None":
+        """#5825 stage 2: the human-readable reason
+        :attr:`resolved_permission_mode` differs from
+        :attr:`configured_permission_mode` — ``None`` when there is no
+        downgrade. Feeds the Ctx-pane row ``chrome.py``'s
+        ``_permission_mode_line`` renders (architect: "the surface is
+        already in place for the network axis alone — mode's own
+        downgrade was the missing half").
+
+        Two downgrade paths exist, both already fully decided elsewhere —
+        this property only NAMES which one fired, it makes no new
+        judgment:
+
+        - ``bounded`` → ``ask`` (this stage): the reason IS
+          :attr:`network_enforcement_gap`'s own string — the identical
+          text the "network" row already shows, so the two rows read as
+          one coherent fact rather than two independently-worded ones.
+        - ``unbounded`` → ``ask`` (stage 1's lock): a fixed, stage-1-
+          authored string — that downgrade's own reason is a single
+          config fact (``disable_unbounded_mode``), not a live read, so
+          there is nothing further to compute here."""
+        from reyn.security.permissions.posture import PermissionMode
+
+        configured = self.configured_permission_mode
+        resolved = self.resolved_permission_mode
+        if configured is resolved:
+            return None
+        if configured is PermissionMode.BOUNDED:
+            return self.network_enforcement_gap
+        if configured is PermissionMode.UNBOUNDED:
+            return "disabled by permissions.disable_unbounded_mode"
+        return None
 
     @property
     def halted_reason(self) -> "str | None":
