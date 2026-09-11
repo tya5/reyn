@@ -98,6 +98,40 @@ def test_parse_error_skipped_with_warning(tmp_path, monkeypatch, caplog):
     assert os.environ.get("REYN_TEST_GOOD") == "ok"
 
 
+def test_parse_error_warning_does_not_leak_the_raw_line(tmp_path, monkeypatch, caplog):
+    """Tier 2: #6149 BLOCKING (security) — a malformed secrets.env line
+    (missing '=', or an empty key such as `=SECRET_TOKEN_VALUE`) MUST NOT
+    have its raw text echoed into `reyn.log`. Before this fix the two
+    warnings below both formatted `%r, raw_line` — logging the line
+    VERBATIM, which for the `no '='` case is exactly a bare token/secret
+    pasted on its own line, and for the empty-key case is `=<value>`, the
+    value itself. The operator needs the line NUMBER and the REASON, not
+    the secret. Positive witness (not just "doesn't crash"): assert the
+    literal marker text used for both malformed lines below is ABSENT
+    from every captured record's message."""
+    secrets = tmp_path / "secrets.env"
+    _write_secrets(
+        secrets,
+        "SENTINEL_BARE_SECRET_TOKEN_XYZ\n"
+        "=SENTINEL_EMPTY_KEY_SECRET_ABC\n"
+        "REYN_TEST_GOOD=ok\n",
+    )
+    monkeypatch.delenv("REYN_TEST_GOOD", raising=False)
+
+    with caplog.at_level(logging.WARNING):
+        load_secrets_to_environ(path=secrets)
+
+    # Both malformed lines were caught (line-number-and-reason still present).
+    assert any("no '='" in r.message for r in caplog.records)
+    assert any("empty key" in r.message for r in caplog.records)
+    # Neither secret sentinel reached the log, in any record.
+    joined = "\n".join(r.message for r in caplog.records)
+    assert "SENTINEL_BARE_SECRET_TOKEN_XYZ" not in joined
+    assert "SENTINEL_EMPTY_KEY_SECRET_ABC" not in joined
+    # Good line still loaded.
+    assert os.environ.get("REYN_TEST_GOOD") == "ok"
+
+
 def test_chmod_warning_on_world_readable(tmp_path, monkeypatch, caplog):
     """Tier 2: world-readable secrets.env emits a warning and is auto-chmod'd to 600."""
     secrets = tmp_path / "secrets.env"

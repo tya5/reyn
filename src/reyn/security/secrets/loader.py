@@ -88,16 +88,16 @@ def _parse_dotenv(text: str) -> list[tuple[str, str]]:
             # (silent outside `__main__`, and never reached the screen
             # even when the category was visible).
             _log.warning(
-                "secrets.env line %d: no '=' found, skipping: %r",
-                lineno, raw_line,
+                "secrets.env line %d: no '=' found, skipping",
+                lineno,
             )
             continue
         key, _, raw_val = line.partition("=")
         key = key.strip()
         if not key:
             _log.warning(
-                "secrets.env line %d: empty key, skipping: %r",
-                lineno, raw_line,
+                "secrets.env line %d: empty key, skipping",
+                lineno,
             )
             continue
         # Strip inline comments on unquoted values
