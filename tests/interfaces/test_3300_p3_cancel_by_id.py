@@ -440,11 +440,12 @@ def test_remote_queue_view_apply_inbox_cancel_recovers_a_stuck_item():
       (a) still list ``m2`` in ``queue`` and (b) reflect a ``queue_seq``
       that already accounts for ``m2``'s own cancel. This rules out the
       ``apply_snapshot`` shape.
-    - The out-of-order pair of DELTAS shape is excluded SEPARATELY — by
-      the monotonic single-counter emission order (a single session, one
-      event loop, one ``_queue_seq`` counter never actually emits two
-      DIFFERENT deltas racing out of order that way), not by the prune
-      ordering above.
+    - The out-of-order pair of DELTAS shape rests on a SEPARATE argument,
+      not on the prune ordering above: a single session with one event
+      loop and one ``_queue_seq`` counter EMITS deltas in seq order. That
+      covers EMISSION only — whether the transport can DELIVER two
+      deltas to a client out of that order was NOT verified during PR
+      #6123 review. Recorded here as unverified, not as established.
 
     Neither exclusion is a demonstrated path to the state under test —
     the server-side path that produces this state remains UNIDENTIFIED as

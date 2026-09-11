@@ -439,10 +439,13 @@ class RemoteQueueView:
         ``Session._commit_mid_turn_injection``'s ``await self._journal.
         consume_inbox(msg_id=msg_id)`` is immediately followed by
         ``self._audit_events.emit("turn_started", ..., seq=self.
-        _bump_queue_seq())``; ``InboxArbiter.drain_to_wake``'s own
-        ``await self._journal.consume_inbox(msg_id=msg_id_nb)`` is
-        followed, with no await in between, by the caller's own
-        ``turn_started`` emit once ``drain_to_wake`` returns. Do not
+        _bump_queue_seq())``; both of ``InboxArbiter.drain_to_wake``'s own
+        prune sites — the common trigger path, ``_journal_and_filter``'s
+        ``await self._journal.consume_inbox(msg_id=msg_id)``, and the
+        non-blocking ride-along branch's ``await self._journal.
+        consume_inbox(msg_id=msg_id_nb)`` — are each followed, with no
+        await in between, by the caller's own ``turn_started`` emit once
+        ``drain_to_wake`` returns. Do not
         re-derive or re-assert the withdrawn scenario from this
         docstring).
 
