@@ -37,7 +37,8 @@ def _run_git(repo_root: Path, *args: str) -> "str | None":
     (git missing, not a repo, no commits yet, ...) — never raises."""
     try:
         result = subprocess.run(
-            ["git", *args], cwd=repo_root, capture_output=True, text=True, timeout=10,
+            ["git", *args], cwd=repo_root, capture_output=True, text=True,
+            encoding="utf-8", timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
