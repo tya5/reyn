@@ -10,8 +10,9 @@ Covers:
   {type:image_url, ...}] returns positive int.
 - hard_truncate_summary: input > budget → output ≤ budget; input ≤ budget →
   identity.
-- 1-turn escape hatch (Axis 7): oversized turn → turn_too_large_truncated event
-  emitted, turn truncated and included.
+- 1-turn escape hatch (Axis 7): oversized turn → turn_kept_whole_over_budget
+  event emitted (#6154 — renamed from turn_too_large_truncated, which never
+  actually truncated), turn kept WHOLE and included.
 - new_msg_exceeds_budget abort (Axis 11): raises NewMsgExceedsBudgetError, event
   emitted.
 - #1128 PR-a: the Axis-8 compaction_lock was removed (it was vestigial — no
@@ -474,38 +475,42 @@ def test_hard_truncate_summary_no_event_when_within_budget() -> None:
 
 
 def test_trim_head_oversized_turn_event_has_required_fields() -> None:
-    """Tier 2: turn_too_large_truncated event has turn_seq, original_tokens,
-    kept_tokens, budget_kind fields (Axis 7 spec).
+    """Tier 2: turn_kept_whole_over_budget event (#6154 -- renamed from
+    turn_too_large_truncated) has turn_seq, group_tokens, budget,
+    budget_kind fields (Axis 7 spec; field names aligned with the sibling
+    tool_cycle_kept_whole_over_budget event, #6154).
     """
     events = EventLog()
     collected = collect_events(events)
     turns = [{"role": "user", "text": "x" * 4000, "seq": 42}]
     trim_head(turns, max_tokens=10, model="", use_chars4=True, events=events)
     ev = next(
-        (e for e in collected if e.type == "turn_too_large_truncated"), None
+        (e for e in collected if e.type == "turn_kept_whole_over_budget"), None
     )
     assert ev is not None
     assert ev.data["turn_seq"] == 42
-    assert ev.data["original_tokens"] > 0
-    assert ev.data["kept_tokens"] == 10
+    assert ev.data["group_tokens"] > 0
+    assert ev.data["budget"] == 10
     assert ev.data["budget_kind"] == "head"
 
 
 def test_trim_tail_oversized_turn_event_has_required_fields() -> None:
-    """Tier 2: turn_too_large_truncated event has turn_seq, original_tokens,
-    kept_tokens, budget_kind fields (Axis 7 spec).
+    """Tier 2: turn_kept_whole_over_budget event (#6154 -- renamed from
+    turn_too_large_truncated) has turn_seq, group_tokens, budget,
+    budget_kind fields (Axis 7 spec; field names aligned with the sibling
+    tool_cycle_kept_whole_over_budget event, #6154).
     """
     events = EventLog()
     collected = collect_events(events)
     turns = [{"role": "user", "text": "x" * 4000, "seq": 99}]
     trim_tail(turns, max_tokens=10, model="", use_chars4=True, events=events)
     ev = next(
-        (e for e in collected if e.type == "turn_too_large_truncated"), None
+        (e for e in collected if e.type == "turn_kept_whole_over_budget"), None
     )
     assert ev is not None
     assert ev.data["turn_seq"] == 99
-    assert ev.data["original_tokens"] > 0
-    assert ev.data["kept_tokens"] == 10
+    assert ev.data["group_tokens"] > 0
+    assert ev.data["budget"] == 10
     assert ev.data["budget_kind"] == "tail"
 
 

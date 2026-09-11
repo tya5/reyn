@@ -68,7 +68,9 @@ def test_trim_head_empty_input() -> None:
 
 def test_trim_head_single_oversized_turn_emits_event() -> None:
     """Tier 2: when a single turn exceeds max_tokens, trim_head includes it
-    (bounded to the cap internally) and emits turn_too_large_truncated (Axis 7).
+    WHOLE (never split or truncated, #2289 keep-whole) and emits
+    turn_kept_whole_over_budget (Axis 7; #6154 -- renamed from
+    turn_too_large_truncated, which never actually truncated).
 
     Degenerate case: a single turn alone exceeds the cap.  trim_head must
     still return the turn (= not zero, which would leave no head at all) and
@@ -82,9 +84,9 @@ def test_trim_head_single_oversized_turn_emits_event() -> None:
     turns = _turns(["x" * 4000])
     result = trim_head(turns, max_tokens=10, events=events)
     assert len(result) >= 1, "degenerate single-turn must still be included"
-    trunc_events = [e for e in collected if e.type == "turn_too_large_truncated"]
-    assert trunc_events, "must emit turn_too_large_truncated for oversized turn"
-    assert trunc_events[0].data["budget_kind"] == "head"
+    kept_whole_events = [e for e in collected if e.type == "turn_kept_whole_over_budget"]
+    assert kept_whole_events, "must emit turn_kept_whole_over_budget for oversized turn"
+    assert kept_whole_events[0].data["budget_kind"] == "head"
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +123,9 @@ def test_trim_tail_empty_input() -> None:
 
 
 def test_trim_tail_single_oversized_turn_emits_event() -> None:
-    """Tier 2: when a single tail turn exceeds max_tokens, it is included and
-    turn_too_large_truncated is emitted (Axis 7).
+    """Tier 2: when a single tail turn exceeds max_tokens, it is included
+    WHOLE and turn_kept_whole_over_budget is emitted (Axis 7; #6154 --
+    renamed from turn_too_large_truncated).
     """
     from reyn.core.events.events import EventLog
     from tests._support.events import collect_events
@@ -131,9 +134,9 @@ def test_trim_tail_single_oversized_turn_emits_event() -> None:
     turns = _turns(["x" * 4000])
     result = trim_tail(turns, max_tokens=10, events=events)
     assert len(result) >= 1
-    trunc_events = [e for e in collected if e.type == "turn_too_large_truncated"]
-    assert trunc_events
-    assert trunc_events[0].data["budget_kind"] == "tail"
+    kept_whole_events = [e for e in collected if e.type == "turn_kept_whole_over_budget"]
+    assert kept_whole_events
+    assert kept_whole_events[0].data["budget_kind"] == "tail"
 
 
 # ---------------------------------------------------------------------------

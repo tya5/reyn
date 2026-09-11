@@ -112,8 +112,9 @@ def test_trim_tail_includes_whole_cycle_when_it_fits():
 
 def test_over_budget_single_cycle_kept_whole_with_new_event():
     """Tier 2: a single tool cycle alone exceeding the budget is kept WHOLE (no split, no result
-    loss) and emits ``tool_cycle_kept_whole_over_budget`` — NOT ``turn_too_large_truncated`` (it is
-    not a truncation)."""
+    loss) and emits ``tool_cycle_kept_whole_over_budget`` — NOT ``turn_kept_whole_over_budget``
+    (#6154 -- renamed from ``turn_too_large_truncated``; the two kinds stay mutually exclusive,
+    routed by whether the over-budget group is a tool cycle or a plain singleton)."""
     turns = [_asst_tc("t1", 80, 1), _tool("t1", 80, 2)]  # 20 + 20 = 40 tokens, alone > 25
     events = EventLog()
     collected = collect_events(events)
@@ -121,18 +122,20 @@ def test_over_budget_single_cycle_kept_whole_with_new_event():
     assert [t["seq"] for t in head] == [1, 2], "the whole cycle survives (call + result), over budget"
     kinds = [e.type for e in collected]
     assert "tool_cycle_kept_whole_over_budget" in kinds, "the keep-whole event is emitted"
-    assert "turn_too_large_truncated" not in kinds, "it is NOT reported as a truncation (no loss)"
+    assert "turn_kept_whole_over_budget" not in kinds, "the non-cycle sibling event must not ALSO fire"
 
 
-def test_over_budget_non_cycle_turn_keeps_legacy_truncated_event():
-    """Tier 2: a single non-cycle turn over budget keeps the existing ``turn_too_large_truncated``
-    event (backward-compat — the group change only adds the cycle case)."""
+def test_over_budget_non_cycle_turn_emits_kept_whole_event():
+    """Tier 2: a single non-cycle turn over budget emits ``turn_kept_whole_over_budget``
+    (#6154 -- renamed from ``turn_too_large_truncated``, which had named the OPPOSITE of what this
+    branch does: the turn is kept WHOLE, nothing is truncated -- the group change only adds the
+    cycle case, this singleton path is unchanged behaviour)."""
     turns = [_user(200, 1)]  # 50 tokens alone > 25
     events = EventLog()
     collected = collect_events(events)
     trim_head(turns, max_tokens=25, model=_M, use_chars4=True, events=events)
     kinds = [e.type for e in collected]
-    assert "turn_too_large_truncated" in kinds
+    assert "turn_kept_whole_over_budget" in kinds
     assert "tool_cycle_kept_whole_over_budget" not in kinds
 
 

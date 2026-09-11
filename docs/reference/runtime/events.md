@@ -281,10 +281,10 @@ tool_result_write_unavailable
 tool_returned
 turn_cancelled
 turn_completed
+turn_kept_whole_over_budget
 turn_settled
 turn_started
 turn_stopped_memory
-turn_too_large_truncated
 untrusted_narrowing_engaged
 untrusted_narrowing_lifted
 user_answered_intervention
