@@ -23,6 +23,17 @@ match (`test_a_user_warning_or_omitted_category_is_never_counted`
 inverted into `test_every_warnings_warn_call_is_counted_regardless_of_
 category`, and the shipped-table tests now check the 18
 `#6145`-tracked pre-existing entries rather than an empty table).
+
+#6144 co-vet round 3 (lead-coder): v2's `(relpath, lineno)` key was
+ITSELF gameable -- not by an author dodging the gate, but by an
+ordinary edit: an exempted site moves down (any edit above it does
+this), and a genuinely NEW, unaudited `warnings.warn` lands on the now-
+vacant line number, silently inheriting the old exemption. Position
+alone is not identity. The key gained a 3rd coordinate,
+`message_template` (the message argument with every f-string expression
+normalised to `"{}"`, truncated to 40 chars) -- `test_a_different_
+message_at_an_exempted_line_is_not_silently_exempted` below is the
+direct witness for exactly the scenario lead-coder described.
 """
 # EXEMPT: the sys.executable spawns below run entry.py/entry_direct_warn.py,
 # throwaway fixture modules under production_filter_witness/ that only call
@@ -57,7 +68,7 @@ def test_every_silent_by_default_category_is_counted():
     4 by name so a category this detector fails to recognise cannot hide
     behind an aggregate count."""
     sites = silent_category_sites(_FIXTURES / "silent_categories.py", root=_FIXTURES)
-    categories = sorted(category for _, _, category in sites)
+    categories = sorted(category for _, _, category, _ in sites)
     assert categories == [
         "DeprecationWarning",
         "DeprecationWarning",
@@ -73,7 +84,7 @@ def test_keyword_category_form_is_recognised():
     `keyword_deprecation` function is the one keyword-form call among its
     5 total sites."""
     sites = silent_category_sites(_FIXTURES / "silent_categories.py", root=_FIXTURES)
-    lines = {lineno for _, lineno, _ in sites}
+    lines = {lineno for _, lineno, _, _ in sites}
     text = (_FIXTURES / "silent_categories.py").read_text(encoding="utf-8")
     keyword_call_line = next(
         i + 1 for i, line in enumerate(text.splitlines()) if "category=DeprecationWarning" in line
@@ -98,7 +109,7 @@ def test_every_warnings_warn_call_is_counted_regardless_of_category():
     sites = silent_category_sites(_FIXTURES / "loud_categories.py", root=_FIXTURES)
     # exactly 2 sites -- unpacking itself raises if the count is off
     (_site_a, _site_b) = sites
-    assert sorted(category for _, _, category in sites) == ["UserWarning", "UserWarning"]
+    assert sorted(category for _, _, category, _ in sites) == ["UserWarning", "UserWarning"]
 
 
 # ── the exception-table arithmetic ───────────────────────────────────────
@@ -106,17 +117,35 @@ def test_every_warnings_warn_call_is_counted_regardless_of_category():
 
 def test_a_site_with_no_table_entry_is_unexplained():
     """Tier 2: the gate's own pass/fail arithmetic -- a measured site
-    absent from `_EXCEPTION_TABLE` is what makes the gate red."""
-    sites = [("some/file.py", 10, "DeprecationWarning")]
+    whose full (relpath, lineno, message_template) key is absent from
+    `_EXCEPTION_TABLE` is what makes the gate red."""
+    sites = [("some/file.py", 10, "DeprecationWarning", "some message")]
     assert unexplained(sites) == sites
 
 
 def test_a_site_matching_a_table_entry_is_explained():
-    """Tier 2: deny side -- a site whose (relpath, lineno) IS in the
-    table is not reported, regardless of the category string (the table
-    key is positional identity, not category)."""
-    sites = [("some/file.py", 10, "DeprecationWarning")]
-    assert unexplained(sites, table={("some/file.py", 10): "reviewed, dev-only"}) == []
+    """Tier 2: deny side -- a site whose (relpath, lineno,
+    message_template) IS in the table is not reported, regardless of the
+    category string (the table key is positional+message identity,
+    never category)."""
+    sites = [("some/file.py", 10, "DeprecationWarning", "some message")]
+    assert unexplained(
+        sites, table={("some/file.py", 10, "some message"): "reviewed, dev-only"},
+    ) == []
+
+
+def test_a_different_message_at_an_exempted_line_is_not_silently_exempted():
+    """Tier 2: the DIRECT witness for #6144 co-vet round 3's own
+    scenario -- an ordinary edit moves an exempted site down, and a
+    genuinely new, unaudited `warnings.warn` lands on the now-vacant
+    line number. Sharing only (relpath, lineno) with a table entry must
+    NOT be enough: the message differs, so the composite key misses, and
+    this new site is unexplained -- exactly what a `(relpath, lineno)`-
+    only key (v2) would have missed."""
+    sites = [("some/file.py", 10, "UserWarning", "a completely different message")]
+    assert unexplained(
+        sites, table={("some/file.py", 10, "the OLD exempted message"): "reviewed, dev-only"},
+    ) == sites
 
 
 def test_the_shipped_exception_table_matches_the_real_measured_population():
@@ -132,7 +161,9 @@ def test_the_shipped_exception_table_matches_the_real_measured_population():
     reference #6145, the tracking issue for auditing and promoting them
     -- never a bare "fine as-is", which #6144's own review already ruled
     none of these currently are."""
-    measured_keys = {(relpath, lineno) for relpath, lineno, _ in measured(REPO_ROOT)}
+    measured_keys = {
+        (relpath, lineno, template) for relpath, lineno, _, template in measured(REPO_ROOT)
+    }
     assert set(_EXCEPTION_TABLE) == measured_keys, (
         f"table declares {set(_EXCEPTION_TABLE) - measured_keys} that no "
         f"longer exist, and is missing {measured_keys - set(_EXCEPTION_TABLE)}"
