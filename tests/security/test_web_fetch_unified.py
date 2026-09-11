@@ -405,13 +405,25 @@ def test_fallback_synthesis_refuses_a_resolver_with_no_router_state(tmp_path: Pa
     elsewhere caught this, but that `RuntimeError` only guards the
     multimodal/binary-media branch (~111 lines later, image responses
     only), never `require_http_get` itself. The fallback now refuses the
-    combination up front instead."""
+    combination up front instead.
+
+    NON-VACUITY (strip-falsified by hand, file-internal Edit only,
+    reverted): removing the new raise makes this test's own call proceed
+    past the guard, reach ``op_runtime/web.py``'s ``_gate_hop``, and hit
+    ``require_http_get(..., bus=None, ...)`` -- which raises
+    ``PermissionError`` on ITS OWN "no interactive bus available"
+    fail-closed path (a real ``events=EventLog()`` is required for the
+    call to get that far at all; a stripped run with ``events=None``
+    only proves the code reaches the FIRST `ctx.events.emit(...)` call,
+    an under-claim caught by lead-coder's own re-read of the first
+    version of this test)."""
+    from reyn.core.events.events import EventLog
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import ToolContext
 
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=True)
     tool_ctx = ToolContext(
-        events=None, permission_resolver=resolver, workspace=None,
+        events=EventLog(), permission_resolver=resolver, workspace=None,
         caller_kind="operator", router_state=None,
     )
 
@@ -428,13 +440,14 @@ def test_fallback_synthesis_refuses_a_resolver_with_a_factory_less_router_state(
     still falls into the SAME fallback branch (`rs.op_context_factory is
     None`), so the same guard must fire -- not only the "router_state is
     None entirely" shape the sibling test above covers."""
+    from reyn.core.events.events import EventLog
     from reyn.security.permissions.permissions import PermissionResolver
     from reyn.tools.types import RouterCallerState, ToolContext
 
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=True)
     rs = RouterCallerState()  # op_context_factory left at its own None default
     tool_ctx = ToolContext(
-        events=None, permission_resolver=resolver, workspace=None,
+        events=EventLog(), permission_resolver=resolver, workspace=None,
         caller_kind="router", router_state=rs,
     )
 
