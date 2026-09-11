@@ -337,10 +337,15 @@ These rules then keep multi-session work coherent:
    backticks broke the regex and left the gate silent for 12 minutes).
    Prose like "no blocking points here" trips it just as a malformed
    marker does, and the script's own log still prints `OK` while the run
-   fails. **From the second line on, both words are free.** Two sessions
-   using this gate daily hit it without knowing the condition existed
-   (2026-08-29 lead-coder, 2026-09-11 architect), which is why it is
-   written here rather than left in the script.
+   fails. **From the second line on, both words are free.** The reason
+   this is written here and not left in the script is not that nobody
+   knew: one of the two sessions that hit it (2026-08-29 lead-coder,
+   2026-09-11 architect) already carried the rule in their own standing
+   checklist, with an instance (#5713) attached, and did not pull it —
+   a checklist read when DISPATCHING work is not reached while
+   DIAGNOSING a red gate. A rule only helps at the moment its reader is
+   already in. This page is read before opening or reviewing a PR, which
+   is where both instances happened.
 
    **A moved head lapses every live marker at once.** The gate asks each
    marker to name the PR's CURRENT head, so a `BLOCKING-CLEARED` or
