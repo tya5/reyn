@@ -67,6 +67,17 @@ new ADR.
 | [0012](0012-auto-resume-default.md) | Auto-resume default + retry policy |
 | [0038](0038-user-facing-time-travel-rewind.md) | User-facing time-travel — global consistent-cut rewind + PITR snapshot generations (**Accepted + Implemented** 2026-06-13) |
 
+### Plan mode — all four SUPERSEDED, mechanism removed by [#1953](https://github.com/tya5/reyn/issues/1953)
+
+These are kept for their historical value (the ADR rule above: a superseded ADR is not deleted). They describe a plan-mode crash-resilience mechanism that PR [#2018](https://github.com/tya5/reyn/pull/2018) removed on 2026-06-21 — read them as a record of what was decided then, never as current behaviour.
+
+| ADR | Topic |
+|---|---|
+| [0022](0022-plan-mode-crash-fail-safe.md) | Plan-mode crash resilience Phase 1 — fail-safe + observability (SUPERSEDED) |
+| [0023](0023-plan-mode-forward-replay.md) | Plan-mode crash resilience Phase 2 — forward replay (SUPERSEDED; was Accepted + Implemented 2026-05-07) |
+| [0024](0024-plan-step-result-spill.md) | Plan step result spill-to-file (R-D10 mirror) (SUPERSEDED) |
+| [0025](0025-plan-step-llm-memoization.md) | Plan-step sub-loop LLM call memoization (R-D2 mirror) (SUPERSEDED) |
+
 ### User intervention
 
 | ADR | Topic |
@@ -107,8 +118,10 @@ new ADR.
 | [0027b](0027b-audit-seal-config-hash-scope.md) | `config_hash` scope for AuditSeal (Proposed, depends on 0027) |
 | [0027c](0027c-audit-seal-plan-mode-integration.md) | `seal_unit` and plan-mode integration for AuditSeal (Proposed, depends on 0027 + 0023) |
 | [0027d](0027d-audit-seal-writer-failure-semantics.md) | AuditContext writer failure semantics (Proposed, depends on 0027) |
+| [0027 (gates)](0027-phase-1-decisions.md) | ADR-0027 Phase 1 pre-implementation user-judgment gates — the five choices 0027a–d each recommend, consolidated into one confirmation checklist (**Pending user confirmation**). ⚠️ Shares the number 0027 with [0027](0027-audit-seal-separation.md) above but is a different document: that one DECIDES the separation, this one collects the questions it leaves to the user |
 | [0029](0029-mcp-install-permission.md) | `mcp_install` permission — install-time gating として permission system に追加 (Proposed) |
 | [0030](0030-universal-secret-handling.md) | Universal secret handling — `${VAR}` 全 yaml + `~/.reyn/secrets.env` + `reyn secret` CLI (Proposed) |
+| [0043](0043-generic-secret-provider-seam.md) | A generic `SecretProvider` seam — NEW consumers only, and the capability gate that already exists gets wired; the `${VAR}` expansion 0030 decides is left untouched (**Accepted** 2026-09-11; extends [0030](0030-universal-secret-handling.md), supersedes nothing; see [#4903](https://github.com/tya5/reyn/issues/4903)) |
 | [0033](0033-rag-extensible-os.md) | RAG-extensible OS — `embed` / `index_*` / `recall` ops + `index_docs` stdlib + `IndexBackend` protocol (**Accepted** 2026-05-10) |
 
 > Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は **`reyn chat` (= local + embedded Web UI server を session bind で同梱) + `reyn serve` (= explicit long-running server、 browser からアクセス)** の 2 commands。 業界慣行 (Ollama / vLLM / LangGraph) の `<tool> serve` pattern に整合、 remote TUI client は workspace location semantics の懸念で当面 scope 外 (= browser remote access で代替、 将来 concrete demand 出たら再判断)。 embedded thesis は `reyn chat` 内に温存。 実現性検討は未着手。
@@ -117,6 +130,7 @@ new ADR.
 
 | ADR | Topic |
 |---|---|
+| [0021](0021-g12-attractor-structural-fix-design.md) | G12 attractor — structural fix design options; detect + explicit failure UX, no auto-rescue (**Accepted**, Option F + Option G, 2026-05-04) |
 | [0035](0035-phase-tool-calls-unification.md) | Phase op-execution via native tool_calls (Phase ↔ chat/planner unification) (**Accepted, fully implemented** 2026-06-02) |
 | [0036](0036-history-compaction-force-close-unification.md) | Chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence) (**Accepted**) — the PR-F2b force-close handoff cap section superseded by [0042](0042-force-close-layer2-removal.md); the rest stands unchanged |
 | [0042](0042-force-close-layer2-removal.md) | force-close layer② removal — spill replaces the consolidate-and-retry path; **layer① (turn-budget force-close) is unaffected and still live** (**Accepted + Implemented** 2026-08-12; supersedes 0036's PR-F2b section only; see [#4381](https://github.com/tya5/reyn/issues/4381)) |

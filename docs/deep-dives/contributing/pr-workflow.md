@@ -77,7 +77,13 @@ catches a dangling *file* reference but never checks whether `#anchor`
 actually exists on the target page, which is `check_doc_anchors.py`'s
 own job, run against the `site/` the mkdocs step just built (#3557/
 #3592: 42/42 line-number citations in `charter.md` had drifted,
-silently, before this script existed); `check_retired_config_keys_denylist.py`
+silently, before this script existed); that same script also carries two link-existence gates over
+`deep-dives/{decisions,proposals,contributing,spec}/` (#4021) and, since
+2026-09-11, an index-coverage gate: **a new ADR under
+`deep-dives/decisions/` needs a row in that directory's own `README.md`**,
+or the run is red (7 of 51 had none when it landed — nothing breaks when
+an ADR is unindexed, it just stops being read);
+`check_retired_config_keys_denylist.py`
 (#4327) is a separate, unrelated check in the same job — a retired
 top-level `reyn.yaml` key (renamed via #4174) must not appear, at
 YAML top level, in operator-facing docs or `reyn.local.yaml.example`.

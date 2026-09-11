@@ -68,6 +68,17 @@ only, no anchor check (there's no built HTML to check an anchor against).
 `main()` runs it first, unconditionally (no `site/` dependency), and folds
 its exit code into the script's own.
 
+## A third gate, same file: `check_decisions_index_coverage`
+
+The two gates above both ask "does this link's target exist". The opposite
+question — "is there a link at all" — is a different defect with the same
+consequence, and neither of them can see it: a directory with zero broken
+links can still hold a document nobody can reach. `check_decisions_index_
+coverage()` derives the ADR set from `deep-dives/decisions/` and fails when
+any of them has no row in that directory's own `README.md` (7 of 51 did when
+it landed, one accepted the same day). It needs no `site/` either, so
+`main()` runs it alongside the other two, before the build-dependent check.
+
 Run standalone: `python scripts/check_doc_anchors.py` (the deep-dives check
 runs immediately; the anchor check below it needs `mkdocs build --strict -f
 .mkdocs/mkdocs.yml` first, which this script assumes already ran and left
@@ -352,12 +363,100 @@ def check_deep_dives_incoming_link_existence() -> int:
     return 0
 
 
+#: Files under `deep-dives/decisions/` that `check_decisions_index_coverage`
+#: deliberately does NOT require an index row for, each with the reason it is
+#: exempt — the `UNSUPPORTED_WRAPPERS` shape (`core/op_runtime/exec_wrappers.py`):
+#: a named entry with a stated reason, never a silent skip. EMPTY today, and
+#: that is the intended steady state: every ADR in that directory is meant to
+#: be reachable from its own README. A future entry is a decision someone has
+#: to write down here, not a file that quietly stops being indexed.
+DECISIONS_INDEX_EXEMPT: dict[str, str] = {}
+
+
+def check_decisions_index_coverage() -> int:
+    """#5989 residue / lead-coder dispatch 2026-09-11: every ADR under
+    `deep-dives/decisions/` must be reachable from that directory's own
+    `README.md` index.
+
+    The two gates above ask "does this link's target exist"; this one asks
+    the opposite question — "is there a link at all". They are not the same
+    check and neither catches the other's defect: a directory can have zero
+    broken links and still hold a document nobody can find. Measured when
+    this gate landed: 7 of 51 ADRs (0021-0025, 0027-phase-1-decisions, 0043)
+    had no row in the index, one of them accepted the same day.
+
+    The failure this closes is silent by construction. Nothing breaks, no
+    build fails, no link dangles — the document simply stops being read.
+    #4021's own motivating instance (ADR-0034 unreadable for three months)
+    was the link-existence half of the same shape; this is the other half.
+
+    Derived, never curated: the file set comes from globbing the directory,
+    so a new ADR is covered the moment it is added, with no list to remember
+    to update (this repo's own completeness discipline — "cover all X" is
+    proved by enumerating the registry, not by a hand-kept subset). A `.ja.md`
+    mirror is excluded as a RULE, not an exemption: the index lists the EN
+    document and the mirror sits beside it, so requiring a second row would
+    make the index list each ADR twice.
+    """
+    decisions = DOCS / "deep-dives" / "decisions"
+    readme = decisions / "README.md"
+    if not readme.is_file():
+        raise SystemExit(f"FATAL: {readme} does not exist — this gate has no index to check against.")
+
+    linked = set(MD_LINK_RE.findall(readme.read_text(encoding="utf-8", errors="replace")))
+    # Normalize a leading `./` so `](./0001-x.md)` and `](0001-x.md)` are the
+    # same target — the index uses the bare form today, and a future `./`
+    # would otherwise read as "not indexed" and fail a correctly-indexed file.
+    linked = {name[2:] if name.startswith("./") else name for name in linked}
+
+    indexable = sorted(
+        path.name
+        for path in decisions.glob("*.md")
+        if path.name != "README.md" and not path.name.endswith(".ja.md")
+    )
+    _require_vacuity_floor(
+        len(indexable), 40,
+        f"Enumerated only {len(indexable)} indexable ADR(s) under {decisions} — "
+        "there were 51 when this gate landed. A glob that silently stops "
+        "matching would let this gate report 'every ADR is indexed' while "
+        "checking almost nothing, which is the exact vacuous-green this "
+        "repo's own test-review question 4 names. The floor is deliberately "
+        "below 51 to tolerate a superseded ADR being folded away, not a pin.",
+    )
+
+    unindexed = [
+        name for name in indexable
+        if name not in linked and name not in DECISIONS_INDEX_EXEMPT
+    ]
+
+    print(f"checked {len(indexable)} ADR(s) under deep-dives/decisions/ for an index row")
+    if DECISIONS_INDEX_EXEMPT:
+        print(f"exempt by name (reason stated in DECISIONS_INDEX_EXEMPT): {len(DECISIONS_INDEX_EXEMPT)}")
+        for name, reason in sorted(DECISIONS_INDEX_EXEMPT.items()):
+            print(f"  {name} — {reason}")
+    if unindexed:
+        print(f"\nNOT_REACHABLE_FROM_INDEX: {len(unindexed)}")
+        for name in unindexed:
+            print(f"  deep-dives/decisions/{name}")
+        print(
+            "\nAdd a row to deep-dives/decisions/README.md's Index, or — if the "
+            "file genuinely should not be listed — add it to "
+            "DECISIONS_INDEX_EXEMPT in this script WITH the reason."
+        )
+        return 1
+
+    print("every ADR under deep-dives/decisions/ is reachable from its README index")
+    return 0
+
+
 def main() -> int:
     # Both run before the SITE check below — neither needs a mkdocs build
     # (#4021 + its follow-up).
     deep_dives_exit = check_deep_dives_link_existence()
     print()
     deep_dives_incoming_exit = check_deep_dives_incoming_link_existence()
+    print()
+    decisions_index_exit = check_decisions_index_coverage()
     print()
 
     if not SITE.is_dir():
@@ -447,7 +546,7 @@ def main() -> int:
         return 1
 
     print("\nno dangling anchors into published pages")
-    return 1 if (deep_dives_exit or deep_dives_incoming_exit) else 0
+    return 1 if (deep_dives_exit or deep_dives_incoming_exit or decisions_index_exit) else 0
 
 
 if __name__ == "__main__":
