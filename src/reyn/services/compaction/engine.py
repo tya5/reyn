@@ -3438,8 +3438,8 @@ class RecoveryLadder:
 
         bg = engine.budgets
         self._bg = bg
-        self._head_min_tokens = bg.head_budget
-        self._tail_min_tokens = bg.tail_budget
+        self._head_tokens_floor = bg.head_budget
+        self._tail_tokens_floor = bg.tail_budget
         self._use_chars4 = cfg.use_chars4_estimate
 
         self._last_recover_cause: str | None = None
@@ -3524,7 +3524,7 @@ class RecoveryLadder:
 
     def _stage_refill_phase1(self) -> bool:
         """ADR-0044 refill, Phase 1: if ``tail`` still holds non-summary
-        content above ``_tail_min_tokens``, trim half of it (skipping any
+        content above ``_tail_tokens_floor``, trim half of it (skipping any
         reserved summary element) into ``raw_middle`` and return ``True``.
         Returns ``False`` (no mutation) when the predicate does not hold —
         this fuses the former bare ``elif`` condition and its body into
@@ -3534,7 +3534,7 @@ class RecoveryLadder:
         the duplication itself pre-dates this PR — see the re-check's own
         comment, unchanged)."""
         if not (
-            _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4) > self._tail_min_tokens
+            _estimate_tokens_list(self.tail, self._model, use_chars4=self._use_chars4) > self._tail_tokens_floor
             and _has_non_summary(self.tail)
         ):
             return False
@@ -3562,7 +3562,7 @@ class RecoveryLadder:
         for ``head`` (prepends into ``raw_middle`` and resets
         ``_compact_attempt_len`` — see the reset's own comment below)."""
         if not (
-            _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4) > self._head_min_tokens
+            _estimate_tokens_list(self.head, self._model, use_chars4=self._use_chars4) > self._head_tokens_floor
             and _has_non_summary(self.head)
         ):
             return False
@@ -3638,11 +3638,11 @@ class RecoveryLadder:
         _cw = self._cfg.component_weights
         _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
         if _head_tail_weight > 0:
-            self._head_min_tokens = int((_cw.get("head", 0) / _head_tail_weight) * _room)
-            self._tail_min_tokens = _room - self._head_min_tokens
+            self._head_tokens_floor = int((_cw.get("head", 0) / _head_tail_weight) * _room)
+            self._tail_tokens_floor = _room - self._head_tokens_floor
         else:
-            self._head_min_tokens = _room // 2
-            self._tail_min_tokens = _room - self._head_min_tokens
+            self._head_tokens_floor = _room // 2
+            self._tail_tokens_floor = _room - self._head_tokens_floor
         # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
         # the shipped config, not just inferable from a shrunk wire):
         # this ladder just lowered the floor below what
@@ -3654,8 +3654,8 @@ class RecoveryLadder:
         self._engine._events.emit(
             "compaction_floor_lowered",
             t_max_override=self._t_max_override,
-            head_min_tokens=self._head_min_tokens,
-            tail_min_tokens=self._tail_min_tokens,
+            head_min_tokens=self._head_tokens_floor,
+            tail_min_tokens=self._tail_tokens_floor,
             configured_head_budget=self._bg.head_budget,
             configured_tail_budget=self._bg.tail_budget,
             saw_byte_limit=self._last_recover_is_byte_limit,
