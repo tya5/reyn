@@ -457,12 +457,20 @@ cover detection.
 
 The same thin client runs two request kinds through one `httpx` client with
 two timeout policies (#5894). The SSE stream keeps an unbounded read
-(`read=None`) — a live stream legitimately reads forever. Every
-client→server **control POST** (a turn submit, an intervention answer, a
-cancel, the heartbeat) is a bounded round-trip and gets its own read timeout,
+(`read=None`) — a live stream legitimately reads forever. A client→server
+**control POST** (a turn submit, an intervention answer, a cancel, the
+heartbeat) is normally a bounded round-trip and gets its own read timeout,
 10s by default (`REYN_AGUI_CONTROL_TIMEOUT_S` overrides it; one constant, one
-place — `remote_client.post_control`). A control POST the server does not
-answer within it is a **non-delivery**, not a wait: `cancel_inflight` returns
+place — `remote_client._read_timeout_for`/`post_control`). **The bound
+applies BY PAYLOAD CLASS, not uniformly (#6083 ⑵-a):** one class
+(`transport.agui.protocol.LONG_RUNNING_PAYLOAD_TYPES`, currently just
+`attach_request`) has a server-side handler whose duration is genuinely
+unbounded (a first-attach session load replaying its persisted WAL history),
+so `_read_timeout_for` returns `None` (matching the SSE stream's own
+unbounded policy) for that class instead of the 10s default — applying the
+bounded default there would misread a slow-but-succeeding attach as a
+timed-out failure. A control POST the server does not answer within its
+(non-`None`) timeout is a **non-delivery**, not a wait: `cancel_inflight` returns
 the empty summary the `ClientTransport` contract reserves for "not
 confirmed", and the Textual TUI draws a row under the `cancel requested…` row
 it drew the instant the key was pressed. Which failure it was is TYPED
