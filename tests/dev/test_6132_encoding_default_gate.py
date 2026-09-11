@@ -19,14 +19,27 @@ requires.
 
 ## Real subprocesses, not in-process
 
-``tests/conftest.py``'s filter (and the ``PYTHONWARNDEFAULTENCODING=1`` env
-CI's ``test.yml`` sets) already covers the real suite — but proving that
-combination CATCHES something needs a controlled, isolated process: the
-flag is latched at interpreter startup (cannot be armed from inside a
-running test), and this file needs to toggle it OFF for one scenario (to
-prove the flag itself is load-bearing, not merely the filter) — something
-only a fresh subprocess can do. ``out_of_process_reyn`` pins each spawn's
-``PYTHONPATH`` to the SAME checkout this test file itself imports (#5028).
+Two different claims need two different rigs:
+
+- The first three scenarios below exercise the raw mechanism (a bare
+  ``warnings.filterwarnings`` + ``PYTHONWARNDEFAULTENCODING``, in an
+  isolated ``sys.executable -c`` script) — proving the flag itself is
+  load-bearing needs toggling it OFF for one scenario, something only a
+  fresh interpreter can do. ``out_of_process_reyn`` pins each spawn's
+  ``PYTHONPATH`` to the SAME checkout this test file itself imports
+  (#5028).
+- The fourth, ``test_a_real_pytest_run_rejects_the_same_omission``, is the
+  one that actually matters operationally: a REAL ``sys.executable -m
+  pytest`` run, using THIS repo's own ``pyproject.toml``/rootdir, is what
+  CI actually runs. A bare ``warnings.filterwarnings()`` call at
+  ``tests/conftest.py`` IMPORT time was tried first and found NOT to
+  protect this path — pytest enters a fresh ``catch_warnings()`` +
+  ``simplefilter("always")`` around every test item's own execution,
+  discarding any filter installed at collection/import time before the
+  item's body runs (reproduced directly: "1 passed, 1 warning", no
+  error). ``[tool.pytest.ini_options].filterwarnings`` in
+  ``pyproject.toml`` is pytest's OWN mechanism for this — re-applied
+  fresh per item — and is what this scenario actually exercises.
 """
 from __future__ import annotations
 
@@ -129,3 +142,54 @@ def test_the_6132_fix_itself_is_clean_under_the_armed_gate(
     result = _run(out_of_process_reyn, script, warn_default_encoding=True)
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
+
+
+_PROBE_TEST_SOURCE = (
+    "def test_probe():\n"
+    "    from reyn.dev.testing.encoding_gate_probe import "
+    "open_without_encoding_for_gate_test\n"
+    "    import tempfile, os\n"
+    "    open_without_encoding_for_gate_test("
+    "os.path.join(tempfile.mkdtemp(), 'p.txt'))\n"
+)
+
+
+def test_a_real_pytest_run_rejects_the_same_omission(
+    out_of_process_reyn: str,
+) -> None:
+    """Tier 2: the scenario that actually matters — a REAL ``sys.executable
+    -m pytest`` run, invoked from this repo's own root (so its
+    ``pyproject.toml`` — ``[tool.pytest.ini_options].filterwarnings`` — is
+    the one in effect, not a throwaway pytester tree), must FAIL a real
+    reyn.* omission, not merely warn about it.
+
+    This is the regression #6132's own BLOCKING review caught: the first
+    version of this gate (a bare ``warnings.filterwarnings()`` call at
+    ``tests/conftest.py`` import time) passed all three scenarios above
+    while doing NOTHING for the real suite — pytest's own per-item
+    ``catch_warnings()`` reset discarded it before any test body ran. This
+    scenario is what would have caught that: it spawns the actual command
+    CI runs, not a hand-rolled reproduction of the mechanism.
+
+    A throwaway single-test file is written under ``tests/dev/`` (not
+    ``tmp_path``, which pytest's rootdir discovery would not resolve back
+    to this repo's own ``pyproject.toml``) and removed in a ``finally``,
+    so nothing this test creates is ever left behind to commit."""
+    probe_path = Path(__file__).parent / "_tmp_6132_probe_for_gate_test.py"
+    probe_path.write_text(_PROBE_TEST_SOURCE, encoding="utf-8")
+    try:
+        env = {**os.environ, "PYTHONPATH": out_of_process_reyn, "PYTHONWARNDEFAULTENCODING": "1"}
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", str(probe_path), "-q"],
+            capture_output=True, text=True, env=env,
+            cwd=str(Path(out_of_process_reyn).parent),
+        )
+    finally:
+        probe_path.unlink(missing_ok=True)
+
+    assert result.returncode != 0, (
+        f"a real pytest run did not reject an unencoded reyn.* open; "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "1 failed" in result.stdout, result.stdout
+    assert "EncodingWarning" in result.stdout, result.stdout

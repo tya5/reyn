@@ -108,39 +108,19 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-# ── #6132: EncodingWarning (PEP 597) as an error, scoped to reyn.* only ────
-#
-# Root cause: a text-mode file open with `encoding=None` opens via
-# `locale.getpreferredencoding(False)` — cp932 on Japanese Windows. A
-# `FailureFallbackRotatingFileHandler` built that way in
-# `interfaces/cli/commands/chat.py` could not encode an em dash in a log
-# record, and stdlib's own `logging.Handler.handleError` wrote the resulting
-# traceback straight to raw `sys.stderr`, breaking the Textual screen it does
-# not own (#6132's own owner-hit reproduction).
-#
-# This filter turns that class of bug into a collection-time-adjacent test
-# failure instead of a platform-specific runtime surprise: Python 3.10+'s
-# `EncodingWarning` (PEP 597) fires from `io.TextIOWrapper` whenever
-# `encoding=` was omitted, but ONLY when the interpreter itself was started
-# with `-X warn_default_encoding` / `PYTHONWARNDEFAULTENCODING=1` (CI's
-# `test.yml` sets this for its main pytest invocation) — the flag is latched
-# at interpreter startup and CANNOT be toggled from here; without it, no
-# `EncodingWarning` is ever produced and this filter has nothing to catch
-# (see `tests/dev/test_6132_encoding_default_gate.py`'s own precondition
-# assertion, which fails loud rather than passing vacuously if the flag is
-# missing).
-#
-# `module=r"reyn(\..*)?$"` scopes the error escalation to reyn's OWN call
-# sites (matched against the warning's attributed module — the direct Python
-# caller of `open()`/`Path.open()`/`.read_text()`/`.write_text()`/a
-# `logging.FileHandler` subclass, not `io` itself, confirmed empirically): a
-# third-party dependency that also omits `encoding=` still emits the warning
-# (visible in pytest's warnings summary) but is never escalated to an error —
-# this repo cannot fix another package's source. This is the discriminator
-# #6132 names ("第三者ライブラリを巻き込まずに reyn の site だけ error 化
-# できるか") and the reason this gate is the PEP 597 mechanism rather than a
-# `scripts/` AST ratchet.
-warnings.filterwarnings("error", category=EncodingWarning, module=r"reyn(\..*)?$")
+# ── #6132: EncodingWarning (PEP 597) is escalated via pyproject.toml, NOT
+# here — see [tool.pytest.ini_options]'s own `filterwarnings` entry and its
+# comment for the mechanism and the root cause. A module-level
+# `warnings.filterwarnings()` call at THIS file's import time was tried
+# first and measured NOT to work: pytest enters a fresh `catch_warnings()`
+# + `simplefilter("always")` around every test item's own execution, which
+# discards any filter installed at collection/import time before a single
+# test body runs — reproduced directly as "1 passed, 1 warning" (no error)
+# against a known-bad reyn.* call. `[tool.pytest.ini_options].
+# filterwarnings` is pytest's OWN mechanism for this exact problem: it is
+# re-applied fresh per item, so it is what actually protects the real
+# suite (verified both directions: a reyn.* site fails, a third-party site
+# stays a non-fatal warning).
 
 # ── FP-0058 P2: A2A/MCP opt-in for pre-existing protocol tests ──────────────
 #
