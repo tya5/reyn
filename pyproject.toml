@@ -531,7 +531,10 @@ pythonpath = ["src"]
 # execution -- measured directly: the exact escalation this entry provides
 # reproduced as "1 passed, 1 warning" (no error) without it. This
 # ini_options key is pytest's OWN filterwarnings mechanism, applied fresh
-# per item, so it is what actually protects the real suite.
+# per item, so it is what actually protects the real suite. The SAME
+# pattern is hand-copied into tests/dev/test_6132_encoding_default_gate.py's
+# own _INSTALL_FILTER (its 3 subprocess-script scenarios run outside
+# pytest entirely, so they cannot read this entry) -- keep both in sync.
 filterwarnings = ["error::EncodingWarning:reyn(\\..*)?$"]
 # dogfood/fixtures/ ships failing-test workspaces consumed by
 # dogfood/scripts/ runners on isolated tmp copies. They MUST NOT
