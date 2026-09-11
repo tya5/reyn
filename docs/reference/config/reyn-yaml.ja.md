@@ -837,7 +837,7 @@ permissions:
   web.fetch: allow        # レジストリ fetch への blanket allow（= レガシー alias）
 ```
 
-より細かい制御は skill の `skill.md` が正規のパス・ホストを宣言する形で行います。`startup_guard` が skill+host ごとに初回だけインタラクティブプロンプトを出し、以降はランタイムチェックがサイレントになります（= デフォルトゾーン外のパスは `file.write` モデル、ホストは `http.get` per-host）。
+より細かい制御は skill の `skill.md` が正規のパス・ホストを宣言する形で行います。実使用時点で（startup 時ではない — #5825 段 3: `src/` に startup 時 prompt pass は存在しない）skill+host ごとに 1 回インタラクティブプロンプトが出て、以降はランタイムチェックがサイレントになります（= デフォルトゾーン外のパスは `file.write` モデル、ホストは `http.get` per-host）。
 
 | やりたいこと | 新しい形 |
 |------|-----------|
