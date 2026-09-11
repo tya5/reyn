@@ -235,7 +235,7 @@ MCP の操作は 2 つのポイントでゲートされます：
 
 MCP サーバーを設定に追加する際、install op の書き込みは OS の標準 list-axis gate を通ります。 旧 `permissions.mcp_install: ask | allow | deny` bool 軸は collapse arc で撤去され、 install 制御は以下の経路に統一されました:
 
-- `.reyn/config/mcp.yaml` への `file.write` (= canonical mutation target)。 `startup_guard` が workflow+path ごとに 1 回 operator に prompt、 承認後の runtime は silent。
+- `.reyn/config/mcp.yaml` への `file.write` (= canonical mutation target)。 実使用時点で（startup 時ではない — #5825 段 3: `src/` に startup 時 prompt pass は存在しない）workflow+path ごとに 1 回 interactive prompt が出て、 承認後の runtime は silent。
 - `registry.modelcontextprotocol.io` への `http.get` (= registry fetch)。 同じ prompt model。
 - registry が `isSecret` 指定する env-var key への `secret.write` (= key set が runtime 決定なので wildcard `"*"`)。
 

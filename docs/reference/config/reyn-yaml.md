@@ -1864,7 +1864,7 @@ permissions:
   web.fetch: allow       # blanket allow for the registry fetch (= legacy alias)
 ```
 
-For finer control, the skill's `skill.md` declares the canonical paths and hosts; `startup_guard` prompts the operator once per skill+host, and the runtime check is silent after that (= `file.write` model for paths outside the default zone, `http.get` per-host).
+For finer control, the skill's `skill.md` declares the canonical paths and hosts; the interactive prompt fires once per skill+host, at the point of actual use (not at startup — #5825 stage 3: no startup-time prompt pass exists in `src/`), and the runtime check is silent after that (= `file.write` model for paths outside the default zone, `http.get` per-host).
 
 | Want | New shape |
 |------|-----------|
