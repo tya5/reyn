@@ -595,7 +595,20 @@ exclude = [
 # target as a guideline rather than a hard rule, since wrapping
 # Reyn's narrative comments and skill scripts often hurts
 # readability more than it helps.
-select = ["F", "I"]
+#
+# #6132: PLW1514 (unspecified-encoding, ruff's preview-only Pylint port)
+# is the static complement to tests/conftest.py's runtime EncodingWarning
+# gate -- the runtime gate only sees a call a test path actually reaches;
+# PLW1514 sees every literal call site regardless of coverage. Neither
+# alone is sufficient -- measured one-by-one against the 11 confirmed
+# #6132 sites (each site's own encoding= stripped in isolation, ruff run,
+# restored): PLW1514 catches exactly the 5 bare `open()`/`Path.open()`/
+# `.write_text()` calls, and misses the other 6 -- the 1 *FileHandler
+# construction (chat.py's own root cause; it does not model FileHandler's
+# encoding=None -> locale.getpreferredencoding() default), all 4
+# `.read_text()` calls, and the 1 `os.fdopen()` call.
+preview = true
+select = ["F", "I", "PLW1514"]
 ignore = [
     # F811: local imports inside functions for clarity (e.g. lazy
     # imports of optional deps) trigger this.
@@ -673,6 +686,19 @@ ignore = [
 # below don't have this failure mode because the directory NAME is the
 # anchor, not a wildcard.
 [tool.ruff.lint.per-file-ignores]
+
+# #6132: PLW1514 (unspecified-encoding) is scoped to src/ only -- the
+# issue's own population and this PR's own fix are both src/-scoped;
+# every other top-level tree with .py files has a much larger,
+# separately-owned population (measured: tests/ 56, scripts/ +
+# dogfood/scripts/ + docs/ 25) that is out of scope for this ticket.
+# ruff per-file-ignores only ADDS ignores (no positive "select here
+# only" mechanism), so each non-src/ tree with a finding is listed
+# explicitly rather than attempted as a single inverse glob.
+"tests/**" = ["PLW1514"]
+"scripts/**" = ["PLW1514"]
+"dogfood/**" = ["PLW1514"]
+"docs/**" = ["PLW1514"]
 
 # #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
 # (ratchet)" job), not a blocking full-adoption gate — the tree currently

@@ -25,5 +25,5 @@ def open_without_encoding_for_gate_test(path: "str | Path") -> None:
     """Open *path* for text writing WITHOUT ``encoding=`` — deliberately,
     the exact #6132 shape. Exists only so the gate has a genuine ``reyn.*``
     call site to prove it catches; see the module docstring."""
-    with open(path, "w") as f:  # deliberately no encoding= -- see module docstring
+    with open(path, "w") as f:  # noqa: PLW1514 -- deliberately no encoding=, see module docstring
         f.write("probe")
