@@ -59,7 +59,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, NewType, Union
 
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import (
@@ -77,6 +77,46 @@ if TYPE_CHECKING:
     from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
 
 logger = logging.getLogger(__name__)
+
+# #5890 stage 0-b (architect measurement, lead-coder ruling): three token
+# quantities this module previously carried as bare ``int`` were shown to
+# be confusable with each other at real production/consumption sites --
+# ``NewType`` closes exactly those sites (an assignment or a constructor
+# call whose target is one of these types), never the comparisons that
+# read them (measured: mypy accepts a cross-type ``>``/``>=`` comparison,
+# and a plain-``int`` value passed where one of these types is expected as
+# a function argument, silently -- see the residue comments at each
+# surviving open site below, in ``_stage_halve_room`` and
+# ``select_fold_candidates_for_shortfall``).
+#
+# Deliberately does NOT distinguish head from tail (the "compartment"
+# axis) -- #5890 stage 0-b's own investigation found zero real sites
+# where a head value was mistaken for a tail value or vice versa; adding
+# a 4th/5th type pair for that axis would be inventing coverage for a
+# confusion nobody has shown. If that axis ever needs its own type, this
+# is not where the case for it lives.
+EntryBudget = NewType("EntryBudget", int)
+"""The immutable, entry-time budget allocated to one compartment (head or
+tail) from ``ComputedBudgets`` -- what ``component_weights`` configured,
+never reassigned after :class:`RecoveryLadder.__init__`."""
+
+LoweredFloor = NewType("LoweredFloor", int)
+"""The CURRENT floor for one compartment -- starts equal to that
+compartment's own :data:`EntryBudget`, and is reassigned downward by
+:meth:`RecoveryLadder._stage_halve_room`'s own ladder. Reading ``min``
+instead of a name that says "current, possibly lowered" is exactly the
+confusion #5890 stage 0-a's own rename (``_tail_min_tokens`` /
+``_head_min_tokens`` -> ``_tail_tokens_floor`` / ``_head_tokens_floor``)
+already fixed at the attribute-name level; this type closes the same gap
+at the type level."""
+
+Shortfall = NewType("Shortfall", int)
+"""How many tokens over the available room the unprotected middle
+currently is -- :func:`select_fold_candidates_for_shortfall`'s own
+``shortfall_tokens`` parameter. A DELTA, never a budget or a floor
+(#5890 stage 0-b, architect's own reading of ``engine:2099``'s pre-
+existing ``int``-vs-``int`` comparison as the real-confusion witness for
+this type)."""
 
 # ---------------------------------------------------------------------------
 # Token-counter fallback tracking (Axis 10)
@@ -2066,7 +2106,7 @@ def trim_tail(
 
 def select_fold_candidates_for_shortfall(
     turns: list,
-    shortfall_tokens: int,
+    shortfall_tokens: "Shortfall",
     model: str = "",
     *,
     use_chars4: bool = False,
@@ -3451,8 +3491,13 @@ class RecoveryLadder:
 
         bg = engine.budgets
         self._bg = bg
-        self._head_tokens_floor = bg.head_budget
-        self._tail_tokens_floor = bg.tail_budget
+        # #5890 stage 0-b: the ladder's floor STARTS at the entry-time
+        # budget (an ``EntryBudget``), moved explicitly into the
+        # mutable ``LoweredFloor`` slot this ladder actually reassigns
+        # (:meth:`_stage_halve_room` below) -- never a bare ``int`` in
+        # between.
+        self._head_tokens_floor: "LoweredFloor" = LoweredFloor(EntryBudget(bg.head_budget))
+        self._tail_tokens_floor: "LoweredFloor" = LoweredFloor(EntryBudget(bg.tail_budget))
         self._use_chars4 = cfg.use_chars4_estimate
 
         self._last_recover_cause: str | None = None
@@ -3640,6 +3685,29 @@ class RecoveryLadder:
                 saw_byte_limit=self._last_recover_is_byte_limit,
             )
         self._t_max_override = _candidate
+        # #5890 stage 0-b: `_room` and `_candidate` (above) do NOT carry
+        # an `EntryBudget`/`LoweredFloor` annotation, and this is a
+        # DELIBERATE choice, not an oversight -- architect's own
+        # self-correction on this PR's own dispatch: `_room: int` would
+        # satisfy the LETTER of "give it a distinguishing type" while
+        # adding zero real checking (an `int` annotation is not a
+        # distinguishing type), and would make the still-open gap LESS
+        # visible, not more -- a reader would see an annotation and
+        # reasonably assume it means something. `_room` itself is
+        # neither a budget nor a floor: it is the undivided POOL
+        # `_head_tokens_floor`/`_tail_tokens_floor` are about to be
+        # apportioned FROM (the same concept `ComputedBudgets.
+        # main_M_room` names one layer up) -- #5890's own investigation
+        # found no real site where `_room` was mistaken for an
+        # `EntryBudget` or a `LoweredFloor`, so inventing a 4th type for
+        # it here would be coverage with no confusion behind it (the
+        # same "compartment axis" restraint the type definitions above
+        # already apply). Measured directly (mypy 2.3.0, #5890): the
+        # `_candidate <= _reserved` comparison above, and every
+        # arithmetic step through this method that stays in plain
+        # `int`, produces ZERO findings if an `EntryBudget` is silently
+        # substituted for a `LoweredFloor` anywhere in this chain --
+        # this is real, disclosed, and NOT closed by this PR.
         _room = _candidate - _reserved
         # head/tail apportion `room` by their own component_weights
         # share, renormalised over just the two of them (body/new_msg
@@ -3648,14 +3716,32 @@ class RecoveryLadder:
         # an even split rather than raising here — a config validity
         # question belongs to `assert_static_bounds` at startup, not
         # a mid-turn recovery path.
+        #
+        # #5890 stage 0-b: `min()`/`int()`/`sum()` erase a `NewType`
+        # back to its plain base type -- measured directly (mypy 2.3.0):
+        # `int(...)` below returns bare `int`, not `LoweredFloor`, with
+        # zero mypy findings at the call itself; the SAME is true of
+        # `min()` over two different `NewType`s and of `sum()`. The
+        # check only survives here because the RESULT is immediately
+        # wrapped in the explicit `LoweredFloor(...)` constructor call
+        # below, at the point it is stored -- using either expression
+        # directly in a comparison (rather than storing it first) would
+        # make the check vanish SILENTLY, with nothing to see at the
+        # comparison site itself. This erasure is not something this
+        # PR closes -- `NewType` has no mechanism to survive stdlib
+        # numeric builtins, and wrapping every one of them would still
+        # leave the same gap the moment a caller un-wraps the result
+        # into a bare local before using it.
         _cw = self._cfg.component_weights
         _head_tail_weight = _cw.get("head", 0) + _cw.get("tail", 0)
         if _head_tail_weight > 0:
-            self._head_tokens_floor = int((_cw.get("head", 0) / _head_tail_weight) * _room)
-            self._tail_tokens_floor = _room - self._head_tokens_floor
+            self._head_tokens_floor = LoweredFloor(
+                int((_cw.get("head", 0) / _head_tail_weight) * _room)
+            )
+            self._tail_tokens_floor = LoweredFloor(_room - self._head_tokens_floor)
         else:
-            self._head_tokens_floor = _room // 2
-            self._tail_tokens_floor = _room - self._head_tokens_floor
+            self._head_tokens_floor = LoweredFloor(_room // 2)
+            self._tail_tokens_floor = LoweredFloor(_room - self._head_tokens_floor)
         # #5531 PR-2 (owner: "下限を割ったことが見える" — visible with
         # the shipped config, not just inferable from a shrunk wire):
         # this ladder just lowered the floor below what

@@ -37,6 +37,7 @@ from reyn.services.compaction.engine import (
     CompactionEngine,
     CompactionOverflowError,
     HistoryChunkToCompact,
+    Shortfall,
     classify_compact_overflow,
     estimate_tokens_for_any_turn,
     select_fold_candidates_for_shortfall,
@@ -608,7 +609,7 @@ class CompactionController:
             # request is not the shortfall question.
             candidates = list(unprotected)
         else:
-            shortfall = unprotected_tokens - main_M_room
+            shortfall = Shortfall(unprotected_tokens - main_M_room)
             candidates = select_fold_candidates_for_shortfall(
                 unprotected, shortfall, model, use_chars4=use_chars4,
             )
