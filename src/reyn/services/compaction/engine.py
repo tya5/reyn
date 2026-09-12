@@ -795,9 +795,9 @@ class ComputedBudgets:
     HistoryChunkToCompact.section_token_caps.
     """
     main_pool: int          # T_max - T_SP  (main session's available tokens)
-    head_budget: int        # tokens reserved for HEAD slice
+    head_budget: "EntryBudget"  # tokens reserved for HEAD slice (#5890 stage 0-b)
     body_budget: int        # tokens reserved for BODY (summary)
-    tail_budget: int        # tokens reserved for TAIL slice
+    tail_budget: "EntryBudget"  # tokens reserved for TAIL slice (#5890 stage 0-b)
     new_msg_budget: int     # tokens reserved for incoming user message
     B_M: int                # compactor LLM's own input budget
     main_M_room: int        # main session's middle room (after head+tail+new_msg)
@@ -875,9 +875,9 @@ def compute_budgets(
     effective_trigger = min(main_M_room, B_M)
     return ComputedBudgets(
         main_pool=main_pool,
-        head_budget=head,
+        head_budget=EntryBudget(head),  # #5890 stage 0-b: entry-time budget, load-bearing
         body_budget=body,
-        tail_budget=tail,
+        tail_budget=EntryBudget(tail),  # #5890 stage 0-b: entry-time budget, load-bearing
         new_msg_budget=new_msg,
         B_M=B_M,
         main_M_room=main_M_room,
