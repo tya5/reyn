@@ -3547,15 +3547,33 @@ class RecoveryLadder:
         # comment below for why re-slicing the SAME ``raw_middle`` on every
         # iteration without persisting this would just recreate the old cycle.
         self._compact_attempt_len: "int | None" = None
-        # #5631 candidate 1: the SENT slice for THIS iteration only --
-        # computed once in ``_stage_fold`` and reused by
-        # ``shrink_pool_after_overflow`` (rung① offers exactly what
-        # rung②'s own compact() attempt just sent, per #5592 — see
-        # ``shrink_pool_after_overflow``'s own docstring). Was a plain
-        # local shared by both former inline sections of one function
-        # body; now a field so the two extracted methods share it
-        # without a param (there is no OTHER caller of either method,
-        # so this is not a wider-scope leak).
+        # #5631 candidate 1: the SENT slice for THIS fold attempt --
+        # computed once in ``_stage_fold``, then read again by
+        # :meth:`_advance_state_after_fold` once the ``compact()`` call
+        # it fed succeeds. Both are pieces of what was ONE function
+        # body before #5631 candidate 1's own 150-line-gate extraction
+        # split it into :meth:`_stage_fold` -> :meth:`_apply_compact_
+        # call` -> :meth:`_advance_state_after_fold` (see each
+        # method's own docstring for the split) -- ALL three run
+        # inside one synchronous await-chain from a single
+        # ``_stage_fold()`` call, never crossing an iteration or a
+        # turn. A field, not a parameter, because neither
+        # ``_apply_compact_call``'s nor ``_advance_state_after_fold``'s
+        # own signature carries it (they take ``input_chunk``/
+        # ``_offered`` and ``chat_summary`` respectively) -- adding it
+        # as a parameter to both would thread it through a call that
+        # does not otherwise need it.
+        #
+        # NOT related to ``shrink_pool_after_overflow``'s own
+        # ``attempt_len`` parameter -- that one is fed by the
+        # DIFFERENT field ``self._compact_attempt_len`` (see its own
+        # comment above), from a wholly separate escalation stage
+        # (:meth:`_run_one_iteration`'s own spill/halve rung, reached
+        # only once this fold stage has nothing left to offer). An
+        # earlier version of this comment conflated the two -- fixed
+        # here after a 2nd review round (#6162/#6165) traced both
+        # fields' own producers/consumers directly rather than
+        # patching the one name that was flagged.
         self._attempt_len: "int | None" = None
         # #4944①: tracks whether THIS iteration reached main_call -- reset
         # at the top of every _run_one_iteration call (an overflow from
