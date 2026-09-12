@@ -3602,7 +3602,11 @@ class RecoveryLadder:
     def _stage_refill_phase1(self) -> bool:
         """ADR-0044 refill, Phase 1: if ``tail`` still holds non-summary
         content above ``_tail_tokens_floor``, trim half of it (skipping any
-        reserved summary element) into ``raw_middle`` and return ``True``.
+        reserved summary element) into ``raw_middle`` and return whether
+        anything actually moved (#5890/#6167: ``bool(_removed)``, not an
+        unconditional ``True`` -- ``_split_off_non_summary`` is itself
+        allowed to remove zero items, so the return value now reflects
+        what happened, not merely that this branch was entered).
         Returns ``False`` (no mutation) when the predicate does not hold —
         this fuses the former bare ``elif`` condition and its body into
         one call so :meth:`_run_one_iteration`'s own escalation chain AND
@@ -3625,6 +3629,19 @@ class RecoveryLadder:
         # Phase 1 "handles" the overflow every iteration while moving
         # nothing, starving the reservation ladder's own floor-check
         # (below) of ever being reached.
+        #
+        # #5890/#6167 (architect, ADR-0049 §1's own N-decreases invariant):
+        # `_split_off_non_summary`'s own docstring allows it to remove
+        # ZERO items ("takes as many as there are ... by making no
+        # progress") -- `_removed` being non-empty here depends ENTIRELY
+        # on the `_has_non_summary` guard above, at THIS call site, not
+        # on anything this function's own return value asserts. `return
+        # True` below used to claim "progress happened" regardless of
+        # whether it actually did; a future guard-less call site would
+        # return True while removing nothing, and N's strict decrease
+        # would break silently -- no exception, no False, just a
+        # progress claim that was never checked against the mutation it
+        # describes.
         _non_summary_tail_count = sum(
             1 for t in self.tail
             if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
@@ -3632,7 +3649,7 @@ class RecoveryLadder:
         chunk = max(_non_summary_tail_count // 2, 1)
         _removed, self.tail = _split_off_non_summary(self.tail, chunk, from_end=False)
         self.raw_middle.extend(_removed)
-        return True
+        return bool(_removed)
 
     def _stage_refill_phase2(self) -> bool:
         """ADR-0044 refill, Phase 2: same as :meth:`_stage_refill_phase1`
@@ -3645,22 +3662,38 @@ class RecoveryLadder:
             return False
         # Phase 2: trim head half → raw_middle. #5531 PR-2: same skip
         # and same `_has_non_summary` guard as Phase 1's own branch.
+        #
+        # #5890/#6167: same N-decreases dependency as Phase 1's own
+        # comment above -- `_removed` being non-empty here depends
+        # entirely on the `_has_non_summary` guard above, not on
+        # anything this function's own return asserts.
         _non_summary_head_count = sum(
             1 for t in self.head
             if not (isinstance(t, dict) and t.get("role") == SUMMARY_MESSAGE_ROLE)
         )
         chunk = max(_non_summary_head_count // 2, 1)
         _removed, self.head = _split_off_non_summary(self.head, chunk, from_end=True)
-        self.raw_middle = _removed + self.raw_middle
-        # #5531 §10 (table #14's own asymmetry, corrected): Phase 2
-        # PREPENDS to raw_middle — a stale ``_compact_attempt_len``
-        # ("the first N turns failed") would now name a DIFFERENT
-        # prefix than the one that fact was ever true of. Phase 1
-        # (below-this-branch's sibling, APPENDS to the end) does NOT
-        # reset — the prefix stays unchanged there, so the knowledge
-        # stays valid.
-        self._compact_attempt_len = None
-        return True
+        if _removed:
+            self.raw_middle = _removed + self.raw_middle
+            # #5531 §10 (table #14's own asymmetry, corrected): Phase 2
+            # PREPENDS to raw_middle — a stale ``_compact_attempt_len``
+            # ("the first N turns failed") would now name a DIFFERENT
+            # prefix than the one that fact was ever true of. Phase 1
+            # (below-this-branch's sibling, APPENDS to the end) does NOT
+            # reset — the prefix stays unchanged there, so the knowledge
+            # stays valid.
+            #
+            # #5890/#6167 (architect ruling ②): guarded on `_removed`
+            # itself now, not merely on this method having been called --
+            # the reset's own reason ("PREPENDS, so the prefix changed")
+            # is only true when a prepend actually happened. `_removed`
+            # empty means nothing was prepended, the prefix `_compact_
+            # attempt_len` describes is unchanged, and the knowledge it
+            # carries is still valid -- discarding it here would be the
+            # same "throw away a fact that is still true" mistake Phase 1
+            # deliberately does NOT make on its own append-only branch.
+            self._compact_attempt_len = None
+        return bool(_removed)
 
     def _stage_halve_room(self) -> None:
         """ADR-0044 — halve the room. Reached once ``raw_middle`` is
