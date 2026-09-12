@@ -3548,12 +3548,13 @@ class RecoveryLadder:
         # iteration without persisting this would just recreate the old cycle.
         self._compact_attempt_len: "int | None" = None
         # #5631 candidate 1: the SENT slice for THIS iteration only --
-        # computed once in ``_stage_fold`` and reused by ``_stage_spill``
-        # (rung① offers exactly what rung②'s own compact() attempt just
-        # sent, per #5592 — see ``_stage_spill``'s own docstring). Was a
-        # plain local shared by both former inline sections of one
-        # function body; now a field so the two extracted methods share
-        # it without a param (there is no OTHER caller of either method,
+        # computed once in ``_stage_fold`` and reused by
+        # ``shrink_pool_after_overflow`` (rung① offers exactly what
+        # rung②'s own compact() attempt just sent, per #5592 — see
+        # ``shrink_pool_after_overflow``'s own docstring). Was a plain
+        # local shared by both former inline sections of one function
+        # body; now a field so the two extracted methods share it
+        # without a param (there is no OTHER caller of either method,
         # so this is not a wider-scope leak).
         self._attempt_len: "int | None" = None
         # #4944①: tracks whether THIS iteration reached main_call -- reset
