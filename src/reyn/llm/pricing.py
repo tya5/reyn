@@ -112,6 +112,23 @@ class TokenUsage:
     #                            explicit write metric (OpenAI / Gemini).
     cached_tokens: int = 0
     cache_creation_tokens: int = 0
+    #: #6166: the reasoning-token SPLIT of ``completion_tokens`` (a subset,
+    #: NOT additive to ``total_tokens`` — mirrors ``cached_tokens``'s own
+    #: "subset of prompt_tokens" shape), for thinking-mode models
+    #: (litellm's cross-provider ``usage.completion_tokens_details.
+    #: reasoning_tokens``). Deliberately ``int | None``, unlike every
+    #: other field here: #6093's own investigation measured two turns
+    #: with byte-identical output text and ``completion_tokens`` 16 vs 55
+    #: — the 39-token gap had nowhere to be recorded, because this field
+    #: did not exist. ``None`` means "this provider/call reported
+    #: nothing" (most providers — no thinking mode), never coerced to
+    #: ``0``: "the model used 0 reasoning tokens" and "nobody told us" are
+    #: different claims, and collapsing them was the exact gap #6166
+    #: closes (contrast ``cache_creation_tokens`` above, which DOES
+    #: default absence to 0 — a deliberate, different choice for a field
+    #: with a real "no equivalent on this provider" zero, not an unstated
+    #: one).
+    reasoning_tokens: "int | None" = None
     #: #3351: PROVENANCE of the counts above, carried BY the same object that
     #: carries them — so no consumer can hold the number without also holding
     #: its origin. Defaults to ``UNKNOWN`` (never ``PROVIDER``): a forgotten
@@ -153,12 +170,30 @@ class TokenUsage:
             return self.source
         return merge_usage_sources(self.source, other.source)
 
+    def _merged_reasoning_tokens(self, other: "TokenUsage") -> "int | None":
+        """#6166 BLOCKING (lead-coder, measured): ``None`` when EITHER side
+        is unstated — a sum is a claim about the TOTAL, and a total with
+        one unstated component is not "31", it is "31 or more, unknown by
+        how much" — reporting the stated side's own figure as the sum
+        would let a consumer read a lower bound as an exact count, the
+        SAME "0 tokens considered" vs "nobody told us" conflation #6166's
+        own body names for the field itself, reproduced inside this
+        aggregation. NOT ``_merged_source``'s own shape: that field's
+        "an absent value states no information" stance is safe for a
+        LABEL (provenance), where one side's silence cannot make the
+        other side's claim false — but for a COUNT, an absent addend
+        makes the total genuinely unknown, not merely unlabeled."""
+        if self.reasoning_tokens is None or other.reasoning_tokens is None:
+            return None
+        return self.reasoning_tokens + other.reasoning_tokens
+
     def __add__(self, other: "TokenUsage") -> "TokenUsage":
         return TokenUsage(
             prompt_tokens=self.prompt_tokens + other.prompt_tokens,
             completion_tokens=self.completion_tokens + other.completion_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
             cache_creation_tokens=self.cache_creation_tokens + other.cache_creation_tokens,
+            reasoning_tokens=self._merged_reasoning_tokens(other),
             source=self._merged_source(other),
         )
 
@@ -166,10 +201,12 @@ class TokenUsage:
         # Merge BEFORE mutating the counts — the neutrality rule reads both
         # operands' token totals, and self's are about to change.
         merged = self._merged_source(other)
+        merged_reasoning = self._merged_reasoning_tokens(other)
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.cached_tokens += other.cached_tokens
         self.cache_creation_tokens += other.cache_creation_tokens
+        self.reasoning_tokens = merged_reasoning
         self.source = merged
         return self
 
@@ -180,6 +217,11 @@ class TokenUsage:
             "total_tokens": self.total_tokens,
             "cached_tokens": self.cached_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
+            # #6166: None round-trips as None (json.dumps writes `null`,
+            # never `0`) — the "unstated, not zero" contract survives this
+            # serialization boundary the same way #3351 already made
+            # provenance survive it, immediately above.
+            "reasoning_tokens": self.reasoning_tokens,
             # #3351: provenance travels with the numbers through every
             # serialization boundary too, so a round-tripped usage cannot
             # come back looking provider-verified.
@@ -203,11 +245,25 @@ class TokenUsage:
             except (TypeError, ValueError):
                 return 0
 
+        def _coerce_optional_int(v: object) -> "int | None":
+            # #6166: unlike ``_coerce_int`` above, a missing/None/
+            # unparseable value stays ``None`` here — this field's own
+            # "unstated, not zero" contract applies on the READ side too
+            # (a pre-#6166 record with no key at all reads the same as a
+            # record that explicitly wrote ``null``).
+            if v is None:
+                return None
+            try:
+                return int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+
         return cls(
             prompt_tokens=_coerce_int(data.get("prompt_tokens", 0)),
             completion_tokens=_coerce_int(data.get("completion_tokens", 0)),
             cached_tokens=_coerce_int(data.get("cached_tokens", 0)),
             cache_creation_tokens=_coerce_int(data.get("cache_creation_tokens", 0)),
+            reasoning_tokens=_coerce_optional_int(data.get("reasoning_tokens")),
             source=parse_usage_source(data.get("usage_source")),
         )
 

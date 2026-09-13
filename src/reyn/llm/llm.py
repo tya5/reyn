@@ -1621,6 +1621,33 @@ def _provider_reported_usage(chunks: list) -> bool:
     return bool(prompt) and bool(completion)
 
 
+def _extract_reasoning_tokens(u) -> "int | None":
+    """#6166: ``completion_tokens_details.reasoning_tokens`` from a litellm
+    usage object, or ``None`` when the provider didn't report it.
+
+    Same "``None`` means unstated, never coerced to 0" discipline
+    ``_cached_tokens_for_trace`` already established for a different
+    field — deliberately NOT folded into :func:`_extract_cache_tokens`
+    (which DOES default absence to 0 for its own two fields, a correct
+    but different choice: 0 cache tokens costs the same either way; 0
+    reasoning tokens and "not a thinking model" are different claims,
+    #6093's own investigation is the measured cost of conflating them).
+    """
+    details = getattr(u, "completion_tokens_details", None)
+    if details is None:
+        return None
+    getter = details.get if isinstance(details, dict) else (
+        lambda k, _d=details: getattr(_d, k, None)
+    )
+    val = getter("reasoning_tokens")
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_usage(response) -> TokenUsage | None:
     """Extract token usage from a litellm response object.
 
@@ -1641,6 +1668,11 @@ def _extract_usage(response) -> TokenUsage | None:
             completion_tokens=int(u.completion_tokens or 0),
             cached_tokens=cached,
             cache_creation_tokens=creation,
+            # #6166: as-received, None when the provider didn't report it
+            # — never coerced to 0 (see _extract_reasoning_tokens's own
+            # docstring for why this field is deliberately unlike
+            # cached/cache_creation_tokens above).
+            reasoning_tokens=_extract_reasoning_tokens(u),
             source=_read_usage_source(response),
         )
     except Exception:
@@ -2185,6 +2217,12 @@ def _emit_chat_cost_events(
             completion_tokens=usage.completion_tokens,
             cached_tokens=usage.cached_tokens,
             cache_creation_tokens=usage.cache_creation_tokens,
+            # #6166: as-received, None when the provider didn't report it
+            # (TokenUsage.reasoning_tokens' own "unstated, not zero"
+            # contract) — the audit trail is where #6093's own 39-token
+            # gap (identical output text, completion_tokens 16 vs 55) had
+            # nowhere to be recorded.
+            reasoning_tokens=usage.reasoning_tokens,
             cost_usd=cost_usd,
             # #3351: PROVENANCE of the figures on this same event — "provider"
             # (the provider reported them) / "estimated" (litellm.token_counter
