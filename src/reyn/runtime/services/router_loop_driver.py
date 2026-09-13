@@ -472,7 +472,26 @@ class RouterLoopDriver:
         caller keep its own pre-#5592 ``seq=`` convention for
         ``spill_turn_content`` (mid: the turn's own ``seq`` field, falling
         back to 1; head/tail: the candidate's own position) rather than
-        this shared method inventing a third one."""
+        this shared method inventing a third one.
+
+        #6179 stage ⑵: a candidate turn's ``content`` field is no longer
+        the ONLY thing this method's own replacement step can offload —
+        each field ``_REASONING_BUNDLE_SPILLABLE_FIELDS`` (reasoning_
+        continuity.py) marks spillable (currently ``reasoning_content``
+        only) is also checked, independently, and replaced with its own
+        preview when eligible. ``content`` and each reasoning field are
+        spilled/checked SEPARATELY (their own ``is_already_spilled``
+        call, their own ``spill_turn_content`` call) — a turn's own
+        content and reasoning can therefore be at different spill
+        states at once. Progress for this candidate (whether it counts
+        toward this batch's own ``_edits``) is "did ANY of its fields
+        change", not "did content change" — see the inline comment at
+        the loop body for why content-only progress silently stalled
+        once reasoning became part of the population. ``thinking_blocks``/
+        ``provider_specific_fields`` are NEVER offered here (see that
+        mapping's own docstring for why a preview-string replacement
+        would break them on providers that require the native
+        round-trip)."""
         def _eligible(
             indexed: "list[tuple[int, dict]]",
         ) -> "list[tuple[int, dict]]":
@@ -499,25 +518,79 @@ class RouterLoopDriver:
                 if it[1].get("spillability") != Spillability.FIRST_CHOICE.value
             ]),
         )
+        # #6179 stage ⑵: `reasoning_content`/`thinking_blocks`/
+        # `provider_specific_fields` (#1652's own reasoning-bundle wire
+        # fields) reach the LLM alongside `content` on the same turn dict,
+        # but spill's own unit used to be `content` alone — a candidate
+        # whose `content` was never spillable (or already spilled) never
+        # had its reasoning fields even LOOKED at, no matter how large.
+        # `_REASONING_BUNDLE_SPILLABLE_FIELDS` (reasoning_continuity.py,
+        # the ONE place this decision is made — this method DERIVES from
+        # it, never keeps a second curated list) names which fields may
+        # safely become a preview string; `content` itself is always
+        # checked, unconditionally, exactly as before.
+        from reyn.runtime.reasoning_continuity import (
+            _REASONING_BUNDLE_SPILLABLE_FIELDS,
+        )
+
         _k = None if granularity == "tier" else 1
         for _tier_members in _tiers:
             if not _tier_members:
                 continue
             _edits: "list[tuple[int, dict]]" = []
             for idx, turn in _tier_members:
-                if self._history_buffer.is_already_spilled(turn["content"]):
+                # #6179 stage ⑵ (architect design, "C" — the load-bearing
+                # fix): progress is now "did ANY field change", not "did
+                # content change" alone. Before this, a turn whose content
+                # was already spilled but whose reasoning field was NOT
+                # would be judged "already spilled" from content alone,
+                # re-offered every round, and its reasoning field spilled
+                # (or attempted) with content staying byte-identical each
+                # time — `_edits` stayed empty forever, the exact "mirror
+                # image" of the infinite-loop failure
+                # `is_already_spilled`'s own docstring names (there:
+                # false progress forever; here: real progress available,
+                # never recorded, so the candidate never leaves the
+                # population — ADR-0049 §1's own ④ never strictly
+                # decreases).
+                _changed: "dict[str, str]" = {}
+                if not self._history_buffer.is_already_spilled(turn["content"]):
+                    replacement = self._history_buffer.spill_turn_content(
+                        turn["content"], chain_id=chain_id,
+                        # #5564: name this write by the turn's own origin —
+                        # never the bare "tool" default for a non-tool
+                        # candidate.
+                        tool=turn.get("name") or turn.get("role") or "history",
+                        seq=seq_fn(idx, turn),
+                    )
+                    if replacement is not None and replacement != turn["content"]:
+                        _changed["content"] = replacement
+                for _field, _spillable in _REASONING_BUNDLE_SPILLABLE_FIELDS.items():
+                    if not _spillable:
+                        # #6179 stage ⑵ ("B"): `thinking_blocks`/
+                        # `provider_specific_fields` are NEVER offered to
+                        # spill_turn_content at all — not skipped by a
+                        # value check, skipped structurally, so a
+                        # non-string/opaque payload here never even
+                        # reaches a preview-string call that could not
+                        # represent it.
+                        continue
+                    _value = turn.get(_field)
+                    if not isinstance(_value, str):
+                        continue
+                    if self._history_buffer.is_already_spilled(_value):
+                        continue
+                    _field_replacement = self._history_buffer.spill_turn_content(
+                        _value, chain_id=chain_id,
+                        tool=turn.get("name") or turn.get("role") or "history",
+                        seq=seq_fn(idx, turn),
+                    )
+                    if _field_replacement is None or _field_replacement == _value:
+                        continue
+                    _changed[_field] = _field_replacement
+                if not _changed:
                     continue
-                replacement = self._history_buffer.spill_turn_content(
-                    turn["content"], chain_id=chain_id,
-                    # #5564: name this write by the turn's own origin —
-                    # never the bare "tool" default for a non-tool
-                    # candidate.
-                    tool=turn.get("name") or turn.get("role") or "history",
-                    seq=seq_fn(idx, turn),
-                )
-                if replacement is None or replacement == turn["content"]:
-                    continue
-                _edits.append((idx, {**turn, "content": replacement}))
+                _edits.append((idx, {**turn, **_changed}))
                 if _k is not None and len(_edits) >= _k:
                     break
             if _edits:
