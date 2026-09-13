@@ -95,10 +95,20 @@ def _started_events(collected: list) -> list:
 
 
 @pytest.mark.asyncio
-async def test_policy_already_open_skips_require_network(tmp_path: Path) -> None:
-    """Tier 2: policy.network already True (compat/unbounded) -> require_network
-    is NEVER called, regardless of the op's own request -- byte-identical to
-    before this field existed (SandboxedExecIROp.network's own docstring)."""
+async def test_policy_already_open_with_no_config_runs_without_asking(tmp_path: Path) -> None:
+    """Tier 2: policy.network already True (compat/unbounded), no
+    ``permissions.network`` config either way -- runs without asking,
+    regardless of the op's own request.
+
+    #5825 §3 fix (renamed from ``test_policy_already_open_skips_require_
+    network``, which is now inaccurate): ``require_network`` IS called for
+    every ``op.network is True`` request as of #5825 §3 (see that method's
+    own ``policy_already_open`` parameter) -- what stays true, and what
+    this test actually asserts, is the OBSERVABLE behavior: no ask, no
+    sandboxed_exec_started change. See ``test_config_network_deny_blocks_
+    an_already_open_policy`` below for the accept-side witness that the
+    call now genuinely happens (a configured deny DOES fire here, where
+    it silently did not before #5825 §3)."""
     bus = _FakeBus(NO)  # would deny if ever asked -- proves it was never asked
     ctx, collected = _make_ctx(tmp_path, bus=bus, network_policy=True)
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["true"], network=True)
@@ -110,6 +120,40 @@ async def test_policy_already_open_skips_require_network(tmp_path: Path) -> None
     await settle(ctx.events)
     (started,) = _started_events(collected)
     assert started.data["network"] is True
+
+
+@pytest.mark.asyncio
+async def test_config_network_deny_blocks_an_already_open_policy(tmp_path: Path) -> None:
+    """Tier 2: #5825 §3 -- the accept-side witness for the security gap
+    the census found. ``permissions.network: deny`` (the operator's own
+    floor) must block a run even when the resolved sandbox policy ALREADY
+    has network on (``network_policy=True`` -- compat/``unbounded``).
+
+    Before #5825 §3: the call site's own guard (`if op.network and not
+    policy.network:`) skipped ``require_network`` entirely whenever
+    ``policy.network`` was already ``True`` -- the floor inside
+    ``require_network`` (checked first, unconditionally, in that method's
+    own body) was therefore NEVER REACHED, and a configured
+    ``permissions.network: deny`` silently did nothing under
+    compat/``unbounded``.
+
+    Strip-falsifier (performed during review): reverting the call site's
+    guard to ``if op.network and not policy.network:`` (dropping the
+    unconditional call) makes this test fail -- the run succeeds instead
+    of raising, because ``require_network`` (and its floor check) is
+    never reached."""
+    bus = _FakeBus(YES)  # would grant if ever asked -- proves the floor denies first
+    ctx, collected = _make_ctx(
+        tmp_path, bus=bus, network_policy=True, config={"network": "deny"},
+    )
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["true"], network=True)
+
+    with pytest.raises(PermissionError, match="denied by config"):
+        await run_sandboxed_exec(op, ctx)
+
+    assert bus.asks == []
+    await settle(ctx.events)
+    assert collected == []
 
 
 @pytest.mark.asyncio
@@ -210,6 +254,43 @@ async def test_no_permission_resolver_denies_a_network_request_fail_closed(
         permission_decl=PermissionDecl(),
         permission_resolver=None,
         default_sandbox_policy={"network": False},
+        sandbox_backend=_SuccessBackend(),
+    )
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["true"], network=True)
+
+    with pytest.raises(PermissionError, match="no permission resolver"):
+        await run_sandboxed_exec(op, ctx)
+
+    await settle(ctx.events)
+    assert collected == []
+
+
+@pytest.mark.asyncio
+async def test_no_permission_resolver_denies_even_against_an_already_open_policy(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5825 §3 review (lead-coder correction, architect census) —
+    the SAME fail-closed posture as the sibling test above, but with
+    ``policy.network`` already ``True`` (compat/``unbounded``-shaped).
+
+    Before this correction, a resolver-less context with an already-open
+    policy would have silently skipped the whole gate (no raise) — "no
+    resolver, so the config deny cannot be checked" must never be read as
+    "no deny exists"; that is this issue's own defect shape re-entering
+    through a different door. The function's own pre-existing behavior
+    (raise when no resolver, see the sibling test) is what this case now
+    matches too, unconditionally of ``policy.network``."""
+    project_root = tmp_path / "proj"
+    project_root.mkdir(parents=True, exist_ok=True)
+    events = EventLog()
+    collected = collect_events(events)
+    workspace = Workspace(events=events, base_dir=project_root)
+    ctx = OpContext(
+        workspace=workspace,
+        events=events,
+        permission_decl=PermissionDecl(),
+        permission_resolver=None,
+        default_sandbox_policy={"network": True},  # already open — compat/unbounded
         sandbox_backend=_SuccessBackend(),
     )
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["true"], network=True)
