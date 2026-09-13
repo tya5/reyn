@@ -112,7 +112,7 @@ Today's behaviour is exactly `ask` **with** a mandatory declaration. So:
 - [ ] The order is total and testable: for every pair, "strictly more permissive than" has one answer.
 - [ ] A capability denied by a restrict layer stays denied in **every** mode, `unbounded` included — the conjunction is not mode-aware.
 - [ ] The floor (§3) is unreachable from `unbounded`, with a test that goes red if a mode is added that reaches it.
-- [ ] `mode: ask` on an existing project is byte-identical to today's behaviour apart from the declaration requirement.
+- [ ] `mode: ask` does not change an existing project's behaviour apart from the declaration requirement. (This item's wording is lead-coder's own, not the owner's — the owner's words were "ダイヤル入れる。宣言は optin。3,4 解説して。あと plan モードは？"; #5825 comment.)
 - [ ] `bounded` never runs an action outside its boundary without a prompt — the strip-falsifier is removing the boundary and watching the acceptance go red, not watching the prompt disappear.
 - [ ] In `bounded`, an exec that requests network with no declaration asks once; with `permissions.network: allow` or a ledger grant it passes silently; with `permissions.network: deny` it is refused without asking; an exec that does not request network is never asked (#5825's seven witnesses).
 - [ ] When the configured sandbox backend cannot enforce the network deny (`sandbox_policy_not_applied`), `bounded` is shown as degraded in the posture surface — a boundary that is not enforced is not silently called one.
