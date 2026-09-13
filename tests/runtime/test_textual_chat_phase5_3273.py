@@ -54,7 +54,7 @@ from reyn.interfaces.repl.read_model import (
 )
 from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
-from reyn.runtime.chat_message import ChatMessage
+from reyn.runtime.chat_message import ChatMessage, HistoryEntryKind
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
@@ -400,6 +400,73 @@ def test_projection_skips_blank_text_turns() -> None:
         ChatMessage(role="assistant", content=""),
     ])
     assert frames == []
+
+
+def test_projection_hook_push_entry_does_not_restore_as_operator_frame() -> None:
+    """Tier 1: #6093 §2 (lead-coder BLOCKING, PR review) — a hook push
+    (E, wake=true) now persists as ``role="user"`` (a real conversational
+    turn, see ``Session._handle_hook_message``'s own docstring) so it is
+    structurally recognised as an already-delivered turn. But
+    ``role="user"`` alone must NOT make the restored transcript label it
+    as the operator's own line: ``app.py``'s ``_history_turns`` reads
+    ``"you" if msg.kind == "user" else "reyn"`` off the projected
+    ``OutboxMessage.kind`` — a hook's own words rendered as ``kind="user"``
+    would misattribute them to the operator, the exact defect this test
+    pins shut.
+
+    ``ChatMessage.kind`` (stage ①'s field) is the discriminator: a hook
+    push declares ``HistoryEntryKind.MATERIAL`` (content from outside
+    Reyn's own OS layer, never claiming to be the operator's own
+    keystroke) — never ``"[hook:"`` in the text (that would make the
+    text itself the witness, which the dispatch caught as NOT a valid
+    witness: the label is broken, not the text).
+
+    Strip-falsifier: removing the ``m.kind is HistoryEntryKind.MATERIAL``
+    branch in ``restore.py``'s ``role == "user"`` handling makes this
+    test go RED — the hook entry would fall through to the ordinary
+    ``OutboxMessage(kind="user", ...)`` branch.
+    """
+    frames = project_restored_frames([
+        ChatMessage(
+            role="user", content="[hook:on_idle] status check",
+            kind=HistoryEntryKind.MATERIAL,
+        ),
+    ])
+    # A non-empty log always leads with the resume divider (kind="system")
+    # — the content frame under test is the one after it.
+    (_divider, only) = frames
+    assert only.kind != "user", (
+        f"a hook-authored entry must not restore with the SAME "
+        f"OutboxMessage.kind a genuine operator line uses — got "
+        f"kind={only.kind!r}"
+    )
+
+
+def test_projection_real_operator_input_still_restores_as_user_frame() -> None:
+    """Tier 1: #6093 §2's own positive control — a GENUINE operator turn
+    (``role="user"``, ``kind`` never declared at its own call site —
+    ``_handle_inbox_text``'s construction — so it stays
+    ``HistoryEntryKind.UNSPECIFIED``, the default) must still restore as
+    ``OutboxMessage(kind="user", ...)``, unaffected by the hook-push fix
+    above. Mixed with a hook-push entry in the SAME log (the accept
+    item's own "mix in one real operator input" requirement) so this is
+    not proven in isolation from the fix that changed the sibling
+    branch."""
+    frames = project_restored_frames([
+        ChatMessage(
+            role="user", content="[hook:on_idle] status check",
+            kind=HistoryEntryKind.MATERIAL,
+        ),
+        ChatMessage(role="user", content="what's the plan for today?"),
+    ])
+    kinds = [f.kind for f in frames]
+    assert "user" in kinds, (
+        f"a genuine operator turn (kind never declared, UNSPECIFIED by "
+        f"default) must still restore as OutboxMessage(kind=\"user\") — "
+        f"got kinds={kinds!r}"
+    )
+    user_frame = next(f for f in frames if f.kind == "user")
+    assert user_frame.text == "what's the plan for today?"
 
 
 # ── Tier 2: app hydration end-to-end ──────────────────────────────────────────

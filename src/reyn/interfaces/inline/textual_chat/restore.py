@@ -127,6 +127,7 @@ from reyn.runtime.chat_message import (
     TOOL_STATUS_ERROR,
     TOOL_STATUS_META_KEY,
     Disclosure,
+    HistoryEntryKind,
 )
 
 from ._meta_keys import RESULT_KIND_KEY, RESULT_META_KEY
@@ -303,6 +304,41 @@ def project_restored_frames(
             continue
         if role == "user":
             meta = m.meta or {}
+            # #6093 stage ②: a hook push (E, wake=true) now persists as
+            # role="user" (a real conversational turn — see
+            # Session._handle_hook_message's own docstring) so it is
+            # correctly recognised as "already delivered" rather than
+            # RE-invented as a synthetic seed. But `role=="user"` alone
+            # no longer means "the operator typed this" the way it did
+            # before that change — dispatching on `role` HERE (what this
+            # branch used to do unconditionally) would relabel a hook's
+            # own words as the operator's own in the restored transcript
+            # (`app.py`'s `_history_turns`: `"you" if kind == "user" else
+            # "reyn"`, keyed off the very `OutboxMessage.kind` this branch
+            # assigns below). `kind` (stage ①'s field) is the declared
+            # discriminator for exactly this: `HistoryEntryKind.MATERIAL`
+            # is the value ONLY a non-operator producer (today: the hook
+            # push) declares on a role="user" entry — genuine operator
+            # input never passes `kind=` at its own call site
+            # (`_handle_inbox_text`'s construction), so it stays
+            # `UNSPECIFIED` and is unaffected by this branch.
+            if m.kind is HistoryEntryKind.MATERIAL:
+                # Mirror the LIVE rendering this same push already got
+                # when it first arrived (`_handle_hook_message`'s own
+                # `OutboxMessage(kind="system", text=attributed, ...)`
+                # push, unchanged by stage ②) — restore stays visually
+                # consistent with what the operator actually saw live,
+                # never "you" for words they did not write.
+                text = m.text
+                if text.strip():
+                    frames.append(
+                        OutboxMessage(
+                            kind="system",
+                            text=text,
+                            meta={RESTORED_META_KEY: True, "chain_id": meta.get("chain_id")},
+                        )
+                    )
+                continue
             prompt = meta.get(INTERVENTION_PROMPT_META_KEY)
             if prompt:
                 # #3299 P4: this history entry IS an answered intervention —

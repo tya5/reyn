@@ -147,8 +147,10 @@ class TurnOrigin(StrEnum):
     CRON = "cron"
 
     #: A wake=true lifecycle-hook push delivered as a turn trigger (#1800 slice
-    #: 5b): a system-role ``[hook:name]`` message plus one router turn
-    #: (self-continuation). #5747 correction: no mechanism counts
+    #: 5b): a ``[hook:name]`` message (#6093 §2: ``role="user"``, a real
+    #: conversational turn — was ``role="system"`` before that fix) plus
+    #: one router turn (self-continuation). #5747 correction: no mechanism
+    #: counts
     #: consecutive turns of this member — #5561 (owner ruling, 2026-08-30,
     #: verbatim "hook 起動を回数で制限なんて誰も設定できないでしょ")
     #: retired the counter that once did, with no successor. (What, if
