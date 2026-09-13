@@ -410,7 +410,10 @@ def _user_frame_meta(attribution: "dict | None") -> dict:
 
 
 def _format_ride_along_attribution(kind: str, name: str, text: str) -> str:
-    """Render an attributed system-role push message: ``[<kind>:<name>] <text>``.
+    """Render an attributed push message's TEXT: ``[<kind>:<name>] <text>``.
+    Renders only the string — the caller decides the entry's ``role``
+    (#6093 §2: the C ride-along sibling below stays ``role="system"``;
+    ``_handle_hook_message``'s own E push is now ``role="user"``).
 
     #1800 slice 5b originally: the single source for the ``[hook:<name>]``
     prefix, shared by the staged-context consumer (C — wake=false
@@ -9697,10 +9700,11 @@ class Session:
             )
         elif kind == TurnOrigin.HOOK:
             # E (wake=true) lifecycle-hook push delivered as a turn trigger:
-            # a system-role [hook:name] message + one router turn (self-
-            # continuation). The attribution + wake binding ride in the
-            # payload (race-free; the slice-7 valve can count hook-driven
-            # turns, and the audit trail attributes the turn to the hook).
+            # a [hook:name] message (#6093 §2: role="user", a real
+            # conversational turn) + one router turn (self-continuation).
+            # The attribution + wake binding ride in the payload
+            # (race-free; the slice-7 valve can count hook-driven turns,
+            # and the audit trail attributes the turn to the hook).
             await self._handle_hook_message(payload)
         elif kind == TurnOrigin.PIPELINE_NUDGE:
             # The empty-text pump that starts an ATTACHED pipeline run
@@ -9818,29 +9822,60 @@ class Session:
     async def _handle_hook_message(self, payload: dict) -> None:
         """#1800 slice 5b: surface an E (wake=true) lifecycle-hook push as one
         router turn (self-continuation). The push is appended as an attributed
-        system-role ``[hook:name]`` message — a NEW message (fidelity: never a
+        ``[hook:name]`` message — a NEW message (fidelity: never a
         silent mutation of an existing one) using the shared
         ``_format_ride_along_attribution`` helper (``kind="hook"`` at this call
         site, always — a hook push by construction) so C and E cannot drift —
         then a single router turn runs.
 
-        #5678/#5686: record IS delivery now — the appended entry (declared
-        ``Disclosure.MODEL``) is what the model actually sees, via the
-        widened ``build_history`` projection, not a SEPARATE text seed
-        passed to ``_run_router_loop`` (which would double-deliver it —
-        see that call site's own comment). This closes two defects at
-        once: E's content used to vanish from every turn AFTER the one it
-        arrived in (excluded from every subsequent projection), and its
-        turn-seed used to reach the model unattributed as a bare
-        ``role="user"`` line (#5686 — RouterLoop.run's own fallback guard
-        fired every time, since a role="system" tail was never
-        recognised as "already delivered")."""
+        #6093 §1/§2 (architect + lead-coder ruling, root-cause fix for the
+        #6093 empty-stop-attractor family): ``role="user"``, not
+        ``role="system"``. The prior ``role="system"`` shape made this
+        entry's tail NOT structurally a conversational turn — the LLM's
+        own next reply after a ``role="system"`` tail had nothing to
+        answer that its own turn-taking training recognises as an
+        inbound message, which is what #6093's own investigation traced
+        the verbatim-repeat failure to (see the issue's own root-cause
+        comment thread). ``kind=HistoryEntryKind.MATERIAL`` (stage ①'s
+        field) records WHY this is safe to place in the user slot without
+        claiming to be the operator's own words: it is content from
+        outside Reyn's own OS layer (a hook push), never Reyn's own
+        chrome (``FRAME`` — ``notify_turn_cancelled`` etc. stay
+        ``role="system"``, unaffected). ``kind`` is also what
+        ``restore.py``'s own projection now reads to avoid mislabeling
+        this entry as the operator's own line in the restored transcript
+        (see that module's own comment on its ``role=="user"`` branch).
+
+        Side effect, stated explicitly per review: this entry now falls
+        into ``COMPACTION_ELIGIBLE_BASE_ROLES`` (``role="user"`` is
+        always eligible) — ``Disclosure`` no longer governs its
+        model-visibility or compaction-eligibility the way it did as a
+        ``role="system"`` entry (``Disclosure`` applies ONLY to
+        ``role="system"``, per ``_normalize_disclosure``; passing it here
+        would silently normalize to ``None`` and govern nothing). This is
+        not an accidental loss of governance — ``role="user"`` was
+        already ALWAYS eligible for every window/compaction filter this
+        codebase has (``is_compaction_eligible``'s own base-role tuple),
+        a STRICTLY WIDER admission than ``Disclosure.MODEL`` ever
+        selectively granted a ``role="system"`` entry, so nothing that
+        used to be visible/eligible stops being so.
+
+        #5678/#5686 (superseded shape, kept for history): record IS
+        delivery — the appended entry is what the model actually sees,
+        not a SEPARATE text seed passed to ``_run_router_loop`` (which
+        would double-deliver it — see that call site's own comment).
+        This still closes both #5678/#5686 defects the same way (E's
+        content no longer vanishes from later turns' projections, and
+        its turn-seed no longer reaches the model unattributed) — only
+        the MECHANISM changed (a real ``role="user"`` conversational
+        turn instead of a widened ``role="system"``/``Disclosure``
+        allowlist admission)."""
         name = payload.get("name", "hook")
         text = payload.get("text", "")
         chain_id = payload.get("chain_id") or new_chain_id()
         attributed = _format_ride_along_attribution(TurnOrigin.HOOK, name, text)
         self._append_history(ChatMessage(
-            role="system",
+            role="user",
             content=attributed,
             ts=_now_iso(),
             meta={"chain_id": chain_id},
@@ -9873,13 +9908,11 @@ class Session:
                 if "spillability" in payload
                 else Spillability.default()
             ),
-            # #5678: a hook push is producer-authored content meant for
-            # the model (this method's own reason for existing) — MODEL,
-            # not INTERNAL. This entry now reaches the model's NEXT-turn
-            # projection too (router_history_buffer.py's allowlist
-            # widening, same PR) — see the run_router_loop call below for
-            # the matching stop-the-double-send half (#5686).
-            disclosure=Disclosure.MODEL,
+            # #6093 §2: this entry's OWN axis (not Disclosure, which does
+            # not apply to role="user" — see this method's own docstring)
+            # — content from outside Reyn's own OS layer, never Reyn's
+            # own chrome.
+            kind=HistoryEntryKind.MATERIAL,
         ))
         await self._put_outbox(OutboxMessage(
             kind="system",

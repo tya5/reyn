@@ -203,9 +203,11 @@ def test_extraction_is_not_vacuous():
     """Tier 2: positive control — if the walk stops finding ANY
     role="system" call (a refactor moves every producer behind a helper,
     a parser regression), the completeness test below passes VACUOUSLY.
-    This pins that the walk still finds the module known to hold FOUR of
-    the six #5678 producers (notify_state_change, notify_turn_cancelled,
-    _handle_hook_message, the C ride-along flush) — a name check, not a
+    This pins that the walk still finds the module known to hold 3 of
+    the original six #5678 producers (notify_state_change,
+    notify_turn_cancelled, the C ride-along flush — #6093 §2 moved the
+    4th, ``_handle_hook_message``'s own E push, to ``role="user"``,
+    outside this AST walk's own scope by design) — a name check, not a
     count, so it survives sites being added or removed elsewhere without
     needing a threshold bump."""
     modules = {module for module, _lineno, _has in _role_system_call_findings()}

@@ -52,7 +52,7 @@ from reyn.config.chat import SafetyConfig
 from reyn.core.events.state_log import StateLog
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import build_hook_payload
-from reyn.runtime.chat_message import Disclosure
+from reyn.runtime.chat_message import HistoryEntryKind, is_compaction_eligible
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
@@ -213,19 +213,36 @@ async def test_composed_event_from_external_input_drives_wake_hook_e2e(tmp_path)
         f"content already in history, not a separate text seed) — "
         f"got {ran!r}"
     )
+    # #6093 §2: _handle_hook_message's own entry is role="user" (a real
+    # conversational turn), not role="system" — see that method's own
+    # docstring.
     matches = [
         m for m in session.history
-        if m.role == "system" and "composed fired!" in m.text
+        if m.role == "user" and "composed fired!" in m.text
     ]
     (only_entry,) = matches  # exactly one — a 2nd or 0 fails to unpack
     assert only_entry.text.startswith("[hook:"), (
         f"the pushed text must land in history attributed with the "
         f"[hook:<name>] prefix (#5686) — got {only_entry.text!r}"
     )
-    assert only_entry.disclosure is not None and only_entry.disclosure >= Disclosure.MODEL, (
-        f"the pushed text's history entry must be declared at least "
-        f"MODEL-disclosed (#5678) so it actually reaches the model's own "
-        f"projection — got {only_entry.disclosure!r}"
+    # #6093 §2: this entry is role="user" now, not role="system" —
+    # Disclosure no longer governs it (applies only to role="system", per
+    # _normalize_disclosure) since role="user" is ALWAYS in
+    # COMPACTION_ELIGIBLE_BASE_ROLES / model-visible, a strictly WIDER
+    # admission than Disclosure.MODEL ever selectively granted a
+    # role="system" entry — reaches the model structurally, not via a
+    # declared axis. What replaces the old Disclosure assertion: this
+    # entry is compaction/window-eligible (is_compaction_eligible), and
+    # its OWN kind (stage ①'s field) records why it may sit in the user
+    # slot without claiming to be the operator's own words.
+    assert is_compaction_eligible(only_entry), (
+        f"the pushed text's history entry must be window/compaction "
+        f"eligible so it actually reaches the model's own projection — "
+        f"role={only_entry.role!r} is not in the always-eligible base set"
+    )
+    assert only_entry.kind is HistoryEntryKind.MATERIAL, (
+        f"a hook push is content from outside Reyn's own OS layer, never "
+        f"Reyn's own chrome — got {only_entry.kind!r}"
     )
 
 

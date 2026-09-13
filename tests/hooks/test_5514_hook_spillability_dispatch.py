@@ -136,7 +136,10 @@ async def test_declared_spillability_reaches_construction_on_wake_true(
         "spillability": Spillability.NEVER.value,
     })
 
-    (only,) = [m for m in session.history if m.role == "system"]
+    # #6093 §2: _handle_hook_message's own entry is role="user" (a real
+    # conversational turn), not role="system" — see that method's own
+    # docstring.
+    (only,) = [m for m in session.history if m.role == "user"]
     assert only.spillability is Spillability.NEVER
 
 
