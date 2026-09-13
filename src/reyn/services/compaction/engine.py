@@ -4423,17 +4423,82 @@ class RecoveryLadder:
                 self._compact_attempt_len if self._compact_attempt_len is not None
                 else len(self.raw_middle)
             )
-            _offered_for_shrink = self.raw_middle[:_current_attempt]
+            # #5890 §2 (architect + lead-coder ruling, correcting the
+            # original "reorder spill before refill" brief -- spill
+            # ALREADY runs before refill; what was missing is what spill
+            # SEARCHES): `offered` used to be ONLY `raw_middle`'s own
+            # offered prefix -- `tail` was never a spill candidate on
+            # this rung, even though `tail`'s own turns are exactly as
+            # eligible (same Spillability declarations, same
+            # `is_already_spilled`/`spill_turn_content` mechanism
+            # `_attempt_reactive_spill`'s own tail face already uses).
+            # `_offered_for_shrink` now covers BOTH -- `pool` is the
+            # SAME list object (aliased, not a second copy) so
+            # `shrink_pool_after_overflow`'s own `pool[idx] =
+            # replacement` (unchanged -- see that function's own
+            # docstring) mutates this combined list in place; the
+            # tail-appended re-split below is what turns it back into
+            # `self.raw_middle`/`self.tail` afterward. No new predicate,
+            # no new field -- ``is_already_spilled``'s own VALUE check
+            # (not turn identity) already makes a turn spilled from
+            # `tail` correctly recognised as "already spilled" if a
+            # later refill ever moves it into `raw_middle` and it is
+            # re-offered here (see that method's own docstring) — this
+            # rung's own bounded-termination measure does not regress.
+            _offered_for_shrink = self.raw_middle[:_current_attempt] + self.tail
+            # #5890 §2 (lead-coder BLOCKING, PR review): the re-split below
+            # is only correct while `spill_fn` (via `shrink_pool_after_
+            # overflow`'s own `pool[idx] = replacement`) does IN-PLACE
+            # REPLACEMENT ONLY -- never appends, removes, or reorders.
+            # That is true TODAY (the shared function's own docstring:
+            # "pool is mutated IN PLACE via spill_fn's returned (index,
+            # replacement) edits"), but nothing STRUCTURALLY forced it --
+            # a future spill_fn that ever changed the list's length would
+            # silently shift the raw_middle/tail boundary with no
+            # exception and no test failure (the exact "declaration with
+            # no enforcement" shape #6168 closed elsewhere tonight, for a
+            # different invariant). Capturing the expected length here and
+            # checking it below turns "only replaces" from an assumption
+            # into something this call site itself enforces.
+            _expected_len_after_spill = len(_offered_for_shrink)
             try:
                 # #5898: off the loop — same reason as the controller's own
                 # call site: the spill batch inside estimates, hashes and
                 # writes each candidate's whole body.
                 self._compact_attempt_len = await asyncio.to_thread(
                     shrink_pool_after_overflow,
-                    self.raw_middle, _offered_for_shrink, _current_attempt,
+                    _offered_for_shrink, _offered_for_shrink, _current_attempt,
                     spill_fn=self._spill_fn or (lambda _offered: []),
                     saw_byte_limit=self._last_recover_is_byte_limit,
                 )
+                if len(_offered_for_shrink) != _expected_len_after_spill:
+                    # `raise`, never `assert` (asserts vanish under
+                    # `-O`) -- this invariant is load-bearing for
+                    # correctness, not a debugging aid.
+                    raise RuntimeError(
+                        f"spill_fn changed the offered candidate count "
+                        f"from {_expected_len_after_spill} to "
+                        f"{len(_offered_for_shrink)} -- the re-split below "
+                        f"assumes spill only REPLACES entries in place "
+                        f"(never appends/removes/reorders); with a "
+                        f"changed length, the raw_middle/tail boundary "
+                        f"below would silently misplace entries between "
+                        f"the two lists (e.g. raw_middle's own tail-end "
+                        f"entries becoming tail's own head, or vice "
+                        f"versa) rather than raising here."
+                    )
+                # #5890 §2: re-split the (spill-mutated, same-length)
+                # combined list back into its two real homes — the first
+                # `_current_attempt` entries are raw_middle's own OFFERED
+                # prefix (the remainder of raw_middle past that point was
+                # never part of `_offered_for_shrink` and is untouched,
+                # appended back unchanged); everything after that boundary
+                # is `tail`.
+                self.raw_middle = (
+                    _offered_for_shrink[:_current_attempt]
+                    + self.raw_middle[_current_attempt:]
+                )
+                self.tail = _offered_for_shrink[_current_attempt:]
             except UnrecoveredError as _mid_floor_exc:
                 # #5712: the shared function's own message says "a single
                 # candidate alone" (caller-neutral wording); RecoveryLadder
@@ -4442,6 +4507,16 @@ class RecoveryLadder:
                 # (test_4947_stage1_floor_names_413_when_it_is_a_byte_limit)
                 # — plus the byte-limit wire-bytes clause this class alone
                 # can compute (needs SP/head/tail/new_msg).
+                #
+                # #5890 §2 (lead-coder ruling): this message is the
+                # MID_FLOOR terminal's own contract — an operator reads it
+                # to learn what was exhausted. "in raw_middle" was
+                # accurate when that was the only population spill ever
+                # searched; now that `_offered_for_shrink` also covers
+                # `tail`, the OLD wording would UNDER-claim what was
+                # actually tried, not merely go stale cosmetically — fixed
+                # in this same PR because the contract changed, not
+                # because the old wording broke.
                 raise UnrecoveredError(
                     (
                         "HTTP 413 (a request-BODY-BYTE limit) recurred "
@@ -4450,7 +4525,7 @@ class RecoveryLadder:
                     ) + "compacting a single raw_middle turn alone — mid "
                     "cannot be split any further (the turn-count floor), "
                     "and spilling every available candidate in raw_middle "
-                    "did not resolve this either." + (
+                    "or tail did not resolve this either." + (
                         _learned_byte_limit_clause(
                             last_accepted_wire_bytes=self._last_accepted_wire_bytes,
                             last_rejected_wire_bytes=self._last_rejected_wire_bytes,

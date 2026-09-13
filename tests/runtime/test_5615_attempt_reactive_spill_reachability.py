@@ -91,8 +91,9 @@ def test_attempt_reactive_spill_receives_a_real_head_candidate_rung1_never_sees(
     candidate. Witnessed via 2 independent, PUBLIC signals: (1) a real
     `tool_result_offloaded` audit-event for the huge content, (2) that
     event's own position in the trace — AFTER rung①'s own
-    `spill_candidate_population_exhausted` (its own `raw_middle`-scoped
-    population, unrelated small content) reports rung①'s own population
+    `spill_candidate_population_exhausted` (its own population — #5890
+    §2: `raw_middle`'s own offered prefix PLUS `tail`, never `head` —
+    unrelated small content either way) reports rung①'s own population
     exhausted, proving rung① itself could not have been the one that
     spilled the huge (`head`-face) candidate — only
     `_attempt_reactive_spill`, called once retry_loop's own attempt
