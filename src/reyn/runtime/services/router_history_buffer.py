@@ -652,9 +652,11 @@ def resolve_effective_trigger_and_budgets(
     *,
     phase: "str | None" = None,
     read_cap_config: Any = None,
-) -> "tuple[int, int, int]":
+) -> "tuple[int, int | None, int | None]":
     """Return ``(effective_trigger, head_budget, tail_budget)`` — #2957 PR-B
-    single SSoT for this lookup.
+    single SSoT for this lookup. #6174: ``head_budget``/``tail_budget`` are
+    ``None`` when no compaction_controller is wired (see the ``else``
+    branch below) — a real caller must handle that, not assume ``int``.
 
     Before PR-B, :class:`RouterHistoryBuffer` (``_resolve_budgets``) and
     :class:`~reyn.runtime.services.context_budget_advisor.ContextBudgetAdvisor`
@@ -687,8 +689,19 @@ def resolve_effective_trigger_and_budgets(
     passes none today (falls back to the shipped default — see
     ``_check_resource_within_budget``'s own docstring for what that means).
     """
-    engine = getattr(compaction_controller, "_engine", None) if compaction_controller is not None else None
-    budgets = getattr(engine, "budgets", None)
+    # #6174 (architect finding): a bare ``getattr(..., None)`` here used to
+    # swallow ANY ``AttributeError`` — including one raised INSIDE
+    # ``_engine``'s own property body (it lazily runs
+    # ``compaction_engine_factory``, #3671 follow-up) — and relabel a real
+    # engine-construction FAILURE as "no budgets", falling through to the
+    # fallback below in silence. "No controller wired" and "controller
+    # wired but its engine failed to build" are different facts; only the
+    # first degrades here — the second must propagate.
+    if compaction_controller is None:
+        engine = None
+    else:
+        engine = compaction_controller._engine
+    budgets = engine.budgets if engine is not None else None
     if budgets is not None:
         effective_trigger, head_budget, tail_budget = (
             budgets.effective_trigger, budgets.head_budget, budgets.tail_budget,
@@ -696,12 +709,22 @@ def resolve_effective_trigger_and_budgets(
     else:
         from reyn.llm.model_budget import get_max_input_tokens
         effective_trigger = get_max_input_tokens(model, events=events)
-        fallback = effective_trigger // 4
-        head_budget, tail_budget = fallback, fallback
+        # #6174: no compaction_controller wired at all — head/tail budgets
+        # are genuinely UNKNOWN here, not "25% of the window each". The
+        # prior ``effective_trigger // 4`` invented a number nothing
+        # measured and silently discarded component_weights' own
+        # asymmetry (shipped default head=10% / tail=15%, NOT a 1:1
+        # split — CompactionEngine.compute_budgets). A caller that
+        # actually needs a head/tail split without a controller has no
+        # basis to derive one here; it must decide, not this function.
+        head_budget, tail_budget = None, None
     _check_resource_within_budget(model, phase, effective_trigger, events, read_cap_config)
     # #4477: 4th instance of the resource/budget comparison class — the
-    # compaction batch's own byte cap vs head+tail's combined token budget.
-    _check_compaction_batch_within_budget(model, phase, head_budget, tail_budget, events)
+    # compaction batch's own byte cap vs head+tail's combined token
+    # budget. #6174: meaningless without a real head/tail split — skip
+    # when the fallback above left them unknown.
+    if head_budget is not None and tail_budget is not None:
+        _check_compaction_batch_within_budget(model, phase, head_budget, tail_budget, events)
     return effective_trigger, head_budget, tail_budget
 
 
@@ -1155,13 +1178,16 @@ class RouterHistoryBuffer:
                 messages[i].pop(f, None)
         return messages
 
-    def _resolve_budgets(self) -> tuple[int, int, int]:
+    def _resolve_budgets(self) -> "tuple[int, int | None, int | None]":
         """Return (effective_trigger, head_budget, tail_budget).
 
         #2957 PR-B: delegates to the module-level
         ``resolve_effective_trigger_and_budgets`` — single SSoT shared with
         ``ContextBudgetAdvisor._get_effective_trigger`` (previously each
-        reimplemented this lookup independently).
+        reimplemented this lookup independently). #6174: head_budget/
+        tail_budget are ``None`` when no compaction_controller is wired —
+        see that function's own docstring; :meth:`decompose_history_for_
+        retry`, this method's one caller, must handle that case itself.
         """
         return resolve_effective_trigger_and_budgets(
             self._compaction_controller, self._model, self._events,
@@ -1590,6 +1616,23 @@ class RouterHistoryBuffer:
             raw_middle: list = []
             tail: list = []
         else:
+            # #6174: head_budget/tail_budget are only None when no
+            # compaction_controller is wired — never the case for the one
+            # production caller (Session._build_history_compaction_bundle
+            # patches a real controller before the first turn runs) and
+            # not exercised by any test that reaches this branch today
+            # (the tests that construct a compaction_controller=None
+            # buffer all stay under effective_trigger, taking the
+            # "everything fits" branch above). Asserting loudly here, not
+            # inventing a split, keeps that true instead of assuming it.
+            if head_budget is None or tail_budget is None:
+                raise RuntimeError(
+                    "decompose_history_for_retry: history overflowed "
+                    f"effective_trigger ({effective_trigger}) but no "
+                    "compaction_controller is wired, so head/tail budgets "
+                    "are unknown -- retry-shrink cannot trim without them "
+                    "(#6174)."
+                )
             head = trim_head(wire_turns, head_budget, self._model, use_chars4=use_chars4)
             tail = trim_tail(wire_turns, tail_budget, self._model, use_chars4=use_chars4)
             # raw_middle = turns strictly between head and tail (by identity).
