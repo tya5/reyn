@@ -2783,6 +2783,10 @@ class RouterLoop:
                         # docstring for why this is the boundary fix).
                         "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                         "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                        # #6166: as-received, None when unstated by the
+                        # provider — see TokenUsage.reasoning_tokens's own
+                        # docstring.
+                        "reasoning_tokens": getattr(result.usage, "reasoning_tokens", None),
                         # #4691 Phase 1 ②: same call-granularity key item ①
                         # stamps on this call's own llm_response_received —
                         # threaded onto the row so a future flowview tree
@@ -2914,6 +2918,10 @@ class RouterLoop:
                             # #4691: same call as the tool-turn text row above.
                             "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                             "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                            # #6166: as-received, None when unstated by the
+                            # provider — see TokenUsage.reasoning_tokens's
+                            # own docstring.
+                            "reasoning_tokens": getattr(result.usage, "reasoning_tokens", None),
                             # #4691 Phase 1 ②: see the tool-turn-text row above
                             # for the full reasoning.
                             "call_id": result.call_id,
@@ -3036,6 +3044,13 @@ class RouterLoop:
                     if result.usage else 0,
                     prompt_tokens=getattr(result.usage, "prompt_tokens", 0)
                     if result.usage else 0,
+                    # #6166: as-received, None when unstated by the
+                    # provider OR when there is no usage at all here —
+                    # unlike the two fields above, never coerced to 0 (see
+                    # TokenUsage.reasoning_tokens's own docstring for why
+                    # this field alone keeps the distinction).
+                    reasoning_tokens=getattr(result.usage, "reasoning_tokens", None)
+                    if result.usage else None,
                     caller_hint="router",
                     model=host.resolve_model(self.router_model),
                 )
@@ -3105,6 +3120,10 @@ class RouterLoop:
                         # #4691: a genuine (if content-empty) call's own usage.
                         "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                         "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                        # #6166: as-received, None when unstated by the
+                        # provider — see TokenUsage.reasoning_tokens's own
+                        # docstring.
+                        "reasoning_tokens": getattr(result.usage, "reasoning_tokens", None),
                         # #4691 Phase 1 ②: see the tool-turn-text row's own
                         # comment (~line 2073) for the full reasoning.
                         "call_id": result.call_id,
@@ -3172,6 +3191,10 @@ class RouterLoop:
                     # full reasoning.
                     "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                     "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                    # #6166: as-received, None when unstated by the
+                    # provider — see TokenUsage.reasoning_tokens's own
+                    # docstring.
+                    "reasoning_tokens": getattr(result.usage, "reasoning_tokens", None),
                     # #4691 Phase 1 ②: see the tool-turn-text row's own comment
                     # (~line 2073) for the full reasoning.
                     "call_id": result.call_id,
