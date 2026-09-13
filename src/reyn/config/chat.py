@@ -1019,7 +1019,18 @@ class SafetyConfig:
 
 @dataclass
 class CompactionSectionCaps:
-    """Per-section token budgets for chat_summary BODY."""
+    """Per-section token budgets for chat_summary BODY.
+
+    #5890: only ``topic_arc`` is an enforced cap — it alone goes through
+    a deterministic bound (LLM re-summarize, then ``hard_truncate_
+    summary``) after the LLM returns. The other four fields are
+    serialised into the compactor prompt as size GUIDANCE only and are
+    never checked against their own field here — an operator reading
+    "caps" in this class's own name would reasonably expect all five to
+    be enforced; they are not (see docs/reference/config/reyn-yaml.md's
+    own "chat.compaction.section_token_caps fields" section for the
+    full asymmetry and why it is a real, currently-open gap, not a
+    closed decision)."""
     topic_arc: int = field(default=200, metadata={"axis": Axis.BOUNDING})
     decisions: int = field(default=400, metadata={"axis": Axis.BOUNDING})
     pending: int = field(default=400, metadata={"axis": Axis.BOUNDING})
