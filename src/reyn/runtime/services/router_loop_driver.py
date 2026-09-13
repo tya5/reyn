@@ -423,14 +423,28 @@ class RouterLoopDriver:
         seq_fn: "Callable[[int, dict], int]",
     ) -> "list[tuple[int, dict]]":
         """#5592 (owner ruling, "1 request = 面 × 同一 Spillability";
-        "head と tail を混ぜない") — within ONE face (a raw_middle slice,
-        ``head``, or ``tail`` — the caller never mixes faces into one
-        call), try the highest-priority non-empty ``Spillability`` tier's
-        eligible candidates (FIRST_CHOICE, else LAST_RESORT; ``NEVER``
-        excluded — same ``_eligible``/``_by_size_desc`` shape
-        ``_spill_candidates`` already established), largest-first,
-        actually spilling (persists via ``spill_turn_content``) up to K
-        of them.
+        "head と tail を混ぜない") — try the highest-priority non-empty
+        ``Spillability`` tier's eligible candidates (FIRST_CHOICE, else
+        LAST_RESORT; ``NEVER`` excluded — same ``_eligible``/
+        ``_by_size_desc`` shape ``_spill_candidates`` already
+        established) within ``turns``, largest-first, actually spilling
+        (persists via ``spill_turn_content``) up to K of them.
+
+        The owner ruling this cites named HEAD and TAIL specifically
+        (``_attempt_reactive_spill``'s own per-face-staged search: never
+        combines them into one call, for the cost reason #5592 itself
+        states below). ``_spill_batch_for_retry`` (#5890 §2, a SEPARATE
+        caller of this same method) treats ``raw_middle``'s own offered
+        prefix and ``tail`` as ONE combined ``turns`` list instead — the
+        two rungs answer different questions (this file's own
+        ``_attempt_reactive_spill`` proactively spills BEFORE an
+        overflow, face by face, to avoid an unnecessary request against
+        a face that already has room; ``_spill_batch_for_retry`` runs
+        AFTER an overflow, as `retry_loop`'s own rung①, where the
+        candidate POPULATION is what #5890 §2 widened, not the request
+        cadence) — this method itself does not enforce either
+        convention; it simply tiers/sorts/spills whatever list it is
+        handed.
 
         K is the ONE thing ``spill_granularity`` controls — unlimited
         (the whole tier) for ``"tier"`` (the default: #5592's own accept
@@ -1132,11 +1146,17 @@ class RouterLoopDriver:
         # about to (re-)offer to ``compact()`` this attempt (#5592,
         # correcting #9.6's own "never a slice" claim — see
         # ``_spill_batch_from_offered``'s own docstring, engine.py)
-        # — never head/tail, a SEPARATE population this closure
-        # never sees (see ``_attempt_reactive_spill`` for that
-        # face; retry_loop only calls this when raw_middle is
-        # non-empty, which coincides exactly with a compact()-
-        # origin overflow).
+        # — #5890 §2: as of that PR, ``candidates`` also carries
+        # ``tail`` appended after the raw_middle prefix (engine.py's
+        # own ``_run_one_iteration`` builds this combined list and
+        # re-splits it back afterward — this method stays unaware of
+        # the boundary, treating the whole thing as one flat
+        # candidate list, same as before). ``head`` is still never
+        # included (retry_loop only calls this when raw_middle is
+        # non-empty, which coincides exactly with a compact()-origin
+        # overflow) — see ``_attempt_reactive_spill`` for the
+        # SEPARATE, per-face-staged head/mid/tail search that face
+        # belongs to instead.
         #
         # #5592 (owner ruling, "1 request = 面 × 同一
         # Spillability"): returns a WHOLE BATCH now, not one

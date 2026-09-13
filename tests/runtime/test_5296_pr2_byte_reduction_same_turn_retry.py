@@ -1485,7 +1485,7 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
             _push(session, "user", f"tail filler {i} " * 8, spillability=Spillability.NEVER)
             _push(session, "assistant", f"tail reply {i} " * 8, spillability=Spillability.NEVER)
 
-        head, raw_middle, _tail, _summary, _ = (
+        head, raw_middle, tail, _summary, _ = (
             session._loop_driver._history_buffer.decompose_history_for_retry()
         )
         # #5514 §7-1: spillability doesn't influence decompose's OWN
@@ -1503,7 +1503,17 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
             "test setup sanity: this test's own point is a population that "
             "is ENTIRELY never — some raw_middle turn isn't"
         )
+        # #5890 §2: `tail` (the "tail filler"/"tail reply" pushes above)
+        # is now ALSO part of the population this rung offers to
+        # spill_fn (see the bound below) — must be entirely NEVER too,
+        # for the SAME reason raw_middle must be: this test's own point
+        # is a population with nothing eligible anywhere in it.
+        assert all(t.get("spillability") == "never" for t in tail), (
+            "test setup sanity: tail must ALSO be entirely never — #5890 "
+            "§2 made it part of the offered population this test measures"
+        )
         raw_middle_population = len(raw_middle)
+        tail_population = len(tail)
 
         events = collect_events(session)
 
@@ -1537,10 +1547,18 @@ def test_spill_population_exhausted_reports_count_and_breakdown_when_all_never(
         # once — so this can be STRICTLY LESS than
         # ``raw_middle_population`` (never pinning the exact
         # ``_attempt_len`` value itself, an algorithm-level detail this
-        # test does not own). Every member of it is still NEVER either
-        # way (the whole history here is NEVER), so the tier breakdown
-        # invariant below still fully accounts for it.
-        assert 0 < only.data["population"] <= raw_middle_population
+        # test does not own).
+        #
+        # #5890 §2 (contract change, not a bug fix — CI caught this
+        # bound the moment the population genuinely widened): `offered`
+        # now ALSO includes the full `tail` alongside raw_middle's own
+        # offered prefix, so the upper bound is
+        # `raw_middle_population + tail_population`, not
+        # `raw_middle_population` alone. Every member of BOTH is still
+        # NEVER either way (the whole history here is NEVER, tail
+        # included — see the sanity assert above), so the tier
+        # breakdown invariant below still fully accounts for it.
+        assert 0 < only.data["population"] <= raw_middle_population + tail_population
         assert only.data["never_count"] == only.data["population"]
         assert only.data["first_choice_count"] == 0
         assert only.data["last_resort_count"] == 0

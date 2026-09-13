@@ -1265,6 +1265,162 @@ def test_5367_3_spill_before_raise_resolves_byte_limit_mid_split_floor(tmp_path)
     )
 
 
+def test_5890_stage2_offered_population_at_mid_floor_includes_tail(tmp_path) -> None:
+    """Tier 2: #5890 §2 — the mid-floor spill rung's own ``offered``
+    population now includes ``tail``, not just ``raw_middle``'s own
+    slice. Before this fix, a genuinely spillable turn sitting in
+    ``tail`` was structurally invisible to this rung — ``spill_fn`` was
+    never even CALLED with it, no matter how eligible its own declared
+    ``Spillability`` was.
+
+    ``raw_middle`` holds ONE turn ``compact()`` 413s on unconditionally
+    (mirrors ``test_5367_3_spill_unavailable_still_raises_with_accurate_
+    message``'s own engine — genuinely unresolvable by ANYTHING this
+    rung can do, since spill only ever REPLACES content, never removes
+    the turn that carries it). ``tail`` holds ONE large, genuinely
+    spillable turn. Spilling ``tail``'s own turn cannot (and is not
+    expected to) resolve ``raw_middle``'s own compact() failure — the
+    property under test is only whether ``spill_fn`` is OFFERED the tail
+    turn's content at all, not whether the episode overall recovers (it
+    does not: ``UnrecoveredError(MID_FLOOR)`` still eventually raises,
+    one iteration later than a compact()-only trace would, since
+    ``tail``'s own content — once spilled — correctly stops appearing as
+    a fresh candidate on the NEXT pass, per ``is_already_spilled``'s own
+    value-based check).
+
+    Falsification (performed during review): reverting
+    ``_offered_for_shrink`` to ``self.raw_middle[:_current_attempt]``
+    (dropping ``+ self.tail``) makes this test's own tail marker never
+    appear in any ``spill_fn`` call — the assertion below goes from
+    finding it to not finding it at all.
+    """
+    cfg = _make_cfg()
+
+    class _AlwaysBlockedOnMidEngine(_OverflowingEngine):
+        """compact() 413s unconditionally, regardless of what happens to
+        tail — genuinely unresolvable by this rung, so any eventual
+        MID_FLOOR here is expected, not a test bug."""
+
+        async def compact(self, input_chunk, *, covers_through=None):
+            raise _FakeStatusError("compact 413", status_code=413)
+
+    engine = _AlwaysBlockedOnMidEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    raw_middle = [{
+        "role": "tool", "content": "UNSPILLABLE_MID_BLOCKER", "seq": 1,
+        "spillability": "never",
+    }]
+    tail = [{
+        "role": "tool", "content": "TAIL_OVERSIZED_RESULT", "seq": 2,
+        "spillability": "first_choice",
+    }]
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+
+    offered_calls: "list[list[str]]" = []
+
+    def _spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
+        offered_calls.append([t.get("content") for t in candidates])
+        for idx, turn in enumerate(candidates):
+            if turn.get("content") == "TAIL_OVERSIZED_RESULT":
+                return [(idx, {**turn, "content": "REF: tail turn spilled"})]
+        return []
+
+    async def _always_413_main_call(**kwargs):
+        raise ContextOverflowError("main_call 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", payload=RetryPayload(
+                head=[], raw_middle=raw_middle,
+                tail=tail, new_msg=new_msg,
+                seq_by_id={},
+            ), cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413_main_call,
+            spill_fn=_spill_fn,
+        ))
+
+    all_offered_contents = [c for call in offered_calls for c in call]
+    assert "TAIL_OVERSIZED_RESULT" in all_offered_contents, (
+        f"expected the tail turn's own content to be offered to spill_fn "
+        f"at least once (population widened, #5890 §2) — got "
+        f"calls={offered_calls!r}"
+    )
+    # raw_middle's own compact()-blocking content is untouched by this
+    # rung (spill only ever replaces, never removes the turn that keeps
+    # failing) — the episode still correctly reaches the mid floor.
+    assert excinfo.value.terminal is RetryLoopTerminal.MID_FLOOR
+
+
+def test_5890_stage2_length_changing_spill_fn_raises_instead_of_silently_misplacing(
+    tmp_path,
+) -> None:
+    """Tier 2: #5890 §2 (lead-coder BLOCKING, PR review) — the raw_middle/
+    tail re-split after spill assumes ``spill_fn`` only REPLACES entries
+    in place (``shrink_pool_after_overflow``'s own ``pool[idx] =
+    replacement``), never changes the offered list's own LENGTH. That was
+    true by convention but structurally UNENFORCED — a future ``spill_fn``
+    that ever appended/removed/reordered would silently shift the
+    raw_middle/tail boundary with no exception and no test failure. This
+    test drives a ``spill_fn`` that violates the assumption (mutates the
+    length of the list it is handed) and confirms the call site now
+    RAISES rather than proceeding to mis-split.
+
+    Uses a raw_middle with 2 turns (``_current_attempt == 2``, not the
+    mid=1 floor) so ``shrink_pool_after_overflow`` itself returns
+    normally (halves ``attempt_len``, no ``UnrecoveredError``) — the
+    length check inside the ``try`` block is what must catch this, not
+    the pre-existing ``except UnrecoveredError`` branch.
+
+    Falsification (performed during review): removing the
+    ``len(_offered_for_shrink) != _expected_len_after_spill`` check
+    (reverting to the un-enforced form) makes this test go RED — no
+    exception is raised, and ``self.raw_middle``/``self.tail`` would
+    silently end up misaligned instead (unobservable through
+    ``retry_loop``'s own public return value, which is exactly why the
+    enforcement belongs at this call site and not in a test reading
+    private state).
+    """
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=True)
+    learner = TokenMultiplierLearner(storage_path=tmp_path / "m.json")
+
+    raw_middle = [
+        {"role": "tool", "content": "mid-1", "seq": 1},
+        {"role": "tool", "content": "mid-2", "seq": 2},
+    ]
+    tail = [{"role": "tool", "content": "tail-1", "seq": 3}]
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+
+    def _length_changing_spill_fn(candidates: "list[dict]") -> "list[tuple[int, dict]]":
+        # Simulates the violation this test exists to catch: a spill_fn
+        # that changes the offered list's own length (real production
+        # spill_fn implementations never do this — this is the
+        # deliberately-wrong double the strip-falsify needs).
+        candidates.append({"role": "tool", "content": "smuggled", "seq": 998})
+        return []
+
+    async def _unreachable(**kwargs):
+        raise AssertionError("main_call must not be reached — the guard raises first")
+
+    with pytest.raises(RuntimeError, match="spill_fn changed the offered candidate count"):
+        asyncio.run(retry_loop(
+            SP="sp", payload=RetryPayload(
+                head=[], raw_middle=raw_middle,
+                tail=tail, new_msg=new_msg,
+                seq_by_id={},
+            ), cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_unreachable,
+            spill_fn=_length_changing_spill_fn,
+        ))
+
+
 def test_terminal_distinguishes_mid_floor_from_room_floor(tmp_path) -> None:
     """Tier 2: #5531 §10 / ADR-0044 (owner: "don't make the doc follow a
     wrong implementation" — the doc's own "travels as a structured value,
