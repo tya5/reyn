@@ -360,19 +360,37 @@ async def run_sandboxed_exec(
 
     # #5825 ①: the op's own REQUEST to run with network enabled (architect
     # ruling, issue #5825, 2026-09-06 — "ask is where a *request* meets a
-    # *closed* boundary"). Called ONLY when BOTH are true: the op explicitly
-    # asks (op.network is True) AND the resolved policy has it OFF
-    # (policy.network is False). A policy that already has network on
-    # (compat / unbounded) is untouched — require_network is not called at
-    # all, byte-identical to before this field existed (see
-    # SandboxedExecIROp.network's own docstring: "the op can REQUEST
-    # network, never FORCE it past a narrower operator policy"). On grant,
-    # replace THIS call's policy so every downstream read (backend.run, the
-    # started/completed events below) sees what was actually enforced —
-    # never the op's own unvalidated request field (#1339's own rule,
-    # applied to this new axis the same way it already applies to every
-    # other one).
-    if op.network and not policy.network:
+    # *closed* boundary"). On grant, replace THIS call's policy so every
+    # downstream read (backend.run, the started/completed events below)
+    # sees what was actually enforced — never the op's own unvalidated
+    # request field (#1339's own rule, applied to this new axis the same
+    # way it already applies to every other one).
+    #
+    # #5825 §3 fix (owner-ruled security gap, #5825's own census):
+    # `require_network` is now called for EVERY `op.network is True`
+    # request, not only when `policy.network is False` — the OLD guard
+    # here (`if op.network and not policy.network:`) skipped this call
+    # entirely whenever the resolved policy already had network on
+    # (compat / `unbounded`), which meant `permissions.network: deny`
+    # (the operator's own floor) was NEVER CONSULTED under those modes —
+    # a config deny silently did nothing. `policy_already_open=policy.
+    # network` tells `require_network` the ask/grant axis is moot (never
+    # widened past what the policy already granted); the FLOOR check
+    # inside it runs unconditionally either way — see that method's own
+    # docstring for the corrected ordering.
+    # #5825 §3 review (architect census, lead-coder ruling): raise
+    # unconditionally when no resolver is attached — NOT only when
+    # `policy.network` is already False. "no resolver, so the deny
+    # cannot be checked" must never be read as "no deny exists" — that
+    # is the exact reentry of this issue's own defect shape through a
+    # different door (a resolver-less context silently treated as
+    # equivalent to "nothing to gate"). The 38-of-54 `require_*` call
+    # sites that DO silently skip when their resolver is `None` are not
+    # a precedent to follow here — the function this fix touches has
+    # always raised in that case (see the pre-existing message below,
+    # unchanged), and this fix's own job is to make the FLOOR check
+    # unconditional, not to introduce a NEW silent-skip path alongside it.
+    if op.network:
         if ctx.permission_resolver is None:
             raise PermissionError(
                 "network access for this exec was requested (network: "
@@ -381,6 +399,7 @@ async def run_sandboxed_exec(
         await ctx.permission_resolver.require_network(
             ctx.permission_decl, ctx.intervention_bus, ctx.actor,
             argv=reported_argv, agent_name=ctx.agent_name or ctx.actor,
+            policy_already_open=policy.network,
         )
         policy = dataclasses.replace(policy, network=True)
 

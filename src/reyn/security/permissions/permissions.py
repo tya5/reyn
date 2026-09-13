@@ -2201,6 +2201,7 @@ class PermissionResolver:
         *,
         argv: "list[str] | None" = None,
         agent_name: str = "",
+        policy_already_open: bool = False,
     ) -> None:
         """Gate a ``sandboxed_exec`` call's REQUEST to run with network
         enabled (#5825 ①, architect ruling 2026-09-06).
@@ -2218,28 +2219,44 @@ class PermissionResolver:
         key only (see :data:`KEY_NETWORK`), same shape as
         :data:`KEY_WEB_FETCH`.
 
-        Called ONLY when the op explicitly REQUESTS network
-        (``op.network is True``) against a resolved policy that has it
-        OFF (``policy.network is False``) — see
-        ``op_runtime/sandboxed_exec.py``'s own seam docstring. A policy
-        that already has network on (compat / ``unbounded``) never
-        reaches this method at all, regardless of the op's request — an
-        op can ask for network, never force it past a narrower operator
-        policy.
+        Called for EVERY ``op.network is True`` request (#5825 §3 fix,
+        owner-ruled security gap — architect co-vet required; corrects
+        an EARLIER, WRONG shape of this docstring, quoted and refuted
+        below) — see ``op_runtime/sandboxed_exec.py``'s own seam
+        docstring for the call site. ``policy_already_open`` (new)
+        carries whether the resolved policy already has network on
+        (compat / ``unbounded``): the FLOOR below still applies either
+        way; only steps 2-4 (the ask/grant axis) are skipped when it is
+        ``True``, since a policy already open has nothing left to ask —
+        never widened past what the policy already granted.
+
+        The claim this docstring made before #5825's own census found
+        the gap — "a policy that already has network on never reaches
+        this method at all" — was FALSE in exactly the way that
+        mattered: it meant ``permissions.network: deny`` (the operator's
+        own floor) was silently never consulted under ``unbounded``/
+        ``compat``, the one case #5825 §3 exists to close. The floor is
+        now unconditional; only the ask/grant axis stays conditional on
+        the policy not already being open.
 
         Order (owner ruling 2026-09-06, FP-0069 §6.1/§10 — "declared →
         silent, undeclared → ask", corrected from an earlier "undeclared
-        → deny" draft):
+        → deny" draft; step 1 corrected AGAIN by #5825 §3 to actually run
+        unconditionally, matching what this text always claimed):
 
         1. **Floor**: ``permissions.network: deny`` (config) → denies,
-           without asking — the operator's floor always wins.
-        2. **Declared**: ``permissions.network: allow`` (config
+           without asking, REGARDLESS of ``policy_already_open`` — the
+           operator's floor always wins.
+        2. **Already open**: ``policy_already_open`` — the resolved
+           policy already grants network; nothing left to ask or check,
+           returns (no ledger read/write for this call).
+        3. **Declared**: ``permissions.network: allow`` (config
            pre-approval) OR a persisted ledger grant under
            ``<actor>/network/*`` (a prior ALWAYS answer, #5052
            agent-scope convention) → passes silently, no ask.
-        3. **Ask**: an interactive ``bus`` is available → prompts once,
+        4. **Ask**: an interactive ``bus`` is available → prompts once,
            persists an ALWAYS/NEVER choice to the SAME ledger key.
-        4. **No bus** (non-interactive / headless) → denies — the same
+        5. **No bus** (non-interactive / headless) → denies — the same
            "bus=None is not a pause, it's a deny" posture
            ``require_http_get``'s own legacy-compat path already applies.
 
@@ -2277,6 +2294,14 @@ class PermissionResolver:
                 f"network access for this exec denied by config "
                 f"({KEY_NETWORK}: deny)."
             )
+        if policy_already_open:
+            # #5825 §3: the floor above already ran (unconditionally).
+            # The resolved policy already grants network -- the ask/
+            # grant axis below is moot; returning here, never widening
+            # past what the policy already had, is the ONLY change this
+            # branch makes to the call sites that used to skip this
+            # method entirely.
+            return
         if self._is_config_approved(KEY_NETWORK):
             return
         key = f"{actor}/network/*"

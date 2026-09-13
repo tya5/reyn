@@ -339,16 +339,21 @@ class SandboxedExecIROp(BaseModel):
     REAL reader this time (`op_runtime/sandboxed_exec.py`'s own seam):
     `True` is a REQUEST, not a grant (same "declaration is intent, the
     prompt is the grant" framing `require_http_get`'s own docstring
-    states) — read ONLY when the resolved policy already has network
-    OFF (`policy.network is False`), at which point it triggers
-    `PermissionResolver.require_network` (config pre-approval, a
-    persisted ledger grant, or an interactive ask) before the policy for
-    THIS call is replaced with `network=True` and the process spawns.
-    `False` (the default) changes nothing — the sandbox's own resolved
-    policy governs, exactly as before this field existed. A policy that
-    already has network ON (compat / `unbounded`) never calls
-    `require_network` at all, regardless of this field's value — the op
-    can REQUEST network, never force it past a narrower operator policy.
+    states) — every request (`True`) now calls
+    `PermissionResolver.require_network` (#5825 §3 fix: the FLOOR,
+    `permissions.network: deny`, is checked unconditionally; the ask/
+    grant axis — config pre-approval, a persisted ledger grant, or an
+    interactive ask — only runs when the resolved policy does not
+    already have network OFF) before the policy for THIS call is
+    replaced with `network=True` and the process spawns. `False` (the
+    default) changes nothing — the sandbox's own resolved policy governs,
+    exactly as before this field existed. A policy that already has
+    network ON (compat / `unbounded`) skips the ask/grant part of
+    `require_network` (nothing left to ask), but NOT the floor check —
+    see that method's own docstring for the corrected ordering (#5825
+    §3 closed a real gap here: the floor used to be skipped too, so a
+    configured `permissions.network: deny` silently did nothing under
+    those modes).
     """
     #5838 段4: `cmd` — a shell command line, XOR `argv` (validated below,
     # same "exactly one of" shape `PresentIROp`/`RenderTemplateIROp` already
