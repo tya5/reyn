@@ -87,6 +87,7 @@ from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
     SPILLED_META_KEY,
     ChatMessage,
     Disclosure,
+    HistoryEntryKind,
     Spillability,
     _now_iso,
     compaction_coverage_from_summary,
@@ -9126,6 +9127,22 @@ class Session:
         _rendered = _render_mid_turn_injection(kind, payload)
         self._append_history(ChatMessage(
             role=_rendered["role"], content=_rendered["content"], ts=_now_iso(),
+            # #6093 §1 (architect ruling, "producer に名乗らせない — 穴は
+            # 1 つだけ"): ``meta`` below is a multi-producer queue's own
+            # dict, passed through WHOLESALE — the one call site among
+            # the 17 where a producer could stuff an arbitrary
+            # ``meta["kind"]`` string. ``kind=`` (this ``ChatMessage``'s
+            # OWN, unrelated field, see ``HistoryEntryKind``) is set
+            # EXPLICITLY here, as a positional-independent keyword the OS
+            # itself supplies from ``kind``/``_rendered`` (the trusted
+            # local, this function's own inbox-arbiter pop above) — never
+            # read from ``payload``/``meta`` — so nothing in the
+            # producer-supplied dict can make this entry claim
+            # ``HistoryEntryKind.FRAME``. Every ``MID_TURN_INJECTABLE``
+            # member (CLIENT_INPUT/AGENT_REQUEST/EXTERNAL_MESSAGE/HOOK)
+            # is content from OUTSIDE Reyn's own OS layer — MATERIAL,
+            # unconditionally, regardless of which member this is.
+            kind=HistoryEntryKind.MATERIAL,
             meta=payload.get("meta") or {},
             # #5514 §4 (traced, still undecided): this item came off
             # ``self._inbox``, a generic multi-producer queue

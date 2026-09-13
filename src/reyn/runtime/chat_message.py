@@ -18,6 +18,13 @@ choke point in ``__init__``, required (no default) whenever
 next-turn projection, an operator's restored TUI, both, or neither"
 (``role`` alone conflates Reyn-internal chrome with producer-authored
 content meant for the model — see that enum's own docstring).
+
+``HistoryEntryKind`` (#6093 §1) is a THIRD declared axis, same
+one-field/one-choke-point shape — defaulted (not required) to
+``UNSPECIFIED`` — answering "is this entry Reyn's own OS chrome
+(FRAME), or content someone/something outside Reyn's own OS layer
+produced (MATERIAL)?" (see that enum's own docstring for the census
+of the 4 previously-unshared vocabularies this replaces).
 """
 from __future__ import annotations
 
@@ -519,6 +526,125 @@ def _normalize_disclosure(value: object, *, role: str, meta: dict) -> "Disclosur
     )
 
 
+class HistoryEntryKind(StrEnum):
+    """#6093 §1 — answers ONE question: "is this entry Reyn's own OS
+    chrome, or is it MATERIAL someone/something outside Reyn's own OS
+    layer produced?" Vocabulary taken verbatim from this file's own
+    prose (:class:`Spillability`'s own docstring, #5514): "reyn's own
+    ★FRAME (``notify_turn_cancelled``) and ★MATERIAL (``template_push``)
+    share ``role=="system"``" — the census that led to this field found
+    that same FRAME/MATERIAL split already informally present but never
+    given a field, spread across FOUR different keys with no shared
+    vocabulary (a bare ``meta["kind"]`` string, ``meta["origin"]``,
+    ``meta["source"]``, and a second, unrelated ``meta["kind"]``
+    spelling holding a :class:`~reyn.runtime.turn_origin.TurnOrigin`
+    member) across the 17 ``_append_history(`` call sites (``git grep
+    -n '_append_history(' -- src/``).
+
+    Deliberately NOT :class:`~reyn.runtime.turn_origin.TurnOrigin`
+    (architect ruling, #6093 §1): ``TurnOrigin`` answers "which
+    PRODUCER authored this MATERIAL" — a question that does not even
+    apply to a FRAME entry (there is no producer to name), and it has
+    no member for what a FRAME entry actually IS (``"turn_cancelled"``
+    is not among its 11 members, all of which name a MATERIAL
+    provenance). This field does not replace ``origin``/``TurnOrigin``
+    or either existing ``meta["kind"]`` spelling — it answers a
+    logically PRIOR question (frame vs material), leaving "which
+    producer" exactly where it already lived.
+
+    ``StrEnum`` for the same reason ``Spillability``/``Disclosure`` are:
+    a value persisted to ``history.jsonl`` via ``asdict`` + ``json.dumps``
+    must serialise to its own wire string, and a value read back as a
+    plain ``str`` must still compare equal to the member.
+    """
+
+    #: The safe-side default (see :meth:`default`) — asserts NOTHING
+    #: about which layer this entry belongs to. Every entry constructed
+    #: before this field existed reads back as this value (no backfill,
+    #: #6093 §1 ruling — same forward-only shape as ``ChatMessage.
+    #: origin``: "existing entries written before this field existed
+    #: have no key, which is treated as not-yet-classified").
+    UNSPECIFIED = "unspecified"
+    #: Reyn's own OS chrome — never producer-authored, never something
+    #: the model or an operator should read as conversational content
+    #: (``notify_turn_cancelled``'s ack, a canned retry-exhausted reply).
+    FRAME = "frame"
+    #: Content someone or something OUTSIDE Reyn's own OS layer produced
+    #: — a user prompt, an LLM reply, a tool result, a hook push, a
+    #: ride-along, an inter-agent message (``template_push`` and every
+    #: other #5514 "deliverable", in that docstring's own vocabulary).
+    MATERIAL = "material"
+
+    @classmethod
+    def default(cls) -> "HistoryEntryKind":
+        """#6093 §1 (architect ruling): the safe-side default is
+        ``UNSPECIFIED``, never ``FRAME`` or ``MATERIAL`` — an omitted
+        declaration must not silently claim EITHER layer. The same
+        asymmetry ``Spillability.default()`` names for its own axis
+        (verbatim): a missing declaration must degrade to "not yet
+        classified", never assert the answer to a question nobody
+        actually answered. Concretely: a discriminator reading this
+        field must treat ``UNSPECIFIED`` as *not applicable* — never as
+        a 3rd member of either side of the FRAME/MATERIAL split."""
+        return cls.UNSPECIFIED
+
+
+def _normalize_history_entry_kind(value: object) -> HistoryEntryKind:
+    """#6093 §1: ``ChatMessage.__init__``'s ONE normalization point for
+    ``kind`` — every one of the 17 ``_append_history(`` call sites funnels
+    through here, including ``ChatMessage(**raw)`` from a read-back
+    ``history.jsonl`` line.
+
+    - ``None`` (omitted at a call site, or a pre-#6093 persisted line
+      with no ``kind`` key at all) → :meth:`HistoryEntryKind.default`
+      (``UNSPECIFIED``) — see that method's own docstring for why this
+      must not fall to either real member. This is what lets all 16 of
+      the 17 call sites this PR does not touch keep working unchanged:
+      an entry that never declares ``kind`` is simply not-yet-classified,
+      never silently misclassified.
+    - Already a ``HistoryEntryKind`` member → passed through unchanged.
+    - A plain ``str`` that names a real member (the read-back case) →
+      converted to that member.
+    - Anything else — an unrecognized string (a future value this
+      version's enum doesn't have yet, or a corrupted history line) —
+      degrades to :meth:`HistoryEntryKind.default` (``UNSPECIFIED``)
+      rather than raising.
+
+      SAME safe-side judgment as ``_normalize_spillability`` (lead-coder
+      BLOCKING correction, #6093 review — an earlier version of this
+      function raised here instead, reasoning by a DIFFERENT precedent,
+      ``Disclosure``'s own required-value raise; that precedent does not
+      apply: ``Disclosure`` is required with no default, so a bad value
+      IS a caller bug to surface loudly. ``kind`` has a real, safe-side
+      default — the exact shape ``_normalize_spillability``'s own
+      docstring already argues for: "an unrecognized string … degrades
+      to ``Spillability.default()`` rather than raising", "an unreadable
+      declaration must degrade availability, never fail the turn").
+      Concretely: this function is reached from ``ChatMessage(**raw)``
+      on every ``history.jsonl`` read-back (``Session._parse_history_
+      line``) — raising here would mean (1) a NEWER build's ``kind``
+      value could never be read back by an OLDER build, and (2) one
+      corrupted/foreign-written history line could fail loading the
+      WHOLE session on restart, for a field whose own default is
+      already "not yet classified". Degrading to ``UNSPECIFIED`` also
+      satisfies #6093 §1's own default ruling directly (the default
+      "must not fall to either real member... never assert the answer
+      to a question nobody actually answered") — the same value an
+      omitted declaration produces, which is correct: an unrecognized
+      string is not more informative than no declaration at all.
+    """
+    if value is None:
+        return HistoryEntryKind.default()
+    if isinstance(value, HistoryEntryKind):
+        return value
+    if isinstance(value, str):
+        try:
+            return HistoryEntryKind(value)
+        except ValueError:
+            return HistoryEntryKind.default()
+    return HistoryEntryKind.default()
+
+
 # #73: typed (not form-sniffed) tool-outcome classification, stamped on a
 # ``role="tool"`` message's ``meta`` at PERSIST time by the ONE place that
 # already knows the classification (``router_loop.py``'s tool-result
@@ -831,6 +957,13 @@ class ChatMessage:
     # including how a pre-#5678 persisted line supplies one via
     # ``_migrate_legacy_chat_message`` rather than this raising.
     disclosure: "Disclosure | None" = None
+    # #6093 §1: the ONE declaration point — see ``HistoryEntryKind``'s
+    # own docstring and ``_normalize_history_entry_kind`` for the full
+    # contract. Defaults to ``HistoryEntryKind.default()``
+    # (``UNSPECIFIED``) — omitted at 16 of the 17 existing
+    # ``_append_history(`` call sites, all unaffected by this field's
+    # addition.
+    kind: HistoryEntryKind = field(default_factory=HistoryEntryKind.default)
 
     def __init__(
         self,
@@ -852,6 +985,11 @@ class ChatMessage:
         # ``role="system"``, irrelevant (stays ``None``) for every other
         # role.
         disclosure: "Disclosure | str | None" = None,
+        # #6093 §1: see ``_normalize_history_entry_kind`` — omitted
+        # (``None``) at every call site this PR does not touch, which
+        # normalizes to ``HistoryEntryKind.UNSPECIFIED``, never either
+        # real member.
+        kind: "HistoryEntryKind | str | None" = None,
     ) -> None:
         # Reject the pre-#383 ``"agent"`` spelling. Migration of on-disk
         # ``history.jsonl`` entries happens at load time via
@@ -874,6 +1012,7 @@ class ChatMessage:
         self.name = name
         self.spillability = _normalize_spillability(spillability)
         self.disclosure = _normalize_disclosure(disclosure, role=role, meta=self.meta)
+        self.kind = _normalize_history_entry_kind(kind)
         # #5896 P0 (owner-hit, 2026-09-07): a plain instance attribute, NOT
         # a dataclass field — deliberately NO class-level annotation, so
         # `dataclasses.fields()`/`asdict()`/`__eq__`/`repr()` never see it.
@@ -908,7 +1047,7 @@ class ChatMessage:
         codebase in-place-mutates ANY field ``asdict(self)`` can see
         (``role`` / ``content`` / ``ts`` / ``seq`` / ``meta`` /
         ``tool_calls`` / ``tool_call_id`` / ``name`` / ``spillability`` /
-        ``disclosure`` — all 9 dataclass fields, not just
+        ``disclosure`` / ``kind`` — all 11 dataclass fields, not just
         ``content``/``meta``) AFTER a message becomes resident.
         Confirmed by reading every in-place write to any of them across
         the whole of ``src/`` (lead-coder review, PR #5945 BLOCKING —
@@ -932,7 +1071,7 @@ class ChatMessage:
         ``dataclasses.replace()`` goes back through ``__init__`` (this
         cache is reset to ``None`` there), so a copy never inherits a
         stale value from the original. If a future change adds an
-        in-place write to any of the 9 fields AFTER a message is
+        in-place write to any of the 11 fields AFTER a message is
         resident, this cache goes silently stale — re-run this same
         search (``.content =`` / ``.meta[...] =`` / ``.seq =`` / etc.,
         across ``src/``, not just ``runtime/``) before trusting it
