@@ -41,7 +41,6 @@ import reyn.prompt.universal_slots as _universal_slots_mod
 from reyn.data.skills.registry import SkillEntry
 from reyn.prompt.dogfood import dogfood_judge_system_prompt
 from reyn.prompt.loop_control import tool_call_cap_notice
-from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.services.turn_budget.engine import wrap_up_system_prompt
 from reyn.tools.encoders import build_actions_map, render_code_api
@@ -119,9 +118,11 @@ def _assembled_output_corpus() -> str:
     )
     chunks.extend(slots_with_skills.values())
 
-    # project_context / output_language / memory-ok / reasoning-continuity /
-    # context-size axes — each rendered at least once so their gated
-    # router_frame constants appear in the corpus.
+    # project_context / output_language / memory-ok / context-size axes —
+    # each rendered at least once so their gated router_frame constants
+    # appear in the corpus. (reasoning-continuity's SP-tail axis was
+    # retired in #6182 — 0 production callers; see reasoning_continuity.py's
+    # own module docstring.)
     chunks.append(build_system_prompt(
         agent_name="chat", agent_role="general assistant",
         available_agents=[{"name": "peer1", "role": "peer role", "cluster": "default"}],
@@ -134,7 +135,6 @@ def _assembled_output_corpus() -> str:
         cwd="/tmp/project",
         project_context="Some AGENTS.md content.",
         output_language="ja",
-        reasoning_continuity_section="━━━ prior_reasoning ━━━\n- note",
         context_size_signal="[context: 12000/128000 tokens]",
     ))
 
@@ -168,12 +168,12 @@ def _assembled_output_corpus() -> str:
     chunks.append(wrap_up_system_prompt())
     chunks.append(wrap_up_system_prompt(reason="router reached iteration limit (5)"))
 
-    # §I-L loop-control nudges (Phase 3): rendered at their own mid-request-
-    # stream injection points, not via build_system_prompt.
+    # §I-K loop-control nudges (Phase 3): rendered at their own mid-request-
+    # stream injection points, not via build_system_prompt. (§L, reasoning-
+    # continuity, was retired in #6182 — 0 production callers.)
     chunks.append(_loop_control_mod.EMPTY_STOP_RETRY_DIRECTIVE)
     chunks.append(_loop_control_mod.G12_SIGNAL_ERROR_TEXT)
     chunks.append(tool_call_cap_notice(attempted=7, kept=3)["content"])
-    chunks.append(render_reasoning_section(["a prior reasoning entry"]))
 
     # §M CodeAct observation-turn labels (Phase 3): exercise all three label
     # branches (result / stdout-fallback / stderr-appended).

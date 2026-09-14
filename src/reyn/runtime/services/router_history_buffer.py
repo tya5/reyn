@@ -1927,12 +1927,5 @@ class RouterHistoryBuffer:
             output_language=rh.output_language,
             project_context=rh.get_project_context(),
             tool_use_sp=tool_use_sp,
-            # #1652: include the prior-reasoning continuity section so the T_SP
-            # estimate (and the override/budget SP path) accounts for it. Host-
-            # polymorphic getattr — phase/estimation hosts without the method
-            # contribute "" (omit-when-empty, byte-identical).
-            reasoning_continuity_section=getattr(
-                rh, "reasoning_continuity_section", lambda: ""
-            )(),
             non_interactive=self._non_interactive,
         )
