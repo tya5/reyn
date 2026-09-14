@@ -474,8 +474,10 @@
 #                             #   continuity). false = disable persist+replay.
 #     display: true           # surface reasoning in the UI (TUI + web,
 #                             #   collapsible). false = hide. Independent of continuity.
-#     recent_turns: 3         # how many recent turns' reasoning to replay.
-#                             #   <= 0 (e.g. 0 / -1) = unbounded (keep all).
+#     recent_turns: 0         # how many recent turns' reasoning to replay.
+#                             #   <= 0 (e.g. 0 / -1) = unbounded (keep all) --
+#                             #   the default; set a positive N to opt into a
+#                             #   harder cap than spill alone provides.
 
 # chat.render_mode: interactive chat renderer/driver on a TTY (#3273). A non-TTY
 # session (piped / CI / no real terminal) always falls back to `plain`.

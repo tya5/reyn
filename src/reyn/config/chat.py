@@ -1216,12 +1216,20 @@ class ReasoningConfig:
     ``display`` — surface reasoning to the UI (TUI + web, collapsible).
       Opt-out to hide it. Independent of ``continuity``.
     ``recent_turns`` — how many recent turns' reasoning to replay under
-      ``continuity``. ``<= 0`` (e.g. 0 / -1) = unbounded (keep all). Bounding
-      matters on gemini (no provider auto-filter → reasoning is billed in full).
+      ``continuity``. ``<= 0`` (e.g. 0 / -1) = unbounded (keep all) — the
+      DEFAULT. #6179 stage ⑵ (spill now covers reasoning fields, #6180)
+      made spill the shrink-flow's own bound on reasoning's size; this knob
+      is no longer the only thing stopping it from growing without limit,
+      so it defaults open rather than pre-emptively truncating. Owner
+      ruling (2026-09-14, verbatim): "わたしは直近3つと言ったことはないと
+      思うあなたが勝手に絞ってる。すべておくるべきだし、spill 対象にする
+      のが自然だと思うな" — the prior default of 3 was this module's own
+      invention, not an owner decision. Set a positive N to opt INTO a
+      harder cap than spill alone provides.
     """
     continuity: bool = field(default=True, metadata={"axis": Axis.PREFERENCE})
     display: bool = field(default=True, metadata={"axis": Axis.PREFERENCE, "override_enabled": True})
-    recent_turns: int = field(default=3, metadata={"axis": Axis.PREFERENCE})
+    recent_turns: int = field(default=0, metadata={"axis": Axis.PREFERENCE})
 
 
 # #3273 (#4223 removed ``inline``/``auto`` — owner instruction, 2026-08-11):
