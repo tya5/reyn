@@ -769,7 +769,7 @@ chat:
   reasoning:
     continuity: true      # persist reasoning to history + replay recent turns
     display: true         # show reasoning in the UI (TUI + web, collapsible)
-    recent_turns: 3       # turns of reasoning to replay; <=0 = unbounded
+    recent_turns: 0       # turns of reasoning to replay; <=0 = unbounded (default)
   gutters:
     left: true            # TUI left gutter (state marker, 2 cols) shown at start
     right: true           # TUI right gutter (elapsed/tokens, 12 cols) shown at start
@@ -971,7 +971,7 @@ what happens afterwards. Both `continuity` and `display` default **on**.
 |-------|---|------|---------|-------------|
 | `continuity` | preference | bool | `true` | Persist reasoning to history **and** replay the recent turns' reasoning into the next turn's system prompt (cross-user-turn reasoning continuity, a text-section mirroring `act_turn_reasoning`). Opt-out to disable persist + replay. |
 | `display` | preference | bool | `true` | Surface reasoning in the UI (TUI + web, collapsible). Opt-out to hide it. Independent of `continuity`. |
-| `recent_turns` | preference | int | `3` | How many recent turns' reasoning to replay under `continuity`. `<= 0` (e.g. `0` / `-1`) = unbounded (keep all). Bounding matters on Gemini — there is no provider auto-filter, so reasoning accumulates and is billed in full. |
+| `recent_turns` | preference | int | `0` (unbounded) | How many recent turns' reasoning to replay under `continuity`. `<= 0` (e.g. `0` / `-1`) = unbounded (keep all) — the default. #6179: spill now covers reasoning fields (#6180), so the shrink flow itself bounds reasoning's size; this knob is an OPTIONAL, additional cap for a caller who wants a harder limit, not the sole bound. |
 
 > **Provider note**: on the Gemini-via-proxy path the reasoning is replayed as a
 > text section (the model sees it in-prompt), and `reasoning_content` is stripped

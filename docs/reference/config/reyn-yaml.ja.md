@@ -394,7 +394,7 @@ chat:
   reasoning:
     continuity: true      # reasoning を履歴に永続化 + 直近ターンを次プロンプトに replay
     display: true         # reasoning を UI（TUI + web、折りたたみ可）に表示
-    recent_turns: 3       # replay する reasoning のターン数; <=0 = 無制限
+    recent_turns: 0       # replay する reasoning のターン数; <=0 = 無制限（既定）
 ```
 
 ### `chat.reasoning` フィールド
@@ -405,7 +405,7 @@ chat:
 |-------|------|---------|-------------|
 | `continuity` | bool | `true` | reasoning を履歴に永続化 **かつ** 直近ターンの reasoning を次ターンの system prompt に replay（cross-user-turn の reasoning continuity、`act_turn_reasoning` を踏襲したテキストセクション）。opt-out で永続化 + replay を無効化。 |
 | `display` | bool | `true` | reasoning を UI（TUI + web、折りたたみ可）に表示。opt-out で非表示。`continuity` とは独立。 |
-| `recent_turns` | int | `3` | `continuity` 時に replay する直近 reasoning のターン数。`<= 0`（例: `0` / `-1`）= 無制限（全保持）。Gemini ではプロバイダー側の auto-filter が無いため bounding が重要（reasoning が蓄積し全量課金される）。 |
+| `recent_turns` | int | `0`（無制限） | `continuity` 時に replay する直近 reasoning のターン数。`<= 0`（例: `0` / `-1`）= 無制限（全保持）— 既定。#6179: spill が reasoning field を覆うようになった（#6180）ため、量の主体は縮小フロー（spill）自身であり、この knob はそれより厳しい上限を望む呼び手向けの任意の追加キャップであって、唯一の bound ではない。 |
 
 > **プロバイダー注記**: Gemini-via-proxy では reasoning はテキストセクションとして replay され（モデルは prompt 内で参照）、wire-shape の assistant message からは `reasoning_content` を strip します（litellm の vertex transformation がネイティブにも emit して double-inject になるのを防ぐ）。Anthropic/DeepSeek の direct-API は tool-use パスでネイティブ `reasoning_content` round-trip を要求します（litellm が wire 上に残っていれば auto 処理）— 既知のプロバイダー依存で、ここでは未実装（proxy + Gemini 前提）。
 

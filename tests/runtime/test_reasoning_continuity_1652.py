@@ -25,10 +25,16 @@ _SP_BASE = dict(
 # ── Tier 1: config schema + reyn.yaml loader ────────────────────────────────
 
 
-def test_reasoning_config_defaults_all_on_n3():
-    """Tier 1: #1652 — defaults: continuity ON, display ON, recent_turns=3."""
+def test_reasoning_config_defaults_all_on_unbounded():
+    """Tier 1: #6179 stage ⑴ — defaults: continuity ON, display ON,
+    recent_turns=0 (unbounded). Owner ruling (2026-09-14, verbatim):
+    "わたしは直近3つと言ったことはないと思うあなたが勝手に絞ってる。すべて
+    おくるべきだし、spill 対象にするのが自然だと思うな" — the prior
+    default of 3 was this module's own invention. #6179 stage ⑵ (#6180)
+    made spill the shrink-flow's own bound on reasoning's size, so this
+    knob no longer needs to pre-emptively truncate by default."""
     c = ReasoningConfig()
-    assert (c.continuity, c.display, c.recent_turns) == (True, True, 3)
+    assert (c.continuity, c.display, c.recent_turns) == (True, True, 0)
 
 
 def test_chat_reasoning_loads_from_yaml_nondefault():
