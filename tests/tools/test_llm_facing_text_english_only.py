@@ -25,7 +25,6 @@ from reyn.prompt.loop_control import (
     G12_SIGNAL_ERROR_TEXT,
     tool_call_cap_notice,
 )
-from reyn.runtime.reasoning_continuity import render_reasoning_section
 from reyn.runtime.router_system_prompt import build_system_prompt
 from reyn.tools import get_default_registry
 from reyn.tools.encoders import build_actions_map, render_code_api
@@ -172,7 +171,6 @@ def _all_request_stream_nudges() -> list[tuple[str, str]]:
         ("loop_control.EMPTY_STOP_RETRY_DIRECTIVE", EMPTY_STOP_RETRY_DIRECTIVE),
         ("loop_control.G12_SIGNAL_ERROR_TEXT", G12_SIGNAL_ERROR_TEXT),
         ("loop_control.tool_call_cap_notice", tool_call_cap_notice(attempted=7, kept=3)["content"]),
-        ("reasoning_continuity.render_reasoning_section", render_reasoning_section(["a prior entry"])),
         ("dogfood.DOGFOOD_INTERPRETATION_SYSTEM_PROMPT", DOGFOOD_INTERPRETATION_SYSTEM_PROMPT),
         ("dogfood.dogfood_judge_system_prompt", dogfood_judge_system_prompt("- on-topic\n- polite")),
         ("codeact._format_codeact_observation[result]", _format_codeact_observation(

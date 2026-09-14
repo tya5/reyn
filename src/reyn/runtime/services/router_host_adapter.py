@@ -421,11 +421,9 @@ class RouterHostAdapter:
         # unattended (reject), the C3 hard-deny posture.
         handle_chat_limit_checkpoint: "Callable[..., Any] | None" = None,
         safety_extensions: "dict[str, float] | None" = None,
-        # #1652: ReasoningConfig (continuity/display/recent_turns) + the session
-        # callback that renders the bounded prior-reasoning text section (reads
-        # history + applies the continuity gate). None → reasoning disabled.
+        # #1652: ReasoningConfig (continuity/display/recent_turns). None →
+        # reasoning disabled.
         reasoning_config: Any = None,
-        reasoning_continuity_section_fn: "Callable[[], str] | None" = None,
         # #4206 slice 2: ③ preference-axis live override for `display` ONLY
         # (continuity/recent_turns stay ② bounding, read off
         # `reasoning_config` unchanged) — None (every pre-slice-2 caller,
@@ -756,9 +754,8 @@ class RouterHostAdapter:
         self._safety_extensions: "dict[str, float]" = (
             safety_extensions if safety_extensions is not None else {}
         )
-        # #1652: reasoning capture/continuity/display config + the section renderer.
+        # #1652: reasoning capture/continuity/display config.
         self._reasoning_config = reasoning_config
-        self._reasoning_continuity_section_fn = reasoning_continuity_section_fn
         # #4206 slice 2: ③ preference-axis live override for `display` ONLY.
         self._reasoning_display_fn = reasoning_display_fn
         # #4206 Slice B (#4724): ③ preference-axis live override for the
@@ -2401,9 +2398,10 @@ class RouterHostAdapter:
             # the OutboxMessage above keeps its own ``kind`` since that's
             # the TUI-facing taxonomy, independent of the LLM-side role.
             # #1652: persist reasoning on the history ChatMessage ONLY when
-            # continuity is on (so _reasoning_continuity_section can replay it);
-            # otherwise persist the stripped meta. Either way the wire-shape
-            # builder never emits meta to the LLM (no native double-inject).
+            # continuity is on (so RouterHistoryBuffer's native wire re-attach
+            # can replay it, bounded to recent_turns); otherwise persist the
+            # stripped meta. Either way the wire-shape builder here never
+            # emits meta to the LLM directly (no native double-inject).
             _persist_meta = (
                 meta if (_reasoning and self.reasoning_continuity_enabled())
                 else _outbox_meta
@@ -2457,14 +2455,6 @@ class RouterHostAdapter:
         """Whether reasoning is persisted to history + replayed into the next
         turn (config ``chat.reasoning.continuity``; default False unconfigured)."""
         return bool(getattr(self._reasoning_config, "continuity", False))
-
-    def reasoning_continuity_section(self) -> str:
-        """Pre-rendered prior-reasoning text section for the next system prompt,
-        or ``""`` when continuity is off / no prior reasoning. The session
-        callback reads recent history + applies the bound + continuity gate."""
-        if self._reasoning_continuity_section_fn is None:
-            return ""
-        return self._reasoning_continuity_section_fn() or ""
 
     # #3607: the four file-op delegates (``file_read`` / ``file_write`` /
     # ``file_delete`` / ``file_regenerate_index``) lived here only so

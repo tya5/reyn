@@ -4,7 +4,7 @@ Extends slice 1 (``output_language``) to a second ③ key, wired through the
 new shared ``Session._resolve_session_preference`` helper and a
 ``reasoning_display_fn`` callback into ``RouterHostAdapter`` — the same
 "live callback, not a frozen construction-time value" shape
-``reasoning_continuity_section_fn`` already established. Deliberately
+``model_class_ceiling_fn`` already established. Deliberately
 narrow: ``chat.reasoning.continuity``/``recent_turns`` are ② bounding
 (#4206's own ratified classification), unaffected by this slice, and NOT
 tested here (their own coverage is unchanged).

@@ -73,9 +73,12 @@ block):
   `recent_turns` stay ② bounding (read directly off `self._reasoning`,
   unaffected). `RouterHostAdapter.reasoning_display_enabled()` consults this
   live via a `reasoning_display_fn` callback wired at construction (the SAME
-  callback shape `reasoning_continuity_section_fn` already established for
-  the sibling continuity-section renderer) — `None` (every pre-slice-2 host)
-  falls back to the frozen `reasoning_config.display` read, byte-identical.
+  "live callback, not a frozen construction-time value" shape
+  `model_class_ceiling_fn` already established) — `None` (every pre-slice-2
+  host) falls back to the frozen `reasoning_config.display` read,
+  byte-identical. (#6182: the SIBLING continuity-section renderer this
+  paragraph used to cross-reference — `reasoning_continuity_section_fn` — was
+  itself a retired stub with 0 production callers and has been removed.)
 - `warn_ratio_overrides()` (#4206 Slice B, #4724) — public METHOD (not a
   property — returns a fresh `dict[str, float]` each call, not a scalar), the
   ③ resolution for the 7 `cost.*.warn_ratio` keys. A DIFFERENT shape from

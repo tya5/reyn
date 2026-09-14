@@ -6906,17 +6906,15 @@ class Session:
             # op-context supplier; the adapter keeps its own reference because
             # its container-repo helpers read it directly.
             environment_backend=self._environment_backend,
-            # #1652: reasoning config (display/continuity/recent_turns gates) +
-            # the bounded prior-reasoning section renderer (reads this session's
-            # history). The host exposes reasoning_display_enabled() /
-            # reasoning_continuity_enabled() / reasoning_continuity_section() to
-            # the router loop for emit-gating, persist-gating, and SP replay.
+            # #1652: reasoning config (display/continuity/recent_turns gates).
+            # The host exposes reasoning_display_enabled() /
+            # reasoning_continuity_enabled() to the router loop for
+            # emit-gating and persist-gating (replay itself now rides the
+            # native wire re-attach, RouterHistoryBuffer — #1652/②, #6182).
             reasoning_config=self._reasoning,
-            reasoning_continuity_section_fn=self.reasoning_continuity_section,
             # #4206 slice 2: ③ preference-axis live override for `display`
             # ONLY (continuity/recent_turns stay ② bounding, read off
-            # `reasoning_config` above, untouched) — a callback, same shape
-            # as `reasoning_continuity_section_fn` immediately above, so the
+            # `reasoning_config` above, untouched) — a callback so the
             # adapter re-resolves session/agent overrides on every call
             # instead of reading the frozen `reasoning_config.display` this
             # session was constructed with.
@@ -12907,19 +12905,6 @@ class Session:
             "window_tokens": window_tokens,
             "window_used_tokens": window_used_tokens,
         }
-
-    def reasoning_continuity_section(self) -> str:
-        """#1652/②: RETIRED — always ``""``.
-
-        Cross-turn reasoning continuity now rides the wire assistant messages
-        natively (RouterHistoryBuffer re-attaches the captured reasoning bundle
-        — reasoning_content / thinking_blocks — bounded to ``recent_turns``),
-        instead of a re-rendered text section at the router system-prompt tail.
-        Moving it off the SP makes the SP byte-stable turn-to-turn → the long
-        SP+tools prefix stays cacheable (the #1652/② cache win on capable-model
-        tiers). Returning ``""`` keeps the SP omit-when-empty shape unchanged.
-        """
-        return ""
 
     async def _run_router_loop(
         self,

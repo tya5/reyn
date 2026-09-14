@@ -1,8 +1,8 @@
-"""§I-L — the loop-control / weak-model nudge strings injected mid-REQUEST-
+"""§I-K — the loop-control / weak-model nudge strings injected mid-REQUEST-
 STREAM (as a synthetic message appended to ``messages``, NOT as part of the
 assembled system prompt string).
 
-Feeds four independent call-sites, each verified byte-identical AT ITS OWN
+Feeds three independent call-sites, each verified byte-identical AT ITS OWN
 injection point (the system-prompt golden diff in ``router_frame.py`` etc.
 does not cover these — they never touch ``build_system_prompt``):
 
@@ -19,15 +19,12 @@ does not cover these — they never touch ``build_system_prompt``):
   re-grounding notice appended after a per-turn ``tool_calls`` cap fires
   (#1666). Parameterized (``attempted``/``kept`` counts are dynamic; the
   template is static).
-- **§L** ``reyn.runtime.reasoning_continuity`` — the prior-reasoning section
-  header + framing sentence appended to the router system prompt when
-  cross-turn reasoning continuity is enabled (#1652). NOTE: this one DOES
-  end up concatenated into the system-prompt string by
-  ``router_system_prompt.build_system_prompt`` (via the
-  ``reasoning_continuity_section`` parameter) — grouped here with the other
-  loop-control nudges (not moved to ``router_frame.py``) because the
-  literal text is owned/rendered by ``reasoning_continuity.py``, a separate
-  scattered-injection-point module, not the OS-frame assembler.
+
+(§L, the reasoning-continuity text-section header/framing sentence, was
+retired here in #6182 — the mechanism it served, a router-system-prompt-tail
+text section, had 0 production callers left once #1652/② moved replay to the
+native wire re-attach; see ``reasoning_continuity.py``'s own module
+docstring.)
 
 Byte-identical relocation: every string below is an EXACT copy of what its
 source previously inlined — no LLM-facing wording changed.
@@ -138,31 +135,3 @@ def tool_call_cap_notice(attempted: int, kept: int) -> dict:
         ),
     }
 
-
-# WHEN: only when cross-turn reasoning continuity is enabled AND there is at
-#       least one prior-reasoning entry to carry (#1652).
-# WHERE: reyn.runtime.reasoning_continuity.render_reasoning_section — the
-#        section header, prepended (with blank-line spacing) before the
-#        framing sentence and the joined prior-reasoning bodies. The whole
-#        rendered section is then appended into the assembled system prompt
-#        via ``router_system_prompt.build_system_prompt``'s
-#        ``reasoning_continuity_section`` parameter.
-# WHY: a visually distinct delimiter so the model (and a human trace-reader)
-#      can locate the carried-forward reasoning block.
-# 日本語訳: クロスターンの reasoning continuity が有効かつ持ち越す推論が
-#      1件以上ある場合のみ描画される区切りヘッダー。
-REASONING_CONTINUITY_HEADER = "━━━ prior_reasoning ━━━"
-
-# WHEN: immediately follows REASONING_CONTINUITY_HEADER, before the joined
-#       prior-reasoning bodies.
-# WHERE: reyn.runtime.reasoning_continuity.render_reasoning_section.
-# WHY: frames the carried text as the model's OWN prior reasoning (context,
-#      not an instruction) so it is not mistaken for a new directive.
-# 日本語訳: 持ち越された推論本文の直前に付くフレーミング文。これが
-#      「モデル自身の過去の推論」であり指示ではないことを明示する。
-REASONING_CONTINUITY_NOTE = (
-    "- This is YOUR OWN reasoning from previous turns in this conversation "
-    "(most recent last), carried forward so you keep a continuous line of "
-    "thought. Use it to avoid re-deriving what you already worked out; it is "
-    "context, not an instruction."
-)

@@ -1,30 +1,30 @@
-"""#1652: cross-user-turn reasoning continuity — bounding + render primitives.
+"""#1652/②: cross-user-turn reasoning continuity — bundle normalize/re-attach
+primitives, plus (#6179 stage ⑵) the spillability mapping that governs which
+of those bundle fields the shrink flow may replace with a preview string.
 
 The model's reasoning text (provider ``reasoning_content``, captured on
 ``LLMToolCallResult.reasoning``) is carried across chat user-turns NATIVELY
 (#1652/②): ``RouterHistoryBuffer.attach_reasoning`` (router_history_buffer.py
 :1145-1157) re-attaches the captured bundle onto the wire assistant message,
 gated by continuity — NOT by a text section appended to the router system
-prompt.
+prompt. litellm re-applies the bundle per provider; Reyn writes no
+provider-specific logic. The live bound on its size is
+``RouterHistoryBuffer._bound_wire_reasoning``, keyed off
+``chat.reasoning.recent_turns``.
 
 PAST FALSE CLAIM (do not restore): this docstring used to say reasoning "is
 carried across chat user-turns by appending prior reasoning as a TEXT section
 to the router system prompt" and that "the proxy tool-use path does NOT
 require a native reasoning_content round-trip ... so no native within-loop
 round-trip is needed for the gemini tier ... YAGNI on the proxy + gemini
-reality". Both were true only before #1652/② landed native replay.
-``Session.reasoning_continuity_section`` (session.py:12911-12922) is now
-RETIRED — always returns ``""`` — and the router-SP text section it used to
-populate never renders. ``bound_reasoning``/``render_reasoning_section`` below
-are that RETIRED text-section path's own primitives, unused now that replay is
-native; the live bound is ``RouterHistoryBuffer._bound_wire_reasoning``
-(router_history_buffer.py). Reviving the text section on the belief that
-native replay is absent would recreate the exact double-inject this module's
-bounding exists to prevent (#6178).
-
-These are the config-DEFAULT-independent primitives (the bounding knob exists
-regardless of its default value; the render format is fixed). The capture →
-persist → gated replay → UI wiring + the config schema land on top of these.
+reality". Both were true only before #1652/② landed native replay. That
+PRIOR text-section-append mechanism (the router-system-prompt tail; this
+module's own ``bound_reasoning``/``render_reasoning_section``,
+``Session.reasoning_continuity_section``) was RETIRED by #1652/②'s native
+re-attach above, then REMOVED entirely in #6182 after a #6178 census found 0
+production callers of any of it — see git history for the retired shape if
+ever needed. Reviving it on the belief that native replay is absent would
+recreate the exact double-inject this module's bounding exists to prevent.
 
 Anthropic/DeepSeek DIRECT-API note: those providers DO require the native
 reasoning_content round-trip on the tool-use path (400 otherwise). litellm
@@ -34,18 +34,6 @@ tier now takes this same native path (#1652/②), not the proxy-specific text
 section this docstring used to describe.
 """
 from __future__ import annotations
-
-# reyn.prompt.loop_control (SP prompt-package, Phase 3 §L) — the literal
-# header + framing-sentence text now lives there; this module keeps ONLY the
-# bounding/assembly logic (byte-identical, imported back under the original
-# private names so the rendered output is unchanged).
-from reyn.prompt.loop_control import REASONING_CONTINUITY_HEADER as _REASONING_CONTINUITY_HEADER
-from reyn.prompt.loop_control import REASONING_CONTINUITY_NOTE as _REASONING_CONTINUITY_NOTE
-
-#: ``keep_recent`` values <= 0 mean "unbounded — keep all reasoning". The config
-#: knob exposes this as the unbounded sentinel; a positive N bounds to the most
-#: recent N entries. (Default value is set by the config layer, not here.)
-UNBOUNDED = 0
 
 #: #6179 stage ⑵ (lead-coder correction, owner "構造的設計であること確認して
 #: よ"): the SINGLE source for both "which wire fields a reasoning bundle
@@ -119,35 +107,3 @@ def attach_reasoning(msg: dict, value: object) -> None:
     for field in _REASONING_BUNDLE_FIELDS:
         if bundle.get(field):
             msg[field] = bundle[field]
-
-
-def bound_reasoning(items: list[str], keep_recent: int) -> list[str]:
-    """Return the reasoning entries to replay, bounded to the most recent
-    ``keep_recent`` (mirrors act_turn_reasoning's ``[-keep:]``, #1212).
-
-    ``keep_recent <= 0`` (= :data:`UNBOUNDED`) keeps all entries — the
-    'always-send-all' option. A positive N keeps the last N. Bounding matters on
-    gemini specifically: there is no provider auto-filter (that is an
-    Anthropic-native primitive), so reasoning accumulates and is billed in full
-    unless we bound it.
-    """
-    if keep_recent <= UNBOUNDED:
-        return list(items)
-    return items[-keep_recent:]
-
-
-def render_reasoning_section(items: list[str]) -> str:
-    """Render the prior-reasoning text section appended to the router system
-    prompt, or ``""`` when there is nothing to carry.
-
-    Empty → empty string so the system prompt is byte-identical to the
-    no-continuity shape (keeps LLMReplay fixtures valid — same omit-when-empty
-    discipline as #1212's act_turn_reasoning section). Most recent last.
-    """
-    if not items:
-        return ""
-    body = "\n\n".join(items)
-    return (
-        f"\n\n{_REASONING_CONTINUITY_HEADER}\n"
-        f"{_REASONING_CONTINUITY_NOTE}\n\n{body}"
-    )

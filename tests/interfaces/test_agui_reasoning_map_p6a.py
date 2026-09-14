@@ -168,7 +168,6 @@ def _mk_host(reasoning_config, *, outbox: list, history: list) -> RouterHostAdap
         ),
         environment_backend=None,
         reasoning_config=reasoning_config,
-        reasoning_continuity_section_fn=lambda: "",
         universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 

@@ -74,8 +74,6 @@ from reyn.prompt.loop_control import (
     EMPTY_STOP_RETRY_DIRECTIVE,
     G12_SIGNAL_ERROR_TEXT,
     G12_SIGNAL_TEXT,
-    REASONING_CONTINUITY_HEADER,
-    REASONING_CONTINUITY_NOTE,
     tool_call_cap_notice,
 )
 from reyn.prompt.retrieval import SEARCH_SP_NON_TERMINAL, SEARCH_SP_TERMINAL
@@ -121,8 +119,6 @@ __all__ = [
     "EMPTY_STOP_RETRY_DIRECTIVE",
     "G12_SIGNAL_TEXT",
     "G12_SIGNAL_ERROR_TEXT",
-    "REASONING_CONTINUITY_HEADER",
-    "REASONING_CONTINUITY_NOTE",
     "tool_call_cap_notice",
     "WRAP_UP_SYSTEM_PROMPT",
     "wrap_up_system_prompt",

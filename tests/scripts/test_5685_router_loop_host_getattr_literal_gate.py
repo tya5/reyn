@@ -230,7 +230,7 @@ def test_the_needle_finds_every_real_literal_a_hand_audit_confirms():
     literals = set(find_host_getattr_literals(_ROUTER_LOOP))
     for needle, why in {
         "peek_mid_turn_injections": "bare host receiver, single-line call",
-        "reasoning_continuity_section": "bare host receiver, MULTI-line call",
+        "get_universal_wrappers_enabled": "bare host receiver, MULTI-line call",
         "resolver": "self.host receiver, single-line call",
         "compute_memo_key": "self.host receiver, MULTI-line call",
     }.items():

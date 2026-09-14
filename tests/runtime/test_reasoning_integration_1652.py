@@ -50,7 +50,7 @@ async def _noop(*a, **k):
     return {}
 
 
-def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = "") -> RouterHostAdapter:
+def _mk_host(reasoning_config, *, outbox: list, history: list) -> RouterHostAdapter:
     events = EventLog(subscribers=[])
     workspace = Path(".reyn") / "agents" / "t"
     return RouterHostAdapter(
@@ -77,7 +77,6 @@ def _mk_host(reasoning_config, *, outbox: list, history: list, section: str = ""
         ),
         environment_backend=None,
         reasoning_config=reasoning_config,
-        reasoning_continuity_section_fn=lambda: section,
         universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
@@ -154,14 +153,15 @@ def test_no_double_inject_reasoning_only_in_meta_never_in_content():
     assert msg.meta.get("reasoning") == _REASONING  # reasoning lives in meta only
 
 
-def test_continuity_section_surfaces_via_host():
-    """Tier 2: #1652 — the host exposes the session-rendered continuity section
-    (the SP replay vehicle); display/continuity flags read from config."""
+def test_display_and_continuity_flags_read_from_config():
+    """Tier 2: #1652 — the host's display/continuity gate readers reflect the
+    ``ReasoningConfig`` it was constructed with (#6182: narrowed from the
+    retired continuity-SECTION coverage this test once also carried — that
+    mechanism, and the host method exposing it, had 0 production callers and
+    was removed; see reasoning_continuity.py's own module docstring)."""
     host = _mk_host(
-        ReasoningConfig(continuity=True, display=True),
-        outbox=[], history=[], section="PRIOR_REASONING_SECTION",
+        ReasoningConfig(continuity=True, display=True), outbox=[], history=[],
     )
-    assert host.reasoning_continuity_section() == "PRIOR_REASONING_SECTION"
     assert host.reasoning_display_enabled() is True
     assert host.reasoning_continuity_enabled() is True
 
@@ -186,8 +186,8 @@ def _assistant_reasoning(wire: list[dict]) -> list:
 
 def test_wire_reattach_bounds_reasoning_to_recent_turns(tmp_path):
     """Tier 2: #1652/② replay-into-next-turn — reasoning rides the wire assistant
-    messages (the SP text section is retired), bounded to recent_turns: the
-    oldest assistant turn's reasoning is stripped, the recent ones carried."""
+    messages (the SP text section is retired, #6182), bounded to recent_turns:
+    the oldest assistant turn's reasoning is stripped, the recent ones carried."""
     s = _session(ReasoningConfig(continuity=True, recent_turns=2), tmp_path)
     s.history.append(ChatMessage(role="user", content="q"))
     s.history.append(ChatMessage(role="assistant", content="a1", meta={"reasoning": "R1"}))
@@ -196,8 +196,6 @@ def test_wire_reattach_bounds_reasoning_to_recent_turns(tmp_path):
     wire = s._history_buffer.build_history()
     # recent_turns=2 → oldest (R1) stripped; R2/R3 carried natively on the wire
     assert _assistant_reasoning(wire) == [None, "R2", "R3"]
-    # SP text section is retired → always empty
-    assert s.reasoning_continuity_section() == ""
 
 
 def test_wire_reattach_off_when_continuity_disabled(tmp_path):
@@ -208,7 +206,6 @@ def test_wire_reattach_off_when_continuity_disabled(tmp_path):
     s.history.append(ChatMessage(role="assistant", content="a", meta={"reasoning": "R"}))
     wire = s._history_buffer.build_history()
     assert all("reasoning_content" not in m for m in wire)
-    assert s.reasoning_continuity_section() == ""
 
 
 def test_wire_reattach_unbounded_keeps_all(tmp_path):
