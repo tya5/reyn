@@ -2060,12 +2060,22 @@ class RouterLoop:
                 context_size_signal=_ctx_signal,
                 # #1479: system info (date/platform/shell/git).
                 environment_info=_environment_info,
-                # #1652: prior-turns' reasoning text section (continuity). Host
-                # returns "" when continuity is off / no prior reasoning →
-                # omit-when-empty (byte-identical SP). The model's own thoughts
-                # are stripped from the wire assistant messages (built explicitly
-                # from content+tool_calls), so this text-section is the single
-                # replay vehicle on gemini (no native double-inject).
+                # #1652/②: prior-turns' reasoning text section — RETIRED.
+                # `host.reasoning_continuity_section` always returns "" now
+                # (session.py:12911-12922), so this call is dead plumbing kept
+                # only for the omit-when-empty SP shape below.
+                # PAST FALSE CLAIM (do not restore): this comment used to say
+                # "The model's own thoughts are stripped from the wire
+                # assistant messages ... so this text-section is the single
+                # replay vehicle on gemini (no native double-inject)" — both
+                # halves were wrong by the time #1652/② landed. Reasoning is
+                # NOT stripped from the wire: router_history_buffer.py:1145-
+                # 1157 re-attaches the captured bundle onto the wire assistant
+                # message, gated by continuity — that re-attachment, not this
+                # text section, is the actual (and only) replay vehicle.
+                # Reviving this section on the belief that native is absent
+                # would recreate the exact double-inject this comment thought
+                # it was preventing (#6178).
                 reasoning_continuity_section=getattr(
                     host, "reasoning_continuity_section", lambda: ""
                 )(),

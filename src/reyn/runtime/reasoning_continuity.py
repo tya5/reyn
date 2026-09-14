@@ -1,13 +1,26 @@
 """#1652: cross-user-turn reasoning continuity — bounding + render primitives.
 
 The model's reasoning text (provider ``reasoning_content``, captured on
-``LLMToolCallResult.reasoning``) is carried across chat user-turns by appending
-prior reasoning as a TEXT section to the router system prompt — the same
-provider-agnostic mechanism as the phase-side ``act_turn_reasoning`` (#1212).
-Verified (live, gemini-via-proxy): text-section continuity is the reliable
-efficacy guarantee (the model sees prior reasoning in-prompt), and the proxy
-tool-use path does NOT require a native reasoning_content round-trip (no 400),
-so no native within-loop round-trip is needed for the gemini tier.
+``LLMToolCallResult.reasoning``) is carried across chat user-turns NATIVELY
+(#1652/②): ``RouterHistoryBuffer.attach_reasoning`` (router_history_buffer.py
+:1145-1157) re-attaches the captured bundle onto the wire assistant message,
+gated by continuity — NOT by a text section appended to the router system
+prompt.
+
+PAST FALSE CLAIM (do not restore): this docstring used to say reasoning "is
+carried across chat user-turns by appending prior reasoning as a TEXT section
+to the router system prompt" and that "the proxy tool-use path does NOT
+require a native reasoning_content round-trip ... so no native within-loop
+round-trip is needed for the gemini tier ... YAGNI on the proxy + gemini
+reality". Both were true only before #1652/② landed native replay.
+``Session.reasoning_continuity_section`` (session.py:12911-12922) is now
+RETIRED — always returns ``""`` — and the router-SP text section it used to
+populate never renders. ``bound_reasoning``/``render_reasoning_section`` below
+are that RETIRED text-section path's own primitives, unused now that replay is
+native; the live bound is ``RouterHistoryBuffer._bound_wire_reasoning``
+(router_history_buffer.py). Reviving the text section on the belief that
+native replay is absent would recreate the exact double-inject this module's
+bounding exists to prevent (#6178).
 
 These are the config-DEFAULT-independent primitives (the bounding knob exists
 regardless of its default value; the render format is fixed). The capture →
@@ -16,10 +29,9 @@ persist → gated replay → UI wiring + the config schema land on top of these.
 Anthropic/DeepSeek DIRECT-API note: those providers DO require the native
 reasoning_content round-trip on the tool-use path (400 otherwise). litellm
 auto-manages it when ``reasoning_content`` is present on the assistant message
-(vertex/gemini transformation + anthropic factory read it). If such a tier is
-ever adopted, include the prior assistant turn's reasoning on the reconstructed
-assistant message in the tool loop; litellm does the rest. YAGNI on the proxy +
-gemini reality (#1652).
+(vertex/gemini transformation + anthropic factory read it) — reyn's gemini
+tier now takes this same native path (#1652/②), not the proxy-specific text
+section this docstring used to describe.
 """
 from __future__ import annotations
 
