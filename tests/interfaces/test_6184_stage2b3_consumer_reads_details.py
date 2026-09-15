@@ -85,6 +85,55 @@ def test_renderer_details_absent_falls_back_to_meta_args() -> None:
     assert "docs/x.md" in out
 
 
+def test_renderer_wire_round_tripped_details_args_still_renders() -> None:
+    """Tier 2: lead-coder BLOCKING (#6196 review) — the 3 other tests
+    above hand-construct `details["args"]` as Python TUPLES, the in-
+    process shape; NONE went through `to_wire_dict` -> JSON -> `from_wire`
+    (grep-confirmed 0 such tests before this one). JSON has no tuple
+    type, so a REAL remote-attach connection (`--connect`) delivers
+    `details["args"]` as a LIST OF LISTS (`[["path", "x"]]`), not list of
+    tuples (`ev.data` alone, without an explicit `json.dumps`/`json.loads`
+    pass, stays Python-object-identical in-process and does NOT exercise
+    this — confirmed by hand before writing this test). Architect's own
+    spec: the consumer must accept BOTH shapes. This test forces the
+    real conversion (explicit JSON round trip, not just `encode_frame`/
+    `decode_event` alone) and asserts the SAME final line as the
+    all-tuples version — the accept criterion is "works with what the
+    wire ACTUALLY delivers", not "works with what this test happened to
+    construct"."""
+    import json
+
+    from reyn.interfaces.transport.agui.protocol import decode_event, encode_frame
+    from reyn.interfaces.transport.frames import DisplayFrame
+
+    original = OutboxMessage(
+        kind="tool_call_started", text="read_file",
+        meta={"tool": "read_file", "args": {"path": "docs/x.md"}},
+        details={"args": [("path", "docs/x.md")]},
+    )
+    ev = encode_frame(DisplayFrame(original))
+    wire_data = json.loads(json.dumps(ev.data))  # the REAL remote-attach shape
+    decoded = decode_event(ev.type, wire_data)
+    wired_msg = decoded.message
+
+    # positive control: the wire round trip actually changed the shape
+    # (tuple -> list) -- if this ever stops being true (e.g. the codec
+    # starts tuple-preserving JSON), this test's own subject is gone and
+    # it must be re-examined, not silently kept as a no-op green.
+    assert isinstance(wired_msg.details["args"][0], list), (
+        "setup: expected the wire round trip to convert the tuple to a "
+        "list -- if it no longer does, this test's own premise is stale"
+    )
+
+    all_tuples = OutboxMessage(
+        kind="tool_call_started", text="read_file",
+        meta={"tool": "read_file", "args": {"path": "docs/x.md"}},
+        details={"args": [("path", "docs/x.md")]},
+    )
+    assert _plain_inline(wired_msg) == _plain_inline(all_tuples)
+    assert "docs/x.md" in _plain_inline(wired_msg)
+
+
 def test_renderer_per_value_cut_fires_through_details() -> None:
     """Tier 2: ⑶ (guard): a single value over 24 chars in `details["args"]`
     is still cut — proves `_truncate_args` (not a flat join) processes the
