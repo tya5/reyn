@@ -652,8 +652,12 @@ async def test_an_expanded_group_parent_recedes() -> None:
     #3522/#3528) — CLAUDE.md's TUI colour policy requires every value here
     resolve through a ``palette.py`` token, never a literal.
 
-    #6184 ⑸-B-1: TWO children (a real Group — one child alone has nothing
-    to recede FROM, see :func:`test_a_single_child_expanded_parent_does_
+    #6184 ⑸-B-1: this test was originally written with exactly ONE child
+    — i.e. it was PINNING the very defect #6184 reports (a Group of 1
+    dims/recedes, which an owner-visible screen read as "a Group with
+    only 1 item in it"), not exercising a real Group. Fixed to TWO
+    children here (a real Group — a single child alone has nothing to
+    recede FROM, see :func:`test_a_single_child_expanded_parent_does_
     not_recede` immediately below, this test's own accept-side pair)."""
     from rich.styled import Styled
 
