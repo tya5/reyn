@@ -1032,10 +1032,34 @@ class ReynPresenter:
         # existing dim style every other secondary line already uses —
         # the SHAPE of the summary (#4691 issue §5's own "▸ read_file,
         # grep ×2" example) is B2's call, not this fix's.
+        #
+        # #6184 ⑸-B-1 (owner-reported "a Group with only 1 item in it" —
+        # architect via lead-coder root-caused it to this pair of lines
+        # reading ``entry.children`` by TRUTHINESS, not COUNT — B-2 below
+        # is the SAME family but stays UNTOUCHED here; see this branch's
+        # own comment for why): this EXPANDED-parent dim-recede branch
+        # only makes sense once there are at least 2 children (a single
+        # child has nothing to recede FROM — dimming a lone parent row
+        # above its one child reads as "a Group of 1", which is the
+        # defect). Scoped to ``>= 2`` (a real COUNT, never the
+        # ``dispatched_tool_calls`` bool the REGISTRATION site reads
+        # before any child exists — #6184's own "declared 2, actual 1"
+        # positive control).
+        #
+        # The COLLAPSED branch ("(N folded)") just below is NOT part of
+        # this fix — left exactly as it read before, truthiness and all.
+        # A single collapsed child is invisible to the reader regardless
+        # of what this file does (flowview's own ``visible_entries()``,
+        # ``_model.py``, excludes a collapsed parent's children from the
+        # render list entirely — a fold state only ``app.py:5511``, a
+        # SEPARATE owner-ruling-gated decision, controls), so removing
+        # the ONLY visible signal that something is folded away here
+        # would make that case WORSE, not better (the #4380 "a wrong
+        # fold nobody can see happened" principle, ``app.py:5650``).
         if entry.collapsed and entry.children:
             count_line = Text(f"  ({len(entry.children)} folded)", style=_CC_DIM)
             body = Group(body, count_line)
-        elif entry.children:
+        elif len(entry.children) >= 2:
             # #4691 arc item ⑤ (owner ruling — "B で良いよ" + "親に弱い印も
             # そうだね"): a Group parent's own line recedes while EXPANDED
             # (children visible) — child = bright (UNCHANGED — the owner's
