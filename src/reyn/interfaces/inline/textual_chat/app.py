@@ -5424,15 +5424,35 @@ class TextualChatApp(App):
 
     def _append_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage]":
         """Append a NEW entry to the retained model, nested per
-        :meth:`_resolve_append_parent` — the ONLY place ``self.conversation
-        .append(`` is called for a freshly-created entry (#4691's own
-        acceptance line, architect via lead-coder: "zero direct
+        :meth:`_resolve_append_parent`.
+
+        #6184 correction (the prior claim here — "zero direct
         ``self.conversation.append(`` call sites left" outside this
-        method). Every entry-creating call site — :meth:`_ingest_frame`'s
-        normal (non-coalesced) append, and
-        :meth:`_handle_agent_delta_event`'s first-delta entry creation —
-        goes through this, so the nesting decision is made in exactly one
-        place, never two copies that can drift apart."""
+        method — is currently FALSE, measured): three call sites create a
+        freshly-created entry, not one. This method is the ONLY one of
+        the three that goes through the PARENT DECISION
+        (:meth:`_resolve_append_parent`) — :meth:`_ingest_frame`'s normal
+        (non-coalesced) append and :meth:`_handle_agent_delta_event`'s
+        first-delta entry creation both route through it, so THEIR
+        nesting decision is made in exactly one place, never two copies
+        that can drift apart.
+
+        The other two direct ``self.conversation.append(`` call sites do
+        NOT go through this method or its parent decision:
+
+        - :meth:`_coalesce_pipeline_step`'s own first-occurrence branch —
+          a pipeline run's step frames fold into ONE row keyed by
+          ``run_id``, tracked in :attr:`_pipeline_runs`; the row is
+          always created flat, never checked against an open turn or a
+          registered call_id.
+        - :meth:`_ensure_compaction_progress_entry` — a shrink-flow
+          episode's own row, tracked in
+          :attr:`_compaction_progress_entry`; likewise always created
+          flat, driven by a per-frame RE-DERIVATION from the session
+          snapshot (:meth:`_refresh_compaction_progress`, which runs on
+          every arriving frame — its own docstring: event-driven, never
+          a fixed-interval poll), not by inspecting an arriving frame's
+          ``kind``."""
         parent = self._resolve_append_parent(kind=msg.kind, meta=msg.meta or {})
         if parent is not None:
             return parent.append_child(msg)
