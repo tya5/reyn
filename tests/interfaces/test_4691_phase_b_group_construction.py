@@ -650,10 +650,54 @@ async def test_an_expanded_group_parent_recedes() -> None:
     actual content. Value comes from ``palette.TOKENS["@recede@"]``
     (``"dim"``, an SGR attribute with its own measured justification,
     #3522/#3528) — CLAUDE.md's TUI colour policy requires every value here
-    resolve through a ``palette.py`` token, never a literal."""
+    resolve through a ``palette.py`` token, never a literal.
+
+    #6184 ⑸-B-1: TWO children (a real Group — one child alone has nothing
+    to recede FROM, see :func:`test_a_single_child_expanded_parent_does_
+    not_recede` immediately below, this test's own accept-side pair)."""
     from rich.styled import Styled
 
     from reyn.interfaces.palette import TOKENS
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await transport.push_display(_started("op-2", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        parent.expand()
+        assert parent.collapsed is False, "setup: expanded"
+        # unpacking (not a len() assertion) doubles as the "exactly 2
+        # children" setup confirmation — raises if the count is off.
+        (_child_a, _child_b) = parent.children
+
+        pres = await app._presenter.present(parent, 80)
+        assert isinstance(pres.renderable, Styled), (
+            "an expanded Group parent with >= 2 children must be wrapped "
+            "to recede"
+        )
+        assert pres.renderable.style == TOKENS["@recede@"]
+
+
+@pytest.mark.asyncio
+async def test_a_single_child_expanded_parent_does_not_recede() -> None:
+    """Tier 2b: #6184 ⑸-B-1 (owner-reported "a Group with only 1 item in
+    it" — architect via lead-coder root-caused it to ``presenter.py``
+    reading ``entry.children`` by TRUTHINESS instead of COUNT) — a single
+    child provides no bundling benefit (nothing to recede FROM), so an
+    EXPANDED parent with exactly 1 child must render as an ordinary row,
+    not dimmed. Accept-side pair of :func:`test_an_expanded_group_parent_
+    recedes` immediately above (2 children DOES recede).
+
+    Strip-falsify: reverting the ``>= 2`` count check back to the old bare
+    ``entry.children`` truthiness makes this test RED (in-file Edit,
+    confirmed, then reverted — see the PR this test landed in)."""
+    from rich.styled import Styled
 
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
@@ -667,13 +711,15 @@ async def test_an_expanded_group_parent_recedes() -> None:
         parent = _entries(app)[0]
         parent.expand()
         assert parent.collapsed is False, "setup: expanded"
-        assert parent.children, "setup: has a child"
+        # unpacking (not a len() assertion) doubles as the "exactly 1
+        # child" setup confirmation — raises if the count is off.
+        (_child,) = parent.children
 
         pres = await app._presenter.present(parent, 80)
-        assert isinstance(pres.renderable, Styled), (
-            "an expanded Group parent's body must be wrapped to recede"
+        assert not isinstance(pres.renderable, Styled), (
+            "a single-child expanded parent must NOT recede — a Group of "
+            "1 has nothing to recede FROM"
         )
-        assert pres.renderable.style == TOKENS["@recede@"]
 
 
 @pytest.mark.asyncio
