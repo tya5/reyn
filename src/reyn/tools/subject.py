@@ -20,8 +20,25 @@ that EXISTING edge instead of opening a new one.
 from __future__ import annotations
 
 
-def resolve_tool_subject(tool_name: str, args: object) -> "str | None":
-    """The declared subject VALUE for one tool call, or ``None``.
+def resolve_tool_subject(tool_name: str, args: object) -> object:
+    """The declared subject's RAW value for one tool call, or ``None``.
+
+    #6184 BLOCKING (lead-coder, measured, PR #6200 review): this used to
+    return ``str(args[param])`` — for ``exec``'s own ``argv`` (a
+    ``list[str]``), that stringifies to a Python repr
+    (``"['python', '-m', 'pytest']"``), the EXACT display shape the
+    owner's original request asked to move away from ("エグゼクであれば
+    実行されたコマンド列自体を表示の中心にしたい"). The architect's own
+    段3 design (issuecomment-5685059570) puts the value→display-string
+    conversion in ``core/present/tool_call_compose.py`` (str → as-is,
+    ``list[str]`` → space-joined so ``argv`` reads as a command line,
+    anything else → the existing normalize path) — a raw ``list`` value
+    stringified HERE, before that conversion ever runs, would have
+    already discarded the list structure the join needs. This function
+    now returns the raw value UNCONVERTED; see
+    :func:`~reyn.core.present.tool_call_compose.render_subject` for the
+    conversion, called by this stage's one producer call site
+    (``lifecycle_forwarder._enqueue_tool_call``) AFTER this function.
 
     ``None`` when: the tool is not registered, declares no
     ``subject_params`` (every tool but ``exec`` today — 段3-1's own
@@ -53,5 +70,5 @@ def resolve_tool_subject(tool_name: str, args: object) -> "str | None":
         return None
     for param in definition.subject_params:
         if param in args and args[param] is not None:
-            return str(args[param])
+            return args[param]
     return None

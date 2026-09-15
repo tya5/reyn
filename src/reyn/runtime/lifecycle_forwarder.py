@@ -24,7 +24,11 @@ import asyncio
 from enum import Enum
 from typing import Any, Callable
 
-from reyn.core.present.tool_call_compose import compose_tool_call_args, compose_tool_call_text
+from reyn.core.present.tool_call_compose import (
+    compose_tool_call_args,
+    compose_tool_call_text,
+    render_subject,
+)
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
@@ -957,8 +961,15 @@ class ChatLifecycleForwarder:
         # #6184 段3-2: the ONE producer read of ToolDefinition.subject_params
         # (段3-1) — see resolve_tool_subject's own docstring. None for
         # every tool that has not declared one yet (78 of 79 today) —
-        # additive, never a made-up value.
-        subject = resolve_tool_subject(tool_name, meta.get("args"))
+        # additive, never a made-up value. #6184 BLOCKING (lead-coder,
+        # measured, PR #6200 review): resolve_tool_subject returns the
+        # RAW declared value now (not a bare str()) — render_subject
+        # (core/present/tool_call_compose.py, the architect's own 段3
+        # design) does the value->display-string conversion, so exec's
+        # own argv (a list[str]) becomes a real space-joined command
+        # line here instead of a Python repr.
+        raw_subject = resolve_tool_subject(tool_name, meta.get("args"))
+        subject = render_subject(raw_subject) if raw_subject is not None else None
         try:
             self.outbox.put_nowait(
                 OutboxMessage(
