@@ -56,13 +56,31 @@ def test_the_real_registrys_diff_is_currently_empty() -> None:
 
 def test_every_tool_in_the_real_registry_defaults_to_empty_subject_params() -> None:
     """Tier 2: non-vacuity for① — pins the field is genuinely additive
-    (every one of today's 79 tools has the default ``()``), not merely
-    that the gate's own diff happens to be empty for some other reason
-    (e.g. every tool's ``parameters`` being unreadable)."""
+    (every tool but ``exec`` has the default ``()``), not merely that
+    the gate's own diff happens to be empty for some other reason (e.g.
+    every tool's ``parameters`` being unreadable).
+
+    #6184 CI fix (lead-coder, measured — #6200's own CI, own review
+    admission: "空虚かは見たが、次の段がこれを壊すかを問わなかった"):
+    this test's own original claim ("every tool" with no exception) was
+    correct at 段3-1's own merge but 段3-2 (a LATER stage, same arc)
+    intentionally makes it false for ``exec`` — the SAME "merge-time
+    observation, not a standing invariant" shape #6190/#6191's own
+    tests already disclosed for their own claims, which this one did
+    not. ``exec`` is now excluded by NAME rather than the claim being
+    weakened to "at least one" — kept this precise so a SECOND tool
+    gaining a declaration without a matching update here still fails.
+    See ``tests/runtime/test_6184_stage3_2_producer_fills_subject.py``'s
+    own ``test_every_currently_registered_tool_except_exec_has_no_
+    subject_params`` for that stage's own, differently-scoped version
+    of this same underlying fact (kept as two tests, not merged: this
+    one is about the GATE's own non-vacuity, that one is about 段3-2's
+    own accept criteria — different questions that currently share an
+    answer)."""
     registry = get_default_registry()
     tools = list(registry)
     assert tools, "setup: the real registry must not be empty"
-    assert all(t.subject_params == () for t in tools)
+    assert all(t.subject_params == () for t in tools if t.name != "exec")
 
 
 # ── acceptance② — a stale subject_params name is flagged, a valid one is not ──
@@ -118,16 +136,31 @@ def test_a_tool_with_no_properties_key_at_all_flags_every_declared_name() -> Non
     assert offenders == [("t1", "anything")]
 
 
-# ── acceptance③ — 0 read sites in src/ (the field is not yet consumed) ──
+# ── acceptance③ — HISTORICAL: 0 read sites in src/ (段3-2 landed 2 real readers) ──
 
 
-def test_no_src_file_reads_subject_params_yet() -> None:
-    """Tier 2: acceptance③ — grep witness that nothing under ``src/``
-    reads ``.subject_params`` yet (段3's eventual consumer is a LATER
-    stage, not this one). This file's own construction of the field
-    (``ToolDefinition(..., subject_params=...)``) and the gate script's
-    own read are excluded by design (they are what accept③ says should
-    NOT exist elsewhere, not the declaration site itself)."""
+def test_subject_params_readers_are_the_closed_producer_set_6184_stage3_2_added() -> None:
+    """Tier 2: acceptance③, superseded (lead-coder, measured — #6200's
+    own CI, own review admission: "空虚かは見たが、次の段がこれを壊すか
+    を問わなかった"). "0 readers" was TRUE at 段3-1's own merge but is
+    now PERMANENTLY false — #6184 段3-2 (a LATER stage, same arc) added
+    the field's first real consumer on purpose (that IS 段3-2's own
+    job), the SAME "merge-time observation, not a standing invariant"
+    shape #6190/#6191's own tests already disclosed for their own
+    claims, which this one did not.
+
+    Re-scoped from "0 readers" to "readers are exactly the 2 files
+    段3-2's own producer path added" — still a real regression witness
+    (a THIRD, unexpected reader still fails this), not merely deleted.
+    Caveat, disclosed rather than hidden: this is a substring grep for
+    the literal text ``.subject_params`` — it also matches a PROSE
+    mention inside a comment/docstring (as ``lifecycle_forwarder.py``'s
+    own reference does — a comment naming the field, not a code read of
+    it), so the pinned set below is not a precise "who reads the field
+    at runtime" answer, only "which files currently contain that
+    substring anywhere". Good enough to catch an unexpected NEW file
+    joining the set; not proof against a comment added to an EXISTING
+    already-listed file."""
     src_root = REPO_ROOT / "src"
     hits: "list[str]" = []
     for path in src_root.rglob("*.py"):
@@ -138,9 +171,13 @@ def test_no_src_file_reads_subject_params_yet() -> None:
         text = path.read_text(encoding="utf-8")
         if ".subject_params" in text:
             hits.append(str(path.relative_to(REPO_ROOT)))
-    assert hits == [], (
-        f"src/ file(s) already read .subject_params, but 段3-1's own "
-        f"accept③ says nothing should yet: {hits}"
+    expected = {
+        "src/reyn/tools/subject.py",
+        "src/reyn/runtime/lifecycle_forwarder.py",
+    }
+    assert set(hits) == expected, (
+        f"reader set changed since #6184 段3-2 landed its own 2 -- "
+        f"got {hits}, expected {sorted(expected)}"
     )
 
 
