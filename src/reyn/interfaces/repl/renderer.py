@@ -668,11 +668,21 @@ class _Truncatable:
     numeric width the pre-split code applied inline at that branch).
     ``prefix`` is literal text around the cut region, never itself
     truncated — byte-identical to the pre-split code, which only ever
-    cut the embedded raw value, not its surrounding prefix."""
+    cut the embedded raw value, not its surrounding prefix.
+
+    ``raw`` is ALREADY NORMALIZED (:func:`_normalize_text`) by the caller
+    at construction time — every ``_Truncatable(...)`` call site in
+    :func:`_summarize_result` applies it before constructing, never this
+    class itself and never :func:`_truncate_result_summary` (lead-coder
+    BLOCKING #6184 review: normalization belongs with the PRODUCER/
+    compose side for the SAME reason :func:`_compose_args`'s own
+    docstring gives — a raw multi-line/control-char value must never
+    reach a consumer's wire unnormalized; the truncate half stays a PURE
+    cut, matching pair A's own architecture exactly)."""
 
     __slots__ = ("prefix", "raw", "kind")
 
-    def __init__(self, prefix: str, raw, kind: str) -> None:
+    def __init__(self, prefix: str, raw: str, kind: str) -> None:
         self.prefix = prefix
         self.raw = raw
         self.kind = kind
@@ -696,15 +706,21 @@ _RESULT_TRUNCATE_WIDTHS: "dict[str, int]" = {
 
 def _truncate_result_summary(composed) -> str:
     """Length-cut a :func:`_summarize_result` composed piece into the
-    final one-line summary — #6184 段2b-1's truncate half. A plain string
-    (the majority of ``_summarize_result``'s branches, already
-    fully-formed and bounded by construction) passes through unchanged;
-    a :class:`_Truncatable` marks the ONE branch whose raw content still
-    needs a width-bounded cut, using the same per-kind width the
-    pre-split code used inline (:data:`_RESULT_TRUNCATE_WIDTHS`)."""
+    final one-line summary — #6184 段2b-1's truncate half. PURE cut — no
+    normalize call (mirrors :func:`_truncate_args`'s own discipline
+    exactly): a :class:`_Truncatable`'s ``raw`` is already normalized by
+    the caller that constructed it, so re-normalizing here would only
+    mask a future compose-side normalization regression behind this
+    function's own safety net (the same reasoning :func:`_truncate_args`
+    already states). A plain string (the majority of
+    ``_summarize_result``'s branches, already fully-formed and bounded by
+    construction) passes through unchanged; a :class:`_Truncatable` marks
+    the ONE branch whose raw content still needs a width-bounded cut,
+    using the same per-kind width the pre-split code used inline
+    (:data:`_RESULT_TRUNCATE_WIDTHS`)."""
     if isinstance(composed, _Truncatable):
         width = _RESULT_TRUNCATE_WIDTHS[composed.kind]
-        return composed.prefix + _cut(_normalize_text(composed.raw), width)
+        return composed.prefix + _cut(composed.raw, width)
     return composed
 
 
@@ -769,10 +785,10 @@ def _summarize_result(tool, result):
         # below would short-circuit to "Read 0 lines" and the error is never seen).
         error = result.get("error")
         if isinstance(error, str):
-            return _Truncatable("✗ ", error, "error")
+            return _Truncatable("✗ ", _normalize_text(error), "error")
         error_message = result.get("error_message")
         if isinstance(error_message, str):
-            return _Truncatable("✗ ", error_message, "error")
+            return _Truncatable("✗ ", _normalize_text(error_message), "error")
         op = result.get("op")
         path = result.get("path")
         status = result.get("status")
@@ -848,11 +864,13 @@ def _summarize_result(tool, result):
             return f"Dropped {n} chunk{'s' if n != 1 else ''}"
         if isinstance(result.get("input_schema"), dict):
             name_or_desc = result.get("name") or result.get("description") or ""
-            return _Truncatable("", str(name_or_desc), "name_or_desc")
+            return _Truncatable("", _normalize_text(str(name_or_desc)), "name_or_desc")
         if result.get("kind") == "mcp":
             mcp_content = result.get("content")
             if isinstance(mcp_content, str) and mcp_content:
-                return _Truncatable("", mcp_content.split("\n")[0], "mcp_content")
+                return _Truncatable(
+                    "", _normalize_text(mcp_content.split("\n")[0]), "mcp_content"
+                )
         passed = result.get("passed")
         if isinstance(passed, bool):
             score = result.get("score")
@@ -883,20 +901,22 @@ def _summarize_result(tool, result):
         if isinstance(returncode, int) and status == "error":
             stderr = result.get("stderr")
             if isinstance(stderr, str) and stderr:
-                return _Truncatable(f"✗ exit {returncode}: ", stderr, "stderr")
+                return _Truncatable(
+                    f"✗ exit {returncode}: ", _normalize_text(stderr), "stderr"
+                )
             return f"✗ exit {returncode}"
         freed_tokens = result.get("freed_tokens")
         if isinstance(freed_tokens, int):
             return f"Freed {freed_tokens} token{'s' if freed_tokens != 1 else ''}"
         answer = result.get("answer")
         if isinstance(answer, str) and answer:
-            return _Truncatable("", answer, "answer")
+            return _Truncatable("", _normalize_text(answer), "answer")
         server_name = result.get("server_name")
         if isinstance(server_name, str) and server_name:
             return f"Installed {server_name}"
         url = result.get("url")
         if isinstance(url, str) and url:
-            return _Truncatable("", url, "url")
+            return _Truncatable("", _normalize_text(url), "url")
         server = result.get("server")
         if isinstance(server, str) and server and status == "ok" and result.get("kind") == "mcp_drop_server":
             return f"Removed {server}"
@@ -907,7 +927,7 @@ def _summarize_result(tool, result):
             return f"{verb} {name_val}" if name_val else verb
         if status:
             return str(status)
-    return _Truncatable("", result, "fallback")
+    return _Truncatable("", _normalize_text(result), "fallback")
 
 
 def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
