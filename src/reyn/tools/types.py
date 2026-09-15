@@ -605,6 +605,32 @@ class ToolDefinition:
     # failure where the full spec lives.
     doc_ref: str | None = field(kw_only=True, default=None)
 
+    # #6184 段3-1: which of THIS tool's own ``parameters["properties"]``
+    # names carry the "主役" (subject) a flowview consumer should draw a
+    # tool row's display from (段3's eventual reader — see that stage's
+    # own design, not yet built; this field is purely additive, nothing
+    # in ``src/`` reads it yet — accept ③, `check_subject_params_
+    # exist_in_own_schema.py`'s own grep witness). Empty tuple (the
+    # default, every one of the 79 existing tools today) means "not yet
+    # declared" — never "no subject" as a positive fact; that distinction
+    # is 段3's own judgment call, not this field's.
+    #
+    # Deliberately NOT the #6190-rejected shape (a hand-curated list in
+    # ``descriptions/``, separate from the tool it describes — the exact
+    # "curated list drifts when it lives in 2 places" shape #6162/#6179
+    # already found twice): this declares a POINTER (which of the tool's
+    # OWN already-declared parameter names is the subject), not new
+    # content, lives ON the tool's own ``ToolDefinition`` (not a second
+    # file), and is MECHANICALLY checkable — a name here that stops
+    # existing in ``parameters["properties"]`` (a param rename) is a
+    # real, gate-catchable defect (``check_subject_params_exist_in_own_
+    # schema.py``), the same "derived from the tool's own declaration,
+    # never a hardcoded name list" discipline
+    # ``gutter.py:_is_retrieval_tool`` already established (verbatim:
+    # "derived from ``ToolDefinition.purity``, never a hardcoded name
+    # list").
+    subject_params: "tuple[str, ...]" = field(kw_only=True, default=())
+
     # Future metadata anchors (commented out; surface as needed):
     # cost_weight: float = 1.0
     # rate_limit_class: str | None = None
