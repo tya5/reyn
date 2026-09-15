@@ -32,6 +32,7 @@ from reyn.interfaces.repl.renderer import (
     _short,
     _summarize_args,
     _summarize_result,
+    _truncate_result_summary,
 )
 
 # ---------------------------------------------------------------------------
@@ -255,6 +256,14 @@ def test_summarize_result_fallback_repr() -> None:
     Unlike the dict-branch tests above, this test's OWN subject is the
     fallback path itself (a bare ``42``, matching no dict/list branch at
     all) — there is no earlier branch for it to vacuously survive the
-    deletion of."""
-    result = _summarize_result("any_tool", 42)
+    deletion of.
+
+    #6184 段2b-1: ``_summarize_result`` is now the COMPOSE half only — the
+    fallback branch returns a ``_Truncatable`` (a bare non-str/non-list/
+    non-dict value always needs the length-bounded cut, so it can never
+    be a plain string here post-split). ``_truncate_result_summary`` is
+    the paired truncate half; this test drives both, matching what
+    ``summarize_tool_result`` (the public wrapper) actually does."""
+    composed = _summarize_result("any_tool", 42)
+    result = _truncate_result_summary(composed)
     assert result == "42"
