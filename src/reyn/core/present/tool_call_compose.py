@@ -1,16 +1,30 @@
 """Producer-side compose for a tool call's outbox wire fields — #6184 段2b-2.
 
-**`text` is wire-only. The TUI never reads it.** The consumer (repl's own
-``renderer.py``) already draws its own display from the structured
-``meta["args"]``/``meta["result"]`` fields — ``tool`` bold, ``(args)`` dim —
-via its own ``_compose_args``/``_truncate_args`` (#6184 段2b-1). Reading
-this module's own :func:`compose_tool_call_text` from that render path
-would mean parsing a flat, already-formatted string back apart into its
-pieces — exactly the shape this arc's own census (dispatch-table
-producer/consumer duplication) already closed elsewhere; this module
-exists so a GENERIC AG-UI client (one with no reyn-specific rendering at
-all) sees a readable one-line value, not so reyn's own TUI has a second
-way to read it.
+**`text` is wire-only. The TUI never reads it as its PRIMARY value** — the
+consumer (repl's own ``renderer.py``) already draws its own display from
+the structured ``meta["args"]``/``meta["result"]`` fields — ``tool``
+bold, ``(args)`` dim — via its own ``_compose_args``/``_truncate_args``
+(#6184 段2b-1). Reading this module's own :func:`compose_tool_call_text`
+from that render path would mean parsing a flat, already-formatted
+string back apart into its pieces — exactly the shape this arc's own
+census (dispatch-table producer/consumer duplication) already closed
+elsewhere; this module exists so a GENERIC AG-UI client (one with no
+reyn-specific rendering at all) sees a readable one-line value, not so
+reyn's own TUI has a second way to read it.
+
+#6184 BLOCKING (lead-coder, measured, PR #6195 review): the claim above
+is NOT unconditional — THREE call sites (``presenter.py:296``,
+``presenter.py:517``, ``renderer.py:1127``, all the same idiom: ``tool =
+str(meta.get("tool", msg.text))``) read ``msg.text`` as a FALLBACK when
+``meta["tool"]`` is absent. Safe TODAY only because
+``lifecycle_forwarder._enqueue_tool_call`` (this module's one producer
+call site) ALWAYS sets ``meta["tool"]`` — never because the TUI does not
+read ``text`` at all. This PR changed what a future accidental
+``meta["tool"]``-dropping edit would put into that fallback's bold
+tool-name slot: the bare name before this PR, this module's own
+``tool(args)`` composed form after it — the SAME docstring-outran-code
+shape #6189 already corrected once in this arc (``_append_frame``'s own
+"zero direct append call sites" claim).
 
 Lives in ``core/present/`` (architect design, #6184 issuecomment-5683686664;
 lead-coder ruling, issuecomment-5683701917) — an EXISTING neutral home both
