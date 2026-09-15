@@ -28,6 +28,16 @@ from reyn.core.present.tool_call_compose import compose_tool_call_args, compose_
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
+# #6184 段3-2: this MODULE's first import of `reyn.tools` — a genuinely
+# NEW edge for this file specifically (see the `_compact_token_count`
+# comment immediately below for why this file is layer-sensitive: it
+# already refuses a `gutter.py` import for the SAME layer-inversion
+# reason). NOT a new edge for the codebase as a whole — `runtime →
+# tools` already exists (`registry.py:5988`, `router_loop.py:43,61,
+# 1254`); this file is simply the first `runtime/lifecycle_forwarder.py`
+# caller of it, an existing direction, never reversed.
+from reyn.tools.subject import resolve_tool_subject
+
 
 def _compact_token_count(n: int) -> str:
     """A compact token count for a lifecycle marker — ``"812"`` / ``"8.2k"`` /
@@ -944,10 +954,16 @@ class ChatLifecycleForwarder:
         meta.update(extra_meta)
         composed_args = compose_tool_call_args(meta.get("args"))
         text = compose_tool_call_text(tool_name, composed_args)
+        # #6184 段3-2: the ONE producer read of ToolDefinition.subject_params
+        # (段3-1) — see resolve_tool_subject's own docstring. None for
+        # every tool that has not declared one yet (78 of 79 today) —
+        # additive, never a made-up value.
+        subject = resolve_tool_subject(tool_name, meta.get("args"))
         try:
             self.outbox.put_nowait(
                 OutboxMessage(
-                    kind=kind, text=text, meta=meta, details={"args": composed_args},
+                    kind=kind, text=text, meta=meta, subject=subject,
+                    details={"args": composed_args},
                 ),
             )
         except asyncio.QueueFull:

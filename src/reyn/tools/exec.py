@@ -402,4 +402,14 @@ EXEC = ToolDefinition(
     handler=_handle,
     category="execution",
     purity="side_effect",
+    # #6184 段3-2: the first real subject_params declaration (段3-1 added
+    # the field, empty for all 79 tools). ("cmd", "argv") — priority
+    # order, first PRESENT wins (never truthiness — an explicitly empty
+    # string is still a declared value): `exec` accepts `argv`/`cmd` as
+    # its own mutually-exclusive top-level choice (this file's own
+    # `_handle`, `given_argv`/`given_cmd`), and `cmd` is the more
+    # human-readable of the two for a display "主役" (a shell string vs
+    # an argv list) — checked FIRST for that reason, not because it is
+    # more common.
+    subject_params=("cmd", "argv"),
 )
