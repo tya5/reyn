@@ -23,6 +23,7 @@ gracefully on an unknown wire kind (ignore-unknown, never fail-close), so it use
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -125,6 +126,67 @@ VOCABULARY: "frozenset[str]" = DISPLAY_KINDS | CONTROL_KINDS
 # draft of this comment expected.
 _INTERVENTION_FAMILY_KINDS: "frozenset[str]" = frozenset({"intervention"})
 
+# #6184: the SINGLE enumeration of OutboxMessage's wire-safe fields is
+# "every dataclass field except the ones named here" — derived by
+# :meth:`OutboxMessage.to_wire_dict`/:meth:`OutboxMessage.from_wire` from
+# ``dataclasses.fields()``, never hand-typed at either the encode
+# (agui/protocol.py) or decode (this module's own ``from_wire``) side. A
+# field gained later is wire-safe automatically; a field that must NOT
+# cross the wire is excluded by adding its name HERE, with the reason
+# recorded in this comment — never by writing a third, independent list
+# somewhere else.
+#
+# ``reply_to`` (FP-0013): a ``TransportRef`` is a process-local runtime
+# routing object — ADR-B (``transport.py``'s own module docstring):
+# "refs are purely runtime objects in this implementation -- they do NOT
+# survive crash recovery". It names a surface INSIDE this process (the
+# local TUI, one in-flight MCP request, one in-flight A2A request) that a
+# remote AG-UI client cannot consume or usefully echo back, and the
+# ``TransportRef`` union has no wire discriminator tag to reconstruct the
+# right variant from a dict (``TuiRef``/``McpRef``/``A2aRef``/... share no
+# common field to switch on) — sending it would need that reconstruction
+# machinery built first, for no reader that exists today. This was
+# already true before #6184 (the pre-existing hand-written encode side
+# never included it); #6184 only makes the omission a DECLARED exclusion
+# instead of a fact recoverable only by reading which of two independent
+# lists happened to be shorter.
+_NON_WIRE_FIELDS: "frozenset[str]" = frozenset({"reply_to"})
+
+
+def _dataclass_field_default(f: "dataclasses.Field") -> object:
+    """The value :meth:`OutboxMessage.from_wire` gives a field whose wire
+    key is ABSENT — an excluded field (currently only ``reply_to``) always
+    takes this path; any other field takes it only when the wire dict
+    genuinely omits that key (not merely an unrecognised extra key, which
+    is a different, already-tolerated case). Reads the field's OWN
+    declared default/default_factory rather than a value hand-typed here
+    a second time, so a future field with a declared default needs no
+    change to this function.
+
+    #6184 BLOCKING round 2 (lead-coder, measured): a field with NEITHER a
+    declared default NOR a default_factory (today: ``kind``/``text``,
+    ``from_wire``'s two REQUIRED core content fields) does NOT fall back
+    to ``None`` here. ``None`` is not a graceful degrade for a
+    ``str``-typed field — it only RELOCATES a fail-close into a
+    fail-FAR-AWAY ``TypeError`` at whichever consumer calls a ``str``
+    method on the result (``agui/protocol.py``'s own ``str(wire["text"])``
+    conversion did not crash only because ``str(None) == "None"`` happens
+    to be a legal call — a different consumer would not be so lucky).
+    Falls back to ``""`` instead — the SAME choice ``from_wire``'s own
+    pre-existing ``kind = str(wire.get("kind") or "")`` line already
+    makes for the OTHER no-default field: one rule for "no-default
+    field", not a different value invented for ``text`` alone. A FUTURE
+    no-default field of a non-``str`` type would be a new REQUIRED
+    argument on a frozen, wire-facing dataclass — adding one is already a
+    breaking change to every existing construction call site and
+    warrants its own review of what ITS missing-value fallback should
+    be; this function does not pre-guess that case."""
+    if f.default is not dataclasses.MISSING:
+        return f.default
+    if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+        return f.default_factory()
+    return ""
+
 
 @dataclass(frozen=True)
 class OutboxMessage:
@@ -185,14 +247,33 @@ class OutboxMessage:
                 "recovered later by position or absence (#5047)."
             )
 
+    def to_wire_dict(self) -> "dict[str, object]":
+        """Wire-safe fields, DERIVED from this dataclass's own field list
+        (#6184) — a field this class gains later is included here
+        automatically; only a name in :data:`_NON_WIRE_FIELDS` (with its
+        own reason recorded there) is ever excluded. A dict-valued field
+        is shallow-copied (matches the pre-#6184 hand-written
+        ``dict(msg.meta or {})`` at the encode call site) so a caller
+        mutating the returned dict cannot mutate this frozen message's
+        own state.
+
+        The ONE encode-side source of truth: ``agui/protocol.py``'s own
+        wire-dict construction sites call this instead of hand-listing
+        field names — see #6184's own finding that two independently
+        hand-typed lists (encode's 3 fields vs. this class's then-4-field
+        ``from_wire`` body) had already drifted apart before anyone
+        noticed, because ``reply_to`` never crossing the wire looked
+        identical to "someone forgot it" either way."""
+        out: "dict[str, object]" = {}
+        for f in dataclasses.fields(self):
+            if f.name in _NON_WIRE_FIELDS:
+                continue
+            value = getattr(self, f.name)
+            out[f.name] = dict(value) if isinstance(value, dict) else value
+        return out
+
     @classmethod
-    def from_wire(
-        cls,
-        kind: str,
-        text: str,
-        meta: "dict | None" = None,
-        reply_to: "TransportRef | None" = None,
-    ) -> "OutboxMessage":
+    def from_wire(cls, **wire: object) -> "OutboxMessage":
         """Reconstruct from UNTRUSTED wire values, BYPASSING vocabulary validation.
 
         The AG-UI decode path (``protocol.decode_event``) rebuilds an
@@ -201,6 +282,19 @@ class OutboxMessage:
         around :meth:`__post_init__` here. All PRODUCTION construction uses the
         validating ``__init__``. Bypasses ``__init__`` via ``object.__new__`` +
         ``object.__setattr__`` (the dataclass is frozen).
+
+        #6184: accepts arbitrary wire keys (``**wire``, not a hand-typed
+        ``kind, text, meta, reply_to=None`` parameter list) and sets EVERY
+        dataclass field by iterating :func:`dataclasses.fields` — the same
+        derivation :meth:`to_wire_dict` uses, so the two can never drift
+        the way the pre-#6184 hand-typed 3-field encode dict and 4-field
+        ``object.__setattr__`` body here did. An excluded field (currently
+        only ``reply_to``) is never read from ``wire`` at all — it gets its
+        own dataclass default via :func:`_dataclass_field_default`,
+        regardless of whether the caller happened to pass that key. An
+        unrecognised extra key in ``wire`` (e.g. the ``"frame"`` tag every
+        decode call site's own dict still carries) is silently ignored,
+        the same tolerance ``dict.get`` already gave every field before.
 
         #5047 (axis A, wire side — architect's confirmed design): a wire
         frame carrying a KNOWN intervention-family ``kind`` but no
@@ -216,14 +310,37 @@ class OutboxMessage:
         pending or become an answer's destination. This is UNRELATED to
         ignore-unknown (an UNKNOWN kind is untouched by this — that is a
         different failure mode, ignored exactly as before); this only
-        catches a KNOWN kind with a missing REQUIRED field."""
-        if kind in _INTERVENTION_FAMILY_KINDS and not (meta or {}).get("intervention_id"):
+        catches a KNOWN kind with a missing REQUIRED field. ``kind``/
+        ``meta`` are resolved BEFORE the generic field loop below because
+        the demotion decision needs both together — every OTHER field
+        (including any this class gains later) is read from ``wire``
+        inside the loop with no such special case.
+
+        #6184 BLOCKING (lead-coder, measured): a field ABSENT from
+        ``wire`` — a genuinely missing key, not merely an unrecognised
+        surplus one — used to default to a literal ``""`` here regardless
+        of that field's own type. That defeats #6184's own promise ("a
+        field gained later works automatically"): the very next field
+        added that is NOT a ``str`` (an ``int``, a ``list``, ...) would
+        silently receive the WRONG-TYPED zero value the moment an older
+        peer's wire payload omits it, not its own declared default. Uses
+        :func:`_dataclass_field_default` here too — the SAME fallback
+        the excluded-field branch above already used correctly — so a
+        missing key's value is always that field's own default, never a
+        one-size-fits-all string."""
+        kind = str(wire.get("kind") or "")
+        meta_raw = wire.get("meta")
+        meta: dict = dict(meta_raw) if isinstance(meta_raw, dict) else {}
+        if kind in _INTERVENTION_FAMILY_KINDS and not meta.get("intervention_id"):
             kind = "system"
+        resolved: "dict[str, object]" = {**wire, "kind": kind, "meta": meta}
         obj = object.__new__(cls)
-        object.__setattr__(obj, "kind", kind)
-        object.__setattr__(obj, "text", text)
-        object.__setattr__(obj, "meta", dict(meta) if meta is not None else {})
-        object.__setattr__(obj, "reply_to", reply_to)
+        for f in dataclasses.fields(cls):
+            if f.name in _NON_WIRE_FIELDS:
+                value = _dataclass_field_default(f)
+            else:
+                value = resolved.get(f.name, _dataclass_field_default(f))
+            object.__setattr__(obj, f.name, value)
         return obj
 
 
