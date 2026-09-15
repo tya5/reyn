@@ -40,6 +40,22 @@ things a first version of this file got wrong:
    nothing to bite on"). Test 4 is what actually bites regardless of how
    many real fields OutboxMessage currently has.
 
+#6184 BLOCKING round 2 (lead-coder, measured, PR #6187 review): round 1's
+own fix over-corrected. ``_dataclass_field_default`` fell back to ``None``
+for a field with neither a declared default nor a default_factory — which
+made an absent ``"text"`` key produce ``text=None``. ``None`` is not a
+graceful degrade for a ``str``-typed field: it relocates a fail-close into
+a fail-FAR-AWAY ``TypeError`` at whichever consumer calls a ``str`` method
+on the result, instead of avoiding one. The fix distinguishes two cases —
+a field WITH a declared default/default_factory uses it (test 5 below,
+witnessed via a subclass field with a distinctive non-``""``/non-``{}``
+default so a blanket string/dict fallback could not pass it by accident);
+a field with NEITHER (today: ``kind``/``text``, the two REQUIRED core
+content fields) degrades to ``""`` — the SAME choice ``from_wire``'s own
+pre-existing ``kind = str(wire.get("kind") or "")`` line already made for
+the sibling no-default field (test 6 below). One rule, not two silently
+different ones for two fields in the same position.
+
 Real ``OutboxMessage``/``TuiRef``/``encode_frame``/``decode_event``
 throughout (CLAUDE.md mock ban) — no curated field-name list anywhere in
 this file (accept criterion ④): every assertion below reads the real
@@ -131,21 +147,36 @@ def test_a_field_this_class_gains_later_is_wire_safe_with_no_code_change():
     assert rebuilt.probe == original.probe
 
 
-def test_from_wire_missing_key_falls_back_to_the_fields_own_default_not_a_blanket_empty_string():
+def test_from_wire_missing_key_uses_the_fields_own_declared_default():
     """Tier 1: #6184 BLOCKING round 1 (lead-coder, measured) — a field
-    genuinely ABSENT from the wire dict must fall back to THAT field's
-    own dataclass default, never a hand-typed "" applied regardless of
-    type. ``text`` has no declared default (it is a required field on
-    :class:`OutboxMessage`) — the fallback for an absent key is
-    ``_dataclass_field_default``, which returns ``None`` for a field
-    with neither a ``default`` nor a ``default_factory``. Before the
-    fix, an absent ``"text"`` key produced the literal string ``""``
-    here regardless of the field's real type — invisible today only
-    because every current field happens to be ``str``/``dict``, exactly
-    the blind spot #6184's own promise ("a field gained later works
-    automatically, no code change needed") must not have."""
+    genuinely ABSENT from the wire dict, and that DECLARES a default or
+    default_factory, falls back to THAT field's own value — never a
+    hand-typed "" applied regardless of type. Witnessed via a subclass
+    field whose default is neither "" nor {} (a blanket string/dict
+    fallback would not reproduce this exact value, so this cannot pass
+    by accident the way a field genuinely defaulting to "" or {} could)."""
+    @dataclasses.dataclass(frozen=True)
+    class _ProbeDefaultMessage(OutboxMessage):
+        probe: str = "distinct-default-xyz"
+
+    msg = _ProbeDefaultMessage.from_wire(kind="status")  # "probe" key entirely absent
+    assert msg.probe == "distinct-default-xyz"
+
+
+def test_from_wire_missing_key_for_a_no_default_field_degrades_to_empty_string_not_none():
+    """Tier 1: #6184 BLOCKING round 2 (lead-coder, measured) — a field
+    with NEITHER a declared default NOR a default_factory (``text``,
+    one of ``from_wire``'s two REQUIRED core content fields) must
+    degrade to ``""`` when its wire key is absent, the SAME choice
+    ``from_wire``'s own pre-existing ``kind = str(wire.get("kind") or
+    "")`` line already makes for the OTHER no-default field — one rule,
+    not two. A first version of this test asserted ``None`` here; that
+    was WRONG (lead-coder, PR #6187 review round 2) — ``None`` is not a
+    graceful degrade for a ``str``-typed field, it only relocates a
+    fail-close into a far-away ``TypeError`` at whichever consumer
+    calls a ``str`` method on the result."""
     msg = OutboxMessage.from_wire(kind="status")  # "text" key entirely absent
-    assert msg.text is None
+    assert msg.text == ""
 
 
 def _encode(msg: OutboxMessage) -> "tuple[str, dict]":

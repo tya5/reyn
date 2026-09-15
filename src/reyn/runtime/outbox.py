@@ -154,16 +154,38 @@ _NON_WIRE_FIELDS: "frozenset[str]" = frozenset({"reply_to"})
 
 
 def _dataclass_field_default(f: "dataclasses.Field") -> object:
-    """The zero-value :meth:`OutboxMessage.from_wire` gives an excluded
-    field (currently only ``reply_to``) — reads the field's OWN declared
-    default/default_factory rather than a value hand-typed here a second
-    time, so a future excluded field with a different default needs no
-    change to this function."""
+    """The value :meth:`OutboxMessage.from_wire` gives a field whose wire
+    key is ABSENT — an excluded field (currently only ``reply_to``) always
+    takes this path; any other field takes it only when the wire dict
+    genuinely omits that key (not merely an unrecognised extra key, which
+    is a different, already-tolerated case). Reads the field's OWN
+    declared default/default_factory rather than a value hand-typed here
+    a second time, so a future field with a declared default needs no
+    change to this function.
+
+    #6184 BLOCKING round 2 (lead-coder, measured): a field with NEITHER a
+    declared default NOR a default_factory (today: ``kind``/``text``,
+    ``from_wire``'s two REQUIRED core content fields) does NOT fall back
+    to ``None`` here. ``None`` is not a graceful degrade for a
+    ``str``-typed field — it only RELOCATES a fail-close into a
+    fail-FAR-AWAY ``TypeError`` at whichever consumer calls a ``str``
+    method on the result (``agui/protocol.py``'s own ``str(wire["text"])``
+    conversion did not crash only because ``str(None) == "None"`` happens
+    to be a legal call — a different consumer would not be so lucky).
+    Falls back to ``""`` instead — the SAME choice ``from_wire``'s own
+    pre-existing ``kind = str(wire.get("kind") or "")`` line already
+    makes for the OTHER no-default field: one rule for "no-default
+    field", not a different value invented for ``text`` alone. A FUTURE
+    no-default field of a non-``str`` type would be a new REQUIRED
+    argument on a frozen, wire-facing dataclass — adding one is already a
+    breaking change to every existing construction call site and
+    warrants its own review of what ITS missing-value fallback should
+    be; this function does not pre-guess that case."""
     if f.default is not dataclasses.MISSING:
         return f.default
     if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
         return f.default_factory()
-    return None
+    return ""
 
 
 @dataclass(frozen=True)
