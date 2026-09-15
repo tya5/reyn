@@ -128,3 +128,42 @@ def compose_tool_call_text(tool: object, composed: "list[tuple[str, str]] | str"
     flat = strip_control_chars(flat)
     capped, _ = cap_leaf(flat)
     return capped
+
+
+def render_subject(value: object) -> str:
+    """Convert a tool's declared subject RAW value
+    (:func:`~reyn.tools.subject.resolve_tool_subject`'s own return) into
+    a display string — #6184 段3-2 BLOCKING fix (lead-coder, measured,
+    PR #6200 review): this conversion moved HERE (the architect's own
+    段3 design, issuecomment-5685059570) from ``reyn/tools/subject.py``,
+    which used to stringify with a bare ``str()`` — for ``exec``'s own
+    ``argv`` (a ``list[str]``), that produced a Python repr
+    (``"['python', '-m', 'pytest']"``), the exact display shape the
+    owner's original request asked to move away from.
+
+    Three shapes, per the architect's own design (verbatim):
+
+    - ``str`` → AS-IS, no further transformation (not even this
+      module's own :func:`_normalize` — the value is a tool's own
+      declared subject, not raw wire content composed from multiple
+      arg values, so the same control-char/whitespace defensiveness
+      :func:`compose_tool_call_text` applies to ITS OWN flat string
+      does not automatically apply here; this is a disclosed, narrow
+      scope decision matching the literal design quote, not an
+      oversight — a LATER stage that wires a consumer to `subject` is
+      the place to revisit whether this needs the same defensive pass).
+    - ``list[str]`` → SPACE-JOINED, so ``argv`` reads as the actual
+      command line it represents (``["python", "-m", "pytest"]`` →
+      ``"python -m pytest"``) — the whole point of this fix.
+    - anything else (a non-string-only list, a number, a dict, ...) →
+      the EXISTING normalize path (:func:`_normalize` — the same
+      whitespace-collapse + control-strip every other composed value in
+      this module already gets), so an unexpected shape still degrades
+      to a safe, readable string rather than crashing or leaking a raw
+      repr unfiltered.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return " ".join(value)
+    return _normalize(value)
