@@ -18,13 +18,27 @@ gained later is wire-safe automatically; only a name declared in
 there — a ``TransportRef`` is a process-local runtime routing object, ADR-B:
 "do NOT survive crash recovery") is excluded, in ONE place.
 
-Strip-falsified by hand (not committed — a temporarily-added probe field
-would itself become a hand-typed entry, the exact anti-pattern #6184's own
-accept criterion ④ forbids): with a throwaway dataclass field added and
-``to_wire_dict`` reverted to a hardcoded 3-key dict (simulating "encode
-side updated, decode side's generic loop was not"), the round trip below
-lost the new field's value — confirmed RED — then reverted to the real
-generic derivation — confirmed GREEN again.
+#6184 BLOCKING round 1 (lead-coder, measured, PR #6187 review) caught two
+things a first version of this file got wrong:
+
+1. A hand strip-falsify (edit source, run, confirm RED, edit back, confirm
+   GREEN) IS the correct discipline while implementing, but a ONE-TIME
+   observation is not itself evidence a future reader can see — it is not
+   preserved by committing nothing. Fixed below with a REAL, committed,
+   ALWAYS-non-vacuous witness instead (test 4): a local subclass adding
+   one extra field. This is NOT the curated field-NAME list accept
+   criterion ④ forbids (lead-coder's own clarification: ④ bans hand-typing
+   field NAMES, not adding a probe field to a dataclass) — ``to_wire_dict``/
+   ``from_wire`` are both generic over ``dataclasses.fields(self/cls)``, so
+   the subclass exercises the real mechanism with zero field names typed
+   anywhere in this file.
+2. Without that subclass witness, test 1 below is vacuous TODAY: the
+   current field set (kind/text/meta, reply_to excluded) happens to equal
+   exactly the 3 fields the pre-#6184 hand-typed encode dict already had,
+   so reverting ``to_wire_dict`` to that hardcoded 3-key form would leave
+   test 1 green (CLAUDE.md test review Q4 — "green having run with
+   nothing to bite on"). Test 4 is what actually bites regardless of how
+   many real fields OutboxMessage currently has.
 
 Real ``OutboxMessage``/``TuiRef``/``encode_frame``/``decode_event``
 throughout (CLAUDE.md mock ban) — no curated field-name list anywhere in
@@ -50,7 +64,10 @@ def test_wire_round_trip_preserves_every_non_excluded_field():
     Reads the field NAMES from ``dataclasses.fields`` (never re-typed
     here) so this test does not itself become a second curated list —
     it asserts the round trip agrees with whatever OutboxMessage's own
-    fields are today, not with a name this file wrote down."""
+    fields are today, not with a name this file wrote down. VACUOUS
+    against an encode-side regression today (see module docstring, and
+    test 4 below, which is not) — kept anyway as the real-usage,
+    real-codec-path witness test 4 deliberately does not exercise."""
     original = OutboxMessage(kind="agent", text="hello world", meta={"run_id": "r1"})
     decoded = decode_event(*_encode(original))
 
@@ -88,6 +105,47 @@ def test_from_wire_tolerates_an_unrecognised_wire_key():
     )
     assert msg.kind == "status"
     assert msg.text == "t"
+
+
+def test_a_field_this_class_gains_later_is_wire_safe_with_no_code_change():
+    """Tier 1: THE non-vacuous witness for #6184's own promise (#6184
+    BLOCKING round 1 — see module docstring point 2). A local subclass
+    adding ONE extra field, never mentioned by name in this file's own
+    assertions beyond reading it back off the subclass — to_wire_dict
+    and from_wire are both generic over dataclasses.fields(self/cls),
+    so a regression reverting either to a hand-typed field list breaks
+    THIS test regardless of what OutboxMessage's own real fields are on
+    any given day, unlike test 1 above."""
+    @dataclasses.dataclass(frozen=True)
+    class _OneExtraFieldMessage(OutboxMessage):
+        probe: str = "probe-default"
+
+    original = _OneExtraFieldMessage(kind="status", text="t", meta={})
+    wire = original.to_wire_dict()
+    assert "probe" in wire, (
+        "to_wire_dict did not include a field gained by a subclass — "
+        "it has reverted to a hand-typed field list"
+    )
+
+    rebuilt = _OneExtraFieldMessage.from_wire(**wire)
+    assert rebuilt.probe == original.probe
+
+
+def test_from_wire_missing_key_falls_back_to_the_fields_own_default_not_a_blanket_empty_string():
+    """Tier 1: #6184 BLOCKING round 1 (lead-coder, measured) — a field
+    genuinely ABSENT from the wire dict must fall back to THAT field's
+    own dataclass default, never a hand-typed "" applied regardless of
+    type. ``text`` has no declared default (it is a required field on
+    :class:`OutboxMessage`) — the fallback for an absent key is
+    ``_dataclass_field_default``, which returns ``None`` for a field
+    with neither a ``default`` nor a ``default_factory``. Before the
+    fix, an absent ``"text"`` key produced the literal string ``""``
+    here regardless of the field's real type — invisible today only
+    because every current field happens to be ``str``/``dict``, exactly
+    the blind spot #6184's own promise ("a field gained later works
+    automatically, no code change needed") must not have."""
+    msg = OutboxMessage.from_wire(kind="status")  # "text" key entirely absent
+    assert msg.text is None
 
 
 def _encode(msg: OutboxMessage) -> "tuple[str, dict]":

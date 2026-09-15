@@ -292,7 +292,20 @@ class OutboxMessage:
         ``meta`` are resolved BEFORE the generic field loop below because
         the demotion decision needs both together — every OTHER field
         (including any this class gains later) is read from ``wire``
-        inside the loop with no such special case."""
+        inside the loop with no such special case.
+
+        #6184 BLOCKING (lead-coder, measured): a field ABSENT from
+        ``wire`` — a genuinely missing key, not merely an unrecognised
+        surplus one — used to default to a literal ``""`` here regardless
+        of that field's own type. That defeats #6184's own promise ("a
+        field gained later works automatically"): the very next field
+        added that is NOT a ``str`` (an ``int``, a ``list``, ...) would
+        silently receive the WRONG-TYPED zero value the moment an older
+        peer's wire payload omits it, not its own declared default. Uses
+        :func:`_dataclass_field_default` here too — the SAME fallback
+        the excluded-field branch above already used correctly — so a
+        missing key's value is always that field's own default, never a
+        one-size-fits-all string."""
         kind = str(wire.get("kind") or "")
         meta_raw = wire.get("meta")
         meta: dict = dict(meta_raw) if isinstance(meta_raw, dict) else {}
@@ -304,7 +317,7 @@ class OutboxMessage:
             if f.name in _NON_WIRE_FIELDS:
                 value = _dataclass_field_default(f)
             else:
-                value = resolved.get(f.name, "")
+                value = resolved.get(f.name, _dataclass_field_default(f))
             object.__setattr__(obj, f.name, value)
         return obj
 
