@@ -1125,7 +1125,13 @@ def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
     # the ⎿ result / failure rows nest one level under it (2-space indent).
     if kind == "tool_call_started":
         tool = str(meta.get("tool", msg.text))
-        args = _summarize_args(meta.get("args"))
+        # #6184 段2b-3: see presenter.py's own _tool_head comment for the
+        # `in`-vs-truthiness rationale — identical here.
+        composed = (
+            msg.details["args"] if "args" in (msg.details or {})
+            else _compose_args(meta.get("args"))
+        )
+        args = _truncate_args(composed)
         body = Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
         return _gutter_grid("▸ ", _CC_TEXT, body)
     if kind == "tool_call_completed":
