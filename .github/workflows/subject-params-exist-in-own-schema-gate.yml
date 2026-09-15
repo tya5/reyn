@@ -1,0 +1,60 @@
+name: subject-params-exist-in-own-schema gate
+
+# #6184 段3-1: fails when a ToolDefinition.subject_params entry names a
+# parameter that no longer exists in that SAME tool's own
+# parameters["properties"] (the "param renamed, pointer left stale"
+# shape -- see scripts/check_subject_params_exist_in_own_schema.py's own
+# module docstring for the full design, and why this is NOT the
+# #6190-rejected hand-curated-list-in-a-separate-file shape).
+#
+# Dedicated per-PR workflow, not a main-invariant-sweep.yml entry
+# (lead-coder's own PR review, #6199): the precedent this gate's SHAPE
+# was modeled on (check_hooks_declared_reachable.py) is wired only into
+# that hourly sweep, which only reddens AFTER a stale-rename PR has
+# already merged. This gate's whole subject is a rename made stale by
+# the SAME PR that renamed the parameter -- the ideal catch point is
+# that PR itself, not an hourly composition-gap sweep an unrelated PR
+# would later inherit red from. Same shape as
+# audit-event-firing-condition-gate.yml (a reyn-importing, path-scoped,
+# per-PR-only gate) for that reason.
+#
+# `paths` covers every input this scan actually reads: every
+# ToolDefinition construction site lives under src/reyn/tools/ (all 35,
+# confirmed via `grep -rl "ToolDefinition(" src/reyn/`), plus the gate
+# script itself.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/tools/**"
+      - "scripts/check_subject_params_exist_in_own_schema.py"
+
+permissions:
+  contents: read
+
+jobs:
+  subject-params-exist-in-own-schema:
+    name: subject-params-exist-in-own-schema gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_subject_params_exist_in_own_schema.py imports
+      # reyn.tools.get_default_registry (the real, installed registry --
+      # never a hand-maintained list, same discipline
+      # gutter.py:_is_retrieval_tool already established), which
+      # transitively needs the project's core deps -- an editable
+      # install is required, same shape as
+      # audit-event-firing-condition-gate.yml.
+      - name: Install reyn (core deps only)
+        run: pip install -e . -c ci-constraints.txt
+
+      - name: Check every declared subject_params name resolves against its own tool's schema
+        run: |
+          python scripts/check_subject_params_exist_in_own_schema.py
