@@ -35,7 +35,8 @@ from reyn.interfaces.repl.renderer import (
     _KIND_LINE,
     _SPINNER,
     _body_renderable,
-    _summarize_args,
+    _compose_args,
+    _truncate_args,
     summarize_tool_result,
 )
 
@@ -294,7 +295,20 @@ def _tool_head(msg: "OutboxMessage") -> Text:
     differs while in flight)."""
     meta = msg.meta or {}
     tool = str(meta.get("tool", msg.text))
-    args = _summarize_args(meta.get("args"))
+    # #6184 段2b-3: read the producer's own structured `details["args"]`
+    # when present — `in`, never truthiness (`_compose_args` legitimately
+    # returns `[]` for "genuinely no args"; truthiness would make that
+    # indistinguishable from "no details field at all", the old-frame/
+    # restore/client-composed case, which must fall back to `meta["args"]`
+    # instead of reading as "no args"). Falls back to composing from the
+    # raw wire meta for any row `details` doesn't cover yet — monotonic,
+    # never worse than the pre-2b-3 behavior. The length-cut stays HERE
+    # (consumer/viewer side) either way — width is a viewer property.
+    composed = (
+        msg.details["args"] if "args" in (msg.details or {})
+        else _compose_args(meta.get("args"))
+    )
+    args = _truncate_args(composed)
     return Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
 
 
@@ -524,7 +538,13 @@ def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
         summary = summarize_tool_result(tool, result_meta.get("result"))
         if summary.startswith("✗"):
             return None  # a summary-shaped failure (D-2 kind, non-raising) — same exclusion
-    args = _summarize_args(meta.get("args"))
+    # #6184 段2b-3: see _tool_head's own comment for the `in`-vs-
+    # truthiness rationale — identical here.
+    composed = (
+        msg.details["args"] if "args" in (msg.details or {})
+        else _compose_args(meta.get("args"))
+    )
+    args = _truncate_args(composed)
     return Text.assemble(
         (tool, _CC_DIM), (f"({args})", _CC_DIM), (" → ", _CC_DIM), (summary, _CC_DIM),
     )
