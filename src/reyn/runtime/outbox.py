@@ -275,6 +275,73 @@ def _normalize_operation(value: object) -> Operation:
     return Operation.default()
 
 
+def _derive_id_and_parent_id(*, kind: str, meta: dict) -> "tuple[str | None, str | None]":
+    """#6184 段2a-2: the ONE derivation point for `id`/`parent_id` on the
+    in-process construction path (:meth:`OutboxMessage.__post_init__`) —
+    zero producer diff, every existing construction call site keeps
+    working unchanged. `from_wire` does NOT call this — a wire-decoded
+    value's `id`/`parent_id` is whatever the ORIGIN process already
+    derived, passed through as-is (the same direction #6184's own
+    `id` field already established in 段2a-1).
+
+    The 4-branch rule below faithfully REPRODUCES today's real consumer
+    (``app.py``'s :meth:`_resolve_append_parent`/:meth:`_register_call_
+    parent`) — it invents nothing new:
+
+    | condition                          | id              | parent_id        |
+    |-------------------------------------|-----------------|-------------------|
+    | `call_id` + `kind=="agent"`         | `call:{call_id}`| `turn:{chain_id}` |
+    | `call_id` + other `kind`            | —               | `call:{call_id}`  |
+    | no `call_id`, `kind != "user"`      | —               | `turn:{chain_id}` |
+    | `kind == "user"`                    | `turn:{chain_id}`| —                |
+
+    ① ``call_id`` is the litellm RESPONSE's own ``id`` — a THIRD PARTY's
+    identifier, not something reyn mints (``llm.py``'s own
+    ``_response_call_id``, verbatim: "The litellm response's own
+    ``id``"). That SAME docstring names the exact risk this function's
+    own key-namespacing guards against, verbatim: a consumer keying on
+    ``call_id`` "would otherwise BUNDLE UNRELATED CALLS AS ONE" if two
+    genuinely different calls ever shared a reported id — the `call:`
+    prefix does not fix that risk (a third party's own uniqueness is
+    still a third party's property, not reyn's to assert), it only
+    keeps THAT risk in its own namespace, separate from `turn:`'s.
+
+    ② The two remaining risks are NOT the same severity, and must not
+    be read as if they were: ``args_hash`` (``dispatcher.py``'s own memo
+    key) collides BY DESIGN — collision IS its purpose (resume
+    memoization: same args, same key, on purpose). A litellm response
+    id repeating across two genuinely different calls would be a
+    provider-side ACCIDENT outside reyn's own design, not a designed
+    property of anything reyn built. `id`'s own "unique per issuance"
+    contract (段2a-1) is inherited FROM the provider for `call:`-prefixed
+    values, not asserted independently by this function.
+
+    ③ A ``kind="agent"`` row with NO ``call_id`` declares no `id` at
+    all — never `""`, never a fabricated placeholder. This is the SAME
+    judgment :meth:`_register_call_parent`'s own ``if kind != "agent"
+    or not call_id: return`` already makes: such a row does not own a
+    call-level group. An empty-string `id` would be a SHARED key every
+    such row collides on — the exact hazard ``_response_call_id``'s own
+    docstring warns against, reproduced by this function instead of
+    avoided by it, if a bare falsy check were skipped here.
+
+    ``chain_id`` gets the identical no-key-when-absent treatment for
+    the same reason — a turn row promoted before #4691 arc item ④
+    started stamping ``chain_id`` (or any other caller a future change
+    might add) must not collide with every other keyless row on a
+    fabricated shared ``"turn:"`` value either.
+    """
+    call_id = meta.get("call_id")
+    chain_id = meta.get("chain_id")
+    if call_id and kind == "agent":
+        return f"call:{call_id}", (f"turn:{chain_id}" if chain_id else None)
+    if call_id:
+        return None, f"call:{call_id}"
+    if kind != "user":
+        return None, (f"turn:{chain_id}" if chain_id else None)
+    return (f"turn:{chain_id}" if chain_id else None), None
+
+
 @dataclass(frozen=True)
 class OutboxMessage:
     """One item published by Session to its outbox queue.
@@ -298,31 +365,53 @@ class OutboxMessage:
                        falls back to the registered default surface (TUI) when
                        absent.
 
-    #6184 段2a-1 (structural fields — purely additive this stage: every
-    one below defaults so no existing construction call site changes,
-    and NOTHING in ``src/`` reads any of them yet; landing this is
-    itself the accept criterion, not any new rendering behaviour):
+    #6184 段2a-1 (structural fields — every one below defaults so no
+    existing construction call site changes, and NOTHING in ``src/``
+    reads any of them yet; landing this is itself the accept criterion,
+    not any new rendering behaviour). 段2a-2 added the DERIVATION of
+    `id`/`parent_id` (below) — still zero producer diff, since every
+    existing construction call site passes neither field and so is
+    unaffected; `subject`/`details` remain unwired.
 
     id
-      Opaque, producer-assigned, UNIQUE PER ISSUANCE. Must NOT be
-      ``op_id``/``args_hash`` reused — those are ``dispatcher.py``'s own
-      MEMO KEY (``_compute_args_hash``, verbatim: "collision risk is
-      acceptable for resume memoization"), deliberately DETERMINISTIC so
-      the SAME tool called with the SAME args collides on purpose. `id`
-      needs the opposite property: two calls with identical args must
-      still get two different `id`s. NOBODY GENERATES ONE THIS STAGE —
-      the default is `None` on every construction, and stays `None`
-      until a later stage wires up an issuance mechanism (undecided as
-      of this stage — do not read the empty default as a defect).
+      Opaque, UNIQUE PER ISSUANCE. Must NOT be ``op_id``/``args_hash``
+      reused — those are ``dispatcher.py``'s own MEMO KEY
+      (``_compute_args_hash``, verbatim: "collision risk is acceptable
+      for resume memoization"), deliberately DETERMINISTIC so the SAME
+      tool called with the SAME args collides on purpose. `id` needs the
+      opposite property: two calls with identical args must still get
+      two different `id`s. #6184 段2a-2: DERIVED in :meth:`__post_init__`
+      via :func:`_derive_id_and_parent_id` from `kind`/`meta` (a
+      ``call:``/``turn:``-prefixed key built from ``meta["call_id"]``/
+      ``meta["chain_id"]``) — see that function's own docstring for the
+      full rule and, critically, WHY `call_id` is a THIRD PARTY's
+      identifier (litellm's own response id), not something whose
+      uniqueness this field can claim independently. A row with no
+      qualifying key (see that function's own table) still gets `None`,
+      never a fabricated placeholder. NO PRODUCER OVERRIDE this stage —
+      the field is ``init=False`` (BLOCKING round 2 fix, PR #6191
+      review: silently overwriting an explicit value was worse than
+      raising — a round-trip test built against one stayed green while
+      comparing the discarded-then-re-derived value to itself; a
+      hand-written raise in turn broke real ``dataclasses.replace()``
+      call sites in app.py, which legitimately carry an existing
+      instance's OWN already-derived value forward as a constructor
+      kwarg — indistinguishable from a producer's hand-typed one at
+      that point. ``init=False`` resolves both: a caller cannot pass
+      this at all (``TypeError``, at the language level), while
+      ``replace()`` — which never attempts to pass an ``init=False``
+      field — always re-derives fresh instead of either conflicting or
+      carrying a stale value forward).
     parent_id
-      Opaque, producer-assigned, optional. Declares that this entry
-      belongs to the SAME something another entry does — NOT that it is
-      that entry's tree-structural child; whether (and how) a consumer
-      renders that as nesting is the CONSUMER's decision, not asserted
-      here. (Architect ruling, #6184 issuecomment-5681485023: writing
-      this as "parent in a tree" invites the next producer to add a
-      SECOND field for "belongs to the same episode" instead of reusing
-      this one.)
+      Opaque, optional. Declares that this entry belongs to the SAME
+      something another entry does — NOT that it is that entry's
+      tree-structural child; whether (and how) a consumer renders that
+      as nesting is the CONSUMER's decision, not asserted here.
+      (Architect ruling, #6184 issuecomment-5681485023: writing this as
+      "parent in a tree" invites the next producer to add a SECOND field
+      for "belongs to the same episode" instead of reusing this one.)
+      #6184 段2a-2: DERIVED alongside `id` — see that field's own note
+      and :func:`_derive_id_and_parent_id`.
     operation
       See :class:`Operation` — the producer's own 2-value declaration
       (``NEW``/``UPDATE``), normalized via :func:`_normalize_operation`.
@@ -347,8 +436,29 @@ class OutboxMessage:
     # ADDITIVE — every field defaults so no existing construction call
     # site needs a change, and (this stage's own accept criterion) no
     # code under src/ reads any of them yet.
-    id: "str | None" = field(default=None)
-    parent_id: "str | None" = field(default=None)
+    # #6184 段2a-2 BLOCKING round 2 (lead-coder review, PR #6191; a real
+    # production regression this session's own strip-falsify found, not
+    # hypothetical): ``init=False`` — NOT a hand-typed ``if self.id is
+    # not None: raise`` in __post_init__. That first attempt broke real
+    # production call sites: several ``dataclasses.replace(entry.item,
+    # ...)`` sites in app.py carry an EXISTING OutboxMessage's own
+    # already-derived `id`/`parent_id` forward as constructor kwargs
+    # (``replace()`` re-invokes ``__init__`` with every current field
+    # value) — indistinguishable, at ``__post_init__`` time, from a
+    # producer hand-typing an unrelated value. ``init=False`` removes
+    # `id`/`parent_id` from the generated ``__init__``'s OWN parameter
+    # list entirely — ``dataclasses.replace()`` then never attempts to
+    # pass them at all (its own contract: an ``init=False`` field is
+    # never copied forward, only ever recomputed by the NEW instance's
+    # own ``__post_init__``), so a `kind`/`meta`-changing ``replace()``
+    # call correctly re-derives against the NEW values instead of
+    # carrying a now-stale one. A caller still cannot set either field
+    # by hand — attempting ``OutboxMessage(..., id="x")`` now raises
+    # ``TypeError`` at the language level (an unrecognised keyword
+    # argument), before construction even reaches this class's own
+    # code — MORE fail-visible than a hand-written raise, not less.
+    id: "str | None" = field(default=None, init=False)
+    parent_id: "str | None" = field(default=None, init=False)
     operation: "Operation" = field(default_factory=Operation.default)
     subject: "str | None" = field(default=None)
     details: dict = field(default_factory=dict)
@@ -390,6 +500,21 @@ class OutboxMessage:
                 "must carry its own identity at construction time, never "
                 "recovered later by position or absence (#5047)."
             )
+        # #6184 段2a-2: the ONE derivation point for `id`/`parent_id` —
+        # see :func:`_derive_id_and_parent_id`'s own docstring for the
+        # 4-branch rule and why it reproduces today's real consumer
+        # rather than inventing a new one. Both fields are declared
+        # ``init=False`` (see their own field comment above) — a caller
+        # CANNOT reach this method with an explicit value to conflict
+        # with in the first place, so there is nothing to check here;
+        # this always derives fresh from `kind`/`meta`, including on
+        # every ``dataclasses.replace(...)`` reconstruction (which never
+        # attempts to pass an ``init=False`` field, so a replace() that
+        # changes `kind`/`meta` correctly re-derives against the NEW
+        # values instead of carrying a stale one forward).
+        derived_id, derived_parent_id = _derive_id_and_parent_id(kind=self.kind, meta=self.meta)
+        object.__setattr__(self, "id", derived_id)
+        object.__setattr__(self, "parent_id", derived_parent_id)
 
     def to_wire_dict(self) -> "dict[str, object]":
         """Wire-safe fields, DERIVED from this dataclass's own field list

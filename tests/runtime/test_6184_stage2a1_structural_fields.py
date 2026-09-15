@@ -63,11 +63,32 @@ def test_all_five_structural_fields_survive_a_real_wire_round_trip():
     #6187's field-derivation machinery covers a REAL new field, not just
     the 4 that existed when it landed. Reads the field NAMES from
     dataclasses.fields (never re-typed here), matching this arc's own
-    established discipline in test_6184_outbox_wire_field_enumeration.py."""
+    established discipline in test_6184_outbox_wire_field_enumeration.py.
+
+    #6184 段2a-2 BLOCKING (lead-coder, measured, PR #6191 review): a
+    prior version of this test passed ``id="issuance-1",
+    parent_id="parent-1"`` explicitly. 段2a-2 made `__post_init__`
+    DERIVE those two fields from ``kind``/``meta`` instead — the
+    explicit values above were silently OVERWRITTEN to ``None`` by that
+    derivation (``meta`` here carries neither ``call_id`` nor
+    ``chain_id``), so both ``original.id``/``original.parent_id`` and
+    the decoded copy ended up ``None`` — the loop below kept comparing
+    ``None == None`` and stayed GREEN, having silently stopped
+    witnessing an ``id``/``parent_id`` round trip at all (CLAUDE.md test
+    review Q4 — green with nothing left to bite on, the SAME shape this
+    arc's own #6190 review caught once already, this time self-inflicted
+    by a LATER PR rather than found up front). Fixed: ``meta`` below now
+    carries a real ``call_id``/``chain_id`` so `id`/`parent_id` derive
+    to genuine non-``None`` values this test actually carries across
+    the wire — passing them explicitly would now raise (see
+    ``OutboxMessage.__post_init__``'s own docstring)."""
     original = OutboxMessage(
-        kind="agent", text="hi", meta={"run_id": "r1"},
-        id="issuance-1", parent_id="parent-1", operation=Operation.UPDATE,
-        subject="subject text", details={"argv": ["ls", "-la"]},
+        kind="agent", text="hi", meta={"run_id": "r1", "call_id": "c1", "chain_id": "t1"},
+        operation=Operation.UPDATE, subject="subject text", details={"argv": ["ls", "-la"]},
+    )
+    assert original.id is not None and original.parent_id is not None, (
+        "test premise: this construction must actually derive non-None "
+        "id/parent_id, or the round trip below is vacuous again"
     )
     ev = encode_frame(DisplayFrame(original))
     decoded = decode_event(ev.type, ev.data)
@@ -97,10 +118,12 @@ def test_operation_update_can_carry_a_new_kind_value():
     is a producer-side declaration, not itself a kind-carrier, but this
     witnesses that UPDATE's own contract (a full new value, never a
     diff — see Operation.UPDATE's own docstring) is not violated by
-    combining it with a kind change on the SAME OutboxMessage."""
+    combining it with a kind change on the SAME OutboxMessage. (No
+    ``id=`` here — 段2a-2 made that field DERIVED, not producer-passed;
+    unrelated to what this test is actually witnessing.)"""
     updated = OutboxMessage(
         kind="intervention_resolved", text="", meta={"intervention_id": "iv-1"},
-        id="entry-1", operation=Operation.UPDATE,
+        operation=Operation.UPDATE,
     )
     assert updated.kind == "intervention_resolved"
     assert updated.operation is Operation.UPDATE
