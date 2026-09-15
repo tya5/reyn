@@ -389,9 +389,13 @@ def encode_frame(frame: Frame) -> AgUiEvent:
 
 def _encode_display(frame: DisplayFrame) -> AgUiEvent:
     msg = frame.message
-    kind, text, meta = msg.kind, msg.text, dict(msg.meta or {})
+    # #6184: single enumeration — the wire-safe field set is derived from
+    # OutboxMessage's own dataclass fields (see to_wire_dict's docstring),
+    # never a hand-typed list here that could drift from from_wire's own.
+    wire = msg.to_wire_dict()
+    kind, text = str(wire["kind"]), str(wire["text"])
     ag_type = _display_event_type(kind)
-    reyn = {"frame": "display", "kind": kind, "text": text, "meta": meta}
+    reyn = {"frame": "display", **wire}
     # Standard AG-UI surface a generic client renders (best-effort).
     if ag_type is TEXT_MESSAGE_CONTENT:
         # ``messageId`` correlates the START/CONTENT/END triplet
@@ -599,12 +603,9 @@ def encode_frame_wire_streaming(
         message_id = tracker.end_stream(chain_id)
         if message_id is not None:
             msg = frame.message
-            reyn = {
-                "frame": "display",
-                "kind": msg.kind,
-                "text": msg.text,
-                "meta": dict(msg.meta or {}),
-            }
+            # #6184: same single enumeration as _encode_display — was a
+            # second, independently hand-typed 3-field dict here before.
+            reyn = {"frame": "display", **msg.to_wire_dict()}
             return [
                 AgUiEvent(
                     type=TEXT_MESSAGE_END,
@@ -743,13 +744,12 @@ def decode_event(
     if frame_tag == "display":
         # UNTRUSTED wire value → from_wire (lenient): an unknown remote kind must
         # ignore-unknown / graceful-degrade, never fail-close on __post_init__.
-        return DisplayFrame(
-            OutboxMessage.from_wire(
-                kind=reyn.get("kind", ""),
-                text=reyn.get("text", ""),
-                meta=dict(reyn.get("meta") or {}),
-            )
-        )
+        # #6184: from_wire itself now derives which fields it reads from
+        # OutboxMessage's own dataclass fields — passing the whole reyn
+        # dict through (its surplus "frame" key is silently ignored) means
+        # this call site can no longer hand-type a field list that drifts
+        # from the encode side's.
+        return DisplayFrame(OutboxMessage.from_wire(**reyn))
     if frame_tag == "event":
         return EventFrame(Event(type=reyn.get("type", ""), data=dict(reyn.get("data") or {})))
     if frame_tag == "state":
@@ -759,14 +759,10 @@ def decode_event(
     if frame_tag == "messages":
         # UNTRUSTED wire values (reconnect backlog) → from_wire (lenient), same
         # ignore-unknown contract as the single-display decode above.
+        # #6184: same derived-field from_wire as the single-display decode
+        # above — each `m` is one _encode_display-shaped reyn payload.
         frames = [
-            DisplayFrame(
-                OutboxMessage.from_wire(
-                    kind=m.get("kind", ""),
-                    text=m.get("text", ""),
-                    meta=dict(m.get("meta") or {}),
-                )
-            )
+            DisplayFrame(OutboxMessage.from_wire(**m))
             for m in (reyn.get("messages") or [])
         ]
         return MessagesSnapshot(
