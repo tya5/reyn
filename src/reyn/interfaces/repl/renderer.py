@@ -556,13 +556,41 @@ def wants_separator(kind: str, seen_message: bool) -> bool:
     )
 
 
-def _short(v, n: int = 60) -> str:
-    """Collapse whitespace and truncate any value to a one-line summary."""
+def _normalize_text(v) -> str:
+    """Collapse whitespace in a value into a single-line string — #6184
+    段2b-1's own COMPOSE half of the old ``_short`` (never touches
+    length; the caller decides width separately, see :func:`_cut`).
+
+    Normalization moves with the PRODUCER (architect correction, #6184):
+    a raw multi-line/control-char value must never reach a consumer's
+    wire unnormalized — a generic AG-UI client sees a ragged block of
+    raw newlines where reyn's own viewers see one collapsed line, a
+    wire-visible difference if normalization stayed on the consumer
+    side. The length cut, by contrast, is a VIEWER property (terminal
+    width varies per viewer and can resize between renders —
+    :func:`_live_terminal_width`'s own docstring), so it stays with the
+    consumer (:func:`_cut`)."""
     if v is None:
         return ""
     s = v if isinstance(v, str) else repr(v)
-    s = " ".join(s.split())
+    return " ".join(s.split())
+
+
+def _cut(s: str, n: int) -> str:
+    """Truncate an ALREADY-normalized single-line string to at most ``n``
+    chars — #6184 段2b-1's own TRUNCATE half of the old ``_short``. Never
+    reads a live width itself; the caller supplies ``n``."""
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _short(v, n: int = 60) -> str:
+    """Collapse whitespace and truncate any value to a one-line summary.
+
+    #6184 段2b-1: composed from :func:`_normalize_text` (compose) +
+    :func:`_cut` (truncate) — nothing MOVES to a different call site yet
+    (2b-2/2b-3 is the actual producer/consumer split; this PR only
+    separates the two responsibilities ``_short`` itself used to fuse)."""
+    return _cut(_normalize_text(v), n)
 
 
 def _live_terminal_width(default: int = 80) -> int:
@@ -576,13 +604,124 @@ def _live_terminal_width(default: int = 80) -> int:
         return default
 
 
-def _summarize_args(args) -> str:
-    """Compact ``k=v`` summary of a tool's args dict (or a bare value)."""
+def _compose_args(args) -> "list[tuple[str, str]] | str":
+    """Normalize a tool's args into a WIDTH-INDEPENDENT compose result —
+    #6184 段2b-1. A dict becomes an ordered list of ``(key, normalized
+    value)`` pairs, each value whitespace-collapsed but never length-cut;
+    a bare (non-dict) value becomes a normalized string. Carries no width
+    information at all (accept ⑵ grep witness: no ``_cut``/``_short``
+    call anywhere in this function) — see :func:`_truncate_args` for the
+    paired length-cut half."""
     if not args:
-        return ""
+        return []
     if isinstance(args, dict):
-        return _short(", ".join(f"{k}={_short(v, 24)}" for k, v in args.items()))
-    return _short(args)
+        return [
+            (" ".join(str(k).split()), _normalize_text(v)) for k, v in args.items()
+        ]
+    return _normalize_text(args)
+
+
+def _truncate_args(
+    composed: "list[tuple[str, str]] | str",
+    *,
+    value_width: int = 24,
+    total_width: int = 60,
+) -> str:
+    """Length-cut a :func:`_compose_args` result into the final ``k=v``
+    summary — #6184 段2b-1's truncate half. PURE cut — no normalize call
+    anywhere in this function (the input is already fully normalized by
+    :func:`_compose_args`, keys included, so a redundant re-normalize
+    here would only mask a future compose-side normalization regression
+    behind this function's own safety net, defeating the split's own
+    point). Byte-identical to the pre-split ``_summarize_args`` when
+    called with these (unchanged) default widths: each value is cut to
+    ``value_width`` BEFORE joining (so one long value cannot consume
+    another key's budget), then the whole joined line is cut to
+    ``total_width`` — the same two-stage shape the old
+    ``_summarize_args`` applied via two nested ``_short`` calls (that
+    outer call's own normalize half is now redundant by construction,
+    not merely skipped: compose already normalized both the key and the
+    value it draws from)."""
+    if not composed:
+        return ""
+    if isinstance(composed, list):
+        joined = ", ".join(f"{k}={_cut(v, value_width)}" for k, v in composed)
+        return _cut(joined, total_width)
+    return _cut(composed, total_width)
+
+
+def _summarize_args(args) -> str:
+    """Compact ``k=v`` summary of a tool's args dict (or a bare value).
+
+    #6184 段2b-1: split into :func:`_compose_args` (normalize, width-
+    independent) + :func:`_truncate_args` (length-cut, width-aware) —
+    kept called together here; nothing moves to a different call site
+    yet (2b-2/2b-3)."""
+    return _truncate_args(_compose_args(args))
+
+
+class _Truncatable:
+    """#6184 段2b-1: marks a composed tool-result summary piece whose
+    ``raw`` half still needs a width-bounded cut before it is final — the
+    matching cut lives in :func:`_truncate_result_summary`, keyed by
+    ``kind`` via :data:`_RESULT_TRUNCATE_WIDTHS` (each key is the SAME
+    numeric width the pre-split code applied inline at that branch).
+    ``prefix`` is literal text around the cut region, never itself
+    truncated — byte-identical to the pre-split code, which only ever
+    cut the embedded raw value, not its surrounding prefix.
+
+    ``raw`` is ALREADY NORMALIZED (:func:`_normalize_text`) by the caller
+    at construction time — every ``_Truncatable(...)`` call site in
+    :func:`_summarize_result` applies it before constructing, never this
+    class itself and never :func:`_truncate_result_summary` (lead-coder
+    BLOCKING #6184 review: normalization belongs with the PRODUCER/
+    compose side for the SAME reason :func:`_compose_args`'s own
+    docstring gives — a raw multi-line/control-char value must never
+    reach a consumer's wire unnormalized; the truncate half stays a PURE
+    cut, matching pair A's own architecture exactly)."""
+
+    __slots__ = ("prefix", "raw", "kind")
+
+    def __init__(self, prefix: str, raw: str, kind: str) -> None:
+        self.prefix = prefix
+        self.raw = raw
+        self.kind = kind
+
+
+#: Per-field-kind width — #6184 段2b-1's own truncate-side width policy,
+#: read only by :func:`_truncate_result_summary`. Each value is the SAME
+#: numeric width :func:`_summarize_result` applied inline at that branch
+#: before this split; grouped by kind (not merged into one constant) so a
+#: future stage can retune one field without touching the others.
+_RESULT_TRUNCATE_WIDTHS: "dict[str, int]" = {
+    "error": 78,
+    "stderr": 78,
+    "answer": 60,
+    "url": 60,
+    "mcp_content": 60,
+    "name_or_desc": 60,
+    "fallback": 80,
+}
+
+
+def _truncate_result_summary(composed) -> str:
+    """Length-cut a :func:`_summarize_result` composed piece into the
+    final one-line summary — #6184 段2b-1's truncate half. PURE cut — no
+    normalize call (mirrors :func:`_truncate_args`'s own discipline
+    exactly): a :class:`_Truncatable`'s ``raw`` is already normalized by
+    the caller that constructed it, so re-normalizing here would only
+    mask a future compose-side normalization regression behind this
+    function's own safety net (the same reasoning :func:`_truncate_args`
+    already states). A plain string (the majority of
+    ``_summarize_result``'s branches, already fully-formed and bounded by
+    construction) passes through unchanged; a :class:`_Truncatable` marks
+    the ONE branch whose raw content still needs a width-bounded cut,
+    using the same per-kind width the pre-split code used inline
+    (:data:`_RESULT_TRUNCATE_WIDTHS`)."""
+    if isinstance(composed, _Truncatable):
+        width = _RESULT_TRUNCATE_WIDTHS[composed.kind]
+        return composed.prefix + _cut(composed.raw, width)
+    return composed
 
 
 def summarize_tool_result(tool, result) -> str:
@@ -611,11 +750,17 @@ def summarize_tool_result(tool, result) -> str:
     site remembering to ask for one. Same ``get_neutralizer("terminal")``
     seam FP-0054 already established (``presenter.py``'s own
     ``_neutralized_label``, applied there to a different leaf — labels,
-    not tool-result summaries — same discipline, different call site)."""
+    not tool-result summaries — same discipline, different call site).
+
+    #6184 段2b-1: ``_summarize_result`` is now the COMPOSE half (branches
+    + a :class:`_Truncatable` tag on the one piece that still needs a
+    width-bounded cut); :func:`_truncate_result_summary` is the TRUNCATE
+    half, called here. Nothing moves to a different call site yet."""
     from reyn.core.present.guard import get_neutralizer
 
     try:
-        summary = _summarize_result(tool, result)
+        composed = _summarize_result(tool, result)
+        summary = _truncate_result_summary(composed)
     except Exception:
         _log.warning(
             "summarizing tool %r's own result failed; falling back to a "
@@ -625,7 +770,7 @@ def summarize_tool_result(tool, result) -> str:
     return get_neutralizer("terminal").neutralize(summary)[0]
 
 
-def _summarize_result(tool, result) -> str:
+def _summarize_result(tool, result):
     t = (tool or "").lower()
     if result is None or result == "":
         return "done"
@@ -640,10 +785,10 @@ def _summarize_result(tool, result) -> str:
         # below would short-circuit to "Read 0 lines" and the error is never seen).
         error = result.get("error")
         if isinstance(error, str):
-            return f"✗ {_short(error, 78)}"
+            return _Truncatable("✗ ", _normalize_text(error), "error")
         error_message = result.get("error_message")
         if isinstance(error_message, str):
-            return f"✗ {_short(error_message, 78)}"
+            return _Truncatable("✗ ", _normalize_text(error_message), "error")
         op = result.get("op")
         path = result.get("path")
         status = result.get("status")
@@ -719,11 +864,13 @@ def _summarize_result(tool, result) -> str:
             return f"Dropped {n} chunk{'s' if n != 1 else ''}"
         if isinstance(result.get("input_schema"), dict):
             name_or_desc = result.get("name") or result.get("description") or ""
-            return _short(str(name_or_desc), 60)
+            return _Truncatable("", _normalize_text(str(name_or_desc)), "name_or_desc")
         if result.get("kind") == "mcp":
             mcp_content = result.get("content")
             if isinstance(mcp_content, str) and mcp_content:
-                return _short(mcp_content.split("\n")[0], 60)
+                return _Truncatable(
+                    "", _normalize_text(mcp_content.split("\n")[0]), "mcp_content"
+                )
         passed = result.get("passed")
         if isinstance(passed, bool):
             score = result.get("score")
@@ -744,26 +891,32 @@ def _summarize_result(tool, result) -> str:
         # `sandboxed_exec_to_canonical`, which already carries stdout/stderr and the
         # returncode). So what was lost was the OPERATOR's signal, not the model's:
         # a human saw a bare "error" and had to expand the row to learn why.
-        # `stderr` is truncated via the SAME `_short(..., 78)` boundary the
-        # `error`/`error_message` branches above already use (don't mint a new
-        # constant when one for the same purpose — a one-line error summary —
-        # already exists in this file).
+        # `stderr` is truncated via the SAME width (78, `_RESULT_TRUNCATE_
+        # WIDTHS["stderr"]`) the `error`/`error_message` branches above
+        # already use (don't mint a new constant when one for the same
+        # purpose — a one-line error summary — already exists in this
+        # file). #6184 段2b-1: the actual cut is deferred to
+        # `_truncate_result_summary` now — this branch only TAGS the raw
+        # stderr text via `_Truncatable`, never calls a cut itself.
         if isinstance(returncode, int) and status == "error":
             stderr = result.get("stderr")
-            detail = _short(stderr, 78) if isinstance(stderr, str) and stderr else ""
-            return f"✗ exit {returncode}" + (f": {detail}" if detail else "")
+            if isinstance(stderr, str) and stderr:
+                return _Truncatable(
+                    f"✗ exit {returncode}: ", _normalize_text(stderr), "stderr"
+                )
+            return f"✗ exit {returncode}"
         freed_tokens = result.get("freed_tokens")
         if isinstance(freed_tokens, int):
             return f"Freed {freed_tokens} token{'s' if freed_tokens != 1 else ''}"
         answer = result.get("answer")
         if isinstance(answer, str) and answer:
-            return _short(answer, 60)
+            return _Truncatable("", _normalize_text(answer), "answer")
         server_name = result.get("server_name")
         if isinstance(server_name, str) and server_name:
             return f"Installed {server_name}"
         url = result.get("url")
         if isinstance(url, str) and url:
-            return _short(url, 60)
+            return _Truncatable("", _normalize_text(url), "url")
         server = result.get("server")
         if isinstance(server, str) and server and status == "ok" and result.get("kind") == "mcp_drop_server":
             return f"Removed {server}"
@@ -774,7 +927,7 @@ def _summarize_result(tool, result) -> str:
             return f"{verb} {name_val}" if name_val else verb
         if status:
             return str(status)
-    return _short(result, 80)
+    return _Truncatable("", _normalize_text(result), "fallback")
 
 
 def _gutter_grid(gutter: str, gutter_style: str, body, *, row_style: str = "",
