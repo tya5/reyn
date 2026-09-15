@@ -147,14 +147,17 @@ def test_no_src_file_reads_subject_params_yet() -> None:
 # ── the gate script actually runs cleanly as a subprocess ────────────────
 
 
-def test_the_gate_script_runs_clean_as_a_real_subprocess() -> None:
+def test_the_gate_script_runs_clean_as_a_real_subprocess(out_of_process_reyn: str) -> None:
     """Tier 2: the same "run it before shipping it" discipline the
     hooks-declared-reachable gate's own test file uses — a real
     subprocess invocation, since that's how CI actually exercises this
-    script."""
+    script. Pins ``out_of_process_reyn``'s own src root as the spawn's
+    ``PYTHONPATH`` rather than re-deriving it from ``REPO_ROOT`` (#3024:
+    the ambient venv, not this test file, decides which checkout a bare
+    spawn resolves ``reyn`` from)."""
     gate_script = REPO_ROOT / "scripts" / "check_subject_params_exist_in_own_schema.py"
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(REPO_ROOT / "src")
+    env["PYTHONPATH"] = out_of_process_reyn
     result = subprocess.run(
         [sys.executable, str(gate_script)],
         cwd=REPO_ROOT,
