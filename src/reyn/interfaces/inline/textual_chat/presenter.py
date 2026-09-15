@@ -294,7 +294,20 @@ def _tool_head(msg: "OutboxMessage") -> Text:
     its settled form read identically (only the appended spinner/elapsed line
     differs while in flight)."""
     meta = msg.meta or {}
-    tool = str(meta.get("tool", msg.text))
+    # #6184 cleanup (lead-coder, GO issuecomment-5684647871): was
+    # `meta.get("tool", msg.text)` — a fallback that reads `text` as the
+    # bold tool-name slot if `meta["tool"]` is ever absent. Never fires
+    # in production today (both real producers, `lifecycle_forwarder.
+    # _enqueue_tool_call` and `restore.project_restored_frames`, always
+    # set `meta["tool"]`) and no test depends on it either (census,
+    # #6184#issuecomment-5684341577) — but #6184's own `text` field now
+    # carries the COMPOSED `tool(args)` wire form (段2b-2), not a bare
+    # tool name, so a future edit that ever drops `meta["tool"]` would
+    # silently put that composed string into this bold slot instead of
+    # degrading honestly. Not fixed because the branch is reachable —
+    # it still isn't — fixed so that IF it is ever reached, it does not
+    # lie.
+    tool = str(meta.get("tool") or "")
     # #6184 段2b-3: read the producer's own structured `details["args"]`
     # when present — `in`, never truthiness (`_compose_args` legitimately
     # returns `[]` for "genuinely no args"; truthiness would make that
@@ -528,7 +541,11 @@ def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
     result_kind = meta.get(_RESULT_KIND_KEY)
     if result_kind is None or result_kind == "tool_call_failed":
         return None
-    tool = str(meta.get("tool", msg.text))
+    # #6184 cleanup — same fix as _tool_head's own, see its docstring
+    # comment for the full reasoning: not reachable in production/tests
+    # today, fixed so an unreachable-today branch does not lie if it is
+    # ever reached later.
+    tool = str(meta.get("tool") or "")
     if not _is_retrieval_tool(tool):
         return None
     result_meta = meta.get(_RESULT_META_KEY) or {}

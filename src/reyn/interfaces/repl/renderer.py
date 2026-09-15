@@ -1124,7 +1124,20 @@ def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
     # Tool-call rows. ▸ marks an invocation (distinct from the ● assistant reply);
     # the ⎿ result / failure rows nest one level under it (2-space indent).
     if kind == "tool_call_started":
-        tool = str(meta.get("tool", msg.text))
+        # #6184 cleanup (lead-coder, GO issuecomment-5684647871): was
+        # `meta.get("tool", msg.text)` — a fallback that reads `text` as
+        # the bold tool-name slot if `meta["tool"]` is ever absent.
+        # Never fires in production today (both real producers,
+        # lifecycle_forwarder._enqueue_tool_call and restore.
+        # project_restored_frames, always set meta["tool"]) and no test
+        # depends on it either (census, #6184#issuecomment-5684341577)
+        # — but `text` now carries the COMPOSED `tool(args)` wire form
+        # (段2b-2), not a bare tool name, so a future edit that ever
+        # drops meta["tool"] would silently put that composed string
+        # into this bold slot instead of degrading honestly. Not fixed
+        # because the branch is reachable — it still isn't — fixed so
+        # that IF it is ever reached, it does not lie.
+        tool = str(meta.get("tool") or "")
         # #6184 段2b-3: see presenter.py's own _tool_head comment for the
         # `in`-vs-truthiness rationale — identical here.
         composed = (
