@@ -5448,9 +5448,11 @@ class TextualChatApp(App):
         - :meth:`_ensure_compaction_progress_entry` — a shrink-flow
           episode's own row, tracked in
           :attr:`_compaction_progress_entry`; likewise always created
-          flat, and driven by a per-frame snapshot poll
-          (:meth:`_refresh_compaction_progress`), not by inspecting an
-          arriving frame's ``kind``."""
+          flat, driven by a per-frame RE-DERIVATION from the session
+          snapshot (:meth:`_refresh_compaction_progress`, which runs on
+          every arriving frame — its own docstring: event-driven, never
+          a fixed-interval poll), not by inspecting an arriving frame's
+          ``kind``."""
         parent = self._resolve_append_parent(kind=msg.kind, meta=msg.meta or {})
         if parent is not None:
             return parent.append_child(msg)
