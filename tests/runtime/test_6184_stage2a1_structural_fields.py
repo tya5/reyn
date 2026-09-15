@@ -12,6 +12,20 @@ machinery (``to_wire_dict``/``from_wire``) — confirmed here, not assumed
 (dispatch, verbatim: "#6187 の derive で自動のはず。確かめてください、
 前提にしない").
 
+#6184 BLOCKING (lead-coder, PR #6190 review): "NOTHING reads them yet"
+is a MERGE-TIME OBSERVATION, not a standing invariant this test file
+enforces going forward — unlike #6187's own field-derivation contract
+(which genuinely IS permanent), 段2b's whole point is to wire a
+consumer up to read these fields, at which point the census above
+becomes stale ON PURPOSE. No permanent gate is added here for that
+reason (a `tests/scaffold/` `triggered_by`/`removed_by` probe was
+considered and rejected — lead-coder's own reasoning: it would create a
+NEW failure mode, "段2b の PR がその削除を忘れる", worse than the gap
+it would close). This module's own "0 readers" claim is true as of
+merge; read `git log` for `outbox.py`'s ``id``/``parent_id``/
+``operation``/``subject``/``details`` fields to see whether it still
+is.
+
 ``operation``'s closed 2-value vocabulary (``NEW``/``UPDATE``) is
 deliberately narrower than the 4 landing shapes #6184's own census found
 (NEST/FLAT-bypass/UPDATE-in-place/DROP) — see :class:`Operation`'s own
