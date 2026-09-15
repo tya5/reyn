@@ -388,7 +388,20 @@ class OutboxMessage:
       identifier (litellm's own response id), not something whose
       uniqueness this field can claim independently. A row with no
       qualifying key (see that function's own table) still gets `None`,
-      never a fabricated placeholder.
+      never a fabricated placeholder. NO PRODUCER OVERRIDE this stage —
+      the field is ``init=False`` (BLOCKING round 2 fix, PR #6191
+      review: silently overwriting an explicit value was worse than
+      raising — a round-trip test built against one stayed green while
+      comparing the discarded-then-re-derived value to itself; a
+      hand-written raise in turn broke real ``dataclasses.replace()``
+      call sites in app.py, which legitimately carry an existing
+      instance's OWN already-derived value forward as a constructor
+      kwarg — indistinguishable from a producer's hand-typed one at
+      that point. ``init=False`` resolves both: a caller cannot pass
+      this at all (``TypeError``, at the language level), while
+      ``replace()`` — which never attempts to pass an ``init=False``
+      field — always re-derives fresh instead of either conflicting or
+      carrying a stale value forward).
     parent_id
       Opaque, optional. Declares that this entry belongs to the SAME
       something another entry does — NOT that it is that entry's
@@ -423,8 +436,29 @@ class OutboxMessage:
     # ADDITIVE — every field defaults so no existing construction call
     # site needs a change, and (this stage's own accept criterion) no
     # code under src/ reads any of them yet.
-    id: "str | None" = field(default=None)
-    parent_id: "str | None" = field(default=None)
+    # #6184 段2a-2 BLOCKING round 2 (lead-coder review, PR #6191; a real
+    # production regression this session's own strip-falsify found, not
+    # hypothetical): ``init=False`` — NOT a hand-typed ``if self.id is
+    # not None: raise`` in __post_init__. That first attempt broke real
+    # production call sites: several ``dataclasses.replace(entry.item,
+    # ...)`` sites in app.py carry an EXISTING OutboxMessage's own
+    # already-derived `id`/`parent_id` forward as constructor kwargs
+    # (``replace()`` re-invokes ``__init__`` with every current field
+    # value) — indistinguishable, at ``__post_init__`` time, from a
+    # producer hand-typing an unrelated value. ``init=False`` removes
+    # `id`/`parent_id` from the generated ``__init__``'s OWN parameter
+    # list entirely — ``dataclasses.replace()`` then never attempts to
+    # pass them at all (its own contract: an ``init=False`` field is
+    # never copied forward, only ever recomputed by the NEW instance's
+    # own ``__post_init__``), so a `kind`/`meta`-changing ``replace()``
+    # call correctly re-derives against the NEW values instead of
+    # carrying a now-stale one. A caller still cannot set either field
+    # by hand — attempting ``OutboxMessage(..., id="x")`` now raises
+    # ``TypeError`` at the language level (an unrecognised keyword
+    # argument), before construction even reaches this class's own
+    # code — MORE fail-visible than a hand-written raise, not less.
+    id: "str | None" = field(default=None, init=False)
+    parent_id: "str | None" = field(default=None, init=False)
     operation: "Operation" = field(default_factory=Operation.default)
     subject: "str | None" = field(default=None)
     details: dict = field(default_factory=dict)
@@ -469,10 +503,15 @@ class OutboxMessage:
         # #6184 段2a-2: the ONE derivation point for `id`/`parent_id` —
         # see :func:`_derive_id_and_parent_id`'s own docstring for the
         # 4-branch rule and why it reproduces today's real consumer
-        # rather than inventing a new one. Zero producer diff: every
-        # existing construction call site passes neither field, so this
-        # always derives fresh from `kind`/`meta` — there is no producer
-        # override to preserve at this stage.
+        # rather than inventing a new one. Both fields are declared
+        # ``init=False`` (see their own field comment above) — a caller
+        # CANNOT reach this method with an explicit value to conflict
+        # with in the first place, so there is nothing to check here;
+        # this always derives fresh from `kind`/`meta`, including on
+        # every ``dataclasses.replace(...)`` reconstruction (which never
+        # attempts to pass an ``init=False`` field, so a replace() that
+        # changes `kind`/`meta` correctly re-derives against the NEW
+        # values instead of carrying a stale one forward).
         derived_id, derived_parent_id = _derive_id_and_parent_id(kind=self.kind, meta=self.meta)
         object.__setattr__(self, "id", derived_id)
         object.__setattr__(self, "parent_id", derived_parent_id)

@@ -30,6 +30,8 @@ enforces it; read ``git log`` for ``outbox.py``'s own ``id``/
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.runtime.outbox import OutboxMessage
 
 
@@ -120,3 +122,73 @@ def test_from_wire_does_not_rederive_passes_through_whatever_the_wire_carried():
     )
     assert msg.id == "wire-origin-id"
     assert msg.parent_id == "wire-origin-parent"
+
+
+def test_explicit_id_at_construction_is_rejected_at_the_language_level():
+    """Tier 1: #6184 段2a-2 BLOCKING round 1 (lead-coder, measured, PR
+    #6191 review) — a real regression, not a hypothetical: a prior
+    version of this derivation silently OVERWROTE an explicitly-passed
+    `id` with the derived value, and a round-trip test built against an
+    explicit `id="issuance-1"` (landed in #6190,
+    test_6184_stage2a1_structural_fields.py) stayed GREEN while
+    comparing the SILENTLY DISCARDED value's re-derived ``None`` to
+    itself — the exact "green with nothing left to bite on" shape
+    CLAUDE.md's own test review Q4 names.
+
+    BLOCKING round 2 (this session's own strip-falsify, not lead-coder):
+    a first fix raised ``ValueError`` from ``__post_init__`` — but that
+    broke REAL production ``dataclasses.replace()`` call sites in
+    app.py, which legitimately carry an existing instance's own
+    already-derived `id` forward as a constructor kwarg (indistinguishable
+    from a producer's hand-typed one, from ``__post_init__``'s own
+    vantage point). Fixed with ``init=False`` instead — a caller cannot
+    pass `id` at construction AT ALL now (the generated ``__init__``
+    itself rejects the keyword, before ANY of this class's own code
+    runs), while ``replace()`` (which never attempts to pass an
+    ``init=False`` field) is unaffected and correctly re-derives."""
+    with pytest.raises(TypeError, match="id"):
+        OutboxMessage(kind="agent", text="t", meta={}, id="explicit-id")  # type: ignore[call-arg]
+
+
+def test_explicit_parent_id_at_construction_is_rejected_at_the_language_level():
+    """Tier 1: sibling of the test above — parent_id gets the identical
+    init=False treatment, not just id."""
+    with pytest.raises(TypeError, match="parent_id"):
+        OutboxMessage(kind="agent", text="t", meta={}, parent_id="explicit-parent")  # type: ignore[call-arg]
+
+
+def test_dataclasses_replace_on_an_unrelated_field_carries_id_forward_unchanged():
+    """Tier 2: THE real production shape this arc's own strip-falsify
+    caught (app.py:_flush_streaming_reply, verbatim call site:
+    ``record.entry.set_item(replace(record.entry.item, text=record.text))``)
+    — replacing an unrelated field (text) on an OutboxMessage that
+    already carries a real derived id/parent_id must not raise, and
+    must re-derive to the SAME value (kind/meta are unchanged by this
+    replace)."""
+    import dataclasses as dc
+
+    original = OutboxMessage(kind="agent", text="before", meta={"call_id": "c1"})
+    assert original.id == "call:c1"
+
+    replaced = dc.replace(original, text="after")
+    assert replaced.text == "after"
+    assert replaced.id == "call:c1"
+
+
+def test_dataclasses_replace_that_changes_kind_rederives_instead_of_carrying_stale_id():
+    """Tier 2: the sibling real production shape (app.py:5352, verbatim:
+    ``self._ingest_frame(replace(msg, kind="system"))``) — replacing
+    `kind` on an OutboxMessage that already carries a derived id/parent_id
+    for its OLD kind must not raise, and must re-derive against the NEW
+    kind rather than silently keep a now-stale value from the old one."""
+    import dataclasses as dc
+
+    original = OutboxMessage(kind="agent", text="t", meta={"call_id": "c1"})
+    assert original.id == "call:c1"  # derived under the OLD kind
+
+    replaced = dc.replace(original, kind="system")
+    assert replaced.kind == "system"
+    # "system" + call_id present -> branch 2 of the table: parent_id
+    # only, id is None -- NOT the stale "call:c1" carried from `original`.
+    assert replaced.id is None
+    assert replaced.parent_id == "call:c1"
