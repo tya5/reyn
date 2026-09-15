@@ -24,6 +24,7 @@ import asyncio
 from enum import Enum
 from typing import Any, Callable
 
+from reyn.core.present.tool_call_compose import compose_tool_call_args, compose_tool_call_text
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
@@ -895,7 +896,27 @@ class ChatLifecycleForwarder:
         ``meta["op_id"]`` (= the deterministic ``args_hash``) to pair
         start / end events; ``meta["tool"]`` carries the tool name for
         display; ``args`` / ``result`` / ``error_*`` live in the
-        kind-specific extras.
+        kind-specific extras — THIS METHOD, and the consumer's own render
+        path (repl's ``renderer.py``, #6184 段2b-1), are unchanged by
+        #6184 段2b-2 below other than ``text``/``details`` themselves —
+        every existing ``meta`` key, ``meta["args"]`` included, is
+        untouched (added to, never replaced).
+
+        #6184 段2b-2: ``text`` is now :func:`~reyn.core.present.
+        tool_call_compose.compose_tool_call_text` (``tool(args)``,
+        control-chars stripped, cap-only/no length cut — see that
+        function's own module docstring for the full "wire-only, TUI
+        never reads it" contract) rather than the bare tool name, and
+        ``details["args"]`` carries the SAME compose pass's own
+        STRUCTURED result (:func:`~reyn.core.present.tool_call_compose.
+        compose_tool_call_args` — a list of ``(key, value)`` pairs, never
+        joined into a string, so a future consumer can still apply its
+        own per-value cut). Only ``tool_called``'s own ``extra_meta``
+        carries ``args`` (dispatcher.py's ``tool_returned``/
+        ``tool_failed`` events never do, only ``args_hash``) — read from
+        ``meta`` AFTER ``extra_meta`` is merged in below, so both degrade
+        to the bare tool name / empty structure for the other two kinds
+        automatically, with no per-kind branch here.
         """
         tool_name = str(data.get("tool", ""))
         meta: dict = {
@@ -921,9 +942,13 @@ class ChatLifecycleForwarder:
             meta["run_id"] = run_id
             meta["run_id_short"] = str(run_id)[-4:]
         meta.update(extra_meta)
+        composed_args = compose_tool_call_args(meta.get("args"))
+        text = compose_tool_call_text(tool_name, composed_args)
         try:
             self.outbox.put_nowait(
-                OutboxMessage(kind=kind, text=tool_name, meta=meta),
+                OutboxMessage(
+                    kind=kind, text=text, meta=meta, details={"args": composed_args},
+                ),
             )
         except asyncio.QueueFull:
             pass

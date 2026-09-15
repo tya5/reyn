@@ -74,6 +74,26 @@ class LeafNeutralizer(Protocol):
         ...
 
 
+def strip_control_chars(value: str) -> str:
+    """Remove C0 control characters (except tab/newline/CR), DEL, and the C1
+    range — #6184 段2b-2: the ONE place this removal is implemented,
+    factored out of :class:`TerminalNeutralizer` (below, which now calls
+    this) so a PRODUCER composing a wire value can call it directly too.
+
+    Deliberately NOT a per-surface strategy, unlike :func:`get_neutralizer`
+    — that function's own docstring is explicit that "what is dangerous is
+    surface-specific" (ESC/CSI on a terminal, HTML on a browser); THIS
+    removal is the one exception, safe and necessary on every wire
+    regardless of which surface eventually renders it — raw control bytes
+    serve no legitimate display purpose on any surface this codebase knows
+    about. A producer that needs this MUST call this function directly,
+    never :func:`get_neutralizer`/:class:`TerminalNeutralizer` — those
+    select a SURFACE's own additional, surface-specific policy, and a
+    producer composing a value for the wire does not know (and must not
+    guess) which surface will eventually consume it."""
+    return _CONTROL_RE.sub("", value)
+
+
 class TerminalNeutralizer:
     """Terminal-surface strategy: strip ESC / control sequences. Does NOT escape
     Rich console markup (the renderer's job — see module docstring) and does NOT
@@ -81,7 +101,7 @@ class TerminalNeutralizer:
     would corrupt ``code`` / ``diff`` content)."""
 
     def neutralize(self, value: str) -> tuple[str, bool]:
-        out = _CONTROL_RE.sub("", value)
+        out = strip_control_chars(value)
         return out, out != value
 
 

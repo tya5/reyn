@@ -12,7 +12,11 @@ Tier 2 tests passing in isolation.
 This module re-pins the contract against the correct subscriber:
 
 1. ``on_tool_called`` enqueues ``OutboxMessage(kind="tool_call_started")``
-   with the tool name as text + ``op_id`` (= source ``args_hash``) in meta.
+   with ``op_id`` (= source ``args_hash``) in meta. ``text`` is the
+   composed ``tool(args)`` wire form when args are present (#6184
+   段2b-2 — see ``test_on_tool_called_enqueues_tool_call_started``'s own
+   docstring for why this is wire-only and does not affect the TUI's
+   own display, which reads ``meta["args"]`` directly, unchanged).
 2. ``on_tool_returned`` enqueues ``tool_call_completed`` with result.
 3. ``on_tool_failed`` enqueues ``tool_call_failed`` with error fields.
 4. The same ``op_id`` flows across the three lifecycle phases.
@@ -44,7 +48,15 @@ def _drain(q: asyncio.Queue) -> list:
 
 
 def test_on_tool_called_enqueues_tool_call_started() -> None:
-    """Tier 2: dispatcher's ``tool_called`` event → ``tool_call_started`` outbox."""
+    """Tier 2: dispatcher's ``tool_called`` event → ``tool_call_started`` outbox.
+
+    #6184 段2b-2: ``text`` is now the composed ``tool(k=v)`` wire form
+    (was the bare tool name) — WIRE-ONLY, the TUI's own display never
+    reads it (it draws from ``meta["args"]``, asserted unchanged below,
+    via its own #6184 段2b-1 ``_compose_args``/``_truncate_args`` split).
+    See ``tests/runtime/test_6184_stage2b2_producer_side_compose.py``
+    for the full producer-side compose contract this exercises here as
+    one integration point."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(
@@ -62,7 +74,7 @@ def test_on_tool_called_enqueues_tool_call_started() -> None:
     assert msgs, "expected at least one outbox message"
     msg = msgs[0]
     assert msg.kind == "tool_call_started"
-    assert msg.text == "read_file"
+    assert msg.text == "read_file(path=/tmp/x.txt)"
     assert msg.meta["op_id"] == "hash-xyz"
     assert msg.meta["tool"] == "read_file"
     assert msg.meta["args"] == {"path": "/tmp/x.txt"}
