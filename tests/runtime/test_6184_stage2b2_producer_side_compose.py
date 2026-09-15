@@ -13,13 +13,14 @@ already-formatted string back apart into its pieces, exactly the shape
 this arc's own census (dispatch-table producer/consumer duplication)
 already closed elsewhere.
 
-#6184 BLOCKING (lead-coder, measured, PR #6195 review): NOT
-unconditional — THREE call sites (``presenter.py:296``,
-``presenter.py:517``, ``renderer.py:1127``) read ``msg.text`` as a
-FALLBACK when ``meta["tool"]`` is absent. Safe today only because
-``_enqueue_tool_call`` always sets ``meta["tool"]`` — see
+#6184 BLOCKING (lead-coder, measured, PR #6195 review) — HISTORICAL, now
+fixed by a follow-up cleanup PR (issuecomment-5684647871): the claim
+above was originally NOT unconditional — THREE call sites read
+``msg.text`` as a FALLBACK when ``meta["tool"]`` was absent, safe only
+because ``_enqueue_tool_call`` always sets ``meta["tool"]``. All three
+now degrade to ``meta.get("tool") or ""`` instead — see
 ``tool_call_compose.py``'s own module docstring for the full
-disclosure this file's own claim above was originally missing.
+disclosure and the fix.
 
 Home: ``core/present/`` — architect design (#6184 issuecomment-5683686664),
 lead-coder ruling (issuecomment-5683701917) — an EXISTING neutral home both

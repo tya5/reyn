@@ -12,19 +12,24 @@ elsewhere; this module exists so a GENERIC AG-UI client (one with no
 reyn-specific rendering at all) sees a readable one-line value, not so
 reyn's own TUI has a second way to read it.
 
-#6184 BLOCKING (lead-coder, measured, PR #6195 review): the claim above
-is NOT unconditional — THREE call sites (``presenter.py:296``,
-``presenter.py:517``, ``renderer.py:1127``, all the same idiom: ``tool =
-str(meta.get("tool", msg.text))``) read ``msg.text`` as a FALLBACK when
-``meta["tool"]`` is absent. Safe TODAY only because
+#6184 BLOCKING (lead-coder, measured, PR #6195 review) — HISTORICAL, now
+fixed: the claim above was originally NOT unconditional. THREE call
+sites (``presenter.py``'s ``_tool_head``/``_collapsed_retrieval_line``,
+``renderer.py``'s ``format_inline_message``) used to read ``msg.text``
+as a FALLBACK (``tool = str(meta.get("tool", msg.text))``) when
+``meta["tool"]`` was absent — safe only because
 ``lifecycle_forwarder._enqueue_tool_call`` (this module's one producer
-call site) ALWAYS sets ``meta["tool"]`` — never because the TUI does not
-read ``text`` at all. This PR changed what a future accidental
-``meta["tool"]``-dropping edit would put into that fallback's bold
-tool-name slot: the bare name before this PR, this module's own
-``tool(args)`` composed form after it — the SAME docstring-outran-code
-shape #6189 already corrected once in this arc (``_append_frame``'s own
-"zero direct append call sites" claim).
+call site) ALWAYS sets ``meta["tool"]``, never because the TUI did not
+read ``text`` at all. #6184's own cleanup PR (issuecomment-5684647871)
+changed all three to ``meta.get("tool") or ""`` — not because the
+branch became reachable (it still is not, and no test depends on it —
+census, issuecomment-5684341577), but because THIS module made ``text``
+carry the COMPOSED ``tool(args)`` wire form (段2b-2) instead of a bare
+tool name, so a future accidental ``meta["tool"]``-dropping edit would
+otherwise have silently put that composed string into the bold
+tool-name slot instead of degrading honestly. The SAME
+docstring-outran-code shape #6189 already corrected once in this arc
+(``_append_frame``'s own "zero direct append call sites" claim).
 
 Lives in ``core/present/`` (architect design, #6184 issuecomment-5683686664;
 lead-coder ruling, issuecomment-5683701917) — an EXISTING neutral home both
