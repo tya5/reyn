@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -188,6 +189,92 @@ def _dataclass_field_default(f: "dataclasses.Field") -> object:
     return ""
 
 
+# #6184 段2a-1 (architect design, issuecomment-5681485023; lead-coder
+# ruling, issuecomment-5681510010): the producer-declared half of the
+# structured-tool-entry vocabulary — deliberately 2 members, NOT the 4
+# census landing shapes (NEST/FLAT-bypass/UPDATE-in-place/DROP). A
+# producer cannot know whether its entry will render nested (that is
+# the RENDERER's decision, made from whether a parent_id was given, not
+# something the producer is positioned to predict — the same "producer
+# doesn't know the shape of its own audience" failure this arc's own
+# census caught 4 times already). DROP is never a producer declaration
+# either — D1 (app.py) is a CONSUMER's dedup judgment on an already-
+# emitted entry, not something a producer would ever assert about
+# itself. See OutboxMessage.operation's own field comment for how NEW/
+# UPDATE map back onto the full 4-shape landing.
+class Operation(StrEnum):
+    """#6184 段2a-1: which of the two things a producer can assert about
+    one structured entry — create a fresh one, or change an existing
+    one. ``StrEnum`` for the same reason ``Spillability``/
+    ``HistoryEntryKind`` (chat_message.py) are: a value that reaches the
+    wire (via :meth:`OutboxMessage.to_wire_dict`) must serialise to its
+    own string, and a value read back off it must still compare equal
+    to the member.
+    """
+
+    #: A fresh entry. Nests under `parent_id` when one is given, lands
+    #: flat (top-level) when it is not — the SAME declaration either
+    #: way; nesting is the renderer's decision, not a second value here.
+    NEW = "new"
+    #: An existing entry (named by `id`) changes. Carries the entry's
+    #: NEW value, not a diff — #6184's own census found a landing shape
+    #: (C7, app.py `_handle_intervention_answer_event`) that rewrites
+    #: `kind` itself on an already-emitted entry; a diff-only UPDATE
+    #: could not express that without a special case carved out just
+    #: for C7. This field never records that a landing was DROPPED
+    #: (D1, app.py) either — D1 is a CONSUMER's dedup judgment on an
+    #: already-emitted entry, not a producer declaration.
+    UPDATE = "update"
+
+    @classmethod
+    def default(cls) -> "Operation":
+        """#6184 段2a-1: the safe-side default is `NEW` — every
+        `OutboxMessage` construction that predates this field (the
+        overwhelming majority, since nothing produces `operation` yet
+        in this stage) IS, retroactively and accurately, a fresh entry,
+        never a change to one that already existed. Unlike
+        `HistoryEntryKind.UNSPECIFIED` (chat_message.py), which must
+        NOT retroactively claim either of ITS two real members are
+        true, `NEW` genuinely is what an un-declared entry always was
+        — so there is no third, neutral member here to fall back to
+        instead."""
+        return cls.NEW
+
+
+def _normalize_operation(value: object) -> Operation:
+    """#6184 段2a-1: the ONE normalization point for `operation` — the
+    SAME degrade-never-raise shape `_normalize_spillability` (this
+    module's own sibling pattern in chat_message.py) and
+    `_normalize_history_entry_kind` already use, not an invented one
+    (lead-coder, dispatch: "既存 pattern に倣ってください。独自の扱いを
+    発明しないこと").
+
+    - ``None`` (omitted at a call site — every current one, since
+      nothing produces this field yet) → :meth:`Operation.default`.
+    - Already an ``Operation`` member → passed through unchanged (an
+      ``Operation`` member IS ALSO a ``str``, via ``StrEnum`` — the
+      ``isinstance`` order below matters for the same reason
+      ``_normalize_spillability``'s own docstring names).
+    - A plain ``str`` naming a real member (the wire-decoded case,
+      ``from_wire`` bypasses ``__post_init__`` and so must normalize
+      here explicitly too) → converted to that member.
+    - Anything else — an unrecognised string (a future value this
+      version's enum doesn't have yet, or a malformed wire/history
+      value) — degrades to :meth:`Operation.default` rather than
+      raising. `from_wire`'s own founding rule (never fail-close on
+      untrusted wire data) applies identically here."""
+    if value is None:
+        return Operation.default()
+    if isinstance(value, Operation):
+        return value
+    if isinstance(value, str):
+        try:
+            return Operation(value)
+        except ValueError:
+            return Operation.default()
+    return Operation.default()
+
+
 @dataclass(frozen=True)
 class OutboxMessage:
     """One item published by Session to its outbox queue.
@@ -210,13 +297,70 @@ class OutboxMessage:
                        routing.  ``None`` during migration; the routing layer
                        falls back to the registered default surface (TUI) when
                        absent.
+
+    #6184 段2a-1 (structural fields — purely additive this stage: every
+    one below defaults so no existing construction call site changes,
+    and NOTHING in ``src/`` reads any of them yet; landing this is
+    itself the accept criterion, not any new rendering behaviour):
+
+    id
+      Opaque, producer-assigned, UNIQUE PER ISSUANCE. Must NOT be
+      ``op_id``/``args_hash`` reused — those are ``dispatcher.py``'s own
+      MEMO KEY (``_compute_args_hash``, verbatim: "collision risk is
+      acceptable for resume memoization"), deliberately DETERMINISTIC so
+      the SAME tool called with the SAME args collides on purpose. `id`
+      needs the opposite property: two calls with identical args must
+      still get two different `id`s. NOBODY GENERATES ONE THIS STAGE —
+      the default is `None` on every construction, and stays `None`
+      until a later stage wires up an issuance mechanism (undecided as
+      of this stage — do not read the empty default as a defect).
+    parent_id
+      Opaque, producer-assigned, optional. Declares that this entry
+      belongs to the SAME something another entry does — NOT that it is
+      that entry's tree-structural child; whether (and how) a consumer
+      renders that as nesting is the CONSUMER's decision, not asserted
+      here. (Architect ruling, #6184 issuecomment-5681485023: writing
+      this as "parent in a tree" invites the next producer to add a
+      SECOND field for "belongs to the same episode" instead of reusing
+      this one.)
+    operation
+      See :class:`Operation` — the producer's own 2-value declaration
+      (``NEW``/``UPDATE``), normalized via :func:`_normalize_operation`.
+    subject
+      Deliberately left EMPTY this stage. A producer must NOT hand-pick
+      its own subject — deriving it from each tool's own declaration
+      (``descriptions/``) is a LATER stage (#6184 段3); a producer
+      choosing by hand here recreates the "registration can be
+      forgotten" failure mode on the PRODUCER side that this arc's own
+      dispatch-table census already found and rejected on the RENDERER
+      side.
+    details
+      Free-form, producer-assigned. Supplementary structured content
+      beyond ``subject`` — what a future structured renderer would draw
+      the rest of an entry's display from.
     """
     kind: str
     text: str
     meta: dict = field(default_factory=dict)
     reply_to: "TransportRef | None" = field(default=None)
+    # #6184 段2a-1: all five below are new, structural, and PURELY
+    # ADDITIVE — every field defaults so no existing construction call
+    # site needs a change, and (this stage's own accept criterion) no
+    # code under src/ reads any of them yet.
+    id: "str | None" = field(default=None)
+    parent_id: "str | None" = field(default=None)
+    operation: "Operation" = field(default_factory=Operation.default)
+    subject: "str | None" = field(default=None)
+    details: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        # #6184 段2a-1: the ONE normalization point for `operation` on
+        # the in-process construction path — mirrors ChatMessage.
+        # __init__'s own `self.kind = _normalize_history_entry_kind(kind)`
+        # call (chat_message.py). `from_wire` bypasses this method
+        # entirely (frozen-dataclass __init__ workaround, see its own
+        # docstring) so it normalizes `operation` itself, separately.
+        object.__setattr__(self, "operation", _normalize_operation(self.operation))
         # Production-side vocabulary gate (fail-visible at construction, catching
         # the dynamic/helper constructions a static scan misses). Untrusted wire
         # values MUST route around this via :meth:`from_wire`.
@@ -341,11 +485,18 @@ class OutboxMessage:
             else:
                 value = resolved.get(f.name, _dataclass_field_default(f))
             object.__setattr__(obj, f.name, value)
+        # #6184 段2a-1: this method bypasses __post_init__ entirely (the
+        # frozen-dataclass __init__ workaround this method's own
+        # docstring names), so `operation` — normally normalized THERE
+        # — is normalized here instead, same as `kind`'s own demotion
+        # a few lines up needed its own pre-loop handling.
+        object.__setattr__(obj, "operation", _normalize_operation(obj.operation))
         return obj
 
 
 __all__ = [
     "OutboxMessage",
+    "Operation",
     "DISPLAY_KINDS",
     "CONTROL_KINDS",
     "VOCABULARY",
