@@ -5491,22 +5491,35 @@ class TextualChatApp(App):
         own session-lifetime growth separately — not this fix's scope).
 
         #6184 段4-A: ``dispatched_tool_calls`` is now the DECLARED CHILD
-        COUNT (an int), not a bool — checked below, verbatim, only for
-        truthiness. Confirmed (not assumed) this is the ONLY real reader
+        COUNT (an int), not a bool — read below, first for truthiness
+        (the spinner gate), then (段4-B) for its actual value (the fold
+        gate). Confirmed (not assumed) this is the ONLY real reader
         (``git grep -n 'dispatched_tool_calls' src/reyn/interfaces/``):
-        ``0`` and an absent key are BOTH falsy in Python, and this is a
-        bare ``if meta.get(...):`` — a genuine count of ``0`` (a round
-        that dispatched no tools, reached via the count path rather than
-        the bool one) and a genuinely MISSING key (an older/foreign
-        frame that never carried this field at all) read identically
-        here, same as they did when the value was a bool. No distinction
-        is needed by this reader; a FUTURE reader that DOES need to tell
-        "0 dispatched" apart from "field absent" cannot use truthiness."""
+        ``0`` and an absent key are BOTH falsy in Python, and the
+        spinner gate is a bare ``if declared_children:`` — a genuine
+        count of ``0`` (a round that dispatched no tools, reached via
+        the count path rather than the bool one) and a genuinely
+        MISSING key (an older/foreign frame that never carried this
+        field at all) read identically there, same as they did when the
+        value was a bool. No distinction is needed by the spinner gate;
+        a FUTURE reader that DOES need to tell "0 dispatched" apart from
+        "field absent" cannot use truthiness.
+
+        #6184 段4-B (owner-observed: "a Group with only 1 item in it"):
+        the fold decision below is BY THE DECLARED COUNT, never a
+        measured one (``entry.children`` is always empty at this point
+        — registration precedes every child's own arrival) — a round
+        that declares exactly 1 tool call still registers and still
+        spins, it simply no longer starts folded. A round declaring 2+
+        still folds, matching #4691 item 3's own original ruling for
+        every case except the single-child one the owner's own report
+        was about."""
         call_id = meta.get("call_id")
         if kind != "agent" or not call_id:
             return
         self._call_parents[call_id] = entry
-        if meta.get("dispatched_tool_calls"):
+        declared_children = meta.get("dispatched_tool_calls")
+        if declared_children:
             # #4691 Phase B ④: the parent's own spinner starts here — its
             # children are about to arrive RUNNING too, and
             # ``_recompute_parent_state`` (called from every child
@@ -5541,7 +5554,20 @@ class TextualChatApp(App):
             # (:meth:`_handle_turn_started_event`) never calls this
             # method at all (it is not ``kind="agent"``), so it was
             # never a candidate for this collapse in the first place.
-            entry.collapse()
+            #
+            # #6184 段4-B (owner-observed: "a Group with only 1 item in
+            # it" — #4691 item 3's own unconditional collapse, applied
+            # to a 1-child Group, reads as a fold hiding nothing worth
+            # hiding): folding now requires the DECLARED count to be at
+            # least 2, never a MEASURED one — ``entry.children`` is
+            # always empty here (registration precedes every child's own
+            # arrival by construction; see the collapse-timing paragraph
+            # above), so a measured check would never fold anything. A
+            # round that dispatches exactly 1 tool still registers and
+            # still spins (the block above, unchanged) — it simply no
+            # longer starts folded.
+            if declared_children >= 2:
+                entry.collapse()
 
     def _record_pump_swallow(self, kind: str, exc: BaseException) -> None:
         """#5732: the ONE call site every ``except Exception`` block in

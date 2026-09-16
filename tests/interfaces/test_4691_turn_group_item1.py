@@ -58,12 +58,20 @@ from reyn.schemas.models import Event
 
 
 def _parent_row(
-    call_id: str, *, text: str = "", dispatched_tool_calls: bool = True,
+    call_id: str, *, text: str = "", dispatched_tool_calls: "bool | int" = 2,
 ) -> OutboxMessage:
     """A completion Group's own placeholder row — the SAME shape
     ``test_4691_phase_b_group_construction.py``'s own ``_parent_row`` uses,
     kept local per that file's own convention (neither module exports its
-    collaborators)."""
+    collaborators).
+
+    #6184 段4-B: default changed from the bool-era ``True`` to the int
+    ``2`` — this file's own tests are about turn-vs-completion Group
+    NESTING, not the fold-threshold itself (that boundary is pinned in
+    ``test_4691_phase_b_group_construction.py``), so they need a
+    declared count that still folds by default to keep exercising the
+    SAME collapsed-parent-hides-its-subtree traversal shape they always
+    have."""
     return OutboxMessage(
         kind="agent",
         text=text,
@@ -470,9 +478,11 @@ async def test_a_no_tool_terminal_reply_nests_under_its_turns_user_row() -> None
     indents, so "looks flat" and "IS flat (``parent is None``)" are
     visually indistinguishable — the screen capture could not actually
     tell them apart, and no automated test asserted ``.parent`` for this
-    exact shape (every existing nesting test used ``_parent_row``'s
-    ``dispatched_tool_calls=True`` default, a TOOL-dispatching completion,
-    never the true terminal-reply case). This asserts ``.parent`` directly
+    exact shape (every existing nesting test used ``_parent_row``'s own
+    default (a TOOL-dispatching completion; #6184 段4-B changed the
+    literal default value from the bool-era ``True`` to the int ``2``,
+    unrelated to this test's own subject), never the true terminal-reply
+    case). This asserts ``.parent`` directly
     for a call that dispatches NO tools (``dispatched_tool_calls=False``,
     the #4777 terminal-reply shape) — the SAME registration branch (call_id
     lookup misses because this row is registering itself, falls through to
@@ -641,7 +651,7 @@ async def test_a_streamed_tool_round_becomes_a_valid_call_level_group_parent() -
             _Event(type="agent_delta", data={"text": "let me check", "chain_id": "chain-A"})
         )
         await pilot.pause()
-        completion = _parent_row("resp-1", text="let me check", dispatched_tool_calls=True)
+        completion = _parent_row("resp-1", text="let me check", dispatched_tool_calls=2)
         completion = _replace(
             completion, meta={**completion.meta, "chain_id": "chain-A"}
         )
