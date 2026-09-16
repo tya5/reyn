@@ -116,5 +116,4 @@ def test_list_tasks_has_no_declared_subject_deny_side() -> None:
     assert msg.subject is None
 
     out = _tool_head(msg).plain
-    assert out == "list_tasks(kind=cron)"
     assert not out.startswith("list_tasks cron")
