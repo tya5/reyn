@@ -1,0 +1,75 @@
+name: scaffold-removed-by-stale gate
+
+# #6209: a tests/scaffold/ file whose own `removed_by` condition (an
+# issue/PR number it names) is already closed/merged must be caught by
+# CI, not found by accident — see scripts/check_scaffold_removed_by_
+# stale.py's own module docstring for the incident (#6207's own scaffold
+# file sat there, condition satisfied, until an UNRELATED issue's review
+# happened to surface it) and the exact rule (number-referencing
+# removed_by strings only, never triggered_by).
+#
+# Two triggers, deliberately NOT folded into one:
+#
+#   - `pull_request`, path-scoped to tests/scaffold/**: a PR that adds or
+#     edits a scaffold file is gated on its OWN diff -- fair, since the
+#     PR's own change is what is being checked.
+#   - `schedule` (+ `workflow_dispatch`): this gate's whole subject can
+#     turn red WITHOUT any PR touching tests/scaffold/ at all -- an
+#     UNRELATED PR that happens to close the issue a landed scaffold
+#     file's removed_by names is exactly the #6209 incident itself. A
+#     schedule is the only way to catch that composition gap.
+#
+# The schedule run is deliberately NOT wired as a required status check
+# on any PR (mirrors dependency-drift-canary.yml's own architect ruling,
+# #5831, verbatim: "第三者の release 時刻が reyn の merge 可否を握らない"
+# -- here it is an issue-closure's timing, not a release's, but the same
+# principle: state neither this PR's author nor its reviewer controls
+# must never decide whether an UNRELATED PR can merge). A scheduled red
+# run is visible on the Actions tab; nothing auto-files a tracking issue
+# (unlike dependency-drift-canary.yml) -- this gate does not request
+# `issues: write`, only the `issues: read` its own `gh api` calls need.
+on:
+  pull_request:
+    paths:
+      - "tests/scaffold/**"
+      - "scripts/check_scaffold_removed_by_stale.py"
+  schedule:
+    # Daily, 07:00 UTC -- same cadence class as dependency-drift-canary.yml's
+    # own daily run; this gate's subject (a scaffold file quietly outliving
+    # its own removal condition) has no urgency finer than "within a day".
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  scaffold-removed-by-stale:
+    name: scaffold-removed-by-stale gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_scaffold_removed_by_stale.py itself is stdlib-only
+      # (re / subprocess / pathlib) plus the `gh` CLI GitHub Actions
+      # runners ship preinstalled -- no `pip install` needed. It DOES
+      # still call `verify_env_identity.guard_bare_script_or_exit()`
+      # (#3024, every bare scripts/*.py entry point), which requires
+      # `reyn` to be find_spec-resolvable regardless of whether this
+      # script's own logic ever imports it -- PYTHONPATH=src alone
+      # satisfies that (no actual install needed, since nothing here
+      # imports reyn.* beyond the guard's own resolution check).
+      - name: Check no scaffold file's removed_by condition is already satisfied
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python scripts/check_scaffold_removed_by_stale.py
