@@ -45,7 +45,7 @@ def _parent_row(
     *,
     text: str = "",
     finish_reason: "str | None" = "tool_calls",
-    dispatched_tool_calls: bool = True,
+    dispatched_tool_calls: "bool | int" = 2,
 ) -> OutboxMessage:
     """The tool-turn-text row (#4691 ③'s own placeholder) — a real call
     boundary, carrying the SAME call_id/finish_reason/dispatched_tool_calls
@@ -54,7 +54,15 @@ def _parent_row(
     ``finish_reason`` is overridable so a test can pin #4777's own claim —
     registration/spinner keyed on ``dispatched_tool_calls`` (a REYN-OBSERVED
     fact) survives a provider that never reports it (#4777, owner-observed:
-    ``finish_reason`` stayed "stop" on every call, provider-side)."""
+    ``finish_reason`` stayed "stop" on every call, provider-side).
+
+    #6184 段4-B: the default changed from the bool-era ``True`` to the int
+    ``2`` — every test in this file that relies on the DEFAULT to mean "a
+    Group that folds" needs 2 declared children now (4-B's own new rule:
+    fold only when the DECLARED count is >= 2 — a bare ``True``, ``== 1``,
+    no longer folds by default; see ``test_a_group_declaring_exactly_1_
+    tool_call_does_not_start_collapsed`` for that boundary case, added in
+    the same stage)."""
     return OutboxMessage(
         kind="agent",
         text=text,
@@ -373,12 +381,24 @@ async def test_a_group_parent_defaults_collapsed() -> None:
     exactly once — that workaround is gone; upstream now does the whole
     job from one call. A CHILD's own detail-expand state (the #3508/#4697
     Space-toggle axis, unrelated to Group fold) is untouched — only the
-    top-level Group fold defaults to collapsed."""
+    top-level Group fold defaults to collapsed.
+
+    #6184 段4-B (lead-coder, measured — owner-observed "a Group with only
+    1 item in it"): this pin is intentionally NARROWED, not removed — the
+    original claim ("a completion Group ALWAYS starts collapsed") was
+    true for every ``dispatched_tool_calls`` truthy value, 1 included;
+    4-B makes it false for exactly 1 (see ``test_a_group_declaring_
+    exactly_1_tool_call_does_not_start_collapsed`` below, the SAME stage's
+    own accept-side pair for that case). ``_parent_row``'s own default
+    changed from the bool-era ``True`` to the int ``2`` for exactly this
+    reason — this test still exercises the TRUE remaining claim
+    ("declared >= 2 folds"), just no longer generalizes to "any truthy
+    count folds"."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
-        await transport.push_display(_parent_row("resp-1"))
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=2))
         await pilot.pause()
         parent = _entries(app)[0]
         assert parent.collapsed is True, (
@@ -425,6 +445,116 @@ async def test_a_terminal_reply_never_starts_collapsed() -> None:
         await transport.push_display(
             _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=False)
         )
+        await pilot.pause()
+
+        (entry,) = _entries(app)
+        assert entry.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_a_group_declaring_exactly_1_tool_call_does_not_start_collapsed() -> None:
+    """Tier 2b: #6184 段4-B, accept① — owner-observed: "a Group with only
+    1 item in it" (#4691 item 3's own unconditional collapse, applied to a
+    1-child Group, folded away the one thing there was to show). The
+    parent still registers and still spins (``dispatched_tool_calls=1`` is
+    truthy) — only the fold no longer fires. Deny-side sibling:
+    :func:`test_a_group_parent_defaults_collapsed` (declared >= 2 still
+    folds) — together they prove the decision is by the ACTUAL declared
+    value, not "any truthy count folds, like before"."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=1))
+        await pilot.pause()
+
+        (parent,) = _entries(app)
+        assert parent.collapsed is False, (
+            "a Group declaring exactly 1 tool call must not start folded "
+            "— the owner's own reported symptom"
+        )
+        assert parent.state is EntryState.RUNNING, (
+            "the spinner is unaffected by 4-B — only the fold decision "
+            "changed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_row_with_no_declared_tool_call_count_key_does_not_start_collapsed() -> None:
+    """Tier 2b: #6184 段4-B — a row whose meta never carried
+    ``dispatched_tool_calls`` at all (an older/foreign frame) stays
+    excluded from BOTH the spinner and the fold decision, via the SAME
+    outer ``if declared_children:`` truthy guard #6184 段4-A already
+    established for the spinner one level up.
+
+    ⚠️ SCOPE, corrected (lead-coder + architect, after an earlier draft
+    of this test wrongly claimed to strip-falsify a ``!= 1`` mistake —
+    issue #6184 comment thread following 5690329165): this does NOT
+    distinguish ``if declared_children >= 2:`` from a buggy
+    ``if declared_children != 1:`` — INSIDE the outer truthy guard, any
+    value that reaches either check is already >= 1 by construction
+    (``None``/``0`` are excluded by that outer guard first, never
+    reaching either check), so the two conditions are equivalent at
+    that position and no witness pair at counts >= 1 can tell them
+    apart (e.g. ``2 != 1`` and ``2 >= 2`` are both ``True`` — the SAME
+    deny-side case :func:`test_a_group_parent_defaults_collapsed` uses
+    would pass either way). This test instead guards the outer guard
+    ITSELF against being loosened later (e.g. to ``is not None``, which
+    would let an absent key reach a fold check for the first time) —
+    not a witness for today's fold-threshold defect."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(
+            OutboxMessage(
+                kind="agent",
+                text="",
+                meta={
+                    "chain_id": "chain-test",
+                    "source": "router_tool_turn_text",
+                    "call_id": "resp-1",
+                    "finish_reason": "tool_calls",
+                    # deliberately NO "dispatched_tool_calls" key at all.
+                    "prompt_tokens": 100,
+                    "completion_tokens": 5,
+                },
+            )
+        )
+        await pilot.pause()
+
+        (entry,) = _entries(app)
+        assert entry.collapsed is False, (
+            "a row whose meta never carried dispatched_tool_calls at all "
+            "must not start folded — None is not >= 2"
+        )
+        assert entry.state is not EntryState.RUNNING, (
+            "same key-absent case, one level up — no spin either "
+            "(unaffected by 4-B, pinned here for the same fixture)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_group_declaring_0_tool_calls_does_not_start_collapsed() -> None:
+    """Tier 2b: #6184 段4-B — architect's own 3rd named witness (via
+    lead-coder, issue #6184 thread): an EXPLICIT ``dispatched_tool_calls
+    = 0`` (meta present, value 0 — distinct from the key being absent
+    entirely, the sibling test above) does not start folded.
+
+    ⚠️ SCOPE (verbatim, required disclosure): this is NOT a witness for
+    today's fold defect — ``0`` is falsy, so it never reaches the outer
+    ``if declared_children:`` guard either way, and stays green whether
+    the fold check inside reads ``!= 1`` or ``>= 2``. It is a guard for
+    a FUTURE loosening of that outer guard (e.g. to ``is not None``,
+    which WOULD let ``0`` reach an ``!= 1`` fold check and wrongly fold
+    it) — kept as a named sentinel per the architect's own explicit
+    request rather than omitted, so a later change to the outer guard's
+    own condition has an immediate red instead of a silent gap."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=0))
         await pilot.pause()
 
         (entry,) = _entries(app)
@@ -517,7 +647,7 @@ async def test_group_construction_survives_a_provider_that_never_reports_tool_ca
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await transport.push_display(
-            _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=True)
+            _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=2)
         )
         await pilot.pause()
         await transport.push_display(_started("op-1", call_id="resp-1"))
