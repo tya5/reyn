@@ -1,0 +1,121 @@
+name: scaffold-removed-by-stale gate
+
+# #6209: a tests/scaffold/ file whose own `removed_by` condition (an
+# issue/PR number it names) is already closed/merged must be caught by
+# CI, not found by accident — see scripts/check_scaffold_removed_by_
+# stale.py's own module docstring for the incident (#6207's own scaffold
+# file sat there, condition satisfied, until an UNRELATED issue's review
+# happened to surface it) and the exact rule (number-referencing
+# removed_by strings only, never triggered_by).
+#
+# Two triggers, deliberately NOT folded into one:
+#
+#   - `pull_request`, path-scoped to tests/scaffold/**: a PR that adds or
+#     edits a scaffold file is gated on its OWN diff -- fair, since the
+#     PR's own change is what is being checked.
+#   - `schedule` (+ `workflow_dispatch`): this gate's whole subject can
+#     turn red WITHOUT any PR touching tests/scaffold/ at all -- an
+#     UNRELATED PR that happens to close the issue a landed scaffold
+#     file's removed_by names is exactly the #6209 incident itself. A
+#     schedule is the only way to catch that composition gap.
+#
+# The schedule run is deliberately NOT wired as a required status check
+# on any PR (mirrors dependency-drift-canary.yml's own architect ruling,
+# #5831, verbatim: "第三者の release 時刻が reyn の merge 可否を握らない"
+# -- here it is an issue-closure's timing, not a release's, but the same
+# principle: state neither this PR's author nor its reviewer controls
+# must never decide whether an UNRELATED PR can merge).
+#
+# lead-coder BLOCKING (PR #6212 review, issuecomment-5706176531): a
+# schedule run with no reader reproduces this gate's OWN subject --
+# this module's own docstring, verbatim: "until a REVIEW OF AN
+# UNRELATED ISSUE happened to surface it". A red Actions-tab run
+# nobody is looking at has no bounding subject (CLAUDE.md's own "who
+# stops this if it repeats?"). Fixed by taking the OTHER half of
+# dependency-drift-canary.yml's own precedent too: on a scheduled/
+# dispatched red, open OR UPDATE (never a fresh issue each time --
+# that "buries the history", same file's own comment) one tracking
+# issue. A `pull_request`-triggered red does NOT also file one -- that
+# run already has a reader (the PR's own author, via the red check
+# itself); filing here would be a duplicate, unread signal for a
+# problem the PR's own diff already surfaces plainly.
+on:
+  pull_request:
+    paths:
+      - "tests/scaffold/**"
+      - "scripts/check_scaffold_removed_by_stale.py"
+  schedule:
+    # Daily, 07:00 UTC -- same cadence class as dependency-drift-canary.yml's
+    # own daily run; this gate's subject (a scaffold file quietly outliving
+    # its own removal condition) has no urgency finer than "within a day".
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scaffold-removed-by-stale:
+    name: scaffold-removed-by-stale gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_scaffold_removed_by_stale.py itself is stdlib-only
+      # (re / subprocess / pathlib) plus the `gh` CLI GitHub Actions
+      # runners ship preinstalled -- no `pip install` needed. It DOES
+      # still call `verify_env_identity.guard_bare_script_or_exit()`
+      # (#3024, every bare scripts/*.py entry point), which requires
+      # `reyn` to be find_spec-resolvable regardless of whether this
+      # script's own logic ever imports it -- PYTHONPATH=src alone
+      # satisfies that (no actual install needed, since nothing here
+      # imports reyn.* beyond the guard's own resolution check).
+      - name: Check no scaffold file's removed_by condition is already satisfied
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          python scripts/check_scaffold_removed_by_stale.py
+
+      # if: failure() && not pull_request -- see the module comment above
+      # for why a PR-triggered red does not ALSO file one (that run
+      # already has a reader). Mirrors dependency-drift-canary.yml's own
+      # "Open or update the drift-tracking issue" step shape exactly
+      # (label create-if-missing, find the one open-labeled issue,
+      # comment on it if found, create it if not -- never a fresh issue
+      # per occurrence).
+      - name: Open or update the scaffold-removed-by-stale tracking issue
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          LABEL="scaffold-removed-by-stale"
+          TITLE="scaffold-removed-by-stale gate red -- a scaffold file's removed_by condition is met"
+          gh label create "$LABEL" --repo "${{ github.repository }}" \
+            --description "Opened/updated by scaffold-removed-by-stale-gate.yml (#6209) -- never blocks an unrelated PR" \
+            --color "d93f0b" 2>/dev/null || true
+
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --label "$LABEL" --json number --jq '.[0].number // empty')
+
+          BODY="**[scaffold-removed-by-stale-gate]** — the scheduled run found at least one \`tests/scaffold/\` file whose \`removed_by\` condition is already met, on $(date -u +%F).
+
+          Run: ${RUN_URL}
+
+          This does **not** block any PR by itself — this run came from \`schedule\`/\`workflow_dispatch\`, not \`pull_request\`. Read the run log above for which file(s), then remove them in an ordinary PR. This is the #6209 incident shape itself: an issue closed by an UNRELATED PR left a landed scaffold file's own removal condition met, with nobody noticing until this run."
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --repo "${{ github.repository }}" --body "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --label "$LABEL" --body "$BODY"
+          fi
