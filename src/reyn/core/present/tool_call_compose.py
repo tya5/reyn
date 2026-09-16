@@ -3,8 +3,11 @@
 **`text` is wire-only. The TUI never reads it as its PRIMARY value** — the
 consumer (repl's own ``renderer.py``) already draws its own display from
 the structured ``meta["args"]``/``meta["result"]`` fields — ``tool``
-bold, ``(args)`` dim — via its own ``_compose_args``/``_truncate_args``
-(#6184 段2b-1). Reading this module's own :func:`compose_tool_call_text`
+bold, ``(args)`` dim — via its own ``_compose_args`` (#6184 段2b-1) and
+``core/present/tool_head.compose_tool_head`` (#6184 段3-3, the length-cut
+half — ``renderer.py``'s own former in-module pair for that half,
+``_truncate_args``, was removed in #6207 once every real consumer had
+moved to that call instead). Reading this module's own :func:`compose_tool_call_text`
 from that render path would mean parsing a flat, already-formatted
 string back apart into its pieces — exactly the shape this arc's own
 census (dispatch-table producer/consumer duplication) already closed
@@ -47,9 +50,10 @@ issuecomment-5683762265 — the original dispatch got both wrong):
   own shape exactly (#6184 段2b-1) — this is what a future PRODUCER-side
   ``details`` field carries. NOT joined into a string: a future consumer
   reading ``details`` needs the per-value boundaries intact to apply its
-  own per-value cut (``_truncate_args``'s own docstring: "each value is
-  cut to ``value_width`` BEFORE joining" — unrecoverable once already
-  joined).
+  own per-value cut — :func:`~reyn.core.present.tool_head.
+  compose_tool_head` (#6184 段3-3) is the real consumer that now applies
+  it, cutting each value BEFORE joining (its own docstring) —
+  unrecoverable once already joined.
 - :func:`compose_tool_call_text` — the FLAT ``tool(k=v, k2=v2)`` wire
   string. No length cut (a producer does not know a future viewer's
   terminal width — that stays entirely on the consumer side, #6184
