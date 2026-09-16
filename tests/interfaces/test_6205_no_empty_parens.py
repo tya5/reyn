@@ -100,7 +100,11 @@ def test_collapsed_retrieval_line_no_trailing_empty_parens_when_subject_consumes
     out = _collapsed_retrieval_line(msg)
     assert out is not None
     assert "()" not in out.plain
-    assert out.plain == "search_knowledge q → 3 results"
+    # `→ 3 results` is `summarize_tool_result`'s own output — outside
+    # this test's subject (the empty-parens fix) — so only the head
+    # this file's own compose_tool_head path actually produces is
+    # pinned exactly, not the full line (lead-coder, PR #6206 review).
+    assert out.plain.startswith("search_knowledge q →")
 
 
 # ---------------------------------------------------------------------------
