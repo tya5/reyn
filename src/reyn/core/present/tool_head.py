@@ -139,6 +139,13 @@ def compose_tool_head(
     renders space-joined as the subject but reprs as a list in its own
     composed arg value — key identity is the only reliable signal).
 
+    The per-value cut runs BEFORE the join, then the whole joined line
+    is cut again to ``total_width`` — so one long value cannot consume
+    another key's budget (#6207: this is the same two-stage discipline
+    ``renderer.py``'s own retired ``_truncate_args`` used to state and
+    execute for the pre-3-3 call path; this function is now the one
+    place it runs).
+
     ONE call to :func:`~reyn.core.present.guard.get_neutralizer`,
     passed ``surface`` — the single syntactic call site this whole path
     has (#6193 accept ⑥) — even though

@@ -2,8 +2,14 @@
 
   ``_meta_prefix(meta)``     — builds [skill#run_id] prefix from meta dict
   ``_short(v, n)``           — collapses whitespace + truncates any value
-  ``_summarize_args(args)``  — compact k=v summary of a tool args dict
   ``_summarize_result(tool, result)`` — human one-line tool result summary
+
+#6207: ``_summarize_args`` (and its own tests, once here) removed — it
+was #6184 段2b-1's own migration-only function, kept called-together on
+purpose ("nothing moves to a different call site yet (2b-2/2b-3)", its
+own retired docstring), and 段2b-2/2b-3 (already landed) moved every
+real consumer off it. See git history for the removed tests' own
+content if ever needed again.
 
 #3891: relabeled from a stale "Tier 2" (these are directly-testable function
 contracts, not OS-level invariants reyn promises externally — the original
@@ -30,7 +36,6 @@ if str(_SRC) not in sys.path:
 from reyn.interfaces.repl.renderer import (
     _meta_prefix,
     _short,
-    _summarize_args,
     _summarize_result,
     _truncate_result_summary,
 )
@@ -109,46 +114,6 @@ def test_short_dict_uses_repr() -> None:
     result = _short({"a": 1}, n=100)
     assert "a" in result
     assert "1" in result
-
-
-# ---------------------------------------------------------------------------
-# _summarize_args
-# ---------------------------------------------------------------------------
-
-
-def test_summarize_args_empty_dict() -> None:
-    """Tier 1: empty dict returns empty string."""
-    assert _summarize_args({}) == ""
-
-
-def test_summarize_args_none() -> None:
-    """Tier 1: None returns empty string."""
-    assert _summarize_args(None) == ""
-
-
-def test_summarize_args_single_key() -> None:
-    """Tier 1: single-key dict renders as 'key=value'.
-
-    The ``"path="`` (with the ``=``) is the discriminating check — a dead
-    dict-branch falls to the bare-value path, whose ``repr()`` output uses
-    ``'path':`` (a colon, from Python dict repr), never ``path=``."""
-    result = _summarize_args({"path": "/tmp/file.txt"})
-    assert "path=" in result
-    assert "/tmp/file.txt" in result
-
-
-def test_summarize_args_multiple_keys() -> None:
-    """Tier 1: multiple keys render comma-separated. Same ``=``-vs-``:``
-    discriminator as the single-key test above."""
-    result = _summarize_args({"a": "x", "b": "y"})
-    assert "a=" in result
-    assert "b=" in result
-
-
-def test_summarize_args_bare_string() -> None:
-    """Tier 1: non-dict arg is shortened to a one-liner."""
-    result = _summarize_args("hello")
-    assert "hello" in result
 
 
 # ---------------------------------------------------------------------------

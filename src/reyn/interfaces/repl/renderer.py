@@ -610,8 +610,11 @@ def _compose_args(args) -> "list[tuple[str, str]] | str":
     value)`` pairs, each value whitespace-collapsed but never length-cut;
     a bare (non-dict) value becomes a normalized string. Carries no width
     information at all (accept ⑵ grep witness: no ``_cut``/``_short``
-    call anywhere in this function) — see :func:`_truncate_args` for the
-    paired length-cut half."""
+    call anywhere in this function) — the paired length-cut half now
+    lives in :func:`~reyn.core.present.tool_head.compose_tool_head`
+    (#6184 段3-3; this function's own former in-module pair,
+    ``_truncate_args``, was removed in #6207 once every real consumer
+    had moved to that call instead)."""
     if not args:
         return []
     if isinstance(args, dict):
@@ -619,45 +622,6 @@ def _compose_args(args) -> "list[tuple[str, str]] | str":
             (" ".join(str(k).split()), _normalize_text(v)) for k, v in args.items()
         ]
     return _normalize_text(args)
-
-
-def _truncate_args(
-    composed: "list[tuple[str, str]] | str",
-    *,
-    value_width: int = 24,
-    total_width: int = 60,
-) -> str:
-    """Length-cut a :func:`_compose_args` result into the final ``k=v``
-    summary — #6184 段2b-1's truncate half. PURE cut — no normalize call
-    anywhere in this function (the input is already fully normalized by
-    :func:`_compose_args`, keys included, so a redundant re-normalize
-    here would only mask a future compose-side normalization regression
-    behind this function's own safety net, defeating the split's own
-    point). Byte-identical to the pre-split ``_summarize_args`` when
-    called with these (unchanged) default widths: each value is cut to
-    ``value_width`` BEFORE joining (so one long value cannot consume
-    another key's budget), then the whole joined line is cut to
-    ``total_width`` — the same two-stage shape the old
-    ``_summarize_args`` applied via two nested ``_short`` calls (that
-    outer call's own normalize half is now redundant by construction,
-    not merely skipped: compose already normalized both the key and the
-    value it draws from)."""
-    if not composed:
-        return ""
-    if isinstance(composed, list):
-        joined = ", ".join(f"{k}={_cut(v, value_width)}" for k, v in composed)
-        return _cut(joined, total_width)
-    return _cut(composed, total_width)
-
-
-def _summarize_args(args) -> str:
-    """Compact ``k=v`` summary of a tool's args dict (or a bare value).
-
-    #6184 段2b-1: split into :func:`_compose_args` (normalize, width-
-    independent) + :func:`_truncate_args` (length-cut, width-aware) —
-    kept called together here; nothing moves to a different call site
-    yet (2b-2/2b-3)."""
-    return _truncate_args(_compose_args(args))
 
 
 class _Truncatable:
@@ -707,12 +671,14 @@ _RESULT_TRUNCATE_WIDTHS: "dict[str, int]" = {
 def _truncate_result_summary(composed) -> str:
     """Length-cut a :func:`_summarize_result` composed piece into the
     final one-line summary — #6184 段2b-1's truncate half. PURE cut — no
-    normalize call (mirrors :func:`_truncate_args`'s own discipline
-    exactly): a :class:`_Truncatable`'s ``raw`` is already normalized by
+    normalize call (the same "pure cut, no re-normalize" discipline
+    :func:`~reyn.core.present.tool_head.compose_tool_head` applies on
+    its own args half, #6184 段3-3 — the former in-module sibling this
+    docstring used to cite, ``_truncate_args``, was removed in #6207):
+    a :class:`_Truncatable`'s ``raw`` is already normalized by
     the caller that constructed it, so re-normalizing here would only
     mask a future compose-side normalization regression behind this
-    function's own safety net (the same reasoning :func:`_truncate_args`
-    already states). A plain string (the majority of
+    function's own safety net. A plain string (the majority of
     ``_summarize_result``'s branches, already fully-formed and bounded by
     construction) passes through unchanged; a :class:`_Truncatable` marks
     the ONE branch whose raw content still needs a width-bounded cut,
