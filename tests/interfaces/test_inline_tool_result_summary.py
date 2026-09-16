@@ -122,6 +122,31 @@ def test_file_read_not_found_shows_error_not_zero_lines() -> None:
     assert "{" not in out, "raw dict repr must not leak"
 
 
+def test_dict_with_error_key_normalizes_embedded_newlines() -> None:
+    """Tier 2: a multi-line 'error' value collapses to ONE line, same as
+    every other summary branch — an embedded newline must not survive
+    into the ⎿ row (which renders each summary as exactly one line).
+
+    Moved here from ``tests/scaffold/test_6184_2b1_compose_truncate_
+    split.py`` (#6207 blocking, lead-coder): that scaffold's own
+    ``removed_by`` condition ("#6184 段2b-2/2b-3 lands") only covers the
+    ARGS-side split (``_compose_args``/``_truncate_args``) — 段2b-2/2b-3
+    moved the producer side of ARGS compose only, never
+    ``summarize_tool_result`` itself (still renderer.py-local, still the
+    ONLY place this normalization runs), so deleting the whole scaffold
+    file alongside the args cleanup would have silently dropped this
+    branch's own newline-normalization witness. No other test in this
+    file exercises a multi-line ``error`` value (the two neighboring
+    error-branch tests above use single-line text; the file's own
+    multi-line witness, ``test_oversized_result_is_truncated_one_line``,
+    drives the FALLBACK branch — a bare string, not a dict's ``error``
+    key)."""
+    error_text = "first line\n\n  second   line"
+    out = summarize_tool_result("list_directory", {"error": error_text})
+    assert out == "✗ first line second line"
+    assert "\n" not in out
+
+
 def test_file_delete_shows_deleted_path() -> None:
     """Tier 2: delete_file result (op='delete', path=...) shows 'Deleted {path}'.
 
