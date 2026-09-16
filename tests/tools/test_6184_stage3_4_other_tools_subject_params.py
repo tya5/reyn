@@ -71,7 +71,17 @@ def test_read_file_subject_is_at_the_heads_of_both_render_paths() -> None:
     """Tier 1: `read_file`'s declared `path` reaches the screen, at the
     HEAD of the line, through both consumer sites (#6184 段3-3's own
     single compose point) — the real registry declaration this stage
-    adds, not a synthetic one."""
+    adds, not a synthetic one.
+
+    #6205 fix (a later, same-arc stage): this test's own original last
+    assertion (`"docs/x.md" before "("`) assumed a trailing `()` always
+    follows the subject — true only because of the #6205 bug this stage
+    did not yet have a fix for. `read_file` takes exactly ONE param
+    (`path`), which IS its own subject, so ZERO args remain and no
+    parens are drawn at all post-fix — see
+    tests/interfaces/test_6205_no_empty_parens.py for that fix's own
+    dedicated coverage (including the deny-side/`exec` sibling this
+    file does not need to re-prove)."""
     msg = _msg_for("read_file", {"path": "docs/x.md"})
     assert msg.subject == "docs/x.md"
 
@@ -80,7 +90,6 @@ def test_read_file_subject_is_at_the_heads_of_both_render_paths() -> None:
 
     inline_out = _plain_inline(msg)
     assert "read_file docs/x.md" in inline_out
-    assert inline_out.index("docs/x.md") < inline_out.index("(")
 
 
 def test_hooks_add_priority_tuple_on_wins_when_name_absent() -> None:

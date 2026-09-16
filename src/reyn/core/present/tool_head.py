@@ -72,6 +72,27 @@ shortened. At width overflow, the trailing OPTION is what disappears,
 never the middle of the subject — the owner's own original ask (the
 executed command line as the display's CENTER) would be defeated by a
 subject that could itself be cut mid-string.
+
+## No empty parens — #6205 (a 段3-2/3-3/3-4 regression)
+
+``args_display`` is ``""`` — not ``"()"`` — when there are no args left
+to show (either the tool genuinely takes none, or ``subject_keys``
+excluded its one and only param). #6184 段3-2/3-3/3-4 gave `subject`
+this exclusion mechanism, which OPENED this hole: a single-param tool
+whose one param became the subject (``read_file``'s own ``path``) now
+composes ZERO remaining pairs, and the pre-#6205 code still wrapped
+that empty joined string in ``()`` unconditionally — ``read_file
+docs/x.md ()``, a trailing empty pair the reader has no reason to
+trust means anything.
+
+ONE rule, not a `"drop the parens only when subject is set"` special
+case (lead-coder's own ruling, #6205: a special case closes this ONE
+hole and reopens on the next path that reaches zero args a different
+way) — a tool that has never taken an arg (``list_plugins``) ALSO now
+composes with no parens at all (``list_plugins``, not
+``list_plugins()``) — accepted on purpose (issue #6205: "行頭に tool
+名が在る時点でそれは既に分かります", the parens were never the ONLY
+signal this is a call).
 """
 from __future__ import annotations
 
@@ -95,12 +116,16 @@ def compose_tool_head(
     total_width: int = 60,
 ) -> "tuple[str, str]":
     """Returns ``(subject_display, args_display)`` — ``args_display`` is
-    ALWAYS the parenthesized ``"(k=v, ...)"`` string (matching the
-    pre-3-3 shape exactly, empty parens included when there are no
-    args), ``subject_display`` is ``""`` when ``subject`` is ``None`` (a
-    caller omits both the text and its own leading separator in that
-    case — accept ③'s byte-identity depends on the caller doing so, not
-    on this function inserting a placeholder).
+    the parenthesized ``"(k=v, ...)"`` string when at least one pair (or
+    a non-empty bare value) remains, and ``""`` — never ``"()"`` — when
+    none do (#6205: a caller must NOT special-case "empty parens only
+    when there is no subject"; this function's own empty-means-empty
+    rule already covers a tool that never took an arg the same way it
+    covers one whose only arg became the subject). ``subject_display``
+    is ``""`` when ``subject`` is ``None`` (a caller omits both the text
+    and its own leading separator in that case — accept ③'s
+    byte-identity depends on the caller doing so, not on this function
+    inserting a placeholder).
 
     ``composed_args`` is whatever :func:`~reyn.interfaces.repl.renderer.
     _compose_args` (or the producer's own ``details["args"]``, #6184
@@ -139,7 +164,13 @@ def compose_tool_head(
         args_str = _cut(composed_args, total_width)
     else:
         args_str = ""
-    args_display, _ = neutralizer.neutralize(f"({args_str})")
+    # #6205: empty parens are never drawn — ONE rule, no "only when a
+    # subject is present" special case (that would just move the hole,
+    # not close it — see this function's own module docstring's #6205
+    # section). `args_str` empty means NOTHING follows, not `"()"`.
+    args_display = ""
+    if args_str:
+        args_display, _ = neutralizer.neutralize(f"({args_str})")
 
     subject_display = ""
     if subject:
