@@ -1302,6 +1302,8 @@ SEARCH_ACTIONS = ToolDefinition(
     handler=_handle_search_actions,
     category="discovery",
     purity="read_only",
+    # #6184 段3-4: query is identifying from its own first characters.
+    subject_params=("query",),
 )
 
 
@@ -1315,6 +1317,8 @@ DESCRIBE_ACTION = ToolDefinition(
     handler=_handle_describe_action,
     category="discovery",
     purity="read_only",
+    # #6184 段3-4: action_name is identifying from its own first characters.
+    subject_params=("action_name",),
 )
 
 
@@ -1328,6 +1332,8 @@ INVOKE_ACTION = ToolDefinition(
     handler=_handle_invoke_action,
     category="invocation",
     purity="side_effect",
+    # #6184 段3-4: action_name is identifying from its own first characters.
+    subject_params=("action_name",),
 )
 
 

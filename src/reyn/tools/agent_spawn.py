@@ -85,4 +85,7 @@ AGENT_SPAWN = ToolDefinition(
     category="delegation",
     purity="side_effect",
     dispatch_kind="sync",  # creates the agent + records lineage; returns a spawn-ack
+    # #6184 段3-4: name is identifying from its own first characters (the
+    # spawned agent's own name).
+    subject_params=("name",),
 )

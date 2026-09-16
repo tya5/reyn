@@ -143,4 +143,8 @@ RENDER_TEMPLATE = ToolDefinition(
     category="presentation",
     purity="read_only",
     doc_ref=_RENDER_TEMPLATE_DOC_REF,
+    # #6184 段3-4: template_ref (a short reference key, when given) is
+    # identifying from its own first characters; the bulk inline `template`
+    # is excluded.
+    subject_params=("template_ref",),
 )

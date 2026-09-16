@@ -209,6 +209,8 @@ DESCRIBE_TASK = ToolDefinition(
     handler=_handle_describe_task,
     category="discovery",
     purity="read_only",
+    # #6184 段3-4: task_id is identifying from its own first characters.
+    subject_params=("task_id",),
 )
 
 
@@ -338,4 +340,6 @@ CANCEL_TASK = ToolDefinition(
     handler=_handle_cancel_task,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: task_id is identifying from its own first characters.
+    subject_params=("task_id",),
 )

@@ -446,6 +446,9 @@ CRON_REGISTER = ToolDefinition(
     handler=_handle_cron_register,
     category="cron",
     purity="side_effect",
+    # #6184 段3-4: name is identifying from its own first characters (the
+    # cron job's own identifier).
+    subject_params=("name",),
 )
 
 CRON_UNREGISTER = ToolDefinition(
@@ -457,6 +460,8 @@ CRON_UNREGISTER = ToolDefinition(
     handler=_handle_cron_unregister,
     category="cron",
     purity="side_effect",
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )
 
 CRON_LIST = ToolDefinition(
@@ -479,6 +484,8 @@ CRON_ENABLE = ToolDefinition(
     handler=_handle_cron_enable,
     category="cron",
     purity="side_effect",
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )
 
 CRON_DISABLE = ToolDefinition(
@@ -490,4 +497,6 @@ CRON_DISABLE = ToolDefinition(
     handler=_handle_cron_disable,
     category="cron",
     purity="side_effect",
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )

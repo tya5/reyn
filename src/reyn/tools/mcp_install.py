@@ -124,4 +124,6 @@ MCP_INSTALL_OP = ToolDefinition(
     # proposal 0060 D5d: mirrors the "mcp" PartTypeSpec's doc_ref
     # (reyn.core.part_types.mcp) — same part-type, install-op axis.
     doc_ref="docs/concepts/tools-integrations/mcp.md",
+    # #6184 段3-4: server_id is identifying from its own first characters.
+    subject_params=("server_id",),
 )

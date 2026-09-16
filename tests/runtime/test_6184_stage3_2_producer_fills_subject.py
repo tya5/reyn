@@ -94,16 +94,21 @@ def test_exec_argv_list_becomes_a_space_joined_command_line():
     assert msg.subject == "python -m pytest"
 
 
-def test_every_currently_registered_tool_except_exec_has_no_subject_params():
-    """Tier 1: accept ⑷, read from the REAL registry (not a hand-typed
-    "78" — that count could drift the moment a tool is added or removed,
-    silently making a hardcoded assertion meaningless either way)."""
+def test_exec_still_has_a_subject_params_declaration():
+    """Tier 1: accept ⑷ AT 段3-2's OWN MERGE TIME this asserted "exactly
+    one tool (exec) declares subject_params" — true then, made false ON
+    PURPOSE by #6184 段3-4 (a LATER stage, same arc, issuecomment-
+    5690351417: every OTHER tool whose own param is "identifying from
+    the first character" also gets one) — the SAME "merge-time
+    observation, not a standing invariant" shape #6190/#6191's own tests
+    already disclosed. Re-scoped rather than re-pinning a new exact
+    count (which 段3-4 itself would immediately outdate again the next
+    time a tool is added): exec's OWN declaration surviving is what this
+    file is actually about; the full current population lives in
+    ``tests/tools/test_6184_stage3_4_other_tools_subject_params.py``."""
     registry = get_default_registry()
-    declared = [t.name for t in registry if t.subject_params]
-    assert declared == ["exec"], (
-        f"expected exactly one tool with a subject_params declaration "
-        f"after #6184 段3-2, got {declared!r}"
-    )
+    declared = {t.name for t in registry if t.subject_params}
+    assert "exec" in declared
 
 
 def test_enqueue_tool_call_wires_subject_for_exec():
@@ -123,12 +128,28 @@ def test_enqueue_tool_call_wires_subject_for_exec():
 def test_enqueue_tool_call_leaves_subject_none_for_an_undeclared_tool():
     """Tier 2: sibling of the test above — a real tool with no
     subject_params declaration produces subject=None through the SAME
-    real producer call site, not a special-cased None."""
+    real producer call site, not a special-cased None.
+
+    ``list_tasks`` (not ``read_file``, this test's own original choice):
+    #6184 段3-4 (a LATER stage, same arc) declared ``read_file``'s own
+    ``path`` a subject — it stopped being an "undeclared tool" example.
+    ``list_tasks`` is lead-coder's own canonical deny-side example
+    throughout that stage's dispatch (its ``kind`` param is a FILTER on
+    one global listing, never an identity) — asserted still-undeclared
+    below rather than assumed, so a THIRD stage declaring it would fail
+    this test's own setup, not silently pass a stale assertion."""
+    registry = get_default_registry()
+    definition = registry.lookup("list_tasks")
+    assert definition is not None and not definition.subject_params, (
+        "setup: list_tasks must still be undeclared for this test's own "
+        "premise to hold"
+    )
+
     outbox: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(outbox=outbox)
     fwd.on_tool_called({
-        "caller_kind": "router", "caller_id": "r1", "tool": "read_file",
-        "chain_id": "c1", "args": {"path": "/x"}, "args_hash": "h2",
+        "caller_kind": "router", "caller_id": "r1", "tool": "list_tasks",
+        "chain_id": "c1", "args": {"kind": "cron"}, "args_hash": "h2",
     })
     msg = outbox.get_nowait()
     assert msg.subject is None

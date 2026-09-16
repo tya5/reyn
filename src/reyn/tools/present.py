@@ -142,4 +142,9 @@ PRESENT = ToolDefinition(
     category="presentation",
     purity="side_effect",
     doc_ref=_PRESENT_DOC_REF,
+    # #6184 段3-4: data_ref (a short reference key, when given) is
+    # identifying from its own first characters; data_inline is bulk
+    # payload, excluded -- same treatment as render_template's own
+    # template/template_ref split.
+    subject_params=("data_ref",),
 )

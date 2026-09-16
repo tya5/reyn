@@ -668,6 +668,9 @@ MCP_SEARCH_REGISTRY = ToolDefinition(
     category="discovery",
     purity="read_only",
     returns_external_content=True,  # FP-0050/#1822: external registry listing
+    # #6184 段3-4: text (the search query) is identifying from its own first
+    # characters.
+    subject_params=("text",),
 )
 
 
@@ -687,6 +690,8 @@ MCP_INSTALL_REGISTRY = ToolDefinition(
     handler=_handle_mcp_install_registry,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: server_id is identifying from its own first characters.
+    subject_params=("server_id",),
 )
 
 
@@ -706,6 +711,8 @@ MCP_INSTALL_PACKAGE = ToolDefinition(
     handler=_handle_mcp_install_package,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: identifier is identifying from its own first characters.
+    subject_params=("identifier",),
 )
 
 
@@ -725,6 +732,8 @@ MCP_INSTALL_LOCAL = ToolDefinition(
     handler=_handle_mcp_install_local,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: name is identifying from its own first characters.
+    subject_params=("name",),
 )
 
 
@@ -745,6 +754,9 @@ MCP_CALL_TOOL = ToolDefinition(
     category="io",
     purity="side_effect",
     returns_external_content=True,  # FP-0050/#1822: external MCP server result
+    # #6184 段3-4: tool (the wrapped MCP tool's own name) is identifying
+    # from its own first characters.
+    subject_params=("tool",),
 )
 
 

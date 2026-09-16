@@ -447,6 +447,8 @@ READ_FILE = ToolDefinition(
     handler=_handle_read,
     category="io",
     purity="read_only",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 WRITE_FILE = ToolDefinition(
@@ -459,6 +461,8 @@ WRITE_FILE = ToolDefinition(
     handler=_handle_write,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 DELETE_FILE = ToolDefinition(
@@ -471,6 +475,8 @@ DELETE_FILE = ToolDefinition(
     handler=_handle_delete,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 EDIT_FILE = ToolDefinition(
@@ -483,6 +489,8 @@ EDIT_FILE = ToolDefinition(
     handler=_handle_edit,
     category="io",
     purity="side_effect",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 LIST_DIRECTORY = ToolDefinition(
@@ -495,6 +503,8 @@ LIST_DIRECTORY = ToolDefinition(
     handler=_handle_list,
     category="io",
     purity="read_only",
+    # #6184 段3-4: path is identifying from its own first characters.
+    subject_params=("path",),
 )
 
 GREP_FILES = ToolDefinition(
@@ -507,6 +517,8 @@ GREP_FILES = ToolDefinition(
     handler=_handle_grep,
     category="io",
     purity="read_only",
+    # #6184 段3-4: pattern is identifying from its own first characters.
+    subject_params=("pattern",),
 )
 
 GLOB_FILES = ToolDefinition(
@@ -519,5 +531,7 @@ GLOB_FILES = ToolDefinition(
     handler=_handle_glob,
     category="io",
     purity="read_only",
+    # #6184 段3-4: pattern is identifying from its own first characters.
+    subject_params=("pattern",),
 )
 

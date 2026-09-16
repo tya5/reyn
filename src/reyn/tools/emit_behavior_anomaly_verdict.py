@@ -103,4 +103,7 @@ EMIT_BEHAVIOR_ANOMALY_VERDICT = ToolDefinition(
     handler=_handle_emit_behavior_anomaly_verdict,
     category="observability",
     purity="side_effect",
+    # #6184 段3-4: chain_id (not verdict -- a 2-value enum,
+    # 'clean'/'suspicious', does not distinguish calls).
+    subject_params=("chain_id",),
 )
