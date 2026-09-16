@@ -23,6 +23,7 @@ from rich.text import Text
 from textual.content import Content
 from textual_flowview import Entry, Presentation
 
+from reyn.core.present.tool_head import compose_tool_head
 from reyn.interfaces.palette import TOKENS
 from reyn.interfaces.repl.renderer import (
     _CC_ACCENT,
@@ -36,9 +37,9 @@ from reyn.interfaces.repl.renderer import (
     _SPINNER,
     _body_renderable,
     _compose_args,
-    _truncate_args,
     summarize_tool_result,
 )
+from reyn.tools.subject import subject_param_names
 
 from ._meta_keys import COMPACTION_PROGRESS_KEY as _COMPACTION_PROGRESS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
@@ -286,7 +287,7 @@ def _compaction_progress_body(meta: dict, *, spinner_frame: "str | None") -> "Re
 
 
 def _tool_head(msg: "OutboxMessage") -> Text:
-    """The ``tool(args)`` header line of a tool-call row.
+    """The ``tool [subject] (args)`` header line of a tool-call row.
 
     The SINGLE source of that header, shared by the static
     :func:`_body_and_background` tool-call branch and the live
@@ -321,8 +322,18 @@ def _tool_head(msg: "OutboxMessage") -> Text:
         msg.details["args"] if "args" in (msg.details or {})
         else _compose_args(meta.get("args"))
     )
-    args = _truncate_args(composed)
-    return Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
+    # #6184 段3-3: `subject` was populated by the producer (段3-2) but never
+    # read until now — the ONE `get_neutralizer` boundary for this whole
+    # line lives in `compose_tool_head` itself (#6193, accept ⑥), not here.
+    subject_keys = frozenset(subject_param_names(tool)) if msg.subject else frozenset()
+    subject_display, args_display = compose_tool_head(
+        msg.subject, composed, subject_keys=subject_keys,
+    )
+    if subject_display:
+        return Text.assemble(
+            (tool, "bold"), " ", (subject_display, _CC_TEXT), " ", (args_display, _CC_DIM),
+        )
+    return Text.assemble((tool, "bold"), (args_display, _CC_DIM))
 
 
 #: How many lines of a full tool result the expanded view shows before it stops.
@@ -561,9 +572,19 @@ def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
         msg.details["args"] if "args" in (msg.details or {})
         else _compose_args(meta.get("args"))
     )
-    args = _truncate_args(composed)
+    # #6184 段3-3: same single-boundary compose as _tool_head — see its
+    # own comment.
+    subject_keys = frozenset(subject_param_names(tool)) if msg.subject else frozenset()
+    subject_display, args_display = compose_tool_head(
+        msg.subject, composed, subject_keys=subject_keys,
+    )
+    if subject_display:
+        return Text.assemble(
+            (tool, _CC_DIM), " ", (subject_display, _CC_DIM), " ", (args_display, _CC_DIM),
+            (" → ", _CC_DIM), (summary, _CC_DIM),
+        )
     return Text.assemble(
-        (tool, _CC_DIM), (f"({args})", _CC_DIM), (" → ", _CC_DIM), (summary, _CC_DIM),
+        (tool, _CC_DIM), (args_display, _CC_DIM), (" → ", _CC_DIM), (summary, _CC_DIM),
     )
 
 

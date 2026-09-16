@@ -72,3 +72,31 @@ def resolve_tool_subject(tool_name: str, args: object) -> object:
         if param in args and args[param] is not None:
             return args[param]
     return None
+
+
+def subject_param_names(tool_name: str) -> "tuple[str, ...]":
+    """A tool's own declared ``subject_params`` tuple, or ``()`` if the
+    tool is unregistered or declares none — #6184 段3-3's one CONSUMER-side
+    reader (the display side's own need: which of a message's own
+    ``details["args"]`` keys were already shown as the subject, so they
+    can be excluded from the ``k=v`` listing rather than shown twice —
+    accept ⑵, architect issuecomment-5689016062).
+
+    Deliberately NOT re-deriving the resolved subject VALUE (that stays
+    :func:`resolve_tool_subject`'s own producer-side job, called once,
+    at ``lifecycle_forwarder._enqueue_tool_call`` — see that function's
+    own docstring for why the RAW value is resolved there and not
+    re-derived here) — this returns only the declared NAMES, letting a
+    consumer match them against its own already-composed ``(key,
+    value)`` pairs by KEY, never re-running the producer's own
+    priority-order value scan a second time on the display path.
+
+    Same "fresh per-call registry lookup, no second cache" shape this
+    module's own :func:`resolve_tool_subject` and
+    ``gutter.py:_is_retrieval_tool`` already established."""
+    from reyn.tools import get_default_registry
+
+    definition = get_default_registry().lookup(tool_name)
+    if definition is None:
+        return ()
+    return definition.subject_params

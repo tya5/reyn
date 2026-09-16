@@ -1144,8 +1144,28 @@ def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
             msg.details["args"] if "args" in (msg.details or {})
             else _compose_args(meta.get("args"))
         )
-        args = _truncate_args(composed)
-        body = Text.assemble((tool, "bold"), (f"({args})", _CC_DIM))
+        # #6184 段3-3: single-boundary compose — see
+        # `core/present/tool_head.py`'s own module docstring for why this
+        # function (not a per-site `get_neutralizer` call) is the ONE
+        # mouth every one of the 3 consumer sites (#6193) now calls
+        # through. `reyn.tools` is imported HERE (not module-level) —
+        # this module's first import of that package, same disclosed
+        # "genuinely new edge for THIS module, not for interfaces/ as a
+        # whole" shape lifecycle_forwarder.py's own 段3-2 comment already
+        # used (`gutter.py:_is_retrieval_tool` already opened the
+        # interfaces -> tools edge).
+        from reyn.core.present.tool_head import compose_tool_head
+        from reyn.tools.subject import subject_param_names
+        subject_keys = frozenset(subject_param_names(tool)) if msg.subject else frozenset()
+        subject_display, args_display = compose_tool_head(
+            msg.subject, composed, subject_keys=subject_keys,
+        )
+        if subject_display:
+            body = Text.assemble(
+                (tool, "bold"), " ", (subject_display, _CC_TEXT), " ", (args_display, _CC_DIM),
+            )
+        else:
+            body = Text.assemble((tool, "bold"), (args_display, _CC_DIM))
         return _gutter_grid("▸ ", _CC_TEXT, body)
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
