@@ -4,9 +4,13 @@ already satisfied must be caught by CI, not found by accident.
 
 ## The incident this closes
 
-`tests/scaffold/test_6184_2b1_compose_truncate_split.py`'s own header
-comment (real, `origin/main` `2256bd972`, before #6207/#6210 removed the
-file) named its own removal condition machine-readably:
+`test_6184_2b1_compose_truncate_split.py` (it lived under
+`tests/scaffold/`; #6207/#6210 removed it — not a path this docstring
+names literally, so `check_tests_path_literal_reference.py`'s own
+ratchet does not treat a gone file's mention as a fresh dangling
+reference) had a header comment (real, `origin/main` `2256bd972`,
+before that removal) naming its own removal condition
+machine-readably:
 
     # scaffold: removed_by="#6184 段2b-2/2b-3 lands (the actual
     #     producer/consumer move) -- ..."
