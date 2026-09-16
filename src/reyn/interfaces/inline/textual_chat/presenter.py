@@ -1079,9 +1079,10 @@ class ReynPresenter:
         # child has nothing to recede FROM — dimming a lone parent row
         # above its one child reads as "a Group of 1", which is the
         # defect). Scoped to ``>= 2`` (a real COUNT, never the
-        # ``dispatched_tool_calls`` bool the REGISTRATION site reads
-        # before any child exists — #6184's own "declared 2, actual 1"
-        # positive control).
+        # ``dispatched_tool_calls`` count the REGISTRATION site reads
+        # before any child exists (#6184 段4-A made this a genuine
+        # declared-child COUNT, not a bool) — #6184's own "declared 2,
+        # actual 1" positive control).
         #
         # The COLLAPSED branch ("(N folded)") just below is NOT part of
         # this fix — left exactly as it read before, truthiness and all.

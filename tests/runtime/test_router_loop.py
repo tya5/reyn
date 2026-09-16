@@ -344,6 +344,79 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatched_tool_calls_meta_counts_declared_children_6184_stage4a(monkeypatch):
+    """Tier 2: OS invariant — #6184 段4-A: the tool-turn-text row's
+    ``dispatched_tool_calls`` meta is the DECLARED CHILD COUNT
+    (``len(interp.actions)``), not ``bool(result.tool_calls)``. Two
+    DISTINCT sync tool_calls in one round (``list_memory`` with different
+    ``path`` args — never deduped, see ``_dedupe_tool_calls_round``'s own
+    "sync tools are deliberately excluded" docstring) must produce ``2``.
+    Strip-falsify witness: reverting the meta to ``bool(result.tool_calls)``
+    turns this red (``True != 2``) — the shape #6184 段4-A's own test
+    review question 7 ("この assertion は、次の段が意図して偽にするか")
+    asks for; this one WOULD be broken by a bool-collapsing revert, so it
+    genuinely covers the change."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([
+            {"name": "list_memory", "args": {"path": "shared"}},
+            {"name": "list_memory", "args": {"path": "agent"}},
+        ]),
+        text_result("done"),
+    ]
+    scripted = _ScriptedLLM(rounds)
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+    await loop.run("list stuff twice", [])
+
+    (turn_row,) = [
+        m for m in host.outbox
+        if m.get("meta", {}).get("source") == "router_tool_turn_text"
+    ]
+    assert turn_row["meta"]["dispatched_tool_calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_dispatched_tool_calls_meta_reflects_post_dedupe_count_6184_stage4a(monkeypatch):
+    """Tier 2: the guardian — #6184 段4-A's own required accept criterion
+    (lead-coder, verbatim): "同じtool・同じ引数を2本出したround（dedupeが
+    効く）で値が1". Two IDENTICAL ``spawn_session`` calls (same tool, same
+    args) in one round trigger ``_dedupe_tool_calls_round``'s async-dupe
+    suppression (F5) — ``interp.actions`` ends up with only ONE entry, so
+    both the tool-turn-text row AND the agent_spawn_ack row (the SAME
+    call, same ``interp``, #4691 Phase 1) must report ``1``, not ``2``
+    (``len(result.tool_calls)``, pre-dedupe). This is the dedupe-specific
+    half of the accept criteria; the SIBLING test above (2 distinct tools
+    → 2) is what actually distinguishes a genuine count from the old bool
+    (``bool([1 item]) == True == 1``, so a value of exactly 1 alone does
+    not — the two tests together are the required "in one PR" pair)."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    duplicate_round = tool_result([
+        {"id": "tc_a", "name": "spawn_session",
+         "args": {"request": "do work", "mode": "ephemeral"}},
+        {"id": "tc_b", "name": "spawn_session",
+         "args": {"request": "do work", "mode": "ephemeral"}},
+    ])
+    scripted = _ScriptedLLM([duplicate_round])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+    await loop.run("spawn twice, identically", [])
+
+    (turn_row,) = [
+        m for m in host.outbox
+        if m.get("meta", {}).get("source") == "router_tool_turn_text"
+    ]
+    (ack_row,) = [
+        m for m in host.outbox
+        if m.get("meta", {}).get("source") == "agent_spawn_ack"
+    ]
+    assert turn_row["meta"]["dispatched_tool_calls"] == 1
+    assert ack_row["meta"]["dispatched_tool_calls"] == 1
+
+
+@pytest.mark.asyncio
 async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
     """Tier 2: OS invariant — async tool_calls with different args are
     NOT deduped (F5 false-positive guard). delegate_to_agent (the original

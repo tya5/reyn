@@ -2798,7 +2798,26 @@ class RouterLoop:
                         # owner-observed case, #4777) still gets a correct
                         # spinner, because this fact is not sourced from that
                         # provider string at all.
-                        "dispatched_tool_calls": bool(result.tool_calls),
+                        #
+                        # #6184 段4-A: now the DECLARED CHILD COUNT
+                        # (``len(interp.actions)``), not a bool. ``interp.
+                        # actions`` is POST-dedupe here — ``SchemeOps.
+                        # resolve()`` (~line 4029) builds it via
+                        # ``self._dedupe_tool_calls_round(llm_response.
+                        # tool_calls)`` BEFORE constructing this ``Execute``
+                        # interpretation, i.e. before this call site is even
+                        # reached — never ``len(result.tool_calls)``
+                        # (pre-dedupe): a weak model emitting the SAME
+                        # tool+args twice in one round would report "2" from
+                        # ``result.tool_calls`` while only ONE child actually
+                        # dispatches (the exact F5/G3 fix's own real-incident
+                        # shape, this method's own comment a few lines
+                        # below). ``interp`` is in scope here — this call
+                        # site is reached only inside ``if isinstance(interp,
+                        # Execute):`` (same fact the comment above already
+                        # relies on for ``result.tool_calls`` being
+                        # non-empty).
+                        "dispatched_tool_calls": len(interp.actions),
                     },
                 )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
@@ -2921,7 +2940,12 @@ class RouterLoop:
                             # 2157) for the full reasoning — this row is the
                             # SAME call, still inside the Execute branch, so
                             # ``result.tool_calls`` is non-empty here too.
-                            "dispatched_tool_calls": bool(result.tool_calls),
+                            #
+                            # #6184 段4-A: same fix as the tool-turn-text row
+                            # above — ``len(interp.actions)`` (POST-dedupe),
+                            # not a bool. Same ``interp`` object, same scope
+                            # (still inside ``if isinstance(interp, Execute):``).
+                            "dispatched_tool_calls": len(interp.actions),
                         },
                     )
                     return self._total_usage
@@ -3123,7 +3147,17 @@ class RouterLoop:
                         # tool call was dispatched, so this is False here (see
                         # the tool-turn-text row, ~line 2157, for the fact's
                         # full reasoning).
-                        "dispatched_tool_calls": bool(result.tool_calls),
+                        #
+                        # #6184 段4-A: ``len(result.tool_calls)`` here, NOT
+                        # ``interp.actions`` — this branch is NOT inside
+                        # ``if isinstance(interp, Execute):`` (the comment
+                        # above is explicit: no tool call was dispatched), so
+                        # ``interp`` carries no meaningful ``.actions`` to
+                        # read. ``result.tool_calls`` is empty by construction
+                        # of reaching this branch, so pre-vs-post-dedupe is
+                        # not a live distinction on an empty list — this is
+                        # always ``0``, matching the bool's own prior ``False``.
+                        "dispatched_tool_calls": len(result.tool_calls),
                     },
                 )
                 return self._total_usage  # no retry
@@ -3194,7 +3228,14 @@ class RouterLoop:
                     # tool call was dispatched, so this is False here (see
                     # the tool-turn-text row, ~line 2157, for the fact's
                     # full reasoning).
-                    "dispatched_tool_calls": bool(result.tool_calls),
+                    #
+                    # #6184 段4-A: same reasoning as the empty-response row
+                    # above (~line 3150) — this branch is NOT inside
+                    # ``if isinstance(interp, Execute):``, so ``interp`` has
+                    # no meaningful ``.actions``; ``result.tool_calls`` is
+                    # empty by construction here, so ``len(...)`` is always
+                    # ``0``, matching the bool's own prior ``False``.
+                    "dispatched_tool_calls": len(result.tool_calls),
                 },
             )
             return self._total_usage
